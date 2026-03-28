@@ -1,23 +1,28 @@
 name: Tests
 
 on:
-  push:
   pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
   test:
-    name: Run on Ubuntu
+    name: Unit & Integration Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Clone the code
-        uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v5
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
-      - name: Running Tests
-        run: |
-          go mod tidy
-          make test
+      - name: Run tests
+        run: make test

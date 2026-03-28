@@ -1,32 +1,38 @@
 name: E2E Tests
 
 on:
-  push:
   pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
   test-e2e:
-    name: Run on Ubuntu
+    name: E2E Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Skip E2E for draft PRs
+    if: github.event.pull_request.draft == false || github.event_name != 'pull_request'
     steps:
-      - name: Clone the code
-        uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v5
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
-      - name: Install the latest version of kind
+      - name: Install Kind
         run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          KIND_VERSION="v0.30.0"
+          curl -Lo ./kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
+          kind version
 
-      - name: Verify kind installation
-        run: kind version
-
-      - name: Running Test e2e
-        run: |
-          go mod tidy
-          make test-e2e
+      - name: Run E2E tests
+        run: make test-e2e
