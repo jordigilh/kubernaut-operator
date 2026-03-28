@@ -57,7 +57,7 @@ func ServiceAccount(kn *kubernautv1alpha1.Kubernaut, component string) *corev1.S
 func WorkflowRunnerServiceAccount(kn *kubernautv1alpha1.Kubernaut) *corev1.ServiceAccount {
 	ns := kn.Spec.WorkflowExecution.WorkflowNamespace
 	if ns == "" {
-		ns = "kubernaut-workflows"
+		ns = DefaultWorkflowNamespace
 	}
 	sa := &corev1.ServiceAccount{
 		ObjectMeta: ObjectMeta(kn, "kubernaut-workflow-runner", ComponentWorkflowExecution),

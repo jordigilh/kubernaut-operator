@@ -313,10 +313,11 @@ type ROTimeoutsSpec struct {
 }
 
 // RORoutingSpec defines routing thresholds for failure detection.
+// Integer thresholds use pointers to distinguish zero from unset.
 type RORoutingSpec struct {
 	// +kubebuilder:default=3
 	// +optional
-	ConsecutiveFailureThreshold int `json:"consecutiveFailureThreshold,omitempty"`
+	ConsecutiveFailureThreshold *int `json:"consecutiveFailureThreshold,omitempty"`
 	// +kubebuilder:default="1h"
 	// +optional
 	ConsecutiveFailureCooldown string `json:"consecutiveFailureCooldown,omitempty"`
@@ -325,10 +326,10 @@ type RORoutingSpec struct {
 	RecentlyRemediatedCooldown string `json:"recentlyRemediatedCooldown,omitempty"`
 	// +kubebuilder:default=3
 	// +optional
-	IneffectiveChainThreshold int `json:"ineffectiveChainThreshold,omitempty"`
+	IneffectiveChainThreshold *int `json:"ineffectiveChainThreshold,omitempty"`
 	// +kubebuilder:default=5
 	// +optional
-	RecurrenceCountThreshold int `json:"recurrenceCountThreshold,omitempty"`
+	RecurrenceCountThreshold *int `json:"recurrenceCountThreshold,omitempty"`
 	// +kubebuilder:default="4h"
 	// +optional
 	IneffectiveTimeWindow string `json:"ineffectiveTimeWindow,omitempty"`
@@ -519,6 +520,12 @@ const (
 const FinalizerName = "kubernaut.ai/cleanup"
 
 // SingletonName is the only accepted CR name; the reconciler rejects others.
+// NOTE: The singleton guard operates at the namespace level. Two namespaces
+// could each contain a CR named "kubernaut", and both controllers would
+// compete over the same cluster-scoped resources (ClusterRoles, CRBs,
+// webhook configurations). A validating admission webhook that enforces
+// cluster-wide uniqueness is planned for a future release. Until then,
+// only one Kubernaut CR should exist per cluster.
 const SingletonName = "kubernaut"
 
 // +kubebuilder:object:root=true

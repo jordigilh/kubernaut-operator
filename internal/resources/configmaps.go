@@ -102,9 +102,12 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.C
 	fmt.Fprintf(&b, "  executing: %s\n", withDefault(ro.Timeouts.Executing, "30m"))
 	fmt.Fprintf(&b, "  verifying: %s\n", withDefault(ro.Timeouts.Verifying, "30m"))
 	fmt.Fprintf(&b, "routing:\n")
-	fmt.Fprintf(&b, "  consecutiveFailureThreshold: %d\n", withDefaultInt(ro.Routing.ConsecutiveFailureThreshold, 3))
+	fmt.Fprintf(&b, "  consecutiveFailureThreshold: %d\n", intPtrDefault(ro.Routing.ConsecutiveFailureThreshold, 3))
 	fmt.Fprintf(&b, "  consecutiveFailureCooldown: %s\n", withDefault(ro.Routing.ConsecutiveFailureCooldown, "1h"))
 	fmt.Fprintf(&b, "  recentlyRemediatedCooldown: %s\n", withDefault(ro.Routing.RecentlyRemediatedCooldown, "5m"))
+	fmt.Fprintf(&b, "  ineffectiveChainThreshold: %d\n", intPtrDefault(ro.Routing.IneffectiveChainThreshold, 3))
+	fmt.Fprintf(&b, "  recurrenceCountThreshold: %d\n", intPtrDefault(ro.Routing.RecurrenceCountThreshold, 5))
+	fmt.Fprintf(&b, "  ineffectiveTimeWindow: %s\n", withDefault(ro.Routing.IneffectiveTimeWindow, "4h"))
 	fmt.Fprintf(&b, "effectivenessAssessment:\n")
 	fmt.Fprintf(&b, "  stabilizationWindow: %s\n", withDefault(ro.EffectivenessAssessment.StabilizationWindow, "5m"))
 	fmt.Fprintf(&b, "asyncPropagation:\n")
@@ -123,7 +126,7 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigM
 	we := &kn.Spec.WorkflowExecution
 	wfNs := we.WorkflowNamespace
 	if wfNs == "" {
-		wfNs = "kubernaut-workflows"
+		wfNs = DefaultWorkflowNamespace
 	}
 	cooldown := we.CooldownPeriod
 	if cooldown == "" {
@@ -270,9 +273,11 @@ func withDefault(val, def string) string {
 	return val
 }
 
-func withDefaultInt(val, def int) int {
-	if val == 0 {
-		return def
+// intPtrDefault dereferences val if non-nil, otherwise returns def.
+// This allows explicitly setting 0 as a valid value.
+func intPtrDefault(val *int, def int) int {
+	if val != nil {
+		return *val
 	}
-	return val
+	return def
 }
