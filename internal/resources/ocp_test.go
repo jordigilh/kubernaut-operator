@@ -20,8 +20,9 @@ import (
 	"strings"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
 	routev1 "github.com/openshift/api/route/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestGatewayRoute_EnabledByDefault(t *testing.T) {
@@ -91,7 +92,10 @@ func TestDataStorageDBSecret_DerivesFromPGSecret(t *testing.T) {
 		},
 	}
 
-	dsSecret := DataStorageDBSecret(kn, pgSecret)
+	dsSecret, err := DataStorageDBSecret(kn, pgSecret)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if dsSecret.Name != "datastorage-db-secret" {
 		t.Errorf("name = %q, want %q", dsSecret.Name, "datastorage-db-secret")
@@ -126,10 +130,28 @@ func TestDataStorageDBSecret_DefaultPort(t *testing.T) {
 		},
 	}
 
-	dsSecret := DataStorageDBSecret(kn, pgSecret)
+	dsSecret, err := DataStorageDBSecret(kn, pgSecret)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	yamlContent := string(dsSecret.Data["db-secrets.yaml"])
 	if !strings.Contains(yamlContent, "port: 5432") {
 		t.Errorf("should default to port 5432, got:\n%s", yamlContent)
+	}
+}
+
+func TestDataStorageDBSecret_MissingKey_ReturnsError(t *testing.T) {
+	kn := testKubernaut()
+	pgSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pg-secret"},
+		Data: map[string][]byte{
+			"POSTGRES_USER": []byte("u"),
+		},
+	}
+
+	_, err := DataStorageDBSecret(kn, pgSecret)
+	if err == nil {
+		t.Error("DataStorageDBSecret should return error when required keys are missing")
 	}
 }
 

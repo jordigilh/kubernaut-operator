@@ -65,6 +65,8 @@ func TestClusterRoles_ContainsExpectedNames(t *testing.T) {
 		"data-storage-auth-middleware",
 		"data-storage-client",
 		"authwebhook-role",
+		"kubernaut-alertmanager-view",
+		"gateway-signal-source",
 	}
 
 	for _, name := range expectedNames {
@@ -84,11 +86,39 @@ func TestClusterRoleBindings_SubjectNamespace(t *testing.T) {
 			continue
 		}
 		for _, subj := range crb.Subjects {
-			if subj.Namespace != kn.Namespace {
-				t.Errorf("CRB %q subject %q has namespace %q, want %q",
-					crb.Name, subj.Name, subj.Namespace, kn.Namespace)
+			validNS := subj.Namespace == kn.Namespace || subj.Namespace == DefaultWorkflowNamespace
+			if !validNS {
+				t.Errorf("CRB %q subject %q has namespace %q, want %q or %q",
+					crb.Name, subj.Name, subj.Namespace, kn.Namespace, DefaultWorkflowNamespace)
 			}
 		}
+	}
+}
+
+func TestClusterRoleBindings_WorkflowRunnerBinding(t *testing.T) {
+	kn := testKubernaut()
+	crbs := ClusterRoleBindings(kn)
+
+	found := false
+	for _, crb := range crbs {
+		if crb.Name == "kubernaut-workflow-runner-binding" {
+			found = true
+			if crb.RoleRef.Name != "kubernaut-workflow-runner" {
+				t.Errorf("workflow-runner CRB roleRef = %q, want %q", crb.RoleRef.Name, "kubernaut-workflow-runner")
+			}
+			if len(crb.Subjects) == 0 {
+				t.Fatal("workflow-runner CRB has no subjects")
+			}
+			if crb.Subjects[0].Name != "kubernaut-workflow-runner" {
+				t.Errorf("workflow-runner CRB subject = %q, want %q", crb.Subjects[0].Name, "kubernaut-workflow-runner")
+			}
+			if crb.Subjects[0].Namespace != DefaultWorkflowNamespace {
+				t.Errorf("workflow-runner CRB subject namespace = %q, want %q", crb.Subjects[0].Namespace, DefaultWorkflowNamespace)
+			}
+		}
+	}
+	if !found {
+		t.Error("ClusterRoleBindings() should include kubernaut-workflow-runner-binding")
 	}
 }
 

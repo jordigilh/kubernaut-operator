@@ -19,6 +19,10 @@ package resources
 import (
 	"strings"
 	"testing"
+
+	batchv1 "k8s.io/api/batch/v1"
+
+	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
 func TestMigrationConfigMap_ContainsSQL(t *testing.T) {
@@ -58,9 +62,18 @@ func TestMigrationConfigMap_Contains001Schema(t *testing.T) {
 	}
 }
 
+func mustMigrationJob(t *testing.T, kn *kubernautv1alpha1.Kubernaut) *batchv1.Job {
+	t.Helper()
+	job, err := MigrationJob(kn)
+	if err != nil {
+		t.Fatalf("MigrationJob() unexpected error: %v", err)
+	}
+	return job
+}
+
 func TestMigrationJob_Structure(t *testing.T) {
 	kn := testKubernaut()
-	job := MigrationJob(kn)
+	job := mustMigrationJob(t, kn)
 
 	if job.Name != "kubernaut-db-migration" {
 		t.Errorf("name = %q, want %q", job.Name, "kubernaut-db-migration")
@@ -79,7 +92,7 @@ func TestMigrationJob_Structure(t *testing.T) {
 
 func TestMigrationJob_Container(t *testing.T) {
 	kn := testKubernaut()
-	job := MigrationJob(kn)
+	job := mustMigrationJob(t, kn)
 
 	if len(job.Spec.Template.Spec.Containers) != 1 {
 		t.Fatalf("Job should have 1 container, got %d", len(job.Spec.Template.Spec.Containers))
@@ -98,11 +111,15 @@ func TestMigrationJob_Container(t *testing.T) {
 	if len(container.Command) == 0 || container.Command[0] != "goose" {
 		t.Errorf("command should start with goose, got %v", container.Command)
 	}
+
+	if container.Resources.Requests == nil {
+		t.Error("migration container should have resource requests")
+	}
 }
 
 func TestMigrationJob_EnvFromPGSecret(t *testing.T) {
 	kn := testKubernaut()
-	job := MigrationJob(kn)
+	job := mustMigrationJob(t, kn)
 
 	container := job.Spec.Template.Spec.Containers[0]
 	if len(container.EnvFrom) == 0 {
@@ -117,7 +134,7 @@ func TestMigrationJob_EnvFromPGSecret(t *testing.T) {
 
 func TestMigrationJob_MountsMigrationsCM(t *testing.T) {
 	kn := testKubernaut()
-	job := MigrationJob(kn)
+	job := mustMigrationJob(t, kn)
 
 	container := job.Spec.Template.Spec.Containers[0]
 	found := false
@@ -143,7 +160,7 @@ func TestMigrationJob_MountsMigrationsCM(t *testing.T) {
 
 func TestMigrationJob_SecurityContext(t *testing.T) {
 	kn := testKubernaut()
-	job := MigrationJob(kn)
+	job := mustMigrationJob(t, kn)
 
 	psc := job.Spec.Template.Spec.SecurityContext
 	if psc == nil || psc.RunAsNonRoot == nil || !*psc.RunAsNonRoot {
@@ -158,7 +175,7 @@ func TestMigrationJob_SecurityContext(t *testing.T) {
 
 func TestMigrationJob_GooseCommand_ContainsPGHost(t *testing.T) {
 	kn := testKubernaut()
-	job := MigrationJob(kn)
+	job := mustMigrationJob(t, kn)
 
 	container := job.Spec.Template.Spec.Containers[0]
 	cmdStr := strings.Join(container.Command, " ")

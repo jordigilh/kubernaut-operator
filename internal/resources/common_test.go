@@ -74,7 +74,10 @@ func TestImage_NestedRegistry(t *testing.T) {
 		Separator: "/",
 		Tag:       "v1.3.0",
 	}
-	got := Image(spec, "gateway")
+	got, err := Image(spec, "gateway")
+	if err != nil {
+		t.Fatalf("Image() unexpected error: %v", err)
+	}
 	want := "quay.io/kubernaut-ai/gateway:v1.3.0"
 	if got != want {
 		t.Errorf("Image() = %q, want %q", got, want)
@@ -88,7 +91,10 @@ func TestImage_FlatRegistry(t *testing.T) {
 		Separator: "-",
 		Tag:       "latest",
 	}
-	got := Image(spec, "gateway")
+	got, err := Image(spec, "gateway")
+	if err != nil {
+		t.Fatalf("Image() unexpected error: %v", err)
+	}
 	want := "quay.io/myorg-gateway:latest"
 	if got != want {
 		t.Errorf("Image() = %q, want %q", got, want)
@@ -102,7 +108,10 @@ func TestImage_Digest(t *testing.T) {
 		Tag:       "v1.3.0",
 		Digest:    "sha256:abc123",
 	}
-	got := Image(spec, "gateway")
+	got, err := Image(spec, "gateway")
+	if err != nil {
+		t.Fatalf("Image() unexpected error: %v", err)
+	}
 	want := "quay.io/kubernaut-ai/gateway@sha256:abc123"
 	if got != want {
 		t.Errorf("Image() = %q, want %q", got, want)
@@ -114,7 +123,10 @@ func TestImage_EmptyNamespace(t *testing.T) {
 		Registry: "myregistry.internal",
 		Tag:      "v1.0",
 	}
-	got := Image(spec, "data-storage")
+	got, err := Image(spec, "data-storage")
+	if err != nil {
+		t.Fatalf("Image() unexpected error: %v", err)
+	}
 	want := "myregistry.internal/data-storage:v1.0"
 	if got != want {
 		t.Errorf("Image() = %q, want %q", got, want)
@@ -127,10 +139,29 @@ func TestImage_DefaultSeparator(t *testing.T) {
 		Namespace: "kubernaut-ai",
 		Tag:       "v1.3.0",
 	}
-	got := Image(spec, "gateway")
+	got, err := Image(spec, "gateway")
+	if err != nil {
+		t.Fatalf("Image() unexpected error: %v", err)
+	}
 	want := "quay.io/kubernaut-ai/gateway:v1.3.0"
 	if got != want {
 		t.Errorf("Image() = %q, want %q (default separator should be /)", got, want)
+	}
+}
+
+func TestImage_EmptyRegistry_ReturnsError(t *testing.T) {
+	spec := &kubernautv1alpha1.ImageSpec{Tag: "v1.0"}
+	_, err := Image(spec, "gateway")
+	if err == nil {
+		t.Error("Image() should return error when registry is empty")
+	}
+}
+
+func TestImage_EmptyTagAndDigest_ReturnsError(t *testing.T) {
+	spec := &kubernautv1alpha1.ImageSpec{Registry: "quay.io"}
+	_, err := Image(spec, "gateway")
+	if err == nil {
+		t.Error("Image() should return error when both tag and digest are empty")
 	}
 }
 

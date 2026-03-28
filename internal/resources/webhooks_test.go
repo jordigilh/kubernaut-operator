@@ -87,6 +87,16 @@ func TestMutatingWebhookConfiguration_Rules(t *testing.T) {
 	}
 }
 
+func TestMutatingWebhookConfiguration_Path(t *testing.T) {
+	kn := testKubernaut()
+	mwc := MutatingWebhookConfiguration(kn, nil)
+
+	wh := mwc.Webhooks[0]
+	if wh.ClientConfig.Service.Path == nil || *wh.ClientConfig.Service.Path != "/mutate" {
+		t.Errorf("mutating webhook path = %v, want /mutate", wh.ClientConfig.Service.Path)
+	}
+}
+
 func TestValidatingWebhookConfiguration_Basic(t *testing.T) {
 	kn := testKubernaut()
 	caBundle := []byte("fake-ca")

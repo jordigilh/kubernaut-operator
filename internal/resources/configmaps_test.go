@@ -96,7 +96,10 @@ func TestRemediationOrchestratorConfigMap_Defaults(t *testing.T) {
 	cm := RemediationOrchestratorConfigMap(kn)
 
 	data := cm.Data["config.yaml"]
-	defaults := []string{"global: 1h", "processing: 5m", "analyzing: 10m", "executing: 30m", "verifying: 30m"}
+	defaults := []string{
+		"global: 1h", "processing: 5m", "analyzing: 10m", "executing: 30m", "verifying: 30m",
+		"ineffectiveChainThreshold: 3", "recurrenceCountThreshold: 5", "ineffectiveTimeWindow: 4h",
+	}
 	for _, d := range defaults {
 		if !strings.Contains(data, d) {
 			t.Errorf("RO config should contain default %q, got:\n%s", d, data)
