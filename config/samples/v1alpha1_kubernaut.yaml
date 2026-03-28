@@ -1,0 +1,32 @@
+apiVersion: kubernaut.ai/v1alpha1
+kind: Kubernaut
+metadata:
+  name: kubernaut
+  namespace: kubernaut
+spec:
+  image:
+    registry: quay.io
+    namespace: kubernaut-ai
+    tag: "v1.3.0"
+  postgresql:
+    secretName: postgresql-secret
+    host: postgresql.kubernaut.svc.cluster.local
+    port: 5432
+  valkey:
+    secretName: valkey-secret
+    host: valkey.kubernaut.svc.cluster.local
+    port: 6379
+  holmesgptApi:
+    llm:
+      provider: openai
+      model: gpt-4o
+      credentialsSecretName: llm-credentials
+  aiAnalysis:
+    policy:
+      configMapName: aianalysis-policies
+  signalProcessing:
+    policy:
+      configMapName: signalprocessing-policy
+  gateway:
+    route:
+      enabled: true
