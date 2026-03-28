@@ -132,30 +132,50 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigM
 	if cooldown == "" {
 		cooldown = "1m"
 	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "dataStorageUrl: %s\n", DataStorageURL(kn.Namespace))
+	fmt.Fprintf(&b, "workflowNamespace: %s\n", wfNs)
+	fmt.Fprintf(&b, "cooldownPeriod: %s\n", cooldown)
+	fmt.Fprintf(&b, "serviceAccountName: kubernaut-workflow-runner\n")
+
+	if kn.Spec.Ansible.Enabled {
+		fmt.Fprintf(&b, "ansible:\n")
+		fmt.Fprintf(&b, "  enabled: true\n")
+		fmt.Fprintf(&b, "  apiURL: %s\n", kn.Spec.Ansible.APIURL)
+		fmt.Fprintf(&b, "  organizationID: %d\n", kn.Spec.Ansible.OrganizationID)
+		if kn.Spec.Ansible.TokenSecretRef != nil {
+			fmt.Fprintf(&b, "  tokenSecretName: %s\n", kn.Spec.Ansible.TokenSecretRef.Name)
+			fmt.Fprintf(&b, "  tokenSecretKey: %s\n", withDefault(kn.Spec.Ansible.TokenSecretRef.Key, "token"))
+		}
+	}
+
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "workflowexecution-config", ComponentWorkflowExecution),
-		Data: map[string]string{
-			"config.yaml": fmt.Sprintf(
-				"dataStorageUrl: %s\nworkflowNamespace: %s\ncooldownPeriod: %s\n",
-				DataStorageURL(kn.Namespace), wfNs, cooldown,
-			),
-		},
+		Data:       map[string]string{"config.yaml": b.String()},
 	}
 }
 
 // EffectivenessMonitorConfigMap builds the effectivenessmonitor-config ConfigMap.
 func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 	em := &kn.Spec.EffectivenessMonitor
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "dataStorageUrl: %s\n", DataStorageURL(kn.Namespace))
+	fmt.Fprintf(&b, "assessment:\n")
+	fmt.Fprintf(&b, "  stabilizationWindow: %s\n", withDefault(em.Assessment.StabilizationWindow, "30s"))
+	fmt.Fprintf(&b, "  validityWindow: %s\n", withDefault(em.Assessment.ValidityWindow, "120s"))
+
+	if kn.Spec.Monitoring.MonitoringEnabled() {
+		fmt.Fprintf(&b, "monitoring:\n")
+		fmt.Fprintf(&b, "  prometheusUrl: %s\n", OCPPrometheusURL)
+		fmt.Fprintf(&b, "  alertManagerUrl: %s\n", OCPAlertManagerURL)
+		fmt.Fprintf(&b, "  tlsCaPath: /etc/ssl/effectivenessmonitor/service-ca.crt\n")
+	}
+
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "effectivenessmonitor-config", ComponentEffectivenessMonitor),
-		Data: map[string]string{
-			"config.yaml": fmt.Sprintf(
-				"dataStorageUrl: %s\nassessment:\n  stabilizationWindow: %s\n  validityWindow: %s\n",
-				DataStorageURL(kn.Namespace),
-				withDefault(em.Assessment.StabilizationWindow, "30s"),
-				withDefault(em.Assessment.ValidityWindow, "120s"),
-			),
-		},
+		Data:       map[string]string{"config.yaml": b.String()},
 	}
 }
 
@@ -200,14 +220,22 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.Confi
 // HolmesGPTAPIConfigMap builds the holmesgpt-api-config ConfigMap.
 func HolmesGPTAPIConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 	ns := kn.Namespace
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "dataStorageUrl: %s\n", DataStorageURL(ns))
+	fmt.Fprintf(&b, "gatewayUrl: %s\n", GatewayURL(ns))
+	fmt.Fprintf(&b, "listenAddr: :8080\n")
+	fmt.Fprintf(&b, "metricsAddr: :8080\n")
+
+	if kn.Spec.Monitoring.MonitoringEnabled() {
+		fmt.Fprintf(&b, "monitoring:\n")
+		fmt.Fprintf(&b, "  prometheusUrl: %s\n", OCPPrometheusURL)
+		fmt.Fprintf(&b, "  tlsCaPath: /etc/ssl/hapi/service-ca.crt\n")
+	}
+
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "holmesgpt-api-config", ComponentHolmesGPTAPI),
-		Data: map[string]string{
-			"config.yaml": fmt.Sprintf(
-				"dataStorageUrl: %s\ngatewayUrl: %s\nlistenAddr: :8080\nmetricsAddr: :8080\n",
-				DataStorageURL(ns), GatewayURL(ns),
-			),
-		},
+		Data:       map[string]string{"config.yaml": b.String()},
 	}
 }
 
