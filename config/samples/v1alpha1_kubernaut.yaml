@@ -1,32 +1,54 @@
 apiVersion: kubernaut.ai/v1alpha1
 kind: Kubernaut
 metadata:
+  labels:
+    app.kubernetes.io/name: kubernaut-operator
+    app.kubernetes.io/managed-by: kustomize
   name: kubernaut
-  namespace: kubernaut
+  namespace: kubernaut-system
 spec:
+  # Container image configuration for all Kubernaut services.
   image:
     registry: quay.io
     namespace: kubernaut-ai
     tag: "v1.3.0"
+    pullPolicy: IfNotPresent
+
+  # BYO PostgreSQL — operator validates keys and derives the
+  # DataStorage db-secrets.yaml Secret automatically.
   postgresql:
     secretName: postgresql-secret
-    host: postgresql.kubernaut.svc.cluster.local
+    host: postgresql.kubernaut-system.svc.cluster.local
     port: 5432
+
+  # BYO Valkey/Redis.
   valkey:
     secretName: valkey-secret
-    host: valkey.kubernaut.svc.cluster.local
+    host: valkey.kubernaut-system.svc.cluster.local
     port: 6379
+
+  # LLM integration service (HolmesGPT-API).
   holmesgptApi:
     llm:
       provider: openai
       model: gpt-4o
       credentialsSecretName: llm-credentials
+
+  # AIAnalysis controller — requires a Rego policy ConfigMap.
   aiAnalysis:
     policy:
       configMapName: aianalysis-policies
+
+  # SignalProcessing controller — requires a Rego policy ConfigMap.
   signalProcessing:
     policy:
       configMapName: signalprocessing-policy
+
+  # OCP monitoring integration (enabled by default).
+  monitoring:
+    enabled: true
+
+  # Gateway settings — Route creates an OCP edge-TLS Route.
   gateway:
     route:
       enabled: true
