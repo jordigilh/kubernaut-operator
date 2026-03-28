@@ -53,6 +53,19 @@ const (
 // when not overridden in the CR spec.
 const DefaultWorkflowNamespace = "kubernaut-workflows"
 
+// OCP monitoring stack endpoints. These are always available on OCP clusters
+// and are hardcoded rather than discovered (OCP-only operator).
+const (
+	OCPPrometheusURL   = "https://prometheus-k8s.openshift-monitoring.svc:9091"
+	OCPAlertManagerURL = "https://alertmanager-main.openshift-monitoring.svc:9094"
+)
+
+// OCP monitoring namespace and service account used for signal source RBAC.
+const (
+	OCPMonitoringNamespace  = "openshift-monitoring"
+	OCPAlertManagerSAName   = "alertmanager-main"
+)
+
 // AllComponents returns the ordered list of all managed components.
 func AllComponents() []string {
 	return []string{

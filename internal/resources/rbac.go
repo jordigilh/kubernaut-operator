@@ -83,8 +83,17 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		crbs = append(crbs,
-			clusterRoleBinding("effectivenessmonitor-alertmanager-view-binding", "kubernaut-alertmanager-view", ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
-			clusterRoleBinding("gateway-signal-source-alertmanager-binding", "gateway-signal-source", ServiceAccountName(ComponentGateway), ns, labels),
+			// AlertManager view for EM to query alert state.
+			clusterRoleBinding("effectivenessmonitor-alertmanager-view-binding", "kubernaut-alertmanager-view",
+				ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
+			// cluster-monitoring-view grants EM and HAPI read access to Prometheus metrics.
+			clusterRoleBinding("effectivenessmonitor-monitoring-view", "cluster-monitoring-view",
+				ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
+			clusterRoleBinding("holmesgpt-api-monitoring-view", "cluster-monitoring-view",
+				ServiceAccountName(ComponentHolmesGPTAPI), ns, labels),
+			// Allow OCP AlertManager to POST signals to the Gateway.
+			clusterRoleBinding("alertmanager-gateway-signal-source", "gateway-signal-source",
+				OCPAlertManagerSAName, OCPMonitoringNamespace, labels),
 		)
 	}
 
@@ -256,6 +265,25 @@ func WorkflowNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut) ([]*rbacv1.Role, []*
 	}
 
 	return roles, rbs
+}
+
+// MonitoringCRBNames returns the names of all monitoring-related ClusterRoleBindings.
+// Used by the finalizer to always attempt cleanup regardless of current Monitoring.Enabled.
+func MonitoringCRBNames(kn *kubernautv1alpha1.Kubernaut) []string {
+	return []string{
+		"effectivenessmonitor-alertmanager-view-binding",
+		"effectivenessmonitor-monitoring-view",
+		"holmesgpt-api-monitoring-view",
+		"alertmanager-gateway-signal-source",
+	}
+}
+
+// MonitoringClusterRoleNames returns the names of all monitoring-related ClusterRoles.
+func MonitoringClusterRoleNames() []string {
+	return []string{
+		"kubernaut-alertmanager-view",
+		"gateway-signal-source",
+	}
 }
 
 // AnsibleRBAC returns the conditional AWX RBAC resources.

@@ -221,15 +221,17 @@ func HolmesGPTAPIDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 		{Name: "llm-credentials", MountPath: "/etc/kubernaut/credentials", ReadOnly: true},
 	}
 
+	var envVars []corev1.EnvVar
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		volumes = append(volumes, configMapVolume("service-ca", "holmesgpt-api-service-ca"))
 		mounts = append(mounts, corev1.VolumeMount{
 			Name: "service-ca", MountPath: "/etc/ssl/hapi", ReadOnly: true,
 		})
+		envVars = append(envVars, corev1.EnvVar{Name: "IS_OPENSHIFT", Value: "True"})
 	}
 
-	return deployment(kn, ComponentHolmesGPTAPI, "holmesgpt-api",
-		kn.Spec.HolmesGPTAPI.Resources, mounts, volumes, nil, nil)
+	return deploymentWithEnv(kn, ComponentHolmesGPTAPI, "holmesgpt-api",
+		kn.Spec.HolmesGPTAPI.Resources, mounts, volumes, nil, nil, envVars)
 }
 
 // AuthWebhookDeployment builds the authwebhook Deployment.
@@ -260,6 +262,19 @@ func deployment(
 	initContainers []corev1.Container,
 	ports []corev1.ContainerPort,
 ) (*appsv1.Deployment, error) {
+	return deploymentWithEnv(kn, component, imageName, resources, volumeMounts, volumes, initContainers, ports, nil)
+}
+
+func deploymentWithEnv(
+	kn *kubernautv1alpha1.Kubernaut,
+	component, imageName string,
+	resources corev1.ResourceRequirements,
+	volumeMounts []corev1.VolumeMount,
+	volumes []corev1.Volume,
+	initContainers []corev1.Container,
+	ports []corev1.ContainerPort,
+	env []corev1.EnvVar,
+) (*appsv1.Deployment, error) {
 	img, err := Image(&kn.Spec.Image, imageName)
 	if err != nil {
 		return nil, err
@@ -286,6 +301,7 @@ func deployment(
 						Image:           img,
 						ImagePullPolicy: kn.Spec.Image.PullPolicy,
 						Ports:           ports,
+						Env:             env,
 						Resources:       MergeResources(resources),
 						SecurityContext: ContainerSecurityContext(),
 						VolumeMounts:    volumeMounts,

@@ -547,6 +547,22 @@ func (r *KubernautReconciler) deleteClusterScopedResources(ctx context.Context, 
 		errs = append(errs, fmt.Errorf("deleting AWX CRB: %w", err))
 	}
 
+	// Monitoring RBAC: always attempt cleanup regardless of current Monitoring.Enabled.
+	for _, name := range resources.MonitoringCRBNames(kn) {
+		monCRB := &rbacv1.ClusterRoleBinding{}
+		monCRB.Name = name
+		if err := r.deleteIfExists(ctx, monCRB); err != nil {
+			errs = append(errs, fmt.Errorf("deleting monitoring CRB %s: %w", name, err))
+		}
+	}
+	for _, name := range resources.MonitoringClusterRoleNames() {
+		monCR := &rbacv1.ClusterRole{}
+		monCR.Name = name
+		if err := r.deleteIfExists(ctx, monCR); err != nil {
+			errs = append(errs, fmt.Errorf("deleting monitoring ClusterRole %s: %w", name, err))
+		}
+	}
+
 	// Webhook configurations.
 	mwc := resources.MutatingWebhookConfiguration(kn, nil)
 	if err := r.deleteIfExists(ctx, mwc); err != nil {
