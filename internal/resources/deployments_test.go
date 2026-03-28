@@ -202,6 +202,42 @@ func TestHolmesGPTAPIDeployment_ServiceCA_WhenMonitoringEnabled(t *testing.T) {
 	assertHasVolumeMount(t, dep, "service-ca", "/etc/ssl/hapi")
 }
 
+func TestHolmesGPTAPIDeployment_IsOpenShiftEnv_WhenMonitoringEnabled(t *testing.T) {
+	kn := testKubernaut()
+	dep, err := HolmesGPTAPIDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	container := dep.Spec.Template.Spec.Containers[0]
+	found := false
+	for _, env := range container.Env {
+		if env.Name == "IS_OPENSHIFT" && env.Value == "True" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("HAPI container should have IS_OPENSHIFT=True env var when monitoring is enabled")
+	}
+}
+
+func TestHolmesGPTAPIDeployment_NoIsOpenShiftEnv_WhenMonitoringDisabled(t *testing.T) {
+	kn := testKubernaut()
+	disabled := false
+	kn.Spec.Monitoring.Enabled = &disabled
+	dep, err := HolmesGPTAPIDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	container := dep.Spec.Template.Spec.Containers[0]
+	for _, env := range container.Env {
+		if env.Name == "IS_OPENSHIFT" {
+			t.Error("HAPI container should not have IS_OPENSHIFT env var when monitoring is disabled")
+		}
+	}
+}
+
 func TestHolmesGPTAPIDeployment_NoServiceCA_WhenMonitoringDisabled(t *testing.T) {
 	kn := testKubernaut()
 	disabled := false

@@ -19,6 +19,8 @@ package resources
 import (
 	"strings"
 	"testing"
+
+	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
 func TestGatewayConfigMap_ContainsDataStorageURL(t *testing.T) {
@@ -225,6 +227,105 @@ func TestServiceCAConfigMaps_HaveAnnotation(t *testing.T) {
 	}
 	for _, tc := range cms {
 		t.Run(tc.name, tc.fn)
+	}
+}
+
+func TestEffectivenessMonitorConfigMap_MonitoringURLs(t *testing.T) {
+	kn := testKubernaut()
+	cm := EffectivenessMonitorConfigMap(kn)
+	data := cm.Data["config.yaml"]
+
+	if !strings.Contains(data, OCPPrometheusURL) {
+		t.Errorf("EM config should contain Prometheus URL when monitoring enabled, got:\n%s", data)
+	}
+	if !strings.Contains(data, OCPAlertManagerURL) {
+		t.Errorf("EM config should contain AlertManager URL when monitoring enabled, got:\n%s", data)
+	}
+	if !strings.Contains(data, "tlsCaPath: /etc/ssl/effectivenessmonitor/service-ca.crt") {
+		t.Errorf("EM config should contain TLS CA path when monitoring enabled, got:\n%s", data)
+	}
+}
+
+func TestEffectivenessMonitorConfigMap_NoMonitoringURLsWhenDisabled(t *testing.T) {
+	kn := testKubernaut()
+	disabled := false
+	kn.Spec.Monitoring.Enabled = &disabled
+	cm := EffectivenessMonitorConfigMap(kn)
+	data := cm.Data["config.yaml"]
+
+	if strings.Contains(data, "prometheusUrl") {
+		t.Errorf("EM config should not contain monitoring section when disabled, got:\n%s", data)
+	}
+}
+
+func TestHolmesGPTAPIConfigMap_MonitoringURL(t *testing.T) {
+	kn := testKubernaut()
+	cm := HolmesGPTAPIConfigMap(kn)
+	data := cm.Data["config.yaml"]
+
+	if !strings.Contains(data, OCPPrometheusURL) {
+		t.Errorf("HAPI config should contain Prometheus URL when monitoring enabled, got:\n%s", data)
+	}
+	if !strings.Contains(data, "tlsCaPath: /etc/ssl/hapi/service-ca.crt") {
+		t.Errorf("HAPI config should contain TLS CA path when monitoring enabled, got:\n%s", data)
+	}
+}
+
+func TestHolmesGPTAPIConfigMap_NoMonitoringWhenDisabled(t *testing.T) {
+	kn := testKubernaut()
+	disabled := false
+	kn.Spec.Monitoring.Enabled = &disabled
+	cm := HolmesGPTAPIConfigMap(kn)
+	data := cm.Data["config.yaml"]
+
+	if strings.Contains(data, "prometheusUrl") {
+		t.Errorf("HAPI config should not contain monitoring section when disabled, got:\n%s", data)
+	}
+}
+
+func TestWorkflowExecutionConfigMap_AWXWiring(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Ansible.Enabled = true
+	kn.Spec.Ansible.APIURL = "https://awx.example.com"
+	kn.Spec.Ansible.OrganizationID = 42
+	kn.Spec.Ansible.TokenSecretRef = &kubernautv1alpha1.SecretKeyRef{
+		Name: "awx-token",
+		Key:  "api-token",
+	}
+	cm := WorkflowExecutionConfigMap(kn)
+	data := cm.Data["config.yaml"]
+
+	for _, want := range []string{
+		"ansible:",
+		"enabled: true",
+		"apiURL: https://awx.example.com",
+		"organizationID: 42",
+		"tokenSecretName: awx-token",
+		"tokenSecretKey: api-token",
+	} {
+		if !strings.Contains(data, want) {
+			t.Errorf("WE config should contain %q when Ansible enabled, got:\n%s", want, data)
+		}
+	}
+}
+
+func TestWorkflowExecutionConfigMap_NoAWXWhenDisabled(t *testing.T) {
+	kn := testKubernaut()
+	cm := WorkflowExecutionConfigMap(kn)
+	data := cm.Data["config.yaml"]
+
+	if strings.Contains(data, "ansible:") {
+		t.Errorf("WE config should not contain ansible section when disabled, got:\n%s", data)
+	}
+}
+
+func TestWorkflowExecutionConfigMap_ServiceAccountName(t *testing.T) {
+	kn := testKubernaut()
+	cm := WorkflowExecutionConfigMap(kn)
+	data := cm.Data["config.yaml"]
+
+	if !strings.Contains(data, "serviceAccountName: kubernaut-workflow-runner") {
+		t.Errorf("WE config should include serviceAccountName, got:\n%s", data)
 	}
 }
 
