@@ -24,12 +24,14 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -155,7 +157,10 @@ func (r *KubernautReconciler) phaseMigrate(ctx context.Context, kn *kubernautv1a
 	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: kn.Spec.PostgreSQL.SecretName}, pgSecret); err != nil {
 		return ctrl.Result{}, fmt.Errorf("fetching pg secret for DS derivation: %w", err)
 	}
-	dsSecret := resources.DataStorageDBSecret(kn, pgSecret)
+	dsSecret, err := resources.DataStorageDBSecret(kn, pgSecret)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("deriving datastorage-db-secret: %w", err)
+	}
 	if err := r.ensureNamespaced(ctx, kn, dsSecret); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensuring datastorage-db-secret: %w", err)
 	}
@@ -170,7 +175,10 @@ func (r *KubernautReconciler) phaseMigrate(ctx context.Context, kn *kubernautv1a
 	}
 
 	// Ensure migration Job exists (Jobs are immutable; create-only).
-	migrationJob := resources.MigrationJob(kn)
+	migrationJob, err := resources.MigrationJob(kn)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("building migration job: %w", err)
+	}
 	existingJob := &batchv1.Job{}
 	err = r.Get(ctx, types.NamespacedName{Name: migrationJob.Name, Namespace: kn.Namespace}, existingJob)
 	if apierrors.IsNotFound(err) {
@@ -196,8 +204,15 @@ func (r *KubernautReconciler) phaseMigrate(ctx context.Context, kn *kubernautv1a
 			return ctrl.Result{}, r.Status().Update(ctx, kn)
 		}
 		if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
+			log.Info("migration job failed, deleting for retry")
+			propagation := metav1.DeletePropagationBackground
+			if err := r.Delete(ctx, existingJob, &client.DeleteOptions{
+				PropagationPolicy: &propagation,
+			}); err != nil && !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("deleting failed migration job: %w", err)
+			}
 			return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionMigrationComplete, metav1.ConditionFalse,
-				"MigrationFailed", "Database migration job failed")
+				"MigrationFailed", "Database migration job failed; will retry")
 		}
 	}
 
@@ -367,19 +382,24 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 	})
 
 	// Deployments.
-	deployments := []*appsv1.Deployment{
-		resources.GatewayDeployment(kn),
-		resources.DataStorageDeployment(kn),
-		resources.AIAnalysisDeployment(kn),
-		resources.SignalProcessingDeployment(kn),
-		resources.RemediationOrchestratorDeployment(kn),
-		resources.WorkflowExecutionDeployment(kn),
-		resources.EffectivenessMonitorDeployment(kn),
-		resources.NotificationDeployment(kn),
-		resources.HolmesGPTAPIDeployment(kn),
-		resources.AuthWebhookDeployment(kn),
+	type depBuilder func(*kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error)
+	depBuilders := []depBuilder{
+		resources.GatewayDeployment,
+		resources.DataStorageDeployment,
+		resources.AIAnalysisDeployment,
+		resources.SignalProcessingDeployment,
+		resources.RemediationOrchestratorDeployment,
+		resources.WorkflowExecutionDeployment,
+		resources.EffectivenessMonitorDeployment,
+		resources.NotificationDeployment,
+		resources.HolmesGPTAPIDeployment,
+		resources.AuthWebhookDeployment,
 	}
-	for _, dep := range deployments {
+	for _, build := range depBuilders {
+		dep, err := build(kn)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("building deployment: %w", err)
+		}
 		if err := r.ensureNamespaced(ctx, kn, dep); err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensuring Deployment %s: %w", dep.Name, err)
 		}
@@ -445,7 +465,8 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 			continue
 		}
 
-		ready := dep.Status.ReadyReplicas >= *dep.Spec.Replicas
+		desired := ptr.Deref(dep.Spec.Replicas, 1)
+		ready := dep.Status.ReadyReplicas >= desired
 		if !ready {
 			allReady = false
 		}
@@ -453,7 +474,7 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 			Name:            component,
 			Ready:           ready,
 			ReadyReplicas:   dep.Status.ReadyReplicas,
-			DesiredReplicas: *dep.Spec.Replicas,
+			DesiredReplicas: desired,
 		})
 	}
 
@@ -500,46 +521,77 @@ func (r *KubernautReconciler) reconcileDelete(ctx context.Context, kn *kubernaut
 
 func (r *KubernautReconciler) deleteClusterScopedResources(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
 	log := logf.FromContext(ctx)
+	var errs []error
 
 	// ClusterRoles.
 	for _, cr := range resources.ClusterRoles(kn) {
 		if err := r.deleteIfExists(ctx, cr); err != nil {
-			return fmt.Errorf("deleting ClusterRole %s: %w", cr.Name, err)
+			errs = append(errs, fmt.Errorf("deleting ClusterRole %s: %w", cr.Name, err))
 		}
 	}
 
 	// ClusterRoleBindings.
 	for _, crb := range resources.ClusterRoleBindings(kn) {
 		if err := r.deleteIfExists(ctx, crb); err != nil {
-			return fmt.Errorf("deleting CRB %s: %w", crb.Name, err)
+			errs = append(errs, fmt.Errorf("deleting CRB %s: %w", crb.Name, err))
 		}
 	}
 
-	// Conditional AWX RBAC.
-	if kn.Spec.Ansible.Enabled {
-		cr, crb := resources.AnsibleRBAC(kn)
-		_ = r.deleteIfExists(ctx, cr)
-		_ = r.deleteIfExists(ctx, crb)
+	// AWX RBAC: always attempt cleanup regardless of current Ansible.Enabled,
+	// because the user may have disabled it after resources were created.
+	cr, crb := resources.AnsibleRBAC(kn)
+	if err := r.deleteIfExists(ctx, cr); err != nil {
+		errs = append(errs, fmt.Errorf("deleting AWX ClusterRole: %w", err))
+	}
+	if err := r.deleteIfExists(ctx, crb); err != nil {
+		errs = append(errs, fmt.Errorf("deleting AWX CRB: %w", err))
 	}
 
 	// Webhook configurations.
 	mwc := resources.MutatingWebhookConfiguration(kn, nil)
-	_ = r.deleteIfExists(ctx, mwc)
+	if err := r.deleteIfExists(ctx, mwc); err != nil {
+		errs = append(errs, fmt.Errorf("deleting MutatingWebhookConfiguration: %w", err))
+	}
 	vwc := resources.ValidatingWebhookConfiguration(kn, nil)
-	_ = r.deleteIfExists(ctx, vwc)
+	if err := r.deleteIfExists(ctx, vwc); err != nil {
+		errs = append(errs, fmt.Errorf("deleting ValidatingWebhookConfiguration: %w", err))
+	}
 
 	// Workflow namespace roles/bindings.
 	wfRoles, wfRBs := resources.WorkflowNamespaceRBAC(kn)
 	for _, role := range wfRoles {
-		_ = r.deleteIfExists(ctx, role)
+		if err := r.deleteIfExists(ctx, role); err != nil {
+			errs = append(errs, fmt.Errorf("deleting wf role %s: %w", role.Name, err))
+		}
 	}
 	for _, rb := range wfRBs {
-		_ = r.deleteIfExists(ctx, rb)
+		if err := r.deleteIfExists(ctx, rb); err != nil {
+			errs = append(errs, fmt.Errorf("deleting wf rb %s: %w", rb.Name, err))
+		}
 	}
 
 	// Workflow runner SA (lives in workflow namespace).
 	wfRunnerSA := resources.WorkflowRunnerServiceAccount(kn)
-	_ = r.deleteIfExists(ctx, wfRunnerSA)
+	if err := r.deleteIfExists(ctx, wfRunnerSA); err != nil {
+		errs = append(errs, fmt.Errorf("deleting workflow runner SA: %w", err))
+	}
+
+	// Workflow namespace: delete unless it was pre-existing (has no kubernaut labels).
+	wfNs := resources.WorkflowNamespace(kn)
+	existingNs := &corev1.Namespace{}
+	if err := r.Get(ctx, types.NamespacedName{Name: wfNs.Name}, existingNs); err == nil {
+		if existingNs.Labels["app.kubernetes.io/managed-by"] == "kubernaut-operator" {
+			if err := r.deleteIfExists(ctx, existingNs); err != nil {
+				errs = append(errs, fmt.Errorf("deleting workflow namespace %s: %w", wfNs.Name, err))
+			}
+		} else {
+			log.Info("skipping deletion of workflow namespace (not managed by operator)", "namespace", wfNs.Name)
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("errors during cluster-scoped cleanup: %v", errs)
+	}
 
 	log.Info("cluster-scoped resources cleaned up")
 	return nil
@@ -626,6 +678,9 @@ func (r *KubernautReconciler) deleteIfExists(ctx context.Context, obj client.Obj
 }
 
 // SetupWithManager sets up the controller with the Manager.
+// Owns() watches trigger reconciliation when owned child resources change.
+// Cluster-scoped resources (ClusterRoles, CRBs, webhook configs) cannot be
+// owned, so they rely on the periodic requeue timer for drift detection.
 func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kubernautv1alpha1.Kubernaut{}).
@@ -633,6 +688,9 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.ServiceAccount{}).
+		Owns(&corev1.Secret{}).
+		Owns(&batchv1.Job{}).
+		Owns(&policyv1.PodDisruptionBudget{}).
 		Named("kubernaut").
 		Complete(r)
 }

@@ -70,6 +70,17 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 		clusterRoleBinding("authwebhook-binding", "authwebhook-role", ServiceAccountName(ComponentAuthWebhook), ns, labels),
 	}
 
+	// Workflow runner CRB: binds the kubernaut-workflow-runner ClusterRole
+	// to the workflow-runner SA in the workflow namespace.
+	wfNs := kn.Spec.WorkflowExecution.WorkflowNamespace
+	if wfNs == "" {
+		wfNs = DefaultWorkflowNamespace
+	}
+	crbs = append(crbs,
+		clusterRoleBinding("kubernaut-workflow-runner-binding", "kubernaut-workflow-runner",
+			"kubernaut-workflow-runner", wfNs, labels),
+	)
+
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		crbs = append(crbs,
 			clusterRoleBinding("effectivenessmonitor-alertmanager-view-binding", "kubernaut-alertmanager-view", ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
@@ -207,7 +218,7 @@ func NamespaceRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.RoleBindin
 func WorkflowNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut) ([]*rbacv1.Role, []*rbacv1.RoleBinding) {
 	wfNs := kn.Spec.WorkflowExecution.WorkflowNamespace
 	if wfNs == "" {
-		wfNs = "kubernaut-workflows"
+		wfNs = DefaultWorkflowNamespace
 	}
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
@@ -263,7 +274,7 @@ func AnsibleRBAC(kn *kubernautv1alpha1.Kubernaut) (*rbacv1.ClusterRole, *rbacv1.
 
 	wfNs := kn.Spec.WorkflowExecution.WorkflowNamespace
 	if wfNs == "" {
-		wfNs = "kubernaut-workflows"
+		wfNs = DefaultWorkflowNamespace
 	}
 	crb := clusterRoleBinding("workflowexecution-awx-binding", "workflowexecution-awx",
 		"kubernaut-workflow-runner", wfNs, labels)

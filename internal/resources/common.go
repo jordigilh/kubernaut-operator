@@ -43,6 +43,16 @@ const (
 	ComponentAuthWebhook             = "authwebhook"
 )
 
+// Well-known ports used across services.
+const (
+	PortHTTP  int32 = 8080
+	PortHTTPS int32 = 8443
+)
+
+// DefaultWorkflowNamespace is the namespace used for workflow execution
+// when not overridden in the CR spec.
+const DefaultWorkflowNamespace = "kubernaut-workflows"
+
 // AllComponents returns the ordered list of all managed components.
 func AllComponents() []string {
 	return []string{
@@ -89,7 +99,15 @@ func SelectorLabels(component string) map[string]string {
 // Image constructs a fully-qualified container image reference.
 // Pattern: {Registry}/{Namespace}{Separator}{service}:{Tag}
 // or       {Registry}/{Namespace}{Separator}{service}@{Digest}
-func Image(spec *kubernautv1alpha1.ImageSpec, service string) string {
+// Returns an error if the spec would produce an invalid image reference.
+func Image(spec *kubernautv1alpha1.ImageSpec, service string) (string, error) {
+	if spec.Registry == "" {
+		return "", fmt.Errorf("image registry must not be empty for service %q", service)
+	}
+	if spec.Tag == "" && spec.Digest == "" {
+		return "", fmt.Errorf("image tag or digest must be set for service %q", service)
+	}
+
 	ns := spec.Namespace
 	sep := spec.Separator
 	if sep == "" {
@@ -104,9 +122,9 @@ func Image(spec *kubernautv1alpha1.ImageSpec, service string) string {
 	}
 
 	if spec.Digest != "" {
-		return fmt.Sprintf("%s/%s@%s", spec.Registry, repo, spec.Digest)
+		return fmt.Sprintf("%s/%s@%s", spec.Registry, repo, spec.Digest), nil
 	}
-	return fmt.Sprintf("%s/%s:%s", spec.Registry, repo, spec.Tag)
+	return fmt.Sprintf("%s/%s:%s", spec.Registry, repo, spec.Tag), nil
 }
 
 // ObjectMeta returns a standard ObjectMeta for namespaced resources.
@@ -169,10 +187,10 @@ func MergeResources(userSpec corev1.ResourceRequirements) corev1.ResourceRequire
 	return DefaultResources()
 }
 
-// ServicePort returns a standard HTTP ServicePort on port 8080.
-func ServicePort(port int32) corev1.ServicePort {
+// ServicePort returns a ServicePort with the given name and port number.
+func ServicePort(name string, port int32) corev1.ServicePort {
 	return corev1.ServicePort{
-		Name:       "http",
+		Name:       name,
 		Port:       port,
 		TargetPort: intstr.FromInt32(port),
 		Protocol:   corev1.ProtocolTCP,

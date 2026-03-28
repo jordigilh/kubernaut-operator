@@ -61,7 +61,15 @@ func GatewayRoute(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 // DataStorageDBSecret derives the datastorage-db-secret from the user-provided
 // PostgreSQL secret. The DataStorage service expects a "db-secrets.yaml" key
 // with YAML content containing host, port, dbname, user, and password.
-func DataStorageDBSecret(kn *kubernautv1alpha1.Kubernaut, pgSecret *corev1.Secret) *corev1.Secret {
+// Returns an error if any required key is missing from the source secret.
+func DataStorageDBSecret(kn *kubernautv1alpha1.Kubernaut, pgSecret *corev1.Secret) (*corev1.Secret, error) {
+	requiredKeys := []string{"POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB"}
+	for _, key := range requiredKeys {
+		if _, ok := pgSecret.Data[key]; !ok {
+			return nil, fmt.Errorf("PostgreSQL secret %q is missing required key %q", pgSecret.Name, key)
+		}
+	}
+
 	pgPort := kn.Spec.PostgreSQL.Port
 	if pgPort == 0 {
 		pgPort = 5432
@@ -81,14 +89,14 @@ func DataStorageDBSecret(kn *kubernautv1alpha1.Kubernaut, pgSecret *corev1.Secre
 		Data: map[string][]byte{
 			"db-secrets.yaml": []byte(yamlContent),
 		},
-	}
+	}, nil
 }
 
 // WorkflowNamespace builds the Namespace resource for workflow execution.
 func WorkflowNamespace(kn *kubernautv1alpha1.Kubernaut) *corev1.Namespace {
 	wfNs := kn.Spec.WorkflowExecution.WorkflowNamespace
 	if wfNs == "" {
-		wfNs = "kubernaut-workflows"
+		wfNs = DefaultWorkflowNamespace
 	}
 
 	return &corev1.Namespace{

@@ -22,22 +22,23 @@ import (
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
-// serviceDefinitions maps component to service name and port.
+// serviceDefinitions maps component to service name, port, and port name.
 var serviceDefinitions = []struct {
 	Component   string
 	ServiceName string
 	Port        int32
+	PortName    string
 }{
-	{ComponentGateway, "gateway-service", 8080},
-	{ComponentDataStorage, "data-storage-service", 8080},
-	{ComponentAIAnalysis, "aianalysis-service", 8080},
-	{ComponentSignalProcessing, "signalprocessing-service", 8080},
-	{ComponentRemediationOrchestrator, "remediationorchestrator-service", 8080},
-	{ComponentWorkflowExecution, "workflowexecution-service", 8080},
-	{ComponentEffectivenessMonitor, "effectivenessmonitor-service", 8080},
-	{ComponentNotification, "notification-service", 8080},
-	{ComponentHolmesGPTAPI, "holmesgpt-api-service", 8080},
-	{ComponentAuthWebhook, "authwebhook-service", 8443},
+	{ComponentGateway, "gateway-service", PortHTTP, "http"},
+	{ComponentDataStorage, "data-storage-service", PortHTTP, "http"},
+	{ComponentAIAnalysis, "aianalysis-service", PortHTTP, "http"},
+	{ComponentSignalProcessing, "signalprocessing-service", PortHTTP, "http"},
+	{ComponentRemediationOrchestrator, "remediationorchestrator-service", PortHTTP, "http"},
+	{ComponentWorkflowExecution, "workflowexecution-service", PortHTTP, "http"},
+	{ComponentEffectivenessMonitor, "effectivenessmonitor-service", PortHTTP, "http"},
+	{ComponentNotification, "notification-service", PortHTTP, "http"},
+	{ComponentHolmesGPTAPI, "holmesgpt-api-service", PortHTTP, "http"},
+	{ComponentAuthWebhook, "authwebhook-service", PortHTTPS, "https"},
 }
 
 // Services builds all Services for the Kubernaut deployment.
@@ -48,7 +49,7 @@ func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
 			ObjectMeta: ObjectMeta(kn, def.ServiceName, def.Component),
 			Spec: corev1.ServiceSpec{
 				Selector: SelectorLabels(def.Component),
-				Ports:    []corev1.ServicePort{ServicePort(def.Port)},
+				Ports:    []corev1.ServicePort{ServicePort(def.PortName, def.Port)},
 			},
 		}
 		services = append(services, svc)
