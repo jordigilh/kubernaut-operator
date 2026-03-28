@@ -30,7 +30,7 @@ func MutatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut, caBundle []by
 	failurePolicy := admissionregistrationv1.Fail
 	matchPolicy := admissionregistrationv1.Equivalent
 	scope := admissionregistrationv1.AllScopes
-	port := int32(8443)
+	port := PortHTTPS
 
 	return &admissionregistrationv1.MutatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
@@ -75,7 +75,7 @@ func ValidatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut, caBundle []
 	failurePolicy := admissionregistrationv1.Fail
 	matchPolicy := admissionregistrationv1.Equivalent
 	scope := admissionregistrationv1.AllScopes
-	port := int32(8443)
+	port := PortHTTPS
 
 	return &admissionregistrationv1.ValidatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{

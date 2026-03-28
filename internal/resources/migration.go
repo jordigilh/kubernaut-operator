@@ -58,10 +58,15 @@ func MigrationConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, err
 // MigrationJob builds the database migration Job.
 // It uses the db-migrate image which bundles the goose CLI and runs
 // migrations from the mounted ConfigMap.
-func MigrationJob(kn *kubernautv1alpha1.Kubernaut) *batchv1.Job {
+func MigrationJob(kn *kubernautv1alpha1.Kubernaut) (*batchv1.Job, error) {
 	pgPort := kn.Spec.PostgreSQL.Port
 	if pgPort == 0 {
 		pgPort = 5432
+	}
+
+	img, err := Image(&kn.Spec.Image, "db-migrate")
+	if err != nil {
+		return nil, err
 	}
 
 	backoffLimit := int32(3)
@@ -79,7 +84,7 @@ func MigrationJob(kn *kubernautv1alpha1.Kubernaut) *batchv1.Job {
 					SecurityContext: PodSecurityContext(),
 					Containers: []corev1.Container{{
 						Name:            "db-migrate",
-						Image:           Image(&kn.Spec.Image, "db-migrate"),
+						Image:           img,
 						ImagePullPolicy: kn.Spec.Image.PullPolicy,
 						Command: []string{"goose", "-dir", "/migrations", "postgres",
 							fmt.Sprintf("host=%s port=%d dbname=$(POSTGRES_DB) user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) sslmode=disable",
@@ -97,6 +102,7 @@ func MigrationJob(kn *kubernautv1alpha1.Kubernaut) *batchv1.Job {
 							ReadOnly:  true,
 						}},
 						SecurityContext: ContainerSecurityContext(),
+						Resources:       DefaultResources(),
 					}},
 					Volumes: []corev1.Volume{
 						configMapVolume("migrations", "kubernaut-migrations"),
@@ -105,5 +111,5 @@ func MigrationJob(kn *kubernautv1alpha1.Kubernaut) *batchv1.Job {
 				},
 			},
 		},
-	}
+	}, nil
 }

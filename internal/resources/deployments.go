@@ -27,7 +27,7 @@ import (
 )
 
 // GatewayDeployment builds the gateway Deployment.
-func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deployment {
+func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	return deployment(kn, ComponentGateway, "gateway", kn.Spec.Gateway.Resources,
 		[]corev1.VolumeMount{{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"}},
 		[]corev1.Volume{configMapVolume("config", "gateway-config")},
@@ -37,21 +37,27 @@ func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deployment {
 
 // DataStorageDeployment builds the data-storage Deployment with init container
 // for database readiness and projected secrets volume.
-func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deployment {
+func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	pgPort := kn.Spec.PostgreSQL.Port
 	if pgPort == 0 {
 		pgPort = 5432
 	}
 
+	pgImage, err := Image(&kn.Spec.Image, "postgresql")
+	if err != nil {
+		return nil, err
+	}
+
 	initContainer := corev1.Container{
 		Name:            "wait-for-postgres",
-		Image:           Image(&kn.Spec.Image, "postgresql"),
+		Image:           pgImage,
 		ImagePullPolicy: kn.Spec.Image.PullPolicy,
 		Command: []string{"sh", "-c",
 			fmt.Sprintf("until pg_isready -h %s -p %d; do echo waiting for postgres; sleep 2; done",
 				kn.Spec.PostgreSQL.Host, pgPort),
 		},
 		SecurityContext: ContainerSecurityContext(),
+		Resources:       DefaultResources(),
 	}
 
 	volumes := []corev1.Volume{
@@ -85,7 +91,7 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deployment {
 }
 
 // AIAnalysisDeployment builds the aianalysis Deployment.
-func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deployment {
+func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	policyName := kn.Spec.AIAnalysis.Policy.ConfigMapName
 	volumes := []corev1.Volume{
 		configMapVolume("config", "aianalysis-config"),
@@ -100,7 +106,7 @@ func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deployment {
 }
 
 // SignalProcessingDeployment builds the signalprocessing Deployment.
-func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deployment {
+func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	policyName := kn.Spec.SignalProcessing.Policy.ConfigMapName
 	volumes := []corev1.Volume{
 		configMapVolume("config", "signalprocessing-config"),
@@ -123,7 +129,7 @@ func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deploym
 }
 
 // RemediationOrchestratorDeployment builds the remediationorchestrator Deployment.
-func RemediationOrchestratorDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deployment {
+func RemediationOrchestratorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	return deployment(kn, ComponentRemediationOrchestrator, "remediationorchestrator",
 		kn.Spec.RemediationOrchestrator.Resources,
 		[]corev1.VolumeMount{{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"}},
@@ -133,7 +139,7 @@ func RemediationOrchestratorDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.
 }
 
 // WorkflowExecutionDeployment builds the workflowexecution Deployment.
-func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deployment {
+func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	return deployment(kn, ComponentWorkflowExecution, "workflowexecution",
 		kn.Spec.WorkflowExecution.Resources,
 		[]corev1.VolumeMount{{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"}},
@@ -143,7 +149,7 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deploy
 }
 
 // EffectivenessMonitorDeployment builds the effectivenessmonitor Deployment.
-func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deployment {
+func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	volumes := []corev1.Volume{
 		configMapVolume("config", "effectivenessmonitor-config"),
 	}
@@ -163,7 +169,7 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Dep
 }
 
 // NotificationDeployment builds the notification Deployment.
-func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deployment {
+func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	volumes := []corev1.Volume{
 		configMapVolume("config", "notification-controller-config"),
 		configMapVolume("routing", "notification-routing-config"),
@@ -198,7 +204,7 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deployment 
 }
 
 // HolmesGPTAPIDeployment builds the holmesgpt-api Deployment.
-func HolmesGPTAPIDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deployment {
+func HolmesGPTAPIDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	sdkCMName := kn.Spec.HolmesGPTAPI.LLM.SdkConfigMapName
 	if sdkCMName == "" {
 		sdkCMName = "holmesgpt-sdk-config"
@@ -227,7 +233,7 @@ func HolmesGPTAPIDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deployment 
 }
 
 // AuthWebhookDeployment builds the authwebhook Deployment.
-func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deployment {
+func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	volumes := []corev1.Volume{
 		configMapVolume("config", "authwebhook-config"),
 		secretVolume("tls", "authwebhook-tls"),
@@ -239,7 +245,7 @@ func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) *appsv1.Deployment {
 
 	return deployment(kn, ComponentAuthWebhook, "authwebhook",
 		kn.Spec.AuthWebhook.Resources, mounts, volumes, nil,
-		[]corev1.ContainerPort{{Name: "https", ContainerPort: 8443, Protocol: corev1.ProtocolTCP}},
+		[]corev1.ContainerPort{{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP}},
 	)
 }
 
@@ -253,9 +259,14 @@ func deployment(
 	volumes []corev1.Volume,
 	initContainers []corev1.Container,
 	ports []corev1.ContainerPort,
-) *appsv1.Deployment {
+) (*appsv1.Deployment, error) {
+	img, err := Image(&kn.Spec.Image, imageName)
+	if err != nil {
+		return nil, err
+	}
+
 	if len(ports) == 0 {
-		ports = []corev1.ContainerPort{{Name: "http", ContainerPort: 8080, Protocol: corev1.ProtocolTCP}}
+		ports = []corev1.ContainerPort{{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP}}
 	}
 
 	return &appsv1.Deployment{
@@ -272,7 +283,7 @@ func deployment(
 					InitContainers:     initContainers,
 					Containers: []corev1.Container{{
 						Name:            component,
-						Image:           Image(&kn.Spec.Image, imageName),
+						Image:           img,
 						ImagePullPolicy: kn.Spec.Image.PullPolicy,
 						Ports:           ports,
 						Resources:       MergeResources(resources),
@@ -283,7 +294,7 @@ func deployment(
 				},
 			},
 		},
-	}
+	}, nil
 }
 
 func configMapVolume(name, cmName string) corev1.Volume {
