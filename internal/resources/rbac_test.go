@@ -53,22 +53,23 @@ func TestClusterRoles_ContainsExpectedNames(t *testing.T) {
 		names[r.Name] = true
 	}
 
+	ns := kn.Namespace
 	expectedNames := []string{
-		"gateway-role",
-		"aianalysis-controller",
-		"holmesgpt-api-client",
-		"holmesgpt-api-investigator",
-		"signalprocessing-controller",
-		"remediationorchestrator-controller",
-		"workflowexecution-controller",
-		"kubernaut-workflow-runner",
-		"effectivenessmonitor-controller",
-		"notification-controller",
-		"data-storage-auth-middleware",
-		"data-storage-client",
-		"authwebhook-role",
-		"kubernaut-alertmanager-view",
-		"gateway-signal-source",
+		ns + "-gateway-role",
+		ns + "-aianalysis-controller",
+		ns + "-holmesgpt-api-client",
+		ns + "-holmesgpt-api-investigator",
+		ns + "-signalprocessing-controller",
+		ns + "-remediationorchestrator-controller",
+		ns + "-workflowexecution-controller",
+		ns + "-workflow-runner",
+		ns + "-effectivenessmonitor-controller",
+		ns + "-notification-controller",
+		ns + "-data-storage-auth-middleware",
+		ns + "-data-storage-client",
+		ns + "-authwebhook-role",
+		ns + "-alertmanager-view",
+		ns + "-gateway-signal-source",
 	}
 
 	for _, name := range expectedNames {
@@ -105,13 +106,17 @@ func TestClusterRoleBindings_SubjectNamespace(t *testing.T) {
 func TestClusterRoleBindings_WorkflowRunnerBinding(t *testing.T) {
 	kn := testKubernaut()
 	crbs := ClusterRoleBindings(kn)
+	ns := kn.Namespace
+
+	wantName := ns + "-workflow-runner-binding"
+	wantRef := ns + "-workflow-runner"
 
 	found := false
 	for _, crb := range crbs {
-		if crb.Name == "kubernaut-workflow-runner-binding" {
+		if crb.Name == wantName {
 			found = true
-			if crb.RoleRef.Name != "kubernaut-workflow-runner" {
-				t.Errorf("workflow-runner CRB roleRef = %q, want %q", crb.RoleRef.Name, "kubernaut-workflow-runner")
+			if crb.RoleRef.Name != wantRef {
+				t.Errorf("workflow-runner CRB roleRef = %q, want %q", crb.RoleRef.Name, wantRef)
 			}
 			if len(crb.Subjects) == 0 {
 				t.Fatal("workflow-runner CRB has no subjects")
@@ -125,7 +130,7 @@ func TestClusterRoleBindings_WorkflowRunnerBinding(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("ClusterRoleBindings() should include kubernaut-workflow-runner-binding")
+		t.Errorf("ClusterRoleBindings() should include %q", wantName)
 	}
 }
 
@@ -140,9 +145,10 @@ func TestDataStorageClientRoleBindings_Count10(t *testing.T) {
 func TestDataStorageClientRoleBindings_AllRefClusterRole(t *testing.T) {
 	kn := testKubernaut()
 	rbs := DataStorageClientRoleBindings(kn)
+	wantRef := kn.Namespace + "-data-storage-client"
 	for _, rb := range rbs {
-		if rb.RoleRef.Name != "data-storage-client" {
-			t.Errorf("RoleBinding %q should reference data-storage-client, got %q", rb.Name, rb.RoleRef.Name)
+		if rb.RoleRef.Name != wantRef {
+			t.Errorf("RoleBinding %q should reference %q, got %q", rb.Name, wantRef, rb.RoleRef.Name)
 		}
 		if rb.RoleRef.Kind != "ClusterRole" {
 			t.Errorf("RoleBinding %q should reference kind ClusterRole, got %q", rb.Name, rb.RoleRef.Kind)
@@ -236,10 +242,12 @@ func TestWorkflowNamespaceRBAC_UsesCustomNamespace(t *testing.T) {
 func TestAnsibleRBAC_AwxJobsPermission(t *testing.T) {
 	kn := testKubernaut()
 	kn.Spec.Ansible.Enabled = true
+	ns := kn.Namespace
 	cr, crb := AnsibleRBAC(kn)
 
-	if cr.Name != "workflowexecution-awx" {
-		t.Errorf("AWX ClusterRole name = %q, want %q", cr.Name, "workflowexecution-awx")
+	wantCR := ns + "-workflowexecution-awx"
+	if cr.Name != wantCR {
+		t.Errorf("AWX ClusterRole name = %q, want %q", cr.Name, wantCR)
 	}
 
 	found := false
@@ -254,14 +262,15 @@ func TestAnsibleRBAC_AwxJobsPermission(t *testing.T) {
 		t.Error("AWX ClusterRole should grant access to awxjobs resources")
 	}
 
-	if crb.RoleRef.Name != "workflowexecution-awx" {
-		t.Errorf("AWX CRB roleRef = %q, want %q", crb.RoleRef.Name, "workflowexecution-awx")
+	if crb.RoleRef.Name != wantCR {
+		t.Errorf("AWX CRB roleRef = %q, want %q", crb.RoleRef.Name, wantCR)
 	}
 }
 
 func TestClusterRoleBindings_MonitoringCRBs(t *testing.T) {
 	kn := testKubernaut()
 	crbs := ClusterRoleBindings(kn)
+	ns := kn.Namespace
 
 	crbMap := make(map[string]*rbacv1.ClusterRoleBinding, len(crbs))
 	for _, crb := range crbs {
@@ -269,9 +278,9 @@ func TestClusterRoleBindings_MonitoringCRBs(t *testing.T) {
 	}
 
 	t.Run("cluster-monitoring-view for EM", func(t *testing.T) {
-		crb, ok := crbMap["effectivenessmonitor-monitoring-view"]
+		crb, ok := crbMap[ns+"-effectivenessmonitor-monitoring-view"]
 		if !ok {
-			t.Fatal("missing effectivenessmonitor-monitoring-view CRB")
+			t.Fatalf("missing %s-effectivenessmonitor-monitoring-view CRB", ns)
 		}
 		if crb.RoleRef.Name != "cluster-monitoring-view" {
 			t.Errorf("roleRef = %q, want %q", crb.RoleRef.Name, "cluster-monitoring-view")
@@ -279,9 +288,9 @@ func TestClusterRoleBindings_MonitoringCRBs(t *testing.T) {
 	})
 
 	t.Run("cluster-monitoring-view for HAPI", func(t *testing.T) {
-		crb, ok := crbMap["holmesgpt-api-monitoring-view"]
+		crb, ok := crbMap[ns+"-holmesgpt-api-monitoring-view"]
 		if !ok {
-			t.Fatal("missing holmesgpt-api-monitoring-view CRB")
+			t.Fatalf("missing %s-holmesgpt-api-monitoring-view CRB", ns)
 		}
 		if crb.RoleRef.Name != "cluster-monitoring-view" {
 			t.Errorf("roleRef = %q, want %q", crb.RoleRef.Name, "cluster-monitoring-view")
@@ -289,12 +298,12 @@ func TestClusterRoleBindings_MonitoringCRBs(t *testing.T) {
 	})
 
 	t.Run("alertmanager signal source binds OCP SA", func(t *testing.T) {
-		crb, ok := crbMap["alertmanager-gateway-signal-source"]
+		crb, ok := crbMap[ns+"-alertmanager-gateway-signal-source"]
 		if !ok {
-			t.Fatal("missing alertmanager-gateway-signal-source CRB")
+			t.Fatalf("missing %s-alertmanager-gateway-signal-source CRB", ns)
 		}
-		if crb.RoleRef.Name != "gateway-signal-source" {
-			t.Errorf("roleRef = %q, want %q", crb.RoleRef.Name, "gateway-signal-source")
+		if crb.RoleRef.Name != ns+"-gateway-signal-source" {
+			t.Errorf("roleRef = %q, want %q", crb.RoleRef.Name, ns+"-gateway-signal-source")
 		}
 		if len(crb.Subjects) == 0 {
 			t.Fatal("CRB has no subjects")
@@ -313,13 +322,14 @@ func TestClusterRoleBindings_MonitoringDisabled_NoMonitoringCRBs(t *testing.T) {
 	kn := testKubernaut()
 	disabled := false
 	kn.Spec.Monitoring.Enabled = &disabled
+	ns := kn.Namespace
 
 	crbs := ClusterRoleBindings(kn)
 	monitoringNames := map[string]bool{
-		"effectivenessmonitor-alertmanager-view-binding": true,
-		"effectivenessmonitor-monitoring-view":           true,
-		"holmesgpt-api-monitoring-view":                  true,
-		"alertmanager-gateway-signal-source":             true,
+		ns + "-effectivenessmonitor-alertmanager-view-binding": true,
+		ns + "-effectivenessmonitor-monitoring-view":           true,
+		ns + "-holmesgpt-api-monitoring-view":                  true,
+		ns + "-alertmanager-gateway-signal-source":             true,
 	}
 
 	for _, crb := range crbs {
