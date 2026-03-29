@@ -301,6 +301,11 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		}
 	}
 
+	// RBAC: HolmesGPT client RoleBinding (namespace-scoped, not cluster-wide).
+	if err := r.ensureNamespaced(ctx, kn, resources.HolmesGPTClientRoleBinding(kn)); err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensuring holmesgpt client rb: %w", err)
+	}
+
 	// RBAC: Workflow namespace roles.
 	wfRoles, wfRBs := resources.WorkflowNamespaceRBAC(kn)
 	for _, role := range wfRoles {
@@ -314,7 +319,7 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		}
 	}
 
-	// Conditional AWX RBAC.
+	// Conditional AWX RBAC: create when enabled, clean up when disabled.
 	if kn.Spec.Ansible.Enabled {
 		cr, crb := resources.AnsibleRBAC(kn)
 		if err := r.ensureClusterScoped(ctx, cr); err != nil {
@@ -322,6 +327,24 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		}
 		if err := r.ensureClusterScoped(ctx, crb); err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensuring AWX CRB: %w", err)
+		}
+	} else {
+		cr, crb := resources.AnsibleRBAC(kn)
+		_ = r.deleteIfExists(ctx, cr)
+		_ = r.deleteIfExists(ctx, crb)
+	}
+
+	// Clean up monitoring RBAC when disabled (prevents stale resources).
+	if !kn.Spec.Monitoring.MonitoringEnabled() {
+		for _, name := range resources.MonitoringCRBNames(kn) {
+			monCRB := &rbacv1.ClusterRoleBinding{}
+			monCRB.Name = name
+			_ = r.deleteIfExists(ctx, monCRB)
+		}
+		for _, name := range resources.MonitoringClusterRoleNames(kn) {
+			monCR := &rbacv1.ClusterRole{}
+			monCR.Name = name
+			_ = r.deleteIfExists(ctx, monCR)
 		}
 	}
 
@@ -582,7 +605,7 @@ func (r *KubernautReconciler) deleteClusterScopedResources(ctx context.Context, 
 			errs = append(errs, fmt.Errorf("deleting monitoring CRB %s: %w", name, err))
 		}
 	}
-	for _, name := range resources.MonitoringClusterRoleNames() {
+	for _, name := range resources.MonitoringClusterRoleNames(kn) {
 		monCR := &rbacv1.ClusterRole{}
 		monCR.Name = name
 		if err := r.deleteIfExists(ctx, monCR); err != nil {
