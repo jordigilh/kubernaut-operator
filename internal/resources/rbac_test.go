@@ -83,7 +83,7 @@ func TestClusterRoleBindings_SubjectNamespace(t *testing.T) {
 	crbs := ClusterRoleBindings(kn)
 
 	allowedNamespaces := map[string]bool{
-		kn.Namespace:           true,
+		kn.Namespace:             true,
 		DefaultWorkflowNamespace: true,
 		OCPMonitoringNamespace:   true,
 	}

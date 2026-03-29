@@ -33,7 +33,7 @@ var serviceAccountNames = map[string]string{
 	ComponentWorkflowExecution:       "workflowexecution-controller",
 	ComponentEffectivenessMonitor:    "effectivenessmonitor-controller",
 	ComponentNotification:            "notification-controller",
-	ComponentHolmesGPTAPI:            "holmesgpt-api",
+	ComponentHolmesGPTAPI:            "holmesgpt-api-sa",
 	ComponentAuthWebhook:             "authwebhook",
 }
 

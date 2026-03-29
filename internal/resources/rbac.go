@@ -60,18 +60,19 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 		clusterRoleBinding("gateway-role-binding", "gateway-role", ServiceAccountName(ComponentGateway), ns, labels),
 		clusterRoleBinding("aianalysis-controller-binding", "aianalysis-controller", ServiceAccountName(ComponentAIAnalysis), ns, labels),
 		clusterRoleBinding("holmesgpt-api-investigator-binding", "holmesgpt-api-investigator", ServiceAccountName(ComponentHolmesGPTAPI), ns, labels),
+		clusterRoleBinding("holmesgpt-api-auth-middleware-binding", "data-storage-auth-middleware", ServiceAccountName(ComponentHolmesGPTAPI), ns, labels),
 		clusterRoleBinding("holmesgpt-api-client-aianalysis-binding", "holmesgpt-api-client", ServiceAccountName(ComponentAIAnalysis), ns, labels),
 		clusterRoleBinding("signalprocessing-controller-binding", "signalprocessing-controller", ServiceAccountName(ComponentSignalProcessing), ns, labels),
 		clusterRoleBinding("remediationorchestrator-controller-binding", "remediationorchestrator-controller", ServiceAccountName(ComponentRemediationOrchestrator), ns, labels),
+		clusterRoleBinding("remediationorchestrator-view-binding", "view", ServiceAccountName(ComponentRemediationOrchestrator), ns, labels),
 		clusterRoleBinding("workflowexecution-controller-binding", "workflowexecution-controller", ServiceAccountName(ComponentWorkflowExecution), ns, labels),
 		clusterRoleBinding("effectivenessmonitor-controller-binding", "effectivenessmonitor-controller", ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
+		clusterRoleBinding("effectivenessmonitor-view-binding", "view", ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
 		clusterRoleBinding("notification-controller-binding", "notification-controller", ServiceAccountName(ComponentNotification), ns, labels),
 		clusterRoleBinding("data-storage-auth-middleware-binding", "data-storage-auth-middleware", ServiceAccountName(ComponentDataStorage), ns, labels),
 		clusterRoleBinding("authwebhook-binding", "authwebhook-role", ServiceAccountName(ComponentAuthWebhook), ns, labels),
 	}
 
-	// Workflow runner CRB: binds the kubernaut-workflow-runner ClusterRole
-	// to the workflow-runner SA in the workflow namespace.
 	wfNs := kn.Spec.WorkflowExecution.WorkflowNamespace
 	if wfNs == "" {
 		wfNs = DefaultWorkflowNamespace
@@ -83,15 +84,12 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		crbs = append(crbs,
-			// AlertManager view for EM to query alert state.
 			clusterRoleBinding("effectivenessmonitor-alertmanager-view-binding", "kubernaut-alertmanager-view",
 				ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
-			// cluster-monitoring-view grants EM and HAPI read access to Prometheus metrics.
 			clusterRoleBinding("effectivenessmonitor-monitoring-view", "cluster-monitoring-view",
 				ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
 			clusterRoleBinding("holmesgpt-api-monitoring-view", "cluster-monitoring-view",
 				ServiceAccountName(ComponentHolmesGPTAPI), ns, labels),
-			// Allow OCP AlertManager to POST signals to the Gateway.
 			clusterRoleBinding("alertmanager-gateway-signal-source", "gateway-signal-source",
 				OCPAlertManagerSAName, OCPMonitoringNamespace, labels),
 		)
@@ -100,7 +98,7 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 	return crbs
 }
 
-// DataStorageClientRoleBindings builds the 10 RoleBindings that grant
+// DataStorageClientRoleBindings builds the RoleBindings that grant
 // data-storage-client ClusterRole access to each consuming SA.
 func DataStorageClientRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.RoleBinding {
 	labels := CommonLabels(kn)
@@ -236,16 +234,16 @@ func WorkflowNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut) ([]*rbacv1.Role, []*
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "datastorage-dep-reader", Namespace: wfNs, Labels: labels},
 			Rules: []rbacv1.PolicyRule{{
-				APIGroups: []string{"apps"},
-				Resources: []string{"deployments"},
-				Verbs:     []string{"get", "list", "watch"},
+				APIGroups: []string{""},
+				Resources: []string{"secrets", "configmaps"},
+				Verbs:     []string{"get"},
 			}},
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "workflowexecution-dep-reader", Namespace: wfNs, Labels: labels},
 			Rules: []rbacv1.PolicyRule{{
-				APIGroups: []string{"apps"},
-				Resources: []string{"deployments"},
+				APIGroups: []string{""},
+				Resources: []string{"secrets", "configmaps"},
 				Verbs:     []string{"get", "list", "watch"},
 			}},
 		},
@@ -310,7 +308,7 @@ func AnsibleRBAC(kn *kubernautv1alpha1.Kubernaut) (*rbacv1.ClusterRole, *rbacv1.
 	return cr, crb
 }
 
-// --- private ClusterRole definitions ---
+// --- private helpers ---
 
 func clusterRoleBinding(name, roleName, saName, saNamespace string, labels map[string]string) *rbacv1.ClusterRoleBinding {
 	return &rbacv1.ClusterRoleBinding{
@@ -328,13 +326,21 @@ func clusterRoleBinding(name, roleName, saName, saNamespace string, labels map[s
 	}
 }
 
+// --- ClusterRole definitions (match Helm chart templates 1:1) ---
+
 func gatewayClusterRole(labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: "gateway-role", Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings"}, Verbs: []string{"create", "get", "list", "watch", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings/status"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"create", "get", "list", "watch", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/status"}, Verbs: []string{"update", "patch"}},
+			{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{""}, Resources: []string{"nodes", "pods", "services", "persistentvolumes"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "create", "update", "delete"}},
+			{APIGroups: []string{"authentication.k8s.io"}, Resources: []string{"tokenreviews"}, Verbs: []string{"create"}},
+			{APIGroups: []string{"authorization.k8s.io"}, Resources: []string{"subjectaccessreviews"}, Verbs: []string{"create"}},
 		},
 	}
 }
@@ -345,10 +351,7 @@ func aianalysisControllerClusterRole(labels map[string]string) *rbacv1.ClusterRo
 		Rules: []rbacv1.PolicyRule{
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses/status"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests"}, Verbs: []string{"create", "get", "list", "watch", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests/status"}, Verbs: []string{"get", "update", "patch"}},
 			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get", "list", "watch"}},
 		},
 	}
 }
@@ -357,7 +360,7 @@ func holmesgptAPIClientClusterRole(labels map[string]string) *rbacv1.ClusterRole
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: "holmesgpt-api-client", Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"services", "endpoints"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"holmesgpt-api"}, Verbs: []string{"create", "get"}},
 		},
 	}
 }
@@ -366,14 +369,19 @@ func holmesgptAPIInvestigatorClusterRole(labels map[string]string) *rbacv1.Clust
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: "holmesgpt-api-investigator", Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"pods", "pods/log", "services", "endpoints", "nodes", "configmaps", "events", "namespaces"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "daemonsets", "replicasets", "statefulsets"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{""}, Resources: []string{"pods", "pods/log", "events", "services", "endpoints", "configmaps", "secrets", "nodes", "namespaces", "replicationcontrollers", "persistentvolumeclaims", "resourcequotas"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses", "networkpolicies"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"rbac.authorization.k8s.io"}, Resources: []string{"roles", "rolebindings", "clusterroles", "clusterrolebindings"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"events.k8s.io"}, Resources: []string{"events"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"storage.k8s.io"}, Resources: []string{"storageclasses", "persistentvolumes"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{""}, Resources: []string{"persistentvolumeclaims"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"networkpolicies"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"cert-manager.io"}, Resources: []string{"certificates", "clusterissuers", "certificaterequests"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"argoproj.io"}, Resources: []string{"applications"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"policy.linkerd.io"}, Resources: []string{"servers", "authorizationpolicies", "meshtlsauthentications"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"security.istio.io"}, Resources: []string{"authorizationpolicies", "peerauthentications", "requestauthentications"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"networking.istio.io"}, Resources: []string{"virtualservices", "destinationrules", "gateways", "serviceentries"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"monitoring.coreos.com"}, Resources: []string{"prometheusrules", "servicemonitors", "podmonitors", "probes"}, Verbs: []string{"get", "list", "watch"}},
 		},
 	}
 }
@@ -382,11 +390,15 @@ func signalprocessingClusterRole(labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: "signalprocessing-controller", Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings/status"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"create", "get", "list", "watch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings", "remediationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings/status", "signalprocessings/finalizers"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{""}, Resources: []string{"pods", "services", "namespaces", "nodes"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"networkpolicies"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 		},
 	}
 }
@@ -395,10 +407,25 @@ func remediationOrchestratorClusterRole(labels map[string]string) *rbacv1.Cluste
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: "remediationorchestrator-controller", Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/status"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses", "remediationapprovalrequests", "workflowexecutions", "effectivenessassessments"}, Verbs: []string{"create", "get", "list", "watch", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests", "remediationapprovalrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/status", "remediationapprovalrequests/status"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/finalizers"}, Verbs: []string{"update"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings/status"}, Verbs: []string{"get"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses/status"}, Verbs: []string{"get"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions/status"}, Verbs: []string{"get"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"notificationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"notificationrequests/status"}, Verbs: []string{"get"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"effectivenessassessments"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"effectivenessassessments/status"}, Verbs: []string{"get"}},
 			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
+			{APIGroups: []string{""}, Resources: []string{"pods", "nodes", "services", "namespaces", "persistentvolumes", "configmaps"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"security.istio.io"}, Resources: []string{"authorizationpolicies", "peerauthentications", "requestauthentications"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"networking.istio.io"}, Resources: []string{"virtualservices", "destinationrules", "gateways", "serviceentries"}, Verbs: []string{"get", "list"}},
 		},
 	}
 }
@@ -407,11 +434,16 @@ func workflowExecutionControllerClusterRole(labels map[string]string) *rbacv1.Cl
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: "workflowexecution-controller", Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions/status"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationworkflows", "actiontypes"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"create", "get", "list", "watch", "delete"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions/finalizers"}, Verbs: []string{"update"}},
+			{APIGroups: []string{"tekton.dev"}, Resources: []string{"pipelineruns"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+			{APIGroups: []string{"tekton.dev"}, Resources: []string{"taskruns"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
+			{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+			{APIGroups: []string{"security.istio.io"}, Resources: []string{"authorizationpolicies", "peerauthentications", "requestauthentications"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"networking.istio.io"}, Resources: []string{"virtualservices", "destinationrules", "gateways", "serviceentries"}, Verbs: []string{"get", "list"}},
 		},
 	}
 }
@@ -420,9 +452,30 @@ func workflowRunnerClusterRole(labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: "kubernaut-workflow-runner", Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"pods", "services", "configmaps", "secrets"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"pods/exec"}, Verbs: []string{"create"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "patch", "update"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"replicasets"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list", "delete", "watch"}},
+			{APIGroups: []string{""}, Resources: []string{"pods/eviction"}, Verbs: []string{"create"}},
+			{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get", "list", "create", "update", "patch"}},
+			{APIGroups: []string{""}, Resources: []string{"nodes"}, Verbs: []string{"get", "list", "patch", "update"}},
+			{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: []string{"get", "list", "patch"}},
+			{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: []string{"get", "list", "patch"}},
+			{APIGroups: []string{""}, Resources: []string{"services"}, Verbs: []string{"get", "list", "create", "update", "patch"}},
+			{APIGroups: []string{"argoproj.io"}, Resources: []string{"applications"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get", "list", "create", "delete", "patch", "update"}},
+			{APIGroups: []string{""}, Resources: []string{"serviceaccounts/token"}, Verbs: []string{"create"}},
+			{APIGroups: []string{"cert-manager.io"}, Resources: []string{"certificates"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"cert-manager.io"}, Resources: []string{"clusterissuers"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"networkpolicies"}, Verbs: []string{"get", "list", "create", "update", "patch", "delete"}},
+			{APIGroups: []string{""}, Resources: []string{"persistentvolumeclaims"}, Verbs: []string{"get", "list", "create", "update", "patch", "delete"}},
+			{APIGroups: []string{"policy.linkerd.io"}, Resources: []string{"authorizationpolicies", "servers", "meshtlsauthentications"}, Verbs: []string{"get", "list", "delete"}},
+			{APIGroups: []string{"security.istio.io"}, Resources: []string{"authorizationpolicies", "peerauthentications", "requestauthentications"}, Verbs: []string{"get", "list", "delete"}},
+			{APIGroups: []string{"networking.istio.io"}, Resources: []string{"virtualservices", "destinationrules", "gateways", "serviceentries"}, Verbs: []string{"get", "list", "create", "update", "patch", "delete"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions"}, Verbs: []string{"get"}},
+			{APIGroups: []string{"storage.k8s.io"}, Resources: []string{"storageclasses"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{""}, Resources: []string{"endpoints"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"get", "list", "create", "delete"}},
 		},
 	}
 }
@@ -433,6 +486,14 @@ func effectivenessMonitorControllerClusterRole(labels map[string]string) *rbacv1
 		Rules: []rbacv1.PolicyRule{
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"effectivenessassessments"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"effectivenessassessments/status"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{""}, Resources: []string{"pods", "nodes", "services", "persistentvolumeclaims", "configmaps"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"security.istio.io"}, Resources: []string{"authorizationpolicies", "peerauthentications", "requestauthentications"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"networking.istio.io"}, Resources: []string{"virtualservices", "destinationrules", "gateways", "serviceentries"}, Verbs: []string{"get", "list"}},
 			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
 		},
 	}
@@ -442,10 +503,10 @@ func notificationControllerClusterRole(labels map[string]string) *rbacv1.Cluster
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: "notification-controller", Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"notificationrequests"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"notificationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"notificationrequests/status"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"notificationrequests/finalizers"}, Verbs: []string{"update"}},
 			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get", "list", "watch"}},
 		},
 	}
 }
@@ -464,7 +525,7 @@ func dataStorageClientClusterRole(labels map[string]string) *rbacv1.ClusterRole 
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: "data-storage-client", Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"serviceaccounts/token"}, Verbs: []string{"create"}},
+			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"data-storage-service"}, Verbs: []string{"create", "get", "list", "update", "delete"}},
 		},
 	}
 }
@@ -473,8 +534,10 @@ func authWebhookClusterRole(labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: "authwebhook-role", Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"actiontypes"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions", "remediationapprovalrequests", "notificationrequests", "remediationrequests", "actiontypes"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationworkflows"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationworkflows/finalizers"}, Verbs: []string{"update"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions/status", "remediationapprovalrequests/status", "remediationrequests/status", "remediationworkflows/status", "actiontypes/status"}, Verbs: []string{"update", "patch"}},
 		},
 	}
 }
@@ -483,8 +546,7 @@ func alertmanagerViewClusterRole(labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: "kubernaut-alertmanager-view", Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"monitoring.coreos.com"}, Resources: []string{"alertmanagers"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{""}, Resources: []string{"services", "endpoints"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"monitoring.coreos.com"}, Resources: []string{"alertmanagers/api"}, Verbs: []string{"get"}},
 		},
 	}
 }
@@ -493,7 +555,7 @@ func gatewaySignalSourceClusterRole(labels map[string]string) *rbacv1.ClusterRol
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: "gateway-signal-source", Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get"}},
+			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"gateway-service"}, Verbs: []string{"create"}},
 		},
 	}
 }
