@@ -45,45 +45,135 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 	if pgPort == 0 {
 		pgPort = 5432
 	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "server:\n")
+	fmt.Fprintf(&b, "  port: 8080\n")
+	fmt.Fprintf(&b, "  host: \"0.0.0.0\"\n")
+	fmt.Fprintf(&b, "  metricsPort: 9090\n")
+	fmt.Fprintf(&b, "  readTimeout: 30s\n")
+	fmt.Fprintf(&b, "  writeTimeout: 30s\n")
+	fmt.Fprintf(&b, "database:\n")
+	fmt.Fprintf(&b, "  host: %s\n", kn.Spec.PostgreSQL.Host)
+	fmt.Fprintf(&b, "  port: %d\n", pgPort)
+	fmt.Fprintf(&b, "  name: kubernaut\n")
+	fmt.Fprintf(&b, "  user: kubernaut\n")
+	fmt.Fprintf(&b, "  sslMode: disable\n")
+	fmt.Fprintf(&b, "  maxOpenConns: 100\n")
+	fmt.Fprintf(&b, "  maxIdleConns: 20\n")
+	fmt.Fprintf(&b, "  connMaxLifetime: 1h\n")
+	fmt.Fprintf(&b, "  connMaxIdleTime: 10m\n")
+	fmt.Fprintf(&b, "  secretsFile: \"/etc/datastorage/secrets/db-secrets.yaml\"\n")
+	fmt.Fprintf(&b, "  usernameKey: \"username\"\n")
+	fmt.Fprintf(&b, "  passwordKey: \"password\"\n")
+	fmt.Fprintf(&b, "redis:\n")
+	fmt.Fprintf(&b, "  addr: %s\n", ValkeyAddr(&kn.Spec.Valkey))
+	fmt.Fprintf(&b, "  db: 0\n")
+	fmt.Fprintf(&b, "  dlqStreamName: dlq-stream\n")
+	fmt.Fprintf(&b, "  dlqMaxLen: 1000\n")
+	fmt.Fprintf(&b, "  dlqConsumerGroup: dlq-group\n")
+	fmt.Fprintf(&b, "  secretsFile: \"/etc/datastorage/secrets/valkey-secrets.yaml\"\n")
+	fmt.Fprintf(&b, "  passwordKey: \"password\"\n")
+	fmt.Fprintf(&b, "logging:\n")
+	fmt.Fprintf(&b, "  level: debug\n")
+	fmt.Fprintf(&b, "  format: json\n")
+
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "datastorage-config", ComponentDataStorage),
-		Data: map[string]string{
-			"config.yaml": fmt.Sprintf(
-				"listenAddr: :8080\npostgresql:\n  host: %s\n  port: %d\nvalkey:\n  addr: %s\n",
-				kn.Spec.PostgreSQL.Host,
-				pgPort,
-				ValkeyAddr(&kn.Spec.Valkey),
-			),
-		},
+		Data:       map[string]string{"config.yaml": b.String()},
 	}
 }
 
 // AIAnalysisConfigMap builds the aianalysis-config ConfigMap.
 func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 	ns := kn.Namespace
-	conf := fmt.Sprintf(
-		"dataStorageUrl: %s\nholmesGptApiUrl: http://holmesgpt-api-service.%s.svc.cluster.local:8080\n",
-		DataStorageURL(ns), ns,
-	)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "controller:\n")
+	fmt.Fprintf(&b, "  metricsAddr: \":9090\"\n")
+	fmt.Fprintf(&b, "  healthProbeAddr: \":8081\"\n")
+	fmt.Fprintf(&b, "  leaderElection: false\n")
+	fmt.Fprintf(&b, "  leaderElectionId: \"aianalysis.kubernaut.ai\"\n")
+	fmt.Fprintf(&b, "holmesgpt:\n")
+	fmt.Fprintf(&b, "  url: \"http://holmesgpt-api.%s.svc.cluster.local:8080\"\n", ns)
+	fmt.Fprintf(&b, "  timeout: \"180s\"\n")
+	fmt.Fprintf(&b, "  sessionPollInterval: \"15s\"\n")
+	fmt.Fprintf(&b, "datastorage:\n")
+	fmt.Fprintf(&b, "  url: \"%s\"\n", DataStorageURL(ns))
+	fmt.Fprintf(&b, "  timeout: \"10s\"\n")
+	fmt.Fprintf(&b, "  buffer:\n")
+	fmt.Fprintf(&b, "    bufferSize: 20000\n")
+	fmt.Fprintf(&b, "    batchSize: 1000\n")
+	fmt.Fprintf(&b, "    flushInterval: \"1s\"\n")
+	fmt.Fprintf(&b, "    maxRetries: 3\n")
+	fmt.Fprintf(&b, "rego:\n")
+	fmt.Fprintf(&b, "  policyPath: \"/etc/aianalysis/policies/approval.rego\"\n")
 	if kn.Spec.AIAnalysis.ConfidenceThreshold != "" {
-		conf += fmt.Sprintf("confidenceThreshold: %s\n", kn.Spec.AIAnalysis.ConfidenceThreshold)
+		fmt.Fprintf(&b, "  confidenceThreshold: %s\n", kn.Spec.AIAnalysis.ConfidenceThreshold)
 	}
+
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "aianalysis-config", ComponentAIAnalysis),
-		Data:       map[string]string{"config.yaml": conf},
+		Data:       map[string]string{"config.yaml": b.String()},
+	}
+}
+
+// AIAnalysisPoliciesConfigMap builds the default aianalysis-policies ConfigMap
+// containing the approval Rego policy.
+func AIAnalysisPoliciesConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+	if kn.Spec.AIAnalysis.Policy.ConfigMapName != "" {
+		return nil
+	}
+	return &corev1.ConfigMap{
+		ObjectMeta: ObjectMeta(kn, "aianalysis-policies", ComponentAIAnalysis),
+		Data: map[string]string{
+			"approval.rego": "package kubernaut.aianalysis\ndefault allow = true\n",
+		},
 	}
 }
 
 // SignalProcessingConfigMap builds the signalprocessing-config ConfigMap.
 func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 	ns := kn.Namespace
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "controller:\n")
+	fmt.Fprintf(&b, "  metricsAddr: \":9090\"\n")
+	fmt.Fprintf(&b, "  healthProbeAddr: \":8081\"\n")
+	fmt.Fprintf(&b, "  leaderElection: false\n")
+	fmt.Fprintf(&b, "  leaderElectionId: \"signalprocessing.kubernaut.ai\"\n")
+	fmt.Fprintf(&b, "enrichment:\n")
+	fmt.Fprintf(&b, "  cacheTtl: \"5m\"\n")
+	fmt.Fprintf(&b, "  timeout: \"10s\"\n")
+	fmt.Fprintf(&b, "classifier:\n")
+	fmt.Fprintf(&b, "  regoConfigMapName: \"signalprocessing-policy\"\n")
+	fmt.Fprintf(&b, "  regoConfigMapKey: \"policy.rego\"\n")
+	fmt.Fprintf(&b, "  hotReloadInterval: \"30s\"\n")
+	fmt.Fprintf(&b, "datastorage:\n")
+	fmt.Fprintf(&b, "  url: \"%s\"\n", DataStorageURL(ns))
+	fmt.Fprintf(&b, "  timeout: \"10s\"\n")
+	fmt.Fprintf(&b, "  buffer:\n")
+	fmt.Fprintf(&b, "    bufferSize: 10000\n")
+	fmt.Fprintf(&b, "    batchSize: 100\n")
+	fmt.Fprintf(&b, "    flushInterval: \"1s\"\n")
+	fmt.Fprintf(&b, "    maxRetries: 3\n")
+
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "signalprocessing-config", ComponentSignalProcessing),
+		Data:       map[string]string{"config.yaml": b.String()},
+	}
+}
+
+// SignalProcessingPolicyConfigMap builds the default signalprocessing-policy ConfigMap
+// containing the classification Rego policy.
+func SignalProcessingPolicyConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+	if kn.Spec.SignalProcessing.Policy.ConfigMapName != "" {
+		return nil
+	}
+	return &corev1.ConfigMap{
+		ObjectMeta: ObjectMeta(kn, "signalprocessing-policy", ComponentSignalProcessing),
 		Data: map[string]string{
-			"config.yaml": fmt.Sprintf(
-				"dataStorageUrl: %s\ngatewayUrl: %s\n",
-				DataStorageURL(ns), GatewayURL(ns),
-			),
+			"policy.rego": "package kubernaut.signalprocessing\ndefault allow = true\n",
 		},
 	}
 }
@@ -181,14 +271,38 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.Conf
 
 // NotificationControllerConfigMap builds the notification-controller-config ConfigMap.
 func NotificationControllerConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+	var b strings.Builder
+	fmt.Fprintf(&b, "controller:\n")
+	fmt.Fprintf(&b, "  metricsAddr: \":9090\"\n")
+	fmt.Fprintf(&b, "  healthProbeAddr: \":8081\"\n")
+	fmt.Fprintf(&b, "  leaderElection: false\n")
+	fmt.Fprintf(&b, "  leaderElectionId: \"notification.kubernaut.ai\"\n")
+	fmt.Fprintf(&b, "delivery:\n")
+	fmt.Fprintf(&b, "  console:\n")
+	fmt.Fprintf(&b, "    enabled: true\n")
+	fmt.Fprintf(&b, "  file:\n")
+	fmt.Fprintf(&b, "    outputDir: \"/tmp/notifications\"\n")
+	fmt.Fprintf(&b, "    format: \"json\"\n")
+	fmt.Fprintf(&b, "    timeout: 5s\n")
+	fmt.Fprintf(&b, "  log:\n")
+	fmt.Fprintf(&b, "    enabled: true\n")
+	fmt.Fprintf(&b, "    format: \"json\"\n")
+	fmt.Fprintf(&b, "  slack:\n")
+	fmt.Fprintf(&b, "    timeout: 10s\n")
+	fmt.Fprintf(&b, "  credentials:\n")
+	fmt.Fprintf(&b, "    dir: \"/etc/notification/credentials\"\n")
+	fmt.Fprintf(&b, "datastorage:\n")
+	fmt.Fprintf(&b, "  url: \"%s\"\n", DataStorageURL(kn.Namespace))
+	fmt.Fprintf(&b, "  timeout: 10s\n")
+	fmt.Fprintf(&b, "  buffer:\n")
+	fmt.Fprintf(&b, "    bufferSize: 10000\n")
+	fmt.Fprintf(&b, "    batchSize: 100\n")
+	fmt.Fprintf(&b, "    flushInterval: 1s\n")
+	fmt.Fprintf(&b, "    maxRetries: 3\n")
+
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "notification-controller-config", ComponentNotification),
-		Data: map[string]string{
-			"config.yaml": fmt.Sprintf(
-				"dataStorageUrl: %s\n",
-				DataStorageURL(kn.Namespace),
-			),
-		},
+		Data:       map[string]string{"config.yaml": b.String()},
 	}
 }
 
@@ -249,7 +363,7 @@ func HolmesGPTSDKConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 		ObjectMeta: ObjectMeta(kn, "holmesgpt-sdk-config", ComponentHolmesGPTAPI),
 		Data: map[string]string{
 			"sdk-config.yaml": fmt.Sprintf(
-				"provider: %s\nmodel: %s\n",
+				"llm:\n  provider: %s\n  model: %s\n",
 				kn.Spec.HolmesGPTAPI.LLM.Provider,
 				kn.Spec.HolmesGPTAPI.LLM.Model,
 			),
@@ -259,14 +373,23 @@ func HolmesGPTSDKConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 
 // AuthWebhookConfigMap builds the authwebhook-config ConfigMap.
 func AuthWebhookConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+	var b strings.Builder
+	fmt.Fprintf(&b, "webhook:\n")
+	fmt.Fprintf(&b, "  port: 9443\n")
+	fmt.Fprintf(&b, "  certDir: /tmp/k8s-webhook-server/serving-certs\n")
+	fmt.Fprintf(&b, "  healthProbeAddr: \":8081\"\n")
+	fmt.Fprintf(&b, "datastorage:\n")
+	fmt.Fprintf(&b, "  url: \"%s\"\n", DataStorageURL(kn.Namespace))
+	fmt.Fprintf(&b, "  timeout: 30s\n")
+	fmt.Fprintf(&b, "  buffer:\n")
+	fmt.Fprintf(&b, "    bufferSize: 1000\n")
+	fmt.Fprintf(&b, "    batchSize: 100\n")
+	fmt.Fprintf(&b, "    flushInterval: 5s\n")
+	fmt.Fprintf(&b, "    maxRetries: 3\n")
+
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "authwebhook-config", ComponentAuthWebhook),
-		Data: map[string]string{
-			"config.yaml": fmt.Sprintf(
-				"dataStorageUrl: %s\n",
-				DataStorageURL(kn.Namespace),
-			),
-		},
+		Data:       map[string]string{"authwebhook.yaml": b.String()},
 	}
 }
 

@@ -41,11 +41,14 @@ func TestDataStorageConfigMap_ContainsPgAndValkey(t *testing.T) {
 	cm := DataStorageConfigMap(kn)
 
 	data := cm.Data["config.yaml"]
-	if !strings.Contains(data, "pg.example.com") {
+	if !strings.Contains(data, "host: pg.example.com") {
 		t.Errorf("datastorage config should contain PG host, got:\n%s", data)
 	}
-	if !strings.Contains(data, "valkey.example.com:6379") {
+	if !strings.Contains(data, "addr: valkey.example.com:6379") {
 		t.Errorf("datastorage config should contain Valkey addr, got:\n%s", data)
+	}
+	if !strings.Contains(data, "secretsFile: \"/etc/datastorage/secrets/db-secrets.yaml\"") {
+		t.Errorf("datastorage config should reference db secrets file, got:\n%s", data)
 	}
 }
 
@@ -80,16 +83,16 @@ func TestAIAnalysisConfigMap_OmitsThresholdWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestSignalProcessingConfigMap_ContainsBothURLs(t *testing.T) {
+func TestSignalProcessingConfigMap_ContainsDataStorageURL(t *testing.T) {
 	kn := testKubernaut()
 	cm := SignalProcessingConfigMap(kn)
 
 	data := cm.Data["config.yaml"]
-	if !strings.Contains(data, "dataStorageUrl") {
-		t.Errorf("signalprocessing config should contain dataStorageUrl, got:\n%s", data)
+	if !strings.Contains(data, "data-storage-service.kubernaut-system.svc.cluster.local") {
+		t.Errorf("signalprocessing config should contain datastorage URL, got:\n%s", data)
 	}
-	if !strings.Contains(data, "gatewayUrl") {
-		t.Errorf("signalprocessing config should contain gatewayUrl, got:\n%s", data)
+	if !strings.Contains(data, "classifier:") {
+		t.Errorf("signalprocessing config should contain classifier section, got:\n%s", data)
 	}
 }
 
@@ -188,8 +191,8 @@ func TestHolmesGPTSDKConfigMap_GeneratedWhenNoExisting(t *testing.T) {
 		t.Fatal("HolmesGPTSDKConfigMap should not be nil when no existing CM specified")
 	}
 	data := cm.Data["sdk-config.yaml"]
-	if !strings.Contains(data, "provider: openai") {
-		t.Errorf("SDK config should contain provider, got:\n%s", data)
+	if !strings.Contains(data, "llm:\n  provider: openai") {
+		t.Errorf("SDK config should contain llm.provider, got:\n%s", data)
 	}
 	if !strings.Contains(data, "model: gpt-4o") {
 		t.Errorf("SDK config should contain model, got:\n%s", data)

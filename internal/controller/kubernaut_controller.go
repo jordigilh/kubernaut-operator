@@ -81,9 +81,7 @@ func (r *KubernautReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	if !controllerutil.ContainsFinalizer(kn, kubernautv1alpha1.FinalizerName) {
 		controllerutil.AddFinalizer(kn, kubernautv1alpha1.FinalizerName)
-		if err := r.Update(ctx, kn); err != nil {
-			return ctrl.Result{}, err
-		}
+		return ctrl.Result{}, r.Update(ctx, kn)
 	}
 
 	return r.reconcilePhases(ctx, kn)
@@ -96,13 +94,22 @@ func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernaut
 	if result, err := r.phaseValidate(ctx, kn); err != nil || result.Requeue || result.RequeueAfter > 0 {
 		return result, err
 	}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(kn), kn); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	if result, err := r.phaseMigrate(ctx, kn); err != nil || result.Requeue || result.RequeueAfter > 0 {
 		return result, err
 	}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(kn), kn); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	if result, err := r.phaseDeploy(ctx, kn); err != nil || result.Requeue || result.RequeueAfter > 0 {
 		return result, err
+	}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(kn), kn); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	return r.phaseRunning(ctx, kn)
@@ -112,7 +119,6 @@ func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernaut
 
 func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
-	r.setPhase(kn, kubernautv1alpha1.PhaseValidating)
 
 	if err := r.validateSecret(ctx, kn.Namespace, kn.Spec.PostgreSQL.SecretName,
 		[]string{"POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB"}); err != nil {
@@ -127,30 +133,26 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 	}
 
 	log.Info("BYO secrets validated")
-	meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-		Type: kubernautv1alpha1.ConditionBYOValidated, Status: metav1.ConditionTrue,
-		Reason: "SecretsValid", Message: "BYO PostgreSQL and Valkey secrets are valid",
-		ObservedGeneration: kn.Generation,
+	return ctrl.Result{}, r.patchStatus(ctx, kn, func() {
+		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+			Type: kubernautv1alpha1.ConditionBYOValidated, Status: metav1.ConditionTrue,
+			Reason: "SecretsValid", Message: "BYO PostgreSQL and Valkey secrets are valid",
+			ObservedGeneration: kn.Generation,
+		})
+		r.setPhase(kn, kubernautv1alpha1.PhaseValidating)
 	})
-	return ctrl.Result{}, r.Status().Update(ctx, kn)
 }
 
 // ---------- Phase: Migrate ----------
 
 func (r *KubernautReconciler) phaseMigrate(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
-	r.setPhase(kn, kubernautv1alpha1.PhaseMigrating)
 
 	// Ensure CRDs are installed/updated.
 	if err := resources.EnsureCRDs(ctx, r.Client); err != nil {
 		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionCRDsInstalled, metav1.ConditionFalse,
 			"CRDInstallFailed", err.Error())
 	}
-	meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-		Type: kubernautv1alpha1.ConditionCRDsInstalled, Status: metav1.ConditionTrue,
-		Reason: "CRDsReady", Message: "All 9 workload CRDs installed",
-		ObservedGeneration: kn.Generation,
-	})
 
 	// Derive DataStorage DB secret from the user-provided PG secret.
 	pgSecret := &corev1.Secret{}
@@ -196,12 +198,19 @@ func (r *KubernautReconciler) phaseMigrate(ctx context.Context, kn *kubernautv1a
 	for _, cond := range existingJob.Status.Conditions {
 		if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
 			log.Info("database migration completed")
-			meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-				Type: kubernautv1alpha1.ConditionMigrationComplete, Status: metav1.ConditionTrue,
-				Reason: "MigrationComplete", Message: "Database migration job succeeded",
-				ObservedGeneration: kn.Generation,
+			return ctrl.Result{}, r.patchStatus(ctx, kn, func() {
+				r.setPhase(kn, kubernautv1alpha1.PhaseMigrating)
+				meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+					Type: kubernautv1alpha1.ConditionCRDsInstalled, Status: metav1.ConditionTrue,
+					Reason: "CRDsReady", Message: "All 9 workload CRDs installed",
+					ObservedGeneration: kn.Generation,
+				})
+				meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+					Type: kubernautv1alpha1.ConditionMigrationComplete, Status: metav1.ConditionTrue,
+					Reason: "MigrationComplete", Message: "Database migration job succeeded",
+					ObservedGeneration: kn.Generation,
+				})
 			})
-			return ctrl.Result{}, r.Status().Update(ctx, kn)
 		}
 		if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
 			log.Info("migration job failed, deleting for retry")
@@ -217,12 +226,19 @@ func (r *KubernautReconciler) phaseMigrate(ctx context.Context, kn *kubernautv1a
 	}
 
 	log.Info("waiting for migration job to complete")
-	meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-		Type: kubernautv1alpha1.ConditionMigrationComplete, Status: metav1.ConditionFalse,
-		Reason: "MigrationInProgress", Message: "Database migration job is running",
-		ObservedGeneration: kn.Generation,
-	})
-	if err := r.Status().Update(ctx, kn); err != nil {
+	if err := r.patchStatus(ctx, kn, func() {
+		r.setPhase(kn, kubernautv1alpha1.PhaseMigrating)
+		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+			Type: kubernautv1alpha1.ConditionCRDsInstalled, Status: metav1.ConditionTrue,
+			Reason: "CRDsReady", Message: "All 9 workload CRDs installed",
+			ObservedGeneration: kn.Generation,
+		})
+		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+			Type: kubernautv1alpha1.ConditionMigrationComplete, Status: metav1.ConditionFalse,
+			Reason: "MigrationInProgress", Message: "Database migration job is running",
+			ObservedGeneration: kn.Generation,
+		})
+	}); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
@@ -232,7 +248,7 @@ func (r *KubernautReconciler) phaseMigrate(ctx context.Context, kn *kubernautv1a
 
 func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
-	r.setPhase(kn, kubernautv1alpha1.PhaseDeploying)
+	_ = log
 
 	// Workflow namespace.
 	wfNs := resources.WorkflowNamespace(kn)
@@ -309,13 +325,6 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		}
 	}
 
-	log.Info("RBAC provisioned")
-	meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-		Type: kubernautv1alpha1.ConditionRBACProvisioned, Status: metav1.ConditionTrue,
-		Reason: "RBACReady", Message: "All RBAC resources provisioned",
-		ObservedGeneration: kn.Generation,
-	})
-
 	// ConfigMaps.
 	configMaps := []*corev1.ConfigMap{
 		resources.GatewayConfigMap(kn),
@@ -329,6 +338,12 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		resources.NotificationRoutingConfigMap(kn),
 		resources.HolmesGPTAPIConfigMap(kn),
 		resources.AuthWebhookConfigMap(kn),
+	}
+	if cm := resources.AIAnalysisPoliciesConfigMap(kn); cm != nil {
+		configMaps = append(configMaps, cm)
+	}
+	if cm := resources.SignalProcessingPolicyConfigMap(kn); cm != nil {
+		configMaps = append(configMaps, cm)
 	}
 	if sdkCM := resources.HolmesGPTSDKConfigMap(kn); sdkCM != nil {
 		configMaps = append(configMaps, sdkCM)
@@ -375,12 +390,6 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		return ctrl.Result{}, fmt.Errorf("ensuring ValidatingWebhookConfiguration: %w", err)
 	}
 
-	meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-		Type: kubernautv1alpha1.ConditionWebhooksConfigured, Status: metav1.ConditionTrue,
-		Reason: "WebhooksReady", Message: "Admission webhooks configured",
-		ObservedGeneration: kn.Generation,
-	})
-
 	// Deployments.
 	type depBuilder func(*kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error)
 	depBuilders := []depBuilder{
@@ -420,24 +429,39 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 	}
 
 	// OCP Route.
+	hasRoute := false
 	if route := resources.GatewayRoute(kn); route != nil {
 		if err := r.ensureNamespaced(ctx, kn, route); err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensuring Gateway Route: %w", err)
 		}
-		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-			Type: kubernautv1alpha1.ConditionRouteReady, Status: metav1.ConditionTrue,
-			Reason: "RouteCreated", Message: "Gateway OCP Route created",
-			ObservedGeneration: kn.Generation,
-		})
+		hasRoute = true
 	}
 
-	meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-		Type: kubernautv1alpha1.ConditionServicesDeployed, Status: metav1.ConditionTrue,
-		Reason: "DeploymentComplete", Message: "All services deployed",
-		ObservedGeneration: kn.Generation,
+	return ctrl.Result{}, r.patchStatus(ctx, kn, func() {
+		r.setPhase(kn, kubernautv1alpha1.PhaseDeploying)
+		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+			Type: kubernautv1alpha1.ConditionRBACProvisioned, Status: metav1.ConditionTrue,
+			Reason: "RBACReady", Message: "All RBAC resources provisioned",
+			ObservedGeneration: kn.Generation,
+		})
+		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+			Type: kubernautv1alpha1.ConditionWebhooksConfigured, Status: metav1.ConditionTrue,
+			Reason: "WebhooksReady", Message: "Admission webhooks configured",
+			ObservedGeneration: kn.Generation,
+		})
+		if hasRoute {
+			meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+				Type: kubernautv1alpha1.ConditionRouteReady, Status: metav1.ConditionTrue,
+				Reason: "RouteCreated", Message: "Gateway OCP Route created",
+				ObservedGeneration: kn.Generation,
+			})
+		}
+		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+			Type: kubernautv1alpha1.ConditionServicesDeployed, Status: metav1.ConditionTrue,
+			Reason: "DeploymentComplete", Message: "All services deployed",
+			ObservedGeneration: kn.Generation,
+		})
 	})
-
-	return ctrl.Result{}, r.Status().Update(ctx, kn)
 }
 
 // ---------- Phase: Running ----------
@@ -478,20 +502,23 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 		})
 	}
 
-	kn.Status.Services = serviceStatuses
+	finalStatuses := serviceStatuses
+	finalAllReady := allReady
 
-	if allReady {
-		r.setPhase(kn, kubernautv1alpha1.PhaseRunning)
-	} else {
-		r.setPhase(kn, kubernautv1alpha1.PhaseDegraded)
-	}
-
-	log.Info("reconciliation complete", "phase", kn.Status.Phase)
-	if err := r.Status().Update(ctx, kn); err != nil {
+	if err := r.patchStatus(ctx, kn, func() {
+		kn.Status.Services = finalStatuses
+		if finalAllReady {
+			r.setPhase(kn, kubernautv1alpha1.PhaseRunning)
+		} else {
+			r.setPhase(kn, kubernautv1alpha1.PhaseDegraded)
+		}
+	}); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	if !allReady {
+	log.Info("reconciliation complete", "phase", kn.Status.Phase)
+
+	if !finalAllReady {
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 
@@ -619,6 +646,16 @@ func (r *KubernautReconciler) setPhase(kn *kubernautv1alpha1.Kubernaut, phase ku
 	kn.Status.Phase = phase
 }
 
+// patchStatus applies status mutations via a server-side merge patch,
+// avoiding resourceVersion conflicts that plague Status().Update().
+// MergeFrom without OptimisticLock omits resourceVersion from the patch,
+// so it never conflicts with concurrent metadata/spec writes.
+func (r *KubernautReconciler) patchStatus(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, mutate func()) error {
+	base := kn.DeepCopy()
+	mutate()
+	return r.Status().Patch(ctx, kn, client.MergeFrom(base))
+}
+
 func (r *KubernautReconciler) validateSecret(ctx context.Context, namespace, name string, requiredKeys []string) error {
 	secret := &corev1.Secret{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, secret); err != nil {
@@ -636,14 +673,15 @@ func (r *KubernautReconciler) setConditionAndRequeue(
 	ctx context.Context, kn *kubernautv1alpha1.Kubernaut,
 	condType string, status metav1.ConditionStatus, reason, message string,
 ) (ctrl.Result, error) {
-	meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-		Type: condType, Status: status, Reason: reason, Message: message,
-		ObservedGeneration: kn.Generation,
-	})
-	if status == metav1.ConditionFalse {
-		r.setPhase(kn, kubernautv1alpha1.PhaseError)
-	}
-	if err := r.Status().Update(ctx, kn); err != nil {
+	if err := r.patchStatus(ctx, kn, func() {
+		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+			Type: condType, Status: status, Reason: reason, Message: message,
+			ObservedGeneration: kn.Generation,
+		})
+		if status == metav1.ConditionFalse {
+			r.setPhase(kn, kubernautv1alpha1.PhaseError)
+		}
+	}); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
