@@ -18,6 +18,7 @@ package resources
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
@@ -38,7 +39,6 @@ var serviceDefinitions = []struct {
 	{ComponentEffectivenessMonitor, "effectivenessmonitor-service", PortHTTP, "http"},
 	{ComponentNotification, "notification-service", PortHTTP, "http"},
 	{ComponentHolmesGPTAPI, "holmesgpt-api-service", PortHTTP, "http"},
-	{ComponentAuthWebhook, "authwebhook-service", PortHTTPS, "https"},
 }
 
 // Services builds all Services for the Kubernaut deployment.
@@ -54,5 +54,25 @@ func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
 		}
 		services = append(services, svc)
 	}
+
+	// authwebhook uses port 443 → 9443 and needs OCP service-ca for TLS certs.
+	awSvc := &corev1.Service{
+		ObjectMeta: ObjectMeta(kn, "authwebhook-service", ComponentAuthWebhook),
+		Spec: corev1.ServiceSpec{
+			Selector: SelectorLabels(ComponentAuthWebhook),
+			Ports: []corev1.ServicePort{{
+				Name:       "https",
+				Port:       443,
+				TargetPort: intstr.FromString("webhook"),
+				Protocol:   corev1.ProtocolTCP,
+			}},
+		},
+	}
+	if awSvc.Annotations == nil {
+		awSvc.Annotations = map[string]string{}
+	}
+	awSvc.Annotations["service.beta.openshift.io/serving-cert-secret-name"] = "authwebhook-tls"
+	services = append(services, awSvc)
+
 	return services
 }

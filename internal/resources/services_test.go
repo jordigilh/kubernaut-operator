@@ -37,12 +37,15 @@ func TestServices_AllInCorrectNamespace(t *testing.T) {
 	}
 }
 
-func TestServices_AuthWebhookOn8443(t *testing.T) {
+func TestServices_AuthWebhookOn443(t *testing.T) {
 	kn := testKubernaut()
 	for _, svc := range Services(kn) {
 		if svc.Name == "authwebhook-service" {
-			if len(svc.Spec.Ports) == 0 || svc.Spec.Ports[0].Port != 8443 {
-				t.Errorf("authwebhook-service port should be 8443, got %v", svc.Spec.Ports)
+			if len(svc.Spec.Ports) == 0 || svc.Spec.Ports[0].Port != 443 {
+				t.Errorf("authwebhook-service port should be 443, got %v", svc.Spec.Ports)
+			}
+			if svc.Annotations["service.beta.openshift.io/serving-cert-secret-name"] != "authwebhook-tls" {
+				t.Errorf("authwebhook-service should have serving-cert annotation, got %v", svc.Annotations)
 			}
 			return
 		}

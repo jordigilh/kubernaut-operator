@@ -62,9 +62,13 @@ const (
 
 // OCP monitoring namespace and service account used for signal source RBAC.
 const (
-	OCPMonitoringNamespace  = "openshift-monitoring"
-	OCPAlertManagerSAName   = "alertmanager-main"
+	OCPMonitoringNamespace = "openshift-monitoring"
+	OCPAlertManagerSAName  = "alertmanager-main"
 )
+
+// DefaultPostgreSQLImage is the RHEL10 PostgreSQL 16 image used for the
+// data-storage init container on OCP (restricted-v2 SCC compatible).
+const DefaultPostgreSQLImage = "registry.redhat.io/rhel10/postgresql-16"
 
 // AllComponents returns the ordered list of all managed components.
 func AllComponents() []string {

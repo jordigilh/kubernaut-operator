@@ -44,7 +44,7 @@ func TestDataStorageDeployment_InitContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertDeploymentBasics(t, dep, ComponentDataStorage, "data-storage")
+	assertDeploymentBasics(t, dep, ComponentDataStorage, "datastorage")
 
 	if len(dep.Spec.Template.Spec.InitContainers) != 1 {
 		t.Fatalf("DataStorage should have 1 init container, got %d", len(dep.Spec.Template.Spec.InitContainers))
@@ -87,27 +87,19 @@ func TestAIAnalysisDeployment_PolicyVolume(t *testing.T) {
 	}
 
 	assertDeploymentBasics(t, dep, ComponentAIAnalysis, "aianalysis")
-	assertHasVolume(t, dep, "policies")
-	assertHasVolumeMount(t, dep, "policies", "/etc/kubernaut/policies")
+	assertHasVolume(t, dep, "rego-policies")
+	assertHasVolumeMount(t, dep, "rego-policies", "/etc/aianalysis/policies")
 }
 
-func TestSignalProcessingDeployment_SubPathMount(t *testing.T) {
+func TestSignalProcessingDeployment_PolicyMount(t *testing.T) {
 	kn := testKubernaut()
 	dep, err := SignalProcessingDeployment(kn)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	container := dep.Spec.Template.Spec.Containers[0]
-	for _, vm := range container.VolumeMounts {
-		if vm.Name == "policy" {
-			if vm.SubPath != "policy.rego" {
-				t.Errorf("policy mount subPath = %q, want %q", vm.SubPath, "policy.rego")
-			}
-			return
-		}
-	}
-	t.Error("SignalProcessing should have a 'policy' volume mount with subPath")
+	assertHasVolume(t, dep, "policy")
+	assertHasVolumeMount(t, dep, "policy", "/etc/signalprocessing/policies")
 }
 
 func TestSignalProcessingDeployment_ProactiveSignalMappings(t *testing.T) {
@@ -119,7 +111,7 @@ func TestSignalProcessingDeployment_ProactiveSignalMappings(t *testing.T) {
 	}
 
 	assertHasVolume(t, dep, "proactive-mappings")
-	assertHasVolumeMount(t, dep, "proactive-mappings", "/etc/kubernaut/proactive-signal-mappings.yaml")
+	assertHasVolumeMount(t, dep, "proactive-mappings", "/etc/signalprocessing/proactive-signal-mappings.yaml")
 }
 
 func TestSignalProcessingDeployment_NoProactiveSignalMappings(t *testing.T) {
@@ -145,10 +137,10 @@ func TestNotificationDeployment_SlackCredentialsVolume(t *testing.T) {
 	}
 
 	assertHasVolume(t, dep, "credentials")
-	assertHasVolumeMount(t, dep, "credentials", "/etc/kubernaut/credentials")
+	assertHasVolumeMount(t, dep, "credentials", "/etc/notification/credentials")
 }
 
-func TestNotificationDeployment_NoSlack_NoCredentials(t *testing.T) {
+func TestNotificationDeployment_NoSlack_EmptyDirCredentials(t *testing.T) {
 	kn := testKubernaut()
 	dep, err := NotificationDeployment(kn)
 	if err != nil {
@@ -157,23 +149,27 @@ func TestNotificationDeployment_NoSlack_NoCredentials(t *testing.T) {
 
 	for _, v := range dep.Spec.Template.Spec.Volumes {
 		if v.Name == "credentials" {
-			t.Error("Notification should not have credentials volume when Slack is not configured")
+			if v.EmptyDir == nil {
+				t.Error("Notification credentials volume should be an emptyDir when Slack is not configured")
+			}
+			return
 		}
 	}
+	t.Error("Notification should still have a credentials volume (emptyDir) even without Slack")
 }
 
-func TestNotificationDeployment_EmptyDir(t *testing.T) {
+func TestNotificationDeployment_OutputEmptyDir(t *testing.T) {
 	kn := testKubernaut()
 	dep, err := NotificationDeployment(kn)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	assertHasVolume(t, dep, "tmp")
+	assertHasVolume(t, dep, "notification-output")
 	for _, v := range dep.Spec.Template.Spec.Volumes {
-		if v.Name == "tmp" {
+		if v.Name == "notification-output" {
 			if v.EmptyDir == nil {
-				t.Error("tmp volume should be an emptyDir")
+				t.Error("notification-output volume should be an emptyDir")
 			}
 		}
 	}
@@ -188,7 +184,7 @@ func TestHolmesGPTAPIDeployment_LLMCredentials(t *testing.T) {
 
 	assertDeploymentBasics(t, dep, ComponentHolmesGPTAPI, "holmesgpt-api")
 	assertHasVolume(t, dep, "llm-credentials")
-	assertHasVolumeMount(t, dep, "llm-credentials", "/etc/kubernaut/credentials")
+	assertHasVolumeMount(t, dep, "llm-credentials", "/etc/holmesgpt/credentials")
 }
 
 func TestHolmesGPTAPIDeployment_ServiceCA_WhenMonitoringEnabled(t *testing.T) {
@@ -272,18 +268,18 @@ func TestAuthWebhookDeployment_TLSAndPort(t *testing.T) {
 	}
 
 	assertDeploymentBasics(t, dep, ComponentAuthWebhook, "authwebhook")
-	assertHasVolume(t, dep, "tls")
-	assertHasVolumeMount(t, dep, "tls", "/etc/kubernaut/tls")
+	assertHasVolume(t, dep, "webhook-certs")
+	assertHasVolumeMount(t, dep, "webhook-certs", "/tmp/k8s-webhook-server/serving-certs")
 
 	container := dep.Spec.Template.Spec.Containers[0]
 	found := false
 	for _, p := range container.Ports {
-		if p.ContainerPort == PortHTTPS && p.Name == "https" {
+		if p.ContainerPort == 9443 && p.Name == "webhook" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("AuthWebhook should expose port 8443 named 'https'")
+		t.Error("AuthWebhook should expose port 9443 named 'webhook'")
 	}
 }
 
@@ -343,7 +339,7 @@ func TestServiceAccountNaming(t *testing.T) {
 		ComponentWorkflowExecution:       "workflowexecution-controller",
 		ComponentEffectivenessMonitor:    "effectivenessmonitor-controller",
 		ComponentNotification:            "notification-controller",
-		ComponentHolmesGPTAPI:            "holmesgpt-api",
+		ComponentHolmesGPTAPI:            "holmesgpt-api-sa",
 		ComponentAuthWebhook:             "authwebhook",
 	}
 	for component, wantName := range expected {

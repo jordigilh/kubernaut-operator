@@ -21,6 +21,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
@@ -43,14 +44,9 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		pgPort = 5432
 	}
 
-	pgImage, err := Image(&kn.Spec.Image, "postgresql")
-	if err != nil {
-		return nil, err
-	}
-
 	initContainer := corev1.Container{
 		Name:            "wait-for-postgres",
-		Image:           pgImage,
+		Image:           DefaultPostgreSQLImage,
 		ImagePullPolicy: kn.Spec.Image.PullPolicy,
 		Command: []string{"sh", "-c",
 			fmt.Sprintf("until pg_isready -h %s -p %d; do echo waiting for postgres; sleep 2; done",
@@ -82,24 +78,34 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 	}
 
 	mounts := []corev1.VolumeMount{
-		{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"},
-		{Name: "secrets", MountPath: "/etc/kubernaut/secrets", ReadOnly: true},
+		{Name: "config", MountPath: "/etc/datastorage", ReadOnly: true},
+		{Name: "secrets", MountPath: "/etc/datastorage/secrets", ReadOnly: true},
 	}
 
-	return deployment(kn, ComponentDataStorage, "data-storage", kn.Spec.DataStorage.Resources,
-		mounts, volumes, []corev1.Container{initContainer}, nil)
+	env := []corev1.EnvVar{
+		{Name: "CONFIG_PATH", Value: "/etc/datastorage/config.yaml"},
+		{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
+			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
+		}},
+	}
+
+	return deploymentWithEnv(kn, ComponentDataStorage, "datastorage", kn.Spec.DataStorage.Resources,
+		mounts, volumes, []corev1.Container{initContainer}, nil, env)
 }
 
 // AIAnalysisDeployment builds the aianalysis Deployment.
 func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	policyName := kn.Spec.AIAnalysis.Policy.ConfigMapName
+	if policyName == "" {
+		policyName = "aianalysis-policies"
+	}
 	volumes := []corev1.Volume{
 		configMapVolume("config", "aianalysis-config"),
-		configMapVolume("policies", policyName),
+		configMapVolume("rego-policies", policyName),
 	}
 	mounts := []corev1.VolumeMount{
-		{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"},
-		{Name: "policies", MountPath: "/etc/kubernaut/policies"},
+		{Name: "config", MountPath: "/etc/aianalysis", ReadOnly: true},
+		{Name: "rego-policies", MountPath: "/etc/aianalysis/policies", ReadOnly: true},
 	}
 	return deployment(kn, ComponentAIAnalysis, "aianalysis", kn.Spec.AIAnalysis.Resources,
 		mounts, volumes, nil, nil)
@@ -108,19 +114,22 @@ func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, 
 // SignalProcessingDeployment builds the signalprocessing Deployment.
 func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	policyName := kn.Spec.SignalProcessing.Policy.ConfigMapName
+	if policyName == "" {
+		policyName = "signalprocessing-policy"
+	}
 	volumes := []corev1.Volume{
 		configMapVolume("config", "signalprocessing-config"),
 		configMapVolume("policy", policyName),
 	}
 	mounts := []corev1.VolumeMount{
-		{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"},
-		{Name: "policy", MountPath: "/etc/kubernaut/policy/policy.rego", SubPath: "policy.rego"},
+		{Name: "config", MountPath: "/etc/signalprocessing/config.yaml", SubPath: "config.yaml"},
+		{Name: "policy", MountPath: "/etc/signalprocessing/policies", ReadOnly: true},
 	}
 
 	if kn.Spec.SignalProcessing.ProactiveSignalMappings != nil {
 		volumes = append(volumes, configMapVolume("proactive-mappings", kn.Spec.SignalProcessing.ProactiveSignalMappings.ConfigMapName))
 		mounts = append(mounts, corev1.VolumeMount{
-			Name: "proactive-mappings", MountPath: "/etc/kubernaut/proactive-signal-mappings.yaml", SubPath: "proactive-signal-mappings.yaml",
+			Name: "proactive-mappings", MountPath: "/etc/signalprocessing/proactive-signal-mappings.yaml", SubPath: "proactive-signal-mappings.yaml",
 		})
 	}
 
@@ -172,13 +181,11 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.De
 func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	volumes := []corev1.Volume{
 		configMapVolume("config", "notification-controller-config"),
-		configMapVolume("routing", "notification-routing-config"),
-		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: "notification-output", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	}
 	mounts := []corev1.VolumeMount{
-		{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"},
-		{Name: "routing", MountPath: "/etc/kubernaut/routing.yaml", SubPath: "routing.yaml"},
-		{Name: "tmp", MountPath: "/tmp"},
+		{Name: "config", MountPath: "/etc/notification", ReadOnly: true},
+		{Name: "notification-output", MountPath: "/tmp/notifications"},
 	}
 
 	if kn.Spec.Notification.Slack.SecretName != "" {
@@ -189,13 +196,22 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 					Sources: []corev1.VolumeProjection{
 						{Secret: &corev1.SecretProjection{
 							LocalObjectReference: corev1.LocalObjectReference{Name: kn.Spec.Notification.Slack.SecretName},
+							Items:                []corev1.KeyToPath{{Key: "webhook-url", Path: "slack-webhook"}},
 						}},
 					},
 				},
 			},
 		})
 		mounts = append(mounts, corev1.VolumeMount{
-			Name: "credentials", MountPath: "/etc/kubernaut/credentials", ReadOnly: true,
+			Name: "credentials", MountPath: "/etc/notification/credentials", ReadOnly: true,
+		})
+	} else {
+		volumes = append(volumes, corev1.Volume{
+			Name:         "credentials",
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		})
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: "credentials", MountPath: "/etc/notification/credentials", ReadOnly: true,
 		})
 	}
 
@@ -216,12 +232,14 @@ func HolmesGPTAPIDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 		secretVolume("llm-credentials", kn.Spec.HolmesGPTAPI.LLM.CredentialsSecretName),
 	}
 	mounts := []corev1.VolumeMount{
-		{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"},
-		{Name: "sdk-config", MountPath: "/etc/kubernaut/sdk-config.yaml", SubPath: "sdk-config.yaml"},
-		{Name: "llm-credentials", MountPath: "/etc/kubernaut/credentials", ReadOnly: true},
+		{Name: "config", MountPath: "/etc/holmesgpt", ReadOnly: true},
+		{Name: "sdk-config", MountPath: "/etc/holmesgpt/sdk", ReadOnly: true},
+		{Name: "llm-credentials", MountPath: "/etc/holmesgpt/credentials", ReadOnly: true},
 	}
 
-	var envVars []corev1.EnvVar
+	envVars := []corev1.EnvVar{
+		{Name: "GOOGLE_APPLICATION_CREDENTIALS", Value: "/etc/holmesgpt/credentials/credentials.json"},
+	}
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		volumes = append(volumes, configMapVolume("service-ca", "holmesgpt-api-service-ca"))
 		mounts = append(mounts, corev1.VolumeMount{
@@ -230,24 +248,41 @@ func HolmesGPTAPIDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 		envVars = append(envVars, corev1.EnvVar{Name: "IS_OPENSHIFT", Value: "True"})
 	}
 
+	res := kn.Spec.HolmesGPTAPI.Resources
+	if len(res.Requests) == 0 && len(res.Limits) == 0 {
+		res = corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("200m"),
+				corev1.ResourceMemory: resource.MustParse("256Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("1000m"),
+				corev1.ResourceMemory: resource.MustParse("1Gi"),
+			},
+		}
+	}
+
 	return deploymentWithEnv(kn, ComponentHolmesGPTAPI, "holmesgpt-api",
-		kn.Spec.HolmesGPTAPI.Resources, mounts, volumes, nil, nil, envVars)
+		res, mounts, volumes, nil, nil, envVars)
 }
 
 // AuthWebhookDeployment builds the authwebhook Deployment.
 func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	volumes := []corev1.Volume{
 		configMapVolume("config", "authwebhook-config"),
-		secretVolume("tls", "authwebhook-tls"),
+		secretVolume("webhook-certs", "authwebhook-tls"),
 	}
 	mounts := []corev1.VolumeMount{
-		{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"},
-		{Name: "tls", MountPath: "/etc/kubernaut/tls", ReadOnly: true},
+		{Name: "config", MountPath: "/etc/authwebhook", ReadOnly: true},
+		{Name: "webhook-certs", MountPath: "/tmp/k8s-webhook-server/serving-certs", ReadOnly: true},
 	}
 
 	return deployment(kn, ComponentAuthWebhook, "authwebhook",
 		kn.Spec.AuthWebhook.Resources, mounts, volumes, nil,
-		[]corev1.ContainerPort{{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP}},
+		[]corev1.ContainerPort{
+			{Name: "webhook", ContainerPort: 9443, Protocol: corev1.ProtocolTCP},
+			{Name: "health", ContainerPort: 8081, Protocol: corev1.ProtocolTCP},
+		},
 	)
 }
 
