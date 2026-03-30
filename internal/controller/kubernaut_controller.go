@@ -334,7 +334,7 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		_ = r.deleteIfExists(ctx, crb)
 	}
 
-	// Clean up monitoring RBAC when disabled (prevents stale resources).
+	// Clean up monitoring resources when disabled (prevents stale resources).
 	if !kn.Spec.Monitoring.MonitoringEnabled() {
 		for _, name := range resources.MonitoringCRBNames(kn) {
 			monCRB := &rbacv1.ClusterRoleBinding{}
@@ -345,6 +345,12 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 			monCR := &rbacv1.ClusterRole{}
 			monCR.Name = name
 			_ = r.deleteIfExists(ctx, monCR)
+		}
+		for _, name := range []string{"effectivenessmonitor-service-ca", "holmesgpt-api-service-ca"} {
+			staleCM := &corev1.ConfigMap{}
+			staleCM.Name = name
+			staleCM.Namespace = kn.Namespace
+			_ = r.deleteIfExists(ctx, staleCM)
 		}
 	}
 
@@ -451,13 +457,16 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		}
 	}
 
-	// OCP Route.
+	// OCP Route: create when enabled, clean up when disabled.
 	hasRoute := false
 	if route := resources.GatewayRoute(kn); route != nil {
 		if err := r.ensureNamespaced(ctx, kn, route); err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensuring Gateway Route: %w", err)
 		}
 		hasRoute = true
+	} else {
+		staleRoute := resources.GatewayRouteStub(kn)
+		_ = r.deleteIfExists(ctx, staleRoute)
 	}
 
 	return ctrl.Result{}, r.patchStatus(ctx, kn, func() {
@@ -768,6 +777,8 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Secret{}).
 		Owns(&batchv1.Job{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
+		Owns(&rbacv1.Role{}).
+		Owns(&rbacv1.RoleBinding{}).
 		Named("kubernaut").
 		Complete(r)
 }

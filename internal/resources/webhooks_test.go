@@ -27,8 +27,8 @@ func TestMutatingWebhookConfiguration_Basic(t *testing.T) {
 	caBundle := []byte("fake-ca")
 	mwc := MutatingWebhookConfiguration(kn, caBundle)
 
-	if mwc.Name != "authwebhook-mutating" {
-		t.Errorf("name = %q, want %q", mwc.Name, "authwebhook-mutating")
+	if mwc.Name != "kubernaut-system-authwebhook-mutating" {
+		t.Errorf("name = %q, want %q", mwc.Name, "kubernaut-system-authwebhook-mutating")
 	}
 	if len(mwc.Webhooks) != 1 {
 		t.Fatalf("should have 1 webhook, got %d", len(mwc.Webhooks))
@@ -102,8 +102,8 @@ func TestValidatingWebhookConfiguration_Basic(t *testing.T) {
 	caBundle := []byte("fake-ca")
 	vwc := ValidatingWebhookConfiguration(kn, caBundle)
 
-	if vwc.Name != "authwebhook-validating" {
-		t.Errorf("name = %q, want %q", vwc.Name, "authwebhook-validating")
+	if vwc.Name != "kubernaut-system-authwebhook-validating" {
+		t.Errorf("name = %q, want %q", vwc.Name, "kubernaut-system-authwebhook-validating")
 	}
 	if len(vwc.Webhooks) != 1 {
 		t.Fatalf("should have 1 webhook, got %d", len(vwc.Webhooks))

@@ -58,6 +58,18 @@ func GatewayRoute(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 	return route
 }
 
+// GatewayRouteStub returns a minimal Route object suitable for deletion lookups
+// when the Route feature is disabled. It carries just enough metadata for
+// deleteIfExists to find the resource.
+func GatewayRouteStub(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
+	return &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gateway-route",
+			Namespace: kn.Namespace,
+		},
+	}
+}
+
 // DataStorageDBSecret derives the datastorage-db-secret from the user-provided
 // PostgreSQL secret. The DataStorage service expects a "db-secrets.yaml" key
 // with YAML content containing host, port, dbname, user, and password.

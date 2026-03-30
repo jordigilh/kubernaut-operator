@@ -34,7 +34,7 @@ func MutatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut, caBundle []by
 
 	return &admissionregistrationv1.MutatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   "authwebhook-mutating",
+			Name:   kn.Namespace + "-authwebhook-mutating",
 			Labels: CommonLabels(kn),
 		},
 		Webhooks: []admissionregistrationv1.MutatingWebhook{{
@@ -79,7 +79,7 @@ func ValidatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut, caBundle []
 
 	return &admissionregistrationv1.ValidatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   "authwebhook-validating",
+			Name:   kn.Namespace + "-authwebhook-validating",
 			Labels: CommonLabels(kn),
 		},
 		Webhooks: []admissionregistrationv1.ValidatingWebhook{{
