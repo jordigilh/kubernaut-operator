@@ -34,6 +34,7 @@ func TestGatewayDeployment_Basic(t *testing.T) {
 
 	assertDeploymentBasics(t, dep, ComponentGateway, "gateway")
 	assertHasVolume(t, dep, "config")
+	assertVolumeSourceConfigMap(t, dep, "config", "gateway-config")
 	assertHasVolumeMount(t, dep, "config", "/etc/kubernaut/config.yaml")
 }
 
@@ -88,6 +89,7 @@ func TestAIAnalysisDeployment_PolicyVolume(t *testing.T) {
 
 	assertDeploymentBasics(t, dep, ComponentAIAnalysis, "aianalysis")
 	assertHasVolume(t, dep, "rego-policies")
+	assertVolumeSourceConfigMap(t, dep, "rego-policies", "aianalysis-policies")
 	assertHasVolumeMount(t, dep, "rego-policies", "/etc/aianalysis/policies")
 }
 
@@ -99,6 +101,7 @@ func TestSignalProcessingDeployment_PolicyMount(t *testing.T) {
 	}
 
 	assertHasVolume(t, dep, "policy")
+	assertVolumeSourceConfigMap(t, dep, "policy", "signalprocessing-policy")
 	assertHasVolumeMount(t, dep, "policy", "/etc/signalprocessing/policies")
 }
 
@@ -323,8 +326,14 @@ func TestAllDeployments_ImagePullPolicy(t *testing.T) {
 func TestAllDeployments_ServiceAccounts(t *testing.T) {
 	kn := testKubernaut()
 	for _, dep := range getAllDeployments(t, kn) {
-		if dep.Spec.Template.Spec.ServiceAccountName == "" {
-			t.Errorf("Deployment %q should have a service account", dep.Name)
+		component := dep.Spec.Template.ObjectMeta.Labels["app"]
+		if component == "" {
+			t.Fatalf("Deployment %q missing 'app' label on pod template", dep.Name)
+		}
+		wantSA := ServiceAccountName(component)
+		gotSA := dep.Spec.Template.Spec.ServiceAccountName
+		if gotSA != wantSA {
+			t.Errorf("Deployment %q SA = %q, want %q (component %q)", dep.Name, gotSA, wantSA, component)
 		}
 	}
 }
@@ -415,6 +424,24 @@ func assertHasVolume(t *testing.T, dep *appsv1.Deployment, name string) {
 		}
 	}
 	t.Errorf("Deployment %q should have volume %q", dep.Name, name)
+}
+
+func assertVolumeSourceConfigMap(t *testing.T, dep *appsv1.Deployment, volumeName, expectedCMName string) {
+	t.Helper()
+	for _, v := range dep.Spec.Template.Spec.Volumes {
+		if v.Name == volumeName {
+			if v.ConfigMap == nil {
+				t.Errorf("Deployment %q volume %q should be backed by a ConfigMap", dep.Name, volumeName)
+				return
+			}
+			if v.ConfigMap.Name != expectedCMName {
+				t.Errorf("Deployment %q volume %q ConfigMap = %q, want %q",
+					dep.Name, volumeName, v.ConfigMap.Name, expectedCMName)
+			}
+			return
+		}
+	}
+	t.Errorf("Deployment %q should have volume %q", dep.Name, volumeName)
 }
 
 func assertHasVolumeMount(t *testing.T, dep *appsv1.Deployment, name, mountPath string) {

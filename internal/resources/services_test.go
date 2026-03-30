@@ -69,14 +69,19 @@ func TestServices_SelectorsMatchDeployments(t *testing.T) {
 	kn := testKubernaut()
 	svcs := Services(kn)
 
+	knownComponents := make(map[string]bool)
+	for _, c := range AllComponents() {
+		knownComponents[c] = true
+	}
+
 	for _, svc := range svcs {
 		app, ok := svc.Spec.Selector["app"]
 		if !ok {
 			t.Errorf("Service %q missing 'app' selector", svc.Name)
 			continue
 		}
-		if app == "" {
-			t.Errorf("Service %q 'app' selector is empty", svc.Name)
+		if !knownComponents[app] {
+			t.Errorf("Service %q selector app=%q is not a known component", svc.Name, app)
 		}
 	}
 }

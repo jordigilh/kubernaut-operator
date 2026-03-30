@@ -181,6 +181,9 @@ func TestNotificationRoutingConfigMap_NoSlack(t *testing.T) {
 	if !strings.Contains(data, "console") {
 		t.Errorf("routing config without slack should use console receiver, got:\n%s", data)
 	}
+	if strings.Contains(data, "slack") {
+		t.Errorf("routing config should not contain slack when Slack is unconfigured, got:\n%s", data)
+	}
 }
 
 func TestHolmesGPTSDKConfigMap_GeneratedWhenNoExisting(t *testing.T) {
@@ -350,5 +353,65 @@ func TestConfigMaps_AllInCorrectNamespace(t *testing.T) {
 		if cm.ns != "kubernaut-system" {
 			t.Errorf("ConfigMap %q namespace = %q, want %q", cm.name, cm.ns, "kubernaut-system")
 		}
+	}
+}
+
+func TestAIAnalysisPoliciesConfigMap_DefaultRegoPolicy(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.AIAnalysis.Policy.ConfigMapName = ""
+
+	cm := AIAnalysisPoliciesConfigMap(kn)
+	if cm == nil {
+		t.Fatal("AIAnalysisPoliciesConfigMap should return non-nil when ConfigMapName is empty")
+	}
+	if cm.Name != "aianalysis-policies" {
+		t.Errorf("Name = %q, want %q", cm.Name, "aianalysis-policies")
+	}
+	rego, ok := cm.Data["approval.rego"]
+	if !ok {
+		t.Fatal("ConfigMap should contain approval.rego key")
+	}
+	if !strings.Contains(rego, "package kubernaut.aianalysis") {
+		t.Errorf("approval.rego should contain Rego package declaration, got:\n%s", rego)
+	}
+}
+
+func TestAIAnalysisPoliciesConfigMap_NilWhenUserProvided(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.AIAnalysis.Policy.ConfigMapName = "user-custom-policies"
+
+	cm := AIAnalysisPoliciesConfigMap(kn)
+	if cm != nil {
+		t.Error("AIAnalysisPoliciesConfigMap should return nil when user provides ConfigMapName")
+	}
+}
+
+func TestSignalProcessingPolicyConfigMap_DefaultRegoPolicy(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.SignalProcessing.Policy.ConfigMapName = ""
+
+	cm := SignalProcessingPolicyConfigMap(kn)
+	if cm == nil {
+		t.Fatal("SignalProcessingPolicyConfigMap should return non-nil when ConfigMapName is empty")
+	}
+	if cm.Name != "signalprocessing-policy" {
+		t.Errorf("Name = %q, want %q", cm.Name, "signalprocessing-policy")
+	}
+	rego, ok := cm.Data["policy.rego"]
+	if !ok {
+		t.Fatal("ConfigMap should contain policy.rego key")
+	}
+	if !strings.Contains(rego, "package kubernaut.signalprocessing") {
+		t.Errorf("policy.rego should contain Rego package declaration, got:\n%s", rego)
+	}
+}
+
+func TestSignalProcessingPolicyConfigMap_NilWhenUserProvided(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.SignalProcessing.Policy.ConfigMapName = "user-sp-policy"
+
+	cm := SignalProcessingPolicyConfigMap(kn)
+	if cm != nil {
+		t.Error("SignalProcessingPolicyConfigMap should return nil when user provides ConfigMapName")
 	}
 }

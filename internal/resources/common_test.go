@@ -22,6 +22,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
@@ -320,5 +322,62 @@ func TestAllComponents_Count(t *testing.T) {
 	components := AllComponents()
 	if len(components) != 10 {
 		t.Errorf("AllComponents() should return 10 components, got %d", len(components))
+	}
+}
+
+func TestSetOwnerReference_SetsControllerRef(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := kubernautv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme core: %v", err)
+	}
+
+	kn := testKubernaut()
+	kn.UID = types.UID("test-uid-1234")
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cm", Namespace: kn.Namespace},
+	}
+	if err := SetOwnerReference(kn, cm, scheme); err != nil {
+		t.Fatalf("SetOwnerReference: %v", err)
+	}
+
+	refs := cm.GetOwnerReferences()
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 owner reference, got %d", len(refs))
+	}
+	ref := refs[0]
+	if ref.Kind != "Kubernaut" {
+		t.Errorf("OwnerRef.Kind = %q, want Kubernaut", ref.Kind)
+	}
+	if ref.UID != kn.UID {
+		t.Errorf("OwnerRef.UID = %q, want %q", ref.UID, kn.UID)
+	}
+	if ref.Controller == nil || !*ref.Controller {
+		t.Error("OwnerRef.Controller should be true")
+	}
+}
+
+func TestServiceAccountName_UnknownComponent_ReturnsSelf(t *testing.T) {
+	got := ServiceAccountName("custom-thing")
+	if got != "custom-thing" {
+		t.Errorf("ServiceAccountName(unknown) = %q, want %q", got, "custom-thing")
+	}
+}
+
+func TestIntPtrDefault_NonNil_ReturnsValue(t *testing.T) {
+	val := 0
+	got := intPtrDefault(&val, 42)
+	if got != 0 {
+		t.Errorf("intPtrDefault(ptr(0), 42) = %d, want 0", got)
+	}
+}
+
+func TestIntPtrDefault_Nil_ReturnsDefault(t *testing.T) {
+	got := intPtrDefault(nil, 42)
+	if got != 42 {
+		t.Errorf("intPtrDefault(nil, 42) = %d, want 42", got)
 	}
 }

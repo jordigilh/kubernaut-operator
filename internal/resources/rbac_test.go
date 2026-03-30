@@ -24,10 +24,9 @@ import (
 
 func TestClusterRoles_Count(t *testing.T) {
 	kn := testKubernaut()
-	// Monitoring enabled by default → includes alertmanager-view + gateway-signal-source
 	roles := ClusterRoles(kn)
-	if len(roles) < 13 {
-		t.Errorf("ClusterRoles() should return at least 13 roles (base), got %d", len(roles))
+	if len(roles) != 15 {
+		t.Errorf("ClusterRoles() should return exactly 15 roles (13 base + 2 monitoring), got %d", len(roles))
 	}
 }
 
@@ -335,6 +334,63 @@ func TestClusterRoleBindings_MonitoringDisabled_NoMonitoringCRBs(t *testing.T) {
 	for _, crb := range crbs {
 		if monitoringNames[crb.Name] {
 			t.Errorf("monitoring CRB %q should not exist when monitoring is disabled", crb.Name)
+		}
+	}
+}
+
+func TestHolmesGPTClientRoleBinding_GrantsAIAnalysisAccess(t *testing.T) {
+	kn := testKubernaut()
+	rb := HolmesGPTClientRoleBinding(kn)
+
+	if rb.Name != "holmesgpt-api-client-aianalysis" {
+		t.Errorf("Name = %q, want %q", rb.Name, "holmesgpt-api-client-aianalysis")
+	}
+	if rb.Namespace != kn.Namespace {
+		t.Errorf("Namespace = %q, want %q", rb.Namespace, kn.Namespace)
+	}
+	wantRoleRef := kn.Namespace + "-holmesgpt-api-client"
+	if rb.RoleRef.Name != wantRoleRef {
+		t.Errorf("RoleRef.Name = %q, want %q", rb.RoleRef.Name, wantRoleRef)
+	}
+	if rb.RoleRef.Kind != "ClusterRole" {
+		t.Errorf("RoleRef.Kind = %q, want ClusterRole", rb.RoleRef.Kind)
+	}
+	if len(rb.Subjects) == 0 {
+		t.Fatal("RoleBinding has no subjects")
+	}
+	subj := rb.Subjects[0]
+	if subj.Name != ServiceAccountName(ComponentAIAnalysis) {
+		t.Errorf("Subject.Name = %q, want %q", subj.Name, ServiceAccountName(ComponentAIAnalysis))
+	}
+	if subj.Namespace != kn.Namespace {
+		t.Errorf("Subject.Namespace = %q, want %q", subj.Namespace, kn.Namespace)
+	}
+}
+
+func TestMonitoringCRBNames_ReturnsAll4(t *testing.T) {
+	kn := testKubernaut()
+	names := MonitoringCRBNames(kn)
+	if len(names) != 4 {
+		t.Fatalf("MonitoringCRBNames() count = %d, want 4", len(names))
+	}
+	ns := kn.Namespace
+	for _, name := range names {
+		if len(name) <= len(ns) || name[:len(ns)] != ns {
+			t.Errorf("MonitoringCRBNames entry %q should be namespace-prefixed with %q", name, ns)
+		}
+	}
+}
+
+func TestMonitoringClusterRoleNames_ReturnsAll2(t *testing.T) {
+	kn := testKubernaut()
+	names := MonitoringClusterRoleNames(kn)
+	if len(names) != 2 {
+		t.Fatalf("MonitoringClusterRoleNames() count = %d, want 2", len(names))
+	}
+	ns := kn.Namespace
+	for _, name := range names {
+		if len(name) <= len(ns) || name[:len(ns)] != ns {
+			t.Errorf("MonitoringClusterRoleNames entry %q should be namespace-prefixed with %q", name, ns)
 		}
 	}
 }

@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -525,7 +526,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(names).To(HaveKey(testNamespace+"-gateway-signal-source"))
 		})
 
-		It("should delete monitoring RBAC when monitoring is disabled", func() {
+		It("should delete monitoring RBAC and service-CA CMs when monitoring is disabled", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
@@ -534,6 +535,16 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			By("verifying monitoring CRs exist")
 			monCR := &rbacv1.ClusterRole{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNamespace + "-alertmanager-view"}, monCR)).To(Succeed())
+
+			By("verifying service-CA CMs exist")
+			emCA := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "effectivenessmonitor-service-ca", Namespace: testNamespace,
+			}, emCA)).To(Succeed())
+			hgCA := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "holmesgpt-api-service-ca", Namespace: testNamespace,
+			}, hgCA)).To(Succeed())
 
 			By("disabling monitoring")
 			kn := &kubernautv1alpha1.Kubernaut{}
@@ -548,6 +559,18 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			err = k8sClient.Get(ctx, types.NamespacedName{Name: testNamespace + "-alertmanager-view"}, monCR)
 			Expect(errors.IsNotFound(err)).To(BeTrue(), "monitoring ClusterRole should be deleted")
+
+			By("verifying service-CA CMs are cleaned up")
+			err = k8sClient.Get(ctx, types.NamespacedName{
+				Name: "effectivenessmonitor-service-ca", Namespace: testNamespace,
+			}, emCA)
+			Expect(errors.IsNotFound(err)).To(BeTrue(),
+				"effectivenessmonitor-service-ca should be deleted when monitoring is disabled")
+			err = k8sClient.Get(ctx, types.NamespacedName{
+				Name: "holmesgpt-api-service-ca", Namespace: testNamespace,
+			}, hgCA)
+			Expect(errors.IsNotFound(err)).To(BeTrue(),
+				"holmesgpt-api-service-ca should be deleted when monitoring is disabled")
 		})
 
 		It("should create AWX RBAC when ansible is enabled", func() {
@@ -1058,6 +1081,168 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			spec := &kubernautv1alpha1.ValkeySpec{Host: "valkey", Port: 6380}
 			addr := resources.ValkeyAddr(spec)
 			Expect(addr).To(Equal("valkey:6380"))
+		})
+	})
+
+	// ======================================================================
+	// 11. Monitoring + Default Policy Coverage Gaps
+	// ======================================================================
+
+	Context("Monitoring and Default Policy Resources", func() {
+		It("should create service-CA ConfigMaps and default policy CMs when user omits policy names", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			cr.Spec.AIAnalysis.Policy.ConfigMapName = ""
+			cr.Spec.SignalProcessing.Policy.ConfigMapName = ""
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			reconcileToRunning(ctx)
+
+			By("verifying effectivenessmonitor-service-ca exists with inject-cabundle annotation")
+			emCA := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "effectivenessmonitor-service-ca", Namespace: testNamespace,
+			}, emCA)).To(Succeed())
+			Expect(emCA.Annotations).To(HaveKeyWithValue(
+				"service.beta.openshift.io/inject-cabundle", "true"))
+
+			By("verifying holmesgpt-api-service-ca exists with inject-cabundle annotation")
+			hgCA := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "holmesgpt-api-service-ca", Namespace: testNamespace,
+			}, hgCA)).To(Succeed())
+			Expect(hgCA.Annotations).To(HaveKeyWithValue(
+				"service.beta.openshift.io/inject-cabundle", "true"))
+
+			By("verifying aianalysis-policies CM exists with approval.rego key")
+			aiPolicyCM := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "aianalysis-policies", Namespace: testNamespace,
+			}, aiPolicyCM)).To(Succeed())
+			Expect(aiPolicyCM.Data).To(HaveKey("approval.rego"))
+
+			By("verifying signalprocessing-policy CM exists with policy.rego key")
+			spPolicyCM := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "signalprocessing-policy", Namespace: testNamespace,
+			}, spPolicyCM)).To(Succeed())
+			Expect(spPolicyCM.Data).To(HaveKey("policy.rego"))
+		})
+	})
+
+	// ======================================================================
+	// 12. HolmesGPT Client RoleBinding Provisioning
+	// ======================================================================
+
+	Context("HolmesGPT Client RoleBinding", func() {
+		It("should create holmesgpt-api-client-aianalysis RoleBinding during deploy", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			reconcileToRunning(ctx)
+
+			rb := &rbacv1.RoleBinding{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "holmesgpt-api-client-aianalysis", Namespace: testNamespace,
+			}, rb)).To(Succeed())
+
+			Expect(rb.RoleRef.Kind).To(Equal("ClusterRole"))
+			expectedRoleRef := testNamespace + "-holmesgpt-api-client"
+			Expect(rb.RoleRef.Name).To(Equal(expectedRoleRef))
+
+			Expect(rb.Subjects).NotTo(BeEmpty())
+			Expect(rb.Subjects[0].Name).To(Equal(resources.ServiceAccountName(resources.ComponentAIAnalysis)))
+			Expect(rb.Subjects[0].Namespace).To(Equal(testNamespace))
+		})
+	})
+
+	// ======================================================================
+	// 13. Deletion Cleanup Completeness
+	// ======================================================================
+
+	Context("Deletion Cleanup Completeness", func() {
+		It("should clean up all resource categories on deletion including webhooks and workflow namespace resources", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			ns := testNamespace
+
+			By("verifying webhook configurations exist")
+			mwcName := ns + "-authwebhook-mutating"
+			vwcName := ns + "-authwebhook-validating"
+
+			By("verifying workflow namespace resources exist")
+			wfNsName := resources.DefaultWorkflowNamespace
+			wfSAList := &corev1.ServiceAccountList{}
+			Expect(k8sClient.List(ctx, wfSAList,
+				client.InNamespace(wfNsName),
+				client.MatchingLabels{"app.kubernetes.io/managed-by": "kubernaut-operator"},
+			)).To(Succeed())
+			Expect(wfSAList.Items).NotTo(BeEmpty(), "workflow runner SA should exist before deletion")
+
+			wfRoleList := &rbacv1.RoleList{}
+			Expect(k8sClient.List(ctx, wfRoleList,
+				client.InNamespace(wfNsName),
+				client.MatchingLabels{"app.kubernetes.io/managed-by": "kubernaut-operator"},
+			)).To(Succeed())
+			Expect(wfRoleList.Items).NotTo(BeEmpty(), "workflow roles should exist before deletion")
+
+			By("preventing namespace deletion for envtest stability")
+			wfNs := &corev1.Namespace{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: wfNsName}, wfNs); err == nil {
+				delete(wfNs.Labels, "app.kubernetes.io/managed-by")
+				Expect(k8sClient.Update(ctx, wfNs)).To(Succeed())
+			}
+
+			By("deleting the CR")
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
+
+			By("reconciling the deletion")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying ClusterRoles are cleaned up")
+			crList := &rbacv1.ClusterRoleList{}
+			Expect(k8sClient.List(ctx, crList, client.MatchingLabels{
+				"app.kubernetes.io/managed-by": "kubernaut-operator",
+			})).To(Succeed())
+			Expect(crList.Items).To(BeEmpty(), "all operator-managed ClusterRoles should be deleted")
+
+			By("verifying CRBs are cleaned up")
+			crbList := &rbacv1.ClusterRoleBindingList{}
+			Expect(k8sClient.List(ctx, crbList, client.MatchingLabels{
+				"app.kubernetes.io/managed-by": "kubernaut-operator",
+			})).To(Succeed())
+			Expect(crbList.Items).To(BeEmpty(), "all operator-managed CRBs should be deleted")
+
+			By("verifying MutatingWebhookConfiguration is cleaned up")
+			mwc := &admissionregistrationv1.MutatingWebhookConfiguration{}
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: mwcName}, mwc)
+			Expect(errors.IsNotFound(err)).To(BeTrue(),
+				"MutatingWebhookConfiguration should be deleted")
+
+			By("verifying ValidatingWebhookConfiguration is cleaned up")
+			vwc := &admissionregistrationv1.ValidatingWebhookConfiguration{}
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: vwcName}, vwc)
+			Expect(errors.IsNotFound(err)).To(BeTrue(),
+				"ValidatingWebhookConfiguration should be deleted")
+
+			By("verifying workflow namespace roles are cleaned up")
+			Expect(k8sClient.List(ctx, wfRoleList,
+				client.InNamespace(wfNsName),
+				client.MatchingLabels{"app.kubernetes.io/managed-by": "kubernaut-operator"},
+			)).To(Succeed())
+			Expect(wfRoleList.Items).To(BeEmpty(),
+				"workflow namespace roles should be deleted")
+
+			By("verifying workflow namespace SAs are cleaned up")
+			Expect(k8sClient.List(ctx, wfSAList,
+				client.InNamespace(wfNsName),
+				client.MatchingLabels{"app.kubernetes.io/managed-by": "kubernaut-operator"},
+			)).To(Succeed())
+			Expect(wfSAList.Items).To(BeEmpty(),
+				"workflow namespace SAs should be deleted")
 		})
 	})
 })

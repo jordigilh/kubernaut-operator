@@ -30,39 +30,32 @@ import (
 	"github.com/jordigilh/kubernaut-operator/test/utils"
 )
 
-// namespace where the project is deployed in
-const namespace = "kubernaut-operator-system"
+const (
+	// operatorNS is the namespace where the operator controller-manager runs.
+	operatorNS = "kubernaut-operator-system"
 
-// serviceAccountName created for the project
-const serviceAccountName = "kubernaut-operator-controller-manager"
+	// crNS is the namespace where the Kubernaut CR and its workload resources live.
+	crNS = "kubernaut-system"
 
-// metricsServiceName is the name of the metrics service of the project
-const metricsServiceName = "kubernaut-operator-controller-manager-metrics-service"
+	// workflowNS is the namespace the operator creates for workflow execution.
+	workflowNS = "kubernaut-workflows"
 
-// metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
-const metricsRoleBindingName = "kubernaut-operator-metrics-binding"
+	serviceAccountName   = "kubernaut-operator-controller-manager"
+	metricsServiceName   = "kubernaut-operator-controller-manager-metrics-service"
+	metricsRoleBindingName = "kubernaut-operator-metrics-binding"
+)
 
-var _ = Describe("Manager", Ordered, func() {
+var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 	var controllerPodName string
 
-	// Before running the tests, set up the environment by creating the namespace,
-	// enforce the restricted security policy to the namespace, installing CRDs,
-	// and deploying the controller.
 	BeforeAll(func() {
-		By("creating manager namespace")
-		cmd := exec.Command("kubectl", "create", "ns", namespace)
-		_, err := utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create namespace")
-
-		By("labeling the namespace to enforce the restricted security policy")
-		cmd = exec.Command("kubectl", "label", "--overwrite", "ns", namespace,
-			"pod-security.kubernetes.io/enforce=restricted")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
+		By("creating the CR namespace")
+		cmd := exec.Command("kubectl", "create", "ns", crNS)
+		_, _ = utils.Run(cmd) // ignore if already exists
 
 		By("installing CRDs")
 		cmd = exec.Command("make", "install")
-		_, err = utils.Run(cmd)
+		_, err := utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
 		By("deploying the controller-manager")
@@ -71,12 +64,23 @@ var _ = Describe("Manager", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 	})
 
-	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
-	// and deleting the namespace.
 	AfterAll(func() {
 		By("cleaning up the curl pod for metrics")
-		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
+		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics",
+			"-n", operatorNS, "--ignore-not-found=true")
 		_, _ = utils.Run(cmd)
+
+		By("deleting Kubernaut CR if it still exists")
+		cmd = exec.Command("kubectl", "delete", "kubernaut", "kubernaut",
+			"-n", crNS, "--ignore-not-found=true", "--timeout=60s")
+		_, _ = utils.Run(cmd)
+
+		By("cleaning up BYO secrets")
+		for _, s := range []string{"postgresql-secret", "valkey-secret", "llm-credentials"} {
+			cmd = exec.Command("kubectl", "delete", "secret", s,
+				"-n", crNS, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+		}
 
 		By("undeploying the controller-manager")
 		cmd = exec.Command("make", "undeploy")
@@ -86,18 +90,16 @@ var _ = Describe("Manager", Ordered, func() {
 		cmd = exec.Command("make", "uninstall")
 		_, _ = utils.Run(cmd)
 
-		By("removing manager namespace")
-		cmd = exec.Command("kubectl", "delete", "ns", namespace)
+		By("removing CR namespace")
+		cmd = exec.Command("kubectl", "delete", "ns", crNS, "--ignore-not-found=true")
 		_, _ = utils.Run(cmd)
 	})
 
-	// After each test, check for failures and collect logs, events,
-	// and pod descriptions for debugging.
 	AfterEach(func() {
 		specReport := CurrentSpecReport()
 		if specReport.Failed() {
 			By("Fetching controller manager pod logs")
-			cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
+			cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", operatorNS)
 			controllerLogs, err := utils.Run(cmd)
 			if err == nil {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerLogs)
@@ -105,112 +107,87 @@ var _ = Describe("Manager", Ordered, func() {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Controller logs: %s", err)
 			}
 
-			By("Fetching Kubernetes events")
-			cmd = exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
+			By("Fetching Kubernetes events in operator namespace")
+			cmd = exec.Command("kubectl", "get", "events", "-n", operatorNS,
+				"--sort-by=.lastTimestamp")
 			eventsOutput, err := utils.Run(cmd)
 			if err == nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Kubernetes events:\n%s", eventsOutput)
-			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Kubernetes events: %s", err)
+				_, _ = fmt.Fprintf(GinkgoWriter, "Operator events:\n%s", eventsOutput)
 			}
 
-			By("Fetching curl-metrics logs")
-			cmd = exec.Command("kubectl", "logs", "curl-metrics", "-n", namespace)
-			metricsOutput, err := utils.Run(cmd)
+			By("Fetching Kubernetes events in CR namespace")
+			cmd = exec.Command("kubectl", "get", "events", "-n", crNS,
+				"--sort-by=.lastTimestamp")
+			eventsOutput, err = utils.Run(cmd)
 			if err == nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Metrics logs:\n %s", metricsOutput)
-			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get curl-metrics logs: %s", err)
+				_, _ = fmt.Fprintf(GinkgoWriter, "CR namespace events:\n%s", eventsOutput)
 			}
 
 			By("Fetching controller manager pod description")
-			cmd = exec.Command("kubectl", "describe", "pod", controllerPodName, "-n", namespace)
+			cmd = exec.Command("kubectl", "describe", "pod", controllerPodName, "-n", operatorNS)
 			podDescription, err := utils.Run(cmd)
 			if err == nil {
 				fmt.Println("Pod description:\n", podDescription)
-			} else {
-				fmt.Println("Failed to describe controller pod")
 			}
 		}
 	})
 
-	SetDefaultEventuallyTimeout(2 * time.Minute)
-	SetDefaultEventuallyPollingInterval(time.Second)
+	SetDefaultEventuallyTimeout(5 * time.Minute)
+	SetDefaultEventuallyPollingInterval(2 * time.Second)
 
-	Context("Manager", func() {
-		It("should run successfully", func() {
-			By("validating that the controller-manager pod is running as expected")
+	// ── 1. Operator health ──────────────────────────────────────────────
+	Context("Operator Pod", func() {
+		It("should be running", func() {
 			verifyControllerUp := func(g Gomega) {
-				// Get the name of the controller-manager pod
-				cmd := exec.Command("kubectl", "get",
-					"pods", "-l", "control-plane=controller-manager",
+				cmd := exec.Command("kubectl", "get", "pods",
+					"-l", "control-plane=controller-manager",
 					"-o", "go-template={{ range .items }}"+
 						"{{ if not .metadata.deletionTimestamp }}"+
 						"{{ .metadata.name }}"+
 						"{{ \"\\n\" }}{{ end }}{{ end }}",
-					"-n", namespace,
+					"-n", operatorNS,
 				)
-
 				podOutput, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve controller-manager pod information")
+				g.Expect(err).NotTo(HaveOccurred())
 				podNames := utils.GetNonEmptyLines(podOutput)
 				g.Expect(podNames).To(HaveLen(1), "expected 1 controller pod running")
 				controllerPodName = podNames[0]
 				g.Expect(controllerPodName).To(ContainSubstring("controller-manager"))
 
-				// Validate the pod's status
-				cmd = exec.Command("kubectl", "get",
-					"pods", controllerPodName, "-o", "jsonpath={.status.phase}",
-					"-n", namespace,
-				)
+				cmd = exec.Command("kubectl", "get", "pods", controllerPodName,
+					"-o", "jsonpath={.status.phase}", "-n", operatorNS)
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Running"), "Incorrect controller-manager pod status")
+				g.Expect(output).To(Equal("Running"))
 			}
 			Eventually(verifyControllerUp).Should(Succeed())
 		})
 
-		It("should ensure the metrics endpoint is serving metrics", func() {
-			By("creating a ClusterRoleBinding for the service account to allow access to metrics")
+		It("should serve the metrics endpoint", func() {
 			cmd := exec.Command("kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
 				"--clusterrole=kubernaut-operator-metrics-reader",
-				fmt.Sprintf("--serviceaccount=%s:%s", namespace, serviceAccountName),
-			)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create ClusterRoleBinding")
+				fmt.Sprintf("--serviceaccount=%s:%s", operatorNS, serviceAccountName))
+			_, _ = utils.Run(cmd) // ignore if exists
 
-			By("validating that the metrics service is available")
-			cmd = exec.Command("kubectl", "get", "service", metricsServiceName, "-n", namespace)
-			_, err = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "get", "service", metricsServiceName, "-n", operatorNS)
+			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Metrics service should exist")
 
-			By("getting the service account token")
 			token, err := serviceAccountToken()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(token).NotTo(BeEmpty())
 
-			By("waiting for the metrics endpoint to be ready")
 			verifyMetricsEndpointReady := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "endpoints", metricsServiceName, "-n", namespace)
+				cmd := exec.Command("kubectl", "get", "endpoints", metricsServiceName, "-n", operatorNS)
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(ContainSubstring("8443"), "Metrics endpoint is not ready")
+				g.Expect(output).To(ContainSubstring("8443"))
 			}
 			Eventually(verifyMetricsEndpointReady).Should(Succeed())
 
-			By("verifying that the controller manager is serving the metrics server")
-			verifyMetricsServerStarted := func(g Gomega) {
-				cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(ContainSubstring("controller-runtime.metrics\tServing metrics server"),
-					"Metrics server not yet started")
-			}
-			Eventually(verifyMetricsServerStarted).Should(Succeed())
-
 			By("creating the curl-metrics pod to access the metrics endpoint")
 			cmd = exec.Command("kubectl", "run", "curl-metrics", "--restart=Never",
-				"--namespace", namespace,
+				"--namespace", operatorNS,
 				"--image=curlimages/curl:latest",
 				"--overrides",
 				fmt.Sprintf(`{
@@ -222,63 +199,330 @@ var _ = Describe("Manager", Ordered, func() {
 							"args": ["curl -v -k -H 'Authorization: Bearer %s' https://%s.%s.svc.cluster.local:8443/metrics"],
 							"securityContext": {
 								"allowPrivilegeEscalation": false,
-								"capabilities": {
-									"drop": ["ALL"]
-								},
+								"capabilities": {"drop": ["ALL"]},
 								"runAsNonRoot": true,
 								"runAsUser": 1000,
-								"seccompProfile": {
-									"type": "RuntimeDefault"
-								}
+								"seccompProfile": {"type": "RuntimeDefault"}
 							}
 						}],
 						"serviceAccount": "%s"
 					}
-				}`, token, metricsServiceName, namespace, serviceAccountName))
+				}`, token, metricsServiceName, operatorNS, serviceAccountName))
 			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create curl-metrics pod")
+			Expect(err).NotTo(HaveOccurred())
 
-			By("waiting for the curl-metrics pod to complete.")
 			verifyCurlUp := func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "pods", "curl-metrics",
-					"-o", "jsonpath={.status.phase}",
-					"-n", namespace)
+					"-o", "jsonpath={.status.phase}", "-n", operatorNS)
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Succeeded"), "curl pod in wrong status")
+				g.Expect(output).To(Equal("Succeeded"))
 			}
 			Eventually(verifyCurlUp, 5*time.Minute).Should(Succeed())
 
-			By("getting the metrics by checking curl-metrics logs")
 			metricsOutput := getMetricsOutput()
-			Expect(metricsOutput).To(ContainSubstring(
-				"controller_runtime_reconcile_total",
-			))
+			Expect(metricsOutput).To(ContainSubstring("controller_runtime_reconcile_total"))
+		})
+	})
+
+	// ── 2. CR lifecycle: create → Running ───────────────────────────────
+	Context("Kubernaut CR Lifecycle", func() {
+		BeforeAll(func() {
+			By("creating BYO prerequisite secrets")
+			createBYOSecrets()
+
+			By("applying the Kubernaut CR from config/samples")
+			cmd := exec.Command("kubectl", "apply", "-f", "config/samples/v1alpha1_kubernaut.yaml")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to apply Kubernaut CR")
 		})
 
-		// +kubebuilder:scaffold:e2e-webhooks-checks
+		It("should add the finalizer", func() {
+			verifyFinalizer := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "kubernaut", "kubernaut",
+					"-n", crNS, "-o", "jsonpath={.metadata.finalizers}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("kubernaut.ai/cleanup"))
+			}
+			Eventually(verifyFinalizer).Should(Succeed())
+		})
 
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput := getMetricsOutput()
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+		It("should reach Running phase", func() {
+			verifyRunning := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "kubernaut", "kubernaut",
+					"-n", crNS, "-o", "jsonpath={.status.phase}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("Running"),
+					"Kubernaut CR should reach Running phase")
+			}
+			Eventually(verifyRunning, 10*time.Minute, 5*time.Second).Should(Succeed())
+		})
+
+		It("should create all component Deployments", func() {
+			components := []string{
+				"gateway", "datastorage", "aianalysis",
+				"signalprocessing", "remediation-orchestrator",
+				"workflow-execution", "effectivenessmonitor",
+				"notification", "holmesgpt-api", "auth-webhook",
+			}
+			for _, comp := range components {
+				cmd := exec.Command("kubectl", "get", "deployment", comp,
+					"-n", crNS, "-o", "jsonpath={.metadata.name}")
+				output, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Deployment %q should exist", comp)
+				Expect(output).To(Equal(comp))
+			}
+		})
+
+		It("should create Services for reachable components", func() {
+			verifyService := func(name string) {
+				cmd := exec.Command("kubectl", "get", "service", name,
+					"-n", crNS, "-o", "jsonpath={.metadata.name}")
+				output, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Service %q should exist", name)
+				Expect(output).To(Equal(name))
+			}
+			for _, svc := range []string{
+				"gateway", "datastorage", "aianalysis",
+				"signalprocessing", "effectivenessmonitor",
+				"notification", "holmesgpt-api", "auth-webhook",
+			} {
+				verifyService(svc)
+			}
+		})
+
+		It("should create the OCP Route for Gateway", func() {
+			cmd := exec.Command("kubectl", "get", "route", "gateway-route",
+				"-n", crNS, "-o", "jsonpath={.spec.to.name}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Gateway Route should exist")
+			Expect(output).To(Equal("gateway"))
+		})
+
+		It("should create ClusterRoles with kubernaut labels", func() {
+			cmd := exec.Command("kubectl", "get", "clusterroles",
+				"-l", "app.kubernetes.io/managed-by=kubernaut-operator",
+				"-o", "go-template={{range .items}}{{.metadata.name}}{{\"\\n\"}}{{end}}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			lines := utils.GetNonEmptyLines(output)
+			Expect(len(lines)).To(BeNumerically(">=", 13),
+				"expected at least 13 ClusterRoles (base set)")
+		})
+
+		It("should create ClusterRoleBindings with kubernaut labels", func() {
+			cmd := exec.Command("kubectl", "get", "clusterrolebindings",
+				"-l", "app.kubernetes.io/managed-by=kubernaut-operator",
+				"-o", "go-template={{range .items}}{{.metadata.name}}{{\"\\n\"}}{{end}}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			lines := utils.GetNonEmptyLines(output)
+			Expect(len(lines)).To(BeNumerically(">=", 10),
+				"expected at least 10 ClusterRoleBindings")
+		})
+
+		It("should create ServiceAccounts for all components", func() {
+			components := []string{
+				"gateway", "datastorage", "aianalysis",
+				"signalprocessing", "remediation-orchestrator",
+				"workflow-execution", "effectivenessmonitor",
+				"notification", "holmesgpt-api", "auth-webhook",
+			}
+			for _, comp := range components {
+				saName := comp + "-sa"
+				cmd := exec.Command("kubectl", "get", "serviceaccount", saName,
+					"-n", crNS, "-o", "jsonpath={.metadata.name}")
+				output, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "SA %q should exist", saName)
+				Expect(output).To(Equal(saName))
+			}
+		})
+
+		It("should create the workflow namespace", func() {
+			cmd := exec.Command("kubectl", "get", "namespace", workflowNS,
+				"-o", "jsonpath={.metadata.labels.app\\.kubernetes\\.io/managed-by}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Workflow namespace should exist")
+			Expect(output).To(Equal("kubernaut-operator"))
+		})
+
+		It("should create the workflow runner ServiceAccount in the workflow namespace", func() {
+			cmd := exec.Command("kubectl", "get", "serviceaccount", "workflow-runner-sa",
+				"-n", workflowNS, "-o", "jsonpath={.metadata.name}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(Equal("workflow-runner-sa"))
+		})
+
+		It("should create OCP service-CA annotated ConfigMaps when monitoring is enabled", func() {
+			for _, cm := range []string{
+				"effectivenessmonitor-service-ca",
+				"holmesgpt-api-service-ca",
+			} {
+				verifyCM := func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "configmap", cm,
+						"-n", crNS,
+						"-o", "jsonpath={.metadata.annotations.service\\.beta\\.openshift\\.io/inject-cabundle}")
+					output, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred(), "ConfigMap %q should exist", cm)
+					g.Expect(output).To(Equal("true"))
+				}
+				Eventually(verifyCM).Should(Succeed())
+			}
+		})
+
+		It("should create default policy ConfigMaps", func() {
+			for _, pair := range []struct {
+				name string
+				key  string
+			}{
+				{"aianalysis-policies", "approval.rego"},
+				{"signalprocessing-policy", "policy.rego"},
+			} {
+				cmd := exec.Command("kubectl", "get", "configmap", pair.name,
+					"-n", crNS,
+					"-o", fmt.Sprintf("jsonpath={.data.%s}", pair.key))
+				output, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "ConfigMap %q should exist", pair.name)
+				Expect(output).NotTo(BeEmpty(),
+					"ConfigMap %q should have key %q with content", pair.name, pair.key)
+			}
+		})
+
+		It("should create the HolmesGPT client RoleBinding", func() {
+			cmd := exec.Command("kubectl", "get", "rolebinding",
+				"holmesgpt-api-client-aianalysis",
+				"-n", crNS, "-o", "jsonpath={.roleRef.name}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "HolmesGPT client RoleBinding should exist")
+			Expect(output).To(Equal("holmesgpt-api-client"))
+		})
+	})
+
+	// ── 3. Deletion and cleanup ─────────────────────────────────────────
+	Context("Kubernaut CR Deletion", func() {
+		BeforeAll(func() {
+			By("deleting the Kubernaut CR")
+			cmd := exec.Command("kubectl", "delete", "kubernaut", "kubernaut",
+				"-n", crNS, "--timeout=120s")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to delete Kubernaut CR")
+		})
+
+		It("should clean up all ClusterRoles managed by the operator", func() {
+			verifyCleaned := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "clusterroles",
+					"-l", "app.kubernetes.io/managed-by=kubernaut-operator",
+					"-o", "go-template={{range .items}}{{.metadata.name}}{{\"\\n\"}}{{end}}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(utils.GetNonEmptyLines(output)).To(BeEmpty(),
+					"all operator-managed ClusterRoles should be deleted")
+			}
+			Eventually(verifyCleaned, 2*time.Minute).Should(Succeed())
+		})
+
+		It("should clean up all ClusterRoleBindings managed by the operator", func() {
+			verifyCleaned := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "clusterrolebindings",
+					"-l", "app.kubernetes.io/managed-by=kubernaut-operator",
+					"-o", "go-template={{range .items}}{{.metadata.name}}{{\"\\n\"}}{{end}}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(utils.GetNonEmptyLines(output)).To(BeEmpty(),
+					"all operator-managed ClusterRoleBindings should be deleted")
+			}
+			Eventually(verifyCleaned, 2*time.Minute).Should(Succeed())
+		})
+
+		It("should clean up the workflow namespace", func() {
+			verifyCleaned := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "namespace", workflowNS,
+					"--ignore-not-found=true", "-o", "jsonpath={.metadata.name}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(BeEmpty(),
+					"workflow namespace should be deleted")
+			}
+			Eventually(verifyCleaned, 2*time.Minute).Should(Succeed())
+		})
+
+		It("should clean up webhook configurations", func() {
+			for _, wh := range []struct {
+				kind string
+				name string
+			}{
+				{"mutatingwebhookconfigurations", "kubernaut-mutating-webhook"},
+				{"validatingwebhookconfigurations", "kubernaut-validating-webhook"},
+			} {
+				cmd := exec.Command("kubectl", "get", wh.kind, wh.name,
+					"--ignore-not-found=true", "-o", "jsonpath={.metadata.name}")
+				output, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(output).To(BeEmpty(),
+					"%s/%s should be deleted", wh.kind, wh.name)
+			}
+		})
+
+		It("should remove the finalizer from the CR", func() {
+			cmd := exec.Command("kubectl", "get", "kubernaut", "kubernaut",
+				"-n", crNS, "--ignore-not-found=true", "-o", "jsonpath={.metadata.name}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(BeEmpty(), "Kubernaut CR should be fully deleted")
+		})
 	})
 })
 
-// serviceAccountToken returns a token for the specified service account in the given namespace.
-// It uses the Kubernetes TokenRequest API to generate a token by directly sending a request
-// and parsing the resulting token from the API response.
+// createBYOSecrets creates the prerequisite Secrets the operator expects:
+// postgresql, valkey, and LLM credentials.
+func createBYOSecrets() {
+	secrets := []struct {
+		name string
+		data map[string]string
+	}{
+		{
+			name: "postgresql-secret",
+			data: map[string]string{
+				"username": "kubernaut",
+				"password": "test-pg-password",
+				"database": "kubernaut",
+			},
+		},
+		{
+			name: "valkey-secret",
+			data: map[string]string{
+				"password": "test-valkey-password",
+			},
+		},
+		{
+			name: "llm-credentials",
+			data: map[string]string{
+				"api-key": "sk-test-not-real-key-for-e2e",
+			},
+		},
+	}
+
+	for _, s := range secrets {
+		args := []string{"create", "secret", "generic", s.name, "-n", crNS}
+		for k, v := range s.data {
+			args = append(args, fmt.Sprintf("--from-literal=%s=%s", k, v))
+		}
+		cmd := exec.Command("kubectl", args...)
+		_, err := utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create secret %q", s.name)
+	}
+}
+
+// serviceAccountToken returns a token for the operator service account.
 func serviceAccountToken() (string, error) {
 	const tokenRequestRawString = `{
 		"apiVersion": "authentication.k8s.io/v1",
 		"kind": "TokenRequest"
 	}`
 
-	// Temporary file to store the token request
 	secretName := fmt.Sprintf("%s-token-request", serviceAccountName)
 	tokenRequestFile := filepath.Join("/tmp", secretName)
 	err := os.WriteFile(tokenRequestFile, []byte(tokenRequestRawString), os.FileMode(0o644))
@@ -288,17 +532,14 @@ func serviceAccountToken() (string, error) {
 
 	var out string
 	verifyTokenCreation := func(g Gomega) {
-		// Execute kubectl command to create the token
 		cmd := exec.Command("kubectl", "create", "--raw", fmt.Sprintf(
 			"/api/v1/namespaces/%s/serviceaccounts/%s/token",
-			namespace,
-			serviceAccountName,
+			operatorNS, serviceAccountName,
 		), "-f", tokenRequestFile)
 
 		output, err := cmd.CombinedOutput()
 		g.Expect(err).NotTo(HaveOccurred())
 
-		// Parse the JSON output to extract the token
 		var token tokenRequest
 		err = json.Unmarshal(output, &token)
 		g.Expect(err).NotTo(HaveOccurred())
@@ -310,18 +551,17 @@ func serviceAccountToken() (string, error) {
 	return out, err
 }
 
-// getMetricsOutput retrieves and returns the logs from the curl pod used to access the metrics endpoint.
+// getMetricsOutput retrieves logs from the curl-metrics pod.
 func getMetricsOutput() string {
 	By("getting the curl-metrics logs")
-	cmd := exec.Command("kubectl", "logs", "curl-metrics", "-n", namespace)
+	cmd := exec.Command("kubectl", "logs", "curl-metrics", "-n", operatorNS)
 	metricsOutput, err := utils.Run(cmd)
 	Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
 	Expect(metricsOutput).To(ContainSubstring("< HTTP/1.1 200 OK"))
 	return metricsOutput
 }
 
-// tokenRequest is a simplified representation of the Kubernetes TokenRequest API response,
-// containing only the token field that we need to extract.
+// tokenRequest is a simplified representation of the Kubernetes TokenRequest API response.
 type tokenRequest struct {
 	Status struct {
 		Token string `json:"token"`

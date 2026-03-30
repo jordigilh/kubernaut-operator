@@ -52,6 +52,18 @@ func TestGatewayRoute_EnabledByDefault(t *testing.T) {
 	}
 }
 
+func TestGatewayRouteStub_MinimalMetadata(t *testing.T) {
+	kn := testKubernaut()
+	stub := GatewayRouteStub(kn)
+
+	if stub.Name != "gateway-route" {
+		t.Errorf("Name = %q, want %q", stub.Name, "gateway-route")
+	}
+	if stub.Namespace != kn.Namespace {
+		t.Errorf("Namespace = %q, want %q", stub.Namespace, kn.Namespace)
+	}
+}
+
 func TestGatewayRoute_DisabledExplicitly(t *testing.T) {
 	kn := testKubernaut()
 	disabled := false
