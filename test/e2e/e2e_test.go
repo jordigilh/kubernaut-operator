@@ -233,7 +233,7 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			Eventually(verifyRunning, 10*time.Minute, 5*time.Second).Should(Succeed())
 		})
 
-		It("should create all component Deployments", func() {
+		It("should create all component Deployments and reach readiness", func() {
 			deployments := []string{
 				"gateway-deployment", "data-storage-deployment", "aianalysis-deployment",
 				"signalprocessing-deployment", "remediationorchestrator-deployment",
@@ -246,6 +246,15 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 				output, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "Deployment %q should exist", dep)
 				Expect(output).To(Equal(dep))
+
+				readyCmd := exec.Command("kubectl", "get", "deployment", dep,
+					"-n", crNS, "-o", "jsonpath={.status.readyReplicas}")
+				readyOutput, err := utils.Run(readyCmd)
+				Expect(err).NotTo(HaveOccurred(), "Deployment %q readyReplicas should be readable", dep)
+				Expect(readyOutput).NotTo(Equal("0"),
+					"Deployment %q should have at least one ready replica", dep)
+				Expect(readyOutput).NotTo(BeEmpty(),
+					"Deployment %q should have at least one ready replica", dep)
 			}
 		})
 

@@ -30,6 +30,9 @@ import (
 	"github.com/jordigilh/kubernaut/pkg/shared/assets"
 )
 
+// newCRDTestClient uses a fake client for CRD install/update logic tests.
+// The fake client does not perform schema validation or conversion webhook
+// testing; real API-server validation is covered by the E2E suite.
 func newCRDTestClient(t *testing.T) *fake.ClientBuilder {
 	t.Helper()
 	scheme := runtime.NewScheme()

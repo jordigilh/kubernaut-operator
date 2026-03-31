@@ -350,6 +350,8 @@ var _ = Describe("Kubernaut Controller", func() {
 
 			kn := &kubernautv1alpha1.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(kn.Status.Conditions).NotTo(BeEmpty(),
+				"conditions should not be empty after reconciliation")
 
 			for _, cond := range kn.Status.Conditions {
 				Expect(cond.ObservedGeneration).To(Equal(kn.Generation),

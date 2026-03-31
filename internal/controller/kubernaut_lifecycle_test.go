@@ -1161,6 +1161,12 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			By("verifying webhook configurations exist")
 			mwcName := ns + "-authwebhook-mutating"
 			vwcName := ns + "-authwebhook-validating"
+			preMWC := &admissionregistrationv1.MutatingWebhookConfiguration{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: mwcName}, preMWC)).To(Succeed(),
+				"MutatingWebhookConfiguration should exist before deletion")
+			preVWC := &admissionregistrationv1.ValidatingWebhookConfiguration{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: vwcName}, preVWC)).To(Succeed(),
+				"ValidatingWebhookConfiguration should exist before deletion")
 
 			By("verifying workflow namespace resources exist")
 			wfNsName := resources.DefaultWorkflowNamespace
