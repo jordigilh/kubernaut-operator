@@ -59,18 +59,15 @@ func MigrationConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, err
 // It uses the db-migrate image which bundles the goose CLI and runs
 // migrations from the mounted ConfigMap.
 func MigrationJob(kn *kubernautv1alpha1.Kubernaut) (*batchv1.Job, error) {
-	pgPort := kn.Spec.PostgreSQL.Port
-	if pgPort == 0 {
-		pgPort = 5432
-	}
+	pgPort := PostgreSQLPort(kn)
 
 	img, err := Image(&kn.Spec.Image, "db-migrate")
 	if err != nil {
 		return nil, err
 	}
 
-	backoffLimit := int32(3)
-	ttlSeconds := int32(300)
+	backoffLimit := MigrationBackoffLimit
+	ttlSeconds := MigrationTTLSeconds
 
 	return &batchv1.Job{
 		ObjectMeta: ObjectMeta(kn, migrationJobName, "migration"),

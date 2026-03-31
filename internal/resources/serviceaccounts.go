@@ -55,13 +55,9 @@ func ServiceAccount(kn *kubernautv1alpha1.Kubernaut, component string) *corev1.S
 // WorkflowRunnerServiceAccount returns the SA used by workflow Jobs/PipelineRuns
 // in the workflow namespace.
 func WorkflowRunnerServiceAccount(kn *kubernautv1alpha1.Kubernaut) *corev1.ServiceAccount {
-	ns := kn.Spec.WorkflowExecution.WorkflowNamespace
-	if ns == "" {
-		ns = DefaultWorkflowNamespace
-	}
 	sa := &corev1.ServiceAccount{
 		ObjectMeta: ObjectMeta(kn, "kubernaut-workflow-runner", ComponentWorkflowExecution),
 	}
-	sa.Namespace = ns
+	sa.Namespace = ResolveWorkflowNamespace(kn)
 	return sa
 }

@@ -78,13 +78,9 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 		clusterRoleBinding(p("authwebhook-binding"), p("authwebhook-role"), ServiceAccountName(ComponentAuthWebhook), ns, labels),
 	}
 
-	wfNs := kn.Spec.WorkflowExecution.WorkflowNamespace
-	if wfNs == "" {
-		wfNs = DefaultWorkflowNamespace
-	}
 	crbs = append(crbs,
 		clusterRoleBinding(p("workflow-runner-binding"), p("workflow-runner"),
-			"kubernaut-workflow-runner", wfNs, labels),
+			"kubernaut-workflow-runner", ResolveWorkflowNamespace(kn), labels),
 	)
 
 	if kn.Spec.Monitoring.MonitoringEnabled() {
@@ -177,21 +173,8 @@ func NamespaceRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Role {
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
 
-	componentsNeedingNsRole := []string{
-		ComponentGateway,
-		ComponentDataStorage,
-		ComponentAIAnalysis,
-		ComponentSignalProcessing,
-		ComponentRemediationOrchestrator,
-		ComponentWorkflowExecution,
-		ComponentEffectivenessMonitor,
-		ComponentNotification,
-		ComponentHolmesGPTAPI,
-		ComponentAuthWebhook,
-	}
-
 	var roles []*rbacv1.Role
-	for _, c := range componentsNeedingNsRole {
+	for _, c := range componentsNeedingNSRole {
 		roles = append(roles, &rbacv1.Role{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      c + "-ns-role",
@@ -213,21 +196,8 @@ func NamespaceRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.RoleBindin
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
 
-	components := []string{
-		ComponentGateway,
-		ComponentDataStorage,
-		ComponentAIAnalysis,
-		ComponentSignalProcessing,
-		ComponentRemediationOrchestrator,
-		ComponentWorkflowExecution,
-		ComponentEffectivenessMonitor,
-		ComponentNotification,
-		ComponentHolmesGPTAPI,
-		ComponentAuthWebhook,
-	}
-
 	var rbs []*rbacv1.RoleBinding
-	for _, c := range components {
+	for _, c := range componentsNeedingNSRole {
 		rbs = append(rbs, &rbacv1.RoleBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      c + "-ns-rolebinding",
@@ -252,10 +222,7 @@ func NamespaceRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.RoleBindin
 // WorkflowNamespaceRBAC returns the Roles and RoleBindings in the workflow namespace
 // for datastorage-dep-reader and workflowexecution-dep-reader.
 func WorkflowNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut) ([]*rbacv1.Role, []*rbacv1.RoleBinding) {
-	wfNs := kn.Spec.WorkflowExecution.WorkflowNamespace
-	if wfNs == "" {
-		wfNs = DefaultWorkflowNamespace
-	}
+	wfNs := ResolveWorkflowNamespace(kn)
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
 
@@ -345,10 +312,7 @@ func AnsibleRBAC(kn *kubernautv1alpha1.Kubernaut) (*rbacv1.ClusterRole, *rbacv1.
 		},
 	}
 
-	wfNs := kn.Spec.WorkflowExecution.WorkflowNamespace
-	if wfNs == "" {
-		wfNs = DefaultWorkflowNamespace
-	}
+	wfNs := ResolveWorkflowNamespace(kn)
 	crb := clusterRoleBinding(clusterRoleName(kn, "workflowexecution-awx-binding"),
 		clusterRoleName(kn, "workflowexecution-awx"),
 		"kubernaut-workflow-runner", wfNs, labels)

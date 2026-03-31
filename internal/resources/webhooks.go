@@ -25,12 +25,7 @@ import (
 
 // MutatingWebhookConfiguration builds the AuthWebhook MutatingWebhookConfiguration.
 func MutatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut, caBundle []byte) *admissionregistrationv1.MutatingWebhookConfiguration {
-	ns := kn.Namespace
-	sideEffects := admissionregistrationv1.SideEffectClassNone
-	failurePolicy := admissionregistrationv1.Fail
-	matchPolicy := admissionregistrationv1.Equivalent
-	scope := admissionregistrationv1.AllScopes
-	port := PortHTTPS
+	clientConfig, rules := webhookClientConfigAndRules(kn, "/mutate", caBundle)
 
 	return &admissionregistrationv1.MutatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
@@ -40,42 +35,18 @@ func MutatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut, caBundle []by
 		Webhooks: []admissionregistrationv1.MutatingWebhook{{
 			Name:                    "mutating.authwebhook.kubernaut.ai",
 			AdmissionReviewVersions: []string{"v1"},
-			SideEffects:             &sideEffects,
-			FailurePolicy:           &failurePolicy,
-			MatchPolicy:             &matchPolicy,
-			ClientConfig: admissionregistrationv1.WebhookClientConfig{
-				Service: &admissionregistrationv1.ServiceReference{
-					Namespace: ns,
-					Name:      "authwebhook-service",
-					Path:      strPtr("/mutate"),
-					Port:      &port,
-				},
-				CABundle: caBundle,
-			},
-			Rules: []admissionregistrationv1.RuleWithOperations{{
-				Operations: []admissionregistrationv1.OperationType{
-					admissionregistrationv1.Create,
-					admissionregistrationv1.Update,
-				},
-				Rule: admissionregistrationv1.Rule{
-					APIGroups:   []string{"kubernaut.ai"},
-					APIVersions: []string{"v1alpha1"},
-					Resources:   []string{"actiontypes"},
-					Scope:       &scope,
-				},
-			}},
+			SideEffects:             sideEffectPtr(admissionregistrationv1.SideEffectClassNone),
+			FailurePolicy:           failurePolicyPtr(admissionregistrationv1.Fail),
+			MatchPolicy:             matchPolicyPtr(admissionregistrationv1.Equivalent),
+			ClientConfig:            clientConfig,
+			Rules:                   rules,
 		}},
 	}
 }
 
 // ValidatingWebhookConfiguration builds the AuthWebhook ValidatingWebhookConfiguration.
 func ValidatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut, caBundle []byte) *admissionregistrationv1.ValidatingWebhookConfiguration {
-	ns := kn.Namespace
-	sideEffects := admissionregistrationv1.SideEffectClassNone
-	failurePolicy := admissionregistrationv1.Fail
-	matchPolicy := admissionregistrationv1.Equivalent
-	scope := admissionregistrationv1.AllScopes
-	port := PortHTTPS
+	clientConfig, rules := webhookClientConfigAndRules(kn, "/validate", caBundle)
 
 	return &admissionregistrationv1.ValidatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
@@ -85,32 +56,46 @@ func ValidatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut, caBundle []
 		Webhooks: []admissionregistrationv1.ValidatingWebhook{{
 			Name:                    "validating.authwebhook.kubernaut.ai",
 			AdmissionReviewVersions: []string{"v1"},
-			SideEffects:             &sideEffects,
-			FailurePolicy:           &failurePolicy,
-			MatchPolicy:             &matchPolicy,
-			ClientConfig: admissionregistrationv1.WebhookClientConfig{
-				Service: &admissionregistrationv1.ServiceReference{
-					Namespace: ns,
-					Name:      "authwebhook-service",
-					Path:      strPtr("/validate"),
-					Port:      &port,
-				},
-				CABundle: caBundle,
-			},
-			Rules: []admissionregistrationv1.RuleWithOperations{{
-				Operations: []admissionregistrationv1.OperationType{
-					admissionregistrationv1.Create,
-					admissionregistrationv1.Update,
-				},
-				Rule: admissionregistrationv1.Rule{
-					APIGroups:   []string{"kubernaut.ai"},
-					APIVersions: []string{"v1alpha1"},
-					Resources:   []string{"actiontypes"},
-					Scope:       &scope,
-				},
-			}},
+			SideEffects:             sideEffectPtr(admissionregistrationv1.SideEffectClassNone),
+			FailurePolicy:           failurePolicyPtr(admissionregistrationv1.Fail),
+			MatchPolicy:             matchPolicyPtr(admissionregistrationv1.Equivalent),
+			ClientConfig:            clientConfig,
+			Rules:                   rules,
 		}},
 	}
 }
 
-func strPtr(s string) *string { return &s }
+func webhookClientConfigAndRules(kn *kubernautv1alpha1.Kubernaut, path string, caBundle []byte) (admissionregistrationv1.WebhookClientConfig, []admissionregistrationv1.RuleWithOperations) {
+	port := PortHTTPS
+	scope := admissionregistrationv1.AllScopes
+
+	clientConfig := admissionregistrationv1.WebhookClientConfig{
+		Service: &admissionregistrationv1.ServiceReference{
+			Namespace: kn.Namespace,
+			Name:      "authwebhook-service",
+			Path:      strPtr(path),
+			Port:      &port,
+		},
+		CABundle: caBundle,
+	}
+
+	rules := []admissionregistrationv1.RuleWithOperations{{
+		Operations: []admissionregistrationv1.OperationType{
+			admissionregistrationv1.Create,
+			admissionregistrationv1.Update,
+		},
+		Rule: admissionregistrationv1.Rule{
+			APIGroups:   []string{"kubernaut.ai"},
+			APIVersions: []string{"v1alpha1"},
+			Resources:   []string{"actiontypes"},
+			Scope:       &scope,
+		},
+	}}
+
+	return clientConfig, rules
+}
+
+func strPtr(s string) *string                                                          { return &s }
+func sideEffectPtr(v admissionregistrationv1.SideEffectClass) *admissionregistrationv1.SideEffectClass { return &v }
+func failurePolicyPtr(v admissionregistrationv1.FailurePolicyType) *admissionregistrationv1.FailurePolicyType { return &v }
+func matchPolicyPtr(v admissionregistrationv1.MatchPolicyType) *admissionregistrationv1.MatchPolicyType { return &v }

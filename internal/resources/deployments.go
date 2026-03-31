@@ -39,10 +39,7 @@ func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, err
 // DataStorageDeployment builds the data-storage Deployment with init container
 // for database readiness and projected secrets volume.
 func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
-	pgPort := kn.Spec.PostgreSQL.Port
-	if pgPort == 0 {
-		pgPort = 5432
-	}
+	pgPort := PostgreSQLPort(kn)
 
 	initContainer := corev1.Container{
 		Name:            "wait-for-postgres",
@@ -95,10 +92,7 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 
 // AIAnalysisDeployment builds the aianalysis Deployment.
 func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
-	policyName := kn.Spec.AIAnalysis.Policy.ConfigMapName
-	if policyName == "" {
-		policyName = "aianalysis-policies"
-	}
+	policyName := AIAnalysisPolicyName(kn)
 	volumes := []corev1.Volume{
 		configMapVolume("config", "aianalysis-config"),
 		configMapVolume("rego-policies", policyName),
@@ -113,10 +107,7 @@ func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, 
 
 // SignalProcessingDeployment builds the signalprocessing Deployment.
 func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
-	policyName := kn.Spec.SignalProcessing.Policy.ConfigMapName
-	if policyName == "" {
-		policyName = "signalprocessing-policy"
-	}
+	policyName := SignalProcessingPolicyName(kn)
 	volumes := []corev1.Volume{
 		configMapVolume("config", "signalprocessing-config"),
 		configMapVolume("policy", policyName),
@@ -221,14 +212,9 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 
 // HolmesGPTAPIDeployment builds the holmesgpt-api Deployment.
 func HolmesGPTAPIDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
-	sdkCMName := kn.Spec.HolmesGPTAPI.LLM.SdkConfigMapName
-	if sdkCMName == "" {
-		sdkCMName = "holmesgpt-sdk-config"
-	}
-
 	volumes := []corev1.Volume{
 		configMapVolume("config", "holmesgpt-api-config"),
-		configMapVolume("sdk-config", sdkCMName),
+		configMapVolume("sdk-config", HolmesGPTSDKConfigName(kn)),
 		secretVolume("llm-credentials", kn.Spec.HolmesGPTAPI.LLM.CredentialsSecretName),
 	}
 	mounts := []corev1.VolumeMount{
@@ -280,8 +266,8 @@ func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 	return deployment(kn, ComponentAuthWebhook, "authwebhook",
 		kn.Spec.AuthWebhook.Resources, mounts, volumes, nil,
 		[]corev1.ContainerPort{
-			{Name: "webhook", ContainerPort: 9443, Protocol: corev1.ProtocolTCP},
-			{Name: "health", ContainerPort: 8081, Protocol: corev1.ProtocolTCP},
+			{Name: "webhook", ContainerPort: PortWebhookServer, Protocol: corev1.ProtocolTCP},
+			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 		},
 	)
 }

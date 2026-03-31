@@ -82,10 +82,7 @@ func DataStorageDBSecret(kn *kubernautv1alpha1.Kubernaut, pgSecret *corev1.Secre
 		}
 	}
 
-	pgPort := kn.Spec.PostgreSQL.Port
-	if pgPort == 0 {
-		pgPort = 5432
-	}
+	pgPort := PostgreSQLPort(kn)
 
 	user := string(pgSecret.Data["POSTGRES_USER"])
 	password := string(pgSecret.Data["POSTGRES_PASSWORD"])
@@ -106,14 +103,9 @@ func DataStorageDBSecret(kn *kubernautv1alpha1.Kubernaut, pgSecret *corev1.Secre
 
 // WorkflowNamespace builds the Namespace resource for workflow execution.
 func WorkflowNamespace(kn *kubernautv1alpha1.Kubernaut) *corev1.Namespace {
-	wfNs := kn.Spec.WorkflowExecution.WorkflowNamespace
-	if wfNs == "" {
-		wfNs = DefaultWorkflowNamespace
-	}
-
 	return &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   wfNs,
+			Name:   ResolveWorkflowNamespace(kn),
 			Labels: CommonLabels(kn),
 		},
 	}

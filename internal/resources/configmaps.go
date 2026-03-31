@@ -41,10 +41,7 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 
 // DataStorageConfigMap builds the datastorage-config ConfigMap.
 func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
-	pgPort := kn.Spec.PostgreSQL.Port
-	if pgPort == 0 {
-		pgPort = 5432
-	}
+	pgPort := PostgreSQLPort(kn)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "server:\n")
@@ -89,11 +86,7 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 	ns := kn.Namespace
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "controller:\n")
-	fmt.Fprintf(&b, "  metricsAddr: \":9090\"\n")
-	fmt.Fprintf(&b, "  healthProbeAddr: \":8081\"\n")
-	fmt.Fprintf(&b, "  leaderElection: false\n")
-	fmt.Fprintf(&b, "  leaderElectionId: \"aianalysis.kubernaut.ai\"\n")
+	writeControllerBlock(&b, "aianalysis.kubernaut.ai")
 	fmt.Fprintf(&b, "holmesgpt:\n")
 	fmt.Fprintf(&b, "  url: \"http://holmesgpt-api.%s.svc.cluster.local:8080\"\n", ns)
 	fmt.Fprintf(&b, "  timeout: \"180s\"\n")
@@ -125,7 +118,7 @@ func AIAnalysisPoliciesConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.Config
 		return nil
 	}
 	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "aianalysis-policies", ComponentAIAnalysis),
+		ObjectMeta: ObjectMeta(kn, AIAnalysisPolicyName(kn), ComponentAIAnalysis),
 		Data: map[string]string{
 			"approval.rego": "package kubernaut.aianalysis\ndefault allow = true\n",
 		},
@@ -137,11 +130,7 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMa
 	ns := kn.Namespace
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "controller:\n")
-	fmt.Fprintf(&b, "  metricsAddr: \":9090\"\n")
-	fmt.Fprintf(&b, "  healthProbeAddr: \":8081\"\n")
-	fmt.Fprintf(&b, "  leaderElection: false\n")
-	fmt.Fprintf(&b, "  leaderElectionId: \"signalprocessing.kubernaut.ai\"\n")
+	writeControllerBlock(&b, "signalprocessing.kubernaut.ai")
 	fmt.Fprintf(&b, "enrichment:\n")
 	fmt.Fprintf(&b, "  cacheTtl: \"5m\"\n")
 	fmt.Fprintf(&b, "  timeout: \"10s\"\n")
@@ -171,7 +160,7 @@ func SignalProcessingPolicyConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.Co
 		return nil
 	}
 	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "signalprocessing-policy", ComponentSignalProcessing),
+		ObjectMeta: ObjectMeta(kn, SignalProcessingPolicyName(kn), ComponentSignalProcessing),
 		Data: map[string]string{
 			"policy.rego": "package kubernaut.signalprocessing\ndefault allow = true\n",
 		},
@@ -214,10 +203,7 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.C
 // WorkflowExecutionConfigMap builds the workflowexecution-config ConfigMap.
 func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 	we := &kn.Spec.WorkflowExecution
-	wfNs := we.WorkflowNamespace
-	if wfNs == "" {
-		wfNs = DefaultWorkflowNamespace
-	}
+	wfNs := ResolveWorkflowNamespace(kn)
 	cooldown := we.CooldownPeriod
 	if cooldown == "" {
 		cooldown = "1m"
@@ -272,11 +258,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.Conf
 // NotificationControllerConfigMap builds the notification-controller-config ConfigMap.
 func NotificationControllerConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 	var b strings.Builder
-	fmt.Fprintf(&b, "controller:\n")
-	fmt.Fprintf(&b, "  metricsAddr: \":9090\"\n")
-	fmt.Fprintf(&b, "  healthProbeAddr: \":8081\"\n")
-	fmt.Fprintf(&b, "  leaderElection: false\n")
-	fmt.Fprintf(&b, "  leaderElectionId: \"notification.kubernaut.ai\"\n")
+	writeControllerBlock(&b, "notification.kubernaut.ai")
 	fmt.Fprintf(&b, "delivery:\n")
 	fmt.Fprintf(&b, "  console:\n")
 	fmt.Fprintf(&b, "    enabled: true\n")
@@ -307,7 +289,7 @@ func NotificationControllerConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.Co
 }
 
 // NotificationRoutingConfigMap builds the notification-routing-config ConfigMap.
-// Returns nil if no routing ConfigMap is specified (operator generates a minimal one).
+// When Slack is configured, routes are generated; otherwise a console-only fallback is used.
 func NotificationRoutingConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 	slack := kn.Spec.Notification.Slack
 	channel := slack.Channel
@@ -360,7 +342,7 @@ func HolmesGPTSDKConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 		return nil
 	}
 	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "holmesgpt-sdk-config", ComponentHolmesGPTAPI),
+		ObjectMeta: ObjectMeta(kn, HolmesGPTSDKConfigName(kn), ComponentHolmesGPTAPI),
 		Data: map[string]string{
 			"sdk-config.yaml": fmt.Sprintf(
 				"llm:\n  provider: %s\n  model: %s\n",
@@ -396,25 +378,31 @@ func AuthWebhookConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 // EffectivenessMonitorServiceCAConfigMap returns the ConfigMap used for
 // OCP service-ca injection for EffectivenessMonitor.
 func EffectivenessMonitorServiceCAConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
-	cm := &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "effectivenessmonitor-service-ca", ComponentEffectivenessMonitor),
-	}
-	cm.Annotations = map[string]string{
-		"service.beta.openshift.io/inject-cabundle": "true",
-	}
-	return cm
+	return serviceCAConfigMap(kn, "effectivenessmonitor-service-ca", ComponentEffectivenessMonitor)
 }
 
 // HolmesGPTAPIServiceCAConfigMap returns the ConfigMap for OCP service-ca injection
 // for HolmesGPT-API.
 func HolmesGPTAPIServiceCAConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+	return serviceCAConfigMap(kn, "holmesgpt-api-service-ca", ComponentHolmesGPTAPI)
+}
+
+func serviceCAConfigMap(kn *kubernautv1alpha1.Kubernaut, name, component string) *corev1.ConfigMap {
 	cm := &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "holmesgpt-api-service-ca", ComponentHolmesGPTAPI),
+		ObjectMeta: ObjectMeta(kn, name, component),
 	}
 	cm.Annotations = map[string]string{
-		"service.beta.openshift.io/inject-cabundle": "true",
+		OCPServiceCAInjectAnnotation: "true",
 	}
 	return cm
+}
+
+func writeControllerBlock(b *strings.Builder, leaderElectionID string) {
+	fmt.Fprintf(b, "controller:\n")
+	fmt.Fprintf(b, "  metricsAddr: \":9090\"\n")
+	fmt.Fprintf(b, "  healthProbeAddr: \":8081\"\n")
+	fmt.Fprintf(b, "  leaderElection: false\n")
+	fmt.Fprintf(b, "  leaderElectionId: %q\n", leaderElectionID)
 }
 
 func withDefault(val, def string) string {

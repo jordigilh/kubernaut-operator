@@ -62,16 +62,15 @@ func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
 			Selector: SelectorLabels(ComponentAuthWebhook),
 			Ports: []corev1.ServicePort{{
 				Name:       "https",
-				Port:       443,
+				Port:       PortAuthWebhookService,
 				TargetPort: intstr.FromString("webhook"),
 				Protocol:   corev1.ProtocolTCP,
 			}},
 		},
 	}
-	if awSvc.Annotations == nil {
-		awSvc.Annotations = map[string]string{}
+	awSvc.Annotations = map[string]string{
+		"service.beta.openshift.io/serving-cert-secret-name": "authwebhook-tls",
 	}
-	awSvc.Annotations["service.beta.openshift.io/serving-cert-secret-name"] = "authwebhook-tls"
 	services = append(services, awSvc)
 
 	return services

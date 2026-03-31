@@ -257,7 +257,7 @@ func TestValkeyAddr(t *testing.T) {
 	}
 }
 
-func TestPostgreSQLHost(t *testing.T) {
+func Test_postgreSQLHost(t *testing.T) {
 	tests := []struct {
 		name string
 		spec kubernautv1alpha1.PostgreSQLSpec
@@ -268,8 +268,8 @@ func TestPostgreSQLHost(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := PostgreSQLHost(&tt.spec); got != tt.want {
-				t.Errorf("PostgreSQLHost() = %q, want %q", got, tt.want)
+			if got := postgreSQLHost(&tt.spec); got != tt.want {
+				t.Errorf("postgreSQLHost() = %q, want %q", got, tt.want)
 			}
 		})
 	}

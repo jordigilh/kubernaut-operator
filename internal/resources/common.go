@@ -47,7 +47,31 @@ const (
 const (
 	PortHTTP  int32 = 8080
 	PortHTTPS int32 = 8443
+	// PortAuthWebhookService is the standard HTTPS port (443) exposed by the
+	// auth-webhook Kubernetes Service, distinct from PortHTTPS (8443) used by
+	// application containers.
+	PortAuthWebhookService int32 = 443
+	PortWebhookServer      int32 = 9443
+	PortHealthProbe        int32 = 8081
 )
+
+// Default PostgreSQL port when not specified in the CR.
+const DefaultPostgreSQLPort int32 = 5432
+
+// Default Valkey port when not specified in the CR.
+const DefaultValkeyPort int32 = 6379
+
+// Migration Job tuning constants.
+const (
+	MigrationBackoffLimit int32 = 3
+	MigrationTTLSeconds   int32 = 300
+)
+
+// PDB constant.
+const PDBMaxUnavailable = 1
+
+// OCP service-CA injection annotation.
+const OCPServiceCAInjectAnnotation = "service.beta.openshift.io/inject-cabundle"
 
 // DefaultWorkflowNamespace is the namespace used for workflow execution
 // when not overridden in the CR spec.
@@ -224,23 +248,71 @@ func GatewayURL(namespace string) string {
 	return fmt.Sprintf("http://gateway-service.%s.svc.cluster.local:8080", namespace)
 }
 
+// PostgreSQLPort returns the effective PostgreSQL port, defaulting to 5432.
+func PostgreSQLPort(kn *kubernautv1alpha1.Kubernaut) int32 {
+	if kn.Spec.PostgreSQL.Port != 0 {
+		return kn.Spec.PostgreSQL.Port
+	}
+	return DefaultPostgreSQLPort
+}
+
+// ResolveWorkflowNamespace returns the effective workflow namespace name.
+func ResolveWorkflowNamespace(kn *kubernautv1alpha1.Kubernaut) string {
+	if kn.Spec.WorkflowExecution.WorkflowNamespace != "" {
+		return kn.Spec.WorkflowExecution.WorkflowNamespace
+	}
+	return DefaultWorkflowNamespace
+}
+
+// AIAnalysisPolicyName returns the AI analysis policy ConfigMap name,
+// defaulting to "aianalysis-policies" when not overridden.
+func AIAnalysisPolicyName(kn *kubernautv1alpha1.Kubernaut) string {
+	if kn.Spec.AIAnalysis.Policy.ConfigMapName != "" {
+		return kn.Spec.AIAnalysis.Policy.ConfigMapName
+	}
+	return "aianalysis-policies"
+}
+
+// SignalProcessingPolicyName returns the signal processing policy ConfigMap name,
+// defaulting to "signalprocessing-policy" when not overridden.
+func SignalProcessingPolicyName(kn *kubernautv1alpha1.Kubernaut) string {
+	if kn.Spec.SignalProcessing.Policy.ConfigMapName != "" {
+		return kn.Spec.SignalProcessing.Policy.ConfigMapName
+	}
+	return "signalprocessing-policy"
+}
+
+// HolmesGPTSDKConfigName returns the HolmesGPT SDK ConfigMap name,
+// defaulting to "holmesgpt-sdk-config" when not overridden.
+func HolmesGPTSDKConfigName(kn *kubernautv1alpha1.Kubernaut) string {
+	if kn.Spec.HolmesGPTAPI.LLM.SdkConfigMapName != "" {
+		return kn.Spec.HolmesGPTAPI.LLM.SdkConfigMapName
+	}
+	return "holmesgpt-sdk-config"
+}
+
 // ValkeyAddr returns the Valkey address in host:port format.
 func ValkeyAddr(spec *kubernautv1alpha1.ValkeySpec) string {
 	port := spec.Port
 	if port == 0 {
-		port = 6379
+		port = DefaultValkeyPort
 	}
 	return fmt.Sprintf("%s:%d", spec.Host, port)
 }
 
-// PostgreSQLHost returns the PostgreSQL DSN host:port.
-func PostgreSQLHost(spec *kubernautv1alpha1.PostgreSQLSpec) string {
+// postgreSQLHost returns the PostgreSQL DSN host:port.
+func postgreSQLHost(spec *kubernautv1alpha1.PostgreSQLSpec) string {
 	port := spec.Port
 	if port == 0 {
-		port = 5432
+		port = DefaultPostgreSQLPort
 	}
 	return fmt.Sprintf("%s:%d", spec.Host, port)
 }
+
+// componentsNeedingNSRole lists components that require namespace-scoped Roles
+// and RoleBindings. Currently all components need NS roles; split from
+// AllComponents() if a component is added without RBAC needs.
+var componentsNeedingNSRole = AllComponents()
 
 func boolPtr(b bool) *bool { return &b }
 
