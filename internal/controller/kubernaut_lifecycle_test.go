@@ -37,19 +37,6 @@ import (
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
-// reconcileN drives N full reconcile cycles on the singleton CR.
-func reconcileN(ctx context.Context, r *KubernautReconciler, n int) (reconcile.Result, error) {
-	var result reconcile.Result
-	var err error
-	for i := 0; i < n; i++ {
-		result, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-		if err != nil {
-			return result, err
-		}
-	}
-	return result, nil
-}
-
 // markMigrationJobComplete creates or patches the migration Job to have a
 // JobComplete condition, allowing the reconciler to proceed past phaseMigrate.
 func markMigrationJobComplete(ctx context.Context) {
@@ -121,6 +108,22 @@ func setAllDeploymentsReady(ctx context.Context) {
 	for _, c := range resources.AllComponents() {
 		setDeploymentReady(ctx, c+"-deployment")
 	}
+}
+
+// reconcileToDeployPhase drives a reconciler through finalizer, validate,
+// migration, and deploy phases, returning the reconciler for further use.
+func reconcileToDeployPhase(ctx context.Context) *KubernautReconciler {
+	r := newReconciler()
+	_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+	Expect(err).NotTo(HaveOccurred())
+	_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+	Expect(err).NotTo(HaveOccurred())
+	markMigrationJobComplete(ctx)
+	_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+	Expect(err).NotTo(HaveOccurred())
+	_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+	Expect(err).NotTo(HaveOccurred())
+	return r
 }
 
 // newCRWithRouteDisabled returns a minimal CR with the OCP route disabled
@@ -225,6 +228,18 @@ func cleanupNamespacedResources(ctx context.Context) {
 	}
 }
 
+// stripWorkflowNamespaceLabel removes the managed-by label so the finalizer
+// skips namespace deletion, keeping envtest healthy. envtest lacks a namespace
+// controller, so deleting a namespace puts it into Terminating forever.
+func stripWorkflowNamespaceLabel(ctx context.Context) {
+	ns := &corev1.Namespace{}
+	wfNsName := resources.DefaultWorkflowNamespace
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: wfNsName}, ns); err == nil {
+		delete(ns.Labels, "app.kubernetes.io/managed-by")
+		Expect(k8sClient.Update(ctx, ns)).To(Succeed())
+	}
+}
+
 // cleanupClusterScoped removes all operator-managed cluster-scoped resources.
 // Note: we intentionally skip deleting the workflow namespace because envtest
 // lacks a namespace controller and namespace deletion leaves the namespace stuck
@@ -314,8 +329,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 
-			r := reconcileToRunning(ctx)
-			_ = r
+			reconcileToRunning(ctx)
 
 			kn := &kubernautv1alpha1.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
@@ -361,14 +375,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("should report Degraded when a Deployment has insufficient replicas", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
-			r := newReconciler()
-
-			By("driving to deploy phase")
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			markMigrationJobComplete(ctx)
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			r := reconcileToDeployPhase(ctx)
 
 			By("marking all except gateway as ready")
 			for _, c := range resources.AllComponents() {
@@ -397,20 +404,16 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("should recover from Degraded to Running when Deployments become ready", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
-			r := newReconciler()
+			r := reconcileToDeployPhase(ctx)
 
-			By("driving to deploy then degraded")
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			markMigrationJobComplete(ctx)
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			By("driving to degraded")
 			for _, c := range resources.AllComponents() {
 				if c != resources.ComponentGateway {
 					setDeploymentReady(ctx, c+"-deployment")
 				}
 			}
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
 
 			kn := &kubernautv1alpha1.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
@@ -420,7 +423,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			setDeploymentReady(ctx, "gateway-deployment")
 
 			By("reconciling - should recover to Running")
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
@@ -438,7 +441,8 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 
 			r := newReconciler()
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
 
 			By("reconciling after validate - Job created, not complete yet")
 			result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -460,8 +464,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 
 			r := newReconciler()
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
 
 			By("marking Job as failed")
 			markMigrationJobFailed(ctx)
@@ -484,8 +490,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 
 			r := newReconciler()
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
 
 			By("getting the existing Job UID")
 			job := &batchv1.Job{}
@@ -494,7 +502,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			origUID := job.UID
 
 			By("reconciling again - Job should not be recreated")
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(k8sClient.Get(ctx, key, job)).To(Succeed())
@@ -523,7 +531,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}
 			Expect(names).To(HaveKey(testNamespace+"-alertmanager-view"),
 				"monitoring ClusterRole should exist when monitoring is enabled")
-			Expect(names).To(HaveKey(testNamespace+"-gateway-signal-source"))
+			Expect(names).To(HaveKey(testNamespace + "-gateway-signal-source"))
 		})
 
 		It("should delete monitoring RBAC and service-CA CMs when monitoring is disabled", func() {
@@ -721,30 +729,13 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	// ======================================================================
 
 	Context("Deletion Edge Cases", func() {
-		// envtest lacks a namespace controller, so deleting a namespace puts it
-		// into Terminating forever. We prevent the finalizer from deleting the
-		// workflow namespace by stripping its managed-by label before each
-		// deletion reconcile. This is safe: the code path is tested by
-		// asserting DeletionTimestamp is nil (unmanaged) or non-nil (managed).
-
-		// stripWorkflowNamespaceLabel removes the managed-by label so the
-		// finalizer skips namespace deletion, keeping envtest healthy.
-		stripWorkflowNamespaceLabel := func() {
-			ns := &corev1.Namespace{}
-			wfNsName := resources.DefaultWorkflowNamespace
-			if err := k8sClient.Get(ctx, types.NamespacedName{Name: wfNsName}, ns); err == nil {
-				delete(ns.Labels, "app.kubernetes.io/managed-by")
-				Expect(k8sClient.Update(ctx, ns)).To(Succeed())
-			}
-		}
-
 		It("should skip deletion of workflow namespace not managed by operator", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
 			By("removing managed-by label to simulate user-managed namespace")
-			stripWorkflowNamespaceLabel()
+			stripWorkflowNamespaceLabel(ctx)
 
 			By("deleting the CR")
 			kn := &kubernautv1alpha1.Kubernaut{}
@@ -775,7 +766,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(crList.Items).NotTo(BeEmpty())
 
 			By("preventing namespace deletion for envtest stability")
-			stripWorkflowNamespaceLabel()
+			stripWorkflowNamespaceLabel(ctx)
 
 			By("deleting the CR")
 			kn := &kubernautv1alpha1.Kubernaut{}
@@ -817,7 +808,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			kn.Spec.Monitoring.Enabled = &f
 			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
 
-			stripWorkflowNamespaceLabel()
+			stripWorkflowNamespaceLabel(ctx)
 			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
 
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -845,7 +836,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			kn.Spec.Ansible.Enabled = false
 			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
 
-			stripWorkflowNamespaceLabel()
+			stripWorkflowNamespaceLabel(ctx)
 			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
 
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -867,7 +858,8 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 
 			r := newReconciler()
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
 
 			By("modifying spec between reconcile cycles (simulating concurrent edit)")
 			kn := &kubernautv1alpha1.Kubernaut{}
@@ -876,7 +868,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
 
 			By("reconciling - status patch should not conflict with spec change")
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
@@ -936,16 +928,16 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 
 			r := newReconciler()
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
 			kn := &kubernautv1alpha1.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			crdCond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionCRDsInstalled)
-			if crdCond != nil {
-				Expect(crdCond.Status).To(Equal(metav1.ConditionTrue))
-			}
+			Expect(crdCond).NotTo(BeNil(), "ConditionCRDsInstalled should be set")
+			Expect(crdCond.Status).To(Equal(metav1.ConditionTrue))
 		})
 
 		It("should be idempotent on repeated EnsureCRDs calls", func() {
@@ -1187,11 +1179,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(wfRoleList.Items).NotTo(BeEmpty(), "workflow roles should exist before deletion")
 
 			By("preventing namespace deletion for envtest stability")
-			wfNs := &corev1.Namespace{}
-			if err := k8sClient.Get(ctx, types.NamespacedName{Name: wfNsName}, wfNs); err == nil {
-				delete(wfNs.Labels, "app.kubernetes.io/managed-by")
-				Expect(k8sClient.Update(ctx, wfNs)).To(Succeed())
-			}
+			stripWorkflowNamespaceLabel(ctx)
 
 			By("deleting the CR")
 			kn := &kubernautv1alpha1.Kubernaut{}

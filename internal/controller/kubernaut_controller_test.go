@@ -257,7 +257,8 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
 			result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
@@ -289,8 +290,9 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
 			kn := &kubernautv1alpha1.Kubernaut{}
@@ -307,8 +309,9 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
 			kn := &kubernautv1alpha1.Kubernaut{}
@@ -323,7 +326,7 @@ var _ = Describe("Kubernaut Controller", func() {
 	// ---- Phase Progression ----
 
 	Context("Phase Progression", func() {
-		It("should not have a NotFound error when CR does not exist", func() {
+		It("should return success when CR does not exist", func() {
 			r := newReconciler()
 			_, err := r.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: "nonexistent", Namespace: testNamespace},
@@ -340,8 +343,9 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
 			kn := &kubernautv1alpha1.Kubernaut{}

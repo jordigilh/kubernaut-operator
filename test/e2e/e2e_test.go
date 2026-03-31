@@ -40,8 +40,8 @@ const (
 	// workflowNS is the namespace the operator creates for workflow execution.
 	workflowNS = "kubernaut-workflows"
 
-	serviceAccountName   = "kubernaut-operator-controller-manager"
-	metricsServiceName   = "kubernaut-operator-controller-manager-metrics-service"
+	serviceAccountName     = "kubernaut-operator-controller-manager"
+	metricsServiceName     = "kubernaut-operator-controller-manager-metrics-service"
 	metricsRoleBindingName = "kubernaut-operator-metrics-binding"
 )
 
@@ -96,39 +96,11 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 	})
 
 	AfterEach(func() {
-		specReport := CurrentSpecReport()
-		if specReport.Failed() {
-			By("Fetching controller manager pod logs")
-			cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", operatorNS)
-			controllerLogs, err := utils.Run(cmd)
-			if err == nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerLogs)
-			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Controller logs: %s", err)
-			}
-
-			By("Fetching Kubernetes events in operator namespace")
-			cmd = exec.Command("kubectl", "get", "events", "-n", operatorNS,
-				"--sort-by=.lastTimestamp")
-			eventsOutput, err := utils.Run(cmd)
-			if err == nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Operator events:\n%s", eventsOutput)
-			}
-
-			By("Fetching Kubernetes events in CR namespace")
-			cmd = exec.Command("kubectl", "get", "events", "-n", crNS,
-				"--sort-by=.lastTimestamp")
-			eventsOutput, err = utils.Run(cmd)
-			if err == nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "CR namespace events:\n%s", eventsOutput)
-			}
-
-			By("Fetching controller manager pod description")
-			cmd = exec.Command("kubectl", "describe", "pod", controllerPodName, "-n", operatorNS)
-			podDescription, err := utils.Run(cmd)
-			if err == nil {
-				fmt.Println("Pod description:\n", podDescription)
-			}
+		if CurrentSpecReport().Failed() {
+			collectDiagnostic("kubectl", "logs", controllerPodName, "-n", operatorNS)
+			collectDiagnostic("kubectl", "get", "events", "-n", operatorNS, "--sort-by=.lastTimestamp")
+			collectDiagnostic("kubectl", "get", "events", "-n", crNS, "--sort-by=.lastTimestamp")
+			collectDiagnostic("kubectl", "describe", "pod", controllerPodName, "-n", operatorNS)
 		}
 	})
 
@@ -248,31 +220,32 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			Eventually(verifyFinalizer).Should(Succeed())
 		})
 
-		It("should reach Running phase", func() {
+		It("should reach Running phase (all services deployed)", func() {
 			verifyRunning := func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "kubernaut", "kubernaut",
-					"-n", crNS, "-o", "jsonpath={.status.phase}")
+					"-n", crNS, "-o",
+					`jsonpath={.status.conditions[?(@.type=="ServicesDeployed")].status}`)
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Running"),
-					"Kubernaut CR should reach Running phase")
+				g.Expect(output).To(Equal("True"),
+					"ServicesDeployed condition should be True")
 			}
 			Eventually(verifyRunning, 10*time.Minute, 5*time.Second).Should(Succeed())
 		})
 
 		It("should create all component Deployments", func() {
-			components := []string{
-				"gateway", "datastorage", "aianalysis",
-				"signalprocessing", "remediation-orchestrator",
-				"workflow-execution", "effectivenessmonitor",
-				"notification", "holmesgpt-api", "auth-webhook",
+			deployments := []string{
+				"gateway-deployment", "data-storage-deployment", "aianalysis-deployment",
+				"signalprocessing-deployment", "remediationorchestrator-deployment",
+				"workflowexecution-deployment", "effectivenessmonitor-deployment",
+				"notification-deployment", "holmesgpt-api-deployment", "authwebhook-deployment",
 			}
-			for _, comp := range components {
-				cmd := exec.Command("kubectl", "get", "deployment", comp,
+			for _, dep := range deployments {
+				cmd := exec.Command("kubectl", "get", "deployment", dep,
 					"-n", crNS, "-o", "jsonpath={.metadata.name}")
 				output, err := utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "Deployment %q should exist", comp)
-				Expect(output).To(Equal(comp))
+				Expect(err).NotTo(HaveOccurred(), "Deployment %q should exist", dep)
+				Expect(output).To(Equal(dep))
 			}
 		})
 
@@ -285,9 +258,10 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 				Expect(output).To(Equal(name))
 			}
 			for _, svc := range []string{
-				"gateway", "datastorage", "aianalysis",
-				"signalprocessing", "effectivenessmonitor",
-				"notification", "holmesgpt-api", "auth-webhook",
+				"gateway-service", "data-storage-service", "aianalysis-service",
+				"signalprocessing-service", "remediationorchestrator-service",
+				"workflowexecution-service", "effectivenessmonitor-service",
+				"notification-service", "holmesgpt-api-service", "authwebhook-service",
 			} {
 				verifyService(svc)
 			}
@@ -298,7 +272,7 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 				"-n", crNS, "-o", "jsonpath={.spec.to.name}")
 			output, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Gateway Route should exist")
-			Expect(output).To(Equal("gateway"))
+			Expect(output).To(Equal("gateway-service"))
 		})
 
 		It("should create ClusterRoles with kubernaut labels", func() {
@@ -324,19 +298,18 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 		})
 
 		It("should create ServiceAccounts for all components", func() {
-			components := []string{
-				"gateway", "datastorage", "aianalysis",
-				"signalprocessing", "remediation-orchestrator",
-				"workflow-execution", "effectivenessmonitor",
-				"notification", "holmesgpt-api", "auth-webhook",
+			serviceAccounts := []string{
+				"gateway", "data-storage-sa", "aianalysis-controller",
+				"signalprocessing-controller", "remediationorchestrator-controller",
+				"workflowexecution-controller", "effectivenessmonitor-controller",
+				"notification-controller", "holmesgpt-api-sa", "authwebhook",
 			}
-			for _, comp := range components {
-				saName := comp + "-sa"
-				cmd := exec.Command("kubectl", "get", "serviceaccount", saName,
+			for _, sa := range serviceAccounts {
+				cmd := exec.Command("kubectl", "get", "serviceaccount", sa,
 					"-n", crNS, "-o", "jsonpath={.metadata.name}")
 				output, err := utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "SA %q should exist", saName)
-				Expect(output).To(Equal(saName))
+				Expect(err).NotTo(HaveOccurred(), "SA %q should exist", sa)
+				Expect(output).To(Equal(sa))
 			}
 		})
 
@@ -349,11 +322,11 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 		})
 
 		It("should create the workflow runner ServiceAccount in the workflow namespace", func() {
-			cmd := exec.Command("kubectl", "get", "serviceaccount", "workflow-runner-sa",
+			cmd := exec.Command("kubectl", "get", "serviceaccount", "kubernaut-workflow-runner",
 				"-n", workflowNS, "-o", "jsonpath={.metadata.name}")
 			output, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(output).To(Equal("workflow-runner-sa"))
+			Expect(output).To(Equal("kubernaut-workflow-runner"))
 		})
 
 		It("should create OCP service-CA annotated ConfigMaps when monitoring is enabled", func() {
@@ -397,7 +370,7 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 				"-n", crNS, "-o", "jsonpath={.roleRef.name}")
 			output, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "HolmesGPT client RoleBinding should exist")
-			Expect(output).To(Equal("holmesgpt-api-client"))
+			Expect(output).To(Equal(crNS + "-holmesgpt-api-client"))
 		})
 	})
 
@@ -412,29 +385,11 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 		})
 
 		It("should clean up all ClusterRoles managed by the operator", func() {
-			verifyCleaned := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "clusterroles",
-					"-l", "app.kubernetes.io/managed-by=kubernaut-operator",
-					"-o", "go-template={{range .items}}{{.metadata.name}}{{\"\\n\"}}{{end}}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(utils.GetNonEmptyLines(output)).To(BeEmpty(),
-					"all operator-managed ClusterRoles should be deleted")
-			}
-			Eventually(verifyCleaned, 2*time.Minute).Should(Succeed())
+			verifyCleanedUp("clusterroles")
 		})
 
 		It("should clean up all ClusterRoleBindings managed by the operator", func() {
-			verifyCleaned := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "clusterrolebindings",
-					"-l", "app.kubernetes.io/managed-by=kubernaut-operator",
-					"-o", "go-template={{range .items}}{{.metadata.name}}{{\"\\n\"}}{{end}}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(utils.GetNonEmptyLines(output)).To(BeEmpty(),
-					"all operator-managed ClusterRoleBindings should be deleted")
-			}
-			Eventually(verifyCleaned, 2*time.Minute).Should(Succeed())
+			verifyCleanedUp("clusterrolebindings")
 		})
 
 		It("should clean up the workflow namespace", func() {
@@ -454,8 +409,8 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 				kind string
 				name string
 			}{
-				{"mutatingwebhookconfigurations", "kubernaut-mutating-webhook"},
-				{"validatingwebhookconfigurations", "kubernaut-validating-webhook"},
+				{"mutatingwebhookconfigurations", crNS + "-authwebhook-mutating"},
+				{"validatingwebhookconfigurations", crNS + "-authwebhook-validating"},
 			} {
 				cmd := exec.Command("kubectl", "get", wh.kind, wh.name,
 					"--ignore-not-found=true", "-o", "jsonpath={.metadata.name}")
@@ -486,15 +441,15 @@ func createBYOSecrets() {
 		{
 			name: "postgresql-secret",
 			data: map[string]string{
-				"username": "kubernaut",
-				"password": "test-pg-password",
-				"database": "kubernaut",
+				"POSTGRES_USER":     "kubernaut",
+				"POSTGRES_PASSWORD": "test-pg-password",
+				"POSTGRES_DB":       "kubernaut",
 			},
 		},
 		{
 			name: "valkey-secret",
 			data: map[string]string{
-				"password": "test-valkey-password",
+				"valkey-secrets.yaml": "requirepass test-valkey-password",
 			},
 		},
 		{
@@ -566,4 +521,38 @@ type tokenRequest struct {
 	Status struct {
 		Token string `json:"token"`
 	} `json:"status"`
+}
+
+
+// kubectlGetLabeled runs a label-selector query and returns the output.
+func kubectlGetLabeled(kind, label, gotemplate string) (string, error) {
+	args := []string{"get", kind, "-l", label}
+	if gotemplate != "" {
+		args = append(args, "-o", fmt.Sprintf("go-template=%s", gotemplate))
+	}
+	return utils.Run(exec.Command("kubectl", args...))
+}
+
+// verifyCleanedUp polls until all operator-managed resources of the given kind
+// are deleted.
+func verifyCleanedUp(kind string) {
+	Eventually(func(g Gomega) {
+		output, err := kubectlGetLabeled(kind,
+			"app.kubernetes.io/managed-by=kubernaut-operator",
+			`{{range .items}}{{.metadata.name}}{{"\\n"}}{{end}}`)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(utils.GetNonEmptyLines(output)).To(BeEmpty(),
+			"all operator-managed %s should be deleted", kind)
+	}, 2*time.Minute).Should(Succeed())
+}
+
+// collectDiagnostic runs a command and writes its output to GinkgoWriter.
+func collectDiagnostic(name string, args ...string) {
+	cmd := exec.Command(name, args...)
+	output, err := utils.Run(cmd)
+	if err == nil {
+		_, _ = fmt.Fprintf(GinkgoWriter, "=== %s %v ===\n%s\n", name, args, output)
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "=== %s %v FAILED: %v ===\n", name, args, err)
+	}
 }

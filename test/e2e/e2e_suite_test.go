@@ -43,16 +43,11 @@ func TestE2E(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	if projectImage == "" {
-		projectImage = "controller:latest"
+		projectImage = "quay.io/kubernaut-ai/kubernaut-operator:1.1.0"
 	}
 
-	By("building the operator image")
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
+	By("verifying oc login")
+	cmd := exec.Command("oc", "whoami")
 	_, err := utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the operator image")
-
-	By("pushing the operator image")
-	cmd = exec.Command("make", "docker-push", fmt.Sprintf("IMG=%s", projectImage))
-	_, err = utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to push the operator image")
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Must be logged into OCP (oc login)")
 })

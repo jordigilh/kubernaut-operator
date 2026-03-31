@@ -30,13 +30,17 @@ import (
 	"github.com/jordigilh/kubernaut/pkg/shared/assets"
 )
 
-func TestEnsureCRDs_CreatesAllCRDs(t *testing.T) {
+func newCRDTestClient(t *testing.T) *fake.ClientBuilder {
+	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
 		t.Fatalf("failed to register apiextensions scheme: %v", err)
 	}
+	return fake.NewClientBuilder().WithScheme(scheme)
+}
 
-	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+func TestEnsureCRDs_CreatesAllCRDs(t *testing.T) {
+	c := newCRDTestClient(t).Build()
 	ctx := context.Background()
 
 	if err := EnsureCRDs(ctx, c); err != nil {
@@ -76,12 +80,7 @@ func TestEnsureCRDs_CreatesAllCRDs(t *testing.T) {
 }
 
 func TestEnsureCRDs_UpdatesExistingCRD(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
-		t.Fatalf("failed to register apiextensions scheme: %v", err)
-	}
-
-	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	c := newCRDTestClient(t).Build()
 	ctx := context.Background()
 
 	if err := EnsureCRDs(ctx, c); err != nil {
