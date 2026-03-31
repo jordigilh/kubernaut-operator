@@ -24,11 +24,13 @@ import (
 
 func TestMutatingWebhookConfiguration_Basic(t *testing.T) {
 	kn := testKubernaut()
-	caBundle := []byte("fake-ca")
-	mwc := MutatingWebhookConfiguration(kn, caBundle)
+	mwc := MutatingWebhookConfiguration(kn)
 
 	if mwc.Name != "kubernaut-system-authwebhook-mutating" {
 		t.Errorf("name = %q, want %q", mwc.Name, "kubernaut-system-authwebhook-mutating")
+	}
+	if mwc.Annotations[OCPServiceCAInjectAnnotation] != "true" {
+		t.Error("MWC should have OCP service-CA inject annotation")
 	}
 	if len(mwc.Webhooks) != 1 {
 		t.Fatalf("should have 1 webhook, got %d", len(mwc.Webhooks))
@@ -47,17 +49,17 @@ func TestMutatingWebhookConfiguration_Basic(t *testing.T) {
 	if wh.ClientConfig.Service.Name != "authwebhook-service" {
 		t.Errorf("service name = %q, want %q", wh.ClientConfig.Service.Name, "authwebhook-service")
 	}
-	if *wh.ClientConfig.Service.Port != 8443 {
-		t.Errorf("service port = %d, want 8443", *wh.ClientConfig.Service.Port)
+	if *wh.ClientConfig.Service.Port != PortAuthWebhookService {
+		t.Errorf("service port = %d, want %d", *wh.ClientConfig.Service.Port, PortAuthWebhookService)
 	}
-	if string(wh.ClientConfig.CABundle) != "fake-ca" {
-		t.Error("caBundle should be set")
+	if len(wh.ClientConfig.CABundle) != 0 {
+		t.Error("caBundle should be empty (OCP service-CA injects it)")
 	}
 }
 
 func TestMutatingWebhookConfiguration_Rules(t *testing.T) {
 	kn := testKubernaut()
-	mwc := MutatingWebhookConfiguration(kn, nil)
+	mwc := MutatingWebhookConfiguration(kn)
 
 	wh := mwc.Webhooks[0]
 	if len(wh.Rules) != 1 {
@@ -89,7 +91,7 @@ func TestMutatingWebhookConfiguration_Rules(t *testing.T) {
 
 func TestMutatingWebhookConfiguration_Path(t *testing.T) {
 	kn := testKubernaut()
-	mwc := MutatingWebhookConfiguration(kn, nil)
+	mwc := MutatingWebhookConfiguration(kn)
 
 	wh := mwc.Webhooks[0]
 	if wh.ClientConfig.Service.Path == nil || *wh.ClientConfig.Service.Path != "/mutate" {
@@ -99,11 +101,13 @@ func TestMutatingWebhookConfiguration_Path(t *testing.T) {
 
 func TestValidatingWebhookConfiguration_Basic(t *testing.T) {
 	kn := testKubernaut()
-	caBundle := []byte("fake-ca")
-	vwc := ValidatingWebhookConfiguration(kn, caBundle)
+	vwc := ValidatingWebhookConfiguration(kn)
 
 	if vwc.Name != "kubernaut-system-authwebhook-validating" {
 		t.Errorf("name = %q, want %q", vwc.Name, "kubernaut-system-authwebhook-validating")
+	}
+	if vwc.Annotations[OCPServiceCAInjectAnnotation] != "true" {
+		t.Error("VWC should have OCP service-CA inject annotation")
 	}
 	if len(vwc.Webhooks) != 1 {
 		t.Fatalf("should have 1 webhook, got %d", len(vwc.Webhooks))
@@ -120,8 +124,8 @@ func TestValidatingWebhookConfiguration_Basic(t *testing.T) {
 
 func TestWebhookConfigurations_SideEffectsNone(t *testing.T) {
 	kn := testKubernaut()
-	mwc := MutatingWebhookConfiguration(kn, nil)
-	vwc := ValidatingWebhookConfiguration(kn, nil)
+	mwc := MutatingWebhookConfiguration(kn)
+	vwc := ValidatingWebhookConfiguration(kn)
 
 	if *mwc.Webhooks[0].SideEffects != admissionregistrationv1.SideEffectClassNone {
 		t.Error("mutating webhook should have SideEffects=None")
@@ -133,8 +137,8 @@ func TestWebhookConfigurations_SideEffectsNone(t *testing.T) {
 
 func TestWebhookConfigurations_FailurePolicy(t *testing.T) {
 	kn := testKubernaut()
-	mwc := MutatingWebhookConfiguration(kn, nil)
-	vwc := ValidatingWebhookConfiguration(kn, nil)
+	mwc := MutatingWebhookConfiguration(kn)
+	vwc := ValidatingWebhookConfiguration(kn)
 
 	if *mwc.Webhooks[0].FailurePolicy != admissionregistrationv1.Fail {
 		t.Error("mutating webhook should have FailurePolicy=Fail")
@@ -146,8 +150,8 @@ func TestWebhookConfigurations_FailurePolicy(t *testing.T) {
 
 func TestWebhookConfigurations_HaveCommonLabels(t *testing.T) {
 	kn := testKubernaut()
-	mwc := MutatingWebhookConfiguration(kn, nil)
-	vwc := ValidatingWebhookConfiguration(kn, nil)
+	mwc := MutatingWebhookConfiguration(kn)
+	vwc := ValidatingWebhookConfiguration(kn)
 
 	for _, obj := range []struct {
 		name   string

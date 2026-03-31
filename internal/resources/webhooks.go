@@ -24,13 +24,15 @@ import (
 )
 
 // MutatingWebhookConfiguration builds the AuthWebhook MutatingWebhookConfiguration.
-func MutatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut, caBundle []byte) *admissionregistrationv1.MutatingWebhookConfiguration {
-	clientConfig, rules := webhookClientConfigAndRules(kn, "/mutate", caBundle)
+// OCP service-CA injects the caBundle via the inject-cabundle annotation.
+func MutatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut) *admissionregistrationv1.MutatingWebhookConfiguration {
+	clientConfig, rules := webhookClientConfigAndRules(kn, "/mutate")
 
 	return &admissionregistrationv1.MutatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   kn.Namespace + "-authwebhook-mutating",
-			Labels: CommonLabels(kn),
+			Name:        kn.Namespace + "-authwebhook-mutating",
+			Labels:      CommonLabels(kn),
+			Annotations: map[string]string{OCPServiceCAInjectAnnotation: "true"},
 		},
 		Webhooks: []admissionregistrationv1.MutatingWebhook{{
 			Name:                    "mutating.authwebhook.kubernaut.ai",
@@ -45,13 +47,15 @@ func MutatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut, caBundle []by
 }
 
 // ValidatingWebhookConfiguration builds the AuthWebhook ValidatingWebhookConfiguration.
-func ValidatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut, caBundle []byte) *admissionregistrationv1.ValidatingWebhookConfiguration {
-	clientConfig, rules := webhookClientConfigAndRules(kn, "/validate", caBundle)
+// OCP service-CA injects the caBundle via the inject-cabundle annotation.
+func ValidatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut) *admissionregistrationv1.ValidatingWebhookConfiguration {
+	clientConfig, rules := webhookClientConfigAndRules(kn, "/validate")
 
 	return &admissionregistrationv1.ValidatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   kn.Namespace + "-authwebhook-validating",
-			Labels: CommonLabels(kn),
+			Name:        kn.Namespace + "-authwebhook-validating",
+			Labels:      CommonLabels(kn),
+			Annotations: map[string]string{OCPServiceCAInjectAnnotation: "true"},
 		},
 		Webhooks: []admissionregistrationv1.ValidatingWebhook{{
 			Name:                    "validating.authwebhook.kubernaut.ai",
@@ -65,8 +69,8 @@ func ValidatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut, caBundle []
 	}
 }
 
-func webhookClientConfigAndRules(kn *kubernautv1alpha1.Kubernaut, path string, caBundle []byte) (admissionregistrationv1.WebhookClientConfig, []admissionregistrationv1.RuleWithOperations) {
-	port := PortHTTPS
+func webhookClientConfigAndRules(kn *kubernautv1alpha1.Kubernaut, path string) (admissionregistrationv1.WebhookClientConfig, []admissionregistrationv1.RuleWithOperations) {
+	port := PortAuthWebhookService
 	scope := admissionregistrationv1.AllScopes
 
 	clientConfig := admissionregistrationv1.WebhookClientConfig{
@@ -76,7 +80,6 @@ func webhookClientConfigAndRules(kn *kubernautv1alpha1.Kubernaut, path string, c
 			Path:      strPtr(path),
 			Port:      &port,
 		},
-		CABundle: caBundle,
 	}
 
 	rules := []admissionregistrationv1.RuleWithOperations{{

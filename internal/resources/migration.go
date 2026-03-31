@@ -83,11 +83,13 @@ func MigrationJob(kn *kubernautv1alpha1.Kubernaut) (*batchv1.Job, error) {
 						Name:            "db-migrate",
 						Image:           img,
 						ImagePullPolicy: kn.Spec.Image.PullPolicy,
-						Command: []string{"goose", "-dir", "/migrations", "postgres",
-							fmt.Sprintf("host=%s port=%d dbname=$(POSTGRES_DB) user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) sslmode=disable",
-								kn.Spec.PostgreSQL.Host, pgPort),
-							"up",
-						},
+					// $(VAR) references are expanded by the kubelet before
+					// container start using all env vars including envFrom.
+					Command: []string{"goose", "-dir", "/migrations", "postgres",
+						fmt.Sprintf("host=%s port=%d dbname=$(POSTGRES_DB) user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) sslmode=disable",
+							kn.Spec.PostgreSQL.Host, pgPort),
+						"up",
+					},
 						EnvFrom: []corev1.EnvFromSource{{
 							SecretRef: &corev1.SecretEnvSource{
 								LocalObjectReference: corev1.LocalObjectReference{Name: kn.Spec.PostgreSQL.SecretName},

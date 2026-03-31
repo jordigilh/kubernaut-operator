@@ -88,7 +88,7 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 	var b strings.Builder
 	writeControllerBlock(&b, "aianalysis.kubernaut.ai")
 	fmt.Fprintf(&b, "holmesgpt:\n")
-	fmt.Fprintf(&b, "  url: \"http://holmesgpt-api.%s.svc.cluster.local:8080\"\n", ns)
+	fmt.Fprintf(&b, "  url: \"http://holmesgpt-api-service.%s.svc.cluster.local:8080\"\n", ns)
 	fmt.Fprintf(&b, "  timeout: \"180s\"\n")
 	fmt.Fprintf(&b, "  sessionPollInterval: \"15s\"\n")
 	fmt.Fprintf(&b, "datastorage:\n")
@@ -135,7 +135,7 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMa
 	fmt.Fprintf(&b, "  cacheTtl: \"5m\"\n")
 	fmt.Fprintf(&b, "  timeout: \"10s\"\n")
 	fmt.Fprintf(&b, "classifier:\n")
-	fmt.Fprintf(&b, "  regoConfigMapName: \"signalprocessing-policy\"\n")
+	fmt.Fprintf(&b, "  regoConfigMapName: \"%s\"\n", SignalProcessingPolicyName(kn))
 	fmt.Fprintf(&b, "  regoConfigMapKey: \"policy.rego\"\n")
 	fmt.Fprintf(&b, "  hotReloadInterval: \"30s\"\n")
 	fmt.Fprintf(&b, "datastorage:\n")
