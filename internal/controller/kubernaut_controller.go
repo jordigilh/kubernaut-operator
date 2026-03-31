@@ -292,10 +292,16 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 				Reason: "RouteCreated", Message: "Gateway OCP Route created",
 				ObservedGeneration: kn.Generation,
 			})
+		} else {
+			meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+				Type: kubernautv1alpha1.ConditionRouteReady, Status: metav1.ConditionFalse,
+				Reason: "RouteDisabled", Message: "Gateway OCP Route is disabled",
+				ObservedGeneration: kn.Generation,
+			})
 		}
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 			Type: kubernautv1alpha1.ConditionServicesDeployed, Status: metav1.ConditionTrue,
-			Reason: "DeploymentComplete", Message: "All services deployed",
+			Reason: "ManifestsApplied", Message: "All service manifests applied",
 			ObservedGeneration: kn.Generation,
 		})
 	})
@@ -381,9 +387,10 @@ func (r *KubernautReconciler) deployWorkflowRBAC(ctx context.Context, kn *kubern
 }
 
 // deployToggleRBAC handles feature-flag-dependent RBAC: Ansible on/off and
-// monitoring teardown when disabled.
+// monitoring teardown when disabled. Cleanup errors are collected and returned
+// so the reconcile loop retries (stale RBAC is a security concern).
 func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
-	log := logf.FromContext(ctx)
+	var errs []error
 
 	cr, crb := resources.AnsibleRBAC(kn)
 	if kn.Spec.Ansible.Enabled {
@@ -395,10 +402,10 @@ func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernau
 		}
 	} else {
 		if err := r.deleteIfExists(ctx, cr); err != nil {
-			log.V(1).Info("cleanup failed", "resource", cr.Name, "error", err)
+			errs = append(errs, fmt.Errorf("removing stale AWX ClusterRole: %w", err))
 		}
 		if err := r.deleteIfExists(ctx, crb); err != nil {
-			log.V(1).Info("cleanup failed", "resource", crb.Name, "error", err)
+			errs = append(errs, fmt.Errorf("removing stale AWX CRB: %w", err))
 		}
 	}
 
@@ -407,14 +414,14 @@ func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernau
 			monCRB := &rbacv1.ClusterRoleBinding{}
 			monCRB.Name = name
 			if err := r.deleteIfExists(ctx, monCRB); err != nil {
-				log.V(1).Info("cleanup failed", "resource", name, "error", err)
+				errs = append(errs, fmt.Errorf("removing stale monitoring CRB %s: %w", name, err))
 			}
 		}
 		for _, name := range resources.MonitoringClusterRoleNames(kn) {
 			monCR := &rbacv1.ClusterRole{}
 			monCR.Name = name
 			if err := r.deleteIfExists(ctx, monCR); err != nil {
-				log.V(1).Info("cleanup failed", "resource", name, "error", err)
+				errs = append(errs, fmt.Errorf("removing stale monitoring ClusterRole %s: %w", name, err))
 			}
 		}
 		for _, name := range []string{"effectivenessmonitor-service-ca", "holmesgpt-api-service-ca"} {
@@ -422,9 +429,13 @@ func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernau
 			staleCM.Name = name
 			staleCM.Namespace = kn.Namespace
 			if err := r.deleteIfExists(ctx, staleCM); err != nil {
-				log.V(1).Info("cleanup failed", "resource", name, "error", err)
+				errs = append(errs, fmt.Errorf("removing stale service-ca ConfigMap %s: %w", name, err))
 			}
 		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("toggle cleanup: %w", errors.Join(errs...))
 	}
 	return nil
 }
@@ -466,27 +477,16 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	return nil
 }
 
-// deployAdmissionWebhooks ensures the TLS secret (create-only) and both
-// MutatingWebhookConfiguration and ValidatingWebhookConfiguration.
+// deployAdmissionWebhooks ensures both MutatingWebhookConfiguration and
+// ValidatingWebhookConfiguration. TLS is managed by OCP service-CA: the
+// authwebhook-service annotation creates the authwebhook-tls Secret, and
+// the inject-cabundle annotation on MWC/VWC injects the CA bundle.
 func (r *KubernautReconciler) deployAdmissionWebhooks(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
-	tlsSecret, caBundle, err := resources.AuthWebhookTLSSecret(kn)
-	if err != nil {
-		return fmt.Errorf("generating TLS secret: %w", err)
-	}
-	existingTLS := &corev1.Secret{}
-	created, err := r.createIfNotFound(ctx, kn, tlsSecret, existingTLS)
-	if err != nil {
-		return fmt.Errorf("ensuring TLS secret: %w", err)
-	}
-	if !created {
-		caBundle = existingTLS.Data["ca.crt"]
-	}
-
-	mwc := resources.MutatingWebhookConfiguration(kn, caBundle)
+	mwc := resources.MutatingWebhookConfiguration(kn)
 	if err := r.ensureClusterScoped(ctx, mwc); err != nil {
 		return fmt.Errorf("ensuring MutatingWebhookConfiguration: %w", err)
 	}
-	vwc := resources.ValidatingWebhookConfiguration(kn, caBundle)
+	vwc := resources.ValidatingWebhookConfiguration(kn)
 	return r.ensureClusterScoped(ctx, vwc)
 }
 
@@ -623,6 +623,9 @@ func (r *KubernautReconciler) reconcileDelete(ctx context.Context, kn *kubernaut
 	return ctrl.Result{}, nil
 }
 
+// NOTE: CRDs installed during migration are intentionally NOT deleted here.
+// They are cluster-scoped and potentially shared across namespaces; removing
+// them would destroy all CRs of those types cluster-wide.
 func (r *KubernautReconciler) deleteClusterScopedResources(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
 	log := logf.FromContext(ctx)
 	var errs []error
@@ -685,11 +688,11 @@ func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kuber
 // ValidatingWebhookConfiguration.
 func (r *KubernautReconciler) deleteWebhookResources(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
 	var errs []error
-	mwc := resources.MutatingWebhookConfiguration(kn, nil)
+	mwc := resources.MutatingWebhookConfiguration(kn)
 	if err := r.deleteIfExists(ctx, mwc); err != nil {
 		errs = append(errs, fmt.Errorf("deleting MutatingWebhookConfiguration: %w", err))
 	}
-	vwc := resources.ValidatingWebhookConfiguration(kn, nil)
+	vwc := resources.ValidatingWebhookConfiguration(kn)
 	if err := r.deleteIfExists(ctx, vwc); err != nil {
 		errs = append(errs, fmt.Errorf("deleting ValidatingWebhookConfiguration: %w", err))
 	}
@@ -721,7 +724,11 @@ func (r *KubernautReconciler) deleteWorkflowResources(ctx context.Context, kn *k
 
 	wfNs := resources.WorkflowNamespace(kn)
 	existingNs := &corev1.Namespace{}
-	if err := r.Get(ctx, types.NamespacedName{Name: wfNs.Name}, existingNs); err == nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: wfNs.Name}, existingNs); err != nil {
+		if !apierrors.IsNotFound(err) {
+			errs = append(errs, fmt.Errorf("getting workflow namespace %s: %w", wfNs.Name, err))
+		}
+	} else {
 		if existingNs.Labels["app.kubernetes.io/managed-by"] == "kubernaut-operator" {
 			if err := r.deleteIfExists(ctx, existingNs); err != nil {
 				errs = append(errs, fmt.Errorf("deleting workflow namespace %s: %w", wfNs.Name, err))

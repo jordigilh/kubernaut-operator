@@ -168,7 +168,10 @@ func HolmesGPTClientRoleBinding(kn *kubernautv1alpha1.Kubernaut) *rbacv1.RoleBin
 }
 
 // NamespaceRoles builds the namespace-scoped Roles for secrets/configmaps access
-// per the kubernaut.nsRoleForSecrets pattern.
+// per the kubernaut.nsRoleForSecrets pattern. Access is granted to ALL
+// secrets/configmaps in the operator namespace rather than per-resource names
+// because the namespace is dedicated to operator workloads and components
+// dynamically reference each other's ConfigMaps.
 func NamespaceRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Role {
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
@@ -372,7 +375,7 @@ func holmesgptAPIClientClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[s
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "holmesgpt-api-client"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"holmesgpt-api"}, Verbs: []string{"create", "get"}},
+			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"holmesgpt-api-service"}, Verbs: []string{"create", "get"}},
 		},
 	}
 }
