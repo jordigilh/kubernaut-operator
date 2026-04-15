@@ -65,6 +65,27 @@ spec:
           - --health-probe-bind-address=:8081
         image: controller:latest
         name: manager
+        env:
+        - name: RELATED_IMAGE_GATEWAY
+          value: quay.io/kubernaut-ai/gateway:v1.3.0-rc1
+        - name: RELATED_IMAGE_DATA_STORAGE
+          value: quay.io/kubernaut-ai/data-storage:v1.3.0-rc1
+        - name: RELATED_IMAGE_AIANALYSIS
+          value: quay.io/kubernaut-ai/aianalysis:v1.3.0-rc1
+        - name: RELATED_IMAGE_SIGNALPROCESSING
+          value: quay.io/kubernaut-ai/signalprocessing:v1.3.0-rc1
+        - name: RELATED_IMAGE_REMEDIATIONORCHESTRATOR
+          value: quay.io/kubernaut-ai/remediationorchestrator:v1.3.0-rc1
+        - name: RELATED_IMAGE_WORKFLOWEXECUTION
+          value: quay.io/kubernaut-ai/workflowexecution:v1.3.0-rc1
+        - name: RELATED_IMAGE_EFFECTIVENESSMONITOR
+          value: quay.io/kubernaut-ai/effectivenessmonitor:v1.3.0-rc1
+        - name: RELATED_IMAGE_NOTIFICATION
+          value: quay.io/kubernaut-ai/notification:v1.3.0-rc1
+        - name: RELATED_IMAGE_HOLMESGPT_API
+          value: quay.io/kubernaut-ai/holmesgpt-api:v1.3.0-rc1
+        - name: RELATED_IMAGE_AUTHWEBHOOK
+          value: quay.io/kubernaut-ai/authwebhook:v1.3.0-rc1
         ports: []
         securityContext:
           allowPrivilegeEscalation: false
