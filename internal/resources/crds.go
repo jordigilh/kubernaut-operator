@@ -22,16 +22,17 @@ import (
 	"io/fs"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/yaml"
 
 	"github.com/jordigilh/kubernaut/pkg/shared/assets"
 )
 
 // EnsureCRDs reads the embedded CRD YAMLs from the shared assets package
-// and applies them to the cluster. Existing CRDs are updated in place.
+// and applies them to the cluster. Uses CreateOrUpdate with a DeepEqual
+// guard to skip no-op writes and avoid unnecessary API server load.
 func EnsureCRDs(ctx context.Context, c client.Client) error {
 	entries, err := fs.ReadDir(assets.CRDsFS, "crds")
 	if err != nil {
@@ -48,27 +49,22 @@ func EnsureCRDs(ctx context.Context, c client.Client) error {
 			return fmt.Errorf("reading embedded CRD %s: %w", entry.Name(), err)
 		}
 
-		crd := &apiextensionsv1.CustomResourceDefinition{}
-		if err := yaml.Unmarshal(data, crd); err != nil {
+		desired := &apiextensionsv1.CustomResourceDefinition{}
+		if err := yaml.Unmarshal(data, desired); err != nil {
 			return fmt.Errorf("unmarshalling CRD %s: %w", entry.Name(), err)
 		}
 
 		existing := &apiextensionsv1.CustomResourceDefinition{}
-		err = c.Get(ctx, types.NamespacedName{Name: crd.Name}, existing)
-
-		if apierrors.IsNotFound(err) {
-			if err := c.Create(ctx, crd); err != nil {
-				return fmt.Errorf("creating CRD %s: %w", crd.Name, err)
+		existing.Name = desired.Name
+		_, err = controllerutil.CreateOrUpdate(ctx, c, existing, func() error {
+			if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) {
+				return nil
 			}
-			continue
-		}
+			existing.Spec = desired.Spec
+			return nil
+		})
 		if err != nil {
-			return fmt.Errorf("checking CRD %s: %w", crd.Name, err)
-		}
-
-		existing.Spec = crd.Spec
-		if err := c.Update(ctx, existing); err != nil {
-			return fmt.Errorf("updating CRD %s: %w", crd.Name, err)
+			return fmt.Errorf("ensuring CRD %s: %w", desired.Name, err)
 		}
 	}
 
