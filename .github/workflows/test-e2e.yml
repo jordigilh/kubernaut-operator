@@ -1,11 +1,17 @@
 name: E2E Tests
 
 on:
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ocp_server:
+        description: "OCP API server URL (e.g. https://api.cluster.example.com:6443)"
+        required: true
+        type: string
+      operator_image:
+        description: "Operator image to test (e.g. quay.io/kubernaut-ai/kubernaut-operator:v1.3.0)"
+        required: true
+        type: string
+        default: "quay.io/kubernaut-ai/kubernaut-operator:v1.3.0"
 
 permissions:
   contents: read
@@ -15,8 +21,6 @@ jobs:
     name: E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Skip E2E for draft PRs
-    if: github.event.pull_request.draft == false || github.event_name != 'pull_request'
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -26,13 +30,18 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install Kind
+      - name: Install oc CLI
         run: |
-          KIND_VERSION="v0.30.0"
-          curl -Lo ./kind "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-          kind version
+          curl -sSL "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz" \
+            | tar xz -C /usr/local/bin oc kubectl
+
+      - name: Login to OCP
+        run: |
+          oc login --token="${{ secrets.OCP_TOKEN }}" \
+                   --server="${{ inputs.ocp_server }}" \
+                   --insecure-skip-tls-verify
 
       - name: Run E2E tests
         run: make test-e2e
+        env:
+          IMG: ${{ inputs.operator_image }}
