@@ -57,10 +57,15 @@ func EnsureCRDs(ctx context.Context, c client.Client) error {
 		existing := &apiextensionsv1.CustomResourceDefinition{}
 		existing.Name = desired.Name
 		_, err = controllerutil.CreateOrUpdate(ctx, c, existing, func() error {
-			if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) {
+			specChanged := !equality.Semantic.DeepEqual(existing.Spec, desired.Spec)
+			labelsChanged := !equality.Semantic.DeepEqual(existing.Labels, desired.Labels)
+			annotationsChanged := !equality.Semantic.DeepEqual(existing.Annotations, desired.Annotations)
+			if !specChanged && !labelsChanged && !annotationsChanged {
 				return nil
 			}
 			existing.Spec = desired.Spec
+			existing.Labels = desired.Labels
+			existing.Annotations = desired.Annotations
 			return nil
 		})
 		if err != nil {

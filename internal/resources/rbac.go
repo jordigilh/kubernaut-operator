@@ -36,8 +36,8 @@ func ClusterRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRole {
 	roles := []*rbacv1.ClusterRole{
 		gatewayClusterRole(kn, labels),
 		aianalysisControllerClusterRole(kn, labels),
-		holmesgptAPIClientClusterRole(kn, labels),
-		holmesgptAPIInvestigatorClusterRole(kn, labels),
+		kubernautAgentClientClusterRole(kn, labels),
+		kubernautAgentInvestigatorClusterRole(kn, labels),
 		signalprocessingClusterRole(kn, labels),
 		remediationOrchestratorClusterRole(kn, labels),
 		workflowExecutionControllerClusterRole(kn, labels),
@@ -67,8 +67,8 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 	crbs := []*rbacv1.ClusterRoleBinding{
 		clusterRoleBinding(p("gateway-role-binding"), p("gateway-role"), ServiceAccountName(ComponentGateway), ns, labels),
 		clusterRoleBinding(p("aianalysis-controller-binding"), p("aianalysis-controller"), ServiceAccountName(ComponentAIAnalysis), ns, labels),
-		clusterRoleBinding(p("holmesgpt-api-investigator-binding"), p("holmesgpt-api-investigator"), ServiceAccountName(ComponentHolmesGPTAPI), ns, labels),
-		clusterRoleBinding(p("holmesgpt-api-auth-middleware-binding"), p("data-storage-auth-middleware"), ServiceAccountName(ComponentHolmesGPTAPI), ns, labels),
+		clusterRoleBinding(p("kubernaut-agent-investigator-binding"), p("kubernaut-agent-investigator"), ServiceAccountName(ComponentKubernautAgent), ns, labels),
+		clusterRoleBinding(p("kubernaut-agent-auth-middleware-binding"), p("data-storage-auth-middleware"), ServiceAccountName(ComponentKubernautAgent), ns, labels),
 		clusterRoleBinding(p("signalprocessing-controller-binding"), p("signalprocessing-controller"), ServiceAccountName(ComponentSignalProcessing), ns, labels),
 		clusterRoleBinding(p("remediationorchestrator-controller-binding"), p("remediationorchestrator-controller"), ServiceAccountName(ComponentRemediationOrchestrator), ns, labels),
 		clusterRoleBinding(p("workflowexecution-controller-binding"), p("workflowexecution-controller"), ServiceAccountName(ComponentWorkflowExecution), ns, labels),
@@ -89,8 +89,8 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 				ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
 			clusterRoleBinding(p("effectivenessmonitor-monitoring-view"), "cluster-monitoring-view",
 				ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
-			clusterRoleBinding(p("holmesgpt-api-monitoring-view"), "cluster-monitoring-view",
-				ServiceAccountName(ComponentHolmesGPTAPI), ns, labels),
+			clusterRoleBinding(p("kubernaut-agent-monitoring-view"), "cluster-monitoring-view",
+				ServiceAccountName(ComponentKubernautAgent), ns, labels),
 			clusterRoleBinding(p("alertmanager-gateway-signal-source"), p("gateway-signal-source"),
 				OCPAlertManagerSAName, OCPMonitoringNamespace, labels),
 		)
@@ -115,7 +115,7 @@ func DataStorageClientRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Ro
 		{"data-storage-client-workflowexecution", ServiceAccountName(ComponentWorkflowExecution)},
 		{"data-storage-client-effectivenessmonitor", ServiceAccountName(ComponentEffectivenessMonitor)},
 		{"data-storage-client-notification", ServiceAccountName(ComponentNotification)},
-		{"data-storage-client-holmesgpt-api", ServiceAccountName(ComponentHolmesGPTAPI)},
+		{"data-storage-client-kubernaut-agent", ServiceAccountName(ComponentKubernautAgent)},
 		{"data-storage-client-authwebhook", ServiceAccountName(ComponentAuthWebhook)},
 		{"data-storage-client-datastorage", ServiceAccountName(ComponentDataStorage)},
 	}
@@ -143,21 +143,21 @@ func DataStorageClientRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Ro
 	return rbs
 }
 
-// HolmesGPTClientRoleBinding creates a namespace-scoped RoleBinding granting
-// the aianalysis SA access to the holmesgpt-api-client ClusterRole.
+// KubernautAgentClientRoleBinding creates a namespace-scoped RoleBinding granting
+// the aianalysis SA access to the kubernaut-agent-client ClusterRole.
 // Scoped to namespace instead of cluster-wide because the ClusterRole only
 // targets a named service.
-func HolmesGPTClientRoleBinding(kn *kubernautv1alpha1.Kubernaut) *rbacv1.RoleBinding {
+func KubernautAgentClientRoleBinding(kn *kubernautv1alpha1.Kubernaut) *rbacv1.RoleBinding {
 	return &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "holmesgpt-api-client-aianalysis",
+			Name:      "kubernaut-agent-client-aianalysis",
 			Namespace: kn.Namespace,
 			Labels:    CommonLabels(kn),
 		},
 		RoleRef: rbacv1.RoleRef{
 			APIGroup: rbacv1.GroupName,
 			Kind:     "ClusterRole",
-			Name:     clusterRoleName(kn, "holmesgpt-api-client"),
+			Name:     clusterRoleName(kn, "kubernaut-agent-client"),
 		},
 		Subjects: []rbacv1.Subject{{
 			Kind:      rbacv1.ServiceAccountKind,
@@ -287,7 +287,7 @@ func MonitoringCRBNames(kn *kubernautv1alpha1.Kubernaut) []string {
 	return []string{
 		p("effectivenessmonitor-alertmanager-view-binding"),
 		p("effectivenessmonitor-monitoring-view"),
-		p("holmesgpt-api-monitoring-view"),
+		p("kubernaut-agent-monitoring-view"),
 		p("alertmanager-gateway-signal-source"),
 	}
 }
@@ -371,16 +371,16 @@ func aianalysisControllerClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map
 	}
 }
 
-func holmesgptAPIClientClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
+func kubernautAgentClientClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "holmesgpt-api-client"), Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "kubernaut-agent-client"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"holmesgpt-api-service"}, Verbs: []string{"create", "get"}},
+			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"kubernaut-agent-service"}, Verbs: []string{"create", "get"}},
 		},
 	}
 }
 
-func holmesgptAPIInvestigatorClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
+func kubernautAgentInvestigatorClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	rules := []rbacv1.PolicyRule{
 		{APIGroups: []string{""}, Resources: []string{"pods", "pods/log", "events", "services", "endpoints", "configmaps", "secrets", "nodes", "namespaces", "replicationcontrollers", "persistentvolumeclaims", "resourcequotas"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "watch"}},
@@ -393,7 +393,7 @@ func holmesgptAPIInvestigatorClusterRole(kn *kubernautv1alpha1.Kubernaut, labels
 	}
 
 	return &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "holmesgpt-api-investigator"), Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "kubernaut-agent-investigator"), Labels: labels},
 		Rules:      rules,
 	}
 }

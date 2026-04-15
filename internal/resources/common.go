@@ -41,7 +41,7 @@ const (
 	ComponentWorkflowExecution       = "workflowexecution"
 	ComponentEffectivenessMonitor    = "effectivenessmonitor"
 	ComponentNotification            = "notification"
-	ComponentHolmesGPTAPI            = "holmesgpt-api"
+	ComponentKubernautAgent          = "kubernaut-agent"
 	ComponentAuthWebhook             = "authwebhook"
 )
 
@@ -64,6 +64,10 @@ const DefaultPostgreSQLPort int32 = 5432
 const DefaultValkeyPort int32 = 6379
 
 // Migration Job tuning constants.
+// MigrationBackoffLimit controls the Kubernetes Job's pod-level retry count
+// (spec.backoffLimit). This is distinct from the operator's reconciliation
+// loop, which will re-check the Job's status on each requeue until it
+// succeeds or reaches the backoff limit.
 const (
 	MigrationBackoffLimit int32 = 3
 	MigrationTTLSeconds   int32 = 300
@@ -74,6 +78,10 @@ const PDBMaxUnavailable = 1
 
 // OCP service-CA injection annotation.
 const OCPServiceCAInjectAnnotation = "service.beta.openshift.io/inject-cabundle"
+
+// OCPServingCertAnnotation is the OCP annotation that triggers automatic
+// TLS certificate generation for a Service.
+const OCPServingCertAnnotation = "service.beta.openshift.io/serving-cert-secret-name"
 
 // DefaultWorkflowNamespace is the namespace used for workflow execution
 // when not overridden in the CR spec.
@@ -94,7 +102,7 @@ const (
 
 // DefaultPostgreSQLImage is the RHEL10 PostgreSQL 16 image used for the
 // data-storage init container on OCP (restricted-v2 SCC compatible).
-const DefaultPostgreSQLImage = "registry.redhat.io/rhel10/postgresql-16:latest"
+const DefaultPostgreSQLImage = "registry.redhat.io/rhel10/postgresql-16:16-1"
 
 // AllComponents returns the ordered list of all managed components.
 func AllComponents() []string {
@@ -107,7 +115,7 @@ func AllComponents() []string {
 		ComponentWorkflowExecution,
 		ComponentEffectivenessMonitor,
 		ComponentNotification,
-		ComponentHolmesGPTAPI,
+		ComponentKubernautAgent,
 		ComponentAuthWebhook,
 	}
 }
@@ -284,13 +292,13 @@ func SignalProcessingPolicyName(kn *kubernautv1alpha1.Kubernaut) string {
 	return "signalprocessing-policy"
 }
 
-// HolmesGPTSDKConfigName returns the HolmesGPT SDK ConfigMap name,
-// defaulting to "holmesgpt-sdk-config" when not overridden.
-func HolmesGPTSDKConfigName(kn *kubernautv1alpha1.Kubernaut) string {
-	if kn.Spec.HolmesGPTAPI.LLM.SdkConfigMapName != "" {
-		return kn.Spec.HolmesGPTAPI.LLM.SdkConfigMapName
+// KubernautAgentSDKConfigName returns the Kubernaut Agent SDK ConfigMap name,
+// defaulting to "kubernaut-agent-sdk-config" when not overridden.
+func KubernautAgentSDKConfigName(kn *kubernautv1alpha1.Kubernaut) string {
+	if kn.Spec.KubernautAgent.LLM.SdkConfigMapName != "" {
+		return kn.Spec.KubernautAgent.LLM.SdkConfigMapName
 	}
-	return "holmesgpt-sdk-config"
+	return "kubernaut-agent-sdk-config"
 }
 
 // ValkeyAddr returns the Valkey address in host:port format.

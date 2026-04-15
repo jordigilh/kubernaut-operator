@@ -67,8 +67,8 @@ type KubernautSpec struct {
 	// +optional
 	EffectivenessMonitor EffectivenessMonitorSpec `json:"effectivenessMonitor,omitempty"`
 
-	// LLM integration service (HolmesGPT-API, transitioning to KubernautAgent).
-	HolmesGPTAPI HolmesGPTAPISpec `json:"holmesgptApi"`
+	// Kubernaut Agent (KA) -- LLM-powered investigation and analysis service.
+	KubernautAgent KubernautAgentSpec `json:"kubernautAgent"`
 
 	// Gateway service settings.
 	// +optional
@@ -400,9 +400,8 @@ type EMAssessmentSpec struct {
 	ValidityWindow string `json:"validityWindow,omitempty"`
 }
 
-// HolmesGPTAPISpec configures the LLM integration service.
-// Initially targets holmesgpt-api; will transition to KubernautAgent in v1.3.
-type HolmesGPTAPISpec struct {
+// KubernautAgentSpec configures the Kubernaut Agent (KA) LLM integration service.
+type KubernautAgentSpec struct {
 	// LLM provider and credentials configuration.
 	LLM LLMSpec `json:"llm"`
 
@@ -512,8 +511,9 @@ type ServiceStatus struct {
 	DesiredReplicas int32 `json:"desiredReplicas"`
 }
 
-// ConditionType is a typed string for condition type names, providing
-// compile-time safety over raw string constants.
+// ConditionType is a string alias for condition type names. It is an alias
+// (not a distinct type) so these constants can be passed directly to
+// metav1.Condition.Type without conversion.
 type ConditionType = string
 
 // Condition types used in KubernautStatus.Conditions.

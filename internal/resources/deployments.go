@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"fmt"
 	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -230,31 +231,34 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 	})
 }
 
-// HolmesGPTAPIDeployment builds the holmesgpt-api Deployment.
-func HolmesGPTAPIDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+// KubernautAgentDeployment builds the kubernaut-agent Deployment.
+func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+	if kn.Spec.KubernautAgent.LLM.CredentialsSecretName == "" {
+		return nil, fmt.Errorf("spec.kubernautAgent.llm.credentialsSecretName must not be empty")
+	}
 	volumes := []corev1.Volume{
-		configMapVolume("config", "holmesgpt-api-config"),
-		configMapVolume("sdk-config", HolmesGPTSDKConfigName(kn)),
-		secretVolume("llm-credentials", kn.Spec.HolmesGPTAPI.LLM.CredentialsSecretName),
+		configMapVolume("config", "kubernaut-agent-config"),
+		configMapVolume("sdk-config", KubernautAgentSDKConfigName(kn)),
+		secretVolume("llm-credentials", kn.Spec.KubernautAgent.LLM.CredentialsSecretName),
 	}
 	mounts := []corev1.VolumeMount{
-		{Name: "config", MountPath: "/etc/holmesgpt", ReadOnly: true},
-		{Name: "sdk-config", MountPath: "/etc/holmesgpt/sdk", ReadOnly: true},
-		{Name: "llm-credentials", MountPath: "/etc/holmesgpt/credentials", ReadOnly: true},
+		{Name: "config", MountPath: "/etc/kubernaut-agent", ReadOnly: true},
+		{Name: "sdk-config", MountPath: "/etc/kubernaut-agent/sdk", ReadOnly: true},
+		{Name: "llm-credentials", MountPath: "/etc/kubernaut-agent/credentials", ReadOnly: true},
 	}
 
 	envVars := []corev1.EnvVar{
-		{Name: "GOOGLE_APPLICATION_CREDENTIALS", Value: "/etc/holmesgpt/credentials/credentials.json"},
+		{Name: "GOOGLE_APPLICATION_CREDENTIALS", Value: "/etc/kubernaut-agent/credentials/credentials.json"},
 	}
 	if kn.Spec.Monitoring.MonitoringEnabled() {
-		volumes = append(volumes, configMapVolume("service-ca", "holmesgpt-api-service-ca"))
+		volumes = append(volumes, configMapVolume("service-ca", "kubernaut-agent-service-ca"))
 		mounts = append(mounts, corev1.VolumeMount{
-			Name: "service-ca", MountPath: "/etc/ssl/hapi", ReadOnly: true,
+			Name: "service-ca", MountPath: "/etc/ssl/ka", ReadOnly: true,
 		})
 		envVars = append(envVars, corev1.EnvVar{Name: "IS_OPENSHIFT", Value: "True"})
 	}
 
-	res := kn.Spec.HolmesGPTAPI.Resources
+	res := kn.Spec.KubernautAgent.Resources
 	if len(res.Requests) == 0 && len(res.Limits) == 0 {
 		res = corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
@@ -269,7 +273,7 @@ func HolmesGPTAPIDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 	}
 
 	return buildDeployment(kn, DeploymentParams{
-		Component: ComponentHolmesGPTAPI, ImageName: "holmesgpt-api",
+		Component: ComponentKubernautAgent, ImageName: "kubernaut-agent",
 		Resources: res, VolumeMounts: mounts, Volumes: volumes, Env: envVars,
 	})
 }

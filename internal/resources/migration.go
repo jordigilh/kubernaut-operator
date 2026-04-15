@@ -77,8 +77,9 @@ func MigrationJob(kn *kubernautv1alpha1.Kubernaut) (*batchv1.Job, error) {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: ComponentLabels(kn, "migration")},
 				Spec: corev1.PodSpec{
-					RestartPolicy:   corev1.RestartPolicyOnFailure,
-					SecurityContext: PodSecurityContext(),
+					AutomountServiceAccountToken: boolPtr(false),
+					RestartPolicy:                corev1.RestartPolicyOnFailure,
+					SecurityContext:              PodSecurityContext(),
 					Containers: []corev1.Container{{
 						Name:            "db-migrate",
 						Image:           img,
@@ -112,3 +113,5 @@ func MigrationJob(kn *kubernautv1alpha1.Kubernaut) (*batchv1.Job, error) {
 		},
 	}, nil
 }
+
+func boolPtr(v bool) *bool { return &v }

@@ -25,22 +25,22 @@ import (
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
-// ControllerConfig holds controller-runtime style settings shared by the
+// controllerConfig holds controller-runtime style settings shared by the
 // AIAnalysis, SignalProcessing, and Notification controllers.
-type ControllerConfig struct {
+type controllerConfig struct {
 	MetricsAddr      string `json:"metricsAddr" yaml:"metricsAddr"`
 	HealthProbeAddr  string `json:"healthProbeAddr" yaml:"healthProbeAddr"`
 	LeaderElection   bool   `json:"leaderElection" yaml:"leaderElection"`
 	LeaderElectionID string `json:"leaderElectionId" yaml:"leaderElectionId"`
 }
 
-// controllerBlock nests ControllerConfig fields under the YAML mapping key "controller".
+// controllerBlock nests controllerConfig fields under the YAML mapping key "controller".
 type controllerBlock struct {
-	ControllerConfig `json:",inline" yaml:",inline"`
+	controllerConfig `json:",inline" yaml:",inline"`
 }
 
 func newControllerBlock(leaderElectionID string) controllerBlock {
-	return controllerBlock{ControllerConfig: ControllerConfig{
+	return controllerBlock{controllerConfig: controllerConfig{
 		MetricsAddr:      ":9090",
 		HealthProbeAddr:  ":8081",
 		LeaderElection:   false,
@@ -105,7 +105,7 @@ type dataStorageBufferYAML struct {
 	MaxRetries    int    `json:"maxRetries" yaml:"maxRetries"`
 }
 
-type aiAnalysisHolmesGPTYAML struct {
+type aiAnalysisKubernautAgentYAML struct {
 	URL                 string `json:"url" yaml:"url"`
 	Timeout             string `json:"timeout" yaml:"timeout"`
 	SessionPollInterval string `json:"sessionPollInterval" yaml:"sessionPollInterval"`
@@ -122,12 +122,12 @@ type aiAnalysisRegoYAML struct {
 	ConfidenceThreshold string `json:"confidenceThreshold,omitempty" yaml:"confidenceThreshold,omitempty"`
 }
 
-// aiAnalysisConfigYAML embeds ControllerConfig under "controller" via controllerBlock.
+// aiAnalysisConfigYAML embeds controllerConfig under "controller" via controllerBlock.
 type aiAnalysisConfigYAML struct {
-	Controller  controllerBlock           `json:"controller" yaml:"controller"`
-	HolmesGPT   aiAnalysisHolmesGPTYAML   `json:"holmesgpt" yaml:"holmesgpt"`
-	Datastorage aiAnalysisDatastorageYAML `json:"datastorage" yaml:"datastorage"`
-	Rego        aiAnalysisRegoYAML        `json:"rego" yaml:"rego"`
+	Controller     controllerBlock              `json:"controller" yaml:"controller"`
+	KubernautAgent aiAnalysisKubernautAgentYAML `json:"kubernautAgent" yaml:"kubernautAgent"`
+	Datastorage    aiAnalysisDatastorageYAML    `json:"datastorage" yaml:"datastorage"`
+	Rego           aiAnalysisRegoYAML           `json:"rego" yaml:"rego"`
 }
 
 type signalProcessingEnrichmentYAML struct {
@@ -154,7 +154,7 @@ type signalProcessingDatastorageYAML struct {
 	Buffer  signalProcessingBufferYAML `json:"buffer" yaml:"buffer"`
 }
 
-// signalProcessingConfigYAML embeds ControllerConfig under "controller" via controllerBlock.
+// signalProcessingConfigYAML embeds controllerConfig under "controller" via controllerBlock.
 type signalProcessingConfigYAML struct {
 	Controller  controllerBlock                 `json:"controller" yaml:"controller"`
 	Enrichment  signalProcessingEnrichmentYAML  `json:"enrichment" yaml:"enrichment"`
@@ -273,7 +273,7 @@ type notificationDatastorageYAML struct {
 	Buffer  notificationBufferYAML `json:"buffer" yaml:"buffer"`
 }
 
-// notificationControllerConfigYAML embeds ControllerConfig under "controller" via controllerBlock.
+// notificationControllerConfigYAML embeds controllerConfig under "controller" via controllerBlock.
 type notificationControllerConfigYAML struct {
 	Controller  controllerBlock             `json:"controller" yaml:"controller"`
 	Delivery    notificationDeliveryYAML    `json:"delivery" yaml:"delivery"`
@@ -309,20 +309,20 @@ type notificationRoutingConsoleYAML struct {
 	Receivers []notificationRoutingConsoleReceiver `json:"receivers" yaml:"receivers"`
 }
 
-type holmesGPTAPIMonitoringYAML struct {
+type kubernautAgentMonitoringYAML struct {
 	PrometheusURL string `json:"prometheusUrl" yaml:"prometheusUrl"`
 	TLSCaPath     string `json:"tlsCaPath" yaml:"tlsCaPath"`
 }
 
-type holmesGPTAPIConfigYAML struct {
-	DataStorageURL string                      `json:"dataStorageUrl" yaml:"dataStorageUrl"`
-	GatewayURL     string                      `json:"gatewayUrl" yaml:"gatewayUrl"`
-	ListenAddr     string                      `json:"listenAddr" yaml:"listenAddr"`
-	MetricsAddr    string                      `json:"metricsAddr" yaml:"metricsAddr"`
-	Monitoring     *holmesGPTAPIMonitoringYAML `json:"monitoring,omitempty" yaml:"monitoring,omitempty"`
+type kubernautAgentConfigYAML struct {
+	DataStorageURL string                        `json:"dataStorageUrl" yaml:"dataStorageUrl"`
+	GatewayURL     string                        `json:"gatewayUrl" yaml:"gatewayUrl"`
+	ListenAddr     string                        `json:"listenAddr" yaml:"listenAddr"`
+	MetricsAddr    string                        `json:"metricsAddr" yaml:"metricsAddr"`
+	Monitoring     *kubernautAgentMonitoringYAML `json:"monitoring,omitempty" yaml:"monitoring,omitempty"`
 }
 
-type holmesGPTSDKConfigYAML struct {
+type kubernautAgentSDKConfigYAML struct {
 	LLM struct {
 		Provider string `json:"provider" yaml:"provider"`
 		Model    string `json:"model" yaml:"model"`
@@ -353,36 +353,37 @@ type authWebhookConfigYAML struct {
 	Datastorage authWebhookDatastorageYAML `json:"datastorage" yaml:"datastorage"`
 }
 
-// mustYAML uses sigs.k8s.io/yaml.Marshal, which serializes via encoding/json
+// marshalYAML uses sigs.k8s.io/yaml.Marshal, which serializes via encoding/json
 // (struct fields must carry json tags for correct YAML key names).
-func mustYAML(v any) string {
+func marshalYAML(v any) (string, error) {
 	b, err := yaml.Marshal(v)
 	if err != nil {
-		panic(fmt.Sprintf("resources: yaml marshal: %v", err))
+		return "", fmt.Errorf("resources: yaml marshal: %w", err)
 	}
-	return string(b)
+	return string(b), nil
 }
 
 // GatewayConfigMap builds the gateway-config ConfigMap.
-func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
 	ns := kn.Namespace
 	cfg := gatewayConfigYAML{
 		DataStorageURL: DataStorageURL(ns),
 		ListenAddr:     ":8080",
 	}
+	data, err := marshalYAML(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("gateway config: %w", err)
+	}
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "gateway-config", ComponentGateway),
-		Data: map[string]string{
-			"config.yaml": mustYAML(cfg),
-		},
-	}
+		Data:       map[string]string{"config.yaml": data},
+	}, nil
 }
 
-// DataStorageConfigMap builds the datastorage-config ConfigMap.
 // DataStorageConfigMap builds the data-storage config ConfigMap. The dbName and
 // dbUser parameters must match the values written into the DataStorageDBSecret
 // to avoid a config/secret mismatch.
-func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string) *corev1.ConfigMap {
+func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string) (*corev1.ConfigMap, error) {
 	pgPort := PostgreSQLPort(kn)
 	cfg := dataStorageConfigYAML{
 		Server: dataStorageServerYAML{
@@ -416,18 +417,22 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string
 			PasswordKey:      "password",
 		},
 		Logging: dataStorageLoggingYAML{
-			Level:  "debug",
+			Level:  "info",
 			Format: "json",
 		},
 	}
+	data, err := marshalYAML(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("datastorage config: %w", err)
+	}
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "datastorage-config", ComponentDataStorage),
-		Data:       map[string]string{"config.yaml": mustYAML(cfg)},
-	}
+		Data:       map[string]string{"config.yaml": data},
+	}, nil
 }
 
 // AIAnalysisConfigMap builds the aianalysis-config ConfigMap.
-func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
 	ns := kn.Namespace
 	rego := aiAnalysisRegoYAML{
 		PolicyPath: "/etc/aianalysis/policies/approval.rego",
@@ -437,8 +442,8 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 	}
 	cfg := aiAnalysisConfigYAML{
 		Controller: newControllerBlock("aianalysis.kubernaut.ai"),
-		HolmesGPT: aiAnalysisHolmesGPTYAML{
-			URL:                 fmt.Sprintf("http://holmesgpt-api-service.%s.svc.cluster.local:8080", ns),
+		KubernautAgent: aiAnalysisKubernautAgentYAML{
+			URL:                 fmt.Sprintf("http://kubernaut-agent-service.%s.svc.cluster.local:8080", ns),
 			Timeout:             "180s",
 			SessionPollInterval: "15s",
 		},
@@ -454,10 +459,14 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 		},
 		Rego: rego,
 	}
+	data, err := marshalYAML(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("aianalysis config: %w", err)
+	}
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "aianalysis-config", ComponentAIAnalysis),
-		Data:       map[string]string{"config.yaml": mustYAML(cfg)},
-	}
+		Data:       map[string]string{"config.yaml": data},
+	}, nil
 }
 
 // AIAnalysisPoliciesConfigMap builds the default aianalysis-policies ConfigMap
@@ -475,7 +484,7 @@ func AIAnalysisPoliciesConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.Config
 }
 
 // SignalProcessingConfigMap builds the signalprocessing-config ConfigMap.
-func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
 	ns := kn.Namespace
 	buf := signalProcessingBufferYAML{
 		BufferSize:    10000,
@@ -500,10 +509,14 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMa
 			Buffer:  buf,
 		},
 	}
+	data, err := marshalYAML(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("signalprocessing config: %w", err)
+	}
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "signalprocessing-config", ComponentSignalProcessing),
-		Data:       map[string]string{"config.yaml": mustYAML(cfg)},
-	}
+		Data:       map[string]string{"config.yaml": data},
+	}, nil
 }
 
 // SignalProcessingPolicyConfigMap builds the default signalprocessing-policy ConfigMap
@@ -521,7 +534,7 @@ func SignalProcessingPolicyConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.Co
 }
 
 // RemediationOrchestratorConfigMap builds the remediationorchestrator-config ConfigMap.
-func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
 	ro := &kn.Spec.RemediationOrchestrator
 	ns := kn.Namespace
 	cfg := remediationOrchestratorConfigYAML{
@@ -550,14 +563,18 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.C
 			ProactiveAlertDelay:    withDefault(ro.AsyncPropagation.ProactiveAlertDelay, "5m"),
 		},
 	}
+	data, err := marshalYAML(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("remediationorchestrator config: %w", err)
+	}
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "remediationorchestrator-config", ComponentRemediationOrchestrator),
-		Data:       map[string]string{"config.yaml": mustYAML(cfg)},
-	}
+		Data:       map[string]string{"config.yaml": data},
+	}, nil
 }
 
 // WorkflowExecutionConfigMap builds the workflowexecution-config ConfigMap.
-func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
 	we := &kn.Spec.WorkflowExecution
 	wfNs := ResolveWorkflowNamespace(kn)
 	cooldown := we.CooldownPeriod
@@ -582,14 +599,18 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigM
 		}
 		cfg.Ansible = &ansible
 	}
+	data, err := marshalYAML(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("workflowexecution config: %w", err)
+	}
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "workflowexecution-config", ComponentWorkflowExecution),
-		Data:       map[string]string{"config.yaml": mustYAML(cfg)},
-	}
+		Data:       map[string]string{"config.yaml": data},
+	}, nil
 }
 
 // EffectivenessMonitorConfigMap builds the effectivenessmonitor-config ConfigMap.
-func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
 	em := &kn.Spec.EffectivenessMonitor
 	cfg := effectivenessMonitorConfigYAML{
 		DataStorageURL: DataStorageURL(kn.Namespace),
@@ -605,14 +626,18 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.Conf
 			TLSCaPath:       "/etc/ssl/effectivenessmonitor/service-ca.crt",
 		}
 	}
+	data, err := marshalYAML(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("effectivenessmonitor config: %w", err)
+	}
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "effectivenessmonitor-config", ComponentEffectivenessMonitor),
-		Data:       map[string]string{"config.yaml": mustYAML(cfg)},
-	}
+		Data:       map[string]string{"config.yaml": data},
+	}, nil
 }
 
 // NotificationControllerConfigMap builds the notification-controller-config ConfigMap.
-func NotificationControllerConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+func NotificationControllerConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
 	buf := notificationBufferYAML{
 		BufferSize:    10000,
 		BatchSize:     100,
@@ -644,15 +669,19 @@ func NotificationControllerConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.Co
 		},
 		Datastorage: ds,
 	}
+	data, err := marshalYAML(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("notification-controller config: %w", err)
+	}
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "notification-controller-config", ComponentNotification),
-		Data:       map[string]string{"config.yaml": mustYAML(cfg)},
-	}
+		Data:       map[string]string{"config.yaml": data},
+	}, nil
 }
 
 // NotificationRoutingConfigMap builds the notification-routing-config ConfigMap.
 // When Slack is configured, routes are generated; otherwise a console-only fallback is used.
-func NotificationRoutingConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+func NotificationRoutingConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
 	slack := kn.Spec.Notification.Slack
 	channel := slack.Channel
 	if channel == "" {
@@ -673,60 +702,74 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.Confi
 		}
 		cfg.Receivers[0].Slack.Channel = channel
 		cfg.Receivers[0].Slack.CredentialsSecretName = slack.SecretName
-		routing = mustYAML(cfg)
+		var err error
+		routing, err = marshalYAML(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("notification-routing slack config: %w", err)
+		}
 	} else {
 		var console notificationRoutingConsoleYAML
 		console.Receivers = []notificationRoutingConsoleReceiver{
 			{Name: "console"},
 		}
-		routing = mustYAML(console)
+		var err error
+		routing, err = marshalYAML(console)
+		if err != nil {
+			return nil, fmt.Errorf("notification-routing console config: %w", err)
+		}
 	}
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "notification-routing-config", ComponentNotification),
 		Data:       map[string]string{"routing.yaml": routing},
-	}
+	}, nil
 }
 
-// HolmesGPTAPIConfigMap builds the holmesgpt-api-config ConfigMap.
-func HolmesGPTAPIConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+// KubernautAgentConfigMap builds the kubernaut-agent-config ConfigMap.
+func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
 	ns := kn.Namespace
-	cfg := holmesGPTAPIConfigYAML{
+	cfg := kubernautAgentConfigYAML{
 		DataStorageURL: DataStorageURL(ns),
 		GatewayURL:     GatewayURL(ns),
 		ListenAddr:     ":8080",
 		MetricsAddr:    ":8080",
 	}
 	if kn.Spec.Monitoring.MonitoringEnabled() {
-		cfg.Monitoring = &holmesGPTAPIMonitoringYAML{
+		cfg.Monitoring = &kubernautAgentMonitoringYAML{
 			PrometheusURL: OCPPrometheusURL,
-			TLSCaPath:     "/etc/ssl/hapi/service-ca.crt",
+			TLSCaPath:     "/etc/ssl/ka/service-ca.crt",
 		}
 	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "holmesgpt-api-config", ComponentHolmesGPTAPI),
-		Data:       map[string]string{"config.yaml": mustYAML(cfg)},
+	data, err := marshalYAML(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("kubernaut-agent config: %w", err)
 	}
+	return &corev1.ConfigMap{
+		ObjectMeta: ObjectMeta(kn, "kubernaut-agent-config", ComponentKubernautAgent),
+		Data:       map[string]string{"config.yaml": data},
+	}, nil
 }
 
-// HolmesGPTSDKConfigMap builds the holmesgpt-sdk-config ConfigMap
+// KubernautAgentSDKConfigMap builds the kubernaut-agent-sdk-config ConfigMap
 // when the user hasn't provided a pre-existing one.
-func HolmesGPTSDKConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
-	if kn.Spec.HolmesGPTAPI.LLM.SdkConfigMapName != "" {
-		return nil
+func KubernautAgentSDKConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+	if kn.Spec.KubernautAgent.LLM.SdkConfigMapName != "" {
+		return nil, nil
 	}
-	var cfg holmesGPTSDKConfigYAML
-	cfg.LLM.Provider = kn.Spec.HolmesGPTAPI.LLM.Provider
-	cfg.LLM.Model = kn.Spec.HolmesGPTAPI.LLM.Model
+	var cfg kubernautAgentSDKConfigYAML
+	cfg.LLM.Provider = kn.Spec.KubernautAgent.LLM.Provider
+	cfg.LLM.Model = kn.Spec.KubernautAgent.LLM.Model
+	data, err := marshalYAML(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("kubernaut-agent-sdk config: %w", err)
+	}
 	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, HolmesGPTSDKConfigName(kn), ComponentHolmesGPTAPI),
-		Data: map[string]string{
-			"sdk-config.yaml": mustYAML(cfg),
-		},
-	}
+		ObjectMeta: ObjectMeta(kn, KubernautAgentSDKConfigName(kn), ComponentKubernautAgent),
+		Data:       map[string]string{"sdk-config.yaml": data},
+	}, nil
 }
 
 // AuthWebhookConfigMap builds the authwebhook-config ConfigMap.
-func AuthWebhookConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+func AuthWebhookConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
 	buf := authWebhookBufferYAML{
 		BufferSize:    1000,
 		BatchSize:     100,
@@ -746,10 +789,14 @@ func AuthWebhookConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 		},
 		Datastorage: ds,
 	}
+	data, err := marshalYAML(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("authwebhook config: %w", err)
+	}
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "authwebhook-config", ComponentAuthWebhook),
-		Data:       map[string]string{"authwebhook.yaml": mustYAML(cfg)},
-	}
+		Data:       map[string]string{"authwebhook.yaml": data},
+	}, nil
 }
 
 // EffectivenessMonitorServiceCAConfigMap returns the ConfigMap used for
@@ -758,10 +805,10 @@ func EffectivenessMonitorServiceCAConfigMap(kn *kubernautv1alpha1.Kubernaut) *co
 	return serviceCAConfigMap(kn, "effectivenessmonitor-service-ca", ComponentEffectivenessMonitor)
 }
 
-// HolmesGPTAPIServiceCAConfigMap returns the ConfigMap for OCP service-ca injection
-// for HolmesGPT-API.
-func HolmesGPTAPIServiceCAConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
-	return serviceCAConfigMap(kn, "holmesgpt-api-service-ca", ComponentHolmesGPTAPI)
+// KubernautAgentServiceCAConfigMap returns the ConfigMap for OCP service-ca injection
+// for Kubernaut Agent.
+func KubernautAgentServiceCAConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+	return serviceCAConfigMap(kn, "kubernaut-agent-service-ca", ComponentKubernautAgent)
 }
 
 func serviceCAConfigMap(kn *kubernautv1alpha1.Kubernaut, name, component string) *corev1.ConfigMap {

@@ -40,6 +40,7 @@ func MutatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut) *admissionreg
 			SideEffects:             sideEffectPtr(admissionregistrationv1.SideEffectClassNone),
 			FailurePolicy:           failurePolicyPtr(admissionregistrationv1.Fail),
 			MatchPolicy:             matchPolicyPtr(admissionregistrationv1.Equivalent),
+			TimeoutSeconds:          int32Ptr(10),
 			ClientConfig:            clientConfig,
 			Rules:                   rules,
 		}},
@@ -63,6 +64,7 @@ func ValidatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut) *admissionr
 			SideEffects:             sideEffectPtr(admissionregistrationv1.SideEffectClassNone),
 			FailurePolicy:           failurePolicyPtr(admissionregistrationv1.Fail),
 			MatchPolicy:             matchPolicyPtr(admissionregistrationv1.Equivalent),
+			TimeoutSeconds:          int32Ptr(10),
 			ClientConfig:            clientConfig,
 			Rules:                   rules,
 		}},
@@ -108,3 +110,4 @@ func failurePolicyPtr(v admissionregistrationv1.FailurePolicyType) *admissionreg
 func matchPolicyPtr(v admissionregistrationv1.MatchPolicyType) *admissionregistrationv1.MatchPolicyType {
 	return &v
 }
+func int32Ptr(v int32) *int32 { return &v }

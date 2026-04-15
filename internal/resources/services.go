@@ -38,7 +38,7 @@ var serviceDefinitions = []struct {
 	{ComponentWorkflowExecution, "workflowexecution-service", PortHTTP, "http"},
 	{ComponentEffectivenessMonitor, "effectivenessmonitor-service", PortHTTP, "http"},
 	{ComponentNotification, "notification-service", PortHTTP, "http"},
-	{ComponentHolmesGPTAPI, "holmesgpt-api-service", PortHTTP, "http"},
+	{ComponentKubernautAgent, "kubernaut-agent-service", PortHTTP, "http"},
 }
 
 // Services builds all Services for the Kubernaut deployment.
@@ -69,7 +69,7 @@ func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
 		},
 	}
 	awSvc.Annotations = map[string]string{
-		"service.beta.openshift.io/serving-cert-secret-name": "authwebhook-tls",
+		OCPServingCertAnnotation: "authwebhook-tls",
 	}
 	services = append(services, awSvc)
 

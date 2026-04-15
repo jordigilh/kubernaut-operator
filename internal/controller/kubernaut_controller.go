@@ -69,9 +69,9 @@ const (
 	ReasonManifestsApplied    = "ManifestsApplied"
 )
 
-// maxFinalizerRetries is the number of consecutive reconcile failures during
+// maxFinalizerAttempts is the number of consecutive reconcile attempts during
 // deletion cleanup before the finalizer is force-removed.
-const maxFinalizerRetries = 20
+const maxFinalizerAttempts = 20
 
 // KubernautReconciler reconciles a Kubernaut object.
 type KubernautReconciler struct {
@@ -219,7 +219,7 @@ func (r *KubernautReconciler) phaseMigrate(ctx context.Context, kn *kubernautv1a
 	log.Info("database migration completed")
 	r.Recorder.Event(kn, corev1.EventTypeNormal, ReasonMigrationComplete, "Database migration job succeeded")
 	return ctrl.Result{}, r.patchStatus(ctx, kn, func() {
-		r.setPhase(kn, kubernautv1alpha1.PhaseMigrating)
+		r.setPhase(kn, kubernautv1alpha1.PhaseDeploying)
 		setCRDsReady(kn)
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 			Type: kubernautv1alpha1.ConditionMigrationComplete, Status: metav1.ConditionTrue,
@@ -438,7 +438,7 @@ func (r *KubernautReconciler) deployRBAC(ctx context.Context, kn *kubernautv1alp
 }
 
 // deployCoreRBAC provisions ClusterRoles, ClusterRoleBindings, namespace-scoped
-// Roles/RoleBindings, DataStorage client bindings, and the HolmesGPT client binding.
+// Roles/RoleBindings, DataStorage client bindings, and the Kubernaut Agent client binding.
 func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
 	for _, cr := range resources.ClusterRoles(kn) {
 		if err := r.ensureUnowned(ctx, cr); err != nil {
@@ -465,7 +465,7 @@ func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv
 			return fmt.Errorf("ensuring ds client rb %s: %w", rb.Name, err)
 		}
 	}
-	return r.ensureNamespaced(ctx, kn, resources.HolmesGPTClientRoleBinding(kn))
+	return r.ensureNamespaced(ctx, kn, resources.KubernautAgentClientRoleBinding(kn))
 }
 
 // deployWorkflowRBAC provisions roles and bindings in the workflow namespace.
@@ -522,7 +522,7 @@ func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernau
 				errs = append(errs, fmt.Errorf("removing stale monitoring ClusterRole %s: %w", name, err))
 			}
 		}
-		for _, name := range []string{"effectivenessmonitor-service-ca", "holmesgpt-api-service-ca"} {
+		for _, name := range []string{"effectivenessmonitor-service-ca", "kubernaut-agent-service-ca"} {
 			staleCM := &corev1.ConfigMap{}
 			staleCM.Name = name
 			staleCM.Namespace = kn.Namespace
@@ -539,32 +539,50 @@ func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernau
 }
 
 func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string) error {
-	configMaps := []*corev1.ConfigMap{
-		resources.GatewayConfigMap(kn),
-		resources.DataStorageConfigMap(kn, dbName, dbUser),
-		resources.AIAnalysisConfigMap(kn),
-		resources.SignalProcessingConfigMap(kn),
-		resources.RemediationOrchestratorConfigMap(kn),
-		resources.WorkflowExecutionConfigMap(kn),
-		resources.EffectivenessMonitorConfigMap(kn),
-		resources.NotificationControllerConfigMap(kn),
-		resources.NotificationRoutingConfigMap(kn),
-		resources.HolmesGPTAPIConfigMap(kn),
-		resources.AuthWebhookConfigMap(kn),
+	type cmBuilder struct {
+		name string
+		fn   func() (*corev1.ConfigMap, error)
 	}
+	builders := []cmBuilder{
+		{"gateway", func() (*corev1.ConfigMap, error) { return resources.GatewayConfigMap(kn) }},
+		{"datastorage", func() (*corev1.ConfigMap, error) { return resources.DataStorageConfigMap(kn, dbName, dbUser) }},
+		{"aianalysis", func() (*corev1.ConfigMap, error) { return resources.AIAnalysisConfigMap(kn) }},
+		{"signalprocessing", func() (*corev1.ConfigMap, error) { return resources.SignalProcessingConfigMap(kn) }},
+		{"remediationorchestrator", func() (*corev1.ConfigMap, error) { return resources.RemediationOrchestratorConfigMap(kn) }},
+		{"workflowexecution", func() (*corev1.ConfigMap, error) { return resources.WorkflowExecutionConfigMap(kn) }},
+		{"effectivenessmonitor", func() (*corev1.ConfigMap, error) { return resources.EffectivenessMonitorConfigMap(kn) }},
+		{"notification-controller", func() (*corev1.ConfigMap, error) { return resources.NotificationControllerConfigMap(kn) }},
+		{"notification-routing", func() (*corev1.ConfigMap, error) { return resources.NotificationRoutingConfigMap(kn) }},
+		{"kubernaut-agent", func() (*corev1.ConfigMap, error) { return resources.KubernautAgentConfigMap(kn) }},
+		{"authwebhook", func() (*corev1.ConfigMap, error) { return resources.AuthWebhookConfigMap(kn) }},
+	}
+
+	var configMaps []*corev1.ConfigMap
+	for _, b := range builders {
+		cm, err := b.fn()
+		if err != nil {
+			return fmt.Errorf("building %s ConfigMap: %w", b.name, err)
+		}
+		configMaps = append(configMaps, cm)
+	}
+
 	if cm := resources.AIAnalysisPoliciesConfigMap(kn); cm != nil {
 		configMaps = append(configMaps, cm)
 	}
 	if cm := resources.SignalProcessingPolicyConfigMap(kn); cm != nil {
 		configMaps = append(configMaps, cm)
 	}
-	if sdkCM := resources.HolmesGPTSDKConfigMap(kn); sdkCM != nil {
+	sdkCM, err := resources.KubernautAgentSDKConfigMap(kn)
+	if err != nil {
+		return fmt.Errorf("building kubernaut-agent-sdk ConfigMap: %w", err)
+	}
+	if sdkCM != nil {
 		configMaps = append(configMaps, sdkCM)
 	}
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		configMaps = append(configMaps,
 			resources.EffectivenessMonitorServiceCAConfigMap(kn),
-			resources.HolmesGPTAPIServiceCAConfigMap(kn),
+			resources.KubernautAgentServiceCAConfigMap(kn),
 		)
 	}
 	for _, cm := range configMaps {
@@ -585,7 +603,10 @@ func (r *KubernautReconciler) deployAdmissionWebhooks(ctx context.Context, kn *k
 		return fmt.Errorf("ensuring MutatingWebhookConfiguration: %w", err)
 	}
 	vwc := resources.ValidatingWebhookConfiguration(kn)
-	return r.ensureUnowned(ctx, vwc)
+	if err := r.ensureUnowned(ctx, vwc); err != nil {
+		return fmt.Errorf("ensuring ValidatingWebhookConfiguration: %w", err)
+	}
+	return nil
 }
 
 // deployWorkloads creates/updates deployments, services, PDBs, and the OCP
@@ -601,7 +622,7 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		resources.WorkflowExecutionDeployment,
 		resources.EffectivenessMonitorDeployment,
 		resources.NotificationDeployment,
-		resources.HolmesGPTAPIDeployment,
+		resources.KubernautAgentDeployment,
 		resources.AuthWebhookDeployment,
 	}
 	for _, build := range depBuilders {
@@ -634,7 +655,10 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 	}
 	staleRoute := resources.GatewayRouteStub(kn)
 	if err := r.deleteIfExists(ctx, staleRoute); err != nil {
-		logf.FromContext(ctx).V(1).Info("cleanup failed", "resource", "gateway-route", "error", err)
+		if runtime.IsNotRegisteredError(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("deleting stale Gateway Route: %w", err)
 	}
 	return false, nil
 }
@@ -709,9 +733,9 @@ func (r *KubernautReconciler) reconcileDelete(ctx context.Context, kn *kubernaut
 	if controllerutil.ContainsFinalizer(kn, kubernautv1alpha1.FinalizerName) {
 		if err := r.deleteClusterScopedResources(ctx, kn); err != nil {
 			deletionAge := time.Since(kn.DeletionTimestamp.Time)
-			if deletionAge > time.Duration(maxFinalizerRetries)*requeueError {
+			if deletionAge > time.Duration(maxFinalizerAttempts)*requeueError {
 				r.Recorder.Eventf(kn, corev1.EventTypeWarning, "FinalizerTimeout",
-					"Cleanup failed for %s; force-removing finalizer: %v", deletionAge.Round(time.Second), err)
+					"cleanup failed after %s; force-removing finalizer: %v", deletionAge.Round(time.Second), err)
 				log.Error(err, "cleanup failed past timeout, force-removing finalizer")
 			} else {
 				return ctrl.Result{RequeueAfter: requeueError}, err
