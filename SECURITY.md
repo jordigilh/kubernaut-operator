@@ -4,7 +4,8 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.x     | :white_check_mark: |
+| 1.3.x   | :white_check_mark: |
+| < 1.3   | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -33,11 +34,26 @@ cluster-scoped resources (ClusterRoles, ClusterRoleBindings, CRDs, webhook
 configurations) and namespace-scoped workloads. When deploying:
 
 - Follow the principle of least privilege for the operator's ServiceAccount
-- The operator programmatically generates TLS certificates for the AuthWebhook;
-  review the generated CA trust chain
+- TLS for the AuthWebhook is managed by OCP service-CA; the operator annotates
+  the Service and webhook configurations for automatic certificate injection
 - Restrict who can create/modify the singleton `Kubernaut` CR
 - BYO secrets (PostgreSQL, Valkey, LLM credentials) should use short-lived
   credentials where possible and be rotated regularly
+- The operator requires `escalate` and `bind` RBAC verbs to provision
+  ClusterRoles for managed workloads; see [RBAC documentation](#rbac) below
+
+### RBAC
+
+The operator requires these elevated permissions:
+
+- **`escalate` / `bind`** on ClusterRoles/ClusterRoleBindings: Required to
+  create RBAC bindings for managed workloads (HolmesGPT investigator,
+  signal processing, monitoring) without granting itself the permissions
+  those roles carry.
+- **`get/list/watch` on Secrets cluster-wide**: The HolmesGPT investigator
+  role requires read access to secrets for root-cause analysis across
+  namespaces. This is a deliberate design choice documented in the
+  `holmesgpt-api-investigator` ClusterRole.
 
 ## Disclosure Policy
 
