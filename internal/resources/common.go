@@ -18,12 +18,14 @@ package resources
 
 import (
 	"fmt"
+	"regexp"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
@@ -92,7 +94,7 @@ const (
 
 // DefaultPostgreSQLImage is the RHEL10 PostgreSQL 16 image used for the
 // data-storage init container on OCP (restricted-v2 SCC compatible).
-const DefaultPostgreSQLImage = "registry.redhat.io/rhel10/postgresql-16"
+const DefaultPostgreSQLImage = "registry.redhat.io/rhel10/postgresql-16:latest"
 
 // AllComponents returns the ordered list of all managed components.
 func AllComponents() []string {
@@ -187,7 +189,7 @@ func SetOwnerReference(kn *kubernautv1alpha1.Kubernaut, obj metav1.Object, schem
 // matching the Helm chart's kubernaut.podSecurityContext helper.
 func PodSecurityContext() *corev1.PodSecurityContext {
 	return &corev1.PodSecurityContext{
-		RunAsNonRoot: boolPtr(true),
+		RunAsNonRoot: ptr.To(true),
 		SeccompProfile: &corev1.SeccompProfile{
 			Type: corev1.SeccompProfileTypeRuntimeDefault,
 		},
@@ -198,8 +200,8 @@ func PodSecurityContext() *corev1.PodSecurityContext {
 // matching the Helm chart's kubernaut.containerSecurityContext helper.
 func ContainerSecurityContext() *corev1.SecurityContext {
 	return &corev1.SecurityContext{
-		AllowPrivilegeEscalation: boolPtr(false),
-		ReadOnlyRootFilesystem:   boolPtr(true),
+		AllowPrivilegeEscalation: ptr.To(false),
+		ReadOnlyRootFilesystem:   ptr.To(true),
 		Capabilities: &corev1.Capabilities{
 			Drop: []corev1.Capability{"ALL"},
 		},
@@ -300,20 +302,23 @@ func ValkeyAddr(spec *kubernautv1alpha1.ValkeySpec) string {
 	return fmt.Sprintf("%s:%d", spec.Host, port)
 }
 
-// postgreSQLHost returns the PostgreSQL DSN host:port.
-func postgreSQLHost(spec *kubernautv1alpha1.PostgreSQLSpec) string {
-	port := spec.Port
-	if port == 0 {
-		port = DefaultPostgreSQLPort
-	}
-	return fmt.Sprintf("%s:%d", spec.Host, port)
-}
-
 // componentsNeedingNSRole lists components that require namespace-scoped Roles
 // and RoleBindings. Currently all components need NS roles; split from
 // AllComponents() if a component is added without RBAC needs.
 var componentsNeedingNSRole = AllComponents()
 
-func boolPtr(b bool) *bool { return &b }
+// validHostname matches DNS names and IPv4/IPv6 addresses. Rejects strings
+// containing shell metacharacters, whitespace, or DSN parameter separators.
+var validHostname = regexp.MustCompile(`^[a-zA-Z0-9._:[\]-]+$`)
 
-func int32Ptr(i int32) *int32 { return &i }
+// ValidateHostname returns an error if host contains characters that could
+// be used for shell or DSN parameter injection.
+func ValidateHostname(host string) error {
+	if host == "" {
+		return fmt.Errorf("hostname must not be empty")
+	}
+	if !validHostname.MatchString(host) {
+		return fmt.Errorf("hostname %q contains invalid characters", host)
+	}
+	return nil
+}

@@ -257,21 +257,19 @@ func TestValkeyAddr(t *testing.T) {
 	}
 }
 
-func Test_postgreSQLHost(t *testing.T) {
-	tests := []struct {
-		name string
-		spec kubernautv1alpha1.PostgreSQLSpec
-		want string
-	}{
-		{"explicit port", kubernautv1alpha1.PostgreSQLSpec{Host: "pg.local", Port: 5433}, "pg.local:5433"},
-		{"default port", kubernautv1alpha1.PostgreSQLSpec{Host: "pg.local"}, "pg.local:5432"},
+func TestValidateHostname_Valid(t *testing.T) {
+	for _, host := range []string{"pg.local", "192.168.1.1", "my-host.example.com", "[::1]"} {
+		if err := ValidateHostname(host); err != nil {
+			t.Errorf("ValidateHostname(%q) should be valid, got: %v", host, err)
+		}
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := postgreSQLHost(&tt.spec); got != tt.want {
-				t.Errorf("postgreSQLHost() = %q, want %q", got, tt.want)
-			}
-		})
+}
+
+func TestValidateHostname_Invalid(t *testing.T) {
+	for _, host := range []string{"", "host;rm -rf /", "host user=admin", "a b"} {
+		if err := ValidateHostname(host); err == nil {
+			t.Errorf("ValidateHostname(%q) should be invalid", host)
+		}
 	}
 }
 
