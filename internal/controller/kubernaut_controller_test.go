@@ -65,7 +65,7 @@ func newMinimalCR() *kubernautv1alpha1.Kubernaut {
 				SecretName: vkSecretName,
 				Host:       "valkey",
 			},
-			HolmesGPTAPI: kubernautv1alpha1.HolmesGPTAPISpec{
+			KubernautAgent: kubernautv1alpha1.KubernautAgentSpec{
 				LLM: kubernautv1alpha1.LLMSpec{
 					Provider:              "openai",
 					Model:                 "gpt-4o",

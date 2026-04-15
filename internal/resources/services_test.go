@@ -44,7 +44,7 @@ func TestServices_AuthWebhookOn443(t *testing.T) {
 			if len(svc.Spec.Ports) == 0 || svc.Spec.Ports[0].Port != 443 {
 				t.Errorf("authwebhook-service port should be 443, got %v", svc.Spec.Ports)
 			}
-			if svc.Annotations["service.beta.openshift.io/serving-cert-secret-name"] != "authwebhook-tls" {
+			if svc.Annotations[OCPServingCertAnnotation] != "authwebhook-tls" {
 				t.Errorf("authwebhook-service should have serving-cert annotation, got %v", svc.Annotations)
 			}
 			return
@@ -103,7 +103,7 @@ func TestServices_ExpectedNames(t *testing.T) {
 		"workflowexecution-service",
 		"effectivenessmonitor-service",
 		"notification-service",
-		"holmesgpt-api-service",
+		"kubernaut-agent-service",
 		"authwebhook-service",
 	}
 	for _, name := range expected {

@@ -20,12 +20,17 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
 func TestGatewayConfigMap_ContainsDataStorageURL(t *testing.T) {
 	kn := testKubernaut()
-	cm := GatewayConfigMap(kn)
+	cm, err := GatewayConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if cm.Name != "gateway-config" {
 		t.Errorf("name = %q, want %q", cm.Name, "gateway-config")
@@ -38,7 +43,10 @@ func TestGatewayConfigMap_ContainsDataStorageURL(t *testing.T) {
 
 func TestDataStorageConfigMap_ContainsPgAndValkey(t *testing.T) {
 	kn := testKubernaut()
-	cm := DataStorageConfigMap(kn, "kubernautdb", "kubernautuser")
+	cm, err := DataStorageConfigMap(kn, "kubernautdb", "kubernautuser")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	data := cm.Data["config.yaml"]
 	if !strings.Contains(data, "host: pg.example.com") {
@@ -55,7 +63,10 @@ func TestDataStorageConfigMap_ContainsPgAndValkey(t *testing.T) {
 func TestDataStorageConfigMap_DefaultPort(t *testing.T) {
 	kn := testKubernaut()
 	kn.Spec.PostgreSQL.Port = 0
-	cm := DataStorageConfigMap(kn, "kubernautdb", "kubernautuser")
+	cm, err := DataStorageConfigMap(kn, "kubernautdb", "kubernautuser")
+	if err != nil {
+		t.Fatal(err)
+	}
 	data := cm.Data["config.yaml"]
 	if !strings.Contains(data, "port: 5432") {
 		t.Errorf("datastorage config should default to port 5432, got:\n%s", data)
@@ -65,7 +76,10 @@ func TestDataStorageConfigMap_DefaultPort(t *testing.T) {
 func TestAIAnalysisConfigMap_IncludesConfidenceThreshold(t *testing.T) {
 	kn := testKubernaut()
 	kn.Spec.AIAnalysis.ConfidenceThreshold = "0.85"
-	cm := AIAnalysisConfigMap(kn)
+	cm, err := AIAnalysisConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	data := cm.Data["config.yaml"]
 	if !strings.Contains(data, "confidenceThreshold") || !strings.Contains(data, "0.85") {
@@ -75,7 +89,10 @@ func TestAIAnalysisConfigMap_IncludesConfidenceThreshold(t *testing.T) {
 
 func TestAIAnalysisConfigMap_OmitsThresholdWhenEmpty(t *testing.T) {
 	kn := testKubernaut()
-	cm := AIAnalysisConfigMap(kn)
+	cm, err := AIAnalysisConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	data := cm.Data["config.yaml"]
 	if strings.Contains(data, "confidenceThreshold") {
@@ -85,7 +102,10 @@ func TestAIAnalysisConfigMap_OmitsThresholdWhenEmpty(t *testing.T) {
 
 func TestSignalProcessingConfigMap_ContainsDataStorageURL(t *testing.T) {
 	kn := testKubernaut()
-	cm := SignalProcessingConfigMap(kn)
+	cm, err := SignalProcessingConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	data := cm.Data["config.yaml"]
 	if !strings.Contains(data, "data-storage-service.kubernaut-system.svc.cluster.local") {
@@ -98,7 +118,10 @@ func TestSignalProcessingConfigMap_ContainsDataStorageURL(t *testing.T) {
 
 func TestRemediationOrchestratorConfigMap_Defaults(t *testing.T) {
 	kn := testKubernaut()
-	cm := RemediationOrchestratorConfigMap(kn)
+	cm, err := RemediationOrchestratorConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	data := cm.Data["config.yaml"]
 	defaults := []string{
@@ -116,7 +139,10 @@ func TestRemediationOrchestratorConfigMap_CustomValues(t *testing.T) {
 	kn := testKubernaut()
 	kn.Spec.RemediationOrchestrator.Timeouts.Global = "2h"
 	kn.Spec.RemediationOrchestrator.Timeouts.Processing = "10m"
-	cm := RemediationOrchestratorConfigMap(kn)
+	cm, err := RemediationOrchestratorConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	data := cm.Data["config.yaml"]
 	if !strings.Contains(data, "global: 2h") {
@@ -129,7 +155,10 @@ func TestRemediationOrchestratorConfigMap_CustomValues(t *testing.T) {
 
 func TestWorkflowExecutionConfigMap_DefaultNamespace(t *testing.T) {
 	kn := testKubernaut()
-	cm := WorkflowExecutionConfigMap(kn)
+	cm, err := WorkflowExecutionConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	data := cm.Data["config.yaml"]
 	if !strings.Contains(data, "kubernaut-workflows") {
@@ -140,7 +169,10 @@ func TestWorkflowExecutionConfigMap_DefaultNamespace(t *testing.T) {
 func TestWorkflowExecutionConfigMap_CustomNamespace(t *testing.T) {
 	kn := testKubernaut()
 	kn.Spec.WorkflowExecution.WorkflowNamespace = "custom-wf"
-	cm := WorkflowExecutionConfigMap(kn)
+	cm, err := WorkflowExecutionConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	data := cm.Data["config.yaml"]
 	if !strings.Contains(data, "custom-wf") {
@@ -150,7 +182,10 @@ func TestWorkflowExecutionConfigMap_CustomNamespace(t *testing.T) {
 
 func TestEffectivenessMonitorConfigMap_Defaults(t *testing.T) {
 	kn := testKubernaut()
-	cm := EffectivenessMonitorConfigMap(kn)
+	cm, err := EffectivenessMonitorConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	data := cm.Data["config.yaml"]
 	if !strings.Contains(data, "stabilizationWindow: 30s") {
@@ -162,7 +197,10 @@ func TestNotificationRoutingConfigMap_SlackConfigured(t *testing.T) {
 	kn := testKubernaut()
 	kn.Spec.Notification.Slack.SecretName = "slack-webhook"
 	kn.Spec.Notification.Slack.Channel = "#ops"
-	cm := NotificationRoutingConfigMap(kn)
+	cm, err := NotificationRoutingConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	data := cm.Data["routing.yaml"]
 	if !strings.Contains(data, "slack") {
@@ -175,7 +213,10 @@ func TestNotificationRoutingConfigMap_SlackConfigured(t *testing.T) {
 
 func TestNotificationRoutingConfigMap_NoSlack(t *testing.T) {
 	kn := testKubernaut()
-	cm := NotificationRoutingConfigMap(kn)
+	cm, err := NotificationRoutingConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	data := cm.Data["routing.yaml"]
 	if !strings.Contains(data, "console") {
@@ -186,12 +227,15 @@ func TestNotificationRoutingConfigMap_NoSlack(t *testing.T) {
 	}
 }
 
-func TestHolmesGPTSDKConfigMap_GeneratedWhenNoExisting(t *testing.T) {
+func TestKubernautAgentSDKConfigMap_GeneratedWhenNoExisting(t *testing.T) {
 	kn := testKubernaut()
-	cm := HolmesGPTSDKConfigMap(kn)
+	cm, err := KubernautAgentSDKConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if cm == nil {
-		t.Fatal("HolmesGPTSDKConfigMap should not be nil when no existing CM specified")
+		t.Fatal("KubernautAgentSDKConfigMap should not be nil when no existing CM specified")
 	}
 	data := cm.Data["sdk-config.yaml"]
 	if !strings.Contains(data, "provider: openai") {
@@ -202,13 +246,15 @@ func TestHolmesGPTSDKConfigMap_GeneratedWhenNoExisting(t *testing.T) {
 	}
 }
 
-func TestHolmesGPTSDKConfigMap_NilWhenExistingProvided(t *testing.T) {
+func TestKubernautAgentSDKConfigMap_NilWhenExistingProvided(t *testing.T) {
 	kn := testKubernaut()
-	kn.Spec.HolmesGPTAPI.LLM.SdkConfigMapName = "my-sdk-config"
-	cm := HolmesGPTSDKConfigMap(kn)
-
+	kn.Spec.KubernautAgent.LLM.SdkConfigMapName = "my-sdk-config"
+	cm, err := KubernautAgentSDKConfigMap(kn)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if cm != nil {
-		t.Error("HolmesGPTSDKConfigMap should be nil when user provides existing CM")
+		t.Error("KubernautAgentSDKConfigMap should be nil when user provides existing CM")
 	}
 }
 
@@ -224,10 +270,10 @@ func TestServiceCAConfigMaps_HaveAnnotation(t *testing.T) {
 				t.Error("EM service-ca ConfigMap should have inject-cabundle annotation")
 			}
 		}},
-		{"holmesgpt-api-service-ca", func(t *testing.T) {
-			cm := HolmesGPTAPIServiceCAConfigMap(kn)
+		{"kubernaut-agent-service-ca", func(t *testing.T) {
+			cm := KubernautAgentServiceCAConfigMap(kn)
 			if cm.Annotations["service.beta.openshift.io/inject-cabundle"] != "true" {
-				t.Error("HAPI service-ca ConfigMap should have inject-cabundle annotation")
+				t.Error("KA service-ca ConfigMap should have inject-cabundle annotation")
 			}
 		}},
 	}
@@ -238,7 +284,10 @@ func TestServiceCAConfigMaps_HaveAnnotation(t *testing.T) {
 
 func TestEffectivenessMonitorConfigMap_MonitoringURLs(t *testing.T) {
 	kn := testKubernaut()
-	cm := EffectivenessMonitorConfigMap(kn)
+	cm, err := EffectivenessMonitorConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 	data := cm.Data["config.yaml"]
 
 	if !strings.Contains(data, OCPPrometheusURL) {
@@ -256,7 +305,10 @@ func TestEffectivenessMonitorConfigMap_NoMonitoringURLsWhenDisabled(t *testing.T
 	kn := testKubernaut()
 	disabled := false
 	kn.Spec.Monitoring.Enabled = &disabled
-	cm := EffectivenessMonitorConfigMap(kn)
+	cm, err := EffectivenessMonitorConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 	data := cm.Data["config.yaml"]
 
 	if strings.Contains(data, "prometheusUrl") {
@@ -264,28 +316,34 @@ func TestEffectivenessMonitorConfigMap_NoMonitoringURLsWhenDisabled(t *testing.T
 	}
 }
 
-func TestHolmesGPTAPIConfigMap_MonitoringURL(t *testing.T) {
+func TestKubernautAgentConfigMap_MonitoringURL(t *testing.T) {
 	kn := testKubernaut()
-	cm := HolmesGPTAPIConfigMap(kn)
+	cm, err := KubernautAgentConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 	data := cm.Data["config.yaml"]
 
 	if !strings.Contains(data, OCPPrometheusURL) {
-		t.Errorf("HAPI config should contain Prometheus URL when monitoring enabled, got:\n%s", data)
+		t.Errorf("KA config should contain Prometheus URL when monitoring enabled, got:\n%s", data)
 	}
-	if !strings.Contains(data, "tlsCaPath: /etc/ssl/hapi/service-ca.crt") {
-		t.Errorf("HAPI config should contain TLS CA path when monitoring enabled, got:\n%s", data)
+	if !strings.Contains(data, "tlsCaPath: /etc/ssl/ka/service-ca.crt") {
+		t.Errorf("KA config should contain TLS CA path when monitoring enabled, got:\n%s", data)
 	}
 }
 
-func TestHolmesGPTAPIConfigMap_NoMonitoringWhenDisabled(t *testing.T) {
+func TestKubernautAgentConfigMap_NoMonitoringWhenDisabled(t *testing.T) {
 	kn := testKubernaut()
 	disabled := false
 	kn.Spec.Monitoring.Enabled = &disabled
-	cm := HolmesGPTAPIConfigMap(kn)
+	cm, err := KubernautAgentConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 	data := cm.Data["config.yaml"]
 
 	if strings.Contains(data, "prometheusUrl") {
-		t.Errorf("HAPI config should not contain monitoring section when disabled, got:\n%s", data)
+		t.Errorf("KA config should not contain monitoring section when disabled, got:\n%s", data)
 	}
 }
 
@@ -298,7 +356,10 @@ func TestWorkflowExecutionConfigMap_AWXWiring(t *testing.T) {
 		Name: "awx-token",
 		Key:  "api-token",
 	}
-	cm := WorkflowExecutionConfigMap(kn)
+	cm, err := WorkflowExecutionConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 	data := cm.Data["config.yaml"]
 
 	for _, want := range []string{
@@ -317,7 +378,10 @@ func TestWorkflowExecutionConfigMap_AWXWiring(t *testing.T) {
 
 func TestWorkflowExecutionConfigMap_NoAWXWhenDisabled(t *testing.T) {
 	kn := testKubernaut()
-	cm := WorkflowExecutionConfigMap(kn)
+	cm, err := WorkflowExecutionConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 	data := cm.Data["config.yaml"]
 
 	if strings.Contains(data, "ansible:") {
@@ -327,7 +391,10 @@ func TestWorkflowExecutionConfigMap_NoAWXWhenDisabled(t *testing.T) {
 
 func TestWorkflowExecutionConfigMap_ServiceAccountName(t *testing.T) {
 	kn := testKubernaut()
-	cm := WorkflowExecutionConfigMap(kn)
+	cm, err := WorkflowExecutionConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
 	data := cm.Data["config.yaml"]
 
 	if !strings.Contains(data, "serviceAccountName: kubernaut-workflow-runner") {
@@ -337,21 +404,29 @@ func TestWorkflowExecutionConfigMap_ServiceAccountName(t *testing.T) {
 
 func TestConfigMaps_AllInCorrectNamespace(t *testing.T) {
 	kn := testKubernaut()
-	cms := []struct{ name, ns string }{
-		{GatewayConfigMap(kn).Name, GatewayConfigMap(kn).Namespace},
-		{DataStorageConfigMap(kn, "db", "user").Name, DataStorageConfigMap(kn, "db", "user").Namespace},
-		{AIAnalysisConfigMap(kn).Name, AIAnalysisConfigMap(kn).Namespace},
-		{SignalProcessingConfigMap(kn).Name, SignalProcessingConfigMap(kn).Namespace},
-		{RemediationOrchestratorConfigMap(kn).Name, RemediationOrchestratorConfigMap(kn).Namespace},
-		{WorkflowExecutionConfigMap(kn).Name, WorkflowExecutionConfigMap(kn).Namespace},
-		{EffectivenessMonitorConfigMap(kn).Name, EffectivenessMonitorConfigMap(kn).Namespace},
-		{NotificationControllerConfigMap(kn).Name, NotificationControllerConfigMap(kn).Namespace},
-		{HolmesGPTAPIConfigMap(kn).Name, HolmesGPTAPIConfigMap(kn).Namespace},
-		{AuthWebhookConfigMap(kn).Name, AuthWebhookConfigMap(kn).Namespace},
+	type builder struct {
+		name string
+		fn   func() (*corev1.ConfigMap, error)
 	}
-	for _, cm := range cms {
-		if cm.ns != "kubernaut-system" {
-			t.Errorf("ConfigMap %q namespace = %q, want %q", cm.name, cm.ns, "kubernaut-system")
+	builders := []builder{
+		{"gateway", func() (*corev1.ConfigMap, error) { return GatewayConfigMap(kn) }},
+		{"datastorage", func() (*corev1.ConfigMap, error) { return DataStorageConfigMap(kn, "db", "user") }},
+		{"aianalysis", func() (*corev1.ConfigMap, error) { return AIAnalysisConfigMap(kn) }},
+		{"signalprocessing", func() (*corev1.ConfigMap, error) { return SignalProcessingConfigMap(kn) }},
+		{"remediationorchestrator", func() (*corev1.ConfigMap, error) { return RemediationOrchestratorConfigMap(kn) }},
+		{"workflowexecution", func() (*corev1.ConfigMap, error) { return WorkflowExecutionConfigMap(kn) }},
+		{"effectivenessmonitor", func() (*corev1.ConfigMap, error) { return EffectivenessMonitorConfigMap(kn) }},
+		{"notification-controller", func() (*corev1.ConfigMap, error) { return NotificationControllerConfigMap(kn) }},
+		{"kubernaut-agent", func() (*corev1.ConfigMap, error) { return KubernautAgentConfigMap(kn) }},
+		{"authwebhook", func() (*corev1.ConfigMap, error) { return AuthWebhookConfigMap(kn) }},
+	}
+	for _, b := range builders {
+		cm, err := b.fn()
+		if err != nil {
+			t.Fatalf("building %s ConfigMap: %v", b.name, err)
+		}
+		if cm.Namespace != "kubernaut-system" {
+			t.Errorf("ConfigMap %q namespace = %q, want %q", cm.Name, cm.Namespace, "kubernaut-system")
 		}
 	}
 }

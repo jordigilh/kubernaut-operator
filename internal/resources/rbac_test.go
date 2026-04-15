@@ -56,8 +56,8 @@ func TestClusterRoles_ContainsExpectedNames(t *testing.T) {
 	expectedNames := []string{
 		ns + "-gateway-role",
 		ns + "-aianalysis-controller",
-		ns + "-holmesgpt-api-client",
-		ns + "-holmesgpt-api-investigator",
+		ns + "-kubernaut-agent-client",
+		ns + "-kubernaut-agent-investigator",
 		ns + "-signalprocessing-controller",
 		ns + "-remediationorchestrator-controller",
 		ns + "-workflowexecution-controller",
@@ -286,10 +286,10 @@ func TestClusterRoleBindings_MonitoringCRBs(t *testing.T) {
 		}
 	})
 
-	t.Run("cluster-monitoring-view for HAPI", func(t *testing.T) {
-		crb, ok := crbMap[ns+"-holmesgpt-api-monitoring-view"]
+	t.Run("cluster-monitoring-view for KA", func(t *testing.T) {
+		crb, ok := crbMap[ns+"-kubernaut-agent-monitoring-view"]
 		if !ok {
-			t.Fatalf("missing %s-holmesgpt-api-monitoring-view CRB", ns)
+			t.Fatalf("missing %s-kubernaut-agent-monitoring-view CRB", ns)
 		}
 		if crb.RoleRef.Name != "cluster-monitoring-view" {
 			t.Errorf("roleRef = %q, want %q", crb.RoleRef.Name, "cluster-monitoring-view")
@@ -327,7 +327,7 @@ func TestClusterRoleBindings_MonitoringDisabled_NoMonitoringCRBs(t *testing.T) {
 	monitoringNames := map[string]bool{
 		ns + "-effectivenessmonitor-alertmanager-view-binding": true,
 		ns + "-effectivenessmonitor-monitoring-view":           true,
-		ns + "-holmesgpt-api-monitoring-view":                  true,
+		ns + "-kubernaut-agent-monitoring-view":                true,
 		ns + "-alertmanager-gateway-signal-source":             true,
 	}
 
@@ -338,17 +338,17 @@ func TestClusterRoleBindings_MonitoringDisabled_NoMonitoringCRBs(t *testing.T) {
 	}
 }
 
-func TestHolmesGPTClientRoleBinding_GrantsAIAnalysisAccess(t *testing.T) {
+func TestKubernautAgentClientRoleBinding_GrantsAIAnalysisAccess(t *testing.T) {
 	kn := testKubernaut()
-	rb := HolmesGPTClientRoleBinding(kn)
+	rb := KubernautAgentClientRoleBinding(kn)
 
-	if rb.Name != "holmesgpt-api-client-aianalysis" {
-		t.Errorf("Name = %q, want %q", rb.Name, "holmesgpt-api-client-aianalysis")
+	if rb.Name != "kubernaut-agent-client-aianalysis" {
+		t.Errorf("Name = %q, want %q", rb.Name, "kubernaut-agent-client-aianalysis")
 	}
 	if rb.Namespace != kn.Namespace {
 		t.Errorf("Namespace = %q, want %q", rb.Namespace, kn.Namespace)
 	}
-	wantRoleRef := kn.Namespace + "-holmesgpt-api-client"
+	wantRoleRef := kn.Namespace + "-kubernaut-agent-client"
 	if rb.RoleRef.Name != wantRoleRef {
 		t.Errorf("RoleRef.Name = %q, want %q", rb.RoleRef.Name, wantRoleRef)
 	}

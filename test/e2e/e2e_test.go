@@ -238,7 +238,7 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 				"gateway-deployment", "data-storage-deployment", "aianalysis-deployment",
 				"signalprocessing-deployment", "remediationorchestrator-deployment",
 				"workflowexecution-deployment", "effectivenessmonitor-deployment",
-				"notification-deployment", "holmesgpt-api-deployment", "authwebhook-deployment",
+				"notification-deployment", "kubernaut-agent-deployment", "authwebhook-deployment",
 			}
 			for _, dep := range deployments {
 				cmd := exec.Command("kubectl", "get", "deployment", dep,
@@ -270,7 +270,7 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 				"gateway-service", "data-storage-service", "aianalysis-service",
 				"signalprocessing-service", "remediationorchestrator-service",
 				"workflowexecution-service", "effectivenessmonitor-service",
-				"notification-service", "holmesgpt-api-service", "authwebhook-service",
+				"notification-service", "kubernaut-agent-service", "authwebhook-service",
 			} {
 				verifyService(svc)
 			}
@@ -311,7 +311,7 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 				"gateway", "data-storage-sa", "aianalysis-controller",
 				"signalprocessing-controller", "remediationorchestrator-controller",
 				"workflowexecution-controller", "effectivenessmonitor-controller",
-				"notification-controller", "holmesgpt-api-sa", "authwebhook",
+				"notification-controller", "kubernaut-agent-sa", "authwebhook",
 			}
 			for _, sa := range serviceAccounts {
 				cmd := exec.Command("kubectl", "get", "serviceaccount", sa,
@@ -341,7 +341,7 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 		It("should create OCP service-CA annotated ConfigMaps when monitoring is enabled", func() {
 			for _, cm := range []string{
 				"effectivenessmonitor-service-ca",
-				"holmesgpt-api-service-ca",
+				"kubernaut-agent-service-ca",
 			} {
 				verifyCM := func(g Gomega) {
 					cmd := exec.Command("kubectl", "get", "configmap", cm,
@@ -373,13 +373,13 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			}
 		})
 
-		It("should create the HolmesGPT client RoleBinding", func() {
+		It("should create the Kubernaut Agent client RoleBinding", func() {
 			cmd := exec.Command("kubectl", "get", "rolebinding",
-				"holmesgpt-api-client-aianalysis",
+				"kubernaut-agent-client-aianalysis",
 				"-n", crNS, "-o", "jsonpath={.roleRef.name}")
 			output, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "HolmesGPT client RoleBinding should exist")
-			Expect(output).To(Equal(crNS + "-holmesgpt-api-client"))
+			Expect(err).NotTo(HaveOccurred(), "Kubernaut Agent client RoleBinding should exist")
+			Expect(output).To(Equal(crNS + "-kubernaut-agent-client"))
 		})
 	})
 

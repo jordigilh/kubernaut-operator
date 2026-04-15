@@ -228,10 +228,10 @@ func cleanupNamespacedResources(ctx context.Context) {
 	}
 }
 
-// stripWorkflowNamespaceLabel removes the created-by annotation so the finalizer
+// stripWorkflowNamespaceCreatedByAnnotation removes the created-by annotation so the finalizer
 // skips namespace deletion, keeping envtest healthy. envtest lacks a namespace
 // controller, so deleting a namespace puts it into Terminating forever.
-func stripWorkflowNamespaceLabel(ctx context.Context) {
+func stripWorkflowNamespaceCreatedByAnnotation(ctx context.Context) {
 	ns := &corev1.Namespace{}
 	wfNsName := resources.DefaultWorkflowNamespace
 	if err := k8sClient.Get(ctx, types.NamespacedName{Name: wfNsName}, ns); err == nil {
@@ -549,10 +549,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
 				Name: "effectivenessmonitor-service-ca", Namespace: testNamespace,
 			}, emCA)).To(Succeed())
-			hgCA := &corev1.ConfigMap{}
+			kaCA := &corev1.ConfigMap{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: "holmesgpt-api-service-ca", Namespace: testNamespace,
-			}, hgCA)).To(Succeed())
+				Name: "kubernaut-agent-service-ca", Namespace: testNamespace,
+			}, kaCA)).To(Succeed())
 
 			By("disabling monitoring")
 			kn := &kubernautv1alpha1.Kubernaut{}
@@ -575,10 +575,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(errors.IsNotFound(err)).To(BeTrue(),
 				"effectivenessmonitor-service-ca should be deleted when monitoring is disabled")
 			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name: "holmesgpt-api-service-ca", Namespace: testNamespace,
-			}, hgCA)
+				Name: "kubernaut-agent-service-ca", Namespace: testNamespace,
+			}, kaCA)
 			Expect(errors.IsNotFound(err)).To(BeTrue(),
-				"holmesgpt-api-service-ca should be deleted when monitoring is disabled")
+				"kubernaut-agent-service-ca should be deleted when monitoring is disabled")
 		})
 
 		It("should create AWX RBAC when ansible is enabled", func() {
@@ -614,12 +614,14 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		})
 
 		It("should not generate SDK ConfigMap when sdkConfigMapName is set", func() {
-			cm := resources.HolmesGPTSDKConfigMap(newMinimalCR())
+			cm, err := resources.KubernautAgentSDKConfigMap(newMinimalCR())
+			Expect(err).NotTo(HaveOccurred())
 			Expect(cm).NotTo(BeNil(), "should generate default SDK ConfigMap")
 
 			crWithSDK := newMinimalCR()
-			crWithSDK.Spec.HolmesGPTAPI.LLM.SdkConfigMapName = "user-managed-sdk"
-			cm = resources.HolmesGPTSDKConfigMap(crWithSDK)
+			crWithSDK.Spec.KubernautAgent.LLM.SdkConfigMapName = "user-managed-sdk"
+			cm, err = resources.KubernautAgentSDKConfigMap(crWithSDK)
+			Expect(err).NotTo(HaveOccurred())
 			Expect(cm).To(BeNil(), "should not generate SDK ConfigMap when user provides one")
 		})
 	})
@@ -735,7 +737,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			r := reconcileToRunning(ctx)
 
 			By("removing created-by annotation to simulate user-managed namespace")
-			stripWorkflowNamespaceLabel(ctx)
+			stripWorkflowNamespaceCreatedByAnnotation(ctx)
 
 			By("deleting the CR")
 			kn := &kubernautv1alpha1.Kubernaut{}
@@ -766,7 +768,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(crList.Items).NotTo(BeEmpty())
 
 			By("preventing namespace deletion for envtest stability")
-			stripWorkflowNamespaceLabel(ctx)
+			stripWorkflowNamespaceCreatedByAnnotation(ctx)
 
 			By("deleting the CR")
 			kn := &kubernautv1alpha1.Kubernaut{}
@@ -808,7 +810,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			kn.Spec.Monitoring.Enabled = &f
 			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
 
-			stripWorkflowNamespaceLabel(ctx)
+			stripWorkflowNamespaceCreatedByAnnotation(ctx)
 			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
 
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -836,7 +838,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			kn.Spec.Ansible.Enabled = false
 			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
 
-			stripWorkflowNamespaceLabel(ctx)
+			stripWorkflowNamespaceCreatedByAnnotation(ctx)
 			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
 
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -1047,7 +1049,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				resources.WorkflowExecutionDeployment,
 				resources.EffectivenessMonitorDeployment,
 				resources.NotificationDeployment,
-				resources.HolmesGPTAPIDeployment,
+				resources.KubernautAgentDeployment,
 				resources.AuthWebhookDeployment,
 			} {
 				dep, err := build(cr)
@@ -1111,12 +1113,12 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(emCA.Annotations).To(HaveKeyWithValue(
 				"service.beta.openshift.io/inject-cabundle", "true"))
 
-			By("verifying holmesgpt-api-service-ca exists with inject-cabundle annotation")
-			hgCA := &corev1.ConfigMap{}
+			By("verifying kubernaut-agent-service-ca exists with inject-cabundle annotation")
+			kaCA := &corev1.ConfigMap{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: "holmesgpt-api-service-ca", Namespace: testNamespace,
-			}, hgCA)).To(Succeed())
-			Expect(hgCA.Annotations).To(HaveKeyWithValue(
+				Name: "kubernaut-agent-service-ca", Namespace: testNamespace,
+			}, kaCA)).To(Succeed())
+			Expect(kaCA.Annotations).To(HaveKeyWithValue(
 				"service.beta.openshift.io/inject-cabundle", "true"))
 
 			By("verifying aianalysis-policies CM exists with approval.rego key")
@@ -1136,22 +1138,22 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	})
 
 	// ======================================================================
-	// 12. HolmesGPT Client RoleBinding Provisioning
+	// 12. Kubernaut Agent Client RoleBinding Provisioning
 	// ======================================================================
 
-	Context("HolmesGPT Client RoleBinding", func() {
-		It("should create holmesgpt-api-client-aianalysis RoleBinding during deploy", func() {
+	Context("Kubernaut Agent Client RoleBinding", func() {
+		It("should create kubernaut-agent-client-aianalysis RoleBinding during deploy", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 			reconcileToRunning(ctx)
 
 			rb := &rbacv1.RoleBinding{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: "holmesgpt-api-client-aianalysis", Namespace: testNamespace,
+				Name: "kubernaut-agent-client-aianalysis", Namespace: testNamespace,
 			}, rb)).To(Succeed())
 
 			Expect(rb.RoleRef.Kind).To(Equal("ClusterRole"))
-			expectedRoleRef := testNamespace + "-holmesgpt-api-client"
+			expectedRoleRef := testNamespace + "-kubernaut-agent-client"
 			Expect(rb.RoleRef.Name).To(Equal(expectedRoleRef))
 
 			Expect(rb.Subjects).NotTo(BeEmpty())
@@ -1199,7 +1201,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(wfRoleList.Items).NotTo(BeEmpty(), "workflow roles should exist before deletion")
 
 			By("preventing namespace deletion for envtest stability")
-			stripWorkflowNamespaceLabel(ctx)
+			stripWorkflowNamespaceCreatedByAnnotation(ctx)
 
 			By("deleting the CR")
 			kn := &kubernautv1alpha1.Kubernaut{}

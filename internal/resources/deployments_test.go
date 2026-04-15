@@ -178,32 +178,32 @@ func TestNotificationDeployment_OutputEmptyDir(t *testing.T) {
 	}
 }
 
-func TestHolmesGPTAPIDeployment_LLMCredentials(t *testing.T) {
+func TestKubernautAgentDeployment_LLMCredentials(t *testing.T) {
 	kn := testKubernaut()
-	dep, err := HolmesGPTAPIDeployment(kn)
+	dep, err := KubernautAgentDeployment(kn)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	assertDeploymentBasics(t, dep, ComponentHolmesGPTAPI, "holmesgpt-api")
+	assertDeploymentBasics(t, dep, ComponentKubernautAgent, "kubernaut-agent")
 	assertHasVolume(t, dep, "llm-credentials")
-	assertHasVolumeMount(t, dep, "llm-credentials", "/etc/holmesgpt/credentials")
+	assertHasVolumeMount(t, dep, "llm-credentials", "/etc/kubernaut-agent/credentials")
 }
 
-func TestHolmesGPTAPIDeployment_ServiceCA_WhenMonitoringEnabled(t *testing.T) {
+func TestKubernautAgentDeployment_ServiceCA_WhenMonitoringEnabled(t *testing.T) {
 	kn := testKubernaut()
-	dep, err := HolmesGPTAPIDeployment(kn)
+	dep, err := KubernautAgentDeployment(kn)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	assertHasVolume(t, dep, "service-ca")
-	assertHasVolumeMount(t, dep, "service-ca", "/etc/ssl/hapi")
+	assertHasVolumeMount(t, dep, "service-ca", "/etc/ssl/ka")
 }
 
-func TestHolmesGPTAPIDeployment_IsOpenShiftEnv_WhenMonitoringEnabled(t *testing.T) {
+func TestKubernautAgentDeployment_IsOpenShiftEnv_WhenMonitoringEnabled(t *testing.T) {
 	kn := testKubernaut()
-	dep, err := HolmesGPTAPIDeployment(kn)
+	dep, err := KubernautAgentDeployment(kn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,15 +216,15 @@ func TestHolmesGPTAPIDeployment_IsOpenShiftEnv_WhenMonitoringEnabled(t *testing.
 		}
 	}
 	if !found {
-		t.Error("HAPI container should have IS_OPENSHIFT=True env var when monitoring is enabled")
+		t.Error("KA container should have IS_OPENSHIFT=True env var when monitoring is enabled")
 	}
 }
 
-func TestHolmesGPTAPIDeployment_NoIsOpenShiftEnv_WhenMonitoringDisabled(t *testing.T) {
+func TestKubernautAgentDeployment_NoIsOpenShiftEnv_WhenMonitoringDisabled(t *testing.T) {
 	kn := testKubernaut()
 	disabled := false
 	kn.Spec.Monitoring.Enabled = &disabled
-	dep, err := HolmesGPTAPIDeployment(kn)
+	dep, err := KubernautAgentDeployment(kn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,23 +232,23 @@ func TestHolmesGPTAPIDeployment_NoIsOpenShiftEnv_WhenMonitoringDisabled(t *testi
 	container := dep.Spec.Template.Spec.Containers[0]
 	for _, env := range container.Env {
 		if env.Name == "IS_OPENSHIFT" {
-			t.Error("HAPI container should not have IS_OPENSHIFT env var when monitoring is disabled")
+			t.Error("KA container should not have IS_OPENSHIFT env var when monitoring is disabled")
 		}
 	}
 }
 
-func TestHolmesGPTAPIDeployment_NoServiceCA_WhenMonitoringDisabled(t *testing.T) {
+func TestKubernautAgentDeployment_NoServiceCA_WhenMonitoringDisabled(t *testing.T) {
 	kn := testKubernaut()
 	disabled := false
 	kn.Spec.Monitoring.Enabled = &disabled
-	dep, err := HolmesGPTAPIDeployment(kn)
+	dep, err := KubernautAgentDeployment(kn)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	for _, v := range dep.Spec.Template.Spec.Volumes {
 		if v.Name == "service-ca" {
-			t.Error("HAPI should not have service-ca volume when monitoring is disabled")
+			t.Error("KA should not have service-ca volume when monitoring is disabled")
 		}
 	}
 }
@@ -348,7 +348,7 @@ func TestServiceAccountNaming(t *testing.T) {
 		ComponentWorkflowExecution:       "workflowexecution-controller",
 		ComponentEffectivenessMonitor:    "effectivenessmonitor-controller",
 		ComponentNotification:            "notification-controller",
-		ComponentHolmesGPTAPI:            "holmesgpt-api-sa",
+		ComponentKubernautAgent:          "kubernaut-agent-sa",
 		ComponentAuthWebhook:             "authwebhook",
 	}
 	for component, wantName := range expected {
@@ -382,7 +382,7 @@ func getAllDeployments(t *testing.T, kn *kubernautv1alpha1.Kubernaut) []*appsv1.
 		WorkflowExecutionDeployment,
 		EffectivenessMonitorDeployment,
 		NotificationDeployment,
-		HolmesGPTAPIDeployment,
+		KubernautAgentDeployment,
 		AuthWebhookDeployment,
 	}
 	var deps []*appsv1.Deployment

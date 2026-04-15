@@ -52,7 +52,7 @@ func testKubernaut() *kubernautv1alpha1.Kubernaut {
 				Host:       "valkey.example.com",
 				Port:       6379,
 			},
-			HolmesGPTAPI: kubernautv1alpha1.HolmesGPTAPISpec{
+			KubernautAgent: kubernautv1alpha1.KubernautAgentSpec{
 				LLM: kubernautv1alpha1.LLMSpec{
 					Provider:              "openai",
 					Model:                 "gpt-4o",
