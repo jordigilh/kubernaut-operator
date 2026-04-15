@@ -532,7 +532,6 @@ type tokenRequest struct {
 	} `json:"status"`
 }
 
-
 // kubectlGetLabeled runs a label-selector query and returns the output.
 func kubectlGetLabeled(kind, label, gotemplate string) (string, error) {
 	args := []string{"get", kind, "-l", label}

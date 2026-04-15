@@ -98,7 +98,13 @@ func webhookClientConfigAndRules(kn *kubernautv1alpha1.Kubernaut, path string) (
 	return clientConfig, rules
 }
 
-func strPtr(s string) *string                                                          { return &s }
-func sideEffectPtr(v admissionregistrationv1.SideEffectClass) *admissionregistrationv1.SideEffectClass { return &v }
-func failurePolicyPtr(v admissionregistrationv1.FailurePolicyType) *admissionregistrationv1.FailurePolicyType { return &v }
-func matchPolicyPtr(v admissionregistrationv1.MatchPolicyType) *admissionregistrationv1.MatchPolicyType { return &v }
+func strPtr(s string) *string { return &s }
+func sideEffectPtr(v admissionregistrationv1.SideEffectClass) *admissionregistrationv1.SideEffectClass {
+	return &v
+}
+func failurePolicyPtr(v admissionregistrationv1.FailurePolicyType) *admissionregistrationv1.FailurePolicyType {
+	return &v
+}
+func matchPolicyPtr(v admissionregistrationv1.MatchPolicyType) *admissionregistrationv1.MatchPolicyType {
+	return &v
+}

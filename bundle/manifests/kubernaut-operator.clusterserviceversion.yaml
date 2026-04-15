@@ -63,7 +63,7 @@ metadata:
     capabilities: Full Lifecycle
     categories: AI/Machine Learning,Monitoring
     containerImage: quay.io/kubernaut-ai/kubernaut-operator:v1.3.0
-    createdAt: "2026-04-15T00:11:12Z"
+    createdAt: "2026-04-15T01:39:53Z"
     description: Automated Kubernetes remediation powered by AI — detects issues,
       analyzes root causes, and executes verified fixes.
     operatorframework.io/suggested-namespace: kubernaut-system
@@ -318,7 +318,7 @@ spec:
                   value: quay.io/kubernaut-ai/holmesgpt-api:v1.3.0-rc1
                 - name: RELATED_IMAGE_AUTHWEBHOOK
                   value: quay.io/kubernaut-ai/authwebhook:v1.3.0-rc1
-                image: quay.io/kubernaut-ai/kubernaut-operator:v1.3.0
+                image: controller:latest
                 livenessProbe:
                   httpGet:
                     path: /healthz

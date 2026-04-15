@@ -146,6 +146,7 @@ spec:
                   organizationID:
                     default: 1
                     description: AWX organization ID.
+                    minimum: 1
                     type: integer
                   tokenSecretRef:
                     description: Reference to the Secret containing the AWX API token.
@@ -534,6 +535,7 @@ spec:
                     description: |-
                       Image digest (e.g. "sha256:abc..."). Overrides Tag for
                       immutable or air-gapped deployments.
+                    pattern: ^sha256:[a-f0-9]{64}$
                     type: string
                   namespace:
                     default: kubernaut-ai
@@ -576,6 +578,7 @@ spec:
                   tag:
                     description: Image tag applied to all services. Required unless
                       Digest is set.
+                    pattern: ^[a-zA-Z0-9._-]+$
                     type: string
                 required:
                 - registry
@@ -691,6 +694,8 @@ spec:
                     default: 5432
                     description: PostgreSQL port.
                     format: int32
+                    maximum: 65535
+                    minimum: 1
                     type: integer
                   secretName:
                     description: |-
@@ -924,6 +929,8 @@ spec:
                     default: 6379
                     description: Valkey port.
                     format: int32
+                    maximum: 65535
+                    minimum: 1
                     type: integer
                   secretName:
                     description: |-
