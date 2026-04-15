@@ -228,14 +228,14 @@ func cleanupNamespacedResources(ctx context.Context) {
 	}
 }
 
-// stripWorkflowNamespaceLabel removes the managed-by label so the finalizer
+// stripWorkflowNamespaceLabel removes the created-by annotation so the finalizer
 // skips namespace deletion, keeping envtest healthy. envtest lacks a namespace
 // controller, so deleting a namespace puts it into Terminating forever.
 func stripWorkflowNamespaceLabel(ctx context.Context) {
 	ns := &corev1.Namespace{}
 	wfNsName := resources.DefaultWorkflowNamespace
 	if err := k8sClient.Get(ctx, types.NamespacedName{Name: wfNsName}, ns); err == nil {
-		delete(ns.Labels, "app.kubernetes.io/managed-by")
+		delete(ns.Annotations, resources.AnnotationCreatedBy)
 		Expect(k8sClient.Update(ctx, ns)).To(Succeed())
 	}
 }
@@ -734,7 +734,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
-			By("removing managed-by label to simulate user-managed namespace")
+			By("removing created-by annotation to simulate user-managed namespace")
 			stripWorkflowNamespaceLabel(ctx)
 
 			By("deleting the CR")
@@ -750,7 +750,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			wfNsName := resources.DefaultWorkflowNamespace
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: wfNsName}, existingNs)).To(Succeed())
 			Expect(existingNs.DeletionTimestamp).To(BeNil(),
-				"namespace without managed-by label should not be deleted")
+				"namespace without created-by annotation should not be deleted")
 		})
 
 		It("should clean up all cluster-scoped RBAC on deletion", func() {
@@ -961,8 +961,15 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			dep, err := resources.DataStorageDeployment(cr)
 			Expect(err).NotTo(HaveOccurred())
 
-			initCmd := dep.Spec.Template.Spec.InitContainers[0].Command
-			Expect(initCmd[2]).To(ContainSubstring("-p 5432"))
+			initEnv := dep.Spec.Template.Spec.InitContainers[0].Env
+			var found bool
+			for _, e := range initEnv {
+				if e.Name == "PGPORT" {
+					Expect(e.Value).To(Equal("5432"))
+					found = true
+				}
+			}
+			Expect(found).To(BeTrue(), "PGPORT env var should be set")
 		})
 
 		It("should use custom PostgreSQL port when specified", func() {
@@ -972,8 +979,15 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			dep, err := resources.DataStorageDeployment(cr)
 			Expect(err).NotTo(HaveOccurred())
 
-			initCmd := dep.Spec.Template.Spec.InitContainers[0].Command
-			Expect(initCmd[2]).To(ContainSubstring("-p 5433"))
+			initEnv := dep.Spec.Template.Spec.InitContainers[0].Env
+			var found bool
+			for _, e := range initEnv {
+				if e.Name == "PGPORT" {
+					Expect(e.Value).To(Equal("5433"))
+					found = true
+				}
+			}
+			Expect(found).To(BeTrue(), "PGPORT env var should be set")
 		})
 
 		It("should construct digest-based image references", func() {

@@ -32,6 +32,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -42,10 +43,41 @@ import (
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
+// Requeue intervals for different reconciliation states.
+const (
+	requeueMigrationPoll = 10 * time.Second
+	requeueDegraded      = 15 * time.Second
+	requeueError         = 30 * time.Second
+	requeueRunning       = 60 * time.Second
+)
+
+// maxMigrationRetries caps the number of times a failed migration Job is
+// deleted and re-created before the operator transitions to PhaseError.
+const maxMigrationRetries = 10
+
+// Condition reasons used in status patches.
+const (
+	ReasonSecretsValid        = "SecretsValid"
+	ReasonCRDsReady           = "CRDsReady"
+	ReasonMigrationComplete   = "MigrationComplete"
+	ReasonMigrationFailed     = "MigrationFailed"
+	ReasonMigrationInProgress = "MigrationInProgress"
+	ReasonRBACReady           = "RBACReady"
+	ReasonWebhooksReady       = "WebhooksReady"
+	ReasonRouteCreated        = "RouteCreated"
+	ReasonRouteDisabled       = "RouteDisabled"
+	ReasonManifestsApplied    = "ManifestsApplied"
+)
+
+// maxFinalizerRetries is the number of consecutive reconcile failures during
+// deletion cleanup before the finalizer is force-removed.
+const maxFinalizerRetries = 20
+
 // KubernautReconciler reconciles a Kubernaut object.
 type KubernautReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=kubernaut.ai,resources=kubernauts,verbs=get;list;watch;create;update;patch;delete
@@ -92,13 +124,25 @@ func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernaut
 	log := logf.FromContext(ctx)
 	log.Info("reconciling phases", "currentPhase", kn.Status.Phase)
 
-	phases := []func(context.Context, *kubernautv1alpha1.Kubernaut) (ctrl.Result, error){
+	// Validate and migrate always run (cheap: secret checks + Job status).
+	for _, phase := range []func(context.Context, *kubernautv1alpha1.Kubernaut) (ctrl.Result, error){
 		r.phaseValidate,
 		r.phaseMigrate,
-		r.phaseDeploy,
-	}
-	for _, phase := range phases {
+	} {
 		result, err := phase(ctx, kn)
+		if err != nil || result.Requeue || result.RequeueAfter > 0 {
+			return result, err
+		}
+		if err := r.Get(ctx, client.ObjectKeyFromObject(kn), kn); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Skip the full deploy pass when already deployed at the current generation.
+	if !r.deployNeeded(kn) {
+		log.V(1).Info("skipping phaseDeploy (generation unchanged)")
+	} else {
+		result, err := r.phaseDeploy(ctx, kn)
 		if err != nil || result.Requeue || result.RequeueAfter > 0 {
 			return result, err
 		}
@@ -110,10 +154,30 @@ func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernaut
 	return r.phaseRunning(ctx, kn)
 }
 
+// deployNeeded returns true when phaseDeploy must run. It is skipped when
+// ServicesDeployed is already True for the current spec generation.
+func (r *KubernautReconciler) deployNeeded(kn *kubernautv1alpha1.Kubernaut) bool {
+	for _, c := range kn.Status.Conditions {
+		if c.Type == kubernautv1alpha1.ConditionServicesDeployed {
+			return !(c.Status == metav1.ConditionTrue && c.ObservedGeneration >= kn.Generation)
+		}
+	}
+	return true
+}
+
 // ---------- Phase: Validate ----------
 
 func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
+
+	if err := resources.ValidateHostname(kn.Spec.PostgreSQL.Host); err != nil {
+		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionBYOValidated, metav1.ConditionFalse,
+			"PostgreSQLHostInvalid", fmt.Sprintf("PostgreSQL host validation failed: %v", err))
+	}
+	if err := resources.ValidateHostname(kn.Spec.Valkey.Host); err != nil {
+		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionBYOValidated, metav1.ConditionFalse,
+			"ValkeyHostInvalid", fmt.Sprintf("Valkey host validation failed: %v", err))
+	}
 
 	if err := r.validateSecret(ctx, kn.Namespace, kn.Spec.PostgreSQL.SecretName,
 		[]string{"POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB"}); err != nil {
@@ -131,7 +195,7 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 	return ctrl.Result{}, r.patchStatus(ctx, kn, func() {
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 			Type: kubernautv1alpha1.ConditionBYOValidated, Status: metav1.ConditionTrue,
-			Reason: "SecretsValid", Message: "BYO PostgreSQL and Valkey secrets are valid",
+			Reason: ReasonSecretsValid, Message: "BYO PostgreSQL and Valkey secrets are valid",
 			ObservedGeneration: kn.Generation,
 		})
 		r.setPhase(kn, kubernautv1alpha1.PhaseValidating)
@@ -153,12 +217,13 @@ func (r *KubernautReconciler) phaseMigrate(ctx context.Context, kn *kubernautv1a
 
 	log := logf.FromContext(ctx)
 	log.Info("database migration completed")
+	r.Recorder.Event(kn, corev1.EventTypeNormal, ReasonMigrationComplete, "Database migration job succeeded")
 	return ctrl.Result{}, r.patchStatus(ctx, kn, func() {
 		r.setPhase(kn, kubernautv1alpha1.PhaseMigrating)
 		setCRDsReady(kn)
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 			Type: kubernautv1alpha1.ConditionMigrationComplete, Status: metav1.ConditionTrue,
-			Reason: "MigrationComplete", Message: "Database migration job succeeded",
+			Reason: ReasonMigrationComplete, Message: "Database migration job succeeded",
 			ObservedGeneration: kn.Generation,
 		})
 	})
@@ -167,8 +232,10 @@ func (r *KubernautReconciler) phaseMigrate(ctx context.Context, kn *kubernautv1a
 // ensureMigrationPrereqs installs CRDs, derives the DataStorage DB secret
 // from the user-provided PostgreSQL secret, and ensures the migration ConfigMap.
 func (r *KubernautReconciler) ensureMigrationPrereqs(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
-	if err := resources.EnsureCRDs(ctx, r.Client); err != nil {
-		return err
+	if !r.crdsSatisfied(kn) {
+		if err := resources.EnsureCRDs(ctx, r.Client); err != nil {
+			return err
+		}
 	}
 
 	pgSecret := &corev1.Secret{}
@@ -214,7 +281,12 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 			return ctrl.Result{}, nil
 		}
 		if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
-			log.Info("migration job failed, deleting for retry")
+			if existingJob.Status.Failed >= int32(maxMigrationRetries) {
+				log.Info("migration job exceeded retry limit", "failed", existingJob.Status.Failed, "max", maxMigrationRetries)
+				return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionMigrationComplete, metav1.ConditionFalse,
+					ReasonMigrationFailed, fmt.Sprintf("Database migration failed after %d attempts; manual intervention required", existingJob.Status.Failed))
+			}
+			log.Info("migration job failed, deleting for retry", "attempt", existingJob.Status.Failed)
 			propagation := metav1.DeletePropagationBackground
 			if err := r.Delete(ctx, existingJob, &client.DeleteOptions{
 				PropagationPolicy: &propagation,
@@ -222,7 +294,7 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 				return ctrl.Result{}, fmt.Errorf("deleting failed migration job: %w", err)
 			}
 			return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionMigrationComplete, metav1.ConditionFalse,
-				"MigrationFailed", "Database migration job failed; will retry")
+				ReasonMigrationFailed, "Database migration job failed; will retry")
 		}
 	}
 
@@ -232,13 +304,24 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 		setCRDsReady(kn)
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 			Type: kubernautv1alpha1.ConditionMigrationComplete, Status: metav1.ConditionFalse,
-			Reason: "MigrationInProgress", Message: "Database migration job is running",
+			Reason: ReasonMigrationInProgress, Message: "Database migration job is running",
 			ObservedGeneration: kn.Generation,
 		})
 	}); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: requeueMigrationPoll}, nil
+}
+
+// crdsSatisfied returns true when the CRDsInstalled condition is already True
+// for the current spec generation, allowing EnsureCRDs to be skipped.
+func (r *KubernautReconciler) crdsSatisfied(kn *kubernautv1alpha1.Kubernaut) bool {
+	for _, c := range kn.Status.Conditions {
+		if c.Type == kubernautv1alpha1.ConditionCRDsInstalled {
+			return c.Status == metav1.ConditionTrue && c.ObservedGeneration >= kn.Generation
+		}
+	}
+	return false
 }
 
 // setCRDsReady sets the ConditionCRDsInstalled condition to True on the
@@ -246,7 +329,7 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 func setCRDsReady(kn *kubernautv1alpha1.Kubernaut) {
 	meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 		Type: kubernautv1alpha1.ConditionCRDsInstalled, Status: metav1.ConditionTrue,
-		Reason: "CRDsReady", Message: "All workload CRDs installed",
+		Reason: ReasonCRDsReady, Message: "All workload CRDs installed",
 		ObservedGeneration: kn.Generation,
 	})
 }
@@ -263,7 +346,15 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 	if err := r.deployRBAC(ctx, kn); err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := r.deployConfigMaps(ctx, kn); err != nil {
+
+	pgSecret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: kn.Spec.PostgreSQL.SecretName}, pgSecret); err != nil {
+		return ctrl.Result{}, fmt.Errorf("fetching pg secret for config: %w", err)
+	}
+	dbName := string(pgSecret.Data["POSTGRES_DB"])
+	dbUser := string(pgSecret.Data["POSTGRES_USER"])
+
+	if err := r.deployConfigMaps(ctx, kn, dbName, dbUser); err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := r.deployAdmissionWebhooks(ctx, kn); err != nil {
@@ -274,34 +365,35 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		return ctrl.Result{}, err
 	}
 
+	r.Recorder.Event(kn, corev1.EventTypeNormal, ReasonManifestsApplied, "All service manifests applied")
 	return ctrl.Result{}, r.patchStatus(ctx, kn, func() {
 		r.setPhase(kn, kubernautv1alpha1.PhaseDeploying)
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 			Type: kubernautv1alpha1.ConditionRBACProvisioned, Status: metav1.ConditionTrue,
-			Reason: "RBACReady", Message: "All RBAC resources provisioned",
+			Reason: ReasonRBACReady, Message: "All RBAC resources provisioned",
 			ObservedGeneration: kn.Generation,
 		})
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 			Type: kubernautv1alpha1.ConditionWebhooksConfigured, Status: metav1.ConditionTrue,
-			Reason: "WebhooksReady", Message: "Admission webhooks configured",
+			Reason: ReasonWebhooksReady, Message: "Admission webhooks configured",
 			ObservedGeneration: kn.Generation,
 		})
 		if hasRoute {
 			meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 				Type: kubernautv1alpha1.ConditionRouteReady, Status: metav1.ConditionTrue,
-				Reason: "RouteCreated", Message: "Gateway OCP Route created",
+				Reason: ReasonRouteCreated, Message: "Gateway OCP Route created",
 				ObservedGeneration: kn.Generation,
 			})
 		} else {
 			meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 				Type: kubernautv1alpha1.ConditionRouteReady, Status: metav1.ConditionFalse,
-				Reason: "RouteDisabled", Message: "Gateway OCP Route is disabled",
+				Reason: ReasonRouteDisabled, Message: "Gateway OCP Route is disabled",
 				ObservedGeneration: kn.Generation,
 			})
 		}
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 			Type: kubernautv1alpha1.ConditionServicesDeployed, Status: metav1.ConditionTrue,
-			Reason: "ManifestsApplied", Message: "All service manifests applied",
+			Reason: ReasonManifestsApplied, Message: "All service manifests applied",
 			ObservedGeneration: kn.Generation,
 		})
 	})
@@ -309,8 +401,14 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 
 func (r *KubernautReconciler) deployWorkflowNamespace(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
 	wfNs := resources.WorkflowNamespace(kn)
-	if err := r.ensureClusterScoped(ctx, wfNs); err != nil {
-		return fmt.Errorf("ensuring workflow namespace: %w", err)
+	existing := &corev1.Namespace{}
+	if err := r.Get(ctx, types.NamespacedName{Name: wfNs.Name}, existing); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("checking workflow namespace: %w", err)
+		}
+		if err := r.Create(ctx, wfNs); err != nil && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("creating workflow namespace: %w", err)
+		}
 	}
 	return nil
 }
@@ -323,7 +421,7 @@ func (r *KubernautReconciler) deployServiceAccounts(ctx context.Context, kn *kub
 		}
 	}
 	wfRunnerSA := resources.WorkflowRunnerServiceAccount(kn)
-	if err := r.ensureClusterScoped(ctx, wfRunnerSA); err != nil {
+	if err := r.ensureUnowned(ctx, wfRunnerSA); err != nil {
 		return fmt.Errorf("ensuring workflow runner SA: %w", err)
 	}
 	return nil
@@ -343,12 +441,12 @@ func (r *KubernautReconciler) deployRBAC(ctx context.Context, kn *kubernautv1alp
 // Roles/RoleBindings, DataStorage client bindings, and the HolmesGPT client binding.
 func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
 	for _, cr := range resources.ClusterRoles(kn) {
-		if err := r.ensureClusterScoped(ctx, cr); err != nil {
+		if err := r.ensureUnowned(ctx, cr); err != nil {
 			return fmt.Errorf("ensuring ClusterRole %s: %w", cr.Name, err)
 		}
 	}
 	for _, crb := range resources.ClusterRoleBindings(kn) {
-		if err := r.ensureClusterScoped(ctx, crb); err != nil {
+		if err := r.ensureUnowned(ctx, crb); err != nil {
 			return fmt.Errorf("ensuring CRB %s: %w", crb.Name, err)
 		}
 	}
@@ -374,12 +472,12 @@ func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv
 func (r *KubernautReconciler) deployWorkflowRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
 	wfRoles, wfRBs := resources.WorkflowNamespaceRBAC(kn)
 	for _, role := range wfRoles {
-		if err := r.ensureClusterScoped(ctx, role); err != nil {
+		if err := r.ensureUnowned(ctx, role); err != nil {
 			return fmt.Errorf("ensuring wf role %s: %w", role.Name, err)
 		}
 	}
 	for _, rb := range wfRBs {
-		if err := r.ensureClusterScoped(ctx, rb); err != nil {
+		if err := r.ensureUnowned(ctx, rb); err != nil {
 			return fmt.Errorf("ensuring wf rb %s: %w", rb.Name, err)
 		}
 	}
@@ -394,10 +492,10 @@ func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernau
 
 	cr, crb := resources.AnsibleRBAC(kn)
 	if kn.Spec.Ansible.Enabled {
-		if err := r.ensureClusterScoped(ctx, cr); err != nil {
+		if err := r.ensureUnowned(ctx, cr); err != nil {
 			return fmt.Errorf("ensuring AWX ClusterRole: %w", err)
 		}
-		if err := r.ensureClusterScoped(ctx, crb); err != nil {
+		if err := r.ensureUnowned(ctx, crb); err != nil {
 			return fmt.Errorf("ensuring AWX CRB: %w", err)
 		}
 	} else {
@@ -440,10 +538,10 @@ func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernau
 	return nil
 }
 
-func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
+func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string) error {
 	configMaps := []*corev1.ConfigMap{
 		resources.GatewayConfigMap(kn),
-		resources.DataStorageConfigMap(kn),
+		resources.DataStorageConfigMap(kn, dbName, dbUser),
 		resources.AIAnalysisConfigMap(kn),
 		resources.SignalProcessingConfigMap(kn),
 		resources.RemediationOrchestratorConfigMap(kn),
@@ -483,11 +581,11 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 // the inject-cabundle annotation on MWC/VWC injects the CA bundle.
 func (r *KubernautReconciler) deployAdmissionWebhooks(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
 	mwc := resources.MutatingWebhookConfiguration(kn)
-	if err := r.ensureClusterScoped(ctx, mwc); err != nil {
+	if err := r.ensureUnowned(ctx, mwc); err != nil {
 		return fmt.Errorf("ensuring MutatingWebhookConfiguration: %w", err)
 	}
 	vwc := resources.ValidatingWebhookConfiguration(kn)
-	return r.ensureClusterScoped(ctx, vwc)
+	return r.ensureUnowned(ctx, vwc)
 }
 
 // deployWorkloads creates/updates deployments, services, PDBs, and the OCP
@@ -596,10 +694,10 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 	log.Info("reconciliation complete", "phase", kn.Status.Phase)
 
 	if !finalAllReady {
-		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: requeueDegraded}, nil
 	}
 
-	return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: requeueRunning}, nil
 }
 
 // ---------- Deletion ----------
@@ -609,10 +707,17 @@ func (r *KubernautReconciler) reconcileDelete(ctx context.Context, kn *kubernaut
 	log.Info("reconciling deletion")
 
 	if controllerutil.ContainsFinalizer(kn, kubernautv1alpha1.FinalizerName) {
-		// Clean up cluster-scoped resources that cannot use owner references.
 		if err := r.deleteClusterScopedResources(ctx, kn); err != nil {
-			return ctrl.Result{}, err
+			deletionAge := time.Since(kn.DeletionTimestamp.Time)
+			if deletionAge > time.Duration(maxFinalizerRetries)*requeueError {
+				r.Recorder.Eventf(kn, corev1.EventTypeWarning, "FinalizerTimeout",
+					"Cleanup failed for %s; force-removing finalizer: %v", deletionAge.Round(time.Second), err)
+				log.Error(err, "cleanup failed past timeout, force-removing finalizer")
+			} else {
+				return ctrl.Result{RequeueAfter: requeueError}, err
+			}
 		}
+		r.Recorder.Event(kn, corev1.EventTypeNormal, "CleanupComplete", "Cluster-scoped resources cleaned up")
 
 		controllerutil.RemoveFinalizer(kn, kubernautv1alpha1.FinalizerName)
 		if err := r.Update(ctx, kn); err != nil {
@@ -729,12 +834,12 @@ func (r *KubernautReconciler) deleteWorkflowResources(ctx context.Context, kn *k
 			errs = append(errs, fmt.Errorf("getting workflow namespace %s: %w", wfNs.Name, err))
 		}
 	} else {
-		if existingNs.Labels["app.kubernetes.io/managed-by"] == "kubernaut-operator" {
+		if existingNs.Annotations[resources.AnnotationCreatedBy] == "kubernaut-operator" {
 			if err := r.deleteIfExists(ctx, existingNs); err != nil {
 				errs = append(errs, fmt.Errorf("deleting workflow namespace %s: %w", wfNs.Name, err))
 			}
 		} else {
-			log.Info("skipping deletion of workflow namespace (not managed by operator)", "namespace", wfNs.Name)
+			log.Info("skipping deletion of workflow namespace (not created by operator)", "namespace", wfNs.Name)
 		}
 	}
 
@@ -747,13 +852,13 @@ func (r *KubernautReconciler) deleteWorkflowResources(ctx context.Context, kn *k
 // setPhase only allows forward transitions (or error) to prevent the
 // status.phase from regressing on subsequent reconcile loops.
 var phaseOrder = map[kubernautv1alpha1.KubernautPhase]int{
-	"":                                  0,
-	kubernautv1alpha1.PhaseValidating:   1,
-	kubernautv1alpha1.PhaseMigrating:    2,
-	kubernautv1alpha1.PhaseDeploying:    3,
-	kubernautv1alpha1.PhaseRunning:      4,
-	kubernautv1alpha1.PhaseDegraded:     4,
-	kubernautv1alpha1.PhaseError:        -1,
+	"":                                0,
+	kubernautv1alpha1.PhaseValidating: 1,
+	kubernautv1alpha1.PhaseMigrating:  2,
+	kubernautv1alpha1.PhaseDeploying:  3,
+	kubernautv1alpha1.PhaseRunning:    4,
+	kubernautv1alpha1.PhaseDegraded:   4,
+	kubernautv1alpha1.PhaseError:      -1,
 }
 
 func (r *KubernautReconciler) setPhase(kn *kubernautv1alpha1.Kubernaut, phase kubernautv1alpha1.KubernautPhase) {
@@ -770,12 +875,17 @@ func (r *KubernautReconciler) setPhase(kn *kubernautv1alpha1.Kubernaut, phase ku
 
 // patchStatus applies status mutations via a server-side merge patch,
 // avoiding resourceVersion conflicts that plague Status().Update().
-// MergeFrom without OptimisticLock omits resourceVersion from the patch,
-// so it never conflicts with concurrent metadata/spec writes.
+// Mutations are applied to a copy so that kn's in-memory state is only
+// updated when the API call succeeds; a failed Patch does not leave kn
+// in a divergent state.
 func (r *KubernautReconciler) patchStatus(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, mutate func()) error {
-	base := kn.DeepCopy()
+	patched := kn.DeepCopy()
 	mutate()
-	return r.Status().Patch(ctx, kn, client.MergeFrom(base))
+	if err := r.Status().Patch(ctx, kn, client.MergeFrom(patched)); err != nil {
+		*kn = *patched
+		return err
+	}
+	return nil
 }
 
 func (r *KubernautReconciler) validateSecret(ctx context.Context, namespace, name string, requiredKeys []string) error {
@@ -806,7 +916,7 @@ func (r *KubernautReconciler) setConditionAndRequeue(
 	}); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: requeueError}, nil
 }
 
 // ensureNamespaced creates or updates a namespaced resource, setting the
@@ -818,22 +928,33 @@ func (r *KubernautReconciler) ensureNamespaced(ctx context.Context, kn *kubernau
 	return r.ensureResource(ctx, obj)
 }
 
-// ensureClusterScoped creates or updates a cluster-scoped resource.
-// No owner reference is set; cleanup is handled by the finalizer.
-func (r *KubernautReconciler) ensureClusterScoped(ctx context.Context, obj client.Object) error {
+// ensureUnowned creates or updates a resource without setting an owner
+// reference. Used for cluster-scoped resources (ClusterRoles, CRBs, webhooks)
+// and cross-namespace resources (workflow Roles/RoleBindings) where
+// OwnerReferences cannot be used. Cleanup is handled by the finalizer.
+func (r *KubernautReconciler) ensureUnowned(ctx context.Context, obj client.Object) error {
 	return r.ensureResource(ctx, obj)
 }
 
 // ensureResource is the shared create-or-update implementation for both
-// namespaced and cluster-scoped resources.
+// namespaced and cluster-scoped resources. AlreadyExists on Create is
+// handled by falling through to Update.
 func (r *KubernautReconciler) ensureResource(ctx context.Context, obj client.Object) error {
 	existing := obj.DeepCopyObject().(client.Object)
 	key := types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}
 	err := r.Get(ctx, key, existing)
 	if apierrors.IsNotFound(err) {
-		return r.Create(ctx, obj)
-	}
-	if err != nil {
+		if createErr := r.Create(ctx, obj); createErr != nil {
+			if !apierrors.IsAlreadyExists(createErr) {
+				return createErr
+			}
+			if err := r.Get(ctx, key, existing); err != nil {
+				return fmt.Errorf("getting %s after AlreadyExists: %w", key, err)
+			}
+		} else {
+			return nil
+		}
+	} else if err != nil {
 		return fmt.Errorf("getting %s: %w", key, err)
 	}
 	obj.SetResourceVersion(existing.GetResourceVersion())
@@ -843,6 +964,7 @@ func (r *KubernautReconciler) ensureResource(ctx context.Context, obj client.Obj
 // createIfNotFound gets an existing resource into `existing`; if not found it
 // sets an owner reference and creates `desired`. Returns (true, nil) when
 // a create occurred, (false, nil) when the resource already existed.
+// AlreadyExists from a concurrent create is treated as success.
 func (r *KubernautReconciler) createIfNotFound(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, desired, existing client.Object) (bool, error) {
 	key := types.NamespacedName{Name: desired.GetName(), Namespace: desired.GetNamespace()}
 	err := r.Get(ctx, key, existing)
@@ -851,6 +973,9 @@ func (r *KubernautReconciler) createIfNotFound(ctx context.Context, kn *kubernau
 			return false, setErr
 		}
 		if err := r.Create(ctx, desired); err != nil {
+			if apierrors.IsAlreadyExists(err) {
+				return false, nil
+			}
 			return false, err
 		}
 		return true, nil
@@ -874,6 +999,7 @@ func (r *KubernautReconciler) deleteIfExists(ctx context.Context, obj client.Obj
 // Cluster-scoped resources (ClusterRoles, CRBs, webhook configs) cannot be
 // owned, so they rely on the periodic requeue timer for drift detection.
 func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.Recorder = mgr.GetEventRecorderFor("kubernaut-controller")
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kubernautv1alpha1.Kubernaut{}).
 		Owns(&appsv1.Deployment{}).
@@ -887,10 +1013,4 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&rbacv1.RoleBinding{}).
 		Named("kubernaut").
 		Complete(r)
-}
-
-// Compile-time interface guard.
-var _ = []client.Object{
-	&rbacv1.ClusterRole{},
-	&batchv1.Job{},
 }

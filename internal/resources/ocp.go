@@ -23,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
@@ -70,6 +71,16 @@ func GatewayRouteStub(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 	}
 }
 
+// dbSecretsYAML is the typed structure for db-secrets.yaml, ensuring values
+// are properly YAML-encoded instead of interpolated via fmt.Sprintf.
+type dbSecretsYAML struct {
+	Host     string `json:"host" yaml:"host"`
+	Port     int32  `json:"port" yaml:"port"`
+	DBName   string `json:"dbname" yaml:"dbname"`
+	User     string `json:"user" yaml:"user"`
+	Password string `json:"password" yaml:"password"`
+}
+
 // DataStorageDBSecret derives the datastorage-db-secret from the user-provided
 // PostgreSQL secret. The DataStorage service expects a "db-secrets.yaml" key
 // with YAML content containing host, port, dbname, user, and password.
@@ -82,24 +93,29 @@ func DataStorageDBSecret(kn *kubernautv1alpha1.Kubernaut, pgSecret *corev1.Secre
 		}
 	}
 
-	pgPort := PostgreSQLPort(kn)
-
-	user := string(pgSecret.Data["POSTGRES_USER"])
-	password := string(pgSecret.Data["POSTGRES_PASSWORD"])
-	dbname := string(pgSecret.Data["POSTGRES_DB"])
-
-	yamlContent := fmt.Sprintf(
-		"host: %s\nport: %d\ndbname: %s\nuser: %s\npassword: %s\n",
-		kn.Spec.PostgreSQL.Host, pgPort, dbname, user, password,
-	)
+	content, err := yaml.Marshal(dbSecretsYAML{
+		Host:     kn.Spec.PostgreSQL.Host,
+		Port:     PostgreSQLPort(kn),
+		DBName:   string(pgSecret.Data["POSTGRES_DB"]),
+		User:     string(pgSecret.Data["POSTGRES_USER"]),
+		Password: string(pgSecret.Data["POSTGRES_PASSWORD"]),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshalling db-secrets.yaml: %w", err)
+	}
 
 	return &corev1.Secret{
 		ObjectMeta: ObjectMeta(kn, "datastorage-db-secret", ComponentDataStorage),
 		Data: map[string][]byte{
-			"db-secrets.yaml": []byte(yamlContent),
+			"db-secrets.yaml": content,
 		},
 	}, nil
 }
+
+// AnnotationCreatedBy marks resources created (not adopted) by the operator.
+// Used to distinguish operator-created namespaces from pre-existing ones so
+// that deletion does not destroy foreign namespaces.
+const AnnotationCreatedBy = "kubernaut.ai/created-by"
 
 // WorkflowNamespace builds the Namespace resource for workflow execution.
 func WorkflowNamespace(kn *kubernautv1alpha1.Kubernaut) *corev1.Namespace {
@@ -107,6 +123,9 @@ func WorkflowNamespace(kn *kubernautv1alpha1.Kubernaut) *corev1.Namespace {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   ResolveWorkflowNamespace(kn),
 			Labels: CommonLabels(kn),
+			Annotations: map[string]string{
+				AnnotationCreatedBy: "kubernaut-operator",
+			},
 		},
 	}
 }
