@@ -26,7 +26,8 @@ The operator is designed as a **singleton**: exactly one `Kubernaut` CR named `k
 ## Installation via OLM
 
 ```bash
-# Install from OperatorHub (when published)
+# NOTE: This example applies only after the operator is published to OperatorHub.
+# For pre-publication testing, use `make deploy IMG=<your-image>`.
 oc create -f - <<EOF
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
@@ -61,7 +62,7 @@ spec:
   valkey:
     secretName: kubernaut-valkey-secret
     host: valkey.kubernaut-system.svc.cluster.local
-  holmesgptApi:
+  kubernautAgent:
     llm:
       provider: openai
       model: gpt-4o
@@ -93,7 +94,7 @@ stringData:
     password: <password>
 ```
 
-**LLM Credentials** (`spec.holmesgptApi.llm.credentialsSecretName`):
+**LLM Credentials** (`spec.kubernautAgent.llm.credentialsSecretName`):
 ```yaml
 apiVersion: v1
 kind: Secret
@@ -102,6 +103,18 @@ metadata:
 stringData:
   credentials.json: |
     {"api_key": "<your-api-key>"}
+```
+
+## Uninstall Behavior
+
+When the `Kubernaut` CR is deleted, the operator's finalizer cleans up all
+cluster-scoped RBAC resources (ClusterRoles, ClusterRoleBindings) and the
+workflow namespace. **CRDs are intentionally retained** to prevent accidental
+data loss of any custom resources managed by those CRDs. To fully remove CRDs
+after uninstalling, delete them manually:
+
+```bash
+oc delete crd actiontypes.kubernaut.ai
 ```
 
 ## Development

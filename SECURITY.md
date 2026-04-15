@@ -42,18 +42,43 @@ configurations) and namespace-scoped workloads. When deploying:
 - The operator requires `escalate` and `bind` RBAC verbs to provision
   ClusterRoles for managed workloads; see [RBAC documentation](#rbac) below
 
+### Admission Webhooks
+
+The operator creates MutatingWebhookConfiguration and ValidatingWebhookConfiguration
+resources for the AuthWebhook service. Key security properties:
+
+- **FailurePolicy: Fail** -- webhook requests are rejected if the AuthWebhook
+  service is unavailable. This prevents unauthenticated mutations from bypassing
+  policy enforcement. In HA deployments, ensure the AuthWebhook Deployment has
+  `replicas >= 2` and an appropriate PodDisruptionBudget to avoid blocking
+  API server operations during rolling updates.
+- **TimeoutSeconds: 10** -- explicit timeout to prevent slow webhook backends
+  from causing API server request pile-up.
+- TLS is managed by OCP service-CA: the `authwebhook-service` annotation
+  requests automatic certificate injection.
+
 ### RBAC
 
 The operator requires these elevated permissions:
 
 - **`escalate` / `bind`** on ClusterRoles/ClusterRoleBindings: Required to
-  create RBAC bindings for managed workloads (HolmesGPT investigator,
+  create RBAC bindings for managed workloads (Kubernaut Agent investigator,
   signal processing, monitoring) without granting itself the permissions
   those roles carry.
-- **`get/list/watch` on Secrets cluster-wide**: The HolmesGPT investigator
+- **`get/list/watch` on Secrets cluster-wide**: The Kubernaut Agent investigator
   role requires read access to secrets for root-cause analysis across
   namespaces. This is a deliberate design choice documented in the
-  `holmesgpt-api-investigator` ClusterRole.
+  `kubernaut-agent-investigator` ClusterRole.
+
+#### Per-ClusterRole Justification
+
+| ClusterRole | Purpose | Scoped Resources |
+|---|---|---|
+| `<ns>-kubernaut-agent-investigator` | Root-cause analysis across namespaces | Pods, Events, Deployments, ReplicaSets, Secrets (read-only) |
+| `<ns>-kubernaut-agent-client` | AIAnalysis service calls the KA service | Services (get/create on `kubernaut-agent-service`) |
+| `<ns>-signalprocessing-controller` | Watch Kubernetes events for signal ingestion | Events (cluster-wide, read-only) |
+| `<ns>-alertmanager-view` | EffectivenessMonitor reads Prometheus/AlertManager metrics | Created only when `monitoring.enabled=true` |
+| `<ns>-awx-integration` | WorkflowExecution talks to AWX/AAP | Created only when `ansible.enabled=true` |
 
 ## Disclosure Policy
 

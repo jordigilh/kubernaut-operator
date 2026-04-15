@@ -544,7 +544,7 @@ Tests are executed on every pull request via GitHub Actions. The pipeline:
 
 | File | Tests | Coverage |
 |------|-------|---------|
-| `rbac_test.go` | 18 | ClusterRoles, CRBs, DataStorage bindings, Namespace roles, Workflow NS, Ansible, Monitoring, HolmesGPT client RB, Monitoring name enumerators |
+| `rbac_test.go` | 18 | ClusterRoles, CRBs, DataStorage bindings, Namespace roles, Workflow NS, Ansible, Monitoring, Kubernaut Agent client RB, Monitoring name enumerators |
 | `deployments_test.go` | 20+ | All 10 deployment builders, image construction, volume mounts, volume source CM accuracy, security contexts |
 | `configmaps_test.go` | 19+ | All ConfigMap builders, default values, YAML formatting, default Rego policies, Slack absence |
 | `common_test.go` | 19+ | Labels, selectors, Image(), ObjectMeta, ValkeyAddr, MergeResources, SetOwnerReference, ServiceAccountName fallback, intPtrDefault |
