@@ -82,13 +82,14 @@ spec:
           value: quay.io/kubernaut-ai/effectivenessmonitor:v1.3.0-rc1
         - name: RELATED_IMAGE_NOTIFICATION
           value: quay.io/kubernaut-ai/notification:v1.3.0-rc1
-        - name: RELATED_IMAGE_HOLMESGPT_API
-          value: quay.io/kubernaut-ai/holmesgpt-api:v1.3.0-rc1
+        - name: RELATED_IMAGE_KUBERNAUT_AGENT
+          value: quay.io/kubernaut-ai/kubernaut-agent:v1.3.0-rc1
         - name: RELATED_IMAGE_AUTHWEBHOOK
           value: quay.io/kubernaut-ai/authwebhook:v1.3.0-rc1
         ports: []
         securityContext:
           allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
           capabilities:
             drop:
             - "ALL"

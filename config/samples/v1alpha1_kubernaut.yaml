@@ -27,8 +27,8 @@ spec:
     host: valkey.kubernaut-system.svc.cluster.local
     port: 6379
 
-  # LLM integration service (HolmesGPT-API).
-  holmesgptApi:
+  # Kubernaut Agent (KA) -- LLM-powered investigation and analysis service.
+  kubernautAgent:
     llm:
       provider: openai
       model: gpt-4o

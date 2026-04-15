@@ -437,9 +437,64 @@ spec:
                         type: string
                     type: object
                 type: object
-              holmesgptApi:
-                description: LLM integration service (HolmesGPT-API, transitioning
-                  to KubernautAgent).
+              image:
+                description: Image configuration for all Kubernaut service containers.
+                properties:
+                  digest:
+                    description: |-
+                      Image digest (e.g. "sha256:abc..."). Overrides Tag for
+                      immutable or air-gapped deployments.
+                    pattern: ^sha256:[a-f0-9]{64}$
+                    type: string
+                  namespace:
+                    default: kubernaut-ai
+                    description: 'Registry namespace / organization. Default: "kubernaut-ai".'
+                    type: string
+                  pullPolicy:
+                    default: IfNotPresent
+                    description: Pull policy for all containers.
+                    type: string
+                  pullSecrets:
+                    description: Pull secrets for private registries.
+                    items:
+                      description: |-
+                        LocalObjectReference contains enough information to let you locate the
+                        referenced object inside the same namespace.
+                      properties:
+                        name:
+                          default: ""
+                          description: |-
+                            Name of the referent.
+                            This field is effectively required, but due to backwards compatibility is
+                            allowed to be empty. Instances of this type with an empty value here are
+                            almost certainly wrong.
+                            More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                          type: string
+                      type: object
+                      x-kubernetes-map-type: atomic
+                    type: array
+                  registry:
+                    description: Container registry hostname.
+                    minLength: 1
+                    type: string
+                  separator:
+                    default: /
+                    description: |-
+                      Separator between namespace and service name.
+                      "/" for nested registries (quay.io/kubernaut-ai/gateway),
+                      "-" for flat registries (quay.io/myorg/kubernaut-ai-gateway).
+                    type: string
+                  tag:
+                    description: Image tag applied to all services. Required unless
+                      Digest is set.
+                    pattern: ^[a-zA-Z0-9._-]+$
+                    type: string
+                required:
+                - registry
+                type: object
+              kubernautAgent:
+                description: Kubernaut Agent (KA) -- LLM-powered investigation and
+                  analysis service.
                 properties:
                   llm:
                     description: LLM provider and credentials configuration.
@@ -527,61 +582,6 @@ spec:
                     type: object
                 required:
                 - llm
-                type: object
-              image:
-                description: Image configuration for all Kubernaut service containers.
-                properties:
-                  digest:
-                    description: |-
-                      Image digest (e.g. "sha256:abc..."). Overrides Tag for
-                      immutable or air-gapped deployments.
-                    pattern: ^sha256:[a-f0-9]{64}$
-                    type: string
-                  namespace:
-                    default: kubernaut-ai
-                    description: 'Registry namespace / organization. Default: "kubernaut-ai".'
-                    type: string
-                  pullPolicy:
-                    default: IfNotPresent
-                    description: Pull policy for all containers.
-                    type: string
-                  pullSecrets:
-                    description: Pull secrets for private registries.
-                    items:
-                      description: |-
-                        LocalObjectReference contains enough information to let you locate the
-                        referenced object inside the same namespace.
-                      properties:
-                        name:
-                          default: ""
-                          description: |-
-                            Name of the referent.
-                            This field is effectively required, but due to backwards compatibility is
-                            allowed to be empty. Instances of this type with an empty value here are
-                            almost certainly wrong.
-                            More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                          type: string
-                      type: object
-                      x-kubernetes-map-type: atomic
-                    type: array
-                  registry:
-                    description: Container registry hostname.
-                    minLength: 1
-                    type: string
-                  separator:
-                    default: /
-                    description: |-
-                      Separator between namespace and service name.
-                      "/" for nested registries (quay.io/kubernaut-ai/gateway),
-                      "-" for flat registries (quay.io/myorg/kubernaut-ai-gateway).
-                    type: string
-                  tag:
-                    description: Image tag applied to all services. Required unless
-                      Digest is set.
-                    pattern: ^[a-zA-Z0-9._-]+$
-                    type: string
-                required:
-                - registry
                 type: object
               monitoring:
                 description: OCP monitoring integration (Prometheus, AlertManager).
@@ -1014,8 +1014,8 @@ spec:
                     type: string
                 type: object
             required:
-            - holmesgptApi
             - image
+            - kubernautAgent
             - postgresql
             - valkey
             type: object
