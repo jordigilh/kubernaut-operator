@@ -17,23 +17,26 @@ limitations under the License.
 package resources
 
 import (
-	"fmt"
+	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
 // GatewayDeployment builds the gateway Deployment.
 func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
-	return deployment(kn, ComponentGateway, "gateway", kn.Spec.Gateway.Resources,
-		[]corev1.VolumeMount{{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"}},
-		[]corev1.Volume{configMapVolume("config", "gateway-config")},
-		nil, nil,
-	)
+	return buildDeployment(kn, DeploymentParams{
+		Component: ComponentGateway, ImageName: "gateway",
+		Resources:    kn.Spec.Gateway.Resources,
+		VolumeMounts: []corev1.VolumeMount{{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"}},
+		Volumes:      []corev1.Volume{configMapVolume("config", "gateway-config")},
+	})
 }
 
 // DataStorageDeployment builds the data-storage Deployment with init container
@@ -46,8 +49,11 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		Image:           DefaultPostgreSQLImage,
 		ImagePullPolicy: kn.Spec.Image.PullPolicy,
 		Command: []string{"sh", "-c",
-			fmt.Sprintf("until pg_isready -h %s -p %d; do echo waiting for postgres; sleep 2; done",
-				kn.Spec.PostgreSQL.Host, pgPort),
+			"until pg_isready -h \"$PGHOST\" -p \"$PGPORT\"; do echo waiting for postgres; sleep 2; done",
+		},
+		Env: []corev1.EnvVar{
+			{Name: "PGHOST", Value: kn.Spec.PostgreSQL.Host},
+			{Name: "PGPORT", Value: strconv.FormatInt(int64(pgPort), 10)},
 		},
 		SecurityContext: ContainerSecurityContext(),
 		Resources:       DefaultResources(),
@@ -86,8 +92,11 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		}},
 	}
 
-	return deploymentWithEnv(kn, ComponentDataStorage, "datastorage", kn.Spec.DataStorage.Resources,
-		mounts, volumes, []corev1.Container{initContainer}, nil, env)
+	return buildDeployment(kn, DeploymentParams{
+		Component: ComponentDataStorage, ImageName: "datastorage",
+		Resources: kn.Spec.DataStorage.Resources, VolumeMounts: mounts, Volumes: volumes,
+		InitContainers: []corev1.Container{initContainer}, Env: env,
+	})
 }
 
 // AIAnalysisDeployment builds the aianalysis Deployment.
@@ -101,8 +110,11 @@ func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, 
 		{Name: "config", MountPath: "/etc/aianalysis", ReadOnly: true},
 		{Name: "rego-policies", MountPath: "/etc/aianalysis/policies", ReadOnly: true},
 	}
-	return deployment(kn, ComponentAIAnalysis, "aianalysis", kn.Spec.AIAnalysis.Resources,
-		mounts, volumes, nil, nil)
+	return buildDeployment(kn, DeploymentParams{
+		Component: ComponentAIAnalysis, ImageName: "aianalysis",
+		Resources: kn.Spec.AIAnalysis.Resources, VolumeMounts: mounts, Volumes: volumes,
+		ProbePort: PortHealthProbe,
+	})
 }
 
 // SignalProcessingDeployment builds the signalprocessing Deployment.
@@ -124,28 +136,31 @@ func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deploy
 		})
 	}
 
-	return deployment(kn, ComponentSignalProcessing, "signalprocessing", kn.Spec.SignalProcessing.Resources,
-		mounts, volumes, nil, nil)
+	return buildDeployment(kn, DeploymentParams{
+		Component: ComponentSignalProcessing, ImageName: "signalprocessing",
+		Resources: kn.Spec.SignalProcessing.Resources, VolumeMounts: mounts, Volumes: volumes,
+		ProbePort: PortHealthProbe,
+	})
 }
 
 // RemediationOrchestratorDeployment builds the remediationorchestrator Deployment.
 func RemediationOrchestratorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
-	return deployment(kn, ComponentRemediationOrchestrator, "remediationorchestrator",
-		kn.Spec.RemediationOrchestrator.Resources,
-		[]corev1.VolumeMount{{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"}},
-		[]corev1.Volume{configMapVolume("config", "remediationorchestrator-config")},
-		nil, nil,
-	)
+	return buildDeployment(kn, DeploymentParams{
+		Component: ComponentRemediationOrchestrator, ImageName: "remediationorchestrator",
+		Resources:    kn.Spec.RemediationOrchestrator.Resources,
+		VolumeMounts: []corev1.VolumeMount{{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"}},
+		Volumes:      []corev1.Volume{configMapVolume("config", "remediationorchestrator-config")},
+	})
 }
 
 // WorkflowExecutionDeployment builds the workflowexecution Deployment.
 func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
-	return deployment(kn, ComponentWorkflowExecution, "workflowexecution",
-		kn.Spec.WorkflowExecution.Resources,
-		[]corev1.VolumeMount{{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"}},
-		[]corev1.Volume{configMapVolume("config", "workflowexecution-config")},
-		nil, nil,
-	)
+	return buildDeployment(kn, DeploymentParams{
+		Component: ComponentWorkflowExecution, ImageName: "workflowexecution",
+		Resources:    kn.Spec.WorkflowExecution.Resources,
+		VolumeMounts: []corev1.VolumeMount{{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"}},
+		Volumes:      []corev1.Volume{configMapVolume("config", "workflowexecution-config")},
+	})
 }
 
 // EffectivenessMonitorDeployment builds the effectivenessmonitor Deployment.
@@ -164,8 +179,10 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.De
 		})
 	}
 
-	return deployment(kn, ComponentEffectivenessMonitor, "effectivenessmonitor",
-		kn.Spec.EffectivenessMonitor.Resources, mounts, volumes, nil, nil)
+	return buildDeployment(kn, DeploymentParams{
+		Component: ComponentEffectivenessMonitor, ImageName: "effectivenessmonitor",
+		Resources: kn.Spec.EffectivenessMonitor.Resources, VolumeMounts: mounts, Volumes: volumes,
+	})
 }
 
 // NotificationDeployment builds the notification Deployment.
@@ -206,8 +223,11 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 		})
 	}
 
-	return deployment(kn, ComponentNotification, "notification",
-		kn.Spec.Notification.Resources, mounts, volumes, nil, nil)
+	return buildDeployment(kn, DeploymentParams{
+		Component: ComponentNotification, ImageName: "notification",
+		Resources: kn.Spec.Notification.Resources, VolumeMounts: mounts, Volumes: volumes,
+		ProbePort: PortHealthProbe,
+	})
 }
 
 // HolmesGPTAPIDeployment builds the holmesgpt-api Deployment.
@@ -248,8 +268,10 @@ func HolmesGPTAPIDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 		}
 	}
 
-	return deploymentWithEnv(kn, ComponentHolmesGPTAPI, "holmesgpt-api",
-		res, mounts, volumes, nil, nil, envVars)
+	return buildDeployment(kn, DeploymentParams{
+		Component: ComponentHolmesGPTAPI, ImageName: "holmesgpt-api",
+		Resources: res, VolumeMounts: mounts, Volumes: volumes, Env: envVars,
+	})
 }
 
 // AuthWebhookDeployment builds the authwebhook Deployment.
@@ -263,71 +285,83 @@ func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		{Name: "webhook-certs", MountPath: "/tmp/k8s-webhook-server/serving-certs", ReadOnly: true},
 	}
 
-	return deployment(kn, ComponentAuthWebhook, "authwebhook",
-		kn.Spec.AuthWebhook.Resources, mounts, volumes, nil,
-		[]corev1.ContainerPort{
+	return buildDeployment(kn, DeploymentParams{
+		Component: ComponentAuthWebhook, ImageName: "authwebhook",
+		Resources: kn.Spec.AuthWebhook.Resources, VolumeMounts: mounts, Volumes: volumes,
+		Ports: []corev1.ContainerPort{
 			{Name: "webhook", ContainerPort: PortWebhookServer, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 		},
-	)
+		ProbePort: PortHealthProbe,
+	})
 }
 
 // --- internal helpers ---
 
-func deployment(
-	kn *kubernautv1alpha1.Kubernaut,
-	component, imageName string,
-	resources corev1.ResourceRequirements,
-	volumeMounts []corev1.VolumeMount,
-	volumes []corev1.Volume,
-	initContainers []corev1.Container,
-	ports []corev1.ContainerPort,
-) (*appsv1.Deployment, error) {
-	return deploymentWithEnv(kn, component, imageName, resources, volumeMounts, volumes, initContainers, ports, nil)
+// DeploymentParams collects the parameters for building a workload Deployment,
+// replacing what was previously a 9-argument function signature.
+type DeploymentParams struct {
+	Component      string
+	ImageName      string
+	Resources      corev1.ResourceRequirements
+	VolumeMounts   []corev1.VolumeMount
+	Volumes        []corev1.Volume
+	InitContainers []corev1.Container
+	Ports          []corev1.ContainerPort
+	Env            []corev1.EnvVar
+	ProbePort      int32
 }
 
-func deploymentWithEnv(
-	kn *kubernautv1alpha1.Kubernaut,
-	component, imageName string,
-	resources corev1.ResourceRequirements,
-	volumeMounts []corev1.VolumeMount,
-	volumes []corev1.Volume,
-	initContainers []corev1.Container,
-	ports []corev1.ContainerPort,
-	env []corev1.EnvVar,
-) (*appsv1.Deployment, error) {
-	img, err := Image(&kn.Spec.Image, imageName)
+func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*appsv1.Deployment, error) {
+	img, err := Image(&kn.Spec.Image, p.ImageName)
 	if err != nil {
 		return nil, err
 	}
 
+	ports := p.Ports
 	if len(ports) == 0 {
 		ports = []corev1.ContainerPort{{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP}}
 	}
 
+	probePort := p.ProbePort
+	if probePort == 0 {
+		probePort = ports[0].ContainerPort
+	}
+	probe := &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			TCPSocket: &corev1.TCPSocketAction{
+				Port: intstr.FromInt32(probePort),
+			},
+		},
+		InitialDelaySeconds: 5,
+		PeriodSeconds:       10,
+	}
+
 	return &appsv1.Deployment{
-		ObjectMeta: ObjectMeta(kn, component+"-deployment", component),
+		ObjectMeta: ObjectMeta(kn, p.Component+"-deployment", p.Component),
 		Spec: appsv1.DeploymentSpec{
-			Replicas: int32Ptr(1),
-			Selector: &metav1.LabelSelector{MatchLabels: SelectorLabels(component)},
+			Replicas: ptr.To[int32](1),
+			Selector: &metav1.LabelSelector{MatchLabels: SelectorLabels(p.Component)},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: ComponentLabels(kn, component)},
+				ObjectMeta: metav1.ObjectMeta{Labels: ComponentLabels(kn, p.Component)},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: ServiceAccountName(component),
+					ServiceAccountName: ServiceAccountName(p.Component),
 					SecurityContext:    PodSecurityContext(),
 					ImagePullSecrets:   kn.Spec.Image.PullSecrets,
-					InitContainers:     initContainers,
+					InitContainers:     p.InitContainers,
 					Containers: []corev1.Container{{
-						Name:            component,
+						Name:            p.Component,
 						Image:           img,
 						ImagePullPolicy: kn.Spec.Image.PullPolicy,
 						Ports:           ports,
-						Env:             env,
-						Resources:       MergeResources(resources),
+						Env:             p.Env,
+						Resources:       MergeResources(p.Resources),
 						SecurityContext: ContainerSecurityContext(),
-						VolumeMounts:    volumeMounts,
+						VolumeMounts:    p.VolumeMounts,
+						LivenessProbe:   probe,
+						ReadinessProbe:  probe,
 					}},
-					Volumes: volumes,
+					Volumes: p.Volumes,
 				},
 			},
 		},
