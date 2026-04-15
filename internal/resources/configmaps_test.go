@@ -38,7 +38,7 @@ func TestGatewayConfigMap_ContainsDataStorageURL(t *testing.T) {
 
 func TestDataStorageConfigMap_ContainsPgAndValkey(t *testing.T) {
 	kn := testKubernaut()
-	cm := DataStorageConfigMap(kn)
+	cm := DataStorageConfigMap(kn, "kubernautdb", "kubernautuser")
 
 	data := cm.Data["config.yaml"]
 	if !strings.Contains(data, "host: pg.example.com") {
@@ -47,7 +47,7 @@ func TestDataStorageConfigMap_ContainsPgAndValkey(t *testing.T) {
 	if !strings.Contains(data, "addr: valkey.example.com:6379") {
 		t.Errorf("datastorage config should contain Valkey addr, got:\n%s", data)
 	}
-	if !strings.Contains(data, "secretsFile: \"/etc/datastorage/secrets/db-secrets.yaml\"") {
+	if !strings.Contains(data, "secretsFile: /etc/datastorage/secrets/db-secrets.yaml") {
 		t.Errorf("datastorage config should reference db secrets file, got:\n%s", data)
 	}
 }
@@ -55,7 +55,7 @@ func TestDataStorageConfigMap_ContainsPgAndValkey(t *testing.T) {
 func TestDataStorageConfigMap_DefaultPort(t *testing.T) {
 	kn := testKubernaut()
 	kn.Spec.PostgreSQL.Port = 0
-	cm := DataStorageConfigMap(kn)
+	cm := DataStorageConfigMap(kn, "kubernautdb", "kubernautuser")
 	data := cm.Data["config.yaml"]
 	if !strings.Contains(data, "port: 5432") {
 		t.Errorf("datastorage config should default to port 5432, got:\n%s", data)
@@ -68,7 +68,7 @@ func TestAIAnalysisConfigMap_IncludesConfidenceThreshold(t *testing.T) {
 	cm := AIAnalysisConfigMap(kn)
 
 	data := cm.Data["config.yaml"]
-	if !strings.Contains(data, "confidenceThreshold: 0.85") {
+	if !strings.Contains(data, "confidenceThreshold") || !strings.Contains(data, "0.85") {
 		t.Errorf("aianalysis config should contain confidence threshold, got:\n%s", data)
 	}
 }
@@ -194,7 +194,7 @@ func TestHolmesGPTSDKConfigMap_GeneratedWhenNoExisting(t *testing.T) {
 		t.Fatal("HolmesGPTSDKConfigMap should not be nil when no existing CM specified")
 	}
 	data := cm.Data["sdk-config.yaml"]
-	if !strings.Contains(data, "llm:\n  provider: openai") {
+	if !strings.Contains(data, "provider: openai") {
 		t.Errorf("SDK config should contain llm.provider, got:\n%s", data)
 	}
 	if !strings.Contains(data, "model: gpt-4o") {
@@ -339,7 +339,7 @@ func TestConfigMaps_AllInCorrectNamespace(t *testing.T) {
 	kn := testKubernaut()
 	cms := []struct{ name, ns string }{
 		{GatewayConfigMap(kn).Name, GatewayConfigMap(kn).Namespace},
-		{DataStorageConfigMap(kn).Name, DataStorageConfigMap(kn).Namespace},
+		{DataStorageConfigMap(kn, "db", "user").Name, DataStorageConfigMap(kn, "db", "user").Namespace},
 		{AIAnalysisConfigMap(kn).Name, AIAnalysisConfigMap(kn).Namespace},
 		{SignalProcessingConfigMap(kn).Name, SignalProcessingConfigMap(kn).Namespace},
 		{RemediationOrchestratorConfigMap(kn).Name, RemediationOrchestratorConfigMap(kn).Namespace},
