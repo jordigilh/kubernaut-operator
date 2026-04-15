@@ -104,11 +104,13 @@ type ImageSpec struct {
 	Separator string `json:"separator,omitempty"`
 
 	// Image tag applied to all services. Required unless Digest is set.
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9._-]+$`
 	// +optional
 	Tag string `json:"tag,omitempty"`
 
 	// Image digest (e.g. "sha256:abc..."). Overrides Tag for
 	// immutable or air-gapped deployments.
+	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
 	// +optional
 	Digest string `json:"digest,omitempty"`
 
@@ -135,6 +137,8 @@ type PostgreSQLSpec struct {
 
 	// PostgreSQL port.
 	// +kubebuilder:default=5432
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	Port int32 `json:"port,omitempty"`
 }
@@ -152,6 +156,8 @@ type ValkeySpec struct {
 
 	// Valkey port.
 	// +kubebuilder:default=6379
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	Port int32 `json:"port,omitempty"`
 }
@@ -169,6 +175,7 @@ type AnsibleSpec struct {
 
 	// AWX organization ID.
 	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=1
 	// +optional
 	OrganizationID int `json:"organizationID,omitempty"`
 
@@ -505,15 +512,19 @@ type ServiceStatus struct {
 	DesiredReplicas int32 `json:"desiredReplicas"`
 }
 
+// ConditionType is a typed string for condition type names, providing
+// compile-time safety over raw string constants.
+type ConditionType = string
+
 // Condition types used in KubernautStatus.Conditions.
 const (
-	ConditionBYOValidated       = "BYOValidated"
-	ConditionMigrationComplete  = "MigrationComplete"
-	ConditionCRDsInstalled      = "CRDsInstalled"
-	ConditionRBACProvisioned    = "RBACProvisioned"
-	ConditionWebhooksConfigured = "WebhooksConfigured"
-	ConditionServicesDeployed   = "ServicesDeployed"
-	ConditionRouteReady         = "RouteReady"
+	ConditionBYOValidated       ConditionType = "BYOValidated"
+	ConditionMigrationComplete  ConditionType = "MigrationComplete"
+	ConditionCRDsInstalled      ConditionType = "CRDsInstalled"
+	ConditionRBACProvisioned    ConditionType = "RBACProvisioned"
+	ConditionWebhooksConfigured ConditionType = "WebhooksConfigured"
+	ConditionServicesDeployed   ConditionType = "ServicesDeployed"
+	ConditionRouteReady         ConditionType = "RouteReady"
 )
 
 // Finalizer used for cluster-scoped resource cleanup.
