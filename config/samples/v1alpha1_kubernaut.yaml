@@ -49,6 +49,10 @@ spec:
     enabled: true
 
   # Gateway settings — Route creates an OCP edge-TLS Route.
+  # Inter-service TLS is always enabled via OCP service-ca (not configurable).
   gateway:
     route:
       enabled: true
+    config:
+      k8sRequestTimeout: "15s"
+      corsAllowedOrigins: "https://no-browser-clients.invalid"

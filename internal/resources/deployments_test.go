@@ -35,7 +35,49 @@ func TestGatewayDeployment_Basic(t *testing.T) {
 	assertDeploymentBasics(t, dep, ComponentGateway, "gateway")
 	assertHasVolume(t, dep, "config")
 	assertVolumeSourceConfigMap(t, dep, "config", "gateway-config")
-	assertHasVolumeMount(t, dep, "config", "/etc/kubernaut/config.yaml")
+	assertHasVolumeMount(t, dep, "config", "/etc/gateway")
+}
+
+func TestGatewayDeployment_CORSEnvVar(t *testing.T) {
+	kn := testKubernaut()
+	dep, err := GatewayDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	container := dep.Spec.Template.Spec.Containers[0]
+	found := false
+	for _, env := range container.Env {
+		if env.Name == "CORS_ALLOWED_ORIGINS" {
+			found = true
+			if env.Value != "https://no-browser-clients.invalid" {
+				t.Errorf("CORS_ALLOWED_ORIGINS = %q, want default deny-all origin", env.Value)
+			}
+		}
+	}
+	if !found {
+		t.Error("Gateway deployment should have CORS_ALLOWED_ORIGINS env var")
+	}
+}
+
+func TestGatewayDeployment_CustomCORS(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Gateway.Config.CORSAllowedOrigins = "https://my-dashboard.example.com"
+	dep, err := GatewayDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	container := dep.Spec.Template.Spec.Containers[0]
+	for _, env := range container.Env {
+		if env.Name == "CORS_ALLOWED_ORIGINS" {
+			if env.Value != "https://my-dashboard.example.com" {
+				t.Errorf("CORS_ALLOWED_ORIGINS = %q, want custom value", env.Value)
+			}
+			return
+		}
+	}
+	t.Error("CORS_ALLOWED_ORIGINS env var not found")
 }
 
 func TestDataStorageDeployment_InitContainer(t *testing.T) {
@@ -178,6 +220,18 @@ func TestNotificationDeployment_OutputEmptyDir(t *testing.T) {
 	}
 }
 
+func TestNotificationDeployment_RoutingConfigMount(t *testing.T) {
+	kn := testKubernaut()
+	dep, err := NotificationDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertHasVolume(t, dep, "routing-config")
+	assertVolumeSourceConfigMap(t, dep, "routing-config", "notification-routing-config")
+	assertHasVolumeMount(t, dep, "routing-config", "/etc/notification-routing")
+}
+
 func TestKubernautAgentDeployment_LLMCredentials(t *testing.T) {
 	kn := testKubernaut()
 	dep, err := KubernautAgentDeployment(kn)
@@ -188,6 +242,28 @@ func TestKubernautAgentDeployment_LLMCredentials(t *testing.T) {
 	assertDeploymentBasics(t, dep, ComponentKubernautAgent, "kubernaut-agent")
 	assertHasVolume(t, dep, "llm-credentials")
 	assertHasVolumeMount(t, dep, "llm-credentials", "/etc/kubernaut-agent/credentials")
+}
+
+func TestKubernautAgentDeployment_ConfigArgs(t *testing.T) {
+	kn := testKubernaut()
+	dep, err := KubernautAgentDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	container := dep.Spec.Template.Spec.Containers[0]
+	want := []string{
+		"-config", "/etc/kubernaut-agent/config.yaml",
+		"-sdk-config", "/etc/kubernaut-agent/sdk/sdk-config.yaml",
+	}
+	if len(container.Args) != len(want) {
+		t.Fatalf("KA args len = %d, want %d (%v)", len(container.Args), len(want), container.Args)
+	}
+	for i := range want {
+		if container.Args[i] != want[i] {
+			t.Errorf("KA args[%d] = %q, want %q", i, container.Args[i], want[i])
+		}
+	}
 }
 
 func TestKubernautAgentDeployment_ServiceCA_WhenMonitoringEnabled(t *testing.T) {
@@ -336,6 +412,66 @@ func TestAllDeployments_ServiceAccounts(t *testing.T) {
 			t.Errorf("Deployment %q SA = %q, want %q (component %q)", dep.Name, gotSA, wantSA, component)
 		}
 	}
+}
+
+func TestAllDeployments_HaveInterServiceTLSCA(t *testing.T) {
+	kn := testKubernaut()
+	deps := getAllDeployments(t, kn)
+
+	for _, dep := range deps {
+		name := dep.Name
+		container := dep.Spec.Template.Spec.Containers[0]
+
+		hasCAVolume := false
+		for _, v := range dep.Spec.Template.Spec.Volumes {
+			if v.Name == "tls-ca" && v.ConfigMap != nil && v.ConfigMap.Name == InterServiceCAConfigMapName {
+				hasCAVolume = true
+			}
+		}
+		if !hasCAVolume {
+			t.Errorf("Deployment %q missing tls-ca volume backed by %q ConfigMap", name, InterServiceCAConfigMapName)
+		}
+
+		hasCAMount := false
+		for _, vm := range container.VolumeMounts {
+			if vm.Name == "tls-ca" && vm.MountPath == "/etc/tls-ca" {
+				hasCAMount = true
+			}
+		}
+		if !hasCAMount {
+			t.Errorf("Deployment %q missing tls-ca volume mount at /etc/tls-ca", name)
+		}
+
+		hasCAEnv := false
+		for _, env := range container.Env {
+			if env.Name == "TLS_CA_FILE" && env.Value == InterServiceTLSCAFile {
+				hasCAEnv = true
+			}
+		}
+		if !hasCAEnv {
+			t.Errorf("Deployment %q missing TLS_CA_FILE env var", name)
+		}
+	}
+}
+
+func TestGatewayDeployment_HasTLSCertVolume(t *testing.T) {
+	kn := testKubernaut()
+	dep, err := GatewayDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasVolume(t, dep, "tls-certs")
+	assertHasVolumeMount(t, dep, "tls-certs", InterServiceTLSCertDir)
+}
+
+func TestDataStorageDeployment_HasTLSCertVolume(t *testing.T) {
+	kn := testKubernaut()
+	dep, err := DataStorageDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasVolume(t, dep, "tls-certs")
+	assertHasVolumeMount(t, dep, "tls-certs", InterServiceTLSCertDir)
 }
 
 func TestServiceAccountNaming(t *testing.T) {

@@ -403,3 +403,100 @@ func TestClusterRoles_HaveCommonLabels(t *testing.T) {
 		}
 	}
 }
+
+func TestKAInvestigator_HasServiceMeshAndGitOpsRules(t *testing.T) {
+	kn := testKubernaut()
+	roles := ClusterRoles(kn)
+	var investigator *rbacv1.ClusterRole
+	for _, r := range roles {
+		if r.Name == kn.Namespace+"-kubernaut-agent-investigator" {
+			investigator = r
+			break
+		}
+	}
+	if investigator == nil {
+		t.Fatal("kubernaut-agent-investigator ClusterRole not found")
+	}
+
+	wantGroups := []string{
+		"cert-manager.io",
+		"argoproj.io",
+		"policy.linkerd.io",
+		"security.istio.io",
+		"networking.istio.io",
+	}
+	foundGroups := make(map[string]bool)
+	for _, rule := range investigator.Rules {
+		for _, g := range rule.APIGroups {
+			foundGroups[g] = true
+		}
+	}
+	for _, g := range wantGroups {
+		if !foundGroups[g] {
+			t.Errorf("kubernaut-agent-investigator missing API group %q", g)
+		}
+	}
+}
+
+func TestWorkflowRunner_HasMeshAndGitOpsRules(t *testing.T) {
+	kn := testKubernaut()
+	roles := ClusterRoles(kn)
+	var runner *rbacv1.ClusterRole
+	for _, r := range roles {
+		if r.Name == kn.Namespace+"-workflow-runner" {
+			runner = r
+			break
+		}
+	}
+	if runner == nil {
+		t.Fatal("workflow-runner ClusterRole not found")
+	}
+
+	wantGroups := []string{
+		"argoproj.io",
+		"cert-manager.io",
+		"policy.linkerd.io",
+		"security.istio.io",
+		"networking.istio.io",
+	}
+	foundGroups := make(map[string]bool)
+	for _, rule := range runner.Rules {
+		for _, g := range rule.APIGroups {
+			foundGroups[g] = true
+		}
+	}
+	for _, g := range wantGroups {
+		if !foundGroups[g] {
+			t.Errorf("workflow-runner missing API group %q", g)
+		}
+	}
+}
+
+func TestDataStorageClient_HasExpandedVerbs(t *testing.T) {
+	kn := testKubernaut()
+	roles := ClusterRoles(kn)
+	var dsClient *rbacv1.ClusterRole
+	for _, r := range roles {
+		if r.Name == kn.Namespace+"-data-storage-client" {
+			dsClient = r
+			break
+		}
+	}
+	if dsClient == nil {
+		t.Fatal("data-storage-client ClusterRole not found")
+	}
+	if len(dsClient.Rules) == 0 {
+		t.Fatal("data-storage-client has no rules")
+	}
+	rule := dsClient.Rules[0]
+	wantVerbs := []string{"create", "get", "list", "update", "delete"}
+	verbs := make(map[string]bool)
+	for _, v := range rule.Verbs {
+		verbs[v] = true
+	}
+	for _, v := range wantVerbs {
+		if !verbs[v] {
+			t.Errorf("data-storage-client missing verb %q", v)
+		}
+	}
+}

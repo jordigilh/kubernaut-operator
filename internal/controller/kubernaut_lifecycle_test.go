@@ -585,6 +585,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
 			cr.Spec.Ansible.Enabled = true
+			cr.Spec.Ansible.APIURL = "https://awx.example.com"
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			reconcileToRunning(ctx)
 
@@ -596,6 +597,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
 			cr.Spec.Ansible.Enabled = true
+			cr.Spec.Ansible.APIURL = "https://awx.example.com"
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			r := reconcileToRunning(ctx)
 
@@ -825,6 +827,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
 			cr.Spec.Ansible.Enabled = true
+			cr.Spec.Ansible.APIURL = "https://awx.example.com"
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			r := reconcileToRunning(ctx)
 

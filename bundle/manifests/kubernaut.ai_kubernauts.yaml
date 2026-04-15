@@ -162,6 +162,9 @@ spec:
                     - name
                     type: object
                 type: object
+                x-kubernetes-validations:
+                - message: ansible.apiURL is required when ansible.enabled is true
+                  rule: '!self.enabled || has(self.apiURL)'
               authWebhook:
                 description: AuthWebhook admission controller settings.
                 properties:
@@ -365,6 +368,28 @@ spec:
               gateway:
                 description: Gateway service settings.
                 properties:
+                  config:
+                    description: Gateway server and middleware configuration.
+                    properties:
+                      corsAllowedOrigins:
+                        default: https://no-browser-clients.invalid
+                        description: |-
+                          CORS allowed origins. Gateway is an M2M webhook API, not a browser
+                          target, so the default is a non-matching origin that blocks CORS.
+                        type: string
+                      k8sRequestTimeout:
+                        default: 15s
+                        description: 'Timeout for outbound K8s API requests. Default:
+                          "15s".'
+                        type: string
+                      trustedProxyCIDRs:
+                        description: |-
+                          Trusted proxy CIDRs for X-Forwarded-For / RealIP extraction.
+                          Empty = fail-closed (proxy headers never trusted).
+                        items:
+                          type: string
+                        type: array
+                    type: object
                   resources:
                     description: Resource requirements.
                     properties:
@@ -492,6 +517,9 @@ spec:
                 required:
                 - registry
                 type: object
+                x-kubernetes-validations:
+                - message: image.tag or image.digest must be set
+                  rule: has(self.tag) || has(self.digest)
               kubernautAgent:
                 description: Kubernaut Agent (KA) -- LLM-powered investigation and
                   analysis service.

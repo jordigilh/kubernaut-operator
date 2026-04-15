@@ -225,7 +225,7 @@ func TestObjectMeta_NamespaceAndLabels(t *testing.T) {
 
 func TestDataStorageURL(t *testing.T) {
 	got := DataStorageURL("kubernaut-system")
-	want := "http://data-storage-service.kubernaut-system.svc.cluster.local:8080"
+	want := "https://data-storage-service.kubernaut-system.svc.cluster.local:8080"
 	if got != want {
 		t.Errorf("DataStorageURL() = %q, want %q", got, want)
 	}
@@ -233,9 +233,15 @@ func TestDataStorageURL(t *testing.T) {
 
 func TestGatewayURL(t *testing.T) {
 	got := GatewayURL("kubernaut-system")
-	want := "http://gateway-service.kubernaut-system.svc.cluster.local:8080"
+	want := "https://gateway-service.kubernaut-system.svc.cluster.local:8080"
 	if got != want {
 		t.Errorf("GatewayURL() = %q, want %q", got, want)
+	}
+}
+
+func TestInterServiceTLSCAFile_MatchesOCPServiceCA(t *testing.T) {
+	if InterServiceTLSCAFile != "/etc/tls-ca/service-ca.crt" {
+		t.Errorf("InterServiceTLSCAFile = %q, want /etc/tls-ca/service-ca.crt (OCP service-ca key)", InterServiceTLSCAFile)
 	}
 }
 

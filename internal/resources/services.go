@@ -41,7 +41,14 @@ var serviceDefinitions = []struct {
 	{ComponentKubernautAgent, "kubernaut-agent-service", PortHTTP, "http"},
 }
 
+// Inter-service TLS secret names provisioned by the OCP service-ca operator.
+const (
+	GatewayTLSSecretName     = "gateway-tls"
+	DataStorageTLSSecretName = "datastorage-tls"
+)
+
 // Services builds all Services for the Kubernaut deployment.
+// Gateway and DataStorage are annotated for OCP service-ca TLS provisioning.
 func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
 	var services []*corev1.Service
 	for _, def := range serviceDefinitions {
@@ -51,6 +58,16 @@ func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
 				Selector: SelectorLabels(def.Component),
 				Ports:    []corev1.ServicePort{ServicePort(def.PortName, def.Port)},
 			},
+		}
+		switch def.Component {
+		case ComponentGateway:
+			svc.Annotations = map[string]string{
+				OCPServingCertAnnotation: GatewayTLSSecretName,
+			}
+		case ComponentDataStorage:
+			svc.Annotations = map[string]string{
+				OCPServingCertAnnotation: DataStorageTLSSecretName,
+			}
 		}
 		services = append(services, svc)
 	}

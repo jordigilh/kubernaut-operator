@@ -67,7 +67,21 @@ spec:
       provider: openai
       model: gpt-4o
       credentialsSecretName: llm-credentials
+  gateway:
+    route:
+      enabled: true
+    config:
+      k8sRequestTimeout: "15s"
+      corsAllowedOrigins: "https://no-browser-clients.invalid"
 ```
+
+### Inter-Service TLS
+
+All inter-service communication uses TLS, provisioned automatically by the
+OpenShift `service-ca` operator. This is always enabled and not configurable.
+The operator annotates Gateway and DataStorage Services so that `service-ca`
+generates serving certificates, and injects the CA bundle into an
+`inter-service-ca` ConfigMap mounted by all components.
 
 ### Required Secrets
 

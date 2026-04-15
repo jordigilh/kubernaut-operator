@@ -36,8 +36,30 @@ func TestGatewayConfigMap_ContainsDataStorageURL(t *testing.T) {
 		t.Errorf("name = %q, want %q", cm.Name, "gateway-config")
 	}
 	data := cm.Data["config.yaml"]
-	if !strings.Contains(data, "data-storage-service.kubernaut-system.svc.cluster.local") {
-		t.Errorf("gateway config should reference DataStorage URL, got:\n%s", data)
+	if !strings.Contains(data, "https://data-storage-service.kubernaut-system.svc.cluster.local") {
+		t.Errorf("gateway config should reference DataStorage HTTPS URL, got:\n%s", data)
+	}
+	if !strings.Contains(data, "k8sRequestTimeout") {
+		t.Errorf("gateway config should contain k8sRequestTimeout, got:\n%s", data)
+	}
+	if !strings.Contains(data, "trustedProxyCIDRs") {
+		t.Errorf("gateway config should contain trustedProxyCIDRs, got:\n%s", data)
+	}
+	if !strings.Contains(data, "maxConcurrentRequests") {
+		t.Errorf("gateway config should contain maxConcurrentRequests, got:\n%s", data)
+	}
+}
+
+func TestGatewayConfigMap_CustomK8sTimeout(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Gateway.Config.K8sRequestTimeout = "30s"
+	cm, err := GatewayConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["config.yaml"]
+	if !strings.Contains(data, "k8sRequestTimeout: 30s") {
+		t.Errorf("gateway config should respect custom k8sRequestTimeout, got:\n%s", data)
 	}
 }
 
@@ -258,6 +280,18 @@ func TestKubernautAgentSDKConfigMap_NilWhenExistingProvided(t *testing.T) {
 	}
 }
 
+func TestInterServiceCAConfigMap_HasInjectAnnotation(t *testing.T) {
+	kn := testKubernaut()
+	cm := InterServiceCAConfigMap(kn)
+	if cm.Name != InterServiceCAConfigMapName {
+		t.Errorf("name = %q, want %q", cm.Name, InterServiceCAConfigMapName)
+	}
+	v, ok := cm.Annotations[OCPServiceCAInjectAnnotation]
+	if !ok || v != "true" {
+		t.Error("inter-service-ca ConfigMap should have inject-cabundle annotation")
+	}
+}
+
 func TestServiceCAConfigMaps_HaveAnnotation(t *testing.T) {
 	kn := testKubernaut()
 	cms := []*struct {
@@ -296,8 +330,11 @@ func TestEffectivenessMonitorConfigMap_MonitoringURLs(t *testing.T) {
 	if !strings.Contains(data, OCPAlertManagerURL) {
 		t.Errorf("EM config should contain AlertManager URL when monitoring enabled, got:\n%s", data)
 	}
-	if !strings.Contains(data, "tlsCaPath: /etc/ssl/effectivenessmonitor/service-ca.crt") {
-		t.Errorf("EM config should contain TLS CA path when monitoring enabled, got:\n%s", data)
+	if !strings.Contains(data, "external:") {
+		t.Errorf("EM config should contain external section when monitoring enabled, got:\n%s", data)
+	}
+	if !strings.Contains(data, "tlsCaFile: /etc/ssl/effectivenessmonitor/service-ca.crt") {
+		t.Errorf("EM config should contain external.tlsCaFile when monitoring enabled, got:\n%s", data)
 	}
 }
 
@@ -311,8 +348,8 @@ func TestEffectivenessMonitorConfigMap_NoMonitoringURLsWhenDisabled(t *testing.T
 	}
 	data := cm.Data["config.yaml"]
 
-	if strings.Contains(data, "prometheusUrl") {
-		t.Errorf("EM config should not contain monitoring section when disabled, got:\n%s", data)
+	if strings.Contains(data, "external:") {
+		t.Errorf("EM config should not contain external monitoring section when disabled, got:\n%s", data)
 	}
 }
 
@@ -327,8 +364,14 @@ func TestKubernautAgentConfigMap_MonitoringURL(t *testing.T) {
 	if !strings.Contains(data, OCPPrometheusURL) {
 		t.Errorf("KA config should contain Prometheus URL when monitoring enabled, got:\n%s", data)
 	}
-	if !strings.Contains(data, "tlsCaPath: /etc/ssl/ka/service-ca.crt") {
-		t.Errorf("KA config should contain TLS CA path when monitoring enabled, got:\n%s", data)
+	if !strings.Contains(data, "data_storage:") {
+		t.Errorf("KA config should contain upstream data_storage section, got:\n%s", data)
+	}
+	if !strings.Contains(data, "url: https://data-storage-service.kubernaut-system.svc.cluster.local:8080") {
+		t.Errorf("KA config should contain HTTPS data_storage.url, got:\n%s", data)
+	}
+	if !strings.Contains(data, "tools:") || !strings.Contains(data, "prometheus:") {
+		t.Errorf("KA config should contain upstream tools.prometheus section when monitoring enabled, got:\n%s", data)
 	}
 }
 
@@ -342,8 +385,23 @@ func TestKubernautAgentConfigMap_NoMonitoringWhenDisabled(t *testing.T) {
 	}
 	data := cm.Data["config.yaml"]
 
-	if strings.Contains(data, "prometheusUrl") {
-		t.Errorf("KA config should not contain monitoring section when disabled, got:\n%s", data)
+	if strings.Contains(data, "prometheusUrl") || strings.Contains(data, "tools:") {
+		t.Errorf("KA config should not contain Prometheus tools section when monitoring is disabled, got:\n%s", data)
+	}
+}
+
+func TestAuthWebhookConfigMap_UsesDefaultConfigFilename(t *testing.T) {
+	kn := testKubernaut()
+	cm, err := AuthWebhookConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := cm.Data["config.yaml"]; !ok {
+		t.Fatalf("AuthWebhookConfigMap should write config.yaml, keys: %#v", cm.Data)
+	}
+	if _, ok := cm.Data["authwebhook.yaml"]; ok {
+		t.Fatalf("AuthWebhookConfigMap should not write legacy authwebhook.yaml, keys: %#v", cm.Data)
 	}
 }
 

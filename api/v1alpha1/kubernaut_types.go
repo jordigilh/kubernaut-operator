@@ -86,6 +86,7 @@ type KubernautSpec struct {
 // ImageSpec configures how container images are resolved for all services.
 // Images are constructed as: {Registry}/{Namespace}{Separator}{service}:{Tag}
 // or {Registry}/{Namespace}{Separator}{service}@{Digest} when Digest is set.
+// +kubebuilder:validation:XValidation:rule="has(self.tag) || has(self.digest)",message="image.tag or image.digest must be set"
 type ImageSpec struct {
 	// Container registry hostname.
 	// +kubebuilder:validation:MinLength=1
@@ -163,6 +164,7 @@ type ValkeySpec struct {
 }
 
 // AnsibleSpec configures the optional AWX/AAP integration.
+// +kubebuilder:validation:XValidation:rule="!self.enabled || has(self.apiURL)",message="ansible.apiURL is required when ansible.enabled is true"
 type AnsibleSpec struct {
 	// Whether AWX/AAP integration is enabled.
 	// +kubebuilder:default=false
@@ -436,9 +438,32 @@ type GatewaySpec struct {
 	// +optional
 	Route RouteSpec `json:"route,omitempty"`
 
+	// Gateway server and middleware configuration.
+	// +optional
+	Config GatewayConfigSpec `json:"config,omitempty"`
+
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// GatewayConfigSpec configures Gateway server behaviour, middleware, and CORS.
+type GatewayConfigSpec struct {
+	// Timeout for outbound K8s API requests. Default: "15s".
+	// +kubebuilder:default="15s"
+	// +optional
+	K8sRequestTimeout string `json:"k8sRequestTimeout,omitempty"`
+
+	// Trusted proxy CIDRs for X-Forwarded-For / RealIP extraction.
+	// Empty = fail-closed (proxy headers never trusted).
+	// +optional
+	TrustedProxyCIDRs []string `json:"trustedProxyCIDRs,omitempty"`
+
+	// CORS allowed origins. Gateway is an M2M webhook API, not a browser
+	// target, so the default is a non-matching origin that blocks CORS.
+	// +kubebuilder:default="https://no-browser-clients.invalid"
+	// +optional
+	CORSAllowedOrigins string `json:"corsAllowedOrigins,omitempty"`
 }
 
 // RouteSpec configures the OCP Route for the Gateway.

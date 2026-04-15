@@ -48,17 +48,42 @@ func newControllerBlock(leaderElectionID string) controllerBlock {
 	}}
 }
 
+type tlsConfigYAML struct {
+	CertDir string `json:"certDir" yaml:"certDir"`
+}
+
+type gatewayServerYAML struct {
+	ListenAddr            string        `json:"listenAddr" yaml:"listenAddr"`
+	MaxConcurrentRequests int           `json:"maxConcurrentRequests" yaml:"maxConcurrentRequests"`
+	ReadTimeout           string        `json:"readTimeout" yaml:"readTimeout"`
+	WriteTimeout          string        `json:"writeTimeout" yaml:"writeTimeout"`
+	IdleTimeout           string        `json:"idleTimeout" yaml:"idleTimeout"`
+	K8sRequestTimeout     string        `json:"k8sRequestTimeout" yaml:"k8sRequestTimeout"`
+	TLS                   tlsConfigYAML `json:"tls" yaml:"tls,omitempty"`
+}
+
+type gatewayMiddlewareYAML struct {
+	TrustedProxyCIDRs []string `json:"trustedProxyCIDRs" yaml:"trustedProxyCIDRs"`
+}
+
+type gatewayDatastorageYAML struct {
+	URL     string `json:"url" yaml:"url"`
+	Timeout string `json:"timeout" yaml:"timeout"`
+}
+
 type gatewayConfigYAML struct {
-	DataStorageURL string `json:"dataStorageUrl" yaml:"dataStorageUrl"`
-	ListenAddr     string `json:"listenAddr" yaml:"listenAddr"`
+	Server      gatewayServerYAML      `json:"server" yaml:"server"`
+	Middleware  gatewayMiddlewareYAML  `json:"middleware" yaml:"middleware"`
+	Datastorage gatewayDatastorageYAML `json:"datastorage" yaml:"datastorage"`
 }
 
 type dataStorageServerYAML struct {
-	Port         int    `json:"port" yaml:"port"`
-	Host         string `json:"host" yaml:"host"`
-	MetricsPort  int    `json:"metricsPort" yaml:"metricsPort"`
-	ReadTimeout  string `json:"readTimeout" yaml:"readTimeout"`
-	WriteTimeout string `json:"writeTimeout" yaml:"writeTimeout"`
+	Port         int           `json:"port" yaml:"port"`
+	Host         string        `json:"host" yaml:"host"`
+	MetricsPort  int           `json:"metricsPort" yaml:"metricsPort"`
+	ReadTimeout  string        `json:"readTimeout" yaml:"readTimeout"`
+	WriteTimeout string        `json:"writeTimeout" yaml:"writeTimeout"`
+	TLS          tlsConfigYAML `json:"tls" yaml:"tls"`
 }
 
 type dataStorageDatabaseYAML struct {
@@ -218,16 +243,24 @@ type emAssessmentYAML struct {
 	ValidityWindow      string `json:"validityWindow" yaml:"validityWindow"`
 }
 
-type emMonitoringYAML struct {
-	PrometheusURL   string `json:"prometheusUrl" yaml:"prometheusUrl"`
-	AlertManagerURL string `json:"alertManagerUrl" yaml:"alertManagerUrl"`
-	TLSCaPath       string `json:"tlsCaPath" yaml:"tlsCaPath"`
+type emDatastorageYAML struct {
+	URL string `json:"url" yaml:"url"`
+}
+
+type emExternalYAML struct {
+	PrometheusURL       string `json:"prometheusUrl" yaml:"prometheusUrl"`
+	PrometheusEnabled   bool   `json:"prometheusEnabled" yaml:"prometheusEnabled"`
+	AlertManagerURL     string `json:"alertManagerUrl" yaml:"alertManagerUrl"`
+	AlertManagerEnabled bool   `json:"alertManagerEnabled" yaml:"alertManagerEnabled"`
+	ConnectionTimeout   string `json:"connectionTimeout,omitempty" yaml:"connectionTimeout,omitempty"`
+	TLSCaFile           string `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 }
 
 type effectivenessMonitorConfigYAML struct {
-	DataStorageURL string            `json:"dataStorageUrl" yaml:"dataStorageUrl"`
-	Assessment     emAssessmentYAML  `json:"assessment" yaml:"assessment"`
-	Monitoring     *emMonitoringYAML `json:"monitoring,omitempty" yaml:"monitoring,omitempty"`
+	Assessment  emAssessmentYAML  `json:"assessment" yaml:"assessment"`
+	Controller  controllerBlock   `json:"controller" yaml:"controller"`
+	Datastorage emDatastorageYAML `json:"datastorage" yaml:"datastorage"`
+	External    *emExternalYAML   `json:"external,omitempty" yaml:"external,omitempty"`
 }
 
 type notificationConsoleYAML struct {
@@ -309,17 +342,21 @@ type notificationRoutingConsoleYAML struct {
 	Receivers []notificationRoutingConsoleReceiver `json:"receivers" yaml:"receivers"`
 }
 
-type kubernautAgentMonitoringYAML struct {
-	PrometheusURL string `json:"prometheusUrl" yaml:"prometheusUrl"`
-	TLSCaPath     string `json:"tlsCaPath" yaml:"tlsCaPath"`
+type kubernautAgentDatastorageYAML struct {
+	URL string `json:"url" yaml:"url"`
+}
+
+type kubernautAgentPrometheusYAML struct {
+	URL string `json:"url" yaml:"url"`
+}
+
+type kubernautAgentToolsYAML struct {
+	Prometheus kubernautAgentPrometheusYAML `json:"prometheus" yaml:"prometheus"`
 }
 
 type kubernautAgentConfigYAML struct {
-	DataStorageURL string                        `json:"dataStorageUrl" yaml:"dataStorageUrl"`
-	GatewayURL     string                        `json:"gatewayUrl" yaml:"gatewayUrl"`
-	ListenAddr     string                        `json:"listenAddr" yaml:"listenAddr"`
-	MetricsAddr    string                        `json:"metricsAddr" yaml:"metricsAddr"`
-	Monitoring     *kubernautAgentMonitoringYAML `json:"monitoring,omitempty" yaml:"monitoring,omitempty"`
+	DataStorage kubernautAgentDatastorageYAML `json:"data_storage" yaml:"data_storage"`
+	Tools       *kubernautAgentToolsYAML      `json:"tools,omitempty" yaml:"tools,omitempty"`
 }
 
 type kubernautAgentSDKConfigYAML struct {
@@ -366,9 +403,30 @@ func marshalYAML(v any) (string, error) {
 // GatewayConfigMap builds the gateway-config ConfigMap.
 func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
 	ns := kn.Namespace
+	gwCfg := &kn.Spec.Gateway.Config
+
+	proxyCIDRs := gwCfg.TrustedProxyCIDRs
+	if proxyCIDRs == nil {
+		proxyCIDRs = []string{}
+	}
+
 	cfg := gatewayConfigYAML{
-		DataStorageURL: DataStorageURL(ns),
-		ListenAddr:     ":8080",
+		Server: gatewayServerYAML{
+			ListenAddr:            ":8080",
+			MaxConcurrentRequests: 100,
+			ReadTimeout:           "30s",
+			WriteTimeout:          "30s",
+			IdleTimeout:           "120s",
+			K8sRequestTimeout:     withDefault(gwCfg.K8sRequestTimeout, "15s"),
+			TLS:                   tlsConfigYAML{CertDir: InterServiceTLSCertDir},
+		},
+		Middleware: gatewayMiddlewareYAML{
+			TrustedProxyCIDRs: proxyCIDRs,
+		},
+		Datastorage: gatewayDatastorageYAML{
+			URL:     DataStorageURL(ns),
+			Timeout: "10s",
+		},
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -392,6 +450,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string
 			MetricsPort:  9090,
 			ReadTimeout:  "30s",
 			WriteTimeout: "30s",
+			TLS:          tlsConfigYAML{CertDir: InterServiceTLSCertDir},
 		},
 		Database: dataStorageDatabaseYAML{
 			Host:            kn.Spec.PostgreSQL.Host,
@@ -613,17 +672,23 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Config
 func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
 	em := &kn.Spec.EffectivenessMonitor
 	cfg := effectivenessMonitorConfigYAML{
-		DataStorageURL: DataStorageURL(kn.Namespace),
 		Assessment: emAssessmentYAML{
 			StabilizationWindow: withDefault(em.Assessment.StabilizationWindow, "30s"),
 			ValidityWindow:      withDefault(em.Assessment.ValidityWindow, "120s"),
 		},
+		Controller: newControllerBlock("effectivenessmonitor.kubernaut.ai"),
+		Datastorage: emDatastorageYAML{
+			URL: DataStorageURL(kn.Namespace),
+		},
 	}
 	if kn.Spec.Monitoring.MonitoringEnabled() {
-		cfg.Monitoring = &emMonitoringYAML{
-			PrometheusURL:   OCPPrometheusURL,
-			AlertManagerURL: OCPAlertManagerURL,
-			TLSCaPath:       "/etc/ssl/effectivenessmonitor/service-ca.crt",
+		cfg.External = &emExternalYAML{
+			PrometheusURL:       OCPPrometheusURL,
+			PrometheusEnabled:   true,
+			AlertManagerURL:     OCPAlertManagerURL,
+			AlertManagerEnabled: true,
+			ConnectionTimeout:   "10s",
+			TLSCaFile:           "/etc/ssl/effectivenessmonitor/service-ca.crt",
 		}
 	}
 	data, err := marshalYAML(cfg)
@@ -728,15 +793,15 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Conf
 func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
 	ns := kn.Namespace
 	cfg := kubernautAgentConfigYAML{
-		DataStorageURL: DataStorageURL(ns),
-		GatewayURL:     GatewayURL(ns),
-		ListenAddr:     ":8080",
-		MetricsAddr:    ":8080",
+		DataStorage: kubernautAgentDatastorageYAML{
+			URL: DataStorageURL(ns),
+		},
 	}
 	if kn.Spec.Monitoring.MonitoringEnabled() {
-		cfg.Monitoring = &kubernautAgentMonitoringYAML{
-			PrometheusURL: OCPPrometheusURL,
-			TLSCaPath:     "/etc/ssl/ka/service-ca.crt",
+		cfg.Tools = &kubernautAgentToolsYAML{
+			Prometheus: kubernautAgentPrometheusYAML{
+				URL: OCPPrometheusURL,
+			},
 		}
 	}
 	data, err := marshalYAML(cfg)
@@ -795,8 +860,22 @@ func AuthWebhookConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 	}
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "authwebhook-config", ComponentAuthWebhook),
-		Data:       map[string]string{"authwebhook.yaml": data},
+		Data:       map[string]string{"config.yaml": data},
 	}, nil
+}
+
+// InterServiceCAConfigMap returns the ConfigMap used for OCP service-ca
+// injection that provides the shared CA trust bundle for inter-service TLS.
+// All components that communicate with Gateway or DataStorage mount this
+// ConfigMap to verify server certificates.
+func InterServiceCAConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: ObjectMeta(kn, InterServiceCAConfigMapName, "inter-service-tls"),
+	}
+	cm.Annotations = map[string]string{
+		OCPServiceCAInjectAnnotation: "true",
+	}
+	return cm
 }
 
 // EffectivenessMonitorServiceCAConfigMap returns the ConfigMap used for

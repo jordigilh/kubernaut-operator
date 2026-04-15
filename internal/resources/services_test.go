@@ -113,6 +113,40 @@ func TestServices_ExpectedNames(t *testing.T) {
 	}
 }
 
+func TestServices_GatewayHasServingCertAnnotation(t *testing.T) {
+	kn := testKubernaut()
+	for _, svc := range Services(kn) {
+		if svc.Name == "gateway-service" {
+			v, ok := svc.Annotations[OCPServingCertAnnotation]
+			if !ok {
+				t.Fatal("gateway-service missing serving-cert-secret-name annotation")
+			}
+			if v != GatewayTLSSecretName {
+				t.Errorf("gateway-service annotation = %q, want %q", v, GatewayTLSSecretName)
+			}
+			return
+		}
+	}
+	t.Fatal("gateway-service not found")
+}
+
+func TestServices_DataStorageHasServingCertAnnotation(t *testing.T) {
+	kn := testKubernaut()
+	for _, svc := range Services(kn) {
+		if svc.Name == "data-storage-service" {
+			v, ok := svc.Annotations[OCPServingCertAnnotation]
+			if !ok {
+				t.Fatal("data-storage-service missing serving-cert-secret-name annotation")
+			}
+			if v != DataStorageTLSSecretName {
+				t.Errorf("data-storage-service annotation = %q, want %q", v, DataStorageTLSSecretName)
+			}
+			return
+		}
+	}
+	t.Fatal("data-storage-service not found")
+}
+
 func TestPodDisruptionBudgets_Count10(t *testing.T) {
 	kn := testKubernaut()
 	pdbs := PodDisruptionBudgets(kn)

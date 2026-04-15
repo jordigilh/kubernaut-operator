@@ -32,11 +32,38 @@ import (
 
 // GatewayDeployment builds the gateway Deployment.
 func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+	corsOrigin := kn.Spec.Gateway.Config.CORSAllowedOrigins
+	if corsOrigin == "" {
+		corsOrigin = "https://no-browser-clients.invalid"
+	}
+
+	env := []corev1.EnvVar{
+		{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{
+			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
+		}},
+		{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
+			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
+		}},
+		{Name: "CORS_ALLOWED_ORIGINS", Value: corsOrigin},
+	}
+
+	volumes := []corev1.Volume{
+		configMapVolume("config", "gateway-config"),
+		secretVolume("tls-certs", GatewayTLSSecretName),
+		configMapVolume("tls-ca", InterServiceCAConfigMapName),
+	}
+	mounts := []corev1.VolumeMount{
+		{Name: "config", MountPath: "/etc/gateway", ReadOnly: true},
+		{Name: "tls-certs", MountPath: InterServiceTLSCertDir, ReadOnly: true},
+		{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
+	}
+
+	env = append(env, corev1.EnvVar{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile})
+
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentGateway, ImageName: "gateway",
-		Resources:    kn.Spec.Gateway.Resources,
-		VolumeMounts: []corev1.VolumeMount{{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"}},
-		Volumes:      []corev1.Volume{configMapVolume("config", "gateway-config")},
+		Resources: kn.Spec.Gateway.Resources, VolumeMounts: mounts, Volumes: volumes,
+		Env: env,
 	})
 }
 
@@ -81,9 +108,16 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		},
 	}
 
+	volumes = append(volumes,
+		secretVolume("tls-certs", DataStorageTLSSecretName),
+		configMapVolume("tls-ca", InterServiceCAConfigMapName),
+	)
+
 	mounts := []corev1.VolumeMount{
 		{Name: "config", MountPath: "/etc/datastorage", ReadOnly: true},
 		{Name: "secrets", MountPath: "/etc/datastorage/secrets", ReadOnly: true},
+		{Name: "tls-certs", MountPath: InterServiceTLSCertDir, ReadOnly: true},
+		{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
 	}
 
 	env := []corev1.EnvVar{
@@ -91,6 +125,7 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
+		{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile},
 	}
 
 	return buildDeployment(kn, DeploymentParams{
@@ -111,10 +146,12 @@ func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, 
 		{Name: "config", MountPath: "/etc/aianalysis", ReadOnly: true},
 		{Name: "rego-policies", MountPath: "/etc/aianalysis/policies", ReadOnly: true},
 	}
+	var env []corev1.EnvVar
+	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentAIAnalysis, ImageName: "aianalysis",
 		Resources: kn.Spec.AIAnalysis.Resources, VolumeMounts: mounts, Volumes: volumes,
-		ProbePort: PortHealthProbe,
+		Env: env, ProbePort: PortHealthProbe,
 	})
 }
 
@@ -137,30 +174,36 @@ func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deploy
 		})
 	}
 
+	var env []corev1.EnvVar
+	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentSignalProcessing, ImageName: "signalprocessing",
 		Resources: kn.Spec.SignalProcessing.Resources, VolumeMounts: mounts, Volumes: volumes,
-		ProbePort: PortHealthProbe,
+		Env: env, ProbePort: PortHealthProbe,
 	})
 }
 
 // RemediationOrchestratorDeployment builds the remediationorchestrator Deployment.
 func RemediationOrchestratorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+	volumes := []corev1.Volume{configMapVolume("config", "remediationorchestrator-config")}
+	mounts := []corev1.VolumeMount{{Name: "config", MountPath: "/etc/remediationorchestrator", ReadOnly: true}}
+	var env []corev1.EnvVar
+	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentRemediationOrchestrator, ImageName: "remediationorchestrator",
-		Resources:    kn.Spec.RemediationOrchestrator.Resources,
-		VolumeMounts: []corev1.VolumeMount{{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"}},
-		Volumes:      []corev1.Volume{configMapVolume("config", "remediationorchestrator-config")},
+		Resources: kn.Spec.RemediationOrchestrator.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
 	})
 }
 
 // WorkflowExecutionDeployment builds the workflowexecution Deployment.
 func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+	volumes := []corev1.Volume{configMapVolume("config", "workflowexecution-config")}
+	mounts := []corev1.VolumeMount{{Name: "config", MountPath: "/etc/workflowexecution", ReadOnly: true}}
+	var env []corev1.EnvVar
+	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentWorkflowExecution, ImageName: "workflowexecution",
-		Resources:    kn.Spec.WorkflowExecution.Resources,
-		VolumeMounts: []corev1.VolumeMount{{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"}},
-		Volumes:      []corev1.Volume{configMapVolume("config", "workflowexecution-config")},
+		Resources: kn.Spec.WorkflowExecution.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
 	})
 }
 
@@ -170,7 +213,7 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.De
 		configMapVolume("config", "effectivenessmonitor-config"),
 	}
 	mounts := []corev1.VolumeMount{
-		{Name: "config", MountPath: "/etc/kubernaut/config.yaml", SubPath: "config.yaml"},
+		{Name: "config", MountPath: "/etc/effectivenessmonitor", ReadOnly: true},
 	}
 
 	if kn.Spec.Monitoring.MonitoringEnabled() {
@@ -180,9 +223,11 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.De
 		})
 	}
 
+	var env []corev1.EnvVar
+	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentEffectivenessMonitor, ImageName: "effectivenessmonitor",
-		Resources: kn.Spec.EffectivenessMonitor.Resources, VolumeMounts: mounts, Volumes: volumes,
+		Resources: kn.Spec.EffectivenessMonitor.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
 	})
 }
 
@@ -190,10 +235,12 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.De
 func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	volumes := []corev1.Volume{
 		configMapVolume("config", "notification-controller-config"),
+		configMapVolume("routing-config", "notification-routing-config"),
 		{Name: "notification-output", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: "config", MountPath: "/etc/notification", ReadOnly: true},
+		{Name: "routing-config", MountPath: "/etc/notification-routing", ReadOnly: true},
 		{Name: "notification-output", MountPath: "/tmp/notifications"},
 	}
 
@@ -224,10 +271,12 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 		})
 	}
 
+	var env []corev1.EnvVar
+	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentNotification, ImageName: "notification",
 		Resources: kn.Spec.Notification.Resources, VolumeMounts: mounts, Volumes: volumes,
-		ProbePort: PortHealthProbe,
+		Env: env, ProbePort: PortHealthProbe,
 	})
 }
 
@@ -258,6 +307,8 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 		envVars = append(envVars, corev1.EnvVar{Name: "IS_OPENSHIFT", Value: "True"})
 	}
 
+	volumes, mounts, envVars = appendInterServiceTLSCA(volumes, mounts, envVars)
+
 	res := kn.Spec.KubernautAgent.Resources
 	if len(res.Requests) == 0 && len(res.Limits) == 0 {
 		res = corev1.ResourceRequirements{
@@ -275,6 +326,10 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentKubernautAgent, ImageName: "kubernaut-agent",
 		Resources: res, VolumeMounts: mounts, Volumes: volumes, Env: envVars,
+		Args: []string{
+			"-config", "/etc/kubernaut-agent/config.yaml",
+			"-sdk-config", "/etc/kubernaut-agent/sdk/sdk-config.yaml",
+		},
 	})
 }
 
@@ -288,10 +343,13 @@ func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		{Name: "config", MountPath: "/etc/authwebhook", ReadOnly: true},
 		{Name: "webhook-certs", MountPath: "/tmp/k8s-webhook-server/serving-certs", ReadOnly: true},
 	}
+	var env []corev1.EnvVar
+	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
 
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentAuthWebhook, ImageName: "authwebhook",
 		Resources: kn.Spec.AuthWebhook.Resources, VolumeMounts: mounts, Volumes: volumes,
+		Env: env,
 		Ports: []corev1.ContainerPort{
 			{Name: "webhook", ContainerPort: PortWebhookServer, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
@@ -313,6 +371,7 @@ type DeploymentParams struct {
 	InitContainers []corev1.Container
 	Ports          []corev1.ContainerPort
 	Env            []corev1.EnvVar
+	Args           []string
 	ProbePort      int32
 }
 
@@ -359,6 +418,7 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 						ImagePullPolicy: kn.Spec.Image.PullPolicy,
 						Ports:           ports,
 						Env:             p.Env,
+						Args:            p.Args,
 						Resources:       MergeResources(p.Resources),
 						SecurityContext: ContainerSecurityContext(),
 						VolumeMounts:    p.VolumeMounts,
@@ -390,4 +450,11 @@ func secretVolume(name, secretName string) corev1.Volume {
 			Secret: &corev1.SecretVolumeSource{SecretName: secretName},
 		},
 	}
+}
+
+func appendInterServiceTLSCA(volumes []corev1.Volume, mounts []corev1.VolumeMount, env []corev1.EnvVar) ([]corev1.Volume, []corev1.VolumeMount, []corev1.EnvVar) {
+	volumes = append(volumes, configMapVolume("tls-ca", InterServiceCAConfigMapName))
+	mounts = append(mounts, corev1.VolumeMount{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true})
+	env = append(env, corev1.EnvVar{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile})
+	return volumes, mounts, env
 }

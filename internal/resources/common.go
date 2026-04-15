@@ -87,6 +87,19 @@ const OCPServingCertAnnotation = "service.beta.openshift.io/serving-cert-secret-
 // when not overridden in the CR spec.
 const DefaultWorkflowNamespace = "kubernaut-workflows"
 
+// InterServiceCAConfigMapName is the ConfigMap that holds the OCP service-ca
+// trust bundle for inter-service TLS verification.
+const InterServiceCAConfigMapName = "inter-service-ca"
+
+// InterServiceTLSCertDir is the mount path for server-side TLS certificates
+// provisioned by the OCP service-ca operator.
+const InterServiceTLSCertDir = "/etc/tls"
+
+// InterServiceTLSCAFile is the mount path for the CA certificate used by
+// clients to verify inter-service TLS connections. OCP service-ca injects
+// the bundle under the key "service-ca.crt".
+const InterServiceTLSCAFile = "/etc/tls-ca/service-ca.crt"
+
 // OCP monitoring stack endpoints. These are always available on OCP clusters
 // and are hardcoded rather than discovered (OCP-only operator).
 const (
@@ -250,12 +263,12 @@ func ServicePort(name string, port int32) corev1.ServicePort {
 
 // DataStorageURL returns the in-cluster DataStorage service URL.
 func DataStorageURL(namespace string) string {
-	return fmt.Sprintf("http://data-storage-service.%s.svc.cluster.local:8080", namespace)
+	return fmt.Sprintf("https://data-storage-service.%s.svc.cluster.local:8080", namespace)
 }
 
-// GatewayURL returns the in-cluster Gateway service URL.
+// GatewayURL returns the in-cluster Gateway service URL (HTTPS via service-ca).
 func GatewayURL(namespace string) string {
-	return fmt.Sprintf("http://gateway-service.%s.svc.cluster.local:8080", namespace)
+	return fmt.Sprintf("https://gateway-service.%s.svc.cluster.local:8080", namespace)
 }
 
 // PostgreSQLPort returns the effective PostgreSQL port, defaulting to 5432.

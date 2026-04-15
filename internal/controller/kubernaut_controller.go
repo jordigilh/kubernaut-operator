@@ -579,6 +579,7 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	if sdkCM != nil {
 		configMaps = append(configMaps, sdkCM)
 	}
+	configMaps = append(configMaps, resources.InterServiceCAConfigMap(kn))
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		configMaps = append(configMaps,
 			resources.EffectivenessMonitorServiceCAConfigMap(kn),
