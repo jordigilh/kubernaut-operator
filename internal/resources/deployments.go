@@ -63,7 +63,8 @@ func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, err
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentGateway, ImageName: "gateway",
 		Resources: kn.Spec.Gateway.Resources, VolumeMounts: mounts, Volumes: volumes,
-		Env: env,
+		Env:  env,
+		Args: []string{"--config=/etc/gateway/config.yaml"},
 	})
 }
 
@@ -132,6 +133,10 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		Component: ComponentDataStorage, ImageName: "datastorage",
 		Resources: kn.Spec.DataStorage.Resources, VolumeMounts: mounts, Volumes: volumes,
 		InitContainers: []corev1.Container{initContainer}, Env: env,
+		Ports: []corev1.ContainerPort{
+			{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP},
+			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
+		},
 	})
 }
 
@@ -146,12 +151,20 @@ func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, 
 		{Name: "config", MountPath: "/etc/aianalysis", ReadOnly: true},
 		{Name: "rego-policies", MountPath: "/etc/aianalysis/policies", ReadOnly: true},
 	}
-	var env []corev1.EnvVar
+	env := []corev1.EnvVar{
+		{Name: "CONFIG_PATH", Value: "/etc/aianalysis/config.yaml"},
+	}
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentAIAnalysis, ImageName: "aianalysis",
 		Resources: kn.Spec.AIAnalysis.Resources, VolumeMounts: mounts, Volumes: volumes,
 		Env: env, ProbePort: PortHealthProbe,
+		Args: []string{"-config", "/etc/aianalysis/config.yaml"},
+		Ports: []corev1.ContainerPort{
+			{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP},
+			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
+			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+		},
 	})
 }
 
@@ -180,6 +193,11 @@ func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deploy
 		Component: ComponentSignalProcessing, ImageName: "signalprocessing",
 		Resources: kn.Spec.SignalProcessing.Resources, VolumeMounts: mounts, Volumes: volumes,
 		Env: env, ProbePort: PortHealthProbe,
+		Args: []string{"--config=/etc/signalprocessing/config.yaml"},
+		Ports: []corev1.ContainerPort{
+			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
+			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+		},
 	})
 }
 
@@ -192,6 +210,11 @@ func RemediationOrchestratorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentRemediationOrchestrator, ImageName: "remediationorchestrator",
 		Resources: kn.Spec.RemediationOrchestrator.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
+		Args: []string{"--config=/etc/config/remediationorchestrator.yaml"},
+		Ports: []corev1.ContainerPort{
+			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
+		},
 	})
 }
 
@@ -204,10 +227,19 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deplo
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentWorkflowExecution, ImageName: "workflowexecution",
 		Resources: kn.Spec.WorkflowExecution.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
+		Args: []string{"--config=/etc/config/workflowexecution.yaml"},
+		Ports: []corev1.ContainerPort{
+			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
+			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+		},
 	})
 }
 
 // EffectivenessMonitorDeployment builds the effectivenessmonitor Deployment.
+// When OCP monitoring is enabled, a wait-for-service-ca init container is
+// included to block startup until the service-CA ConfigMap is populated,
+// preventing CrashLoopBackOff on fresh installs where the CA injection is
+// asynchronous.
 func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	volumes := []corev1.Volume{
 		configMapVolume("config", "effectivenessmonitor-config"),
@@ -216,10 +248,34 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.De
 		{Name: "config", MountPath: "/etc/effectivenessmonitor", ReadOnly: true},
 	}
 
+	var initContainers []corev1.Container
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		volumes = append(volumes, configMapVolume("service-ca", "effectivenessmonitor-service-ca"))
 		mounts = append(mounts, corev1.VolumeMount{
-			Name: "service-ca", MountPath: "/etc/ssl/effectivenessmonitor", ReadOnly: true,
+			Name: "service-ca", MountPath: "/etc/ssl/em", ReadOnly: true,
+		})
+		initContainers = append(initContainers, corev1.Container{
+			Name:            "wait-for-service-ca",
+			Image:           "registry.access.redhat.com/ubi10/ubi-minimal:latest",
+			ImagePullPolicy: kn.Spec.Image.PullPolicy,
+			Command:         []string{"sh", "-c"},
+			Args: []string{
+				`while [ ! -s /etc/ssl/em/service-ca.crt ]; do echo "waiting for service-ca.crt..."; sleep 2; done`,
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: "service-ca", MountPath: "/etc/ssl/em", ReadOnly: true},
+			},
+			SecurityContext: ContainerSecurityContext(),
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("10m"),
+					corev1.ResourceMemory: resource.MustParse("16Mi"),
+				},
+				Limits: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("50m"),
+					corev1.ResourceMemory: resource.MustParse("32Mi"),
+				},
+			},
 		})
 	}
 
@@ -227,7 +283,13 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.De
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentEffectivenessMonitor, ImageName: "effectivenessmonitor",
-		Resources: kn.Spec.EffectivenessMonitor.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
+		Resources: kn.Spec.EffectivenessMonitor.Resources, VolumeMounts: mounts, Volumes: volumes,
+		Env: env, InitContainers: initContainers,
+		Args: []string{"--config=/etc/effectivenessmonitor/effectivenessmonitor.yaml"},
+		Ports: []corev1.ContainerPort{
+			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
+			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+		},
 	})
 }
 
@@ -271,12 +333,22 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 		})
 	}
 
-	var env []corev1.EnvVar
+	env := []corev1.EnvVar{
+		{Name: "CONFIG_PATH", Value: "/etc/notification/config.yaml"},
+		{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
+			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
+		}},
+	}
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentNotification, ImageName: "notification",
 		Resources: kn.Spec.Notification.Resources, VolumeMounts: mounts, Volumes: volumes,
 		Env: env, ProbePort: PortHealthProbe,
+		Args: []string{"-config", "/etc/notification/config.yaml"},
+		Ports: []corev1.ContainerPort{
+			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
+			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+		},
 	})
 }
 
@@ -362,6 +434,7 @@ func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		Component: ComponentAuthWebhook, ImageName: "authwebhook",
 		Resources: kn.Spec.AuthWebhook.Resources, VolumeMounts: mounts, Volumes: volumes,
 		Env: env,
+		Args: []string{"-config=/etc/authwebhook/authwebhook.yaml"},
 		Ports: []corev1.ContainerPort{
 			{Name: "webhook", ContainerPort: PortWebhookServer, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},

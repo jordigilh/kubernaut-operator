@@ -339,6 +339,49 @@ func TestEffectivenessMonitorDeployment_ServiceCA(t *testing.T) {
 	assertHasVolume(t, dep, "service-ca")
 }
 
+func TestEffectivenessMonitorDeployment_WaitForServiceCA_InitContainer(t *testing.T) {
+	kn := testKubernaut()
+	dep, err := EffectivenessMonitorDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(dep.Spec.Template.Spec.InitContainers) != 1 {
+		t.Fatalf("EM should have 1 init container when monitoring enabled, got %d", len(dep.Spec.Template.Spec.InitContainers))
+	}
+	init := dep.Spec.Template.Spec.InitContainers[0]
+	if init.Name != "wait-for-service-ca" {
+		t.Errorf("init container name = %q, want %q", init.Name, "wait-for-service-ca")
+	}
+	if init.Resources.Requests == nil {
+		t.Error("init container should have resource requests")
+	}
+
+	hasMount := false
+	for _, vm := range init.VolumeMounts {
+		if vm.Name == "service-ca" && vm.MountPath == "/etc/ssl/em" {
+			hasMount = true
+		}
+	}
+	if !hasMount {
+		t.Error("init container should mount service-ca at /etc/ssl/em")
+	}
+}
+
+func TestEffectivenessMonitorDeployment_NoInitContainer_MonitoringDisabled(t *testing.T) {
+	kn := testKubernaut()
+	disabled := false
+	kn.Spec.Monitoring.Enabled = &disabled
+	dep, err := EffectivenessMonitorDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(dep.Spec.Template.Spec.InitContainers) != 0 {
+		t.Errorf("EM should have 0 init containers when monitoring disabled, got %d", len(dep.Spec.Template.Spec.InitContainers))
+	}
+}
+
 func TestAuthWebhookDeployment_TLSAndPort(t *testing.T) {
 	kn := testKubernaut()
 	dep, err := AuthWebhookDeployment(kn)
@@ -445,6 +488,77 @@ func TestAllDeployments_ProbeTimingMatchesHelmChart(t *testing.T) {
 		}
 		if rp.FailureThreshold != pc.ReadinessFailureThreshold {
 			t.Errorf("%s readiness FailureThreshold = %d, want %d", dep.Name, rp.FailureThreshold, pc.ReadinessFailureThreshold)
+		}
+	}
+}
+
+func TestDeployments_MetricsPort(t *testing.T) {
+	kn := testKubernaut()
+	withMetrics := map[string]bool{
+		ComponentDataStorage:             true,
+		ComponentAIAnalysis:              true,
+		ComponentSignalProcessing:        true,
+		ComponentRemediationOrchestrator: true,
+		ComponentWorkflowExecution:       true,
+		ComponentEffectivenessMonitor:    true,
+		ComponentNotification:            true,
+	}
+
+	for _, dep := range getAllDeployments(t, kn) {
+		component := dep.Spec.Template.ObjectMeta.Labels["app"]
+		container := dep.Spec.Template.Spec.Containers[0]
+
+		hasMetrics := false
+		for _, p := range container.Ports {
+			if p.ContainerPort == PortMetrics && p.Name == "metrics" {
+				hasMetrics = true
+			}
+		}
+
+		if withMetrics[component] && !hasMetrics {
+			t.Errorf("Deployment %q should expose metrics port 9090", dep.Name)
+		}
+		if !withMetrics[component] && hasMetrics {
+			t.Errorf("Deployment %q should NOT expose metrics port 9090", dep.Name)
+		}
+	}
+}
+
+func TestDeployments_ConfigArgs(t *testing.T) {
+	kn := testKubernaut()
+
+	wantArgs := map[string][]string{
+		ComponentGateway:                 {"--config=/etc/gateway/config.yaml"},
+		ComponentAIAnalysis:              {"-config", "/etc/aianalysis/config.yaml"},
+		ComponentSignalProcessing:        {"--config=/etc/signalprocessing/config.yaml"},
+		ComponentRemediationOrchestrator: {"--config=/etc/config/remediationorchestrator.yaml"},
+		ComponentWorkflowExecution:       {"--config=/etc/config/workflowexecution.yaml"},
+		ComponentEffectivenessMonitor:    {"--config=/etc/effectivenessmonitor/effectivenessmonitor.yaml"},
+		ComponentNotification:            {"-config", "/etc/notification/config.yaml"},
+		ComponentKubernautAgent:          {"-config", "/etc/kubernaut-agent/config.yaml", "-sdk-config", "/etc/kubernaut-agent/sdk/sdk-config.yaml"},
+		ComponentAuthWebhook:             {"-config=/etc/authwebhook/authwebhook.yaml"},
+	}
+
+	for _, dep := range getAllDeployments(t, kn) {
+		component := dep.Spec.Template.ObjectMeta.Labels["app"]
+		container := dep.Spec.Template.Spec.Containers[0]
+
+		want, hasExpected := wantArgs[component]
+		if !hasExpected {
+			if len(container.Args) != 0 {
+				t.Errorf("Deployment %q should have no args, got %v", dep.Name, container.Args)
+			}
+			continue
+		}
+
+		if len(container.Args) != len(want) {
+			t.Errorf("Deployment %q args len = %d, want %d (%v vs %v)", dep.Name, len(container.Args), len(want), container.Args, want)
+			continue
+		}
+		for i := range want {
+			if container.Args[i] != want[i] {
+				t.Errorf("Deployment %q args[%d] = %q, want %q", dep.Name, i, container.Args[i], want[i])
+			}
 		}
 	}
 }
