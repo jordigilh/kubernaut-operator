@@ -362,6 +362,50 @@ func TestAuthWebhookDeployment_TLSAndPort(t *testing.T) {
 	}
 }
 
+func TestAuthWebhookDeployment_RecreateStrategy(t *testing.T) {
+	kn := testKubernaut()
+	dep, err := AuthWebhookDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if dep.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType {
+		t.Errorf("AuthWebhook strategy = %q, want Recreate", dep.Spec.Strategy.Type)
+	}
+}
+
+func TestAllDeployments_HTTPGetProbes(t *testing.T) {
+	kn := testKubernaut()
+	deps := getAllDeployments(t, kn)
+
+	for _, dep := range deps {
+		container := dep.Spec.Template.Spec.Containers[0]
+		component := dep.Spec.Template.ObjectMeta.Labels["app"]
+
+		if container.LivenessProbe == nil {
+			t.Fatalf("Deployment %q should have liveness probe", dep.Name)
+		}
+		if container.ReadinessProbe == nil {
+			t.Fatalf("Deployment %q should have readiness probe", dep.Name)
+		}
+
+		if container.LivenessProbe.HTTPGet == nil {
+			t.Errorf("Deployment %q liveness probe should use HTTPGet (not TCPSocket)", dep.Name)
+		}
+		if container.ReadinessProbe.HTTPGet == nil {
+			t.Errorf("Deployment %q readiness probe should use HTTPGet (not TCPSocket)", dep.Name)
+		}
+
+		wantLiveness, wantReadiness := probePathsForComponent(component)
+		if container.LivenessProbe.HTTPGet != nil && container.LivenessProbe.HTTPGet.Path != wantLiveness {
+			t.Errorf("Deployment %q liveness path = %q, want %q", dep.Name, container.LivenessProbe.HTTPGet.Path, wantLiveness)
+		}
+		if container.ReadinessProbe.HTTPGet != nil && container.ReadinessProbe.HTTPGet.Path != wantReadiness {
+			t.Errorf("Deployment %q readiness path = %q, want %q", dep.Name, container.ReadinessProbe.HTTPGet.Path, wantReadiness)
+		}
+	}
+}
+
 func TestAllDeployments_SecurityContexts(t *testing.T) {
 	kn := testKubernaut()
 	allDeps := getAllDeployments(t, kn)

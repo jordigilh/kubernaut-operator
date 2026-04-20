@@ -355,6 +355,7 @@ func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 		},
 		ProbePort: PortHealthProbe,
+		Strategy:  &appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 	})
 }
 
@@ -373,6 +374,9 @@ type DeploymentParams struct {
 	Env            []corev1.EnvVar
 	Args           []string
 	ProbePort      int32
+	Strategy       *appsv1.DeploymentStrategy
+	LivenessPath   string
+	ReadinessPath  string
 }
 
 func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*appsv1.Deployment, error) {
@@ -390,9 +394,29 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 	if probePort == 0 {
 		probePort = ports[0].ContainerPort
 	}
-	probe := &corev1.Probe{
+
+	livenessPath, readinessPath := probePathsForComponent(p.Component)
+	if p.LivenessPath != "" {
+		livenessPath = p.LivenessPath
+	}
+	if p.ReadinessPath != "" {
+		readinessPath = p.ReadinessPath
+	}
+
+	liveness := &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
-			TCPSocket: &corev1.TCPSocketAction{
+			HTTPGet: &corev1.HTTPGetAction{
+				Path: livenessPath,
+				Port: intstr.FromInt32(probePort),
+			},
+		},
+		InitialDelaySeconds: 5,
+		PeriodSeconds:       10,
+	}
+	readiness := &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			HTTPGet: &corev1.HTTPGetAction{
+				Path: readinessPath,
 				Port: intstr.FromInt32(probePort),
 			},
 		},
@@ -400,7 +424,7 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 		PeriodSeconds:       10,
 	}
 
-	return &appsv1.Deployment{
+	dep := &appsv1.Deployment{
 		ObjectMeta: ObjectMeta(kn, p.Component+"-deployment", p.Component),
 		Spec: appsv1.DeploymentSpec{
 			Replicas: ptr.To[int32](1),
@@ -422,14 +446,20 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 						Resources:       MergeResources(p.Resources),
 						SecurityContext: ContainerSecurityContext(),
 						VolumeMounts:    p.VolumeMounts,
-						LivenessProbe:   probe,
-						ReadinessProbe:  probe,
+						LivenessProbe:   liveness,
+						ReadinessProbe:  readiness,
 					}},
 					Volumes: p.Volumes,
 				},
 			},
 		},
-	}, nil
+	}
+
+	if p.Strategy != nil {
+		dep.Spec.Strategy = *p.Strategy
+	}
+
+	return dep, nil
 }
 
 func configMapVolume(name, cmName string) corev1.Volume {
@@ -457,4 +487,21 @@ func appendInterServiceTLSCA(volumes []corev1.Volume, mounts []corev1.VolumeMoun
 	mounts = append(mounts, corev1.VolumeMount{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true})
 	env = append(env, corev1.EnvVar{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile})
 	return volumes, mounts, env
+}
+
+// probePathsForComponent returns the (livenessPath, readinessPath) HTTP GET
+// probe paths for a given component, matching the Helm chart conventions.
+func probePathsForComponent(component string) (string, string) {
+	switch component {
+	case ComponentGateway:
+		return "/health", "/ready"
+	case ComponentDataStorage:
+		return "/health", "/health"
+	case ComponentKubernautAgent:
+		return "/health", "/ready"
+	case ComponentAIAnalysis:
+		return "/healthz", "/healthz"
+	default:
+		return "/healthz", "/readyz"
+	}
 }
