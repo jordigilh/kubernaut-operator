@@ -429,7 +429,7 @@ spec:
   - name: Kubernaut Operator
     url: https://github.com/jordigilh/kubernaut-operator
   maintainers:
-  - email: jordi.gil@kubernaut.ai
+  - email: jgil@redhat.com
     name: Jordi Gil
   maturity: alpha
   minKubeVersion: 1.31.0
