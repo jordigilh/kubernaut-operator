@@ -185,3 +185,17 @@ func TestPodDisruptionBudgets_HaveSelectors(t *testing.T) {
 		}
 	}
 }
+
+func TestPodDisruptionBudgets_NamesMatchComponents(t *testing.T) {
+	kn := testKubernaut()
+	pdbs := PodDisruptionBudgets(kn)
+	components := AllComponents()
+	if len(pdbs) != len(components) {
+		t.Fatalf("PDB count = %d, component count = %d", len(pdbs), len(components))
+	}
+	for i, pdb := range pdbs {
+		if pdb.Name != components[i] {
+			t.Errorf("PDB[%d] name = %q, want %q (no -pdb suffix)", i, pdb.Name, components[i])
+		}
+	}
+}

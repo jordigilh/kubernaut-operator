@@ -32,7 +32,7 @@ func PodDisruptionBudgets(kn *kubernautv1alpha1.Kubernaut) []*policyv1.PodDisrup
 
 	for _, component := range AllComponents() {
 		pdbs = append(pdbs, &policyv1.PodDisruptionBudget{
-			ObjectMeta: ObjectMeta(kn, component+"-pdb", component),
+			ObjectMeta: ObjectMeta(kn, component, component),
 			Spec: policyv1.PodDisruptionBudgetSpec{
 				MaxUnavailable: &maxUnavailable,
 				Selector:       &metav1.LabelSelector{MatchLabels: SelectorLabels(component)},
