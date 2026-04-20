@@ -32,28 +32,45 @@ func TestMutatingWebhookConfiguration_Basic(t *testing.T) {
 	if mwc.Annotations[OCPServiceCAInjectAnnotation] != "true" {
 		t.Error("MWC should have OCP service-CA inject annotation")
 	}
-	if len(mwc.Webhooks) != 1 {
-		t.Fatalf("should have 1 webhook, got %d", len(mwc.Webhooks))
+	if len(mwc.Webhooks) != 3 {
+		t.Fatalf("should have 3 webhooks, got %d", len(mwc.Webhooks))
+	}
+}
+
+func TestMutatingWebhookConfiguration_WebhookNames(t *testing.T) {
+	kn := testKubernaut()
+	mwc := MutatingWebhookConfiguration(kn)
+
+	wantNames := []string{
+		"workflowexecution.mutate.kubernaut.ai",
+		"remediationapprovalrequest.mutate.kubernaut.ai",
+		"remediationrequest.mutate.kubernaut.ai",
 	}
 
-	wh := mwc.Webhooks[0]
-	if wh.Name != "mutating.authwebhook.kubernaut.ai" {
-		t.Errorf("webhook name = %q", wh.Name)
+	for i, wh := range mwc.Webhooks {
+		if wh.Name != wantNames[i] {
+			t.Errorf("webhook[%d] name = %q, want %q", i, wh.Name, wantNames[i])
+		}
 	}
-	if wh.ClientConfig.Service == nil {
-		t.Fatal("webhook should use service reference")
+}
+
+func TestMutatingWebhookConfiguration_Paths(t *testing.T) {
+	kn := testKubernaut()
+	mwc := MutatingWebhookConfiguration(kn)
+
+	wantPaths := []string{
+		"/mutate-workflowexecution",
+		"/mutate-remediationapprovalrequest",
+		"/mutate-remediationrequest",
 	}
-	if wh.ClientConfig.Service.Namespace != "kubernaut-system" {
-		t.Errorf("service namespace = %q, want %q", wh.ClientConfig.Service.Namespace, "kubernaut-system")
-	}
-	if wh.ClientConfig.Service.Name != "authwebhook-service" {
-		t.Errorf("service name = %q, want %q", wh.ClientConfig.Service.Name, "authwebhook-service")
-	}
-	if *wh.ClientConfig.Service.Port != PortAuthWebhookService {
-		t.Errorf("service port = %d, want %d", *wh.ClientConfig.Service.Port, PortAuthWebhookService)
-	}
-	if len(wh.ClientConfig.CABundle) != 0 {
-		t.Error("caBundle should be empty (OCP service-CA injects it)")
+
+	for i, wh := range mwc.Webhooks {
+		if wh.ClientConfig.Service == nil {
+			t.Fatalf("webhook[%d] should use service reference", i)
+		}
+		if wh.ClientConfig.Service.Path == nil || *wh.ClientConfig.Service.Path != wantPaths[i] {
+			t.Errorf("webhook[%d] path = %v, want %q", i, wh.ClientConfig.Service.Path, wantPaths[i])
+		}
 	}
 }
 
@@ -61,41 +78,49 @@ func TestMutatingWebhookConfiguration_Rules(t *testing.T) {
 	kn := testKubernaut()
 	mwc := MutatingWebhookConfiguration(kn)
 
-	wh := mwc.Webhooks[0]
-	if len(wh.Rules) != 1 {
-		t.Fatalf("should have 1 rule, got %d", len(wh.Rules))
-	}
-	rule := wh.Rules[0]
-
-	hasCreate := false
-	hasUpdate := false
-	for _, op := range rule.Operations {
-		if op == admissionregistrationv1.Create {
-			hasCreate = true
-		}
-		if op == admissionregistrationv1.Update {
-			hasUpdate = true
-		}
-	}
-	if !hasCreate || !hasUpdate {
-		t.Errorf("rule should include Create and Update operations, got %v", rule.Operations)
+	wantResources := []string{
+		"workflowexecutions/status",
+		"remediationapprovalrequests/status",
+		"remediationrequests/status",
 	}
 
-	if len(rule.APIGroups) == 0 || rule.APIGroups[0] != "kubernaut.ai" {
-		t.Errorf("rule apiGroups = %v, want [kubernaut.ai]", rule.APIGroups)
-	}
-	if len(rule.Resources) == 0 || rule.Resources[0] != "actiontypes" {
-		t.Errorf("rule resources = %v, want [actiontypes]", rule.Resources)
+	for i, wh := range mwc.Webhooks {
+		if len(wh.Rules) != 1 {
+			t.Fatalf("webhook[%d] should have 1 rule, got %d", i, len(wh.Rules))
+		}
+		rule := wh.Rules[0]
+
+		if len(rule.Operations) != 1 || rule.Operations[0] != admissionregistrationv1.Update {
+			t.Errorf("webhook[%d] should only have UPDATE operation, got %v", i, rule.Operations)
+		}
+
+		if len(rule.APIGroups) == 0 || rule.APIGroups[0] != "kubernaut.ai" {
+			t.Errorf("webhook[%d] apiGroups = %v, want [kubernaut.ai]", i, rule.APIGroups)
+		}
+		if len(rule.Resources) == 0 || rule.Resources[0] != wantResources[i] {
+			t.Errorf("webhook[%d] resources = %v, want [%s]", i, rule.Resources, wantResources[i])
+		}
 	}
 }
 
-func TestMutatingWebhookConfiguration_Path(t *testing.T) {
+func TestMutatingWebhookConfiguration_ServiceReference(t *testing.T) {
 	kn := testKubernaut()
 	mwc := MutatingWebhookConfiguration(kn)
 
-	wh := mwc.Webhooks[0]
-	if wh.ClientConfig.Service.Path == nil || *wh.ClientConfig.Service.Path != "/mutate" {
-		t.Errorf("mutating webhook path = %v, want /mutate", wh.ClientConfig.Service.Path)
+	for i, wh := range mwc.Webhooks {
+		svc := wh.ClientConfig.Service
+		if svc == nil {
+			t.Fatalf("webhook[%d] should use service reference", i)
+		}
+		if svc.Namespace != "kubernaut-system" {
+			t.Errorf("webhook[%d] service namespace = %q, want %q", i, svc.Namespace, "kubernaut-system")
+		}
+		if svc.Name != "authwebhook-service" {
+			t.Errorf("webhook[%d] service name = %q, want %q", i, svc.Name, "authwebhook-service")
+		}
+		if *svc.Port != PortAuthWebhookService {
+			t.Errorf("webhook[%d] service port = %d, want %d", i, *svc.Port, PortAuthWebhookService)
+		}
 	}
 }
 
@@ -109,29 +134,132 @@ func TestValidatingWebhookConfiguration_Basic(t *testing.T) {
 	if vwc.Annotations[OCPServiceCAInjectAnnotation] != "true" {
 		t.Error("VWC should have OCP service-CA inject annotation")
 	}
-	if len(vwc.Webhooks) != 1 {
-		t.Fatalf("should have 1 webhook, got %d", len(vwc.Webhooks))
-	}
-
-	wh := vwc.Webhooks[0]
-	if wh.Name != "validating.authwebhook.kubernaut.ai" {
-		t.Errorf("webhook name = %q", wh.Name)
-	}
-	if *wh.ClientConfig.Service.Path != "/validate" {
-		t.Errorf("service path = %q, want %q", *wh.ClientConfig.Service.Path, "/validate")
+	if len(vwc.Webhooks) != 3 {
+		t.Fatalf("should have 3 webhooks, got %d", len(vwc.Webhooks))
 	}
 }
 
-func TestWebhookConfigurations_SideEffectsNone(t *testing.T) {
+func TestValidatingWebhookConfiguration_WebhookNames(t *testing.T) {
 	kn := testKubernaut()
-	mwc := MutatingWebhookConfiguration(kn)
 	vwc := ValidatingWebhookConfiguration(kn)
 
-	if *mwc.Webhooks[0].SideEffects != admissionregistrationv1.SideEffectClassNone {
-		t.Error("mutating webhook should have SideEffects=None")
+	wantNames := []string{
+		"notificationrequest.validate.kubernaut.ai",
+		"remediationworkflow.validate.kubernaut.ai",
+		"actiontype.validate.kubernaut.ai",
 	}
+
+	for i, wh := range vwc.Webhooks {
+		if wh.Name != wantNames[i] {
+			t.Errorf("webhook[%d] name = %q, want %q", i, wh.Name, wantNames[i])
+		}
+	}
+}
+
+func TestValidatingWebhookConfiguration_Paths(t *testing.T) {
+	kn := testKubernaut()
+	vwc := ValidatingWebhookConfiguration(kn)
+
+	wantPaths := []string{
+		"/validate-notificationrequest-delete",
+		"/validate-remediationworkflow",
+		"/validate-actiontype",
+	}
+
+	for i, wh := range vwc.Webhooks {
+		if wh.ClientConfig.Service == nil {
+			t.Fatalf("webhook[%d] should use service reference", i)
+		}
+		if wh.ClientConfig.Service.Path == nil || *wh.ClientConfig.Service.Path != wantPaths[i] {
+			t.Errorf("webhook[%d] path = %v, want %q", i, wh.ClientConfig.Service.Path, wantPaths[i])
+		}
+	}
+}
+
+func TestValidatingWebhookConfiguration_Rules(t *testing.T) {
+	kn := testKubernaut()
+	vwc := ValidatingWebhookConfiguration(kn)
+
+	wantResources := []string{
+		"notificationrequests",
+		"remediationworkflows",
+		"actiontypes",
+	}
+
+	// notificationrequest: DELETE only; others: CREATE, UPDATE, DELETE
+	for i, wh := range vwc.Webhooks {
+		if len(wh.Rules) != 1 {
+			t.Fatalf("webhook[%d] should have 1 rule, got %d", i, len(wh.Rules))
+		}
+		rule := wh.Rules[0]
+
+		if i == 0 {
+			if len(rule.Operations) != 1 || rule.Operations[0] != admissionregistrationv1.Delete {
+				t.Errorf("webhook[%d] should only have DELETE, got %v", i, rule.Operations)
+			}
+		} else {
+			if len(rule.Operations) != 3 {
+				t.Errorf("webhook[%d] should have CREATE, UPDATE, DELETE, got %v", i, rule.Operations)
+			}
+		}
+
+		if len(rule.Resources) == 0 || rule.Resources[0] != wantResources[i] {
+			t.Errorf("webhook[%d] resources = %v, want [%s]", i, rule.Resources, wantResources[i])
+		}
+	}
+}
+
+func TestValidatingWebhookConfiguration_NamespaceSelector(t *testing.T) {
+	kn := testKubernaut()
+	vwc := ValidatingWebhookConfiguration(kn)
+
+	// notificationrequest (index 0) has no namespaceSelector
+	if vwc.Webhooks[0].NamespaceSelector != nil {
+		t.Error("notificationrequest validating webhook should not have namespaceSelector")
+	}
+
+	// remediationworkflow and actiontype should have namespaceSelector
+	for _, i := range []int{1, 2} {
+		wh := vwc.Webhooks[i]
+		if wh.NamespaceSelector == nil {
+			t.Errorf("webhook[%d] should have namespaceSelector", i)
+			continue
+		}
+		ns, ok := wh.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"]
+		if !ok || ns != "kubernaut-system" {
+			t.Errorf("webhook[%d] namespaceSelector should match %q, got %v", i, "kubernaut-system", wh.NamespaceSelector.MatchLabels)
+		}
+	}
+}
+
+func TestValidatingWebhookConfiguration_SideEffects(t *testing.T) {
+	kn := testKubernaut()
+	vwc := ValidatingWebhookConfiguration(kn)
+
+	// notificationrequest: SideEffects=None
 	if *vwc.Webhooks[0].SideEffects != admissionregistrationv1.SideEffectClassNone {
-		t.Error("validating webhook should have SideEffects=None")
+		t.Error("notificationrequest webhook should have SideEffects=None")
+	}
+	// remediationworkflow and actiontype: SideEffects=NoneOnDryRun
+	for _, i := range []int{1, 2} {
+		if *vwc.Webhooks[i].SideEffects != admissionregistrationv1.SideEffectClassNoneOnDryRun {
+			t.Errorf("webhook[%d] should have SideEffects=NoneOnDryRun", i)
+		}
+	}
+}
+
+func TestValidatingWebhookConfiguration_Timeouts(t *testing.T) {
+	kn := testKubernaut()
+	vwc := ValidatingWebhookConfiguration(kn)
+
+	// notificationrequest: 10s; others: 15s
+	if *vwc.Webhooks[0].TimeoutSeconds != 10 {
+		t.Errorf("notificationrequest timeout = %d, want 10", *vwc.Webhooks[0].TimeoutSeconds)
+	}
+	for _, i := range []int{1, 2} {
+		if *vwc.Webhooks[i].TimeoutSeconds != 15 {
+			t.Errorf("webhook[%d] timeout = %d, want 15", i, *vwc.Webhooks[i].TimeoutSeconds)
+		}
 	}
 }
 
@@ -140,11 +268,15 @@ func TestWebhookConfigurations_FailurePolicy(t *testing.T) {
 	mwc := MutatingWebhookConfiguration(kn)
 	vwc := ValidatingWebhookConfiguration(kn)
 
-	if *mwc.Webhooks[0].FailurePolicy != admissionregistrationv1.Fail {
-		t.Error("mutating webhook should have FailurePolicy=Fail")
+	for i, wh := range mwc.Webhooks {
+		if *wh.FailurePolicy != admissionregistrationv1.Fail {
+			t.Errorf("mutating webhook[%d] should have FailurePolicy=Fail", i)
+		}
 	}
-	if *vwc.Webhooks[0].FailurePolicy != admissionregistrationv1.Fail {
-		t.Error("validating webhook should have FailurePolicy=Fail")
+	for i, wh := range vwc.Webhooks {
+		if *wh.FailurePolicy != admissionregistrationv1.Fail {
+			t.Errorf("validating webhook[%d] should have FailurePolicy=Fail", i)
+		}
 	}
 }
 
