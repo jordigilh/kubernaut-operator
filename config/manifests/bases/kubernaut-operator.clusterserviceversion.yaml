@@ -26,7 +26,7 @@ metadata:
     operators.operatorframework.io/builder: operator-sdk-v1.42.2
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     repository: https://github.com/jordigilh/kubernaut-operator
-    support: Kubernaut AI
+    support: jgil@redhat.com
   name: kubernaut-operator.v0.0.0
   namespace: placeholder
 spec:
