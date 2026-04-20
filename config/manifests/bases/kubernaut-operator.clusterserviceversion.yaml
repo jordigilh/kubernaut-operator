@@ -5,7 +5,7 @@ metadata:
     alm-examples: '[]'
     capabilities: Full Lifecycle
     categories: AI/Machine Learning,Monitoring
-    containerImage: quay.io/kubernaut-ai/kubernaut-operator:v1.3.0
+    containerImage: quay.io/kubernaut-ai/kubernaut-operator:v1.3.0-rc3
     createdAt: "2026-03-28T00:00:00Z"
     description: Automated Kubernetes remediation powered by AI — detects issues,
       analyzes root causes, and executes verified fixes.
