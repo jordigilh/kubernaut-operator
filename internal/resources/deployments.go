@@ -334,6 +334,18 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 }
 
 // AuthWebhookDeployment builds the authwebhook Deployment.
+//
+// OPERATIONAL NOTE — Admission blackout during rollout:
+// The deployment uses the Recreate strategy (matching the Helm chart) to
+// avoid TLS certificate routing conflicts between old and new pods. This
+// means that during a rollout the old pod is terminated before the new one
+// starts, creating a brief window (~15-30 s, depending on readiness probe
+// timing) where admission requests to the authwebhook will fail. Because
+// the webhook FailurePolicy is set to Fail, any Kubernaut CRD mutations
+// (WorkflowExecution status, RemediationApprovalRequest status,
+// RemediationRequest status, NotificationRequest deletions,
+// RemediationWorkflow CUD, ActionType CUD) will be rejected during this
+// window. SREs should plan operator upgrades during low-activity windows.
 func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	volumes := []corev1.Volume{
 		configMapVolume("config", "authwebhook-config"),
@@ -395,33 +407,37 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 		probePort = ports[0].ContainerPort
 	}
 
-	livenessPath, readinessPath := probePathsForComponent(p.Component)
+	pc := probeConfigForComponent(p.Component)
 	if p.LivenessPath != "" {
-		livenessPath = p.LivenessPath
+		pc.LivenessPath = p.LivenessPath
 	}
 	if p.ReadinessPath != "" {
-		readinessPath = p.ReadinessPath
+		pc.ReadinessPath = p.ReadinessPath
 	}
 
 	liveness := &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
 			HTTPGet: &corev1.HTTPGetAction{
-				Path: livenessPath,
+				Path: pc.LivenessPath,
 				Port: intstr.FromInt32(probePort),
 			},
 		},
-		InitialDelaySeconds: 5,
-		PeriodSeconds:       10,
+		InitialDelaySeconds: pc.LivenessInitialDelay,
+		PeriodSeconds:       pc.LivenessPeriod,
+		TimeoutSeconds:      pc.LivenessTimeout,
+		FailureThreshold:    pc.LivenessFailureThreshold,
 	}
 	readiness := &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
 			HTTPGet: &corev1.HTTPGetAction{
-				Path: readinessPath,
+				Path: pc.ReadinessPath,
 				Port: intstr.FromInt32(probePort),
 			},
 		},
-		InitialDelaySeconds: 5,
-		PeriodSeconds:       10,
+		InitialDelaySeconds: pc.ReadinessInitialDelay,
+		PeriodSeconds:       pc.ReadinessPeriod,
+		TimeoutSeconds:      pc.ReadinessTimeout,
+		FailureThreshold:    pc.ReadinessFailureThreshold,
 	}
 
 	dep := &appsv1.Deployment{
@@ -489,19 +505,66 @@ func appendInterServiceTLSCA(volumes []corev1.Volume, mounts []corev1.VolumeMoun
 	return volumes, mounts, env
 }
 
-// probePathsForComponent returns the (livenessPath, readinessPath) HTTP GET
-// probe paths for a given component, matching the Helm chart conventions.
-func probePathsForComponent(component string) (string, string) {
+// ProbeConfig holds per-component HTTP GET probe paths and timing, mirroring
+// the Helm chart values exactly so that cold-start and resource-constrained
+// nodes don't see premature restarts.
+type ProbeConfig struct {
+	LivenessPath              string
+	LivenessInitialDelay      int32
+	LivenessPeriod            int32
+	LivenessTimeout           int32
+	LivenessFailureThreshold  int32
+	ReadinessPath             string
+	ReadinessInitialDelay     int32
+	ReadinessPeriod           int32
+	ReadinessTimeout          int32
+	ReadinessFailureThreshold int32
+}
+
+// probeConfigForComponent returns the probe configuration for a given
+// component, matching the Helm chart (v1.3.0-rc7) exactly.
+func probeConfigForComponent(component string) ProbeConfig {
 	switch component {
 	case ComponentGateway:
-		return "/health", "/ready"
+		return ProbeConfig{
+			LivenessPath: "/health", LivenessInitialDelay: 10, LivenessPeriod: 10, LivenessTimeout: 5, LivenessFailureThreshold: 3,
+			ReadinessPath: "/ready", ReadinessInitialDelay: 30, ReadinessPeriod: 5, ReadinessTimeout: 5, ReadinessFailureThreshold: 6,
+		}
 	case ComponentDataStorage:
-		return "/health", "/health"
-	case ComponentKubernautAgent:
-		return "/health", "/ready"
+		return ProbeConfig{
+			LivenessPath: "/health", LivenessInitialDelay: 30, LivenessPeriod: 10, LivenessTimeout: 5, LivenessFailureThreshold: 3,
+			ReadinessPath: "/health", ReadinessInitialDelay: 30, ReadinessPeriod: 5, ReadinessTimeout: 3, ReadinessFailureThreshold: 3,
+		}
 	case ComponentAIAnalysis:
-		return "/healthz", "/healthz"
+		return ProbeConfig{
+			LivenessPath: "/healthz", LivenessInitialDelay: 30, LivenessPeriod: 20, LivenessTimeout: 5, LivenessFailureThreshold: 3,
+			ReadinessPath: "/healthz", ReadinessInitialDelay: 30, ReadinessPeriod: 5, ReadinessTimeout: 3, ReadinessFailureThreshold: 3,
+		}
+	case ComponentKubernautAgent:
+		return ProbeConfig{
+			LivenessPath: "/health", LivenessInitialDelay: 15, LivenessPeriod: 20, LivenessTimeout: 5, LivenessFailureThreshold: 3,
+			ReadinessPath: "/ready", ReadinessInitialDelay: 10, ReadinessPeriod: 10, ReadinessTimeout: 5, ReadinessFailureThreshold: 6,
+		}
+	case ComponentEffectivenessMonitor:
+		return ProbeConfig{
+			LivenessPath: "/healthz", LivenessInitialDelay: 10, LivenessPeriod: 10, LivenessTimeout: 5, LivenessFailureThreshold: 3,
+			ReadinessPath: "/readyz", ReadinessInitialDelay: 5, ReadinessPeriod: 5, ReadinessTimeout: 5, ReadinessFailureThreshold: 3,
+		}
+	case ComponentNotification:
+		return ProbeConfig{
+			LivenessPath: "/healthz", LivenessInitialDelay: 15, LivenessPeriod: 20, LivenessTimeout: 5, LivenessFailureThreshold: 3,
+			ReadinessPath: "/readyz", ReadinessInitialDelay: 15, ReadinessPeriod: 10, ReadinessTimeout: 5, ReadinessFailureThreshold: 6,
+		}
+	case ComponentAuthWebhook:
+		return ProbeConfig{
+			LivenessPath: "/healthz", LivenessInitialDelay: 15, LivenessPeriod: 20, LivenessTimeout: 5, LivenessFailureThreshold: 3,
+			ReadinessPath: "/readyz", ReadinessInitialDelay: 15, ReadinessPeriod: 10, ReadinessTimeout: 5, ReadinessFailureThreshold: 6,
+		}
 	default:
-		return "/healthz", "/readyz"
+		// SignalProcessing, RemediationOrchestrator, WorkflowExecution
+		return ProbeConfig{
+			LivenessPath: "/healthz", LivenessInitialDelay: 15, LivenessPeriod: 20, LivenessTimeout: 5, LivenessFailureThreshold: 3,
+			ReadinessPath: "/readyz", ReadinessInitialDelay: 5, ReadinessPeriod: 10, ReadinessTimeout: 5, ReadinessFailureThreshold: 6,
+		}
 	}
 }

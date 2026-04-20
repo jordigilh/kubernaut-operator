@@ -396,12 +396,55 @@ func TestAllDeployments_HTTPGetProbes(t *testing.T) {
 			t.Errorf("Deployment %q readiness probe should use HTTPGet (not TCPSocket)", dep.Name)
 		}
 
-		wantLiveness, wantReadiness := probePathsForComponent(component)
-		if container.LivenessProbe.HTTPGet != nil && container.LivenessProbe.HTTPGet.Path != wantLiveness {
-			t.Errorf("Deployment %q liveness path = %q, want %q", dep.Name, container.LivenessProbe.HTTPGet.Path, wantLiveness)
+		pc := probeConfigForComponent(component)
+		lp := container.LivenessProbe
+		rp := container.ReadinessProbe
+
+		if lp.HTTPGet != nil && lp.HTTPGet.Path != pc.LivenessPath {
+			t.Errorf("Deployment %q liveness path = %q, want %q", dep.Name, lp.HTTPGet.Path, pc.LivenessPath)
 		}
-		if container.ReadinessProbe.HTTPGet != nil && container.ReadinessProbe.HTTPGet.Path != wantReadiness {
-			t.Errorf("Deployment %q readiness path = %q, want %q", dep.Name, container.ReadinessProbe.HTTPGet.Path, wantReadiness)
+		if rp.HTTPGet != nil && rp.HTTPGet.Path != pc.ReadinessPath {
+			t.Errorf("Deployment %q readiness path = %q, want %q", dep.Name, rp.HTTPGet.Path, pc.ReadinessPath)
+		}
+	}
+}
+
+func TestAllDeployments_ProbeTimingMatchesHelmChart(t *testing.T) {
+	kn := testKubernaut()
+	deps := getAllDeployments(t, kn)
+
+	for _, dep := range deps {
+		container := dep.Spec.Template.Spec.Containers[0]
+		component := dep.Spec.Template.ObjectMeta.Labels["app"]
+		pc := probeConfigForComponent(component)
+
+		lp := container.LivenessProbe
+		rp := container.ReadinessProbe
+
+		if lp.InitialDelaySeconds != pc.LivenessInitialDelay {
+			t.Errorf("%s liveness InitialDelaySeconds = %d, want %d", dep.Name, lp.InitialDelaySeconds, pc.LivenessInitialDelay)
+		}
+		if lp.PeriodSeconds != pc.LivenessPeriod {
+			t.Errorf("%s liveness PeriodSeconds = %d, want %d", dep.Name, lp.PeriodSeconds, pc.LivenessPeriod)
+		}
+		if lp.TimeoutSeconds != pc.LivenessTimeout {
+			t.Errorf("%s liveness TimeoutSeconds = %d, want %d", dep.Name, lp.TimeoutSeconds, pc.LivenessTimeout)
+		}
+		if lp.FailureThreshold != pc.LivenessFailureThreshold {
+			t.Errorf("%s liveness FailureThreshold = %d, want %d", dep.Name, lp.FailureThreshold, pc.LivenessFailureThreshold)
+		}
+
+		if rp.InitialDelaySeconds != pc.ReadinessInitialDelay {
+			t.Errorf("%s readiness InitialDelaySeconds = %d, want %d", dep.Name, rp.InitialDelaySeconds, pc.ReadinessInitialDelay)
+		}
+		if rp.PeriodSeconds != pc.ReadinessPeriod {
+			t.Errorf("%s readiness PeriodSeconds = %d, want %d", dep.Name, rp.PeriodSeconds, pc.ReadinessPeriod)
+		}
+		if rp.TimeoutSeconds != pc.ReadinessTimeout {
+			t.Errorf("%s readiness TimeoutSeconds = %d, want %d", dep.Name, rp.TimeoutSeconds, pc.ReadinessTimeout)
+		}
+		if rp.FailureThreshold != pc.ReadinessFailureThreshold {
+			t.Errorf("%s readiness FailureThreshold = %d, want %d", dep.Name, rp.FailureThreshold, pc.ReadinessFailureThreshold)
 		}
 	}
 }
