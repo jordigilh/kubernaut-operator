@@ -131,6 +131,21 @@ after uninstalling, delete them manually:
 oc delete crd actiontypes.kubernaut.ai
 ```
 
+## Operational Notes
+
+### Admission Webhook Blackout During Upgrades
+
+The AuthWebhook deployment uses a **Recreate** strategy to prevent TLS
+certificate routing conflicts between old and new pods. During a rollout the
+old pod is terminated before the new one is ready, creating a brief window
+(~15–30 s) where admission requests are unavailable. Because the webhook
+`failurePolicy` is `Fail`, any Kubernaut CRD mutations
+(e.g. `WorkflowExecution/status`, `RemediationWorkflow` CUD,
+`ActionType` CUD) will be rejected until the new pod passes its readiness
+probe.
+
+**Recommendation:** schedule operator upgrades during low-activity windows.
+
 ## Development
 
 ```bash
