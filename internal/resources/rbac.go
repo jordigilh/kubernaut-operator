@@ -375,7 +375,7 @@ func kubernautAgentClientClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "kubernaut-agent-client"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"kubernaut-agent-service"}, Verbs: []string{"create", "get"}},
+			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"kubernaut-agent"}, Verbs: []string{"create", "get"}},
 		},
 	}
 }
@@ -395,6 +395,7 @@ func kubernautAgentInvestigatorClusterRole(kn *kubernautv1alpha1.Kubernaut, labe
 		{APIGroups: []string{"security.istio.io"}, Resources: []string{"authorizationpolicies", "peerauthentications", "requestauthentications"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"networking.istio.io"}, Resources: []string{"virtualservices", "destinationrules", "gateways", "serviceentries"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"monitoring.coreos.com"}, Resources: []string{"prometheusrules", "servicemonitors", "podmonitors", "probes"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"metrics.k8s.io"}, Resources: []string{"pods", "nodes"}, Verbs: []string{"get", "list"}},
 	}
 
 	return &rbacv1.ClusterRole{
