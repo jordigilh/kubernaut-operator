@@ -31,6 +31,9 @@ import (
 )
 
 // GatewayDeployment builds the gateway Deployment.
+// Issue #753: Gateway no longer terminates TLS at the application layer —
+// the OCP Route handles TLS termination for external traffic. The pod only
+// mounts the inter-service CA for outbound client trust (TLS_CA_FILE).
 func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	corsOrigin := kn.Spec.Gateway.Config.CORSAllowedOrigins
 	if corsOrigin == "" {
@@ -45,26 +48,29 @@ func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, err
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
 		{Name: "CORS_ALLOWED_ORIGINS", Value: corsOrigin},
+		{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile},
 	}
 
 	volumes := []corev1.Volume{
 		configMapVolume("config", "gateway-config"),
-		secretVolume("tls-certs", GatewayTLSSecretName),
-		configMapVolume("tls-ca", InterServiceCAConfigMapName),
+		optionalConfigMapVolume("tls-ca", InterServiceCAConfigMapName),
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: "config", MountPath: "/etc/gateway", ReadOnly: true},
-		{Name: "tls-certs", MountPath: InterServiceTLSCertDir, ReadOnly: true},
 		{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
 	}
-
-	env = append(env, corev1.EnvVar{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile})
 
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentGateway, ImageName: "gateway",
 		Resources: kn.Spec.Gateway.Resources, VolumeMounts: mounts, Volumes: volumes,
-		Env:  env,
-		Args: []string{"--config=/etc/gateway/config.yaml"},
+		Env:       env,
+		Args:      []string{"--config=/etc/gateway/config.yaml"},
+		ProbePort: PortHealthProbe,
+		Ports: []corev1.ContainerPort{
+			{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP},
+			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
+		},
 	})
 }
 
@@ -133,8 +139,10 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		Component: ComponentDataStorage, ImageName: "datastorage",
 		Resources: kn.Spec.DataStorage.Resources, VolumeMounts: mounts, Volumes: volumes,
 		InitContainers: []corev1.Container{initContainer}, Env: env,
+		ProbePort: PortHealthProbe,
 		Ports: []corev1.ContainerPort{
 			{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP},
+			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		},
 	})
@@ -353,6 +361,9 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 }
 
 // KubernautAgentDeployment builds the kubernaut-agent Deployment.
+// Issue #753: kubernaut-agent now serves TLS on port 8080 with certs from
+// kubernautagent-tls (provisioned by OCP service-ca). Health and metrics
+// are on dedicated plain HTTP ports 8081 and 9090.
 func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	if kn.Spec.KubernautAgent.LLM.CredentialsSecretName == "" {
 		return nil, fmt.Errorf("spec.kubernautAgent.llm.credentialsSecretName must not be empty")
@@ -361,11 +372,13 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 		configMapVolume("config", "kubernaut-agent-config"),
 		configMapVolume("sdk-config", KubernautAgentSDKConfigName(kn)),
 		secretVolume("llm-credentials", kn.Spec.KubernautAgent.LLM.CredentialsSecretName),
+		secretVolume("tls-certs", KubernautAgentTLSSecretName),
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: "config", MountPath: "/etc/kubernaut-agent", ReadOnly: true},
 		{Name: "sdk-config", MountPath: "/etc/kubernaut-agent/sdk", ReadOnly: true},
 		{Name: "llm-credentials", MountPath: "/etc/kubernaut-agent/credentials", ReadOnly: true},
+		{Name: "tls-certs", MountPath: InterServiceTLSCertDir, ReadOnly: true},
 	}
 
 	envVars := []corev1.EnvVar{
@@ -398,9 +411,15 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentKubernautAgent, ImageName: "kubernaut-agent",
 		Resources: res, VolumeMounts: mounts, Volumes: volumes, Env: envVars,
+		ProbePort: PortHealthProbe,
 		Args: []string{
 			"-config", "/etc/kubernaut-agent/config.yaml",
 			"-sdk-config", "/etc/kubernaut-agent/sdk/sdk-config.yaml",
+		},
+		Ports: []corev1.ContainerPort{
+			{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP},
+			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		},
 	})
 }
@@ -562,6 +581,19 @@ func configMapVolume(name, cmName string) corev1.Volume {
 	}
 }
 
+func optionalConfigMapVolume(name, cmName string) corev1.Volume {
+	optional := true
+	return corev1.Volume{
+		Name: name,
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: cmName},
+				Optional:             &optional,
+			},
+		},
+	}
+}
+
 func secretVolume(name, secretName string) corev1.Volume {
 	return corev1.Volume{
 		Name: name,
@@ -595,18 +627,20 @@ type ProbeConfig struct {
 }
 
 // probeConfigForComponent returns the probe configuration for a given
-// component, matching the Helm chart (v1.3.0-rc7) exactly.
+// component, matching the Helm chart (v1.3.0-rc11) exactly.
+// Issue #753: Gateway, DataStorage, and KubernautAgent probes moved to the
+// dedicated health port (8081) using /healthz and /readyz paths.
 func probeConfigForComponent(component string) ProbeConfig {
 	switch component {
 	case ComponentGateway:
 		return ProbeConfig{
-			LivenessPath: "/health", LivenessInitialDelay: 10, LivenessPeriod: 10, LivenessTimeout: 5, LivenessFailureThreshold: 3,
-			ReadinessPath: "/ready", ReadinessInitialDelay: 30, ReadinessPeriod: 5, ReadinessTimeout: 5, ReadinessFailureThreshold: 6,
+			LivenessPath: "/healthz", LivenessInitialDelay: 10, LivenessPeriod: 10, LivenessTimeout: 5, LivenessFailureThreshold: 3,
+			ReadinessPath: "/readyz", ReadinessInitialDelay: 30, ReadinessPeriod: 5, ReadinessTimeout: 5, ReadinessFailureThreshold: 6,
 		}
 	case ComponentDataStorage:
 		return ProbeConfig{
-			LivenessPath: "/health", LivenessInitialDelay: 30, LivenessPeriod: 10, LivenessTimeout: 5, LivenessFailureThreshold: 3,
-			ReadinessPath: "/health", ReadinessInitialDelay: 30, ReadinessPeriod: 5, ReadinessTimeout: 3, ReadinessFailureThreshold: 3,
+			LivenessPath: "/healthz", LivenessInitialDelay: 30, LivenessPeriod: 10, LivenessTimeout: 5, LivenessFailureThreshold: 3,
+			ReadinessPath: "/readyz", ReadinessInitialDelay: 30, ReadinessPeriod: 5, ReadinessTimeout: 3, ReadinessFailureThreshold: 3,
 		}
 	case ComponentAIAnalysis:
 		return ProbeConfig{
@@ -615,8 +649,8 @@ func probeConfigForComponent(component string) ProbeConfig {
 		}
 	case ComponentKubernautAgent:
 		return ProbeConfig{
-			LivenessPath: "/health", LivenessInitialDelay: 15, LivenessPeriod: 20, LivenessTimeout: 5, LivenessFailureThreshold: 3,
-			ReadinessPath: "/ready", ReadinessInitialDelay: 10, ReadinessPeriod: 10, ReadinessTimeout: 5, ReadinessFailureThreshold: 6,
+			LivenessPath: "/healthz", LivenessInitialDelay: 15, LivenessPeriod: 20, LivenessTimeout: 5, LivenessFailureThreshold: 3,
+			ReadinessPath: "/readyz", ReadinessInitialDelay: 10, ReadinessPeriod: 10, ReadinessTimeout: 5, ReadinessFailureThreshold: 6,
 		}
 	case ComponentEffectivenessMonitor:
 		return ProbeConfig{

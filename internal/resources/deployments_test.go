@@ -495,6 +495,7 @@ func TestAllDeployments_ProbeTimingMatchesHelmChart(t *testing.T) {
 func TestDeployments_MetricsPort(t *testing.T) {
 	kn := testKubernaut()
 	withMetrics := map[string]bool{
+		ComponentGateway:                 true,
 		ComponentDataStorage:             true,
 		ComponentAIAnalysis:              true,
 		ComponentSignalProcessing:        true,
@@ -502,6 +503,7 @@ func TestDeployments_MetricsPort(t *testing.T) {
 		ComponentWorkflowExecution:       true,
 		ComponentEffectivenessMonitor:    true,
 		ComponentNotification:            true,
+		ComponentKubernautAgent:          true,
 	}
 
 	for _, dep := range getAllDeployments(t, kn) {
@@ -655,9 +657,22 @@ func TestAllDeployments_HaveInterServiceTLSCA(t *testing.T) {
 	}
 }
 
-func TestGatewayDeployment_HasTLSCertVolume(t *testing.T) {
+func TestGatewayDeployment_NoTLSCertVolume(t *testing.T) {
 	kn := testKubernaut()
 	dep, err := GatewayDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range dep.Spec.Template.Spec.Volumes {
+		if v.Name == "tls-certs" {
+			t.Error("Gateway should NOT have tls-certs volume (OCP Route handles TLS)")
+		}
+	}
+}
+
+func TestKubernautAgentDeployment_HasTLSCertVolume(t *testing.T) {
+	kn := testKubernaut()
+	dep, err := KubernautAgentDeployment(kn)
 	if err != nil {
 		t.Fatal(err)
 	}
