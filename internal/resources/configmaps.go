@@ -53,13 +53,14 @@ type tlsConfigYAML struct {
 }
 
 type gatewayServerYAML struct {
-	ListenAddr            string        `json:"listenAddr" yaml:"listenAddr"`
-	MaxConcurrentRequests int           `json:"maxConcurrentRequests" yaml:"maxConcurrentRequests"`
-	ReadTimeout           string        `json:"readTimeout" yaml:"readTimeout"`
-	WriteTimeout          string        `json:"writeTimeout" yaml:"writeTimeout"`
-	IdleTimeout           string        `json:"idleTimeout" yaml:"idleTimeout"`
-	K8sRequestTimeout     string        `json:"k8sRequestTimeout" yaml:"k8sRequestTimeout"`
-	TLS                   tlsConfigYAML `json:"tls" yaml:"tls,omitempty"`
+	ListenAddr            string `json:"listenAddr" yaml:"listenAddr"`
+	HealthAddr            string `json:"healthAddr" yaml:"healthAddr"`
+	MetricsAddr           string `json:"metricsAddr" yaml:"metricsAddr"`
+	MaxConcurrentRequests int    `json:"maxConcurrentRequests" yaml:"maxConcurrentRequests"`
+	ReadTimeout           string `json:"readTimeout" yaml:"readTimeout"`
+	WriteTimeout          string `json:"writeTimeout" yaml:"writeTimeout"`
+	IdleTimeout           string `json:"idleTimeout" yaml:"idleTimeout"`
+	K8sRequestTimeout     string `json:"k8sRequestTimeout" yaml:"k8sRequestTimeout"`
 }
 
 type gatewayMiddlewareYAML struct {
@@ -80,6 +81,7 @@ type gatewayConfigYAML struct {
 type dataStorageServerYAML struct {
 	Port         int           `json:"port" yaml:"port"`
 	Host         string        `json:"host" yaml:"host"`
+	HealthPort   int           `json:"healthPort" yaml:"healthPort"`
 	MetricsPort  int           `json:"metricsPort" yaml:"metricsPort"`
 	ReadTimeout  string        `json:"readTimeout" yaml:"readTimeout"`
 	WriteTimeout string        `json:"writeTimeout" yaml:"writeTimeout"`
@@ -354,7 +356,20 @@ type kubernautAgentToolsYAML struct {
 	Prometheus kubernautAgentPrometheusYAML `json:"prometheus" yaml:"prometheus"`
 }
 
+type kubernautAgentServerTLSYAML struct {
+	CertDir string `json:"certDir" yaml:"certDir"`
+}
+
+type kubernautAgentServerYAML struct {
+	Address     string                      `json:"address" yaml:"address"`
+	Port        int                         `json:"port" yaml:"port"`
+	HealthAddr  string                      `json:"health_addr" yaml:"health_addr"`
+	MetricsAddr string                      `json:"metrics_addr" yaml:"metrics_addr"`
+	TLS         kubernautAgentServerTLSYAML `json:"tls" yaml:"tls"`
+}
+
 type kubernautAgentConfigYAML struct {
+	Server      kubernautAgentServerYAML      `json:"server" yaml:"server"`
 	DataStorage kubernautAgentDatastorageYAML `json:"data_storage" yaml:"data_storage"`
 	Tools       *kubernautAgentToolsYAML      `json:"tools,omitempty" yaml:"tools,omitempty"`
 }
@@ -413,12 +428,13 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error
 	cfg := gatewayConfigYAML{
 		Server: gatewayServerYAML{
 			ListenAddr:            ":8080",
+			HealthAddr:            ":8081",
+			MetricsAddr:           ":9090",
 			MaxConcurrentRequests: 100,
 			ReadTimeout:           "30s",
 			WriteTimeout:          "30s",
 			IdleTimeout:           "120s",
 			K8sRequestTimeout:     withDefault(gwCfg.K8sRequestTimeout, "15s"),
-			TLS:                   tlsConfigYAML{CertDir: InterServiceTLSCertDir},
 		},
 		Middleware: gatewayMiddlewareYAML{
 			TrustedProxyCIDRs: proxyCIDRs,
@@ -447,6 +463,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string
 		Server: dataStorageServerYAML{
 			Port:         8080,
 			Host:         "0.0.0.0",
+			HealthPort:   8081,
 			MetricsPort:  9090,
 			ReadTimeout:  "30s",
 			WriteTimeout: "30s",
@@ -502,7 +519,7 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, er
 	cfg := aiAnalysisConfigYAML{
 		Controller: newControllerBlock("aianalysis.kubernaut.ai"),
 		KubernautAgent: aiAnalysisKubernautAgentYAML{
-			URL:                 fmt.Sprintf("http://kubernaut-agent-service.%s.svc.cluster.local:8080", ns),
+			URL:                 fmt.Sprintf("https://kubernaut-agent.%s.svc.cluster.local:8080", ns),
 			Timeout:             "180s",
 			SessionPollInterval: "15s",
 		},
@@ -793,6 +810,13 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Conf
 func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
 	ns := kn.Namespace
 	cfg := kubernautAgentConfigYAML{
+		Server: kubernautAgentServerYAML{
+			Address:     "0.0.0.0",
+			Port:        8080,
+			HealthAddr:  ":8081",
+			MetricsAddr: ":9090",
+			TLS:         kubernautAgentServerTLSYAML{CertDir: InterServiceTLSCertDir},
+		},
 		DataStorage: kubernautAgentDatastorageYAML{
 			URL: DataStorageURL(ns),
 		},
