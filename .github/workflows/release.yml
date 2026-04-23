@@ -120,12 +120,11 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
           GIT_COMMIT: ${{ github.sha }}
         run: |
-          mkdir -p bin
           echo "Cross-compiling manager for arm64..."
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a \
             -ldflags "-s -w -X main.Version=${VERSION} -X main.GitCommit=${GIT_COMMIT}" \
-            -o bin/manager-arm64 cmd/main.go
-          ls -lh bin/manager-arm64
+            -o manager-arm64 cmd/main.go
+          ls -lh manager-arm64
 
       - name: Login to Quay.io
         run: |
@@ -142,7 +141,7 @@ jobs:
           podman build \
             --platform linux/arm64 \
             -f Dockerfile.runtime \
-            --build-arg BINARY=bin/manager-arm64 \
+            --build-arg BINARY=manager-arm64 \
             -t "${IMAGE}" .
 
       - name: Push image
