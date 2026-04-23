@@ -534,7 +534,7 @@ func TestDeployments_ConfigArgs(t *testing.T) {
 		ComponentAIAnalysis:              {"-config", "/etc/aianalysis/config.yaml"},
 		ComponentSignalProcessing:        {"--config=/etc/signalprocessing/config.yaml"},
 		ComponentRemediationOrchestrator: {"--config=/etc/config/remediationorchestrator.yaml"},
-		ComponentWorkflowExecution:       {"--config=/etc/config/config.yaml"},
+		ComponentWorkflowExecution:       {"--config=/etc/workflowexecution/config.yaml"},
 		ComponentEffectivenessMonitor:    {"--config=/etc/effectivenessmonitor/effectivenessmonitor.yaml"},
 		ComponentNotification:            {"-config", "/etc/notification/config.yaml"},
 		ComponentKubernautAgent:          {"-config", "/etc/kubernaut-agent/config.yaml", "-sdk-config", "/etc/kubernaut-agent/sdk/sdk-config.yaml"},

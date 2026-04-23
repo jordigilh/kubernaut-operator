@@ -235,7 +235,7 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deplo
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentWorkflowExecution, ImageName: "workflowexecution",
 		Resources: kn.Spec.WorkflowExecution.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
-		Args: []string{"--config=/etc/config/config.yaml"},
+		Args: []string{"--config=/etc/workflowexecution/config.yaml"},
 		Ports: []corev1.ContainerPort{
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
