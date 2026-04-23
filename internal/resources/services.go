@@ -23,53 +23,59 @@ import (
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
-// serviceDefinitions maps component to service name, port, and port name.
-var serviceDefinitions = []struct {
+// serviceDefinition maps a component to its Kubernetes Service name, ports,
+// and optional annotations. Matches the Helm chart v1.3.0-rc11 topology.
+type serviceDefinition struct {
 	Component   string
 	ServiceName string
-	Port        int32
-	PortName    string
-}{
-	{ComponentGateway, "gateway-service", PortHTTP, "http"},
-	{ComponentDataStorage, "data-storage-service", PortHTTP, "http"},
-	{ComponentAIAnalysis, "aianalysis-service", PortHTTP, "http"},
-	{ComponentSignalProcessing, "signalprocessing-service", PortHTTP, "http"},
-	{ComponentRemediationOrchestrator, "remediationorchestrator-service", PortHTTP, "http"},
-	{ComponentWorkflowExecution, "workflowexecution-service", PortHTTP, "http"},
-	{ComponentEffectivenessMonitor, "effectivenessmonitor-service", PortHTTP, "http"},
-	{ComponentNotification, "notification-service", PortHTTP, "http"},
-	{ComponentKubernautAgent, "kubernaut-agent-service", PortHTTP, "http"},
+	Ports       []corev1.ServicePort
+	Annotations map[string]string
+}
+
+// apiServices are multi-port Services for components that expose HTTP APIs.
+var apiServices = []serviceDefinition{
+	{ComponentGateway, "gateway-service",
+		[]corev1.ServicePort{ServicePort("http", PortHTTP), ServicePort("health", PortHealthProbe), ServicePort("metrics", PortMetrics)},
+		map[string]string{OCPServingCertAnnotation: GatewayTLSSecretName}},
+	{ComponentDataStorage, "data-storage-service",
+		[]corev1.ServicePort{ServicePort("http", PortHTTP), ServicePort("health", PortHealthProbe)},
+		map[string]string{OCPServingCertAnnotation: DataStorageTLSSecretName}},
+	{ComponentAIAnalysis, "aianalysis-service",
+		[]corev1.ServicePort{ServicePort("api", PortHTTP), ServicePort("metrics", PortMetrics), ServicePort("health", PortHealthProbe)},
+		nil},
+	{ComponentKubernautAgent, "kubernaut-agent",
+		[]corev1.ServicePort{ServicePort("http", PortHTTP), ServicePort("health", PortHealthProbe), ServicePort("metrics", PortMetrics)},
+		map[string]string{OCPServingCertAnnotation: KubernautAgentTLSSecretName}},
+}
+
+// metricsServiceDefinitions are single-port metrics-only Services for
+// controller-style components that have no external HTTP API.
+var metricsServiceDefinitions = []serviceDefinition{
+	{ComponentSignalProcessing, "signalprocessing-controller-metrics",
+		[]corev1.ServicePort{ServicePort("metrics", PortMetrics)}, nil},
+	{ComponentRemediationOrchestrator, "remediationorchestrator-controller",
+		[]corev1.ServicePort{ServicePort("metrics", PortMetrics)}, nil},
+	{ComponentWorkflowExecution, "workflowexecution-controller-metrics",
+		[]corev1.ServicePort{ServicePort("metrics", PortMetrics)}, nil},
+	{ComponentEffectivenessMonitor, "effectivenessmonitor-metrics",
+		[]corev1.ServicePort{ServicePort("metrics", PortMetrics)}, nil},
+	{ComponentNotification, "notification-metrics",
+		[]corev1.ServicePort{ServicePort("metrics", PortMetrics)}, nil},
 }
 
 // Inter-service TLS secret names provisioned by the OCP service-ca operator.
 const (
-	GatewayTLSSecretName     = "gateway-tls"
-	DataStorageTLSSecretName = "datastorage-tls"
+	GatewayTLSSecretName        = "gateway-tls"
+	DataStorageTLSSecretName    = "datastorage-tls"
+	KubernautAgentTLSSecretName = "kubernautagent-tls"
 )
 
-// Services builds all Services for the Kubernaut deployment.
-// Gateway and DataStorage are annotated for OCP service-ca TLS provisioning.
+// Services builds all API Services for the Kubernaut deployment.
+// Annotations for OCP service-ca TLS provisioning are set per-service.
 func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
 	var services []*corev1.Service
-	for _, def := range serviceDefinitions {
-		svc := &corev1.Service{
-			ObjectMeta: ObjectMeta(kn, def.ServiceName, def.Component),
-			Spec: corev1.ServiceSpec{
-				Selector: SelectorLabels(def.Component),
-				Ports:    []corev1.ServicePort{ServicePort(def.PortName, def.Port)},
-			},
-		}
-		switch def.Component {
-		case ComponentGateway:
-			svc.Annotations = map[string]string{
-				OCPServingCertAnnotation: GatewayTLSSecretName,
-			}
-		case ComponentDataStorage:
-			svc.Annotations = map[string]string{
-				OCPServingCertAnnotation: DataStorageTLSSecretName,
-			}
-		}
-		services = append(services, svc)
+	for _, def := range apiServices {
+		services = append(services, buildService(kn, def))
 	}
 
 	// authwebhook uses port 443 → 9443 and needs OCP service-ca for TLS certs.
@@ -91,4 +97,29 @@ func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
 	services = append(services, awSvc)
 
 	return services
+}
+
+// MetricsServices builds dedicated metrics-only Services for controller-style
+// components that have no external HTTP API. Matches the Helm chart v1.3.0-rc11
+// topology where these components expose only a :9090 metrics port.
+func MetricsServices(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
+	var services []*corev1.Service
+	for _, def := range metricsServiceDefinitions {
+		services = append(services, buildService(kn, def))
+	}
+	return services
+}
+
+func buildService(kn *kubernautv1alpha1.Kubernaut, def serviceDefinition) *corev1.Service {
+	svc := &corev1.Service{
+		ObjectMeta: ObjectMeta(kn, def.ServiceName, def.Component),
+		Spec: corev1.ServiceSpec{
+			Selector: SelectorLabels(def.Component),
+			Ports:    def.Ports,
+		},
+	}
+	if len(def.Annotations) > 0 {
+		svc.Annotations = def.Annotations
+	}
+	return svc
 }

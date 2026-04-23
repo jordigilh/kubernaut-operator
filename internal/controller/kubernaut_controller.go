@@ -642,6 +642,12 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		}
 	}
 
+	for _, svc := range resources.MetricsServices(kn) {
+		if err := r.ensureNamespaced(ctx, kn, svc); err != nil {
+			return false, fmt.Errorf("ensuring metrics Service %s: %w", svc.Name, err)
+		}
+	}
+
 	for _, pdb := range resources.PodDisruptionBudgets(kn) {
 		if err := r.ensureNamespaced(ctx, kn, pdb); err != nil {
 			return false, fmt.Errorf("ensuring PDB %s: %w", pdb.Name, err)
