@@ -21,8 +21,6 @@ metadata:
     features.operators.openshift.io/token-auth-azure: "false"
     features.operators.openshift.io/token-auth-gcp: "false"
     operatorframework.io/suggested-namespace: kubernaut-system
-    operators.openshift.io/valid-subscription: '["OpenShift Container Platform", "OpenShift
-      Platform Plus"]'
     operators.operatorframework.io/builder: operator-sdk-v1.42.2
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     repository: https://github.com/jordigilh/kubernaut-operator
