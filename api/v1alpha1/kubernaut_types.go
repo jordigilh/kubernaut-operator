@@ -89,8 +89,10 @@ type KubernautSpec struct {
 // +kubebuilder:validation:XValidation:rule="has(self.tag) || has(self.digest)",message="image.tag or image.digest must be set"
 type ImageSpec struct {
 	// Container registry hostname.
+	// +kubebuilder:default="quay.io"
 	// +kubebuilder:validation:MinLength=1
-	Registry string `json:"registry"`
+	// +optional
+	Registry string `json:"registry,omitempty"`
 
 	// Registry namespace / organization. Default: "kubernaut-ai".
 	// +kubebuilder:default="kubernaut-ai"

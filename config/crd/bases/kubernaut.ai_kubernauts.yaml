@@ -499,6 +499,7 @@ spec:
                       x-kubernetes-map-type: atomic
                     type: array
                   registry:
+                    default: quay.io
                     description: Container registry hostname.
                     minLength: 1
                     type: string
@@ -514,8 +515,6 @@ spec:
                       Digest is set.
                     pattern: ^[a-zA-Z0-9._-]+$
                     type: string
-                required:
-                - registry
                 type: object
                 x-kubernetes-validations:
                 - message: image.tag or image.digest must be set

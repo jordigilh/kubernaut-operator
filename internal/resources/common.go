@@ -166,13 +166,14 @@ func SelectorLabels(component string) map[string]string {
 // or       {Registry}/{Namespace}{Separator}{service}@{Digest}
 // Returns an error if the spec would produce an invalid image reference.
 func Image(spec *kubernautv1alpha1.ImageSpec, service string) (string, error) {
-	if spec.Registry == "" {
-		return "", fmt.Errorf("image registry must not be empty for service %q", service)
-	}
 	if spec.Tag == "" && spec.Digest == "" {
 		return "", fmt.Errorf("image tag or digest must be set for service %q", service)
 	}
 
+	registry := spec.Registry
+	if registry == "" {
+		registry = "quay.io"
+	}
 	ns := spec.Namespace
 	sep := spec.Separator
 	if sep == "" {
@@ -187,9 +188,9 @@ func Image(spec *kubernautv1alpha1.ImageSpec, service string) (string, error) {
 	}
 
 	if spec.Digest != "" {
-		return fmt.Sprintf("%s/%s@%s", spec.Registry, repo, spec.Digest), nil
+		return fmt.Sprintf("%s/%s@%s", registry, repo, spec.Digest), nil
 	}
-	return fmt.Sprintf("%s/%s:%s", spec.Registry, repo, spec.Tag), nil
+	return fmt.Sprintf("%s/%s:%s", registry, repo, spec.Tag), nil
 }
 
 // ObjectMeta returns a standard ObjectMeta for namespaced resources.

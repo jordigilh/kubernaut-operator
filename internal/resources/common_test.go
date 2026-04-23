@@ -151,11 +151,15 @@ func TestImage_DefaultSeparator(t *testing.T) {
 	}
 }
 
-func TestImage_EmptyRegistry_ReturnsError(t *testing.T) {
-	spec := &kubernautv1alpha1.ImageSpec{Tag: "v1.0"}
-	_, err := Image(spec, "gateway")
-	if err == nil {
-		t.Error("Image() should return error when registry is empty")
+func TestImage_EmptyRegistry_UsesDefault(t *testing.T) {
+	spec := &kubernautv1alpha1.ImageSpec{Namespace: "kubernaut-ai", Tag: "v1.0"}
+	got, err := Image(spec, "gateway")
+	if err != nil {
+		t.Fatalf("Image() unexpected error: %v", err)
+	}
+	want := "quay.io/kubernaut-ai/gateway:v1.0"
+	if got != want {
+		t.Errorf("Image() = %q, want %q", got, want)
 	}
 }
 

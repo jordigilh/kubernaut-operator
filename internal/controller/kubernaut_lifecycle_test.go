@@ -1063,13 +1063,13 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}
 		})
 
-		It("should error when image registry is empty", func() {
+		It("should default registry when image registry is empty", func() {
 			cr := newMinimalCR()
 			cr.Spec.Image.Registry = ""
 
-			_, err := resources.GatewayDeployment(cr)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("image registry must not be empty"))
+			dep, err := resources.GatewayDeployment(cr)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dep.Spec.Template.Spec.Containers[0].Image).To(ContainSubstring("quay.io/"))
 		})
 
 		It("should error when both tag and digest are empty", func() {

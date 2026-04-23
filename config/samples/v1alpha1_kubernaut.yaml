@@ -8,11 +8,9 @@ metadata:
   namespace: kubernaut-system
 spec:
   # Container image configuration for all Kubernaut services.
+  # Registry defaults to quay.io, namespace to kubernaut-ai.
   image:
-    registry: quay.io
-    namespace: kubernaut-ai
     tag: "1.3.0"
-    pullPolicy: IfNotPresent
 
   # BYO PostgreSQL — operator validates keys and derives the
   # DataStorage db-secrets.yaml Secret automatically.
