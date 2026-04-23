@@ -235,7 +235,7 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deplo
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentWorkflowExecution, ImageName: "workflowexecution",
 		Resources: kn.Spec.WorkflowExecution.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
-		Args: []string{"--config=/etc/config/workflowexecution.yaml"},
+		Args: []string{"--config=/etc/config/config.yaml"},
 		Ports: []corev1.ContainerPort{
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
@@ -453,7 +453,7 @@ func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		Component: ComponentAuthWebhook, ImageName: "authwebhook",
 		Resources: kn.Spec.AuthWebhook.Resources, VolumeMounts: mounts, Volumes: volumes,
 		Env:  env,
-		Args: []string{"-config=/etc/authwebhook/authwebhook.yaml"},
+		Args: []string{"-config=/etc/authwebhook/config.yaml"},
 		Ports: []corev1.ContainerPort{
 			{Name: "webhook", ContainerPort: PortWebhookServer, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
