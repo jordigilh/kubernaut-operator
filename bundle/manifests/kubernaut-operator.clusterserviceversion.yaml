@@ -67,7 +67,7 @@ metadata:
     capabilities: Full Lifecycle
     categories: AI/Machine Learning,Monitoring
     containerImage: quay.io/kubernaut-ai/kubernaut-operator:v1.3.0-rc3
-    createdAt: "2026-04-23T16:25:04Z"
+    createdAt: "2026-04-23T16:27:23Z"
     description: Automated Kubernetes remediation powered by AI — detects issues,
       analyzes root causes, and executes verified fixes.
     documentation: https://jordigilh.github.io/kubernaut-docs/latest/
@@ -102,7 +102,7 @@ spec:
   description: |
     ## Kubernaut Operator for OpenShift
 
-    The Kubernaut Operator deploys and manages the **Kubernaut AI Remediation Platform**
+    The Kubernaut Operator deploys and manages the **Kubernaut AIOps Remediation Platform**
     on OpenShift Container Platform (OCP) 4.18+.
 
     Kubernaut automatically detects Kubernetes issues via AlertManager signals, performs
