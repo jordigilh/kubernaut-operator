@@ -239,7 +239,7 @@ func TestKubernautAgentDeployment_LLMCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertDeploymentBasics(t, dep, ComponentKubernautAgent, "kubernaut-agent")
+	assertDeploymentBasics(t, dep, ComponentKubernautAgent, "kubernautagent")
 	assertHasVolume(t, dep, "llm-credentials")
 	assertHasVolumeMount(t, dep, "llm-credentials", "/etc/kubernaut-agent/credentials")
 }

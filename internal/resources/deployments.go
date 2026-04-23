@@ -409,7 +409,7 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 	}
 
 	return buildDeployment(kn, DeploymentParams{
-		Component: ComponentKubernautAgent, ImageName: "kubernaut-agent",
+		Component: ComponentKubernautAgent, ImageName: "kubernautagent",
 		Resources: res, VolumeMounts: mounts, Volumes: volumes, Env: envVars,
 		ProbePort: PortHealthProbe,
 		Args: []string{
@@ -452,7 +452,7 @@ func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentAuthWebhook, ImageName: "authwebhook",
 		Resources: kn.Spec.AuthWebhook.Resources, VolumeMounts: mounts, Volumes: volumes,
-		Env: env,
+		Env:  env,
 		Args: []string{"-config=/etc/authwebhook/authwebhook.yaml"},
 		Ports: []corev1.ContainerPort{
 			{Name: "webhook", ContainerPort: PortWebhookServer, Protocol: corev1.ProtocolTCP},
