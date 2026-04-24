@@ -2,6 +2,12 @@
 
 Kubernetes operator for deploying and managing the [Kubernaut](https://kubernaut.ai) autonomous remediation platform on OpenShift (OCP 4.18+).
 
+<p align="center">
+  <a href="docs/assets/kubernaut-console-animated.svg">
+    <img src="docs/assets/kubernaut-console-animated.svg" alt="Kubernaut Console — Incident Response" width="720"/>
+  </a>
+</p>
+
 ## Overview
 
 The Kubernaut Operator manages the full lifecycle of a Kubernaut deployment:
@@ -21,145 +27,78 @@ The operator is designed as a **singleton**: exactly one `Kubernaut` CR named `k
 | OpenShift | 4.18+ |
 | PostgreSQL | 15+ (BYO) |
 | Valkey/Redis | 7+ (BYO) |
-| LLM API key | OpenAI, Anthropic, or GCP Vertex AI |
+| LLM API credentials | OpenAI, Anthropic, or GCP Vertex AI |
 
-## Installation via OLM
+## Installation Guide
 
-```bash
-# NOTE: This example applies only after the operator is published to OperatorHub.
-# For pre-publication testing, use `make deploy IMG=<your-image>`.
-oc create -f - <<EOF
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: kubernaut-operator
-  namespace: openshift-operators
-spec:
-  channel: alpha
-  name: kubernaut-operator
-  source: community-operators
-  sourceNamespace: openshift-marketplace
-EOF
-```
+Follow the three-part installation guide to deploy Kubernaut on OCP:
 
-## CR Configuration
+| Step | Document | What it covers |
+|---|---|---|
+| 1 | [Infrastructure Prerequisites](docs/installation/01-infrastructure.md) | Namespace, PostgreSQL, Valkey, LLM credentials |
+| 2 | [Configure Services](docs/installation/02-configure-services.md) | KA (LLM/SDK), SP (Rego policy), AA (approval policy), AAP (Ansible), ArgoCD, Slack |
+| 3 | [Deploy Kubernaut](docs/installation/03-deploy.md) | Install operator, create CR, verify, seed catalog, AlertManager |
 
-Create a `Kubernaut` CR in any namespace. The operator watches all namespaces.
+## CR Reference
+
+### Image overrides
+
+Service images are resolved from `RELATED_IMAGE_*` environment variables on the operator pod (set at build time, rewritten by OLM for disconnected registries). For non-OLM deployments or testing, use per-component overrides:
 
 ```yaml
-apiVersion: kubernaut.ai/v1alpha1
-kind: Kubernaut
-metadata:
-  name: kubernaut
 spec:
   image:
-    registry: quay.io
-    namespace: kubernaut-ai
-    tag: v1.3.0-rc1
-  postgresql:
-    secretName: kubernaut-pg-secret
-    host: postgresql.kubernaut-system.svc.cluster.local
-  valkey:
-    secretName: kubernaut-valkey-secret
-    host: valkey.kubernaut-system.svc.cluster.local
-  kubernautAgent:
-    llm:
-      provider: openai
-      model: gpt-4o
-      credentialsSecretName: llm-credentials
+    overrides:
+      gateway: "myregistry.example.com/gateway:custom"
+      kubernautagent: "myregistry.example.com/kubernautagent:custom"
+```
+
+### Inter-service TLS
+
+All inter-service communication uses TLS, provisioned automatically by the OpenShift `service-ca` operator. This is always enabled and not configurable. The operator annotates Gateway and DataStorage Services so that `service-ca` generates serving certificates, and injects the CA bundle into an `inter-service-ca` ConfigMap mounted by all components.
+
+### Gateway configuration
+
+```yaml
+spec:
   gateway:
     route:
-      enabled: true
+      enabled: true           # set false if using a custom Ingress
+      hostname: ""             # leave empty for OCP auto-generated hostname
     config:
-      k8sRequestTimeout: "15s"
-      corsAllowedOrigins: "https://no-browser-clients.invalid"
+      k8sRequestTimeout: "15s"                              # default
+      corsAllowedOrigins: "https://no-browser-clients.invalid"  # default (M2M API)
 ```
 
-### Inter-Service TLS
+## Uninstall
 
-All inter-service communication uses TLS, provisioned automatically by the
-OpenShift `service-ca` operator. This is always enabled and not configurable.
-The operator annotates Gateway and DataStorage Services so that `service-ca`
-generates serving certificates, and injects the CA bundle into an
-`inter-service-ca` ConfigMap mounted by all components.
-
-### Required Secrets
-
-**PostgreSQL** (`spec.postgresql.secretName`):
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: kubernaut-pg-secret
-stringData:
-  POSTGRES_USER: kubernaut
-  POSTGRES_PASSWORD: <password>
-  POSTGRES_DB: kubernaut
-```
-
-**Valkey** (`spec.valkey.secretName`):
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: kubernaut-valkey-secret
-stringData:
-  valkey-secrets.yaml: |
-    password: <password>
-```
-
-**LLM Credentials** (`spec.kubernautAgent.llm.credentialsSecretName`):
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: llm-credentials
-stringData:
-  credentials.json: |
-    {"api_key": "<your-api-key>"}
-```
-
-## Uninstall Behavior
-
-When the `Kubernaut` CR is deleted, the operator's finalizer cleans up all
-cluster-scoped RBAC resources (ClusterRoles, ClusterRoleBindings) and the
-workflow namespace. **CRDs are intentionally retained** to prevent accidental
-data loss of any custom resources managed by those CRDs. To fully remove CRDs
-after uninstalling, delete them manually:
+When the `Kubernaut` CR is deleted, the operator's finalizer cleans up all cluster-scoped RBAC resources (ClusterRoles, ClusterRoleBindings) and the workflow namespace. **CRDs are intentionally retained** to prevent accidental data loss. To fully remove CRDs after uninstalling:
 
 ```bash
-oc delete crd actiontypes.kubernaut.ai
+oc delete crd actiontypes.kubernaut.ai remediationworkflows.kubernaut.ai \
+  remediationrequests.kubernaut.ai remediationapprovalrequests.kubernaut.ai \
+  notificationrequests.kubernaut.ai workflowexecutions.kubernaut.ai
 ```
 
 ## Operational Notes
 
-### Admission Webhook Blackout During Upgrades
+### Admission webhook blackout during upgrades
 
-The AuthWebhook deployment uses a **Recreate** strategy to prevent TLS
-certificate routing conflicts between old and new pods. During a rollout the
-old pod is terminated before the new one is ready, creating a brief window
-(~15–30 s) where admission requests are unavailable. Because the webhook
-`failurePolicy` is `Fail`, any Kubernaut CRD mutations
-(e.g. `WorkflowExecution/status`, `RemediationWorkflow` CUD,
-`ActionType` CUD) will be rejected until the new pod passes its readiness
-probe.
+The AuthWebhook deployment uses a **Recreate** strategy to prevent TLS certificate routing conflicts between old and new pods. During a rollout the old pod is terminated before the new one is ready, creating a brief window (~15-30 s) where admission requests are unavailable. Because the webhook `failurePolicy` is `Fail`, any Kubernaut CRD mutations will be rejected until the new pod passes its readiness probe.
 
 **Recommendation:** schedule operator upgrades during low-activity windows.
 
 ## Development
 
 ```bash
-# Build
-make build
+make build          # Build the operator binary
+make test           # Run unit and integration tests
+make manifests      # Regenerate CRD, RBAC, and webhook manifests
+make generate       # Regenerate deepcopy
+make bundle         # Regenerate the OLM bundle
 
-# Run tests
-make test
-
-# Build operator image
-make docker-build IMG=quay.io/yourorg/kubernaut-operator:dev
-
-# Deploy to connected cluster
-make deploy IMG=quay.io/yourorg/kubernaut-operator:dev
+# Deploy to a connected cluster (non-OLM)
+make deploy IMG=quay.io/kubernaut-ai/kubernaut-operator:v1.3.0
 
 # Undeploy
 make undeploy
