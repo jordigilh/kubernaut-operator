@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"time"
 
+	configv1 "github.com/openshift/api/config/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -37,7 +38,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
@@ -91,6 +94,7 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingwebhookconfigurations;validatingwebhookconfigurations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get;list;watch
 
 func (r *KubernautReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -340,13 +344,16 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 	dbName := string(pgSecret.Data["POSTGRES_DB"])
 	dbUser := string(pgSecret.Data["POSTGRES_USER"])
 
-	if err := r.deployConfigMaps(ctx, kn, dbName, dbUser); err != nil {
+	tlsProfile := r.resolveClusterTLSProfile(ctx)
+
+	cmHashes, err := r.deployConfigMaps(ctx, kn, dbName, dbUser, tlsProfile)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := r.deployAdmissionWebhooks(ctx, kn); err != nil {
 		return ctrl.Result{}, err
 	}
-	hasRoute, err := r.deployWorkloads(ctx, kn)
+	hasRoute, err := r.deployWorkloads(ctx, kn, cmHashes)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -524,32 +531,38 @@ func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernau
 	return nil
 }
 
-func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string) error {
+// deployConfigMaps builds and ensures all service ConfigMaps. Returns a map
+// of component name to SHA-256 hash of the ConfigMap data, used to stamp pod
+// template annotations and force rolling restarts when config content changes.
+func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, dbName, dbUser, tlsProfile string) (map[string]string, error) {
 	type cmBuilder struct {
 		name string
 		fn   func() (*corev1.ConfigMap, error)
 	}
+	tlsOpt := resources.WithTLSProfile(tlsProfile)
 	builders := []cmBuilder{
-		{"gateway", func() (*corev1.ConfigMap, error) { return resources.GatewayConfigMap(kn) }},
-		{"datastorage", func() (*corev1.ConfigMap, error) { return resources.DataStorageConfigMap(kn, dbName, dbUser) }},
-		{"aianalysis", func() (*corev1.ConfigMap, error) { return resources.AIAnalysisConfigMap(kn) }},
-		{"signalprocessing", func() (*corev1.ConfigMap, error) { return resources.SignalProcessingConfigMap(kn) }},
-		{"remediationorchestrator", func() (*corev1.ConfigMap, error) { return resources.RemediationOrchestratorConfigMap(kn) }},
-		{"workflowexecution", func() (*corev1.ConfigMap, error) { return resources.WorkflowExecutionConfigMap(kn) }},
-		{"effectivenessmonitor", func() (*corev1.ConfigMap, error) { return resources.EffectivenessMonitorConfigMap(kn) }},
-		{"notification-controller", func() (*corev1.ConfigMap, error) { return resources.NotificationControllerConfigMap(kn) }},
+		{"gateway", func() (*corev1.ConfigMap, error) { return resources.GatewayConfigMap(kn, tlsOpt) }},
+		{"datastorage", func() (*corev1.ConfigMap, error) { return resources.DataStorageConfigMap(kn, dbName, dbUser, tlsOpt) }},
+		{"aianalysis", func() (*corev1.ConfigMap, error) { return resources.AIAnalysisConfigMap(kn, tlsOpt) }},
+		{"signalprocessing", func() (*corev1.ConfigMap, error) { return resources.SignalProcessingConfigMap(kn, tlsOpt) }},
+		{"remediationorchestrator", func() (*corev1.ConfigMap, error) { return resources.RemediationOrchestratorConfigMap(kn, tlsOpt) }},
+		{"workflowexecution", func() (*corev1.ConfigMap, error) { return resources.WorkflowExecutionConfigMap(kn, tlsOpt) }},
+		{"effectivenessmonitor", func() (*corev1.ConfigMap, error) { return resources.EffectivenessMonitorConfigMap(kn, tlsOpt) }},
+		{"notification-controller", func() (*corev1.ConfigMap, error) { return resources.NotificationControllerConfigMap(kn, tlsOpt) }},
 		{"notification-routing", func() (*corev1.ConfigMap, error) { return resources.NotificationRoutingConfigMap(kn) }},
-		{"kubernaut-agent", func() (*corev1.ConfigMap, error) { return resources.KubernautAgentConfigMap(kn) }},
-		{"authwebhook", func() (*corev1.ConfigMap, error) { return resources.AuthWebhookConfigMap(kn) }},
+		{"kubernaut-agent", func() (*corev1.ConfigMap, error) { return resources.KubernautAgentConfigMap(kn, tlsOpt) }},
+		{"authwebhook", func() (*corev1.ConfigMap, error) { return resources.AuthWebhookConfigMap(kn, tlsOpt) }},
 	}
 
+	cmHashes := make(map[string]string, len(builders))
 	var configMaps []*corev1.ConfigMap
 	for _, b := range builders {
 		cm, err := b.fn()
 		if err != nil {
-			return fmt.Errorf("building %s ConfigMap: %w", b.name, err)
+			return nil, fmt.Errorf("building %s ConfigMap: %w", b.name, err)
 		}
 		configMaps = append(configMaps, cm)
+		cmHashes[b.name] = resources.ConfigMapDataHash(cm.Data)
 	}
 
 	if cm := resources.AIAnalysisPoliciesConfigMap(kn); cm != nil {
@@ -560,7 +573,7 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	}
 	sdkCM, err := resources.KubernautAgentSDKConfigMap(kn)
 	if err != nil {
-		return fmt.Errorf("building kubernaut-agent-sdk ConfigMap: %w", err)
+		return nil, fmt.Errorf("building kubernaut-agent-sdk ConfigMap: %w", err)
 	}
 	if sdkCM != nil {
 		configMaps = append(configMaps, sdkCM)
@@ -574,10 +587,10 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	}
 	for _, cm := range configMaps {
 		if err := r.ensureNamespaced(ctx, kn, cm); err != nil {
-			return fmt.Errorf("ensuring ConfigMap %s: %w", cm.Name, err)
+			return nil, fmt.Errorf("ensuring ConfigMap %s: %w", cm.Name, err)
 		}
 	}
-	return nil
+	return cmHashes, nil
 }
 
 // deployAdmissionWebhooks ensures both MutatingWebhookConfiguration and
@@ -596,9 +609,26 @@ func (r *KubernautReconciler) deployAdmissionWebhooks(ctx context.Context, kn *k
 	return nil
 }
 
+// componentCMHashKey maps a deployment component name to its corresponding
+// ConfigMap hash key (from deployConfigMaps).
+var componentCMHashKey = map[string]string{
+	resources.ComponentGateway:                 "gateway",
+	resources.ComponentDataStorage:             "datastorage",
+	resources.ComponentAIAnalysis:              "aianalysis",
+	resources.ComponentSignalProcessing:        "signalprocessing",
+	resources.ComponentRemediationOrchestrator: "remediationorchestrator",
+	resources.ComponentWorkflowExecution:       "workflowexecution",
+	resources.ComponentEffectivenessMonitor:    "effectivenessmonitor",
+	resources.ComponentNotification:            "notification-controller",
+	resources.ComponentKubernautAgent:          "kubernaut-agent",
+	resources.ComponentAuthWebhook:             "authwebhook",
+}
+
 // deployWorkloads creates/updates deployments, services, PDBs, and the OCP
-// route. Returns true if a route was created.
-func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (hasRoute bool, _ error) {
+// route. cmHashes maps ConfigMap builder names to content hashes; these are
+// stamped as pod template annotations to force rolling restarts when config
+// content changes. Returns true if a route was created.
+func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, cmHashes map[string]string) (hasRoute bool, _ error) {
 	type depBuilder func(*kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error)
 	depBuilders := []depBuilder{
 		resources.GatewayDeployment,
@@ -617,6 +647,7 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		if err != nil {
 			return false, fmt.Errorf("building deployment: %w", err)
 		}
+		stampConfigMapHash(dep, cmHashes)
 		if err := r.ensureNamespaced(ctx, kn, dep); err != nil {
 			return false, fmt.Errorf("ensuring Deployment %s: %w", dep.Name, err)
 		}
@@ -936,6 +967,27 @@ func (r *KubernautReconciler) setConditionAndRequeue(
 	return ctrl.Result{RequeueAfter: requeueError}, nil
 }
 
+// resolveClusterTLSProfile reads the OpenShift APIServer CR and maps the
+// cluster-wide TLS security profile to a service-consumable profile name.
+// Returns "" on non-OCP clusters or when the profile is unset.
+func (r *KubernautReconciler) resolveClusterTLSProfile(ctx context.Context) string {
+	log := logf.FromContext(ctx)
+	apiServer := &configv1.APIServer{}
+	if err := r.Get(ctx, client.ObjectKey{Name: "cluster"}, apiServer); err != nil {
+		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			log.V(1).Info("APIServer CR not found (non-OCP cluster), skipping TLS profile injection")
+			return ""
+		}
+		log.V(1).Info("failed to read APIServer CR, skipping TLS profile injection", "error", err)
+		return ""
+	}
+	profile := resources.MapTLSProfile(apiServer.Spec.TLSSecurityProfile)
+	if profile != "" {
+		log.V(1).Info("resolved cluster TLS profile", "profile", profile)
+	}
+	return profile
+}
+
 // ensureNamespaced creates or updates a namespaced resource, setting the
 // Kubernaut CR as owner for garbage collection.
 func (r *KubernautReconciler) ensureNamespaced(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, obj client.Object) error {
@@ -990,6 +1042,27 @@ func (r *KubernautReconciler) ensureResource(ctx context.Context, obj client.Obj
 
 // setHashAnnotation merges the spec-hash annotation into the object's
 // existing annotations without clobbering others.
+// stampConfigMapHash looks up the component name from the Deployment's labels
+// and stamps the corresponding ConfigMap content hash as a pod template
+// annotation. This forces Kubernetes to roll out new pods when config changes.
+func stampConfigMapHash(dep *appsv1.Deployment, cmHashes map[string]string) {
+	component := dep.Spec.Template.Labels["app"]
+	hashKey, ok := componentCMHashKey[component]
+	if !ok {
+		return
+	}
+	hash, ok := cmHashes[hashKey]
+	if !ok {
+		return
+	}
+	a := dep.Spec.Template.Annotations
+	if a == nil {
+		a = make(map[string]string, 1)
+	}
+	a[resources.AnnotationConfigMapHash] = hash
+	dep.Spec.Template.Annotations = a
+}
+
 func setHashAnnotation(obj client.Object, hash string) {
 	a := obj.GetAnnotations()
 	if a == nil {
@@ -1049,6 +1122,24 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Owns(&rbacv1.Role{}).
 		Owns(&rbacv1.RoleBinding{}).
+		Watches(&configv1.APIServer{},
+			handler.EnqueueRequestsFromMapFunc(r.apiServerToKubernaut)).
 		Named("kubernaut").
 		Complete(r)
+}
+
+// apiServerToKubernaut maps APIServer CR changes to the singleton Kubernaut
+// reconcile request so that TLS profile changes trigger a config update.
+func (r *KubernautReconciler) apiServerToKubernaut(ctx context.Context, _ client.Object) []reconcile.Request {
+	list := &kubernautv1alpha1.KubernautList{}
+	if err := r.List(ctx, list); err != nil {
+		return nil
+	}
+	var reqs []reconcile.Request
+	for _, kn := range list.Items {
+		reqs = append(reqs, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: kn.Name, Namespace: kn.Namespace},
+		})
+	}
+	return reqs
 }

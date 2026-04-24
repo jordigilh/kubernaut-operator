@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	configv1 "github.com/openshift/api/config/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
 	kubernautaiv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
@@ -56,6 +57,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
+	utilruntime.Must(configv1.Install(scheme))
 	utilruntime.Must(routev1.Install(scheme))
 	utilruntime.Must(kubernautaiv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
