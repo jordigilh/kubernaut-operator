@@ -177,6 +177,21 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx rm kubernaut-operator-builder
 	rm Dockerfile.cross
 
+# TARGETARCH for cross-build (default: host arch).
+# Override to cross-compile: make cross-build TARGETARCH=amd64
+TARGETARCH ?= $(shell go env GOARCH)
+
+.PHONY: cross-build
+cross-build: manifests generate fmt vet ## Cross-compile the manager and build a container image (no emulation).
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(TARGETARCH) go build -a \
+		-ldflags "-s -w $(LDFLAGS)" \
+		-o bin/manager cmd/main.go
+	$(CONTAINER_TOOL) build -f Dockerfile.cross-runtime -t $(IMG) .
+
+.PHONY: cross-push
+cross-push: cross-build ## Cross-compile, build and push the container image.
+	$(CONTAINER_TOOL) push $(IMG)
+
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist

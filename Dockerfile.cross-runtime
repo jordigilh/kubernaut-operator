@@ -1,0 +1,23 @@
+# Slim runtime image for cross-compiled builds.
+# Used by: make cross-build TARGETARCH=amd64
+#
+# The manager binary is pre-compiled on the host via Go's native
+# cross-compilation (GOOS/GOARCH), so no emulation is needed.
+
+FROM registry.access.redhat.com/ubi10/ubi-minimal:latest AS base
+
+FROM scratch
+
+COPY --from=base /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/ssl/certs/ca-certificates.crt
+COPY --from=base /etc/passwd /etc/passwd
+COPY bin/manager /manager
+
+USER 65534
+
+LABEL org.opencontainers.image.source="https://github.com/jordigilh/kubernaut-operator" \
+      org.opencontainers.image.title="kubernaut-operator" \
+      org.opencontainers.image.description="Kubernetes operator for the Kubernaut AI platform" \
+      org.opencontainers.image.vendor="Kubernaut AI" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+ENTRYPOINT ["/manager"]
