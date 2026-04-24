@@ -222,10 +222,8 @@ func (r *KubernautReconciler) phaseMigrate(ctx context.Context, kn *kubernautv1a
 // ensureMigrationPrereqs installs CRDs, derives the DataStorage DB secret
 // from the user-provided PostgreSQL secret, and ensures the migration ConfigMap.
 func (r *KubernautReconciler) ensureMigrationPrereqs(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
-	if !r.crdsSatisfied(kn) {
-		if err := resources.EnsureCRDs(ctx, r.Client); err != nil {
-			return err
-		}
+	if err := resources.EnsureCRDs(ctx, r.Client); err != nil {
+		return err
 	}
 
 	pgSecret := &corev1.Secret{}
@@ -301,17 +299,6 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: requeueMigrationPoll}, nil
-}
-
-// crdsSatisfied returns true when the CRDsInstalled condition is already True
-// for the current spec generation, allowing EnsureCRDs to be skipped.
-func (r *KubernautReconciler) crdsSatisfied(kn *kubernautv1alpha1.Kubernaut) bool {
-	for _, c := range kn.Status.Conditions {
-		if c.Type == kubernautv1alpha1.ConditionCRDsInstalled {
-			return c.Status == metav1.ConditionTrue && c.ObservedGeneration >= kn.Generation
-		}
-	}
-	return false
 }
 
 // setCRDsReady sets the ConditionCRDsInstalled condition to True on the

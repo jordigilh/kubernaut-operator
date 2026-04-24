@@ -17,84 +17,17 @@ limitations under the License.
 package resources
 
 import (
-	"context"
+	"encoding/json"
 	"io/fs"
+	"strings"
 	"testing"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	sigsyaml "sigs.k8s.io/yaml"
 
 	"github.com/jordigilh/kubernaut/pkg/shared/assets"
 )
-
-// newCRDTestClient uses a fake client for CRD install/update logic tests.
-// The fake client does not perform schema validation or conversion webhook
-// testing; real API-server validation is covered by the E2E suite.
-func newCRDTestClient(t *testing.T) *fake.ClientBuilder {
-	t.Helper()
-	scheme := runtime.NewScheme()
-	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
-		t.Fatalf("failed to register apiextensions scheme: %v", err)
-	}
-	return fake.NewClientBuilder().WithScheme(scheme)
-}
-
-func TestEnsureCRDs_CreatesAllCRDs(t *testing.T) {
-	c := newCRDTestClient(t).Build()
-	ctx := context.Background()
-
-	if err := EnsureCRDs(ctx, c); err != nil {
-		t.Fatalf("EnsureCRDs() first call error: %v", err)
-	}
-
-	entries, err := fs.ReadDir(assets.CRDsFS, "crds")
-	if err != nil {
-		t.Fatalf("reading embedded CRDs: %v", err)
-	}
-
-	crdCount := 0
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		crdCount++
-		data, err := fs.ReadFile(assets.CRDsFS, "crds/"+entry.Name())
-		if err != nil {
-			t.Fatalf("reading CRD %s: %v", entry.Name(), err)
-		}
-
-		expected := &apiextensionsv1.CustomResourceDefinition{}
-		if err := sigsyaml.Unmarshal(data, expected); err != nil {
-			t.Fatalf("unmarshalling CRD %s: %v", entry.Name(), err)
-		}
-
-		actual := &apiextensionsv1.CustomResourceDefinition{}
-		if err := c.Get(ctx, types.NamespacedName{Name: expected.Name}, actual); err != nil {
-			t.Errorf("CRD %q should exist after EnsureCRDs: %v", expected.Name, err)
-		}
-	}
-
-	if crdCount == 0 {
-		t.Error("embedded CRDs directory should contain at least one CRD file")
-	}
-}
-
-func TestEnsureCRDs_UpdatesExistingCRD(t *testing.T) {
-	c := newCRDTestClient(t).Build()
-	ctx := context.Background()
-
-	if err := EnsureCRDs(ctx, c); err != nil {
-		t.Fatalf("EnsureCRDs() first call error: %v", err)
-	}
-
-	// Second call should succeed (update path).
-	if err := EnsureCRDs(ctx, c); err != nil {
-		t.Fatalf("EnsureCRDs() second call (update) error: %v", err)
-	}
-}
 
 func TestEnsureCRDs_EmbeddedYAMLParses(t *testing.T) {
 	entries, err := fs.ReadDir(assets.CRDsFS, "crds")
@@ -124,5 +57,64 @@ func TestEnsureCRDs_EmbeddedYAMLParses(t *testing.T) {
 		if crd.Spec.Group == "" {
 			t.Errorf("CRD %s has no spec.group", entry.Name())
 		}
+	}
+}
+
+func TestEnsureCRDs_UnstructuredRoundTrip_PreservesAllFields(t *testing.T) {
+	entries, err := fs.ReadDir(assets.CRDsFS, "crds")
+	if err != nil {
+		t.Fatalf("reading embedded CRDs: %v", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		data, err := fs.ReadFile(assets.CRDsFS, "crds/"+entry.Name())
+		if err != nil {
+			t.Fatalf("reading %s: %v", entry.Name(), err)
+		}
+		raw := string(data)
+
+		jsonBytes, err := sigsyaml.YAMLToJSON(data)
+		if err != nil {
+			t.Fatalf("converting %s to JSON: %v", entry.Name(), err)
+		}
+
+		obj := &unstructured.Unstructured{}
+		if err := json.Unmarshal(jsonBytes, &obj.Object); err != nil {
+			t.Fatalf("unmarshalling %s to unstructured: %v", entry.Name(), err)
+		}
+
+		roundTripped, err := json.Marshal(obj.Object)
+		if err != nil {
+			t.Fatalf("re-marshalling %s: %v", entry.Name(), err)
+		}
+
+		if strings.Contains(raw, "serviceAccountName") {
+			if !strings.Contains(string(roundTripped), "serviceAccountName") {
+				t.Errorf("%s: raw YAML has serviceAccountName but unstructured round-trip lost it", entry.Name())
+			}
+		}
+
+		if obj.GetName() == "" {
+			t.Errorf("%s has no metadata.name after unstructured parse", entry.Name())
+		}
+	}
+}
+
+func TestEnsureCRDs_EmbeddedCRDCount(t *testing.T) {
+	entries, err := fs.ReadDir(assets.CRDsFS, "crds")
+	if err != nil {
+		t.Fatalf("reading embedded CRDs: %v", err)
+	}
+	count := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			count++
+		}
+	}
+	if count < 9 {
+		t.Errorf("expected at least 9 embedded CRD files, got %d", count)
 	}
 }

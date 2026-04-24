@@ -18,21 +18,25 @@ package resources
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/yaml"
 
 	"github.com/jordigilh/kubernaut/pkg/shared/assets"
 )
 
+const crdFieldManager = "kubernaut-operator"
+
 // EnsureCRDs reads the embedded CRD YAMLs from the shared assets package
-// and applies them to the cluster. Uses CreateOrUpdate with a DeepEqual
-// guard to skip no-op writes and avoid unnecessary API server load.
+// and applies them to the cluster using Server-Side Apply. SSA preserves the
+// full OpenAPI schema (including deeply nested properties like
+// serviceAccountName) that can be lost during Go type round-tripping with
+// typed CRD structs.
 func EnsureCRDs(ctx context.Context, c client.Client) error {
 	entries, err := fs.ReadDir(assets.CRDsFS, "crds")
 	if err != nil {
@@ -49,29 +53,35 @@ func EnsureCRDs(ctx context.Context, c client.Client) error {
 			return fmt.Errorf("reading embedded CRD %s: %w", entry.Name(), err)
 		}
 
-		desired := &apiextensionsv1.CustomResourceDefinition{}
-		if err := yaml.Unmarshal(data, desired); err != nil {
+		obj := &unstructured.Unstructured{}
+		jsonBytes, err := yaml.YAMLToJSON(data)
+		if err != nil {
+			return fmt.Errorf("converting CRD %s YAML to JSON: %w", entry.Name(), err)
+		}
+		if err := json.Unmarshal(jsonBytes, &obj.Object); err != nil {
 			return fmt.Errorf("unmarshalling CRD %s: %w", entry.Name(), err)
 		}
 
-		existing := &apiextensionsv1.CustomResourceDefinition{}
-		existing.Name = desired.Name
-		_, err = controllerutil.CreateOrUpdate(ctx, c, existing, func() error {
-			specChanged := !equality.Semantic.DeepEqual(existing.Spec, desired.Spec)
-			labelsChanged := !equality.Semantic.DeepEqual(existing.Labels, desired.Labels)
-			annotationsChanged := !equality.Semantic.DeepEqual(existing.Annotations, desired.Annotations)
-			if !specChanged && !labelsChanged && !annotationsChanged {
-				return nil
-			}
-			existing.Spec = desired.Spec
-			existing.Labels = desired.Labels
-			existing.Annotations = desired.Annotations
-			return nil
-		})
-		if err != nil {
-			return fmt.Errorf("ensuring CRD %s: %w", desired.Name, err)
+		obj.SetManagedFields(nil)
+		if err := c.Patch(ctx, obj, client.Apply, client.FieldOwner(crdFieldManager), client.ForceOwnership); err != nil {
+			return fmt.Errorf("applying CRD %s: %w", entry.Name(), err)
 		}
 	}
 
 	return nil
+}
+
+// CRDName returns the cluster-scoped name for a given embedded CRD file,
+// useful for testing.
+func CRDName(ctx context.Context, c client.Client, name string) (types.NamespacedName, error) {
+	data, err := fs.ReadFile(assets.CRDsFS, "crds/"+name)
+	if err != nil {
+		return types.NamespacedName{}, err
+	}
+	obj := &unstructured.Unstructured{}
+	jsonBytes, _ := yaml.YAMLToJSON(data)
+	if err := json.Unmarshal(jsonBytes, &obj.Object); err != nil {
+		return types.NamespacedName{}, err
+	}
+	return types.NamespacedName{Name: obj.GetName()}, nil
 }
