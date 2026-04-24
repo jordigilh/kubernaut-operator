@@ -25,8 +25,9 @@ import (
 // The operator deploys all Kubernaut services into the CR's namespace and
 // auto-derives OCP platform configuration (monitoring, service-ca, Routes).
 type KubernautSpec struct {
-	// Image configuration for all Kubernaut service containers.
-	Image ImageSpec `json:"image"`
+	// Image pull policy, pull secrets, and optional per-component overrides.
+	// +optional
+	Image ImageSpec `json:"image,omitempty"`
 
 	// BYO PostgreSQL connection. The operator validates the secret and derives
 	// the DataStorage db-secrets.yaml Secret automatically.
@@ -83,40 +84,12 @@ type KubernautSpec struct {
 	DataStorage DataStorageSpec `json:"dataStorage,omitempty"`
 }
 
-// ImageSpec configures how container images are resolved for all services.
-// Images are constructed as: {Registry}/{Namespace}{Separator}{service}:{Tag}
-// or {Registry}/{Namespace}{Separator}{service}@{Digest} when Digest is set.
-// +kubebuilder:validation:XValidation:rule="has(self.tag) || has(self.digest)",message="image.tag or image.digest must be set"
+// ImageSpec configures container image policy for all services.
+// Service images are resolved from RELATED_IMAGE_* environment variables
+// set on the operator manager pod (populated at build time and rewritten
+// by OLM for disconnected/mirrored registries). Use Overrides only for
+// non-OLM or advanced deployments.
 type ImageSpec struct {
-	// Container registry hostname.
-	// +kubebuilder:default="quay.io"
-	// +kubebuilder:validation:MinLength=1
-	// +optional
-	Registry string `json:"registry,omitempty"`
-
-	// Registry namespace / organization. Default: "kubernaut-ai".
-	// +kubebuilder:default="kubernaut-ai"
-	// +optional
-	Namespace string `json:"namespace,omitempty"`
-
-	// Separator between namespace and service name.
-	// "/" for nested registries (quay.io/kubernaut-ai/gateway),
-	// "-" for flat registries (quay.io/myorg/kubernaut-ai-gateway).
-	// +kubebuilder:default="/"
-	// +optional
-	Separator string `json:"separator,omitempty"`
-
-	// Image tag applied to all services. Required unless Digest is set.
-	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9._-]+$`
-	// +optional
-	Tag string `json:"tag,omitempty"`
-
-	// Image digest (e.g. "sha256:abc..."). Overrides Tag for
-	// immutable or air-gapped deployments.
-	// +kubebuilder:validation:Pattern=`^sha256:[a-f0-9]{64}$`
-	// +optional
-	Digest string `json:"digest,omitempty"`
-
 	// Pull policy for all containers.
 	// +kubebuilder:default="IfNotPresent"
 	// +optional
@@ -125,6 +98,13 @@ type ImageSpec struct {
 	// Pull secrets for private registries.
 	// +optional
 	PullSecrets []corev1.LocalObjectReference `json:"pullSecrets,omitempty"`
+
+	// Per-component image overrides. Keys are component names
+	// (e.g. "gateway", "datastorage", "kubernautagent"), values are full
+	// image references (e.g. "myregistry.example.com/gateway:v1.4.0").
+	// When set, overrides the RELATED_IMAGE env var for that component.
+	// +optional
+	Overrides map[string]string `json:"overrides,omitempty"`
 }
 
 // PostgreSQLSpec defines the BYO PostgreSQL connection.

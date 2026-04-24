@@ -463,18 +463,18 @@ spec:
                     type: object
                 type: object
               image:
-                description: Image configuration for all Kubernaut service containers.
+                description: Image pull policy, pull secrets, and optional per-component
+                  overrides.
                 properties:
-                  digest:
+                  overrides:
+                    additionalProperties:
+                      type: string
                     description: |-
-                      Image digest (e.g. "sha256:abc..."). Overrides Tag for
-                      immutable or air-gapped deployments.
-                    pattern: ^sha256:[a-f0-9]{64}$
-                    type: string
-                  namespace:
-                    default: kubernaut-ai
-                    description: 'Registry namespace / organization. Default: "kubernaut-ai".'
-                    type: string
+                      Per-component image overrides. Keys are component names
+                      (e.g. "gateway", "datastorage", "kubernautagent"), values are full
+                      image references (e.g. "myregistry.example.com/gateway:v1.4.0").
+                      When set, overrides the RELATED_IMAGE env var for that component.
+                    type: object
                   pullPolicy:
                     default: IfNotPresent
                     description: Pull policy for all containers.
@@ -498,27 +498,7 @@ spec:
                       type: object
                       x-kubernetes-map-type: atomic
                     type: array
-                  registry:
-                    default: quay.io
-                    description: Container registry hostname.
-                    minLength: 1
-                    type: string
-                  separator:
-                    default: /
-                    description: |-
-                      Separator between namespace and service name.
-                      "/" for nested registries (quay.io/kubernaut-ai/gateway),
-                      "-" for flat registries (quay.io/myorg/kubernaut-ai-gateway).
-                    type: string
-                  tag:
-                    description: Image tag applied to all services. Required unless
-                      Digest is set.
-                    pattern: ^[a-zA-Z0-9._-]+$
-                    type: string
                 type: object
-                x-kubernetes-validations:
-                - message: image.tag or image.digest must be set
-                  rule: has(self.tag) || has(self.digest)
               kubernautAgent:
                 description: Kubernaut Agent (KA) -- LLM-powered investigation and
                   analysis service.
@@ -1041,7 +1021,6 @@ spec:
                     type: string
                 type: object
             required:
-            - image
             - kubernautAgent
             - postgresql
             - valkey
