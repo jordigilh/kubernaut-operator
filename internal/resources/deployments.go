@@ -484,6 +484,7 @@ type DeploymentParams struct {
 	Strategy       *appsv1.DeploymentStrategy
 	LivenessPath   string
 	ReadinessPath  string
+	PodAnnotations map[string]string
 }
 
 func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*appsv1.Deployment, error) {
@@ -541,7 +542,10 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 			Replicas: ptr.To[int32](1),
 			Selector: &metav1.LabelSelector{MatchLabels: SelectorLabels(p.Component)},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: ComponentLabels(kn, p.Component)},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      ComponentLabels(kn, p.Component),
+					Annotations: p.PodAnnotations,
+				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: ServiceAccountName(p.Component),
 					SecurityContext:    PodSecurityContext(),
