@@ -73,6 +73,7 @@ type gatewayDatastorageYAML struct {
 }
 
 type gatewayConfigYAML struct {
+	TLSProfile  string                 `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Server      gatewayServerYAML      `json:"server" yaml:"server"`
 	Middleware  gatewayMiddlewareYAML  `json:"middleware" yaml:"middleware"`
 	Datastorage gatewayDatastorageYAML `json:"datastorage" yaml:"datastorage"`
@@ -119,10 +120,11 @@ type dataStorageLoggingYAML struct {
 }
 
 type dataStorageConfigYAML struct {
-	Server   dataStorageServerYAML   `json:"server" yaml:"server"`
-	Database dataStorageDatabaseYAML `json:"database" yaml:"database"`
-	Redis    dataStorageRedisYAML    `json:"redis" yaml:"redis"`
-	Logging  dataStorageLoggingYAML  `json:"logging" yaml:"logging"`
+	TLSProfile string                  `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
+	Server     dataStorageServerYAML   `json:"server" yaml:"server"`
+	Database   dataStorageDatabaseYAML `json:"database" yaml:"database"`
+	Redis      dataStorageRedisYAML    `json:"redis" yaml:"redis"`
+	Logging    dataStorageLoggingYAML  `json:"logging" yaml:"logging"`
 }
 
 type dataStorageBufferYAML struct {
@@ -151,6 +153,7 @@ type aiAnalysisRegoYAML struct {
 
 // aiAnalysisConfigYAML embeds controllerConfig under "controller" via controllerBlock.
 type aiAnalysisConfigYAML struct {
+	TLSProfile     string                       `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Controller     controllerBlock              `json:"controller" yaml:"controller"`
 	KubernautAgent aiAnalysisKubernautAgentYAML `json:"kubernautAgent" yaml:"kubernautAgent"`
 	Datastorage    aiAnalysisDatastorageYAML    `json:"datastorage" yaml:"datastorage"`
@@ -183,6 +186,7 @@ type signalProcessingDatastorageYAML struct {
 
 // signalProcessingConfigYAML embeds controllerConfig under "controller" via controllerBlock.
 type signalProcessingConfigYAML struct {
+	TLSProfile  string                          `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Controller  controllerBlock                 `json:"controller" yaml:"controller"`
 	Enrichment  signalProcessingEnrichmentYAML  `json:"enrichment" yaml:"enrichment"`
 	Classifier  signalProcessingClassifierYAML  `json:"classifier" yaml:"classifier"`
@@ -217,6 +221,7 @@ type roAsyncPropagationYAML struct {
 }
 
 type remediationOrchestratorConfigYAML struct {
+	TLSProfile              string                 `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	DataStorageURL          string                 `json:"dataStorageUrl" yaml:"dataStorageUrl"`
 	Timeouts                roTimeoutsYAML         `json:"timeouts" yaml:"timeouts"`
 	Routing                 roRoutingYAML          `json:"routing" yaml:"routing"`
@@ -233,6 +238,7 @@ type workflowExecutionAnsibleYAML struct {
 }
 
 type workflowExecutionConfigYAML struct {
+	TLSProfile         string                        `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	DataStorageURL     string                        `json:"dataStorageUrl" yaml:"dataStorageUrl"`
 	WorkflowNamespace  string                        `json:"workflowNamespace" yaml:"workflowNamespace"`
 	CooldownPeriod     string                        `json:"cooldownPeriod" yaml:"cooldownPeriod"`
@@ -259,6 +265,7 @@ type emExternalYAML struct {
 }
 
 type effectivenessMonitorConfigYAML struct {
+	TLSProfile  string            `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Assessment  emAssessmentYAML  `json:"assessment" yaml:"assessment"`
 	Controller  controllerBlock   `json:"controller" yaml:"controller"`
 	Datastorage emDatastorageYAML `json:"datastorage" yaml:"datastorage"`
@@ -310,6 +317,7 @@ type notificationDatastorageYAML struct {
 
 // notificationControllerConfigYAML embeds controllerConfig under "controller" via controllerBlock.
 type notificationControllerConfigYAML struct {
+	TLSProfile  string                      `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Controller  controllerBlock             `json:"controller" yaml:"controller"`
 	Delivery    notificationDeliveryYAML    `json:"delivery" yaml:"delivery"`
 	Credentials notificationCredentialsYAML `json:"credentials" yaml:"credentials"`
@@ -369,6 +377,7 @@ type kubernautAgentServerYAML struct {
 }
 
 type kubernautAgentConfigYAML struct {
+	TLSProfile  string                        `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Server      kubernautAgentServerYAML      `json:"server" yaml:"server"`
 	DataStorage kubernautAgentDatastorageYAML `json:"data_storage" yaml:"data_storage"`
 	Tools       *kubernautAgentToolsYAML      `json:"tools,omitempty" yaml:"tools,omitempty"`
@@ -401,8 +410,32 @@ type authWebhookDatastorageYAML struct {
 }
 
 type authWebhookConfigYAML struct {
+	TLSProfile  string                     `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Webhook     authWebhookWebhookYAML     `json:"webhook" yaml:"webhook"`
 	Datastorage authWebhookDatastorageYAML `json:"datastorage" yaml:"datastorage"`
+}
+
+// configMapOpts holds resolved functional options for ConfigMap builders.
+type configMapOpts struct {
+	tlsProfile string
+}
+
+// ConfigMapOption is a functional option for ConfigMap builders.
+type ConfigMapOption func(*configMapOpts)
+
+// WithTLSProfile injects the cluster TLS security profile name into the
+// service's ConfigMap YAML. Omit this option on non-OCP clusters or when
+// the profile is unset (services fall back to Go's TLS 1.2 defaults).
+func WithTLSProfile(profile string) ConfigMapOption {
+	return func(o *configMapOpts) { o.tlsProfile = profile }
+}
+
+func resolveOpts(opts []ConfigMapOption) configMapOpts {
+	var o configMapOpts
+	for _, fn := range opts {
+		fn(&o)
+	}
+	return o
 }
 
 // marshalYAML uses sigs.k8s.io/yaml.Marshal, which serializes via encoding/json
@@ -416,7 +449,8 @@ func marshalYAML(v any) (string, error) {
 }
 
 // GatewayConfigMap builds the gateway-config ConfigMap.
-func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+	o := resolveOpts(opts)
 	ns := kn.Namespace
 	gwCfg := &kn.Spec.Gateway.Config
 
@@ -426,6 +460,7 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error
 	}
 
 	cfg := gatewayConfigYAML{
+		TLSProfile: o.tlsProfile,
 		Server: gatewayServerYAML{
 			ListenAddr:            ":8080",
 			HealthAddr:            ":8081",
@@ -457,9 +492,11 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error
 // DataStorageConfigMap builds the data-storage config ConfigMap. The dbName and
 // dbUser parameters must match the values written into the DataStorageDBSecret
 // to avoid a config/secret mismatch.
-func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string) (*corev1.ConfigMap, error) {
+func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+	o := resolveOpts(opts)
 	pgPort := PostgreSQLPort(kn)
 	cfg := dataStorageConfigYAML{
+		TLSProfile: o.tlsProfile,
 		Server: dataStorageServerYAML{
 			Port:         8080,
 			Host:         "0.0.0.0",
@@ -508,7 +545,8 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string
 }
 
 // AIAnalysisConfigMap builds the aianalysis-config ConfigMap.
-func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+	o := resolveOpts(opts)
 	ns := kn.Namespace
 	rego := aiAnalysisRegoYAML{
 		PolicyPath: "/etc/aianalysis/policies/approval.rego",
@@ -517,6 +555,7 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, er
 		rego.ConfidenceThreshold = kn.Spec.AIAnalysis.ConfidenceThreshold
 	}
 	cfg := aiAnalysisConfigYAML{
+		TLSProfile: o.tlsProfile,
 		Controller: newControllerBlock("aianalysis.kubernaut.ai"),
 		KubernautAgent: aiAnalysisKubernautAgentYAML{
 			URL:                 fmt.Sprintf("https://kubernaut-agent.%s.svc.cluster.local:8080", ns),
@@ -560,7 +599,8 @@ func AIAnalysisPoliciesConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.Config
 }
 
 // SignalProcessingConfigMap builds the signalprocessing-config ConfigMap.
-func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+	o := resolveOpts(opts)
 	ns := kn.Namespace
 	buf := signalProcessingBufferYAML{
 		BufferSize:    10000,
@@ -569,6 +609,7 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigM
 		MaxRetries:    3,
 	}
 	cfg := signalProcessingConfigYAML{
+		TLSProfile: o.tlsProfile,
 		Controller: newControllerBlock("signalprocessing.kubernaut.ai"),
 		Enrichment: signalProcessingEnrichmentYAML{
 			CacheTTL: "5m",
@@ -610,10 +651,12 @@ func SignalProcessingPolicyConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.Co
 }
 
 // RemediationOrchestratorConfigMap builds the remediationorchestrator-config ConfigMap.
-func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+	o := resolveOpts(opts)
 	ro := &kn.Spec.RemediationOrchestrator
 	ns := kn.Namespace
 	cfg := remediationOrchestratorConfigYAML{
+		TLSProfile:     o.tlsProfile,
 		DataStorageURL: DataStorageURL(ns),
 		Timeouts: roTimeoutsYAML{
 			Global:     withDefault(ro.Timeouts.Global, "1h"),
@@ -650,7 +693,8 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.
 }
 
 // WorkflowExecutionConfigMap builds the workflowexecution-config ConfigMap.
-func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+	o := resolveOpts(opts)
 	we := &kn.Spec.WorkflowExecution
 	wfNs := ResolveWorkflowNamespace(kn)
 	cooldown := we.CooldownPeriod
@@ -658,6 +702,7 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Config
 		cooldown = "1m"
 	}
 	cfg := workflowExecutionConfigYAML{
+		TLSProfile:         o.tlsProfile,
 		DataStorageURL:     DataStorageURL(kn.Namespace),
 		WorkflowNamespace:  wfNs,
 		CooldownPeriod:     cooldown,
@@ -686,9 +731,11 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Config
 }
 
 // EffectivenessMonitorConfigMap builds the effectivenessmonitor-config ConfigMap.
-func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+	o := resolveOpts(opts)
 	em := &kn.Spec.EffectivenessMonitor
 	cfg := effectivenessMonitorConfigYAML{
+		TLSProfile: o.tlsProfile,
 		Assessment: emAssessmentYAML{
 			StabilizationWindow: withDefault(em.Assessment.StabilizationWindow, "30s"),
 			ValidityWindow:      withDefault(em.Assessment.ValidityWindow, "120s"),
@@ -719,7 +766,8 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Con
 }
 
 // NotificationControllerConfigMap builds the notification-controller-config ConfigMap.
-func NotificationControllerConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+func NotificationControllerConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+	o := resolveOpts(opts)
 	buf := notificationBufferYAML{
 		BufferSize:    10000,
 		BatchSize:     100,
@@ -732,6 +780,7 @@ func NotificationControllerConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.C
 		Buffer:  buf,
 	}
 	cfg := notificationControllerConfigYAML{
+		TLSProfile: o.tlsProfile,
 		Controller: newControllerBlock("notification.kubernaut.ai"),
 		Delivery: notificationDeliveryYAML{
 			Console: notificationConsoleYAML{Enabled: true},
@@ -807,9 +856,11 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Conf
 }
 
 // KubernautAgentConfigMap builds the kubernaut-agent-config ConfigMap.
-func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+	o := resolveOpts(opts)
 	ns := kn.Namespace
 	cfg := kubernautAgentConfigYAML{
+		TLSProfile: o.tlsProfile,
 		Server: kubernautAgentServerYAML{
 			Address:     "0.0.0.0",
 			Port:        8080,
@@ -858,7 +909,8 @@ func KubernautAgentSDKConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Config
 }
 
 // AuthWebhookConfigMap builds the authwebhook-config ConfigMap.
-func AuthWebhookConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+func AuthWebhookConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+	o := resolveOpts(opts)
 	buf := authWebhookBufferYAML{
 		BufferSize:    1000,
 		BatchSize:     100,
@@ -871,6 +923,7 @@ func AuthWebhookConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 		Buffer:  buf,
 	}
 	cfg := authWebhookConfigYAML{
+		TLSProfile: o.tlsProfile,
 		Webhook: authWebhookWebhookYAML{
 			Port:            9443,
 			CertDir:         "/tmp/k8s-webhook-server/serving-certs",
