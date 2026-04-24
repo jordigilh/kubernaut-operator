@@ -1257,7 +1257,72 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	})
 
 	// ======================================================================
-	// 14. Deletion Cleanup Completeness
+	// 14. TLS Profile Injection and ConfigMap-Hash Rollout
+	// ======================================================================
+
+	Context("TLS Profile Injection and ConfigMap-Hash Rollout", func() {
+		It("should stamp configmap-hash annotation on Deployment pod templates", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			reconcileToRunning(ctx)
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "gateway-deployment", Namespace: testNamespace,
+			}, dep)).To(Succeed())
+
+			podAnnotations := dep.Spec.Template.Annotations
+			Expect(podAnnotations).To(HaveKey(resources.AnnotationConfigMapHash),
+				"Deployment pod template should have configmap-hash annotation")
+			Expect(podAnnotations[resources.AnnotationConfigMapHash]).NotTo(BeEmpty())
+		})
+
+		It("should update configmap-hash when a ConfigMap-affecting spec field changes", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "remediationorchestrator-deployment", Namespace: testNamespace,
+			}, dep)).To(Succeed())
+			oldHash := dep.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
+			Expect(oldHash).NotTo(BeEmpty())
+
+			By("changing a spec field that alters the RO ConfigMap")
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			kn.Spec.RemediationOrchestrator.Timeouts.Global = "99h"
+			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
+
+			By("reconciling to propagate")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "remediationorchestrator-deployment", Namespace: testNamespace,
+			}, dep)).To(Succeed())
+			newHash := dep.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
+			Expect(newHash).NotTo(Equal(oldHash),
+				"configmap-hash should change when the underlying ConfigMap content changes")
+		})
+
+		It("should gracefully skip TLS profile on non-OCP clusters (no tlsProfile in ConfigMaps)", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			reconcileToRunning(ctx)
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "gateway-config", Namespace: testNamespace,
+			}, cm)).To(Succeed())
+			Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("tlsProfile"),
+				"tlsProfile should be omitted when the APIServer CR is not available")
+		})
+	})
+
+	// ======================================================================
+	// 15. Deletion Cleanup Completeness
 	// ======================================================================
 
 	Context("Deletion Cleanup Completeness", func() {
