@@ -33,6 +33,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -81,6 +82,7 @@ type KubernautReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+	RestCfg  *rest.Config
 }
 
 // +kubebuilder:rbac:groups=kubernaut.ai,resources=kubernauts,verbs=get;list;watch;create;update;patch;delete
@@ -222,7 +224,7 @@ func (r *KubernautReconciler) phaseMigrate(ctx context.Context, kn *kubernautv1a
 // ensureMigrationPrereqs installs CRDs, derives the DataStorage DB secret
 // from the user-provided PostgreSQL secret, and ensures the migration ConfigMap.
 func (r *KubernautReconciler) ensureMigrationPrereqs(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
-	if err := resources.EnsureCRDs(ctx, r.Client); err != nil {
+	if err := resources.EnsureCRDs(ctx, r.RestCfg); err != nil {
 		return err
 	}
 

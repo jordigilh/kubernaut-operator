@@ -18,26 +18,41 @@ package resources
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io/fs"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/yaml"
 
 	"github.com/jordigilh/kubernaut/pkg/shared/assets"
 )
 
-const crdFieldManager = "kubernaut-operator"
+var crdGVR = schema.GroupVersionResource{
+	Group:    "apiextensions.k8s.io",
+	Version:  "v1",
+	Resource: "customresourcedefinitions",
+}
 
 // EnsureCRDs reads the embedded CRD YAMLs from the shared assets package
-// and applies them to the cluster using Server-Side Apply. SSA preserves the
-// full OpenAPI schema (including deeply nested properties like
-// serviceAccountName) that can be lost during Go type round-tripping with
-// typed CRD structs.
-func EnsureCRDs(ctx context.Context, c client.Client) error {
+// and applies them to the cluster using the dynamic client.
+//
+// We bypass the controller-runtime typed client because it registers
+// apiextensionsv1 in its scheme, causing automatic conversion from
+// unstructured to typed Go structs. That round-trip silently drops deeply
+// nested JSONSchemaProps properties (e.g. serviceAccountName under
+// execution.properties). The dynamic client sends the raw JSON as-is.
+func EnsureCRDs(ctx context.Context, cfg *rest.Config) error {
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("creating dynamic client for CRDs: %w", err)
+	}
+	crdClient := dyn.Resource(crdGVR)
+
 	entries, err := fs.ReadDir(assets.CRDsFS, "crds")
 	if err != nil {
 		return fmt.Errorf("reading embedded CRD directory: %w", err)
@@ -53,35 +68,39 @@ func EnsureCRDs(ctx context.Context, c client.Client) error {
 			return fmt.Errorf("reading embedded CRD %s: %w", entry.Name(), err)
 		}
 
-		obj := &unstructured.Unstructured{}
-		jsonBytes, err := yaml.YAMLToJSON(data)
+		desired, err := yamlToUnstructured(data)
 		if err != nil {
-			return fmt.Errorf("converting CRD %s YAML to JSON: %w", entry.Name(), err)
-		}
-		if err := json.Unmarshal(jsonBytes, &obj.Object); err != nil {
-			return fmt.Errorf("unmarshalling CRD %s: %w", entry.Name(), err)
+			return fmt.Errorf("parsing CRD %s: %w", entry.Name(), err)
 		}
 
-		obj.SetManagedFields(nil)
-		if err := c.Patch(ctx, obj, client.Apply, client.FieldOwner(crdFieldManager), client.ForceOwnership); err != nil {
-			return fmt.Errorf("applying CRD %s: %w", entry.Name(), err)
+		existing, err := crdClient.Get(ctx, desired.GetName(), metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			if _, createErr := crdClient.Create(ctx, desired, metav1.CreateOptions{}); createErr != nil {
+				return fmt.Errorf("creating CRD %s: %w", desired.GetName(), createErr)
+			}
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("getting CRD %s: %w", desired.GetName(), err)
+		}
+
+		desired.SetResourceVersion(existing.GetResourceVersion())
+		if _, err := crdClient.Update(ctx, desired, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("updating CRD %s: %w", desired.GetName(), err)
 		}
 	}
 
 	return nil
 }
 
-// CRDName returns the cluster-scoped name for a given embedded CRD file,
-// useful for testing.
-func CRDName(ctx context.Context, c client.Client, name string) (types.NamespacedName, error) {
-	data, err := fs.ReadFile(assets.CRDsFS, "crds/"+name)
+func yamlToUnstructured(data []byte) (*unstructured.Unstructured, error) {
+	jsonBytes, err := yaml.YAMLToJSON(data)
 	if err != nil {
-		return types.NamespacedName{}, err
+		return nil, err
 	}
 	obj := &unstructured.Unstructured{}
-	jsonBytes, _ := yaml.YAMLToJSON(data)
-	if err := json.Unmarshal(jsonBytes, &obj.Object); err != nil {
-		return types.NamespacedName{}, err
+	if err := obj.UnmarshalJSON(jsonBytes); err != nil {
+		return nil, err
 	}
-	return types.NamespacedName{Name: obj.GetName()}, nil
+	return obj, nil
 }

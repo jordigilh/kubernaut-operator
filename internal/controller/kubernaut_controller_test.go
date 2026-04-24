@@ -86,6 +86,7 @@ func newReconciler() *KubernautReconciler {
 		Client:   k8sClient,
 		Scheme:   k8sClient.Scheme(),
 		Recorder: record.NewFakeRecorder(100),
+		RestCfg:  cfg,
 	}
 }
 

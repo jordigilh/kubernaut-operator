@@ -143,8 +143,9 @@ func main() {
 	}
 
 	if err := (&controller.KubernautReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		RestCfg: mgr.GetConfig(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Kubernaut")
 		os.Exit(1)

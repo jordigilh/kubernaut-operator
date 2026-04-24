@@ -17,13 +17,11 @@ limitations under the License.
 package resources
 
 import (
-	"encoding/json"
 	"io/fs"
 	"strings"
 	"testing"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	sigsyaml "sigs.k8s.io/yaml"
 
 	"github.com/jordigilh/kubernaut/pkg/shared/assets"
@@ -60,7 +58,7 @@ func TestEnsureCRDs_EmbeddedYAMLParses(t *testing.T) {
 	}
 }
 
-func TestEnsureCRDs_UnstructuredRoundTrip_PreservesAllFields(t *testing.T) {
+func TestEnsureCRDs_YamlToUnstructured_PreservesAllFields(t *testing.T) {
 	entries, err := fs.ReadDir(assets.CRDsFS, "crds")
 	if err != nil {
 		t.Fatalf("reading embedded CRDs: %v", err)
@@ -76,29 +74,24 @@ func TestEnsureCRDs_UnstructuredRoundTrip_PreservesAllFields(t *testing.T) {
 		}
 		raw := string(data)
 
-		jsonBytes, err := sigsyaml.YAMLToJSON(data)
+		obj, err := yamlToUnstructured(data)
 		if err != nil {
-			t.Fatalf("converting %s to JSON: %v", entry.Name(), err)
+			t.Fatalf("yamlToUnstructured(%s): %v", entry.Name(), err)
 		}
 
-		obj := &unstructured.Unstructured{}
-		if err := json.Unmarshal(jsonBytes, &obj.Object); err != nil {
-			t.Fatalf("unmarshalling %s to unstructured: %v", entry.Name(), err)
-		}
-
-		roundTripped, err := json.Marshal(obj.Object)
+		roundTripped, err := obj.MarshalJSON()
 		if err != nil {
 			t.Fatalf("re-marshalling %s: %v", entry.Name(), err)
 		}
 
 		if strings.Contains(raw, "serviceAccountName") {
 			if !strings.Contains(string(roundTripped), "serviceAccountName") {
-				t.Errorf("%s: raw YAML has serviceAccountName but unstructured round-trip lost it", entry.Name())
+				t.Errorf("%s: raw YAML has serviceAccountName but yamlToUnstructured round-trip lost it", entry.Name())
 			}
 		}
 
 		if obj.GetName() == "" {
-			t.Errorf("%s has no metadata.name after unstructured parse", entry.Name())
+			t.Errorf("%s has no metadata.name after yamlToUnstructured", entry.Name())
 		}
 	}
 }

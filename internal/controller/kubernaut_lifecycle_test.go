@@ -948,10 +948,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		})
 
 		It("should be idempotent on repeated EnsureCRDs calls", func() {
-			err := resources.EnsureCRDs(ctx, k8sClient)
+			err := resources.EnsureCRDs(ctx, cfg)
 			Expect(err).NotTo(HaveOccurred())
 
-			err = resources.EnsureCRDs(ctx, k8sClient)
+			err = resources.EnsureCRDs(ctx, cfg)
 			Expect(err).NotTo(HaveOccurred(), "second call should be idempotent")
 		})
 	})
