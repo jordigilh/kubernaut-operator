@@ -145,7 +145,7 @@ func TestRemediationOrchestratorConfigMap_Defaults(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data := cm.Data["config.yaml"]
+	data := cm.Data["remediationorchestrator.yaml"]
 	defaults := []string{
 		"global: 1h", "processing: 5m", "analyzing: 10m", "executing: 30m", "verifying: 30m",
 		"ineffectiveChainThreshold: 3", "recurrenceCountThreshold: 5", "ineffectiveTimeWindow: 4h",
@@ -166,7 +166,7 @@ func TestRemediationOrchestratorConfigMap_CustomValues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data := cm.Data["config.yaml"]
+	data := cm.Data["remediationorchestrator.yaml"]
 	if !strings.Contains(data, "global: 2h") {
 		t.Errorf("RO config should use custom global timeout, got:\n%s", data)
 	}
@@ -182,7 +182,7 @@ func TestWorkflowExecutionConfigMap_DefaultNamespace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data := cm.Data["config.yaml"]
+	data := cm.Data["workflowexecution.yaml"]
 	if !strings.Contains(data, "kubernaut-workflows") {
 		t.Errorf("WE config should use default workflow namespace, got:\n%s", data)
 	}
@@ -196,7 +196,7 @@ func TestWorkflowExecutionConfigMap_CustomNamespace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data := cm.Data["config.yaml"]
+	data := cm.Data["workflowexecution.yaml"]
 	if !strings.Contains(data, "custom-wf") {
 		t.Errorf("WE config should use custom workflow namespace, got:\n%s", data)
 	}
@@ -209,7 +209,7 @@ func TestEffectivenessMonitorConfigMap_Defaults(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data := cm.Data["config.yaml"]
+	data := cm.Data["effectivenessmonitor.yaml"]
 	if !strings.Contains(data, "stabilizationWindow: 30s") {
 		t.Errorf("EM config should have default stabilization window, got:\n%s", data)
 	}
@@ -322,7 +322,7 @@ func TestEffectivenessMonitorConfigMap_MonitoringURLs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data := cm.Data["config.yaml"]
+	data := cm.Data["effectivenessmonitor.yaml"]
 
 	if !strings.Contains(data, OCPPrometheusURL) {
 		t.Errorf("EM config should contain Prometheus URL when monitoring enabled, got:\n%s", data)
@@ -333,7 +333,7 @@ func TestEffectivenessMonitorConfigMap_MonitoringURLs(t *testing.T) {
 	if !strings.Contains(data, "external:") {
 		t.Errorf("EM config should contain external section when monitoring enabled, got:\n%s", data)
 	}
-	if !strings.Contains(data, "tlsCaFile: /etc/ssl/effectivenessmonitor/service-ca.crt") {
+	if !strings.Contains(data, "tlsCaFile: /etc/ssl/em/service-ca.crt") {
 		t.Errorf("EM config should contain external.tlsCaFile when monitoring enabled, got:\n%s", data)
 	}
 }
@@ -346,7 +346,7 @@ func TestEffectivenessMonitorConfigMap_NoMonitoringURLsWhenDisabled(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	data := cm.Data["config.yaml"]
+	data := cm.Data["effectivenessmonitor.yaml"]
 
 	if strings.Contains(data, "external:") {
 		t.Errorf("EM config should not contain external monitoring section when disabled, got:\n%s", data)
@@ -397,11 +397,8 @@ func TestAuthWebhookConfigMap_UsesDefaultConfigFilename(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, ok := cm.Data["config.yaml"]; !ok {
-		t.Fatalf("AuthWebhookConfigMap should write config.yaml, keys: %#v", cm.Data)
-	}
-	if _, ok := cm.Data["authwebhook.yaml"]; ok {
-		t.Fatalf("AuthWebhookConfigMap should not write legacy authwebhook.yaml, keys: %#v", cm.Data)
+	if _, ok := cm.Data["authwebhook.yaml"]; !ok {
+		t.Fatalf("AuthWebhookConfigMap should write authwebhook.yaml, keys: %#v", cm.Data)
 	}
 }
 
@@ -418,7 +415,7 @@ func TestWorkflowExecutionConfigMap_AWXWiring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data := cm.Data["config.yaml"]
+	data := cm.Data["workflowexecution.yaml"]
 
 	for _, want := range []string{
 		"ansible:",
@@ -440,7 +437,7 @@ func TestWorkflowExecutionConfigMap_NoAWXWhenDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data := cm.Data["config.yaml"]
+	data := cm.Data["workflowexecution.yaml"]
 
 	if strings.Contains(data, "ansible:") {
 		t.Errorf("WE config should not contain ansible section when disabled, got:\n%s", data)
@@ -453,7 +450,7 @@ func TestWorkflowExecutionConfigMap_ServiceAccountName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data := cm.Data["config.yaml"]
+	data := cm.Data["workflowexecution.yaml"]
 
 	if !strings.Contains(data, "serviceAccountName: kubernaut-workflow-runner") {
 		t.Errorf("WE config should include serviceAccountName, got:\n%s", data)

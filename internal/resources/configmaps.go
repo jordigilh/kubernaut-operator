@@ -645,7 +645,7 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.
 	}
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "remediationorchestrator-config", ComponentRemediationOrchestrator),
-		Data:       map[string]string{"config.yaml": data},
+		Data:       map[string]string{"remediationorchestrator.yaml": data},
 	}, nil
 }
 
@@ -681,7 +681,7 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Config
 	}
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "workflowexecution-config", ComponentWorkflowExecution),
-		Data:       map[string]string{"config.yaml": data},
+		Data:       map[string]string{"workflowexecution.yaml": data},
 	}, nil
 }
 
@@ -705,7 +705,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Con
 			AlertManagerURL:     OCPAlertManagerURL,
 			AlertManagerEnabled: true,
 			ConnectionTimeout:   "10s",
-			TLSCaFile:           "/etc/ssl/effectivenessmonitor/service-ca.crt",
+			TLSCaFile:           "/etc/ssl/em/service-ca.crt",
 		}
 	}
 	data, err := marshalYAML(cfg)
@@ -714,7 +714,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Con
 	}
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "effectivenessmonitor-config", ComponentEffectivenessMonitor),
-		Data:       map[string]string{"config.yaml": data},
+		Data:       map[string]string{"effectivenessmonitor.yaml": data},
 	}, nil
 }
 
@@ -884,7 +884,7 @@ func AuthWebhookConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 	}
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "authwebhook-config", ComponentAuthWebhook),
-		Data:       map[string]string{"config.yaml": data},
+		Data:       map[string]string{"authwebhook.yaml": data},
 	}, nil
 }
 

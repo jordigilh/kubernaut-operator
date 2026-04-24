@@ -18,7 +18,9 @@ package resources
 
 import (
 	"fmt"
+	"os"
 	"regexp"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -161,36 +163,44 @@ func SelectorLabels(component string) map[string]string {
 	}
 }
 
-// Image constructs a fully-qualified container image reference.
-// Pattern: {Registry}/{Namespace}{Separator}{service}:{Tag}
-// or       {Registry}/{Namespace}{Separator}{service}@{Digest}
-// Returns an error if the spec would produce an invalid image reference.
-func Image(spec *kubernautv1alpha1.ImageSpec, service string) (string, error) {
-	if spec.Tag == "" && spec.Digest == "" {
-		return "", fmt.Errorf("image tag or digest must be set for service %q", service)
+// componentEnvSuffix maps a DeploymentParams.ImageName to the RELATED_IMAGE
+// env var suffix. The env var is RELATED_IMAGE_<SUFFIX>.
+var componentEnvSuffix = map[string]string{
+	"gateway":                 "GATEWAY",
+	"datastorage":             "DATA_STORAGE",
+	"aianalysis":              "AIANALYSIS",
+	"signalprocessing":        "SIGNALPROCESSING",
+	"remediationorchestrator": "REMEDIATIONORCHESTRATOR",
+	"workflowexecution":       "WORKFLOWEXECUTION",
+	"effectivenessmonitor":    "EFFECTIVENESSMONITOR",
+	"notification":            "NOTIFICATION",
+	"kubernautagent":          "KUBERNAUT_AGENT",
+	"authwebhook":             "AUTHWEBHOOK",
+	"db-migrate":              "DB_MIGRATE",
+}
+
+// ResolveImage returns the fully-qualified container image for a component.
+// Resolution order:
+//  1. CR spec.image.overrides[imageName]  (user override)
+//  2. RELATED_IMAGE_<SUFFIX> env var       (set by OLM / manager.yaml)
+//  3. Error
+func ResolveImage(kn *kubernautv1alpha1.Kubernaut, imageName string) (string, error) {
+	if kn.Spec.Image.Overrides != nil {
+		if img, ok := kn.Spec.Image.Overrides[imageName]; ok && img != "" {
+			return img, nil
+		}
 	}
 
-	registry := spec.Registry
-	if registry == "" {
-		registry = "quay.io"
+	suffix, ok := componentEnvSuffix[imageName]
+	if !ok {
+		suffix = strings.ToUpper(strings.ReplaceAll(imageName, "-", "_"))
 	}
-	ns := spec.Namespace
-	sep := spec.Separator
-	if sep == "" {
-		sep = "/"
-	}
-
-	var repo string
-	if ns != "" {
-		repo = fmt.Sprintf("%s%s%s", ns, sep, service)
-	} else {
-		repo = service
+	envKey := "RELATED_IMAGE_" + suffix
+	if img := os.Getenv(envKey); img != "" {
+		return img, nil
 	}
 
-	if spec.Digest != "" {
-		return fmt.Sprintf("%s/%s@%s", registry, repo, spec.Digest), nil
-	}
-	return fmt.Sprintf("%s/%s:%s", registry, repo, spec.Tag), nil
+	return "", fmt.Errorf("no image found for component %q: set RELATED_IMAGE_%s or spec.image.overrides[%q]", imageName, suffix, imageName)
 }
 
 // ObjectMeta returns a standard ObjectMeta for namespaced resources.

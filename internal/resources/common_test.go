@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"os"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -28,6 +29,13 @@ import (
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
+func TestMain(m *testing.M) {
+	cleanup := setTestRelatedImages()
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
+}
+
 func testKubernaut() *kubernautv1alpha1.Kubernaut {
 	return &kubernautv1alpha1.Kubernaut{
 		ObjectMeta: metav1.ObjectMeta{
@@ -36,10 +44,6 @@ func testKubernaut() *kubernautv1alpha1.Kubernaut {
 		},
 		Spec: kubernautv1alpha1.KubernautSpec{
 			Image: kubernautv1alpha1.ImageSpec{
-				Registry:   "quay.io",
-				Namespace:  "kubernaut-ai",
-				Separator:  "/",
-				Tag:        "v1.3.0",
 				PullPolicy: corev1.PullIfNotPresent,
 			},
 			PostgreSQL: kubernautv1alpha1.PostgreSQLSpec{
@@ -69,105 +73,95 @@ func testKubernaut() *kubernautv1alpha1.Kubernaut {
 	}
 }
 
-func TestImage_NestedRegistry(t *testing.T) {
-	spec := &kubernautv1alpha1.ImageSpec{
-		Registry:  "quay.io",
-		Namespace: "kubernaut-ai",
-		Separator: "/",
-		Tag:       "v1.3.0",
+// setTestRelatedImages sets RELATED_IMAGE env vars for all components
+// so that ResolveImage works in tests. Call cleanup() when done.
+func setTestRelatedImages() (cleanup func()) {
+	envs := map[string]string{
+		"RELATED_IMAGE_GATEWAY":                 "quay.io/kubernaut-ai/gateway:v1.3.0",
+		"RELATED_IMAGE_DATA_STORAGE":            "quay.io/kubernaut-ai/datastorage:v1.3.0",
+		"RELATED_IMAGE_AIANALYSIS":              "quay.io/kubernaut-ai/aianalysis:v1.3.0",
+		"RELATED_IMAGE_SIGNALPROCESSING":        "quay.io/kubernaut-ai/signalprocessing:v1.3.0",
+		"RELATED_IMAGE_REMEDIATIONORCHESTRATOR": "quay.io/kubernaut-ai/remediationorchestrator:v1.3.0",
+		"RELATED_IMAGE_WORKFLOWEXECUTION":       "quay.io/kubernaut-ai/workflowexecution:v1.3.0",
+		"RELATED_IMAGE_EFFECTIVENESSMONITOR":    "quay.io/kubernaut-ai/effectivenessmonitor:v1.3.0",
+		"RELATED_IMAGE_NOTIFICATION":            "quay.io/kubernaut-ai/notification:v1.3.0",
+		"RELATED_IMAGE_KUBERNAUT_AGENT":         "quay.io/kubernaut-ai/kubernautagent:v1.3.0",
+		"RELATED_IMAGE_AUTHWEBHOOK":             "quay.io/kubernaut-ai/authwebhook:v1.3.0",
+		"RELATED_IMAGE_DB_MIGRATE":              "quay.io/kubernaut-ai/db-migrate:v1.3.0",
 	}
-	got, err := Image(spec, "gateway")
+	for k, v := range envs {
+		os.Setenv(k, v)
+	}
+	return func() {
+		for k := range envs {
+			os.Unsetenv(k)
+		}
+	}
+}
+
+func TestResolveImage_FromEnvVar(t *testing.T) {
+	kn := testKubernaut()
+	got, err := ResolveImage(kn, "gateway")
 	if err != nil {
-		t.Fatalf("Image() unexpected error: %v", err)
+		t.Fatalf("ResolveImage() unexpected error: %v", err)
 	}
 	want := "quay.io/kubernaut-ai/gateway:v1.3.0"
 	if got != want {
-		t.Errorf("Image() = %q, want %q", got, want)
+		t.Errorf("ResolveImage() = %q, want %q", got, want)
 	}
 }
 
-func TestImage_FlatRegistry(t *testing.T) {
-	spec := &kubernautv1alpha1.ImageSpec{
-		Registry:  "quay.io",
-		Namespace: "myorg",
-		Separator: "-",
-		Tag:       "latest",
+func TestResolveImage_OverrideTakesPrecedence(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Image.Overrides = map[string]string{
+		"gateway": "myregistry.internal/custom-gateway:v2.0.0",
 	}
-	got, err := Image(spec, "gateway")
+	got, err := ResolveImage(kn, "gateway")
 	if err != nil {
-		t.Fatalf("Image() unexpected error: %v", err)
+		t.Fatalf("ResolveImage() unexpected error: %v", err)
 	}
-	want := "quay.io/myorg-gateway:latest"
+	want := "myregistry.internal/custom-gateway:v2.0.0"
 	if got != want {
-		t.Errorf("Image() = %q, want %q", got, want)
+		t.Errorf("ResolveImage() = %q, want %q", got, want)
 	}
 }
 
-func TestImage_Digest(t *testing.T) {
-	spec := &kubernautv1alpha1.ImageSpec{
-		Registry:  "quay.io",
-		Namespace: "kubernaut-ai",
-		Tag:       "v1.3.0",
-		Digest:    "sha256:abc123",
-	}
-	got, err := Image(spec, "gateway")
-	if err != nil {
-		t.Fatalf("Image() unexpected error: %v", err)
-	}
-	want := "quay.io/kubernaut-ai/gateway@sha256:abc123"
-	if got != want {
-		t.Errorf("Image() = %q, want %q", got, want)
-	}
-}
+func TestResolveImage_NoEnvVar_ReturnsError(t *testing.T) {
+	prev := os.Getenv("RELATED_IMAGE_GATEWAY")
+	os.Unsetenv("RELATED_IMAGE_GATEWAY")
+	defer os.Setenv("RELATED_IMAGE_GATEWAY", prev)
 
-func TestImage_EmptyNamespace(t *testing.T) {
-	spec := &kubernautv1alpha1.ImageSpec{
-		Registry: "myregistry.internal",
-		Tag:      "v1.0",
-	}
-	got, err := Image(spec, "data-storage")
-	if err != nil {
-		t.Fatalf("Image() unexpected error: %v", err)
-	}
-	want := "myregistry.internal/data-storage:v1.0"
-	if got != want {
-		t.Errorf("Image() = %q, want %q", got, want)
-	}
-}
-
-func TestImage_DefaultSeparator(t *testing.T) {
-	spec := &kubernautv1alpha1.ImageSpec{
-		Registry:  "quay.io",
-		Namespace: "kubernaut-ai",
-		Tag:       "v1.3.0",
-	}
-	got, err := Image(spec, "gateway")
-	if err != nil {
-		t.Fatalf("Image() unexpected error: %v", err)
-	}
-	want := "quay.io/kubernaut-ai/gateway:v1.3.0"
-	if got != want {
-		t.Errorf("Image() = %q, want %q (default separator should be /)", got, want)
-	}
-}
-
-func TestImage_EmptyRegistry_UsesDefault(t *testing.T) {
-	spec := &kubernautv1alpha1.ImageSpec{Namespace: "kubernaut-ai", Tag: "v1.0"}
-	got, err := Image(spec, "gateway")
-	if err != nil {
-		t.Fatalf("Image() unexpected error: %v", err)
-	}
-	want := "quay.io/kubernaut-ai/gateway:v1.0"
-	if got != want {
-		t.Errorf("Image() = %q, want %q", got, want)
-	}
-}
-
-func TestImage_EmptyTagAndDigest_ReturnsError(t *testing.T) {
-	spec := &kubernautv1alpha1.ImageSpec{Registry: "quay.io"}
-	_, err := Image(spec, "gateway")
+	kn := testKubernaut()
+	_, err := ResolveImage(kn, "gateway")
 	if err == nil {
-		t.Error("Image() should return error when both tag and digest are empty")
+		t.Error("ResolveImage() should return error when no env var and no override")
+	}
+}
+
+func TestResolveImage_AllComponents(t *testing.T) {
+	kn := testKubernaut()
+	components := []string{
+		"gateway", "datastorage", "aianalysis", "signalprocessing",
+		"remediationorchestrator", "workflowexecution", "effectivenessmonitor",
+		"notification", "kubernautagent", "authwebhook",
+	}
+	for _, c := range components {
+		_, err := ResolveImage(kn, c)
+		if err != nil {
+			t.Errorf("ResolveImage(%q) unexpected error: %v", c, err)
+		}
+	}
+}
+
+func TestResolveImage_MigrationUsesDbMigrateImage(t *testing.T) {
+	kn := testKubernaut()
+	got, err := ResolveImage(kn, "db-migrate")
+	if err != nil {
+		t.Fatalf("ResolveImage(db-migrate) unexpected error: %v", err)
+	}
+	want := "quay.io/kubernaut-ai/db-migrate:v1.3.0"
+	if got != want {
+		t.Errorf("ResolveImage(db-migrate) = %q, want %q", got, want)
 	}
 }
 

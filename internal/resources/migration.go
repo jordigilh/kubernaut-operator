@@ -61,7 +61,7 @@ func MigrationConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, err
 func MigrationJob(kn *kubernautv1alpha1.Kubernaut) (*batchv1.Job, error) {
 	pgPort := PostgreSQLPort(kn)
 
-	img, err := Image(&kn.Spec.Image, "db-migrate")
+	img, err := ResolveImage(kn, "db-migrate")
 	if err != nil {
 		return nil, err
 	}

@@ -212,13 +212,14 @@ func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deploy
 // RemediationOrchestratorDeployment builds the remediationorchestrator Deployment.
 func RemediationOrchestratorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	volumes := []corev1.Volume{configMapVolume("config", "remediationorchestrator-config")}
-	mounts := []corev1.VolumeMount{{Name: "config", MountPath: "/etc/remediationorchestrator", ReadOnly: true}}
+	mounts := []corev1.VolumeMount{{Name: "config", MountPath: "/etc/config", ReadOnly: true}}
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentRemediationOrchestrator, ImageName: "remediationorchestrator",
 		Resources: kn.Spec.RemediationOrchestrator.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
-		Args: []string{"--config=/etc/config/remediationorchestrator.yaml"},
+		Args:      []string{"--config=/etc/config/remediationorchestrator.yaml"},
+		ProbePort: PortHealthProbe,
 		Ports: []corev1.ContainerPort{
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
@@ -229,13 +230,14 @@ func RemediationOrchestratorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1
 // WorkflowExecutionDeployment builds the workflowexecution Deployment.
 func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	volumes := []corev1.Volume{configMapVolume("config", "workflowexecution-config")}
-	mounts := []corev1.VolumeMount{{Name: "config", MountPath: "/etc/workflowexecution", ReadOnly: true}}
+	mounts := []corev1.VolumeMount{{Name: "config", MountPath: "/etc/config", ReadOnly: true}}
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentWorkflowExecution, ImageName: "workflowexecution",
 		Resources: kn.Spec.WorkflowExecution.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
-		Args: []string{"--config=/etc/workflowexecution/config.yaml"},
+		Args:      []string{"--config=/etc/config/workflowexecution.yaml"},
+		ProbePort: PortHealthProbe,
 		Ports: []corev1.ContainerPort{
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
@@ -293,7 +295,8 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.De
 		Component: ComponentEffectivenessMonitor, ImageName: "effectivenessmonitor",
 		Resources: kn.Spec.EffectivenessMonitor.Resources, VolumeMounts: mounts, Volumes: volumes,
 		Env: env, InitContainers: initContainers,
-		Args: []string{"--config=/etc/effectivenessmonitor/effectivenessmonitor.yaml"},
+		Args:      []string{"--config=/etc/effectivenessmonitor/effectivenessmonitor.yaml"},
+		ProbePort: PortHealthProbe,
 		Ports: []corev1.ContainerPort{
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
@@ -453,7 +456,7 @@ func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		Component: ComponentAuthWebhook, ImageName: "authwebhook",
 		Resources: kn.Spec.AuthWebhook.Resources, VolumeMounts: mounts, Volumes: volumes,
 		Env:  env,
-		Args: []string{"-config=/etc/authwebhook/config.yaml"},
+		Args: []string{"-config=/etc/authwebhook/authwebhook.yaml"},
 		Ports: []corev1.ContainerPort{
 			{Name: "webhook", ContainerPort: PortWebhookServer, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
@@ -484,7 +487,7 @@ type DeploymentParams struct {
 }
 
 func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*appsv1.Deployment, error) {
-	img, err := Image(&kn.Spec.Image, p.ImageName)
+	img, err := ResolveImage(kn, p.ImageName)
 	if err != nil {
 		return nil, err
 	}
