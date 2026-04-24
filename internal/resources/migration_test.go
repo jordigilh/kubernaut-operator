@@ -36,16 +36,19 @@ func TestMigrationConfigMap_ContainsSQL(t *testing.T) {
 		t.Errorf("name = %q, want %q", cm.Name, "kubernaut-migrations")
 	}
 
-	if len(cm.Data) == 0 {
-		t.Fatal("migration ConfigMap should contain at least one SQL file")
+	if len(cm.Data) < 7 {
+		t.Fatalf("migration ConfigMap should contain at least 7 SQL files (v1.3.0), got %d", len(cm.Data))
 	}
 
 	for name, content := range cm.Data {
 		if !strings.HasSuffix(name, ".sql") {
 			t.Errorf("migration file %q should have .sql extension", name)
 		}
-		if !strings.Contains(content, "CREATE") {
-			t.Errorf("migration file %q should contain SQL DDL (CREATE), got %d bytes", name, len(content))
+		hasDDL := strings.Contains(content, "CREATE") ||
+			strings.Contains(content, "ALTER") ||
+			strings.Contains(content, "DROP")
+		if !hasDDL {
+			t.Errorf("migration file %q should contain SQL DDL, got %d bytes", name, len(content))
 		}
 	}
 }
