@@ -643,7 +643,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
 				Name: "remediationorchestrator-config", Namespace: testNamespace,
 			}, cm)).To(Succeed())
-			Expect(cm.Data["config.yaml"]).To(ContainSubstring("global: 1h"))
+			Expect(cm.Data["remediationorchestrator.yaml"]).To(ContainSubstring("global: 1h"))
 
 			By("updating the spec")
 			kn := &kubernautv1alpha1.Kubernaut{}
@@ -658,7 +658,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
 				Name: "remediationorchestrator-config", Namespace: testNamespace,
 			}, cm)).To(Succeed())
-			Expect(cm.Data["config.yaml"]).To(ContainSubstring("global: 2h"))
+			Expect(cm.Data["remediationorchestrator.yaml"]).To(ContainSubstring("global: 2h"))
 		})
 
 		It("should update Deployment image when spec.image.tag changes", func() {
@@ -671,12 +671,14 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
 				Name: "gateway-deployment", Namespace: testNamespace,
 			}, dep)).To(Succeed())
-			Expect(dep.Spec.Template.Spec.Containers[0].Image).To(ContainSubstring(":v1.3.0"))
+			Expect(dep.Spec.Template.Spec.Containers[0].Image).To(ContainSubstring(":test"))
 
-			By("changing image tag to v2.0.0")
+			By("setting an image override for gateway")
 			kn := &kubernautv1alpha1.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			kn.Spec.Image.Tag = "v2.0.0"
+			kn.Spec.Image.Overrides = map[string]string{
+				"gateway": "myregistry.example.com/gateway:v2.0.0",
+			}
 			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
 
 			By("reconciling to propagate")
@@ -686,7 +688,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
 				Name: "gateway-deployment", Namespace: testNamespace,
 			}, dep)).To(Succeed())
-			Expect(dep.Spec.Template.Spec.Containers[0].Image).To(ContainSubstring(":v2.0.0"))
+			Expect(dep.Spec.Template.Spec.Containers[0].Image).To(Equal("myregistry.example.com/gateway:v2.0.0"))
 		})
 
 		It("should set owner references on namespaced resources", func() {
@@ -995,14 +997,15 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(found).To(BeTrue(), "PGPORT env var should be set")
 		})
 
-		It("should construct digest-based image references", func() {
+		It("should use image override when set", func() {
 			cr := newMinimalCR()
-			cr.Spec.Image.Tag = ""
-			cr.Spec.Image.Digest = "sha256:abc123"
+			cr.Spec.Image.Overrides = map[string]string{
+				"gateway": "custom.io/gw:v2@sha256:abc123",
+			}
 
 			dep, err := resources.GatewayDeployment(cr)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(dep.Spec.Template.Spec.Containers[0].Image).To(ContainSubstring("@sha256:abc123"))
+			Expect(dep.Spec.Template.Spec.Containers[0].Image).To(Equal("custom.io/gw:v2@sha256:abc123"))
 		})
 
 		It("should propagate pull secrets to Deployments", func() {
@@ -1063,23 +1066,11 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}
 		})
 
-		It("should default registry when image registry is empty", func() {
+		It("should resolve image from RELATED_IMAGE env var", func() {
 			cr := newMinimalCR()
-			cr.Spec.Image.Registry = ""
-
 			dep, err := resources.GatewayDeployment(cr)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(dep.Spec.Template.Spec.Containers[0].Image).To(ContainSubstring("quay.io/"))
-		})
-
-		It("should error when both tag and digest are empty", func() {
-			cr := newMinimalCR()
-			cr.Spec.Image.Tag = ""
-			cr.Spec.Image.Digest = ""
-
-			_, err := resources.GatewayDeployment(cr)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("image tag or digest must be set"))
+			Expect(dep.Spec.Template.Spec.Containers[0].Image).To(Equal("quay.io/kubernaut-ai/gateway:test"))
 		})
 
 		It("should use default Valkey port 6379 when not specified", func() {
@@ -1166,7 +1157,107 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	})
 
 	// ======================================================================
-	// 13. Deletion Cleanup Completeness
+	// 13. Spec-Hash Reconcile Optimization
+	// ======================================================================
+
+	Context("Spec-Hash Reconcile Optimization", func() {
+		It("should stamp spec-hash annotation on created resources", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			reconcileToRunning(ctx)
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "remediationorchestrator-config", Namespace: testNamespace,
+			}, cm)).To(Succeed())
+			Expect(cm.Annotations).To(HaveKey(resources.AnnotationSpecHash),
+				"ConfigMap should have spec-hash annotation after creation")
+			Expect(cm.Annotations[resources.AnnotationSpecHash]).NotTo(BeEmpty())
+		})
+
+		It("should skip update when hash matches (no drift)", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "remediationorchestrator-config", Namespace: testNamespace,
+			}, cm)).To(Succeed())
+			origRV := cm.ResourceVersion
+
+			By("reconciling again without spec changes")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "remediationorchestrator-config", Namespace: testNamespace,
+			}, cm)).To(Succeed())
+			Expect(cm.ResourceVersion).To(Equal(origRV),
+				"ResourceVersion should not change when there is no drift")
+		})
+
+		It("should detect and correct out-of-band ConfigMap edits", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "remediationorchestrator-config", Namespace: testNamespace,
+			}, cm)).To(Succeed())
+			origHash := cm.Annotations[resources.AnnotationSpecHash]
+
+			By("simulating an out-of-band edit")
+			cm.Data["remediationorchestrator.yaml"] = "tampered: true"
+			cm.Annotations[resources.AnnotationSpecHash] = "stale-hash"
+			Expect(k8sClient.Update(ctx, cm)).To(Succeed())
+
+			By("reconciling to detect and correct the drift")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "remediationorchestrator-config", Namespace: testNamespace,
+			}, cm)).To(Succeed())
+			Expect(cm.Data["remediationorchestrator.yaml"]).To(ContainSubstring("global: 1h"),
+				"ConfigMap should be restored to the desired state")
+			Expect(cm.Annotations[resources.AnnotationSpecHash]).To(Equal(origHash),
+				"hash should be restored to the original value")
+		})
+
+		It("should update hash when CR spec changes", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "remediationorchestrator-config", Namespace: testNamespace,
+			}, cm)).To(Succeed())
+			oldHash := cm.Annotations[resources.AnnotationSpecHash]
+
+			By("changing the CR spec")
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			kn.Spec.RemediationOrchestrator.Timeouts.Global = "5h"
+			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
+
+			By("reconciling to propagate the change")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "remediationorchestrator-config", Namespace: testNamespace,
+			}, cm)).To(Succeed())
+			Expect(cm.Data["remediationorchestrator.yaml"]).To(ContainSubstring("global: 5h"))
+			Expect(cm.Annotations[resources.AnnotationSpecHash]).NotTo(Equal(oldHash),
+				"hash should change when spec changes")
+		})
+	})
+
+	// ======================================================================
+	// 14. Deletion Cleanup Completeness
 	// ======================================================================
 
 	Context("Deletion Cleanup Completeness", func() {

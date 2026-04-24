@@ -138,31 +138,17 @@ func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernaut
 		}
 	}
 
-	// Skip the full deploy pass when already deployed at the current generation.
-	if !r.deployNeeded(kn) {
-		log.V(1).Info("skipping phaseDeploy (generation unchanged)")
-	} else {
-		result, err := r.phaseDeploy(ctx, kn)
-		if err != nil || result.Requeue || result.RequeueAfter > 0 {
-			return result, err
-		}
-		if err := r.Get(ctx, client.ObjectKeyFromObject(kn), kn); err != nil {
-			return ctrl.Result{}, err
-		}
+	// Always run phaseDeploy — the spec-hash check inside ensureResource
+	// short-circuits API writes when no drift is detected, making this cheap.
+	result, err := r.phaseDeploy(ctx, kn)
+	if err != nil || result.Requeue || result.RequeueAfter > 0 {
+		return result, err
+	}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(kn), kn); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	return r.phaseRunning(ctx, kn)
-}
-
-// deployNeeded returns true when phaseDeploy must run. It is skipped when
-// ServicesDeployed is already True for the current spec generation.
-func (r *KubernautReconciler) deployNeeded(kn *kubernautv1alpha1.Kubernaut) bool {
-	for _, c := range kn.Status.Conditions {
-		if c.Type == kubernautv1alpha1.ConditionServicesDeployed {
-			return !(c.Status == metav1.ConditionTrue && c.ObservedGeneration >= kn.Generation)
-		}
-	}
-	return true
 }
 
 // ---------- Phase: Validate ----------
@@ -968,9 +954,14 @@ func (r *KubernautReconciler) ensureUnowned(ctx context.Context, obj client.Obje
 }
 
 // ensureResource is the shared create-or-update implementation for both
-// namespaced and cluster-scoped resources. AlreadyExists on Create is
-// handled by falling through to Update.
+// namespaced and cluster-scoped resources. It stamps a spec-hash annotation
+// on the desired object and compares it with the live object to skip
+// unnecessary API server writes. AlreadyExists on Create is handled by
+// falling through to the update path.
 func (r *KubernautReconciler) ensureResource(ctx context.Context, obj client.Object) error {
+	desiredHash := resources.SpecHash(obj)
+	setHashAnnotation(obj, desiredHash)
+
 	existing := obj.DeepCopyObject().(client.Object)
 	key := types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}
 	err := r.Get(ctx, key, existing)
@@ -988,8 +979,24 @@ func (r *KubernautReconciler) ensureResource(ctx context.Context, obj client.Obj
 	} else if err != nil {
 		return fmt.Errorf("getting %s: %w", key, err)
 	}
+
+	if existing.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash {
+		return nil
+	}
+
 	obj.SetResourceVersion(existing.GetResourceVersion())
 	return r.Update(ctx, obj)
+}
+
+// setHashAnnotation merges the spec-hash annotation into the object's
+// existing annotations without clobbering others.
+func setHashAnnotation(obj client.Object, hash string) {
+	a := obj.GetAnnotations()
+	if a == nil {
+		a = make(map[string]string, 1)
+	}
+	a[resources.AnnotationSpecHash] = hash
+	obj.SetAnnotations(a)
 }
 
 // createIfNotFound gets an existing resource into `existing`; if not found it

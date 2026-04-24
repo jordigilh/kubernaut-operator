@@ -54,8 +54,7 @@ func newMinimalCR() *kubernautv1alpha1.Kubernaut {
 		},
 		Spec: kubernautv1alpha1.KubernautSpec{
 			Image: kubernautv1alpha1.ImageSpec{
-				Registry: "quay.io",
-				Tag:      "v1.3.0",
+				PullPolicy: corev1.PullIfNotPresent,
 			},
 			PostgreSQL: kubernautv1alpha1.PostgreSQLSpec{
 				SecretName: pgSecretName,
