@@ -106,7 +106,7 @@ func setDeploymentReady(ctx context.Context, name string) {
 // setAllDeploymentsReady marks all 10 service Deployments as ready.
 func setAllDeploymentsReady(ctx context.Context) {
 	for _, c := range resources.AllComponents() {
-		setDeploymentReady(ctx, c+"-deployment")
+		setDeploymentReady(ctx, c+"-controller")
 	}
 }
 
@@ -380,7 +380,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			By("marking all except gateway as ready")
 			for _, c := range resources.AllComponents() {
 				if c != resources.ComponentGateway {
-					setDeploymentReady(ctx, c+"-deployment")
+					setDeploymentReady(ctx, c+"-controller")
 				}
 			}
 
@@ -409,7 +409,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			By("driving to degraded")
 			for _, c := range resources.AllComponents() {
 				if c != resources.ComponentGateway {
-					setDeploymentReady(ctx, c+"-deployment")
+					setDeploymentReady(ctx, c+"-controller")
 				}
 			}
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -420,7 +420,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseDegraded))
 
 			By("marking the gateway as ready")
-			setDeploymentReady(ctx, "gateway-deployment")
+			setDeploymentReady(ctx, "gateway-controller")
 
 			By("reconciling - should recover to Running")
 			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -669,7 +669,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			By("verifying initial image tag")
 			dep := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: "gateway-deployment", Namespace: testNamespace,
+				Name: "gateway-controller", Namespace: testNamespace,
 			}, dep)).To(Succeed())
 			Expect(dep.Spec.Template.Spec.Containers[0].Image).To(ContainSubstring(":test"))
 
@@ -686,7 +686,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: "gateway-deployment", Namespace: testNamespace,
+				Name: "gateway-controller", Namespace: testNamespace,
 			}, dep)).To(Succeed())
 			Expect(dep.Spec.Template.Spec.Containers[0].Image).To(Equal("myregistry.example.com/gateway:v2.0.0"))
 		})
@@ -701,7 +701,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			dep := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: "gateway-deployment", Namespace: testNamespace,
+				Name: "gateway-controller", Namespace: testNamespace,
 			}, dep)).To(Succeed())
 
 			Expect(dep.OwnerReferences).NotTo(BeEmpty())
@@ -722,7 +722,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			dep := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: "gateway-deployment", Namespace: testNamespace,
+				Name: "gateway-controller", Namespace: testNamespace,
 			}, dep)).To(Succeed())
 
 			limit := dep.Spec.Template.Spec.Containers[0].Resources.Limits[corev1.ResourceMemory]
@@ -1268,7 +1268,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			dep := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: "gateway-deployment", Namespace: testNamespace,
+				Name: "gateway-controller", Namespace: testNamespace,
 			}, dep)).To(Succeed())
 
 			podAnnotations := dep.Spec.Template.Annotations
@@ -1284,7 +1284,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			dep := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: "remediationorchestrator-deployment", Namespace: testNamespace,
+				Name: "remediationorchestrator-controller", Namespace: testNamespace,
 			}, dep)).To(Succeed())
 			oldHash := dep.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
 			Expect(oldHash).NotTo(BeEmpty())
@@ -1300,7 +1300,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: "remediationorchestrator-deployment", Namespace: testNamespace,
+				Name: "remediationorchestrator-controller", Namespace: testNamespace,
 			}, dep)).To(Succeed())
 			newHash := dep.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
 			Expect(newHash).NotTo(Equal(oldHash),

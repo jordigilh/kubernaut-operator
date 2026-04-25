@@ -537,7 +537,7 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 	}
 
 	dep := &appsv1.Deployment{
-		ObjectMeta: ObjectMeta(kn, p.Component+"-deployment", p.Component),
+		ObjectMeta: ObjectMeta(kn, p.Component+"-controller", p.Component),
 		Spec: appsv1.DeploymentSpec{
 			Replicas: ptr.To[int32](1),
 			Selector: &metav1.LabelSelector{MatchLabels: SelectorLabels(p.Component)},

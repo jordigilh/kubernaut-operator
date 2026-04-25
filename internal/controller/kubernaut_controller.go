@@ -687,7 +687,7 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 	for _, component := range resources.AllComponents() {
 		dep := &appsv1.Deployment{}
 		err := r.Get(ctx, types.NamespacedName{
-			Name:      component + "-deployment",
+			Name:      component + "-controller",
 			Namespace: kn.Namespace,
 		}, dep)
 		if err != nil {
