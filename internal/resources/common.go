@@ -47,6 +47,28 @@ const (
 	ComponentAuthWebhook             = "authwebhook"
 )
 
+// controllerSuffix lists components that are actual Kubernetes controllers
+// (reconciliation loops) and use the "-controller" deployment name suffix,
+// matching the Helm chart convention. REST API services and webhook servers
+// use their bare component name.
+var controllerSuffix = map[string]bool{
+	ComponentAIAnalysis:              true,
+	ComponentSignalProcessing:        true,
+	ComponentRemediationOrchestrator: true,
+	ComponentWorkflowExecution:       true,
+	ComponentEffectivenessMonitor:    true,
+	ComponentNotification:            true,
+}
+
+// DeploymentName returns the Deployment resource name for a component,
+// aligned with the Helm chart naming convention.
+func DeploymentName(component string) string {
+	if controllerSuffix[component] {
+		return component + "-controller"
+	}
+	return component
+}
+
 // Well-known ports used across services.
 const (
 	PortHTTP    int32 = 8080

@@ -188,12 +188,14 @@ func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deploy
 		{Name: "policy", MountPath: "/etc/signalprocessing/policies", ReadOnly: true},
 	}
 
+	proactiveCMName := "signalprocessing-proactive-signal-mappings"
 	if kn.Spec.SignalProcessing.ProactiveSignalMappings != nil {
-		volumes = append(volumes, configMapVolume("proactive-mappings", kn.Spec.SignalProcessing.ProactiveSignalMappings.ConfigMapName))
-		mounts = append(mounts, corev1.VolumeMount{
-			Name: "proactive-mappings", MountPath: "/etc/signalprocessing/proactive-signal-mappings.yaml", SubPath: "proactive-signal-mappings.yaml",
-		})
+		proactiveCMName = kn.Spec.SignalProcessing.ProactiveSignalMappings.ConfigMapName
 	}
+	volumes = append(volumes, configMapVolume("proactive-mappings", proactiveCMName))
+	mounts = append(mounts, corev1.VolumeMount{
+		Name: "proactive-mappings", MountPath: "/etc/signalprocessing/proactive-signal-mappings.yaml", SubPath: "proactive-signal-mappings.yaml",
+	})
 
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
@@ -393,6 +395,17 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 			Name: "service-ca", MountPath: "/etc/ssl/ka", ReadOnly: true,
 		})
 		envVars = append(envVars, corev1.EnvVar{Name: "IS_OPENSHIFT", Value: "True"})
+
+		volumes = append(volumes, corev1.Volume{
+			Name:         "combined-ca",
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		})
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: "combined-ca", MountPath: "/etc/ssl/combined", ReadOnly: true,
+		})
+		envVars = append(envVars, corev1.EnvVar{
+			Name: "SSL_CERT_FILE", Value: "/etc/ssl/combined/ca-bundle.crt",
+		})
 	}
 
 	volumes, mounts, envVars = appendInterServiceTLSCA(volumes, mounts, envVars)
@@ -411,10 +424,32 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 		}
 	}
 
+	var initContainers []corev1.Container
+	if kn.Spec.Monitoring.MonitoringEnabled() {
+		initContainers = append(initContainers, corev1.Container{
+			Name:  "build-ca-bundle",
+			Image: "registry.access.redhat.com/ubi10/ubi-minimal:latest",
+			Command: []string{"sh", "-c",
+				"cat /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /service-ca/service-ca.crt > /combined/ca-bundle.crt",
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: "service-ca", MountPath: "/service-ca", ReadOnly: true},
+				{Name: "combined-ca", MountPath: "/combined"},
+			},
+			SecurityContext: &corev1.SecurityContext{
+				RunAsNonRoot:             ptr.To(true),
+				AllowPrivilegeEscalation: ptr.To(false),
+				Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+				SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+			},
+		})
+	}
+
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentKubernautAgent, ImageName: "kubernautagent",
 		Resources: res, VolumeMounts: mounts, Volumes: volumes, Env: envVars,
-		ProbePort: PortHealthProbe,
+		InitContainers: initContainers,
+		ProbePort:      PortHealthProbe,
 		Args: []string{
 			"-config", "/etc/kubernaut-agent/config.yaml",
 			"-sdk-config", "/etc/kubernaut-agent/sdk/sdk-config.yaml",
@@ -537,7 +572,7 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 	}
 
 	dep := &appsv1.Deployment{
-		ObjectMeta: ObjectMeta(kn, p.Component+"-controller", p.Component),
+		ObjectMeta: ObjectMeta(kn, DeploymentName(p.Component), p.Component),
 		Spec: appsv1.DeploymentSpec{
 			Replicas: ptr.To[int32](1),
 			Selector: &metav1.LabelSelector{MatchLabels: SelectorLabels(p.Component)},

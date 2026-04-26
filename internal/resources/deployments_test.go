@@ -159,18 +159,16 @@ func TestSignalProcessingDeployment_ProactiveSignalMappings(t *testing.T) {
 	assertHasVolumeMount(t, dep, "proactive-mappings", "/etc/signalprocessing/proactive-signal-mappings.yaml")
 }
 
-func TestSignalProcessingDeployment_NoProactiveSignalMappings(t *testing.T) {
+func TestSignalProcessingDeployment_DefaultProactiveSignalMappings(t *testing.T) {
 	kn := testKubernaut()
 	dep, err := SignalProcessingDeployment(kn)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for _, v := range dep.Spec.Template.Spec.Volumes {
-		if v.Name == "proactive-mappings" {
-			t.Error("SignalProcessing should not have proactive-mappings volume when not configured")
-		}
-	}
+	assertHasVolume(t, dep, "proactive-mappings")
+	assertVolumeSourceConfigMap(t, dep, "proactive-mappings", "signalprocessing-proactive-signal-mappings")
+	assertHasVolumeMount(t, dep, "proactive-mappings", "/etc/signalprocessing/proactive-signal-mappings.yaml")
 }
 
 func TestNotificationDeployment_SlackCredentialsVolume(t *testing.T) {
