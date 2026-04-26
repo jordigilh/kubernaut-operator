@@ -560,6 +560,9 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	if cm := resources.SignalProcessingPolicyConfigMap(kn); cm != nil {
 		configMaps = append(configMaps, cm)
 	}
+	if cm := resources.ProactiveSignalMappingsConfigMap(kn); cm != nil {
+		configMaps = append(configMaps, cm)
+	}
 	sdkCM, err := resources.KubernautAgentSDKConfigMap(kn)
 	if err != nil {
 		return nil, fmt.Errorf("building kubernaut-agent-sdk ConfigMap: %w", err)
@@ -687,7 +690,7 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 	for _, component := range resources.AllComponents() {
 		dep := &appsv1.Deployment{}
 		err := r.Get(ctx, types.NamespacedName{
-			Name:      component + "-controller",
+			Name:      resources.DeploymentName(component),
 			Namespace: kn.Namespace,
 		}, dep)
 		if err != nil {
