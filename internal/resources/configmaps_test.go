@@ -109,6 +109,21 @@ func TestAIAnalysisConfigMap_IncludesConfidenceThreshold(t *testing.T) {
 	}
 }
 
+func TestAIAnalysisConfigMap_AgentKey(t *testing.T) {
+	kn := testKubernaut()
+	cm, err := AIAnalysisConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["config.yaml"]
+	if !strings.Contains(data, "agent:") {
+		t.Errorf("aianalysis config should contain 'agent:' key, got:\n%s", data)
+	}
+	if strings.Contains(data, "kubernautAgent:") {
+		t.Errorf("aianalysis config should not contain old 'kubernautAgent:' key, got:\n%s", data)
+	}
+}
+
 func TestAIAnalysisConfigMap_OmitsThresholdWhenEmpty(t *testing.T) {
 	kn := testKubernaut()
 	cm, err := AIAnalysisConfigMap(kn)
@@ -154,6 +169,31 @@ func TestRemediationOrchestratorConfigMap_Defaults(t *testing.T) {
 		if !strings.Contains(data, d) {
 			t.Errorf("RO config should contain default %q, got:\n%s", d, data)
 		}
+	}
+}
+
+func TestRemediationOrchestratorConfigMap_NestedStructure(t *testing.T) {
+	kn := testKubernaut()
+	cm, err := RemediationOrchestratorConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["remediationorchestrator.yaml"]
+
+	for _, want := range []string{
+		"controller:",
+		"leaderElectionId: remediationorchestrator.kubernaut.ai",
+		"datastorage:",
+		"url: https://data-storage-service",
+		"timeout:",
+		"buffer:",
+	} {
+		if !strings.Contains(data, want) {
+			t.Errorf("RO config should contain %q, got:\n%s", want, data)
+		}
+	}
+	if strings.Contains(data, "dataStorageUrl") {
+		t.Errorf("RO config should not contain flat dataStorageUrl key, got:\n%s", data)
 	}
 }
 
@@ -246,6 +286,24 @@ func TestNotificationRoutingConfigMap_NoSlack(t *testing.T) {
 	}
 	if strings.Contains(data, "slack") {
 		t.Errorf("routing config should not contain slack when Slack is unconfigured, got:\n%s", data)
+	}
+}
+
+func TestNotificationControllerConfigMap_CredentialsInDelivery(t *testing.T) {
+	kn := testKubernaut()
+	cm, err := NotificationControllerConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["config.yaml"]
+	if !strings.Contains(data, "delivery:") {
+		t.Errorf("notification config should contain delivery: block, got:\n%s", data)
+	}
+	if !strings.Contains(data, "credentials:") {
+		t.Errorf("notification config should contain credentials: block, got:\n%s", data)
+	}
+	if !strings.Contains(data, "dir: /etc/notification/credentials") {
+		t.Errorf("notification config should contain credentials dir, got:\n%s", data)
 	}
 }
 
@@ -419,11 +477,11 @@ func TestWorkflowExecutionConfigMap_AWXWiring(t *testing.T) {
 
 	for _, want := range []string{
 		"ansible:",
-		"enabled: true",
 		"apiURL: https://awx.example.com",
 		"organizationID: 42",
-		"tokenSecretName: awx-token",
-		"tokenSecretKey: api-token",
+		"tokenSecretRef:",
+		"name: awx-token",
+		"key: api-token",
 	} {
 		if !strings.Contains(data, want) {
 			t.Errorf("WE config should contain %q when Ansible enabled, got:\n%s", want, data)
@@ -444,7 +502,7 @@ func TestWorkflowExecutionConfigMap_NoAWXWhenDisabled(t *testing.T) {
 	}
 }
 
-func TestWorkflowExecutionConfigMap_ServiceAccountName(t *testing.T) {
+func TestWorkflowExecutionConfigMap_NestedStructure(t *testing.T) {
 	kn := testKubernaut()
 	cm, err := WorkflowExecutionConfigMap(kn)
 	if err != nil {
@@ -452,8 +510,18 @@ func TestWorkflowExecutionConfigMap_ServiceAccountName(t *testing.T) {
 	}
 	data := cm.Data["workflowexecution.yaml"]
 
-	if !strings.Contains(data, "serviceAccountName: kubernaut-workflow-runner") {
-		t.Errorf("WE config should include serviceAccountName, got:\n%s", data)
+	for _, want := range []string{
+		"execution:",
+		"namespace: kubernaut-workflows",
+		"cooldownPeriod:",
+		"datastorage:",
+		"url: https://data-storage-service",
+		"controller:",
+		"leaderElectionId: workflowexecution.kubernaut.ai",
+	} {
+		if !strings.Contains(data, want) {
+			t.Errorf("WE config should contain %q, got:\n%s", want, data)
+		}
 	}
 }
 
@@ -543,5 +611,43 @@ func TestSignalProcessingPolicyConfigMap_NilWhenUserProvided(t *testing.T) {
 	cm := SignalProcessingPolicyConfigMap(kn)
 	if cm != nil {
 		t.Error("SignalProcessingPolicyConfigMap should return nil when user provides ConfigMapName")
+	}
+}
+
+func TestProactiveSignalMappingsConfigMap_DefaultMappings(t *testing.T) {
+	kn := testKubernaut()
+
+	cm := ProactiveSignalMappingsConfigMap(kn)
+	if cm == nil {
+		t.Fatal("ProactiveSignalMappingsConfigMap should return non-nil when no user override")
+	}
+	if cm.Name != "signalprocessing-proactive-signal-mappings" {
+		t.Errorf("Name = %q, want %q", cm.Name, "signalprocessing-proactive-signal-mappings")
+	}
+	data, ok := cm.Data["proactive-signal-mappings.yaml"]
+	if !ok {
+		t.Fatal("ConfigMap should contain proactive-signal-mappings.yaml key")
+	}
+	for _, mapping := range []string{
+		"PredictedOOMKill", "OOMKilled",
+		"PredictedCPUThrottling", "CPUThrottling",
+		"PredictedDiskPressure", "DiskPressure",
+		"PredictedNodeNotReady", "NodeNotReady",
+	} {
+		if !strings.Contains(data, mapping) {
+			t.Errorf("proactive-signal-mappings.yaml should contain %q, got:\n%s", mapping, data)
+		}
+	}
+}
+
+func TestProactiveSignalMappingsConfigMap_NilWhenUserProvided(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha1.ConfigMapRef{
+		ConfigMapName: "user-proactive-mappings",
+	}
+
+	cm := ProactiveSignalMappingsConfigMap(kn)
+	if cm != nil {
+		t.Error("ProactiveSignalMappingsConfigMap should return nil when user provides ConfigMapName")
 	}
 }

@@ -153,11 +153,11 @@ type aiAnalysisRegoYAML struct {
 
 // aiAnalysisConfigYAML embeds controllerConfig under "controller" via controllerBlock.
 type aiAnalysisConfigYAML struct {
-	TLSProfile     string                       `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
-	Controller     controllerBlock              `json:"controller" yaml:"controller"`
-	KubernautAgent aiAnalysisKubernautAgentYAML `json:"kubernautAgent" yaml:"kubernautAgent"`
-	Datastorage    aiAnalysisDatastorageYAML    `json:"datastorage" yaml:"datastorage"`
-	Rego           aiAnalysisRegoYAML           `json:"rego" yaml:"rego"`
+	TLSProfile  string                       `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
+	Controller  controllerBlock              `json:"controller" yaml:"controller"`
+	Agent       aiAnalysisKubernautAgentYAML `json:"agent" yaml:"agent"`
+	Datastorage aiAnalysisDatastorageYAML    `json:"datastorage" yaml:"datastorage"`
+	Rego        aiAnalysisRegoYAML           `json:"rego" yaml:"rego"`
 }
 
 type signalProcessingEnrichmentYAML struct {
@@ -220,30 +220,59 @@ type roAsyncPropagationYAML struct {
 	ProactiveAlertDelay    string `json:"proactiveAlertDelay" yaml:"proactiveAlertDelay"`
 }
 
+type roDatastorageYAML struct {
+	URL     string                `json:"url" yaml:"url"`
+	Timeout string                `json:"timeout" yaml:"timeout"`
+	Buffer  dataStorageBufferYAML `json:"buffer" yaml:"buffer"`
+}
+
 type remediationOrchestratorConfigYAML struct {
 	TLSProfile              string                 `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
-	DataStorageURL          string                 `json:"dataStorageUrl" yaml:"dataStorageUrl"`
+	Controller              controllerBlock        `json:"controller" yaml:"controller"`
 	Timeouts                roTimeoutsYAML         `json:"timeouts" yaml:"timeouts"`
+	Datastorage             roDatastorageYAML      `json:"datastorage" yaml:"datastorage"`
 	Routing                 roRoutingYAML          `json:"routing" yaml:"routing"`
 	EffectivenessAssessment roEffectivenessYAML    `json:"effectivenessAssessment" yaml:"effectivenessAssessment"`
 	AsyncPropagation        roAsyncPropagationYAML `json:"asyncPropagation" yaml:"asyncPropagation"`
 }
 
+type weExecutionYAML struct {
+	Namespace      string `json:"namespace" yaml:"namespace"`
+	CooldownPeriod string `json:"cooldownPeriod" yaml:"cooldownPeriod"`
+}
+
+type weControllerYAML struct {
+	MetricsAddr      string `json:"metricsAddr" yaml:"metricsAddr"`
+	HealthProbeAddr  string `json:"healthProbeAddr" yaml:"healthProbeAddr"`
+	LeaderElection   bool   `json:"leaderElection" yaml:"leaderElection"`
+	LeaderElectionID string `json:"leaderElectionId" yaml:"leaderElectionId"`
+}
+
+type weDatastorageYAML struct {
+	URL     string                `json:"url" yaml:"url"`
+	Timeout string                `json:"timeout" yaml:"timeout"`
+	Buffer  dataStorageBufferYAML `json:"buffer" yaml:"buffer"`
+}
+
+type weTokenSecretRefYAML struct {
+	Name      string `json:"name" yaml:"name"`
+	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Key       string `json:"key" yaml:"key"`
+}
+
 type workflowExecutionAnsibleYAML struct {
-	Enabled         bool   `json:"enabled" yaml:"enabled"`
-	APIURL          string `json:"apiURL" yaml:"apiURL"`
-	OrganizationID  int    `json:"organizationID" yaml:"organizationID"`
-	TokenSecretName string `json:"tokenSecretName,omitempty" yaml:"tokenSecretName,omitempty"`
-	TokenSecretKey  string `json:"tokenSecretKey,omitempty" yaml:"tokenSecretKey,omitempty"`
+	APIURL         string                `json:"apiURL" yaml:"apiURL"`
+	TokenSecretRef *weTokenSecretRefYAML `json:"tokenSecretRef,omitempty" yaml:"tokenSecretRef,omitempty"`
+	Insecure       bool                  `json:"insecure,omitempty" yaml:"insecure,omitempty"`
+	OrganizationID int                   `json:"organizationID,omitempty" yaml:"organizationID,omitempty"`
 }
 
 type workflowExecutionConfigYAML struct {
-	TLSProfile         string                        `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
-	DataStorageURL     string                        `json:"dataStorageUrl" yaml:"dataStorageUrl"`
-	WorkflowNamespace  string                        `json:"workflowNamespace" yaml:"workflowNamespace"`
-	CooldownPeriod     string                        `json:"cooldownPeriod" yaml:"cooldownPeriod"`
-	ServiceAccountName string                        `json:"serviceAccountName" yaml:"serviceAccountName"`
-	Ansible            *workflowExecutionAnsibleYAML `json:"ansible,omitempty" yaml:"ansible,omitempty"`
+	TLSProfile  string                        `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
+	Execution   weExecutionYAML               `json:"execution" yaml:"execution"`
+	Ansible     *workflowExecutionAnsibleYAML `json:"ansible,omitempty" yaml:"ansible,omitempty"`
+	Datastorage weDatastorageYAML             `json:"datastorage" yaml:"datastorage"`
+	Controller  weControllerYAML              `json:"controller" yaml:"controller"`
 }
 
 type emAssessmentYAML struct {
@@ -292,10 +321,11 @@ type notificationSlackYAML struct {
 }
 
 type notificationDeliveryYAML struct {
-	Console notificationConsoleYAML `json:"console" yaml:"console"`
-	File    notificationFileYAML    `json:"file" yaml:"file"`
-	Log     notificationLogYAML     `json:"log" yaml:"log"`
-	Slack   notificationSlackYAML   `json:"slack" yaml:"slack"`
+	Console     notificationConsoleYAML     `json:"console" yaml:"console"`
+	File        notificationFileYAML        `json:"file" yaml:"file"`
+	Log         notificationLogYAML         `json:"log" yaml:"log"`
+	Slack       notificationSlackYAML       `json:"slack" yaml:"slack"`
+	Credentials notificationCredentialsYAML `json:"credentials" yaml:"credentials"`
 }
 
 type notificationCredentialsYAML struct {
@@ -320,7 +350,6 @@ type notificationControllerConfigYAML struct {
 	TLSProfile  string                      `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Controller  controllerBlock             `json:"controller" yaml:"controller"`
 	Delivery    notificationDeliveryYAML    `json:"delivery" yaml:"delivery"`
-	Credentials notificationCredentialsYAML `json:"credentials" yaml:"credentials"`
 	Datastorage notificationDatastorageYAML `json:"datastorage" yaml:"datastorage"`
 }
 
@@ -357,7 +386,8 @@ type kubernautAgentDatastorageYAML struct {
 }
 
 type kubernautAgentPrometheusYAML struct {
-	URL string `json:"url" yaml:"url"`
+	URL       string `json:"url" yaml:"url"`
+	TLSCaFile string `json:"tls_ca_file,omitempty" yaml:"tls_ca_file,omitempty"`
 }
 
 type kubernautAgentToolsYAML struct {
@@ -557,7 +587,7 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOptio
 	cfg := aiAnalysisConfigYAML{
 		TLSProfile: o.tlsProfile,
 		Controller: newControllerBlock("aianalysis.kubernaut.ai"),
-		KubernautAgent: aiAnalysisKubernautAgentYAML{
+		Agent: aiAnalysisKubernautAgentYAML{
 			URL:                 fmt.Sprintf("https://kubernaut-agent.%s.svc.cluster.local:8080", ns),
 			Timeout:             "180s",
 			SessionPollInterval: "15s",
@@ -650,14 +680,44 @@ func SignalProcessingPolicyConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.Co
 	}
 }
 
+// ProactiveSignalMappingsConfigMap builds the default signalprocessing-proactive-signal-mappings
+// ConfigMap with BR-SP-106 proactive signal mode mappings. Returns nil when the user
+// provides their own ConfigMap via spec.signalProcessing.proactiveSignalMappings.
+func ProactiveSignalMappingsConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+	if kn.Spec.SignalProcessing.ProactiveSignalMappings != nil {
+		return nil
+	}
+	return &corev1.ConfigMap{
+		ObjectMeta: ObjectMeta(kn, "signalprocessing-proactive-signal-mappings", ComponentSignalProcessing),
+		Data: map[string]string{
+			"proactive-signal-mappings.yaml": `proactive_signal_mappings:
+  PredictedOOMKill: OOMKilled
+  PredictedCPUThrottling: CPUThrottling
+  PredictedDiskPressure: DiskPressure
+  PredictedNodeNotReady: NodeNotReady
+`,
+		},
+	}
+}
+
 // RemediationOrchestratorConfigMap builds the remediationorchestrator-config ConfigMap.
 func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ro := &kn.Spec.RemediationOrchestrator
 	ns := kn.Namespace
 	cfg := remediationOrchestratorConfigYAML{
-		TLSProfile:     o.tlsProfile,
-		DataStorageURL: DataStorageURL(ns),
+		TLSProfile: o.tlsProfile,
+		Controller: newControllerBlock("remediationorchestrator.kubernaut.ai"),
+		Datastorage: roDatastorageYAML{
+			URL:     DataStorageURL(ns),
+			Timeout: "10s",
+			Buffer: dataStorageBufferYAML{
+				BufferSize:    10000,
+				BatchSize:     500,
+				FlushInterval: "1s",
+				MaxRetries:    3,
+			},
+		},
 		Timeouts: roTimeoutsYAML{
 			Global:     withDefault(ro.Timeouts.Global, "1h"),
 			Processing: withDefault(ro.Timeouts.Processing, "5m"),
@@ -702,21 +762,39 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigM
 		cooldown = "1m"
 	}
 	cfg := workflowExecutionConfigYAML{
-		TLSProfile:         o.tlsProfile,
-		DataStorageURL:     DataStorageURL(kn.Namespace),
-		WorkflowNamespace:  wfNs,
-		CooldownPeriod:     cooldown,
-		ServiceAccountName: "kubernaut-workflow-runner",
+		TLSProfile: o.tlsProfile,
+		Execution: weExecutionYAML{
+			Namespace:      wfNs,
+			CooldownPeriod: cooldown,
+		},
+		Datastorage: weDatastorageYAML{
+			URL:     DataStorageURL(kn.Namespace),
+			Timeout: "10s",
+			Buffer: dataStorageBufferYAML{
+				BufferSize:    10000,
+				BatchSize:     500,
+				FlushInterval: "1s",
+				MaxRetries:    3,
+			},
+		},
+		Controller: weControllerYAML{
+			MetricsAddr:      ":9090",
+			HealthProbeAddr:  ":8081",
+			LeaderElection:   false,
+			LeaderElectionID: "workflowexecution.kubernaut.ai",
+		},
 	}
 	if kn.Spec.Ansible.Enabled {
 		ansible := workflowExecutionAnsibleYAML{
-			Enabled:        true,
 			APIURL:         kn.Spec.Ansible.APIURL,
 			OrganizationID: kn.Spec.Ansible.OrganizationID,
 		}
 		if kn.Spec.Ansible.TokenSecretRef != nil {
-			ansible.TokenSecretName = kn.Spec.Ansible.TokenSecretRef.Name
-			ansible.TokenSecretKey = withDefault(kn.Spec.Ansible.TokenSecretRef.Key, "token")
+			ansible.TokenSecretRef = &weTokenSecretRefYAML{
+				Name:      kn.Spec.Ansible.TokenSecretRef.Name,
+				Namespace: kn.Namespace,
+				Key:       withDefault(kn.Spec.Ansible.TokenSecretRef.Key, "token"),
+			}
 		}
 		cfg.Ansible = &ansible
 	}
@@ -794,9 +872,9 @@ func NotificationControllerConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...Co
 				Format:  "json",
 			},
 			Slack: notificationSlackYAML{Timeout: "10s"},
-		},
-		Credentials: notificationCredentialsYAML{
-			Dir: "/etc/notification/credentials",
+			Credentials: notificationCredentialsYAML{
+				Dir: "/etc/notification/credentials",
+			},
 		},
 		Datastorage: ds,
 	}
@@ -875,7 +953,8 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		cfg.Tools = &kubernautAgentToolsYAML{
 			Prometheus: kubernautAgentPrometheusYAML{
-				URL: OCPPrometheusURL,
+				URL:       OCPPrometheusURL,
+				TLSCaFile: "/etc/ssl/combined/ca-bundle.crt",
 			},
 		}
 	}
