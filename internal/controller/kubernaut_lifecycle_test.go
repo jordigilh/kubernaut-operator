@@ -508,6 +508,31 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, key, job)).To(Succeed())
 			Expect(job.UID).To(Equal(origUID), "Job should not be recreated")
 		})
+
+		It("should skip migration when a completed Job with matching spec-hash exists", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			By("capturing the completed Job UID and resourceVersion")
+			job := &batchv1.Job{}
+			key := types.NamespacedName{Name: "kubernaut-db-migration", Namespace: testNamespace}
+			Expect(k8sClient.Get(ctx, key, job)).To(Succeed())
+			origUID := job.UID
+			origRV := job.ResourceVersion
+
+			Expect(job.Annotations).To(HaveKey(resources.AnnotationSpecHash),
+				"completed Job should carry a spec-hash annotation")
+
+			By("reconciling again (simulates operator restart)")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying the Job was not deleted/recreated")
+			Expect(k8sClient.Get(ctx, key, job)).To(Succeed())
+			Expect(job.UID).To(Equal(origUID), "Job UID should be unchanged")
+			Expect(job.ResourceVersion).To(Equal(origRV), "Job should not have been updated")
+		})
 	})
 
 	// ======================================================================

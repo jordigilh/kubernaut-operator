@@ -250,6 +250,10 @@ func (r *KubernautReconciler) ensureMigrationPrereqs(ctx context.Context, kn *ku
 // ensureMigrationJob creates the migration Job if absent, then checks its
 // status. Returns a zero Result when the job has completed successfully;
 // returns a non-zero Result (requeue) when the job is still running or failed.
+//
+// A completed Job with a matching spec-hash annotation is considered
+// up-to-date and short-circuits the entire migration phase, avoiding
+// unnecessary pod churn on operator restarts.
 func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -257,6 +261,9 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("building migration job: %w", err)
 	}
+	desiredHash := resources.SpecHash(migrationJob)
+	setHashAnnotation(migrationJob, desiredHash)
+
 	existingJob := &batchv1.Job{}
 	created, err := r.createIfNotFound(ctx, kn, migrationJob, existingJob)
 	if err != nil {
@@ -268,7 +275,17 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 
 	for _, cond := range existingJob.Status.Conditions {
 		if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
-			return ctrl.Result{}, nil
+			if existingJob.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash {
+				return ctrl.Result{}, nil
+			}
+			log.Info("completed migration job has stale spec-hash, deleting for re-run")
+			propagation := metav1.DeletePropagationBackground
+			if err := r.Delete(ctx, existingJob, &client.DeleteOptions{
+				PropagationPolicy: &propagation,
+			}); err != nil && !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("deleting stale migration job: %w", err)
+			}
+			return ctrl.Result{Requeue: true}, nil
 		}
 		if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
 			if existingJob.Status.Failed >= int32(maxMigrationRetries) {
