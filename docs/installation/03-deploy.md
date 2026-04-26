@@ -140,7 +140,7 @@ curl -sk "https://${GATEWAY_URL}/healthz"
 After the AuthWebhook is ready, apply ActionTypes and RemediationWorkflows. The webhook uses `failurePolicy: Fail`, so CRD mutations are rejected until the webhook pod is healthy.
 
 ```bash
-oc rollout status deployment/authwebhook-controller -n kubernaut-system --timeout=3m
+oc rollout status deployment/authwebhook -n kubernaut-system --timeout=3m
 
 # Clone the demo scenarios repo (if not already available)
 git clone https://github.com/jordigilh/kubernaut-demo-scenarios.git

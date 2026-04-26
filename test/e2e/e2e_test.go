@@ -235,10 +235,10 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 
 		It("should create all component Deployments and reach readiness", func() {
 			deployments := []string{
-				"gateway-controller", "data-storage-controller", "aianalysis-controller",
+				"gateway", "data-storage", "aianalysis-controller",
 				"signalprocessing-controller", "remediationorchestrator-controller",
 				"workflowexecution-controller", "effectivenessmonitor-controller",
-				"notification-controller", "kubernaut-agent-controller", "authwebhook-controller",
+				"notification-controller", "kubernaut-agent", "authwebhook",
 			}
 			for _, dep := range deployments {
 				cmd := exec.Command("kubectl", "get", "deployment", dep,
