@@ -3,7 +3,7 @@ module github.com/jordigilh/kubernaut-operator
 go 1.25.6
 
 require (
-	github.com/jordigilh/kubernaut v1.3.0
+	github.com/jordigilh/kubernaut v1.3.1
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.1
 	github.com/openshift/api v0.0.0-20260327162646-993e604705e3
