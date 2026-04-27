@@ -58,7 +58,7 @@ metadata:
     capabilities: Full Lifecycle
     categories: AI/Machine Learning,Monitoring
     com.redhat.openshift.versions: v4.18
-    containerImage: quay.io/kubernaut-ai/kubernaut-operator:v1.3.2
+    containerImage: quay.io/kubernaut-ai/kubernaut-operator@sha256:30c81ff3917c106e07db0e8d65e551986ce6d72fbe4df62bd7acf179c83b8ecb
     createdAt: "2026-04-26T23:38:00Z"
     description: Automated Kubernetes remediation powered by AI — detects issues,
       analyzes root causes, and executes verified fixes.
@@ -365,7 +365,7 @@ spec:
                   value: quay.io/kubernaut-ai/authwebhook@sha256:9de8ef5a47b1e6eeed758cffbff2ded11f19ab757789a8e7b981b2e2b2f2f047
                 - name: RELATED_IMAGE_DB_MIGRATE
                   value: quay.io/kubernaut-ai/db-migrate@sha256:99f65904b158132ffad21009736a45d5a4ba5c4ebece90938272e771eb4fcffe
-                image: quay.io/kubernaut-ai/kubernaut-operator:v1.3.2
+                image: quay.io/kubernaut-ai/kubernaut-operator@sha256:30c81ff3917c106e07db0e8d65e551986ce6d72fbe4df62bd7acf179c83b8ecb
                 livenessProbe:
                   httpGet:
                     path: /healthz
