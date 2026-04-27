@@ -17,7 +17,6 @@ limitations under the License.
 package controller
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -72,11 +71,6 @@ const (
 	ReasonRouteCreated        = "RouteCreated"
 	ReasonRouteDisabled       = "RouteDisabled"
 	ReasonManifestsApplied    = "ManifestsApplied"
-
-	ReasonAnsibleDisabled        = "Disabled"
-	ReasonAnsibleReady           = "Ready"
-	ReasonAnsibleTokenNotFound   = "TokenSecretNotFound"
-	ReasonAnsibleTokenKeyMissing = "TokenKeyMissing"
 )
 
 // maxFinalizerAttempts is the number of consecutive reconcile attempts during
@@ -743,8 +737,6 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 	finalStatuses := serviceStatuses
 	finalAllReady := allReady
 
-	ansibleCond := r.validateAnsibleConfig(ctx, kn)
-
 	if err := r.patchStatus(ctx, kn, func() {
 		kn.Status.Services = finalStatuses
 		if finalAllReady {
@@ -752,14 +744,8 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 		} else {
 			r.setPhase(kn, kubernautv1alpha1.PhaseDegraded)
 		}
-		meta.SetStatusCondition(&kn.Status.Conditions, ansibleCond)
 	}); err != nil {
 		return ctrl.Result{}, err
-	}
-
-	if ansibleCond.Status == metav1.ConditionFalse {
-		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "AnsibleConfigInvalid", "Reconcile",
-			"%s: %s", ansibleCond.Reason, ansibleCond.Message)
 	}
 
 	log.Info("reconciliation complete", "phase", kn.Status.Phase)
@@ -972,70 +958,6 @@ func (r *KubernautReconciler) validateSecret(ctx context.Context, namespace, nam
 	return nil
 }
 
-// validateAnsibleConfig evaluates the AnsibleReady condition based on the
-// current CR spec and cluster state. It returns a condition to be set in the
-// status patch. When ansible is disabled, it returns True/Disabled. When
-// enabled, it validates the token Secret exists and contains the expected key.
-// This method is non-blocking: it never returns an error or sets PhaseError.
-func (r *KubernautReconciler) validateAnsibleConfig(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) metav1.Condition {
-	if !kn.Spec.Ansible.Enabled {
-		return metav1.Condition{
-			Type:               kubernautv1alpha1.ConditionAnsibleReady,
-			Status:             metav1.ConditionTrue,
-			Reason:             ReasonAnsibleDisabled,
-			Message:            "Ansible integration is disabled",
-			ObservedGeneration: kn.Generation,
-		}
-	}
-
-	if kn.Spec.Ansible.TokenSecretRef == nil {
-		return metav1.Condition{
-			Type:               kubernautv1alpha1.ConditionAnsibleReady,
-			Status:             metav1.ConditionFalse,
-			Reason:             ReasonAnsibleTokenNotFound,
-			Message:            "spec.ansible.tokenSecretRef is not configured",
-			ObservedGeneration: kn.Generation,
-		}
-	}
-
-	secret := &corev1.Secret{}
-	secretKey := client.ObjectKey{
-		Namespace: kn.Namespace,
-		Name:      kn.Spec.Ansible.TokenSecretRef.Name,
-	}
-	if err := r.Get(ctx, secretKey, secret); err != nil {
-		return metav1.Condition{
-			Type:               kubernautv1alpha1.ConditionAnsibleReady,
-			Status:             metav1.ConditionFalse,
-			Reason:             ReasonAnsibleTokenNotFound,
-			Message:            fmt.Sprintf("Secret %q not found", secretKey.Name),
-			ObservedGeneration: kn.Generation,
-		}
-	}
-
-	tokenKey := kn.Spec.Ansible.TokenSecretRef.Key
-	if tokenKey == "" {
-		tokenKey = "token"
-	}
-	if _, ok := secret.Data[tokenKey]; !ok {
-		return metav1.Condition{
-			Type:               kubernautv1alpha1.ConditionAnsibleReady,
-			Status:             metav1.ConditionFalse,
-			Reason:             ReasonAnsibleTokenKeyMissing,
-			Message:            fmt.Sprintf("Secret %q is missing key %q", secretKey.Name, tokenKey),
-			ObservedGeneration: kn.Generation,
-		}
-	}
-
-	return metav1.Condition{
-		Type:               kubernautv1alpha1.ConditionAnsibleReady,
-		Status:             metav1.ConditionTrue,
-		Reason:             ReasonAnsibleReady,
-		Message:            "Ansible token Secret is valid",
-		ObservedGeneration: kn.Generation,
-	}
-}
-
 func (r *KubernautReconciler) setConditionAndRequeue(
 	ctx context.Context, kn *kubernautv1alpha1.Kubernaut,
 	condType string, reason, message string,
@@ -1095,10 +1017,6 @@ func (r *KubernautReconciler) ensureUnowned(ctx context.Context, obj client.Obje
 // on the desired object and compares it with the live object to skip
 // unnecessary API server writes. AlreadyExists on Create is handled by
 // falling through to the update path.
-//
-// When the spec-hash annotation matches (no spec change), ensureResource
-// additionally checks for content drift on ConfigMaps — detecting external
-// modifications that preserved the annotation but altered the data.
 func (r *KubernautReconciler) ensureResource(ctx context.Context, obj client.Object) error {
 	desiredHash := resources.SpecHash(obj)
 	setHashAnnotation(obj, desiredHash)
@@ -1122,46 +1040,11 @@ func (r *KubernautReconciler) ensureResource(ctx context.Context, obj client.Obj
 	}
 
 	if existing.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash {
-		if !contentDrifted(obj, existing) {
-			return nil
-		}
+		return nil
 	}
 
 	obj.SetResourceVersion(existing.GetResourceVersion())
 	return r.Update(ctx, obj)
-}
-
-// contentDrifted performs a targeted comparison of operator-managed content
-// for types that are susceptible to external data modification without
-// annotation changes (e.g., ConfigMaps edited by users or tooling).
-//
-// Only keys present in the desired object are compared; extra keys in the
-// live object (e.g., OCP-injected service-ca.crt) are ignored to prevent
-// false positives. Returns false for non-ConfigMap types.
-func contentDrifted(desired, existing client.Object) bool {
-	desiredCM, ok := desired.(*corev1.ConfigMap)
-	if !ok {
-		return false
-	}
-	existingCM, ok := existing.(*corev1.ConfigMap)
-	if !ok {
-		return false
-	}
-
-	for key, val := range desiredCM.Data {
-		if existingCM.Data[key] != val {
-			return true
-		}
-	}
-
-	for key, val := range desiredCM.BinaryData {
-		existingVal, exists := existingCM.BinaryData[key]
-		if !exists || !bytes.Equal(val, existingVal) {
-			return true
-		}
-	}
-
-	return false
 }
 
 // setHashAnnotation merges the spec-hash annotation into the object's

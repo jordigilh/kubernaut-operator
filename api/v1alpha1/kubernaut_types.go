@@ -532,7 +532,6 @@ const (
 	ConditionWebhooksConfigured ConditionType = "WebhooksConfigured"
 	ConditionServicesDeployed   ConditionType = "ServicesDeployed"
 	ConditionRouteReady         ConditionType = "RouteReady"
-	ConditionAnsibleReady       ConditionType = "AnsibleReady"
 )
 
 // Finalizer used for cluster-scoped resource cleanup.
