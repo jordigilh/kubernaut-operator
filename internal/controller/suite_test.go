@@ -25,6 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	configv1 "github.com/openshift/api/config/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -80,6 +81,7 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	err = apiextensionsv1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
+	Expect(configv1.Install(scheme.Scheme)).To(Succeed())
 
 	// +kubebuilder:scaffold:scheme
 

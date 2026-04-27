@@ -18,9 +18,12 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	configv1 "github.com/openshift/api/config/v1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -30,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -38,6 +42,19 @@ import (
 )
 
 const testAwxAPIURL = "https://awx.example.com"
+
+// deleteFailingClient wraps a real client but returns an error on Delete
+// calls for ClusterRole objects, simulating a persistent cleanup failure.
+type deleteFailingClient struct {
+	client.Client
+}
+
+func (c *deleteFailingClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	if _, ok := obj.(*rbacv1.ClusterRole); ok {
+		return fmt.Errorf("simulated: permission denied deleting ClusterRole %s", obj.GetName())
+	}
+	return c.Client.Delete(ctx, obj, opts...)
+}
 
 // markMigrationJobComplete creates or patches the migration Job to have a
 // JobComplete condition, allowing the reconciler to proceed past phaseMigrate.
@@ -1446,6 +1463,279 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			)).To(Succeed())
 			Expect(wfSAList.Items).To(BeEmpty(),
 				"workflow namespace SAs should be deleted")
+		})
+	})
+
+	Context("Wiring Verification — Hostname Validation via Reconcile", func() {
+		BeforeEach(func() {
+			deleteCRIfExists(ctx)
+			cleanupNamespacedResources(ctx)
+		})
+		AfterEach(func() {
+			deleteCRIfExists(ctx)
+			cleanupNamespacedResources(ctx)
+		})
+
+		It("should reject a CR with an invalid PostgreSQL hostname", func() {
+			cr := newMinimalCR()
+			cr.Spec.PostgreSQL.Host = "host;rm -rf /"
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			createBYOSecrets(ctx)
+
+			r := newReconciler()
+			By("reconcile 1: add finalizer")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("reconcile 2: validate — should fail on hostname")
+			result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseError))
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionBYOValidated)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal("PostgreSQLHostInvalid"))
+		})
+
+		It("should reject a CR with an invalid Valkey hostname", func() {
+			cr := newMinimalCR()
+			cr.Spec.Valkey.Host = "host user=admin"
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			createBYOSecrets(ctx)
+
+			r := newReconciler()
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseError))
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionBYOValidated)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal("ValkeyHostInvalid"))
+		})
+	})
+
+	Context("Wiring Verification — APIServer Watch Handler", func() {
+		BeforeEach(func() {
+			deleteCRIfExists(ctx)
+			cleanupNamespacedResources(ctx)
+		})
+		AfterEach(func() {
+			deleteCRIfExists(ctx)
+			cleanupNamespacedResources(ctx)
+		})
+
+		It("should return reconcile requests for existing Kubernaut CRs", func() {
+			cr := newMinimalCR()
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			r := newReconciler()
+			reqs := r.apiServerToKubernaut(ctx, &configv1.APIServer{})
+			Expect(reqs).To(HaveLen(1))
+			Expect(reqs[0].NamespacedName).To(Equal(singletonKey()))
+		})
+
+		It("should return empty list when no Kubernaut CRs exist", func() {
+			r := newReconciler()
+			reqs := r.apiServerToKubernaut(ctx, &configv1.APIServer{})
+			Expect(reqs).To(BeEmpty())
+		})
+	})
+
+	Context("Wiring Verification — Event Recorder Assertions", func() {
+		BeforeEach(func() {
+			deleteCRIfExists(ctx)
+			cleanupNamespacedResources(ctx)
+			deleteBYOSecrets(ctx)
+		})
+		AfterEach(func() {
+			deleteCRIfExists(ctx)
+			cleanupNamespacedResources(ctx)
+		})
+
+		It("should emit MigrationComplete and ManifestsApplied events during reconcileToRunning", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+
+			r := reconcileToRunning(ctx)
+
+			recorder := r.Recorder.(*events.FakeRecorder)
+			var collected []string
+		drain:
+			for {
+				select {
+				case ev := <-recorder.Events:
+					collected = append(collected, ev)
+				default:
+					break drain
+				}
+			}
+
+			Expect(collected).To(ContainElement("Normal MigrationComplete Database migration job succeeded"))
+			Expect(collected).To(ContainElement("Normal ManifestsApplied All service manifests applied"))
+		})
+
+		It("should emit CleanupComplete event on successful deletion", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+
+			r := reconcileToRunning(ctx)
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
+
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			recorder := r.Recorder.(*events.FakeRecorder)
+			var collected []string
+		drain:
+			for {
+				select {
+				case ev := <-recorder.Events:
+					collected = append(collected, ev)
+				default:
+					break drain
+				}
+			}
+
+			Expect(collected).To(ContainElement("Normal CleanupComplete Cluster-scoped resources cleaned up"))
+		})
+	})
+
+	Context("Wiring Verification — Finalizer Timeout Force-Removal", func() {
+		BeforeEach(func() {
+			deleteCRIfExists(ctx)
+			cleanupNamespacedResources(ctx)
+			deleteBYOSecrets(ctx)
+		})
+		AfterEach(func() {
+			deleteCRIfExists(ctx)
+			cleanupNamespacedResources(ctx)
+		})
+
+		It("should force-remove finalizer and emit warning when cleanup fails past timeout", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+
+			r := newReconciler()
+
+			By("reconcile 1: add finalizer")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("swapping client to one that fails on Delete for ClusterRoles")
+			r.Client = &deleteFailingClient{Client: k8sClient}
+
+			By("deleting the CR")
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
+
+			By("setting now() to 11 minutes after DeletionTimestamp (past 10min timeout)")
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			r.now = func() time.Time {
+				return kn.DeletionTimestamp.Add(11 * time.Minute)
+			}
+
+			By("reconciling deletion — should force-remove finalizer despite cleanup error")
+			r.Client = &deleteFailingClient{Client: k8sClient}
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying finalizer is removed")
+			err = k8sClient.Get(ctx, singletonKey(), kn)
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "CR should be gone after forced finalizer removal")
+
+			By("verifying FinalizerTimeout warning event")
+			recorder := r.Recorder.(*events.FakeRecorder)
+			var collected []string
+		drain:
+			for {
+				select {
+				case ev := <-recorder.Events:
+					collected = append(collected, ev)
+				default:
+					break drain
+				}
+			}
+			Expect(collected).To(ContainElement(ContainSubstring("Warning FinalizerTimeout")))
+		})
+	})
+
+	Context("Wiring Verification — Migration Max Retry Exhaustion", func() {
+		BeforeEach(func() {
+			deleteCRIfExists(ctx)
+			cleanupNamespacedResources(ctx)
+			deleteBYOSecrets(ctx)
+		})
+		AfterEach(func() {
+			deleteCRIfExists(ctx)
+			cleanupNamespacedResources(ctx)
+		})
+
+		It("should transition to PhaseError when migration Job exceeds max retries", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+
+			r := newReconciler()
+			By("reconcile 1: add finalizer")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("reconcile 2: validate + create migration Job")
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("patching migration Job status to failed with 10 attempts")
+			job := &batchv1.Job{}
+			key := types.NamespacedName{Name: "kubernaut-db-migration", Namespace: testNamespace}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, key, job)
+			}, timeout, interval).Should(Succeed())
+
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.Failed = 10
+			job.Status.Conditions = append(job.Status.Conditions,
+				batchv1.JobCondition{
+					Type:   "FailureTarget",
+					Status: corev1.ConditionTrue,
+				},
+				batchv1.JobCondition{
+					Type:   batchv1.JobFailed,
+					Status: corev1.ConditionTrue,
+				},
+			)
+			Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+
+			By("reconcile 3: should detect max retry exhaustion")
+			result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseError))
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionMigrationComplete)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal("MigrationFailed"))
+			Expect(cond.Message).To(ContainSubstring("manual intervention required"))
 		})
 	})
 })

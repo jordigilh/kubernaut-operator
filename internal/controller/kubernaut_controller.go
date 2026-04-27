@@ -83,6 +83,7 @@ type KubernautReconciler struct {
 	Scheme   *runtime.Scheme
 	Recorder events.EventRecorder
 	RestCfg  *rest.Config
+	now      func() time.Time
 }
 
 // +kubebuilder:rbac:groups=kubernaut.ai,resources=kubernauts,verbs=get;list;watch;create;update;patch;delete
@@ -764,7 +765,7 @@ func (r *KubernautReconciler) reconcileDelete(ctx context.Context, kn *kubernaut
 
 	if controllerutil.ContainsFinalizer(kn, kubernautv1alpha1.FinalizerName) {
 		if err := r.deleteClusterScopedResources(ctx, kn); err != nil {
-			deletionAge := time.Since(kn.DeletionTimestamp.Time)
+			deletionAge := r.now().Sub(kn.DeletionTimestamp.Time)
 			if deletionAge > time.Duration(maxFinalizerAttempts)*requeueError {
 				r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "FinalizerTimeout", "Reconcile",
 					"cleanup failed after %s; force-removing finalizer: %v", deletionAge.Round(time.Second), err)
@@ -1117,6 +1118,9 @@ func (r *KubernautReconciler) deleteIfExists(ctx context.Context, obj client.Obj
 // owned, so they rely on the periodic requeue timer for drift detection.
 func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorder("kubernaut-controller")
+	if r.now == nil {
+		r.now = time.Now
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kubernautv1alpha1.Kubernaut{}).
 		Owns(&appsv1.Deployment{}).
