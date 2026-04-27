@@ -81,8 +81,8 @@ func TestMigrationJob_Structure(t *testing.T) {
 	if job.Name != "kubernaut-db-migration" {
 		t.Errorf("name = %q, want %q", job.Name, "kubernaut-db-migration")
 	}
-	if job.Namespace != "kubernaut-system" {
-		t.Errorf("namespace = %q, want %q", job.Namespace, "kubernaut-system")
+	if job.Namespace != testSystemNamespace {
+		t.Errorf("namespace = %q, want %q", job.Namespace, testSystemNamespace)
 	}
 
 	if job.Spec.BackoffLimit == nil || *job.Spec.BackoffLimit != 3 {

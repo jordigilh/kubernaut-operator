@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -32,7 +33,7 @@ func TestGatewayDeployment_Basic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertDeploymentBasics(t, dep, ComponentGateway, "gateway")
+	assertDeploymentBasics(t, dep, "gateway")
 	assertHasVolume(t, dep, "config")
 	assertVolumeSourceConfigMap(t, dep, "config", "gateway-config")
 	assertHasVolumeMount(t, dep, "config", "/etc/gateway")
@@ -87,7 +88,7 @@ func TestDataStorageDeployment_InitContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertDeploymentBasics(t, dep, ComponentDataStorage, "datastorage")
+	assertDeploymentBasics(t, dep, "datastorage")
 
 	if len(dep.Spec.Template.Spec.InitContainers) != 1 {
 		t.Fatalf("DataStorage should have 1 init container, got %d", len(dep.Spec.Template.Spec.InitContainers))
@@ -129,7 +130,7 @@ func TestAIAnalysisDeployment_PolicyVolume(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertDeploymentBasics(t, dep, ComponentAIAnalysis, "aianalysis")
+	assertDeploymentBasics(t, dep, "aianalysis")
 	assertHasVolume(t, dep, "rego-policies")
 	assertVolumeSourceConfigMap(t, dep, "rego-policies", "aianalysis-policies")
 	assertHasVolumeMount(t, dep, "rego-policies", "/etc/aianalysis/policies")
@@ -237,7 +238,7 @@ func TestKubernautAgentDeployment_LLMCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertDeploymentBasics(t, dep, ComponentKubernautAgent, "kubernautagent")
+	assertDeploymentBasics(t, dep, "kubernautagent")
 	assertHasVolume(t, dep, "llm-credentials")
 	assertHasVolumeMount(t, dep, "llm-credentials", "/etc/kubernaut-agent/credentials")
 }
@@ -387,7 +388,7 @@ func TestAuthWebhookDeployment_TLSAndPort(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertDeploymentBasics(t, dep, ComponentAuthWebhook, "authwebhook")
+	assertDeploymentBasics(t, dep, "authwebhook")
 	assertHasVolume(t, dep, "webhook-certs")
 	assertHasVolumeMount(t, dep, "webhook-certs", "/tmp/k8s-webhook-server/serving-certs")
 
@@ -421,7 +422,7 @@ func TestAllDeployments_HTTPGetProbes(t *testing.T) {
 
 	for _, dep := range deps {
 		container := dep.Spec.Template.Spec.Containers[0]
-		component := dep.Spec.Template.ObjectMeta.Labels["app"]
+		component := dep.Spec.Template.Labels["app"]
 
 		if container.LivenessProbe == nil {
 			t.Fatalf("Deployment %q should have liveness probe", dep.Name)
@@ -456,7 +457,7 @@ func TestAllDeployments_ProbeTimingMatchesHelmChart(t *testing.T) {
 
 	for _, dep := range deps {
 		container := dep.Spec.Template.Spec.Containers[0]
-		component := dep.Spec.Template.ObjectMeta.Labels["app"]
+		component := dep.Spec.Template.Labels["app"]
 		pc := probeConfigForComponent(component)
 
 		lp := container.LivenessProbe
@@ -505,7 +506,7 @@ func TestDeployments_MetricsPort(t *testing.T) {
 	}
 
 	for _, dep := range getAllDeployments(t, kn) {
-		component := dep.Spec.Template.ObjectMeta.Labels["app"]
+		component := dep.Spec.Template.Labels["app"]
 		container := dep.Spec.Template.Spec.Containers[0]
 
 		hasMetrics := false
@@ -540,7 +541,7 @@ func TestDeployments_ConfigArgs(t *testing.T) {
 	}
 
 	for _, dep := range getAllDeployments(t, kn) {
-		component := dep.Spec.Template.ObjectMeta.Labels["app"]
+		component := dep.Spec.Template.Labels["app"]
 		container := dep.Spec.Template.Spec.Containers[0]
 
 		want, hasExpected := wantArgs[component]
@@ -603,7 +604,7 @@ func TestAllDeployments_ImagePullPolicy(t *testing.T) {
 func TestAllDeployments_ServiceAccounts(t *testing.T) {
 	kn := testKubernaut()
 	for _, dep := range getAllDeployments(t, kn) {
-		component := dep.Spec.Template.ObjectMeta.Labels["app"]
+		component := dep.Spec.Template.Labels["app"]
 		if component == "" {
 			t.Fatalf("Deployment %q missing 'app' label on pod template", dep.Name)
 		}
@@ -735,7 +736,7 @@ func getAllDeployments(t *testing.T, kn *kubernautv1alpha1.Kubernaut) []*appsv1.
 		KubernautAgentDeployment,
 		AuthWebhookDeployment,
 	}
-	var deps []*appsv1.Deployment
+	deps := make([]*appsv1.Deployment, 0, len(builders))
 	for _, b := range builders {
 		dep, err := b(kn)
 		if err != nil {
@@ -746,11 +747,11 @@ func getAllDeployments(t *testing.T, kn *kubernautv1alpha1.Kubernaut) []*appsv1.
 	return deps
 }
 
-func assertDeploymentBasics(t *testing.T, dep *appsv1.Deployment, component, imageSuffix string) {
+func assertDeploymentBasics(t *testing.T, dep *appsv1.Deployment, imageSuffix string) {
 	t.Helper()
 
-	if dep.Namespace != "kubernaut-system" {
-		t.Errorf("Deployment %q namespace = %q, want %q", dep.Name, dep.Namespace, "kubernaut-system")
+	if dep.Namespace != testSystemNamespace {
+		t.Errorf("Deployment %q namespace = %q, want %q", dep.Name, dep.Namespace, testSystemNamespace)
 	}
 	if dep.Spec.Replicas == nil || *dep.Spec.Replicas != 1 {
 		t.Errorf("Deployment %q should have 1 replica", dep.Name)
@@ -762,6 +763,9 @@ func assertDeploymentBasics(t *testing.T, dep *appsv1.Deployment, component, ima
 	container := dep.Spec.Template.Spec.Containers[0]
 	if container.Image == "" {
 		t.Errorf("Deployment %q should have a non-empty image", dep.Name)
+	}
+	if !strings.Contains(container.Image, imageSuffix) {
+		t.Errorf("Deployment %q image %q should contain %q", dep.Name, container.Image, imageSuffix)
 	}
 }
 

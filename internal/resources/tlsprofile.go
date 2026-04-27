@@ -20,6 +20,13 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 )
 
+// Named TLS profile strings consumed by kubernaut services (ADR-TLS-001).
+const (
+	TLSProfileNameOld          = "Old"
+	TLSProfileNameIntermediate = "Intermediate"
+	TLSProfileNameModern       = "Modern"
+)
+
 // MapTLSProfile converts an OpenShift TLSSecurityProfile (from the cluster
 // APIServer CR) into the profile name string expected by kubernaut services.
 // Returns "" when profile is nil (non-OCP or unset), which tells services to
@@ -34,11 +41,11 @@ func MapTLSProfile(profile *configv1.TLSSecurityProfile) string {
 	}
 	switch profile.Type {
 	case configv1.TLSProfileOldType:
-		return "Old"
+		return TLSProfileNameOld
 	case configv1.TLSProfileIntermediateType:
-		return "Intermediate"
+		return TLSProfileNameIntermediate
 	case configv1.TLSProfileModernType:
-		return "Modern"
+		return TLSProfileNameModern
 	case configv1.TLSProfileCustomType:
 		return mapCustomProfile(profile.Custom)
 	default:
@@ -48,14 +55,14 @@ func MapTLSProfile(profile *configv1.TLSSecurityProfile) string {
 
 func mapCustomProfile(custom *configv1.CustomTLSProfile) string {
 	if custom == nil {
-		return "Intermediate"
+		return TLSProfileNameIntermediate
 	}
 	switch custom.MinTLSVersion {
 	case configv1.VersionTLS13:
-		return "Modern"
+		return TLSProfileNameModern
 	case configv1.VersionTLS12:
-		return "Intermediate"
+		return TLSProfileNameIntermediate
 	default:
-		return "Old"
+		return TLSProfileNameOld
 	}
 }

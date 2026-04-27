@@ -37,6 +37,8 @@ import (
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
+const testAwxAPIURL = "https://awx.example.com"
+
 // markMigrationJobComplete creates or patches the migration Job to have a
 // JobComplete condition, allowing the reconciler to proceed past phaseMigrate.
 func markMigrationJobComplete(ctx context.Context) {
@@ -610,7 +612,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
 			cr.Spec.Ansible.Enabled = true
-			cr.Spec.Ansible.APIURL = "https://awx.example.com"
+			cr.Spec.Ansible.APIURL = testAwxAPIURL
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			reconcileToRunning(ctx)
 
@@ -622,7 +624,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
 			cr.Spec.Ansible.Enabled = true
-			cr.Spec.Ansible.APIURL = "https://awx.example.com"
+			cr.Spec.Ansible.APIURL = testAwxAPIURL
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			r := reconcileToRunning(ctx)
 
@@ -854,7 +856,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
 			cr.Spec.Ansible.Enabled = true
-			cr.Spec.Ansible.APIURL = "https://awx.example.com"
+			cr.Spec.Ansible.APIURL = testAwxAPIURL
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			r := reconcileToRunning(ctx)
 

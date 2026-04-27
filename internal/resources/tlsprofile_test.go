@@ -30,21 +30,21 @@ func TestMapTLSProfile_Nil(t *testing.T) {
 
 func TestMapTLSProfile_Old(t *testing.T) {
 	p := &configv1.TLSSecurityProfile{Type: configv1.TLSProfileOldType}
-	if got := MapTLSProfile(p); got != "Old" {
+	if got := MapTLSProfile(p); got != TLSProfileNameOld {
 		t.Fatalf("expected Old, got %q", got)
 	}
 }
 
 func TestMapTLSProfile_Intermediate(t *testing.T) {
 	p := &configv1.TLSSecurityProfile{Type: configv1.TLSProfileIntermediateType}
-	if got := MapTLSProfile(p); got != "Intermediate" {
+	if got := MapTLSProfile(p); got != TLSProfileNameIntermediate {
 		t.Fatalf("expected Intermediate, got %q", got)
 	}
 }
 
 func TestMapTLSProfile_Modern(t *testing.T) {
 	p := &configv1.TLSSecurityProfile{Type: configv1.TLSProfileModernType}
-	if got := MapTLSProfile(p); got != "Modern" {
+	if got := MapTLSProfile(p); got != TLSProfileNameModern {
 		t.Fatalf("expected Modern, got %q", got)
 	}
 }
@@ -59,7 +59,7 @@ func TestMapTLSProfile_CustomTLS13(t *testing.T) {
 			},
 		},
 	}
-	if got := MapTLSProfile(p); got != "Modern" {
+	if got := MapTLSProfile(p); got != TLSProfileNameModern {
 		t.Fatalf("Custom with TLS 1.3 should map to Modern, got %q", got)
 	}
 }
@@ -74,7 +74,7 @@ func TestMapTLSProfile_CustomTLS12(t *testing.T) {
 			},
 		},
 	}
-	if got := MapTLSProfile(p); got != "Intermediate" {
+	if got := MapTLSProfile(p); got != TLSProfileNameIntermediate {
 		t.Fatalf("Custom with TLS 1.2 should map to Intermediate, got %q", got)
 	}
 }
@@ -89,7 +89,7 @@ func TestMapTLSProfile_CustomTLS10(t *testing.T) {
 			},
 		},
 	}
-	if got := MapTLSProfile(p); got != "Old" {
+	if got := MapTLSProfile(p); got != TLSProfileNameOld {
 		t.Fatalf("Custom with TLS 1.0 should map to Old, got %q", got)
 	}
 }
@@ -103,14 +103,14 @@ func TestMapTLSProfile_CustomTLS11(t *testing.T) {
 			},
 		},
 	}
-	if got := MapTLSProfile(p); got != "Old" {
+	if got := MapTLSProfile(p); got != TLSProfileNameOld {
 		t.Fatalf("Custom with TLS 1.1 should map to Old, got %q", got)
 	}
 }
 
 func TestMapTLSProfile_CustomNilCustomField(t *testing.T) {
 	p := &configv1.TLSSecurityProfile{Type: configv1.TLSProfileCustomType}
-	if got := MapTLSProfile(p); got != "Intermediate" {
+	if got := MapTLSProfile(p); got != TLSProfileNameIntermediate {
 		t.Fatalf("Custom with nil custom field should default to Intermediate, got %q", got)
 	}
 }

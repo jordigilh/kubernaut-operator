@@ -25,6 +25,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	testGatewayServiceName     = "gateway-service"
+	testOperatorManagedByValue = "kubernaut-operator"
+)
+
 func TestGatewayRoute_EnabledByDefault(t *testing.T) {
 	kn := testKubernaut()
 	route := GatewayRoute(kn)
@@ -35,11 +40,11 @@ func TestGatewayRoute_EnabledByDefault(t *testing.T) {
 	if route.Name != "gateway-route" {
 		t.Errorf("name = %q, want %q", route.Name, "gateway-route")
 	}
-	if route.Namespace != "kubernaut-system" {
-		t.Errorf("namespace = %q, want %q", route.Namespace, "kubernaut-system")
+	if route.Namespace != testSystemNamespace {
+		t.Errorf("namespace = %q, want %q", route.Namespace, testSystemNamespace)
 	}
-	if route.Spec.To.Name != "gateway-service" {
-		t.Errorf("route target = %q, want %q", route.Spec.To.Name, "gateway-service")
+	if route.Spec.To.Name != testGatewayServiceName {
+		t.Errorf("route target = %q, want %q", route.Spec.To.Name, testGatewayServiceName)
 	}
 	if route.Spec.TLS == nil {
 		t.Fatal("route should have TLS config")
@@ -171,10 +176,10 @@ func TestWorkflowNamespace_DefaultName(t *testing.T) {
 	kn := testKubernaut()
 	ns := WorkflowNamespace(kn)
 
-	if ns.Name != "kubernaut-workflows" {
-		t.Errorf("name = %q, want %q", ns.Name, "kubernaut-workflows")
+	if ns.Name != DefaultWorkflowNamespace {
+		t.Errorf("name = %q, want %q", ns.Name, DefaultWorkflowNamespace)
 	}
-	if ns.Labels["app.kubernetes.io/managed-by"] != "kubernaut-operator" {
+	if ns.Labels["app.kubernetes.io/managed-by"] != testOperatorManagedByValue {
 		t.Error("workflow namespace should have managed-by label")
 	}
 }

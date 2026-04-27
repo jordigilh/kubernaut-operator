@@ -20,6 +20,8 @@ import (
 	"testing"
 )
 
+const testAuthWebhookServiceName = "authwebhook-service"
+
 func TestServices_APIServiceCount(t *testing.T) {
 	kn := testKubernaut()
 	svcs := Services(kn)
@@ -41,8 +43,8 @@ func TestServices_AllInCorrectNamespace(t *testing.T) {
 	kn := testKubernaut()
 	all := append(Services(kn), MetricsServices(kn)...)
 	for _, svc := range all {
-		if svc.Namespace != "kubernaut-system" {
-			t.Errorf("Service %q namespace = %q, want %q", svc.Name, svc.Namespace, "kubernaut-system")
+		if svc.Namespace != testSystemNamespace {
+			t.Errorf("Service %q namespace = %q, want %q", svc.Name, svc.Namespace, testSystemNamespace)
 		}
 	}
 }
@@ -50,7 +52,7 @@ func TestServices_AllInCorrectNamespace(t *testing.T) {
 func TestServices_AuthWebhookOn443(t *testing.T) {
 	kn := testKubernaut()
 	for _, svc := range Services(kn) {
-		if svc.Name == "authwebhook-service" {
+		if svc.Name == testAuthWebhookServiceName {
 			if len(svc.Spec.Ports) == 0 || svc.Spec.Ports[0].Port != 443 {
 				t.Errorf("authwebhook-service port should be 443, got %v", svc.Spec.Ports)
 			}
@@ -66,7 +68,7 @@ func TestServices_AuthWebhookOn443(t *testing.T) {
 func TestServices_APIServicesHaveHTTPPort(t *testing.T) {
 	kn := testKubernaut()
 	for _, svc := range Services(kn) {
-		if svc.Name == "authwebhook-service" {
+		if svc.Name == testAuthWebhookServiceName {
 			continue
 		}
 		found := false
@@ -95,7 +97,7 @@ func TestServices_ExpectedAPIServiceNames(t *testing.T) {
 		"data-storage-service",
 		"aianalysis-service",
 		"kubernaut-agent",
-		"authwebhook-service",
+		testAuthWebhookServiceName,
 	}
 	for _, name := range expected {
 		if !names[name] {
@@ -255,8 +257,8 @@ func TestPodDisruptionBudgets_MaxUnavailable1(t *testing.T) {
 func TestPodDisruptionBudgets_CorrectNamespace(t *testing.T) {
 	kn := testKubernaut()
 	for _, pdb := range PodDisruptionBudgets(kn) {
-		if pdb.Namespace != "kubernaut-system" {
-			t.Errorf("PDB %q namespace = %q, want %q", pdb.Name, pdb.Namespace, "kubernaut-system")
+		if pdb.Namespace != testSystemNamespace {
+			t.Errorf("PDB %q namespace = %q, want %q", pdb.Name, pdb.Namespace, testSystemNamespace)
 		}
 	}
 }

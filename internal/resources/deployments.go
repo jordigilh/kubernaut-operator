@@ -94,9 +94,10 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		Resources:       DefaultResources(),
 	}
 
-	volumes := []corev1.Volume{
+	volumes := make([]corev1.Volume, 0, 4)
+	volumes = append(volumes,
 		configMapVolume("config", "datastorage-config"),
-		{
+		corev1.Volume{
 			Name: "secrets",
 			VolumeSource: corev1.VolumeSource{
 				Projected: &corev1.ProjectedVolumeSource{
@@ -113,7 +114,7 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 				},
 			},
 		},
-	}
+	)
 
 	volumes = append(volumes,
 		secretVolume("tls-certs", DataStorageTLSSecretName),
@@ -179,14 +180,16 @@ func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, 
 // SignalProcessingDeployment builds the signalprocessing Deployment.
 func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	policyName := SignalProcessingPolicyName(kn)
-	volumes := []corev1.Volume{
+	volumes := make([]corev1.Volume, 0, 3)
+	volumes = append(volumes,
 		configMapVolume("config", "signalprocessing-config"),
 		configMapVolume("policy", policyName),
-	}
-	mounts := []corev1.VolumeMount{
-		{Name: "config", MountPath: "/etc/signalprocessing/config.yaml", SubPath: "config.yaml"},
-		{Name: "policy", MountPath: "/etc/signalprocessing/policies", ReadOnly: true},
-	}
+	)
+	mounts := make([]corev1.VolumeMount, 0, 3)
+	mounts = append(mounts,
+		corev1.VolumeMount{Name: "config", MountPath: "/etc/signalprocessing/config.yaml", SubPath: "config.yaml"},
+		corev1.VolumeMount{Name: "policy", MountPath: "/etc/signalprocessing/policies", ReadOnly: true},
+	)
 
 	proactiveCMName := "signalprocessing-proactive-signal-mappings"
 	if kn.Spec.SignalProcessing.ProactiveSignalMappings != nil {

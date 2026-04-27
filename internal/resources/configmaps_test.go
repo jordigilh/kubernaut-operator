@@ -25,6 +25,8 @@ import (
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
+const injectCABundleAnnotationValue = "true"
+
 func TestGatewayConfigMap_ContainsDataStorageURL(t *testing.T) {
 	kn := testKubernaut()
 	cm, err := GatewayConfigMap(kn)
@@ -345,7 +347,7 @@ func TestInterServiceCAConfigMap_HasInjectAnnotation(t *testing.T) {
 		t.Errorf("name = %q, want %q", cm.Name, InterServiceCAConfigMapName)
 	}
 	v, ok := cm.Annotations[OCPServiceCAInjectAnnotation]
-	if !ok || v != "true" {
+	if !ok || v != injectCABundleAnnotationValue {
 		t.Error("inter-service-ca ConfigMap should have inject-cabundle annotation")
 	}
 }
@@ -358,13 +360,13 @@ func TestServiceCAConfigMaps_HaveAnnotation(t *testing.T) {
 	}{
 		{"effectivenessmonitor-service-ca", func(t *testing.T) {
 			cm := EffectivenessMonitorServiceCAConfigMap(kn)
-			if cm.Annotations["service.beta.openshift.io/inject-cabundle"] != "true" {
+			if cm.Annotations["service.beta.openshift.io/inject-cabundle"] != injectCABundleAnnotationValue {
 				t.Error("EM service-ca ConfigMap should have inject-cabundle annotation")
 			}
 		}},
 		{"kubernaut-agent-service-ca", func(t *testing.T) {
 			cm := KubernautAgentServiceCAConfigMap(kn)
-			if cm.Annotations["service.beta.openshift.io/inject-cabundle"] != "true" {
+			if cm.Annotations["service.beta.openshift.io/inject-cabundle"] != injectCABundleAnnotationValue {
 				t.Error("KA service-ca ConfigMap should have inject-cabundle annotation")
 			}
 		}},
@@ -548,8 +550,8 @@ func TestConfigMaps_AllInCorrectNamespace(t *testing.T) {
 		if err != nil {
 			t.Fatalf("building %s ConfigMap: %v", b.name, err)
 		}
-		if cm.Namespace != "kubernaut-system" {
-			t.Errorf("ConfigMap %q namespace = %q, want %q", cm.Name, cm.Namespace, "kubernaut-system")
+		if cm.Namespace != testSystemNamespace {
+			t.Errorf("ConfigMap %q namespace = %q, want %q", cm.Name, cm.Namespace, testSystemNamespace)
 		}
 	}
 }

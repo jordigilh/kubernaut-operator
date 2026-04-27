@@ -120,7 +120,7 @@ func DataStorageClientRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Ro
 		{"data-storage-client-datastorage", ServiceAccountName(ComponentDataStorage)},
 	}
 
-	var rbs []*rbacv1.RoleBinding
+	rbs := make([]*rbacv1.RoleBinding, 0, len(consumers))
 	for _, c := range consumers {
 		rbs = append(rbs, &rbacv1.RoleBinding{
 			ObjectMeta: metav1.ObjectMeta{
@@ -176,7 +176,7 @@ func NamespaceRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Role {
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
 
-	var roles []*rbacv1.Role
+	roles := make([]*rbacv1.Role, 0, len(componentsNeedingNSRole))
 	for _, c := range componentsNeedingNSRole {
 		roles = append(roles, &rbacv1.Role{
 			ObjectMeta: metav1.ObjectMeta{
@@ -199,7 +199,7 @@ func NamespaceRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.RoleBindin
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
 
-	var rbs []*rbacv1.RoleBinding
+	rbs := make([]*rbacv1.RoleBinding, 0, len(componentsNeedingNSRole))
 	for _, c := range componentsNeedingNSRole {
 		rbs = append(rbs, &rbacv1.RoleBinding{
 			ObjectMeta: metav1.ObjectMeta{

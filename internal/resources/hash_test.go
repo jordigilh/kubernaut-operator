@@ -24,15 +24,15 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func newConfigMap(name, ns string, data map[string]string) *corev1.ConfigMap {
+func newConfigMap(data map[string]string) *corev1.ConfigMap {
 	return &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "ns"},
 		Data:       data,
 	}
 }
 
 func TestSpecHash_Stability(t *testing.T) {
-	cm := newConfigMap("test", "ns", map[string]string{"key": "val"})
+	cm := newConfigMap(map[string]string{"key": "val"})
 	h1 := SpecHash(cm)
 	h2 := SpecHash(cm)
 	if h1 != h2 {
@@ -44,15 +44,15 @@ func TestSpecHash_Stability(t *testing.T) {
 }
 
 func TestSpecHash_Sensitivity(t *testing.T) {
-	cm1 := newConfigMap("test", "ns", map[string]string{"key": "val1"})
-	cm2 := newConfigMap("test", "ns", map[string]string{"key": "val2"})
+	cm1 := newConfigMap(map[string]string{"key": "val1"})
+	cm2 := newConfigMap(map[string]string{"key": "val2"})
 	if SpecHash(cm1) == SpecHash(cm2) {
 		t.Fatal("different data should produce different hashes")
 	}
 }
 
 func TestSpecHash_IgnoresServerMetadata(t *testing.T) {
-	base := newConfigMap("test", "ns", map[string]string{"key": "val"})
+	base := newConfigMap(map[string]string{"key": "val"})
 	baseHash := SpecHash(base)
 
 	withRV := base.DeepCopy()
@@ -81,7 +81,7 @@ func TestSpecHash_IgnoresServerMetadata(t *testing.T) {
 }
 
 func TestSpecHash_IgnoresHashAnnotation(t *testing.T) {
-	base := newConfigMap("test", "ns", map[string]string{"key": "val"})
+	base := newConfigMap(map[string]string{"key": "val"})
 	baseHash := SpecHash(base)
 
 	withAnnotation := base.DeepCopy()
@@ -92,7 +92,7 @@ func TestSpecHash_IgnoresHashAnnotation(t *testing.T) {
 }
 
 func TestSpecHash_PreservesOtherAnnotations(t *testing.T) {
-	cm1 := newConfigMap("test", "ns", map[string]string{"key": "val"})
+	cm1 := newConfigMap(map[string]string{"key": "val"})
 
 	cm2 := cm1.DeepCopy()
 	cm2.Annotations = map[string]string{"custom-annotation": "value"}
@@ -103,7 +103,7 @@ func TestSpecHash_PreservesOtherAnnotations(t *testing.T) {
 }
 
 func TestSpecHash_OwnerRefChange(t *testing.T) {
-	cm1 := newConfigMap("test", "ns", map[string]string{"key": "val"})
+	cm1 := newConfigMap(map[string]string{"key": "val"})
 
 	cm2 := cm1.DeepCopy()
 	cm2.OwnerReferences = []metav1.OwnerReference{
@@ -121,7 +121,7 @@ func TestSpecHash_OwnerRefChange(t *testing.T) {
 }
 
 func TestSpecHash_DoesNotMutateOriginal(t *testing.T) {
-	cm := newConfigMap("test", "ns", map[string]string{"key": "val"})
+	cm := newConfigMap(map[string]string{"key": "val"})
 	cm.ResourceVersion = "999"
 	cm.UID = "original-uid"
 	cm.Annotations = map[string]string{AnnotationSpecHash: "old", "keep": "this"}

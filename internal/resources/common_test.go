@@ -29,6 +29,8 @@ import (
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
+const testSystemNamespace = "kubernaut-system"
+
 func TestMain(m *testing.M) {
 	cleanup := setTestRelatedImages()
 	code := m.Run()
@@ -40,7 +42,7 @@ func testKubernaut() *kubernautv1alpha1.Kubernaut {
 	return &kubernautv1alpha1.Kubernaut{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      kubernautv1alpha1.SingletonName,
-			Namespace: "kubernaut-system",
+			Namespace: testSystemNamespace,
 		},
 		Spec: kubernautv1alpha1.KubernautSpec{
 			Image: kubernautv1alpha1.ImageSpec{
@@ -90,11 +92,15 @@ func setTestRelatedImages() (cleanup func()) {
 		"RELATED_IMAGE_DB_MIGRATE":              "quay.io/kubernaut-ai/db-migrate:v1.3.0",
 	}
 	for k, v := range envs {
-		os.Setenv(k, v)
+		if err := os.Setenv(k, v); err != nil {
+			panic(err)
+		}
 	}
 	return func() {
 		for k := range envs {
-			os.Unsetenv(k)
+			if err := os.Unsetenv(k); err != nil {
+				panic(err)
+			}
 		}
 	}
 }
@@ -127,9 +133,7 @@ func TestResolveImage_OverrideTakesPrecedence(t *testing.T) {
 }
 
 func TestResolveImage_NoEnvVar_ReturnsError(t *testing.T) {
-	prev := os.Getenv("RELATED_IMAGE_GATEWAY")
-	os.Unsetenv("RELATED_IMAGE_GATEWAY")
-	defer os.Setenv("RELATED_IMAGE_GATEWAY", prev)
+	t.Setenv("RELATED_IMAGE_GATEWAY", "")
 
 	kn := testKubernaut()
 	_, err := ResolveImage(kn, "gateway")
@@ -185,11 +189,11 @@ func TestComponentLabels_IncludesAppLabel(t *testing.T) {
 	kn := testKubernaut()
 	labels := ComponentLabels(kn, ComponentGateway)
 
-	if got := labels["app"]; got != "gateway" {
-		t.Errorf("ComponentLabels[app] = %q, want %q", got, "gateway")
+	if got := labels["app"]; got != ComponentGateway {
+		t.Errorf("ComponentLabels[app] = %q, want %q", got, ComponentGateway)
 	}
-	if got := labels["app.kubernetes.io/component"]; got != "gateway" {
-		t.Errorf("ComponentLabels[component] = %q, want %q", got, "gateway")
+	if got := labels["app.kubernetes.io/component"]; got != ComponentGateway {
+		t.Errorf("ComponentLabels[component] = %q, want %q", got, ComponentGateway)
 	}
 	if _, ok := labels["app.kubernetes.io/managed-by"]; !ok {
 		t.Error("ComponentLabels should include common labels")
@@ -201,8 +205,8 @@ func TestSelectorLabels(t *testing.T) {
 	if len(labels) != 1 {
 		t.Fatalf("SelectorLabels should have exactly 1 key, got %d", len(labels))
 	}
-	if got := labels["app"]; got != "gateway" {
-		t.Errorf("SelectorLabels[app] = %q, want %q", got, "gateway")
+	if got := labels["app"]; got != ComponentGateway {
+		t.Errorf("SelectorLabels[app] = %q, want %q", got, ComponentGateway)
 	}
 }
 
@@ -213,16 +217,16 @@ func TestObjectMeta_NamespaceAndLabels(t *testing.T) {
 	if om.Name != "gateway-config" {
 		t.Errorf("ObjectMeta.Name = %q, want %q", om.Name, "gateway-config")
 	}
-	if om.Namespace != "kubernaut-system" {
-		t.Errorf("ObjectMeta.Namespace = %q, want %q", om.Namespace, "kubernaut-system")
+	if om.Namespace != testSystemNamespace {
+		t.Errorf("ObjectMeta.Namespace = %q, want %q", om.Namespace, testSystemNamespace)
 	}
-	if om.Labels["app"] != "gateway" {
-		t.Errorf("ObjectMeta.Labels[app] = %q, want %q", om.Labels["app"], "gateway")
+	if om.Labels["app"] != ComponentGateway {
+		t.Errorf("ObjectMeta.Labels[app] = %q, want %q", om.Labels["app"], ComponentGateway)
 	}
 }
 
 func TestDataStorageURL(t *testing.T) {
-	got := DataStorageURL("kubernaut-system")
+	got := DataStorageURL(testSystemNamespace)
 	want := "https://data-storage-service.kubernaut-system.svc.cluster.local:8080"
 	if got != want {
 		t.Errorf("DataStorageURL() = %q, want %q", got, want)
@@ -230,7 +234,7 @@ func TestDataStorageURL(t *testing.T) {
 }
 
 func TestGatewayURL(t *testing.T) {
-	got := GatewayURL("kubernaut-system")
+	got := GatewayURL(testSystemNamespace)
 	want := "https://gateway-service.kubernaut-system.svc.cluster.local:8080"
 	if got != want {
 		t.Errorf("GatewayURL() = %q, want %q", got, want)

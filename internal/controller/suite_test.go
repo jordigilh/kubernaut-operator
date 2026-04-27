@@ -70,7 +70,7 @@ var _ = BeforeSuite(func() {
 		"RELATED_IMAGE_AUTHWEBHOOK":             "quay.io/kubernaut-ai/authwebhook:test",
 		"RELATED_IMAGE_DB_MIGRATE":              "quay.io/kubernaut-ai/db-migrate:test",
 	} {
-		os.Setenv(k, v)
+		Expect(os.Setenv(k, v)).To(Succeed())
 	}
 
 	ctx, cancel = context.WithCancel(context.TODO())

@@ -22,6 +22,11 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 )
 
+const (
+	testWorkflowRunnerSAName = "kubernaut-workflow-runner"
+	testCustomWorkflowNS     = "my-wf-ns"
+)
+
 func TestClusterRoles_Count(t *testing.T) {
 	kn := testKubernaut()
 	roles := ClusterRoles(kn)
@@ -120,8 +125,8 @@ func TestClusterRoleBindings_WorkflowRunnerBinding(t *testing.T) {
 			if len(crb.Subjects) == 0 {
 				t.Fatal("workflow-runner CRB has no subjects")
 			}
-			if crb.Subjects[0].Name != "kubernaut-workflow-runner" {
-				t.Errorf("workflow-runner CRB subject = %q, want %q", crb.Subjects[0].Name, "kubernaut-workflow-runner")
+			if crb.Subjects[0].Name != testWorkflowRunnerSAName {
+				t.Errorf("workflow-runner CRB subject = %q, want %q", crb.Subjects[0].Name, testWorkflowRunnerSAName)
 			}
 			if crb.Subjects[0].Namespace != DefaultWorkflowNamespace {
 				t.Errorf("workflow-runner CRB subject namespace = %q, want %q", crb.Subjects[0].Namespace, DefaultWorkflowNamespace)
@@ -210,12 +215,12 @@ func TestWorkflowNamespaceRBAC_UsesDefaultNamespace(t *testing.T) {
 	roles, rbs := WorkflowNamespaceRBAC(kn)
 
 	for _, r := range roles {
-		if r.Namespace != "kubernaut-workflows" {
+		if r.Namespace != DefaultWorkflowNamespace {
 			t.Errorf("workflow Role %q should be in kubernaut-workflows, got %q", r.Name, r.Namespace)
 		}
 	}
 	for _, rb := range rbs {
-		if rb.Namespace != "kubernaut-workflows" {
+		if rb.Namespace != DefaultWorkflowNamespace {
 			t.Errorf("workflow RoleBinding %q should be in kubernaut-workflows, got %q", rb.Name, rb.Namespace)
 		}
 	}
@@ -223,16 +228,16 @@ func TestWorkflowNamespaceRBAC_UsesDefaultNamespace(t *testing.T) {
 
 func TestWorkflowNamespaceRBAC_UsesCustomNamespace(t *testing.T) {
 	kn := testKubernaut()
-	kn.Spec.WorkflowExecution.WorkflowNamespace = "my-wf-ns"
+	kn.Spec.WorkflowExecution.WorkflowNamespace = testCustomWorkflowNS
 	roles, rbs := WorkflowNamespaceRBAC(kn)
 
 	for _, r := range roles {
-		if r.Namespace != "my-wf-ns" {
+		if r.Namespace != testCustomWorkflowNS {
 			t.Errorf("workflow Role %q should be in my-wf-ns, got %q", r.Name, r.Namespace)
 		}
 	}
 	for _, rb := range rbs {
-		if rb.Namespace != "my-wf-ns" {
+		if rb.Namespace != testCustomWorkflowNS {
 			t.Errorf("workflow RoleBinding %q should be in my-wf-ns, got %q", rb.Name, rb.Namespace)
 		}
 	}

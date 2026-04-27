@@ -28,7 +28,7 @@ import (
 // Each PDB allows at most 1 unavailable pod, matching the Helm chart.
 func PodDisruptionBudgets(kn *kubernautv1alpha1.Kubernaut) []*policyv1.PodDisruptionBudget {
 	maxUnavailable := intstr.FromInt32(PDBMaxUnavailable)
-	var pdbs []*policyv1.PodDisruptionBudget
+	pdbs := make([]*policyv1.PodDisruptionBudget, 0, len(AllComponents()))
 
 	for _, component := range AllComponents() {
 		pdbs = append(pdbs, &policyv1.PodDisruptionBudget{

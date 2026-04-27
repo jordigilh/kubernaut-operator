@@ -34,7 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -81,7 +81,7 @@ const maxFinalizerAttempts = 20
 type KubernautReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 	RestCfg  *rest.Config
 }
 
@@ -136,7 +136,7 @@ func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernaut
 		r.phaseMigrate,
 	} {
 		result, err := phase(ctx, kn)
-		if err != nil || result.Requeue || result.RequeueAfter > 0 {
+		if err != nil || result.RequeueAfter > 0 {
 			return result, err
 		}
 		if err := r.Get(ctx, client.ObjectKeyFromObject(kn), kn); err != nil {
@@ -146,9 +146,8 @@ func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernaut
 
 	// Always run phaseDeploy — the spec-hash check inside ensureResource
 	// short-circuits API writes when no drift is detected, making this cheap.
-	result, err := r.phaseDeploy(ctx, kn)
-	if err != nil || result.Requeue || result.RequeueAfter > 0 {
-		return result, err
+	if err := r.phaseDeploy(ctx, kn); err != nil {
+		return ctrl.Result{}, err
 	}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(kn), kn); err != nil {
 		return ctrl.Result{}, err
@@ -163,23 +162,23 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 	log := logf.FromContext(ctx)
 
 	if err := resources.ValidateHostname(kn.Spec.PostgreSQL.Host); err != nil {
-		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionBYOValidated, metav1.ConditionFalse,
+		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionBYOValidated,
 			"PostgreSQLHostInvalid", fmt.Sprintf("PostgreSQL host validation failed: %v", err))
 	}
 	if err := resources.ValidateHostname(kn.Spec.Valkey.Host); err != nil {
-		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionBYOValidated, metav1.ConditionFalse,
+		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionBYOValidated,
 			"ValkeyHostInvalid", fmt.Sprintf("Valkey host validation failed: %v", err))
 	}
 
 	if err := r.validateSecret(ctx, kn.Namespace, kn.Spec.PostgreSQL.SecretName,
 		[]string{"POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB"}); err != nil {
-		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionBYOValidated, metav1.ConditionFalse,
+		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionBYOValidated,
 			"PostgreSQLSecretInvalid", fmt.Sprintf("PostgreSQL secret validation failed: %v", err))
 	}
 
 	if err := r.validateSecret(ctx, kn.Namespace, kn.Spec.Valkey.SecretName,
 		[]string{"valkey-secrets.yaml"}); err != nil {
-		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionBYOValidated, metav1.ConditionFalse,
+		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionBYOValidated,
 			"ValkeySecretInvalid", fmt.Sprintf("Valkey secret validation failed: %v", err))
 	}
 
@@ -198,18 +197,18 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 
 func (r *KubernautReconciler) phaseMigrate(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (ctrl.Result, error) {
 	if err := r.ensureMigrationPrereqs(ctx, kn); err != nil {
-		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionCRDsInstalled, metav1.ConditionFalse,
+		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionCRDsInstalled,
 			"CRDInstallFailed", err.Error())
 	}
 
 	result, err := r.ensureMigrationJob(ctx, kn)
-	if err != nil || result.Requeue || result.RequeueAfter > 0 {
+	if err != nil || result.RequeueAfter > 0 {
 		return result, err
 	}
 
 	log := logf.FromContext(ctx)
 	log.Info("database migration completed")
-	r.Recorder.Event(kn, corev1.EventTypeNormal, ReasonMigrationComplete, "Database migration job succeeded")
+	r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, ReasonMigrationComplete, "Reconcile", "Database migration job succeeded")
 	return ctrl.Result{}, r.patchStatus(ctx, kn, func() {
 		r.setPhase(kn, kubernautv1alpha1.PhaseDeploying)
 		setCRDsReady(kn)
@@ -285,12 +284,12 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 			}); err != nil && !apierrors.IsNotFound(err) {
 				return ctrl.Result{}, fmt.Errorf("deleting stale migration job: %w", err)
 			}
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: time.Millisecond}, nil
 		}
 		if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
 			if existingJob.Status.Failed >= int32(maxMigrationRetries) {
 				log.Info("migration job exceeded retry limit", "failed", existingJob.Status.Failed, "max", maxMigrationRetries)
-				return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionMigrationComplete, metav1.ConditionFalse,
+				return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionMigrationComplete,
 					ReasonMigrationFailed, fmt.Sprintf("Database migration failed after %d attempts; manual intervention required", existingJob.Status.Failed))
 			}
 			log.Info("migration job failed, deleting for retry", "attempt", existingJob.Status.Failed)
@@ -300,7 +299,7 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 			}); err != nil && !apierrors.IsNotFound(err) {
 				return ctrl.Result{}, fmt.Errorf("deleting failed migration job: %w", err)
 			}
-			return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionMigrationComplete, metav1.ConditionFalse,
+			return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionMigrationComplete,
 				ReasonMigrationFailed, "Database migration job failed; will retry")
 		}
 	}
@@ -332,20 +331,20 @@ func setCRDsReady(kn *kubernautv1alpha1.Kubernaut) {
 
 // ---------- Phase: Deploy ----------
 
-func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (ctrl.Result, error) {
+func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
 	if err := r.deployWorkflowNamespace(ctx, kn); err != nil {
-		return ctrl.Result{}, err
+		return err
 	}
 	if err := r.deployServiceAccounts(ctx, kn); err != nil {
-		return ctrl.Result{}, err
+		return err
 	}
 	if err := r.deployRBAC(ctx, kn); err != nil {
-		return ctrl.Result{}, err
+		return err
 	}
 
 	pgSecret := &corev1.Secret{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: kn.Spec.PostgreSQL.SecretName}, pgSecret); err != nil {
-		return ctrl.Result{}, fmt.Errorf("fetching pg secret for config: %w", err)
+		return fmt.Errorf("fetching pg secret for config: %w", err)
 	}
 	dbName := string(pgSecret.Data["POSTGRES_DB"])
 	dbUser := string(pgSecret.Data["POSTGRES_USER"])
@@ -354,18 +353,18 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 
 	cmHashes, err := r.deployConfigMaps(ctx, kn, dbName, dbUser, tlsProfile)
 	if err != nil {
-		return ctrl.Result{}, err
+		return err
 	}
 	if err := r.deployAdmissionWebhooks(ctx, kn); err != nil {
-		return ctrl.Result{}, err
+		return err
 	}
 	hasRoute, err := r.deployWorkloads(ctx, kn, cmHashes)
 	if err != nil {
-		return ctrl.Result{}, err
+		return err
 	}
 
-	r.Recorder.Event(kn, corev1.EventTypeNormal, ReasonManifestsApplied, "All service manifests applied")
-	return ctrl.Result{}, r.patchStatus(ctx, kn, func() {
+	r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, ReasonManifestsApplied, "Reconcile", "All service manifests applied")
+	return r.patchStatus(ctx, kn, func() {
 		r.setPhase(kn, kubernautv1alpha1.PhaseDeploying)
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 			Type: kubernautv1alpha1.ConditionRBACProvisioned, Status: metav1.ConditionTrue,
@@ -767,14 +766,14 @@ func (r *KubernautReconciler) reconcileDelete(ctx context.Context, kn *kubernaut
 		if err := r.deleteClusterScopedResources(ctx, kn); err != nil {
 			deletionAge := time.Since(kn.DeletionTimestamp.Time)
 			if deletionAge > time.Duration(maxFinalizerAttempts)*requeueError {
-				r.Recorder.Eventf(kn, corev1.EventTypeWarning, "FinalizerTimeout",
+				r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "FinalizerTimeout", "Reconcile",
 					"cleanup failed after %s; force-removing finalizer: %v", deletionAge.Round(time.Second), err)
 				log.Error(err, "cleanup failed past timeout, force-removing finalizer")
 			} else {
 				return ctrl.Result{RequeueAfter: requeueError}, err
 			}
 		}
-		r.Recorder.Event(kn, corev1.EventTypeNormal, "CleanupComplete", "Cluster-scoped resources cleaned up")
+		r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "CleanupComplete", "Reconcile", "Cluster-scoped resources cleaned up")
 
 		controllerutil.RemoveFinalizer(kn, kubernautv1alpha1.FinalizerName)
 		if err := r.Update(ctx, kn); err != nil {
@@ -790,7 +789,7 @@ func (r *KubernautReconciler) reconcileDelete(ctx context.Context, kn *kubernaut
 // them would destroy all CRs of those types cluster-wide.
 func (r *KubernautReconciler) deleteClusterScopedResources(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
 	log := logf.FromContext(ctx)
-	var errs []error
+	errs := make([]error, 0, 3)
 	errs = append(errs, r.deleteRBACResources(ctx, kn)...)
 	errs = append(errs, r.deleteWebhookResources(ctx, kn)...)
 	errs = append(errs, r.deleteWorkflowResources(ctx, kn)...)
@@ -960,16 +959,14 @@ func (r *KubernautReconciler) validateSecret(ctx context.Context, namespace, nam
 
 func (r *KubernautReconciler) setConditionAndRequeue(
 	ctx context.Context, kn *kubernautv1alpha1.Kubernaut,
-	condType string, status metav1.ConditionStatus, reason, message string,
+	condType string, reason, message string,
 ) (ctrl.Result, error) {
 	if err := r.patchStatus(ctx, kn, func() {
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-			Type: condType, Status: status, Reason: reason, Message: message,
+			Type: condType, Status: metav1.ConditionFalse, Reason: reason, Message: message,
 			ObservedGeneration: kn.Generation,
 		})
-		if status == metav1.ConditionFalse {
-			r.setPhase(kn, kubernautv1alpha1.PhaseError)
-		}
+		r.setPhase(kn, kubernautv1alpha1.PhaseError)
 	}); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1119,7 +1116,7 @@ func (r *KubernautReconciler) deleteIfExists(ctx context.Context, obj client.Obj
 // Cluster-scoped resources (ClusterRoles, CRBs, webhook configs) cannot be
 // owned, so they rely on the periodic requeue timer for drift detection.
 func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.Recorder = mgr.GetEventRecorderFor("kubernaut-controller")
+	r.Recorder = mgr.GetEventRecorder("kubernaut-controller")
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kubernautv1alpha1.Kubernaut{}).
 		Owns(&appsv1.Deployment{}).

@@ -97,10 +97,10 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 
 	AfterEach(func() {
 		if CurrentSpecReport().Failed() {
-			collectDiagnostic("kubectl", "logs", controllerPodName, "-n", operatorNS)
-			collectDiagnostic("kubectl", "get", "events", "-n", operatorNS, "--sort-by=.lastTimestamp")
-			collectDiagnostic("kubectl", "get", "events", "-n", crNS, "--sort-by=.lastTimestamp")
-			collectDiagnostic("kubectl", "describe", "pod", controllerPodName, "-n", operatorNS)
+			collectDiagnostic("logs", controllerPodName, "-n", operatorNS)
+			collectDiagnostic("get", "events", "-n", operatorNS, "--sort-by=.lastTimestamp")
+			collectDiagnostic("get", "events", "-n", crNS, "--sort-by=.lastTimestamp")
+			collectDiagnostic("describe", "pod", controllerPodName, "-n", operatorNS)
 		}
 	})
 
@@ -555,12 +555,12 @@ func verifyCleanedUp(kind string) {
 }
 
 // collectDiagnostic runs a command and writes its output to GinkgoWriter.
-func collectDiagnostic(name string, args ...string) {
-	cmd := exec.Command(name, args...)
+func collectDiagnostic(args ...string) {
+	cmd := exec.Command("kubectl", args...)
 	output, err := utils.Run(cmd)
 	if err == nil {
-		_, _ = fmt.Fprintf(GinkgoWriter, "=== %s %v ===\n%s\n", name, args, output)
+		_, _ = fmt.Fprintf(GinkgoWriter, "=== kubectl %v ===\n%s\n", args, output)
 	} else {
-		_, _ = fmt.Fprintf(GinkgoWriter, "=== %s %v FAILED: %v ===\n", name, args, err)
+		_, _ = fmt.Fprintf(GinkgoWriter, "=== kubectl %v FAILED: %v ===\n", args, err)
 	}
 }
