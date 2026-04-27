@@ -5,7 +5,7 @@
 #   production: scratch            -- zero CVE surface, no shell
 #
 # Usage:
-#   podman build -t quay.io/kubernaut-ai/kubernaut-operator:v1.3.0 .
+#   podman build --build-arg VERSION=v1.3.2 -t quay.io/kubernaut-ai/kubernaut-operator:v1.3.2 .
 
 # ============================================================================
 # Stage 1: Build
