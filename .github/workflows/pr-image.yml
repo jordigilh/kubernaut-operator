@@ -1,0 +1,67 @@
+name: PR Image Build
+
+# Builds an amd64 operator image on PR to validate the Dockerfile and
+# provide a deployable preview image for testing on OCP clusters.
+# Image is tagged as: quay.io/kubernaut-ai/kubernaut-operator:pr-<number>
+#
+# Prerequisites:
+#   - Quay.io robot account secrets: QUAY_ROBOT_USERNAME, QUAY_ROBOT_TOKEN
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+env:
+  IMAGE_REGISTRY: quay.io/kubernaut-ai
+  IMAGE_NAME: kubernaut-operator
+
+jobs:
+  build-image:
+    name: Build & Push PR Image (amd64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Login to Quay.io
+        run: |
+          podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
+                       -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
+                       quay.io
+
+      - name: Build image
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GIT_COMMIT: ${{ github.event.pull_request.head.sha }}
+        run: |
+          IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:pr-${PR_NUMBER}"
+          VERSION="pr-${PR_NUMBER}"
+          echo "Building ${IMAGE} (commit: ${GIT_COMMIT:0:8})..."
+          podman build \
+            --platform linux/amd64 \
+            --build-arg TARGETOS=linux \
+            --build-arg TARGETARCH=amd64 \
+            --build-arg VERSION="${VERSION}" \
+            --build-arg GIT_COMMIT="${GIT_COMMIT}" \
+            -t "${IMAGE}" .
+
+      - name: Push image
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:pr-${PR_NUMBER}"
+          echo "Pushing ${IMAGE}..."
+          podman push "${IMAGE}"
+          echo ""
+          echo "## Preview image ready" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${IMAGE}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Deploy with:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "make deploy IMG=${IMAGE}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

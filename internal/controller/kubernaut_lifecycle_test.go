@@ -129,6 +129,37 @@ func setAllDeploymentsReady(ctx context.Context) {
 	}
 }
 
+// newCRWithAnsibleEnabled returns a minimal CR with Ansible enabled and a
+// tokenSecretRef pointing to the given secret name.
+func newCRWithAnsibleEnabled(secretName string) *kubernautv1alpha1.Kubernaut {
+	cr := newCRWithRouteDisabled()
+	cr.Spec.Ansible.Enabled = true
+	cr.Spec.Ansible.APIURL = testAwxAPIURL
+	cr.Spec.Ansible.TokenSecretRef = &kubernautv1alpha1.SecretKeyRef{
+		Name: secretName,
+		Key:  "token",
+	}
+	return cr
+}
+
+// createAnsibleSecret creates a Secret with the given name and key/value pair.
+func createAnsibleSecret(ctx context.Context, name, key, value string) { //nolint:unparam // name varies in future tests
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace},
+		Data:       map[string][]byte{key: []byte(value)},
+	}
+	Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+}
+
+// deleteAnsibleSecret removes the ansible token Secret if it exists.
+func deleteAnsibleSecret(ctx context.Context, name string) {
+	secret := &corev1.Secret{}
+	err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: testNamespace}, secret)
+	if err == nil {
+		_ = k8sClient.Delete(ctx, secret)
+	}
+}
+
 // reconcileToDeployPhase drives a reconciler through finalizer, validate,
 // migration, and deploy phases, returning the reconciler for further use.
 func reconcileToDeployPhase(ctx context.Context) *KubernautReconciler {
@@ -1463,6 +1494,278 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			)).To(Succeed())
 			Expect(wfSAList.Items).To(BeEmpty(),
 				"workflow namespace SAs should be deleted")
+		})
+	})
+
+	// ======================================================================
+	// 16. ConfigMap Drift Detection (Issue #16, TDD Red — Phase 1)
+	// ======================================================================
+
+	Context("ConfigMap Drift Detection", func() {
+		BeforeEach(func() {
+			deleteCRIfExists(ctx)
+			cleanupNamespacedResources(ctx)
+			deleteBYOSecrets(ctx)
+		})
+		AfterEach(func() {
+			deleteCRIfExists(ctx)
+			cleanupNamespacedResources(ctx)
+		})
+
+		It("D1-I: should restore ConfigMap data when annotation is preserved but data is tampered", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			cm := &corev1.ConfigMap{}
+			cmKey := types.NamespacedName{Name: "workflowexecution-config", Namespace: testNamespace}
+			Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
+
+			origData := cm.Data["workflowexecution.yaml"]
+			origHash := cm.Annotations[resources.AnnotationSpecHash]
+			Expect(origData).NotTo(BeEmpty())
+			Expect(origHash).NotTo(BeEmpty())
+
+			By("simulating external actor modifying data but PRESERVING the spec-hash annotation")
+			cm.Data["workflowexecution.yaml"] = "tampered: true\n"
+			Expect(k8sClient.Update(ctx, cm)).To(Succeed())
+
+			By("verifying annotation is still the original hash (simulates the issue)")
+			Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
+			Expect(cm.Annotations[resources.AnnotationSpecHash]).To(Equal(origHash))
+			Expect(cm.Data["workflowexecution.yaml"]).To(Equal("tampered: true\n"))
+
+			By("reconciling — operator should detect content drift and restore")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying data is restored to operator-desired state")
+			Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
+			Expect(cm.Data["workflowexecution.yaml"]).To(Equal(origData),
+				"ConfigMap data should be restored after annotation-preserved tampering")
+		})
+
+		It("D4-I: should not update ConfigMap when annotation and content both match (regression guard)", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			cm := &corev1.ConfigMap{}
+			cmKey := types.NamespacedName{Name: "workflowexecution-config", Namespace: testNamespace}
+			Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
+			origRV := cm.ResourceVersion
+
+			By("reconciling again without any external changes")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
+			Expect(cm.ResourceVersion).To(Equal(origRV),
+				"ResourceVersion should not change when there is no drift")
+		})
+	})
+
+	// ======================================================================
+	// 17. AnsibleReady Condition Lifecycle (Issue #17, TDD Red — Phase 4)
+	// ======================================================================
+
+	Context("AnsibleReady Condition Lifecycle", func() {
+		const ansibleSecretName = "ansible-token"
+
+		BeforeEach(func() {
+			deleteCRIfExists(ctx)
+			cleanupNamespacedResources(ctx)
+			deleteBYOSecrets(ctx)
+			deleteAnsibleSecret(ctx, ansibleSecretName)
+		})
+		AfterEach(func() {
+			deleteCRIfExists(ctx)
+			cleanupNamespacedResources(ctx)
+			deleteAnsibleSecret(ctx, ansibleSecretName)
+		})
+
+		It("A1: should set AnsibleReady=True/Disabled when ansible is not enabled", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			cr.Spec.Ansible.Enabled = false
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			Expect(cond).NotTo(BeNil(), "AnsibleReady condition should be present")
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(cond.Reason).To(Equal("Disabled"))
+		})
+
+		It("A2: should set AnsibleReady=True/Ready when ansible is enabled with valid token Secret", func() {
+			createBYOSecrets(ctx)
+			createAnsibleSecret(ctx, ansibleSecretName, "token", "my-token-value")
+			cr := newCRWithAnsibleEnabled(ansibleSecretName)
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			Expect(cond).NotTo(BeNil(), "AnsibleReady condition should be present")
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(cond.Reason).To(Equal("Ready"))
+		})
+
+		It("A3: should set AnsibleReady=False/TokenSecretNotFound when Secret does not exist", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithAnsibleEnabled("nonexistent-secret")
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			Expect(cond).NotTo(BeNil(), "AnsibleReady condition should be present")
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal("TokenSecretNotFound"))
+		})
+
+		It("A4: should set AnsibleReady=False/TokenKeyMissing when Secret lacks the expected key", func() {
+			createBYOSecrets(ctx)
+			createAnsibleSecret(ctx, ansibleSecretName, "wrong-key", "value")
+			cr := newCRWithAnsibleEnabled(ansibleSecretName)
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			Expect(cond).NotTo(BeNil(), "AnsibleReady condition should be present")
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal("TokenKeyMissing"))
+		})
+
+		It("A5: should set AnsibleReady=False/TokenSecretNotFound when tokenSecretRef is nil", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			cr.Spec.Ansible.Enabled = true
+			cr.Spec.Ansible.APIURL = testAwxAPIURL
+			cr.Spec.Ansible.TokenSecretRef = nil
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			Expect(cond).NotTo(BeNil(), "AnsibleReady condition should be present")
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal("TokenSecretNotFound"))
+		})
+
+		It("A6: should recover AnsibleReady to True when Secret is created after initial failure", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithAnsibleEnabled(ansibleSecretName)
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			r := reconcileToRunning(ctx)
+
+			By("verifying initially False")
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+
+			By("creating the Secret")
+			createAnsibleSecret(ctx, ansibleSecretName, "token", "my-token")
+
+			By("re-reconciling (simulates periodic requeue)")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying recovery")
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			cond = findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(cond.Reason).To(Equal("Ready"))
+		})
+
+		It("A7: should reach PhaseRunning even when AnsibleReady=False (non-blocking)", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithAnsibleEnabled("nonexistent-secret")
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseRunning),
+				"PhaseRunning must be reached even when AnsibleReady is False")
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+		})
+
+		It("A6b: should flip AnsibleReady to False when a previously valid Secret is deleted", func() {
+			createBYOSecrets(ctx)
+			createAnsibleSecret(ctx, ansibleSecretName, "token", "my-token")
+			cr := newCRWithAnsibleEnabled(ansibleSecretName)
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			r := reconcileToRunning(ctx)
+
+			By("verifying initially True/Ready")
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+
+			By("deleting the Secret")
+			deleteAnsibleSecret(ctx, ansibleSecretName)
+
+			By("re-reconciling")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying condition flipped to False")
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			cond = findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal("TokenSecretNotFound"))
+		})
+
+		It("A8: should emit AnsibleConfigInvalid event when Secret is missing", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithAnsibleEnabled("nonexistent-secret")
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			r := reconcileToRunning(ctx)
+
+			recorder := r.Recorder.(*events.FakeRecorder)
+			var collected []string
+		drain:
+			for {
+				select {
+				case ev := <-recorder.Events:
+					collected = append(collected, ev)
+				default:
+					break drain
+				}
+			}
+
+			Expect(collected).To(ContainElement(ContainSubstring("AnsibleConfigInvalid")))
 		})
 	})
 
