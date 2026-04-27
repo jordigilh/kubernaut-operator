@@ -21,18 +21,38 @@ import (
 	"fmt"
 	"io/fs"
 
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/yaml"
 
 	"github.com/jordigilh/kubernaut/pkg/shared/assets"
 )
 
+var crdGVR = schema.GroupVersionResource{
+	Group:    "apiextensions.k8s.io",
+	Version:  "v1",
+	Resource: "customresourcedefinitions",
+}
+
 // EnsureCRDs reads the embedded CRD YAMLs from the shared assets package
-// and applies them to the cluster. Existing CRDs are updated in place.
-func EnsureCRDs(ctx context.Context, c client.Client) error {
+// and applies them to the cluster using the dynamic client.
+//
+// We bypass the controller-runtime typed client because it registers
+// apiextensionsv1 in its scheme, causing automatic conversion from
+// unstructured to typed Go structs. That round-trip silently drops deeply
+// nested JSONSchemaProps properties (e.g. serviceAccountName under
+// execution.properties). The dynamic client sends the raw JSON as-is.
+func EnsureCRDs(ctx context.Context, cfg *rest.Config) error {
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("creating dynamic client for CRDs: %w", err)
+	}
+	crdClient := dyn.Resource(crdGVR)
+
 	entries, err := fs.ReadDir(assets.CRDsFS, "crds")
 	if err != nil {
 		return fmt.Errorf("reading embedded CRD directory: %w", err)
@@ -48,29 +68,39 @@ func EnsureCRDs(ctx context.Context, c client.Client) error {
 			return fmt.Errorf("reading embedded CRD %s: %w", entry.Name(), err)
 		}
 
-		crd := &apiextensionsv1.CustomResourceDefinition{}
-		if err := yaml.Unmarshal(data, crd); err != nil {
-			return fmt.Errorf("unmarshalling CRD %s: %w", entry.Name(), err)
+		desired, err := yamlToUnstructured(data)
+		if err != nil {
+			return fmt.Errorf("parsing CRD %s: %w", entry.Name(), err)
 		}
 
-		existing := &apiextensionsv1.CustomResourceDefinition{}
-		err = c.Get(ctx, types.NamespacedName{Name: crd.Name}, existing)
-
+		existing, err := crdClient.Get(ctx, desired.GetName(), metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
-			if err := c.Create(ctx, crd); err != nil {
-				return fmt.Errorf("creating CRD %s: %w", crd.Name, err)
+			if _, createErr := crdClient.Create(ctx, desired, metav1.CreateOptions{}); createErr != nil {
+				return fmt.Errorf("creating CRD %s: %w", desired.GetName(), createErr)
 			}
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("checking CRD %s: %w", crd.Name, err)
+			return fmt.Errorf("getting CRD %s: %w", desired.GetName(), err)
 		}
 
-		existing.Spec = crd.Spec
-		if err := c.Update(ctx, existing); err != nil {
-			return fmt.Errorf("updating CRD %s: %w", crd.Name, err)
+		desired.SetResourceVersion(existing.GetResourceVersion())
+		if _, err := crdClient.Update(ctx, desired, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("updating CRD %s: %w", desired.GetName(), err)
 		}
 	}
 
 	return nil
+}
+
+func yamlToUnstructured(data []byte) (*unstructured.Unstructured, error) {
+	jsonBytes, err := yaml.YAMLToJSON(data)
+	if err != nil {
+		return nil, err
+	}
+	obj := &unstructured.Unstructured{}
+	if err := obj.UnmarshalJSON(jsonBytes); err != nil {
+		return nil, err
+	}
+	return obj, nil
 }

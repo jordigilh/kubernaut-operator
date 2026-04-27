@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -53,8 +54,7 @@ func newMinimalCR() *kubernautv1alpha1.Kubernaut {
 		},
 		Spec: kubernautv1alpha1.KubernautSpec{
 			Image: kubernautv1alpha1.ImageSpec{
-				Registry: "quay.io",
-				Tag:      "v1.3.0",
+				PullPolicy: corev1.PullIfNotPresent,
 			},
 			PostgreSQL: kubernautv1alpha1.PostgreSQLSpec{
 				SecretName: pgSecretName,
@@ -64,7 +64,7 @@ func newMinimalCR() *kubernautv1alpha1.Kubernaut {
 				SecretName: vkSecretName,
 				Host:       "valkey",
 			},
-			HolmesGPTAPI: kubernautv1alpha1.HolmesGPTAPISpec{
+			KubernautAgent: kubernautv1alpha1.KubernautAgentSpec{
 				LLM: kubernautv1alpha1.LLMSpec{
 					Provider:              "openai",
 					Model:                 "gpt-4o",
@@ -83,8 +83,11 @@ func newMinimalCR() *kubernautv1alpha1.Kubernaut {
 
 func newReconciler() *KubernautReconciler {
 	return &KubernautReconciler{
-		Client: k8sClient,
-		Scheme: k8sClient.Scheme(),
+		Client:   k8sClient,
+		Scheme:   k8sClient.Scheme(),
+		Recorder: events.NewFakeRecorder(100),
+		RestCfg:  cfg,
+		now:      time.Now,
 	}
 }
 
@@ -257,7 +260,8 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
 			result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
@@ -289,8 +293,9 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
 			kn := &kubernautv1alpha1.Kubernaut{}
@@ -307,8 +312,9 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
 			kn := &kubernautv1alpha1.Kubernaut{}
@@ -323,7 +329,7 @@ var _ = Describe("Kubernaut Controller", func() {
 	// ---- Phase Progression ----
 
 	Context("Phase Progression", func() {
-		It("should not have a NotFound error when CR does not exist", func() {
+		It("should return success when CR does not exist", func() {
 			r := newReconciler()
 			_, err := r.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{Name: "nonexistent", Namespace: testNamespace},
@@ -340,12 +346,15 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
-			_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
 			kn := &kubernautv1alpha1.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(kn.Status.Conditions).NotTo(BeEmpty(),
+				"conditions should not be empty after reconciliation")
 
 			for _, cond := range kn.Status.Conditions {
 				Expect(cond.ObservedGeneration).To(Equal(kn.Generation),

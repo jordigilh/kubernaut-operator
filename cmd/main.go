@@ -24,6 +24,7 @@ import (
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -33,13 +34,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	configv1 "github.com/openshift/api/config/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
 	kubernautaiv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	"github.com/jordigilh/kubernaut-operator/internal/controller"
 	// +kubebuilder:scaffold:imports
+)
+
+// Populated at build time via -ldflags.
+var (
+	Version   = "dev"
+	GitCommit = "unknown"
 )
 
 var (
@@ -49,6 +56,8 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
+	utilruntime.Must(configv1.Install(scheme))
 	utilruntime.Must(routev1.Install(scheme))
 	utilruntime.Must(kubernautaiv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
@@ -57,7 +66,6 @@ func init() {
 func main() {
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
-	var webhookCertPath, webhookCertName, webhookCertKey string
 	var enableLeaderElection bool
 	var probeAddr string
 	var secureMetrics bool
@@ -72,12 +80,6 @@ func main() {
 		"Enable leader election for controller manager.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS.")
-	flag.StringVar(&webhookCertPath, "webhook-cert-path", "",
-		"The directory that contains the webhook certificate.")
-	flag.StringVar(&webhookCertName, "webhook-cert-name", "tls.crt",
-		"The name of the webhook certificate file.")
-	flag.StringVar(&webhookCertKey, "webhook-cert-key", "tls.key",
-		"The name of the webhook key file.")
 	flag.StringVar(&metricsCertPath, "metrics-cert-path", "",
 		"The directory that contains the metrics server certificate.")
 	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt",
@@ -87,7 +89,7 @@ func main() {
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers.")
 
-	opts := zap.Options{Development: true}
+	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
@@ -100,27 +102,7 @@ func main() {
 		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
 
-	var metricsCertWatcher, webhookCertWatcher *certwatcher.CertWatcher
-	webhookTLSOpts := tlsOpts
-
-	if len(webhookCertPath) > 0 {
-		setupLog.Info("Initializing webhook certificate watcher",
-			"webhook-cert-path", webhookCertPath)
-		var err error
-		webhookCertWatcher, err = certwatcher.New(
-			filepath.Join(webhookCertPath, webhookCertName),
-			filepath.Join(webhookCertPath, webhookCertKey),
-		)
-		if err != nil {
-			setupLog.Error(err, "failed to initialize webhook certificate watcher")
-			os.Exit(1)
-		}
-		webhookTLSOpts = append(webhookTLSOpts, func(config *tls.Config) {
-			config.GetCertificate = webhookCertWatcher.GetCertificate
-		})
-	}
-
-	webhookServer := webhook.NewServer(webhook.Options{TLSOpts: webhookTLSOpts})
+	var metricsCertWatcher *certwatcher.CertWatcher
 
 	metricsServerOptions := metricsserver.Options{
 		BindAddress:   metricsAddr,
@@ -151,7 +133,6 @@ func main() {
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
-		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "kubernaut-operator.kubernaut.ai",
@@ -162,8 +143,9 @@ func main() {
 	}
 
 	if err := (&controller.KubernautReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		RestCfg: mgr.GetConfig(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Kubernaut")
 		os.Exit(1)
@@ -173,12 +155,6 @@ func main() {
 	if metricsCertWatcher != nil {
 		if err := mgr.Add(metricsCertWatcher); err != nil {
 			setupLog.Error(err, "unable to add metrics certificate watcher to manager")
-			os.Exit(1)
-		}
-	}
-	if webhookCertWatcher != nil {
-		if err := mgr.Add(webhookCertWatcher); err != nil {
-			setupLog.Error(err, "unable to add webhook certificate watcher to manager")
 			os.Exit(1)
 		}
 	}
@@ -192,7 +168,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting manager")
+	setupLog.Info("starting manager", "version", Version, "commit", GitCommit)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)

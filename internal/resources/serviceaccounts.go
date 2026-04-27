@@ -33,7 +33,7 @@ var serviceAccountNames = map[string]string{
 	ComponentWorkflowExecution:       "workflowexecution-controller",
 	ComponentEffectivenessMonitor:    "effectivenessmonitor-controller",
 	ComponentNotification:            "notification-controller",
-	ComponentHolmesGPTAPI:            "holmesgpt-api",
+	ComponentKubernautAgent:          "kubernaut-agent-sa",
 	ComponentAuthWebhook:             "authwebhook",
 }
 
@@ -55,13 +55,9 @@ func ServiceAccount(kn *kubernautv1alpha1.Kubernaut, component string) *corev1.S
 // WorkflowRunnerServiceAccount returns the SA used by workflow Jobs/PipelineRuns
 // in the workflow namespace.
 func WorkflowRunnerServiceAccount(kn *kubernautv1alpha1.Kubernaut) *corev1.ServiceAccount {
-	ns := kn.Spec.WorkflowExecution.WorkflowNamespace
-	if ns == "" {
-		ns = "kubernaut-workflows"
-	}
 	sa := &corev1.ServiceAccount{
 		ObjectMeta: ObjectMeta(kn, "kubernaut-workflow-runner", ComponentWorkflowExecution),
 	}
-	sa.Namespace = ns
+	sa.Namespace = ResolveWorkflowNamespace(kn)
 	return sa
 }

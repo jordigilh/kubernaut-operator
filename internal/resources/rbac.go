@@ -23,64 +23,83 @@ import (
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
+// clusterRoleName returns a namespace-scoped ClusterRole name to prevent
+// collisions when multiple Kubernaut CRs exist in different namespaces.
+func clusterRoleName(kn *kubernautv1alpha1.Kubernaut, base string) string {
+	return kn.Namespace + "-" + base
+}
+
 // ClusterRoles builds all ClusterRoles needed by the Kubernaut deployment,
-// matching the Helm chart definitions.
+// matching the Helm chart definitions with namespace-prefixed names.
 func ClusterRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRole {
 	labels := CommonLabels(kn)
 	roles := []*rbacv1.ClusterRole{
-		gatewayClusterRole(labels),
-		aianalysisControllerClusterRole(labels),
-		holmesgptAPIClientClusterRole(labels),
-		holmesgptAPIInvestigatorClusterRole(labels),
-		signalprocessingClusterRole(labels),
-		remediationOrchestratorClusterRole(labels),
-		workflowExecutionControllerClusterRole(labels),
-		workflowRunnerClusterRole(labels),
-		effectivenessMonitorControllerClusterRole(labels),
-		notificationControllerClusterRole(labels),
-		dataStorageAuthMiddlewareClusterRole(labels),
-		dataStorageClientClusterRole(labels),
-		authWebhookClusterRole(labels),
+		gatewayClusterRole(kn, labels),
+		aianalysisControllerClusterRole(kn, labels),
+		kubernautAgentClientClusterRole(kn, labels),
+		kubernautAgentInvestigatorClusterRole(kn, labels),
+		signalprocessingClusterRole(kn, labels),
+		remediationOrchestratorClusterRole(kn, labels),
+		workflowExecutionControllerClusterRole(kn, labels),
+		workflowRunnerClusterRole(kn, labels),
+		effectivenessMonitorControllerClusterRole(kn, labels),
+		notificationControllerClusterRole(kn, labels),
+		dataStorageAuthMiddlewareClusterRole(kn, labels),
+		dataStorageClientClusterRole(kn, labels),
+		authWebhookClusterRole(kn, labels),
 	}
 
 	if kn.Spec.Monitoring.MonitoringEnabled() {
-		roles = append(roles, alertmanagerViewClusterRole(labels))
-		roles = append(roles, gatewaySignalSourceClusterRole(labels))
+		roles = append(roles, alertmanagerViewClusterRole(kn, labels))
+		roles = append(roles, gatewaySignalSourceClusterRole(kn, labels))
 	}
 
 	return roles
 }
 
 // ClusterRoleBindings builds all CRBs, binding SAs in the CR namespace.
+// All names are namespace-prefixed for multi-instance safety.
 func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleBinding {
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
+	p := func(base string) string { return clusterRoleName(kn, base) }
 
 	crbs := []*rbacv1.ClusterRoleBinding{
-		clusterRoleBinding("gateway-role-binding", "gateway-role", ServiceAccountName(ComponentGateway), ns, labels),
-		clusterRoleBinding("aianalysis-controller-binding", "aianalysis-controller", ServiceAccountName(ComponentAIAnalysis), ns, labels),
-		clusterRoleBinding("holmesgpt-api-investigator-binding", "holmesgpt-api-investigator", ServiceAccountName(ComponentHolmesGPTAPI), ns, labels),
-		clusterRoleBinding("holmesgpt-api-client-aianalysis-binding", "holmesgpt-api-client", ServiceAccountName(ComponentAIAnalysis), ns, labels),
-		clusterRoleBinding("signalprocessing-controller-binding", "signalprocessing-controller", ServiceAccountName(ComponentSignalProcessing), ns, labels),
-		clusterRoleBinding("remediationorchestrator-controller-binding", "remediationorchestrator-controller", ServiceAccountName(ComponentRemediationOrchestrator), ns, labels),
-		clusterRoleBinding("workflowexecution-controller-binding", "workflowexecution-controller", ServiceAccountName(ComponentWorkflowExecution), ns, labels),
-		clusterRoleBinding("effectivenessmonitor-controller-binding", "effectivenessmonitor-controller", ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
-		clusterRoleBinding("notification-controller-binding", "notification-controller", ServiceAccountName(ComponentNotification), ns, labels),
-		clusterRoleBinding("data-storage-auth-middleware-binding", "data-storage-auth-middleware", ServiceAccountName(ComponentDataStorage), ns, labels),
-		clusterRoleBinding("authwebhook-binding", "authwebhook-role", ServiceAccountName(ComponentAuthWebhook), ns, labels),
+		clusterRoleBinding(p("gateway-role-binding"), p("gateway-role"), ServiceAccountName(ComponentGateway), ns, labels),
+		clusterRoleBinding(p("aianalysis-controller-binding"), p("aianalysis-controller"), ServiceAccountName(ComponentAIAnalysis), ns, labels),
+		clusterRoleBinding(p("kubernaut-agent-investigator-binding"), p("kubernaut-agent-investigator"), ServiceAccountName(ComponentKubernautAgent), ns, labels),
+		clusterRoleBinding(p("kubernaut-agent-auth-middleware-binding"), p("data-storage-auth-middleware"), ServiceAccountName(ComponentKubernautAgent), ns, labels),
+		clusterRoleBinding(p("signalprocessing-controller-binding"), p("signalprocessing-controller"), ServiceAccountName(ComponentSignalProcessing), ns, labels),
+		clusterRoleBinding(p("remediationorchestrator-controller-binding"), p("remediationorchestrator-controller"), ServiceAccountName(ComponentRemediationOrchestrator), ns, labels),
+		clusterRoleBinding(p("workflowexecution-controller-binding"), p("workflowexecution-controller"), ServiceAccountName(ComponentWorkflowExecution), ns, labels),
+		clusterRoleBinding(p("effectivenessmonitor-controller-binding"), p("effectivenessmonitor-controller"), ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
+		clusterRoleBinding(p("notification-controller-binding"), p("notification-controller"), ServiceAccountName(ComponentNotification), ns, labels),
+		clusterRoleBinding(p("data-storage-auth-middleware-binding"), p("data-storage-auth-middleware"), ServiceAccountName(ComponentDataStorage), ns, labels),
+		clusterRoleBinding(p("authwebhook-binding"), p("authwebhook-role"), ServiceAccountName(ComponentAuthWebhook), ns, labels),
 	}
+
+	crbs = append(crbs,
+		clusterRoleBinding(p("workflow-runner-binding"), p("workflow-runner"),
+			"kubernaut-workflow-runner", ResolveWorkflowNamespace(kn), labels),
+	)
 
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		crbs = append(crbs,
-			clusterRoleBinding("effectivenessmonitor-alertmanager-view-binding", "kubernaut-alertmanager-view", ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
-			clusterRoleBinding("gateway-signal-source-alertmanager-binding", "gateway-signal-source", ServiceAccountName(ComponentGateway), ns, labels),
+			clusterRoleBinding(p("effectivenessmonitor-alertmanager-view-binding"), p("alertmanager-view"),
+				ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
+			clusterRoleBinding(p("effectivenessmonitor-monitoring-view"), "cluster-monitoring-view",
+				ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
+			clusterRoleBinding(p("kubernaut-agent-monitoring-view"), "cluster-monitoring-view",
+				ServiceAccountName(ComponentKubernautAgent), ns, labels),
+			clusterRoleBinding(p("alertmanager-gateway-signal-source"), p("gateway-signal-source"),
+				OCPAlertManagerSAName, OCPMonitoringNamespace, labels),
 		)
 	}
 
 	return crbs
 }
 
-// DataStorageClientRoleBindings builds the 10 RoleBindings that grant
+// DataStorageClientRoleBindings builds the RoleBindings that grant
 // data-storage-client ClusterRole access to each consuming SA.
 func DataStorageClientRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.RoleBinding {
 	labels := CommonLabels(kn)
@@ -96,12 +115,12 @@ func DataStorageClientRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Ro
 		{"data-storage-client-workflowexecution", ServiceAccountName(ComponentWorkflowExecution)},
 		{"data-storage-client-effectivenessmonitor", ServiceAccountName(ComponentEffectivenessMonitor)},
 		{"data-storage-client-notification", ServiceAccountName(ComponentNotification)},
-		{"data-storage-client-holmesgpt-api", ServiceAccountName(ComponentHolmesGPTAPI)},
+		{"data-storage-client-kubernaut-agent", ServiceAccountName(ComponentKubernautAgent)},
 		{"data-storage-client-authwebhook", ServiceAccountName(ComponentAuthWebhook)},
 		{"data-storage-client-datastorage", ServiceAccountName(ComponentDataStorage)},
 	}
 
-	var rbs []*rbacv1.RoleBinding
+	rbs := make([]*rbacv1.RoleBinding, 0, len(consumers))
 	for _, c := range consumers {
 		rbs = append(rbs, &rbacv1.RoleBinding{
 			ObjectMeta: metav1.ObjectMeta{
@@ -112,7 +131,7 @@ func DataStorageClientRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Ro
 			RoleRef: rbacv1.RoleRef{
 				APIGroup: rbacv1.GroupName,
 				Kind:     "ClusterRole",
-				Name:     "data-storage-client",
+				Name:     clusterRoleName(kn, "data-storage-client"),
 			},
 			Subjects: []rbacv1.Subject{{
 				Kind:      rbacv1.ServiceAccountKind,
@@ -124,27 +143,41 @@ func DataStorageClientRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Ro
 	return rbs
 }
 
+// KubernautAgentClientRoleBinding creates a namespace-scoped RoleBinding granting
+// the aianalysis SA access to the kubernaut-agent-client ClusterRole.
+// Scoped to namespace instead of cluster-wide because the ClusterRole only
+// targets a named service.
+func KubernautAgentClientRoleBinding(kn *kubernautv1alpha1.Kubernaut) *rbacv1.RoleBinding {
+	return &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kubernaut-agent-client-aianalysis",
+			Namespace: kn.Namespace,
+			Labels:    CommonLabels(kn),
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName,
+			Kind:     "ClusterRole",
+			Name:     clusterRoleName(kn, "kubernaut-agent-client"),
+		},
+		Subjects: []rbacv1.Subject{{
+			Kind:      rbacv1.ServiceAccountKind,
+			Name:      ServiceAccountName(ComponentAIAnalysis),
+			Namespace: kn.Namespace,
+		}},
+	}
+}
+
 // NamespaceRoles builds the namespace-scoped Roles for secrets/configmaps access
-// per the kubernaut.nsRoleForSecrets pattern.
+// per the kubernaut.nsRoleForSecrets pattern. Access is granted to ALL
+// secrets/configmaps in the operator namespace rather than per-resource names
+// because the namespace is dedicated to operator workloads and components
+// dynamically reference each other's ConfigMaps.
 func NamespaceRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Role {
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
 
-	componentsNeedingNsRole := []string{
-		ComponentGateway,
-		ComponentDataStorage,
-		ComponentAIAnalysis,
-		ComponentSignalProcessing,
-		ComponentRemediationOrchestrator,
-		ComponentWorkflowExecution,
-		ComponentEffectivenessMonitor,
-		ComponentNotification,
-		ComponentHolmesGPTAPI,
-		ComponentAuthWebhook,
-	}
-
-	var roles []*rbacv1.Role
-	for _, c := range componentsNeedingNsRole {
+	roles := make([]*rbacv1.Role, 0, len(componentsNeedingNSRole))
+	for _, c := range componentsNeedingNSRole {
 		roles = append(roles, &rbacv1.Role{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      c + "-ns-role",
@@ -166,21 +199,8 @@ func NamespaceRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.RoleBindin
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
 
-	components := []string{
-		ComponentGateway,
-		ComponentDataStorage,
-		ComponentAIAnalysis,
-		ComponentSignalProcessing,
-		ComponentRemediationOrchestrator,
-		ComponentWorkflowExecution,
-		ComponentEffectivenessMonitor,
-		ComponentNotification,
-		ComponentHolmesGPTAPI,
-		ComponentAuthWebhook,
-	}
-
-	var rbs []*rbacv1.RoleBinding
-	for _, c := range components {
+	rbs := make([]*rbacv1.RoleBinding, 0, len(componentsNeedingNSRole))
+	for _, c := range componentsNeedingNSRole {
 		rbs = append(rbs, &rbacv1.RoleBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      c + "-ns-rolebinding",
@@ -205,10 +225,7 @@ func NamespaceRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.RoleBindin
 // WorkflowNamespaceRBAC returns the Roles and RoleBindings in the workflow namespace
 // for datastorage-dep-reader and workflowexecution-dep-reader.
 func WorkflowNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut) ([]*rbacv1.Role, []*rbacv1.RoleBinding) {
-	wfNs := kn.Spec.WorkflowExecution.WorkflowNamespace
-	if wfNs == "" {
-		wfNs = "kubernaut-workflows"
-	}
+	wfNs := ResolveWorkflowNamespace(kn)
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
 
@@ -216,18 +233,29 @@ func WorkflowNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut) ([]*rbacv1.Role, []*
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "datastorage-dep-reader", Namespace: wfNs, Labels: labels},
 			Rules: []rbacv1.PolicyRule{{
-				APIGroups: []string{"apps"},
-				Resources: []string{"deployments"},
-				Verbs:     []string{"get", "list", "watch"},
+				APIGroups: []string{""},
+				Resources: []string{"secrets", "configmaps"},
+				Verbs:     []string{"get"},
 			}},
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "workflowexecution-dep-reader", Namespace: wfNs, Labels: labels},
 			Rules: []rbacv1.PolicyRule{{
-				APIGroups: []string{"apps"},
-				Resources: []string{"deployments"},
+				APIGroups: []string{""},
+				Resources: []string{"secrets", "configmaps"},
 				Verbs:     []string{"get", "list", "watch"},
 			}},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "workflow-runner-ns-writer", Namespace: wfNs, Labels: labels},
+			Rules: []rbacv1.PolicyRule{
+				{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get", "list", "create", "delete", "patch", "update"}},
+				{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get", "list", "create", "update", "patch"}},
+				{APIGroups: []string{""}, Resources: []string{"services"}, Verbs: []string{"get", "list", "create", "update", "patch"}},
+				{APIGroups: []string{""}, Resources: []string{"persistentvolumeclaims"}, Verbs: []string{"get", "list", "create", "update", "patch", "delete"}},
+				{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"networkpolicies"}, Verbs: []string{"get", "list", "create", "update", "patch", "delete"}},
+				{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"get", "list", "create", "delete"}},
+			},
 		},
 	}
 
@@ -242,16 +270,42 @@ func WorkflowNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut) ([]*rbacv1.Role, []*
 			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: "workflowexecution-dep-reader"},
 			Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: ServiceAccountName(ComponentWorkflowExecution), Namespace: ns}},
 		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "workflow-runner-ns-writer-binding", Namespace: wfNs, Labels: labels},
+			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: "workflow-runner-ns-writer"},
+			Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: "kubernaut-workflow-runner", Namespace: wfNs}},
+		},
 	}
 
 	return roles, rbs
+}
+
+// MonitoringCRBNames returns the names of all monitoring-related ClusterRoleBindings.
+// Used by the finalizer to always attempt cleanup regardless of current Monitoring.Enabled.
+func MonitoringCRBNames(kn *kubernautv1alpha1.Kubernaut) []string {
+	p := func(base string) string { return clusterRoleName(kn, base) }
+	return []string{
+		p("effectivenessmonitor-alertmanager-view-binding"),
+		p("effectivenessmonitor-monitoring-view"),
+		p("kubernaut-agent-monitoring-view"),
+		p("alertmanager-gateway-signal-source"),
+	}
+}
+
+// MonitoringClusterRoleNames returns the names of all monitoring-related ClusterRoles.
+func MonitoringClusterRoleNames(kn *kubernautv1alpha1.Kubernaut) []string {
+	p := func(base string) string { return clusterRoleName(kn, base) }
+	return []string{
+		p("alertmanager-view"),
+		p("gateway-signal-source"),
+	}
 }
 
 // AnsibleRBAC returns the conditional AWX RBAC resources.
 func AnsibleRBAC(kn *kubernautv1alpha1.Kubernaut) (*rbacv1.ClusterRole, *rbacv1.ClusterRoleBinding) {
 	labels := CommonLabels(kn)
 	cr := &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "workflowexecution-awx", Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "workflowexecution-awx"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
 			{
 				APIGroups: []string{"awx.ansible.com"},
@@ -261,17 +315,15 @@ func AnsibleRBAC(kn *kubernautv1alpha1.Kubernaut) (*rbacv1.ClusterRole, *rbacv1.
 		},
 	}
 
-	wfNs := kn.Spec.WorkflowExecution.WorkflowNamespace
-	if wfNs == "" {
-		wfNs = "kubernaut-workflows"
-	}
-	crb := clusterRoleBinding("workflowexecution-awx-binding", "workflowexecution-awx",
+	wfNs := ResolveWorkflowNamespace(kn)
+	crb := clusterRoleBinding(clusterRoleName(kn, "workflowexecution-awx-binding"),
+		clusterRoleName(kn, "workflowexecution-awx"),
 		"kubernaut-workflow-runner", wfNs, labels)
 
 	return cr, crb
 }
 
-// --- private ClusterRole definitions ---
+// --- private helpers ---
 
 func clusterRoleBinding(name, roleName, saName, saNamespace string, labels map[string]string) *rbacv1.ClusterRoleBinding {
 	return &rbacv1.ClusterRoleBinding{
@@ -289,131 +341,188 @@ func clusterRoleBinding(name, roleName, saName, saNamespace string, labels map[s
 	}
 }
 
-func gatewayClusterRole(labels map[string]string) *rbacv1.ClusterRole {
+// --- ClusterRole definitions (namespace-prefixed for multi-instance safety) ---
+
+func gatewayClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "gateway-role", Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "gateway-role"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings"}, Verbs: []string{"create", "get", "list", "watch", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings/status"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"create", "get", "list", "watch", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/status"}, Verbs: []string{"update", "patch"}},
+			{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{""}, Resources: []string{"nodes", "pods", "services", "persistentvolumes"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "create", "update", "delete"}},
+			{APIGroups: []string{"authentication.k8s.io"}, Resources: []string{"tokenreviews"}, Verbs: []string{"create"}},
+			{APIGroups: []string{"authorization.k8s.io"}, Resources: []string{"subjectaccessreviews"}, Verbs: []string{"create"}},
 		},
 	}
 }
 
-func aianalysisControllerClusterRole(labels map[string]string) *rbacv1.ClusterRole {
+func aianalysisControllerClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "aianalysis-controller", Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "aianalysis-controller"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses/status"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests"}, Verbs: []string{"create", "get", "list", "watch", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests/status"}, Verbs: []string{"get", "update", "patch"}},
 			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get", "list", "watch"}},
 		},
 	}
 }
 
-func holmesgptAPIClientClusterRole(labels map[string]string) *rbacv1.ClusterRole {
+func kubernautAgentClientClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "holmesgpt-api-client", Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "kubernaut-agent-client"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"services", "endpoints"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"kubernaut-agent"}, Verbs: []string{"create", "get"}},
 		},
 	}
 }
 
-func holmesgptAPIInvestigatorClusterRole(labels map[string]string) *rbacv1.ClusterRole {
+func kubernautAgentInvestigatorClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
+	rules := []rbacv1.PolicyRule{
+		{APIGroups: []string{""}, Resources: []string{"pods", "pods/log", "events", "services", "endpoints", "configmaps", "secrets", "nodes", "namespaces", "replicationcontrollers", "persistentvolumeclaims", "resourcequotas"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"events.k8s.io"}, Resources: []string{"events"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"networkpolicies"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"cert-manager.io"}, Resources: []string{"certificates", "clusterissuers", "certificaterequests"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"argoproj.io"}, Resources: []string{"applications"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"policy.linkerd.io"}, Resources: []string{"servers", "authorizationpolicies", "meshtlsauthentications"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"security.istio.io"}, Resources: []string{"authorizationpolicies", "peerauthentications", "requestauthentications"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"networking.istio.io"}, Resources: []string{"virtualservices", "destinationrules", "gateways", "serviceentries"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"monitoring.coreos.com"}, Resources: []string{"prometheusrules", "servicemonitors", "podmonitors", "probes"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"metrics.k8s.io"}, Resources: []string{"pods", "nodes"}, Verbs: []string{"get", "list"}},
+	}
+
 	return &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "holmesgpt-api-investigator", Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "kubernaut-agent-investigator"), Labels: labels},
+		Rules:      rules,
+	}
+}
+
+func signalprocessingClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
+	return &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "signalprocessing-controller"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"pods", "pods/log", "services", "endpoints", "nodes", "configmaps", "events", "namespaces"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "daemonsets", "replicasets", "statefulsets"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses", "networkpolicies"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"rbac.authorization.k8s.io"}, Resources: []string{"roles", "rolebindings", "clusterroles", "clusterrolebindings"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings", "remediationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings/status", "signalprocessings/finalizers"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{""}, Resources: []string{"pods", "services", "namespaces", "nodes"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"storage.k8s.io"}, Resources: []string{"storageclasses", "persistentvolumes"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{""}, Resources: []string{"persistentvolumeclaims"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"networkpolicies"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 		},
 	}
 }
 
-func signalprocessingClusterRole(labels map[string]string) *rbacv1.ClusterRole {
+func remediationOrchestratorClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "signalprocessing-controller", Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "remediationorchestrator-controller"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings/status"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"create", "get", "list", "watch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests", "remediationapprovalrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/status", "remediationapprovalrequests/status"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/finalizers"}, Verbs: []string{"update"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings/status"}, Verbs: []string{"get"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses/status"}, Verbs: []string{"get"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions/status"}, Verbs: []string{"get"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"notificationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"notificationrequests/status"}, Verbs: []string{"get"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"effectivenessassessments"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"effectivenessassessments/status"}, Verbs: []string{"get"}},
 			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{""}, Resources: []string{"pods", "nodes", "services", "namespaces", "persistentvolumes", "configmaps"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list", "watch"}},
 		},
 	}
 }
 
-func remediationOrchestratorClusterRole(labels map[string]string) *rbacv1.ClusterRole {
+func workflowExecutionControllerClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "remediationorchestrator-controller", Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "workflowexecution-controller"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/status"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses", "remediationapprovalrequests", "workflowexecutions", "effectivenessassessments"}, Verbs: []string{"create", "get", "list", "watch", "update", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
-		},
-	}
-}
-
-func workflowExecutionControllerClusterRole(labels map[string]string) *rbacv1.ClusterRole {
-	return &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "workflowexecution-controller", Labels: labels},
-		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions/status"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationworkflows", "actiontypes"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"create", "get", "list", "watch", "delete"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions/finalizers"}, Verbs: []string{"update"}},
+			{APIGroups: []string{"tekton.dev"}, Resources: []string{"pipelineruns"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+			{APIGroups: []string{"tekton.dev"}, Resources: []string{"taskruns"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
+			{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 		},
 	}
 }
 
-func workflowRunnerClusterRole(labels map[string]string) *rbacv1.ClusterRole {
+// workflowRunnerClusterRole contains only cluster-wide read access and CRD
+// operations. Write access to secrets, configmaps, PVCs, etc. is scoped to
+// the workflow namespace via workflowRunnerNamespaceRole (see WorkflowNamespaceRBAC).
+func workflowRunnerClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "kubernaut-workflow-runner", Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "workflow-runner"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"pods", "services", "configmaps", "secrets"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"pods/exec"}, Verbs: []string{"create"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "patch", "update"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"replicasets"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list", "delete", "watch"}},
+			{APIGroups: []string{""}, Resources: []string{"pods/eviction"}, Verbs: []string{"create"}},
+			{APIGroups: []string{""}, Resources: []string{"nodes"}, Verbs: []string{"get", "list", "patch", "update"}},
+			{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: []string{"get", "list", "patch"}},
+			{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: []string{"get", "list", "patch"}},
+			{APIGroups: []string{""}, Resources: []string{"serviceaccounts/token"}, Verbs: []string{"create"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions"}, Verbs: []string{"get"}},
+			{APIGroups: []string{"storage.k8s.io"}, Resources: []string{"storageclasses"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{""}, Resources: []string{"endpoints"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"argoproj.io"}, Resources: []string{"applications"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"cert-manager.io"}, Resources: []string{"certificates"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"cert-manager.io"}, Resources: []string{"clusterissuers"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"policy.linkerd.io"}, Resources: []string{"authorizationpolicies", "servers", "meshtlsauthentications"}, Verbs: []string{"get", "list", "delete"}},
+			{APIGroups: []string{"security.istio.io"}, Resources: []string{"authorizationpolicies", "peerauthentications", "requestauthentications"}, Verbs: []string{"get", "list", "delete"}},
+			{APIGroups: []string{"networking.istio.io"}, Resources: []string{"virtualservices", "destinationrules", "gateways", "serviceentries"}, Verbs: []string{"get", "list", "create", "update", "patch", "delete"}},
 		},
 	}
 }
 
-func effectivenessMonitorControllerClusterRole(labels map[string]string) *rbacv1.ClusterRole {
+func effectivenessMonitorControllerClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "effectivenessmonitor-controller", Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "effectivenessmonitor-controller"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"effectivenessassessments"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"effectivenessassessments/status"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{""}, Resources: []string{"pods", "nodes", "services", "persistentvolumeclaims", "configmaps"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list"}},
 			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
 		},
 	}
 }
 
-func notificationControllerClusterRole(labels map[string]string) *rbacv1.ClusterRole {
+func notificationControllerClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "notification-controller", Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "notification-controller"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"notificationrequests"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"notificationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"notificationrequests/status"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"notificationrequests/finalizers"}, Verbs: []string{"update"}},
 			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get", "list", "watch"}},
 		},
 	}
 }
 
-func dataStorageAuthMiddlewareClusterRole(labels map[string]string) *rbacv1.ClusterRole {
+func dataStorageAuthMiddlewareClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "data-storage-auth-middleware", Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "data-storage-auth-middleware"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
 			{APIGroups: []string{"authentication.k8s.io"}, Resources: []string{"tokenreviews"}, Verbs: []string{"create"}},
 			{APIGroups: []string{"authorization.k8s.io"}, Resources: []string{"subjectaccessreviews"}, Verbs: []string{"create"}},
@@ -421,40 +530,41 @@ func dataStorageAuthMiddlewareClusterRole(labels map[string]string) *rbacv1.Clus
 	}
 }
 
-func dataStorageClientClusterRole(labels map[string]string) *rbacv1.ClusterRole {
+func dataStorageClientClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "data-storage-client", Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "data-storage-client"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"serviceaccounts/token"}, Verbs: []string{"create"}},
+			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"data-storage-service"}, Verbs: []string{"create", "get", "list", "update", "delete"}},
 		},
 	}
 }
 
-func authWebhookClusterRole(labels map[string]string) *rbacv1.ClusterRole {
+func authWebhookClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "authwebhook-role", Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "authwebhook-role"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"actiontypes"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions", "remediationapprovalrequests", "notificationrequests", "remediationrequests", "actiontypes"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationworkflows"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationworkflows/finalizers"}, Verbs: []string{"update"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions/status", "remediationapprovalrequests/status", "remediationrequests/status", "remediationworkflows/status", "actiontypes/status"}, Verbs: []string{"update", "patch"}},
 		},
 	}
 }
 
-func alertmanagerViewClusterRole(labels map[string]string) *rbacv1.ClusterRole {
+func alertmanagerViewClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "kubernaut-alertmanager-view", Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "alertmanager-view"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"monitoring.coreos.com"}, Resources: []string{"alertmanagers"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{""}, Resources: []string{"services", "endpoints"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"monitoring.coreos.com"}, Resources: []string{"alertmanagers/api"}, Verbs: []string{"get"}},
 		},
 	}
 }
 
-func gatewaySignalSourceClusterRole(labels map[string]string) *rbacv1.ClusterRole {
+func gatewaySignalSourceClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: "gateway-signal-source", Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "gateway-signal-source"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get"}},
+			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"gateway-service"}, Verbs: []string{"create"}},
 		},
 	}
 }

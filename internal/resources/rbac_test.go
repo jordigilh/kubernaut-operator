@@ -18,14 +18,20 @@ package resources
 
 import (
 	"testing"
+
+	rbacv1 "k8s.io/api/rbac/v1"
+)
+
+const (
+	testWorkflowRunnerSAName = "kubernaut-workflow-runner"
+	testCustomWorkflowNS     = "my-wf-ns"
 )
 
 func TestClusterRoles_Count(t *testing.T) {
 	kn := testKubernaut()
-	// Monitoring enabled by default → includes alertmanager-view + gateway-signal-source
 	roles := ClusterRoles(kn)
-	if len(roles) < 13 {
-		t.Errorf("ClusterRoles() should return at least 13 roles (base), got %d", len(roles))
+	if len(roles) != 15 {
+		t.Errorf("ClusterRoles() should return exactly 15 roles (13 base + 2 monitoring), got %d", len(roles))
 	}
 }
 
@@ -51,20 +57,23 @@ func TestClusterRoles_ContainsExpectedNames(t *testing.T) {
 		names[r.Name] = true
 	}
 
+	ns := kn.Namespace
 	expectedNames := []string{
-		"gateway-role",
-		"aianalysis-controller",
-		"holmesgpt-api-client",
-		"holmesgpt-api-investigator",
-		"signalprocessing-controller",
-		"remediationorchestrator-controller",
-		"workflowexecution-controller",
-		"kubernaut-workflow-runner",
-		"effectivenessmonitor-controller",
-		"notification-controller",
-		"data-storage-auth-middleware",
-		"data-storage-client",
-		"authwebhook-role",
+		ns + "-gateway-role",
+		ns + "-aianalysis-controller",
+		ns + "-kubernaut-agent-client",
+		ns + "-kubernaut-agent-investigator",
+		ns + "-signalprocessing-controller",
+		ns + "-remediationorchestrator-controller",
+		ns + "-workflowexecution-controller",
+		ns + "-workflow-runner",
+		ns + "-effectivenessmonitor-controller",
+		ns + "-notification-controller",
+		ns + "-data-storage-auth-middleware",
+		ns + "-data-storage-client",
+		ns + "-authwebhook-role",
+		ns + "-alertmanager-view",
+		ns + "-gateway-signal-source",
 	}
 
 	for _, name := range expectedNames {
@@ -78,17 +87,54 @@ func TestClusterRoleBindings_SubjectNamespace(t *testing.T) {
 	kn := testKubernaut()
 	crbs := ClusterRoleBindings(kn)
 
+	allowedNamespaces := map[string]bool{
+		kn.Namespace:             true,
+		DefaultWorkflowNamespace: true,
+		OCPMonitoringNamespace:   true,
+	}
+
 	for _, crb := range crbs {
 		if len(crb.Subjects) == 0 {
 			t.Errorf("CRB %q has no subjects", crb.Name)
 			continue
 		}
 		for _, subj := range crb.Subjects {
-			if subj.Namespace != kn.Namespace {
-				t.Errorf("CRB %q subject %q has namespace %q, want %q",
-					crb.Name, subj.Name, subj.Namespace, kn.Namespace)
+			if !allowedNamespaces[subj.Namespace] {
+				t.Errorf("CRB %q subject %q has namespace %q, want one of %v",
+					crb.Name, subj.Name, subj.Namespace, allowedNamespaces)
 			}
 		}
+	}
+}
+
+func TestClusterRoleBindings_WorkflowRunnerBinding(t *testing.T) {
+	kn := testKubernaut()
+	crbs := ClusterRoleBindings(kn)
+	ns := kn.Namespace
+
+	wantName := ns + "-workflow-runner-binding"
+	wantRef := ns + "-workflow-runner"
+
+	found := false
+	for _, crb := range crbs {
+		if crb.Name == wantName {
+			found = true
+			if crb.RoleRef.Name != wantRef {
+				t.Errorf("workflow-runner CRB roleRef = %q, want %q", crb.RoleRef.Name, wantRef)
+			}
+			if len(crb.Subjects) == 0 {
+				t.Fatal("workflow-runner CRB has no subjects")
+			}
+			if crb.Subjects[0].Name != testWorkflowRunnerSAName {
+				t.Errorf("workflow-runner CRB subject = %q, want %q", crb.Subjects[0].Name, testWorkflowRunnerSAName)
+			}
+			if crb.Subjects[0].Namespace != DefaultWorkflowNamespace {
+				t.Errorf("workflow-runner CRB subject namespace = %q, want %q", crb.Subjects[0].Namespace, DefaultWorkflowNamespace)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("ClusterRoleBindings() should include %q", wantName)
 	}
 }
 
@@ -103,9 +149,10 @@ func TestDataStorageClientRoleBindings_Count10(t *testing.T) {
 func TestDataStorageClientRoleBindings_AllRefClusterRole(t *testing.T) {
 	kn := testKubernaut()
 	rbs := DataStorageClientRoleBindings(kn)
+	wantRef := kn.Namespace + "-data-storage-client"
 	for _, rb := range rbs {
-		if rb.RoleRef.Name != "data-storage-client" {
-			t.Errorf("RoleBinding %q should reference data-storage-client, got %q", rb.Name, rb.RoleRef.Name)
+		if rb.RoleRef.Name != wantRef {
+			t.Errorf("RoleBinding %q should reference %q, got %q", rb.Name, wantRef, rb.RoleRef.Name)
 		}
 		if rb.RoleRef.Kind != "ClusterRole" {
 			t.Errorf("RoleBinding %q should reference kind ClusterRole, got %q", rb.Name, rb.RoleRef.Kind)
@@ -168,12 +215,12 @@ func TestWorkflowNamespaceRBAC_UsesDefaultNamespace(t *testing.T) {
 	roles, rbs := WorkflowNamespaceRBAC(kn)
 
 	for _, r := range roles {
-		if r.Namespace != "kubernaut-workflows" {
+		if r.Namespace != DefaultWorkflowNamespace {
 			t.Errorf("workflow Role %q should be in kubernaut-workflows, got %q", r.Name, r.Namespace)
 		}
 	}
 	for _, rb := range rbs {
-		if rb.Namespace != "kubernaut-workflows" {
+		if rb.Namespace != DefaultWorkflowNamespace {
 			t.Errorf("workflow RoleBinding %q should be in kubernaut-workflows, got %q", rb.Name, rb.Namespace)
 		}
 	}
@@ -181,16 +228,16 @@ func TestWorkflowNamespaceRBAC_UsesDefaultNamespace(t *testing.T) {
 
 func TestWorkflowNamespaceRBAC_UsesCustomNamespace(t *testing.T) {
 	kn := testKubernaut()
-	kn.Spec.WorkflowExecution.WorkflowNamespace = "my-wf-ns"
+	kn.Spec.WorkflowExecution.WorkflowNamespace = testCustomWorkflowNS
 	roles, rbs := WorkflowNamespaceRBAC(kn)
 
 	for _, r := range roles {
-		if r.Namespace != "my-wf-ns" {
+		if r.Namespace != testCustomWorkflowNS {
 			t.Errorf("workflow Role %q should be in my-wf-ns, got %q", r.Name, r.Namespace)
 		}
 	}
 	for _, rb := range rbs {
-		if rb.Namespace != "my-wf-ns" {
+		if rb.Namespace != testCustomWorkflowNS {
 			t.Errorf("workflow RoleBinding %q should be in my-wf-ns, got %q", rb.Name, rb.Namespace)
 		}
 	}
@@ -199,10 +246,12 @@ func TestWorkflowNamespaceRBAC_UsesCustomNamespace(t *testing.T) {
 func TestAnsibleRBAC_AwxJobsPermission(t *testing.T) {
 	kn := testKubernaut()
 	kn.Spec.Ansible.Enabled = true
+	ns := kn.Namespace
 	cr, crb := AnsibleRBAC(kn)
 
-	if cr.Name != "workflowexecution-awx" {
-		t.Errorf("AWX ClusterRole name = %q, want %q", cr.Name, "workflowexecution-awx")
+	wantCR := ns + "-workflowexecution-awx"
+	if cr.Name != wantCR {
+		t.Errorf("AWX ClusterRole name = %q, want %q", cr.Name, wantCR)
 	}
 
 	found := false
@@ -217,8 +266,137 @@ func TestAnsibleRBAC_AwxJobsPermission(t *testing.T) {
 		t.Error("AWX ClusterRole should grant access to awxjobs resources")
 	}
 
-	if crb.RoleRef.Name != "workflowexecution-awx" {
-		t.Errorf("AWX CRB roleRef = %q, want %q", crb.RoleRef.Name, "workflowexecution-awx")
+	if crb.RoleRef.Name != wantCR {
+		t.Errorf("AWX CRB roleRef = %q, want %q", crb.RoleRef.Name, wantCR)
+	}
+}
+
+func TestClusterRoleBindings_MonitoringCRBs(t *testing.T) {
+	kn := testKubernaut()
+	crbs := ClusterRoleBindings(kn)
+	ns := kn.Namespace
+
+	crbMap := make(map[string]*rbacv1.ClusterRoleBinding, len(crbs))
+	for _, crb := range crbs {
+		crbMap[crb.Name] = crb
+	}
+
+	t.Run("cluster-monitoring-view for EM", func(t *testing.T) {
+		crb, ok := crbMap[ns+"-effectivenessmonitor-monitoring-view"]
+		if !ok {
+			t.Fatalf("missing %s-effectivenessmonitor-monitoring-view CRB", ns)
+		}
+		if crb.RoleRef.Name != "cluster-monitoring-view" {
+			t.Errorf("roleRef = %q, want %q", crb.RoleRef.Name, "cluster-monitoring-view")
+		}
+	})
+
+	t.Run("cluster-monitoring-view for KA", func(t *testing.T) {
+		crb, ok := crbMap[ns+"-kubernaut-agent-monitoring-view"]
+		if !ok {
+			t.Fatalf("missing %s-kubernaut-agent-monitoring-view CRB", ns)
+		}
+		if crb.RoleRef.Name != "cluster-monitoring-view" {
+			t.Errorf("roleRef = %q, want %q", crb.RoleRef.Name, "cluster-monitoring-view")
+		}
+	})
+
+	t.Run("alertmanager signal source binds OCP SA", func(t *testing.T) {
+		crb, ok := crbMap[ns+"-alertmanager-gateway-signal-source"]
+		if !ok {
+			t.Fatalf("missing %s-alertmanager-gateway-signal-source CRB", ns)
+		}
+		if crb.RoleRef.Name != ns+"-gateway-signal-source" {
+			t.Errorf("roleRef = %q, want %q", crb.RoleRef.Name, ns+"-gateway-signal-source")
+		}
+		if len(crb.Subjects) == 0 {
+			t.Fatal("CRB has no subjects")
+		}
+		subj := crb.Subjects[0]
+		if subj.Name != OCPAlertManagerSAName {
+			t.Errorf("subject name = %q, want %q", subj.Name, OCPAlertManagerSAName)
+		}
+		if subj.Namespace != OCPMonitoringNamespace {
+			t.Errorf("subject namespace = %q, want %q", subj.Namespace, OCPMonitoringNamespace)
+		}
+	})
+}
+
+func TestClusterRoleBindings_MonitoringDisabled_NoMonitoringCRBs(t *testing.T) {
+	kn := testKubernaut()
+	disabled := false
+	kn.Spec.Monitoring.Enabled = &disabled
+	ns := kn.Namespace
+
+	crbs := ClusterRoleBindings(kn)
+	monitoringNames := map[string]bool{
+		ns + "-effectivenessmonitor-alertmanager-view-binding": true,
+		ns + "-effectivenessmonitor-monitoring-view":           true,
+		ns + "-kubernaut-agent-monitoring-view":                true,
+		ns + "-alertmanager-gateway-signal-source":             true,
+	}
+
+	for _, crb := range crbs {
+		if monitoringNames[crb.Name] {
+			t.Errorf("monitoring CRB %q should not exist when monitoring is disabled", crb.Name)
+		}
+	}
+}
+
+func TestKubernautAgentClientRoleBinding_GrantsAIAnalysisAccess(t *testing.T) {
+	kn := testKubernaut()
+	rb := KubernautAgentClientRoleBinding(kn)
+
+	if rb.Name != "kubernaut-agent-client-aianalysis" {
+		t.Errorf("Name = %q, want %q", rb.Name, "kubernaut-agent-client-aianalysis")
+	}
+	if rb.Namespace != kn.Namespace {
+		t.Errorf("Namespace = %q, want %q", rb.Namespace, kn.Namespace)
+	}
+	wantRoleRef := kn.Namespace + "-kubernaut-agent-client"
+	if rb.RoleRef.Name != wantRoleRef {
+		t.Errorf("RoleRef.Name = %q, want %q", rb.RoleRef.Name, wantRoleRef)
+	}
+	if rb.RoleRef.Kind != "ClusterRole" {
+		t.Errorf("RoleRef.Kind = %q, want ClusterRole", rb.RoleRef.Kind)
+	}
+	if len(rb.Subjects) == 0 {
+		t.Fatal("RoleBinding has no subjects")
+	}
+	subj := rb.Subjects[0]
+	if subj.Name != ServiceAccountName(ComponentAIAnalysis) {
+		t.Errorf("Subject.Name = %q, want %q", subj.Name, ServiceAccountName(ComponentAIAnalysis))
+	}
+	if subj.Namespace != kn.Namespace {
+		t.Errorf("Subject.Namespace = %q, want %q", subj.Namespace, kn.Namespace)
+	}
+}
+
+func TestMonitoringCRBNames_ReturnsAll4(t *testing.T) {
+	kn := testKubernaut()
+	names := MonitoringCRBNames(kn)
+	if len(names) != 4 {
+		t.Fatalf("MonitoringCRBNames() count = %d, want 4", len(names))
+	}
+	ns := kn.Namespace
+	for _, name := range names {
+		if len(name) <= len(ns) || name[:len(ns)] != ns {
+			t.Errorf("MonitoringCRBNames entry %q should be namespace-prefixed with %q", name, ns)
+		}
+	}
+}
+
+func TestMonitoringClusterRoleNames_ReturnsAll2(t *testing.T) {
+	kn := testKubernaut()
+	names := MonitoringClusterRoleNames(kn)
+	if len(names) != 2 {
+		t.Fatalf("MonitoringClusterRoleNames() count = %d, want 2", len(names))
+	}
+	ns := kn.Namespace
+	for _, name := range names {
+		if len(name) <= len(ns) || name[:len(ns)] != ns {
+			t.Errorf("MonitoringClusterRoleNames entry %q should be namespace-prefixed with %q", name, ns)
+		}
 	}
 }
 
@@ -227,6 +405,103 @@ func TestClusterRoles_HaveCommonLabels(t *testing.T) {
 	for _, cr := range ClusterRoles(kn) {
 		if cr.Labels["app.kubernetes.io/managed-by"] != "kubernaut-operator" {
 			t.Errorf("ClusterRole %q missing managed-by label", cr.Name)
+		}
+	}
+}
+
+func TestKAInvestigator_HasServiceMeshAndGitOpsRules(t *testing.T) {
+	kn := testKubernaut()
+	roles := ClusterRoles(kn)
+	var investigator *rbacv1.ClusterRole
+	for _, r := range roles {
+		if r.Name == kn.Namespace+"-kubernaut-agent-investigator" {
+			investigator = r
+			break
+		}
+	}
+	if investigator == nil {
+		t.Fatal("kubernaut-agent-investigator ClusterRole not found")
+	}
+
+	wantGroups := []string{
+		"cert-manager.io",
+		"argoproj.io",
+		"policy.linkerd.io",
+		"security.istio.io",
+		"networking.istio.io",
+	}
+	foundGroups := make(map[string]bool)
+	for _, rule := range investigator.Rules {
+		for _, g := range rule.APIGroups {
+			foundGroups[g] = true
+		}
+	}
+	for _, g := range wantGroups {
+		if !foundGroups[g] {
+			t.Errorf("kubernaut-agent-investigator missing API group %q", g)
+		}
+	}
+}
+
+func TestWorkflowRunner_HasMeshAndGitOpsRules(t *testing.T) {
+	kn := testKubernaut()
+	roles := ClusterRoles(kn)
+	var runner *rbacv1.ClusterRole
+	for _, r := range roles {
+		if r.Name == kn.Namespace+"-workflow-runner" {
+			runner = r
+			break
+		}
+	}
+	if runner == nil {
+		t.Fatal("workflow-runner ClusterRole not found")
+	}
+
+	wantGroups := []string{
+		"argoproj.io",
+		"cert-manager.io",
+		"policy.linkerd.io",
+		"security.istio.io",
+		"networking.istio.io",
+	}
+	foundGroups := make(map[string]bool)
+	for _, rule := range runner.Rules {
+		for _, g := range rule.APIGroups {
+			foundGroups[g] = true
+		}
+	}
+	for _, g := range wantGroups {
+		if !foundGroups[g] {
+			t.Errorf("workflow-runner missing API group %q", g)
+		}
+	}
+}
+
+func TestDataStorageClient_HasExpandedVerbs(t *testing.T) {
+	kn := testKubernaut()
+	roles := ClusterRoles(kn)
+	var dsClient *rbacv1.ClusterRole
+	for _, r := range roles {
+		if r.Name == kn.Namespace+"-data-storage-client" {
+			dsClient = r
+			break
+		}
+	}
+	if dsClient == nil {
+		t.Fatal("data-storage-client ClusterRole not found")
+	}
+	if len(dsClient.Rules) == 0 {
+		t.Fatal("data-storage-client has no rules")
+	}
+	rule := dsClient.Rules[0]
+	wantVerbs := []string{"create", "get", "list", "update", "delete"}
+	verbs := make(map[string]bool)
+	for _, v := range rule.Verbs {
+		verbs[v] = true
+	}
+	for _, v := range wantVerbs {
+		if !verbs[v] {
+			t.Errorf("data-storage-client missing verb %q", v)
 		}
 	}
 }

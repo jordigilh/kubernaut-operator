@@ -20,8 +20,14 @@ import (
 	"strings"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
 	routev1 "github.com/openshift/api/route/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+const (
+	testGatewayServiceName     = "gateway-service"
+	testOperatorManagedByValue = "kubernaut-operator"
 )
 
 func TestGatewayRoute_EnabledByDefault(t *testing.T) {
@@ -34,11 +40,11 @@ func TestGatewayRoute_EnabledByDefault(t *testing.T) {
 	if route.Name != "gateway-route" {
 		t.Errorf("name = %q, want %q", route.Name, "gateway-route")
 	}
-	if route.Namespace != "kubernaut-system" {
-		t.Errorf("namespace = %q, want %q", route.Namespace, "kubernaut-system")
+	if route.Namespace != testSystemNamespace {
+		t.Errorf("namespace = %q, want %q", route.Namespace, testSystemNamespace)
 	}
-	if route.Spec.To.Name != "gateway-service" {
-		t.Errorf("route target = %q, want %q", route.Spec.To.Name, "gateway-service")
+	if route.Spec.To.Name != testGatewayServiceName {
+		t.Errorf("route target = %q, want %q", route.Spec.To.Name, testGatewayServiceName)
 	}
 	if route.Spec.TLS == nil {
 		t.Fatal("route should have TLS config")
@@ -48,6 +54,18 @@ func TestGatewayRoute_EnabledByDefault(t *testing.T) {
 	}
 	if route.Spec.TLS.InsecureEdgeTerminationPolicy != routev1.InsecureEdgeTerminationPolicyRedirect {
 		t.Errorf("insecure policy = %q, want Redirect", route.Spec.TLS.InsecureEdgeTerminationPolicy)
+	}
+}
+
+func TestGatewayRouteStub_MinimalMetadata(t *testing.T) {
+	kn := testKubernaut()
+	stub := GatewayRouteStub(kn)
+
+	if stub.Name != "gateway-route" {
+		t.Errorf("Name = %q, want %q", stub.Name, "gateway-route")
+	}
+	if stub.Namespace != kn.Namespace {
+		t.Errorf("Namespace = %q, want %q", stub.Namespace, kn.Namespace)
 	}
 }
 
@@ -91,7 +109,10 @@ func TestDataStorageDBSecret_DerivesFromPGSecret(t *testing.T) {
 		},
 	}
 
-	dsSecret := DataStorageDBSecret(kn, pgSecret)
+	dsSecret, err := DataStorageDBSecret(kn, pgSecret)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if dsSecret.Name != "datastorage-db-secret" {
 		t.Errorf("name = %q, want %q", dsSecret.Name, "datastorage-db-secret")
@@ -126,10 +147,28 @@ func TestDataStorageDBSecret_DefaultPort(t *testing.T) {
 		},
 	}
 
-	dsSecret := DataStorageDBSecret(kn, pgSecret)
+	dsSecret, err := DataStorageDBSecret(kn, pgSecret)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	yamlContent := string(dsSecret.Data["db-secrets.yaml"])
 	if !strings.Contains(yamlContent, "port: 5432") {
 		t.Errorf("should default to port 5432, got:\n%s", yamlContent)
+	}
+}
+
+func TestDataStorageDBSecret_MissingKey_ReturnsError(t *testing.T) {
+	kn := testKubernaut()
+	pgSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pg-secret"},
+		Data: map[string][]byte{
+			"POSTGRES_USER": []byte("u"),
+		},
+	}
+
+	_, err := DataStorageDBSecret(kn, pgSecret)
+	if err == nil {
+		t.Error("DataStorageDBSecret should return error when required keys are missing")
 	}
 }
 
@@ -137,10 +176,10 @@ func TestWorkflowNamespace_DefaultName(t *testing.T) {
 	kn := testKubernaut()
 	ns := WorkflowNamespace(kn)
 
-	if ns.Name != "kubernaut-workflows" {
-		t.Errorf("name = %q, want %q", ns.Name, "kubernaut-workflows")
+	if ns.Name != DefaultWorkflowNamespace {
+		t.Errorf("name = %q, want %q", ns.Name, DefaultWorkflowNamespace)
 	}
-	if ns.Labels["app.kubernetes.io/managed-by"] != "kubernaut-operator" {
+	if ns.Labels["app.kubernetes.io/managed-by"] != testOperatorManagedByValue {
 		t.Error("workflow namespace should have managed-by label")
 	}
 }

@@ -69,6 +69,14 @@ rules:
   - update
   - watch
 - apiGroups:
+  - config.openshift.io
+  resources:
+  - apiservers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - kubernaut.ai
   resources:
   - kubernauts
@@ -114,8 +122,10 @@ rules:
   - rolebindings
   - roles
   verbs:
+  - bind
   - create
   - delete
+  - escalate
   - get
   - list
   - patch

@@ -58,14 +58,16 @@ func MigrationConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, err
 // MigrationJob builds the database migration Job.
 // It uses the db-migrate image which bundles the goose CLI and runs
 // migrations from the mounted ConfigMap.
-func MigrationJob(kn *kubernautv1alpha1.Kubernaut) *batchv1.Job {
-	pgPort := kn.Spec.PostgreSQL.Port
-	if pgPort == 0 {
-		pgPort = 5432
+func MigrationJob(kn *kubernautv1alpha1.Kubernaut) (*batchv1.Job, error) {
+	pgPort := PostgreSQLPort(kn)
+
+	img, err := ResolveImage(kn, "db-migrate")
+	if err != nil {
+		return nil, err
 	}
 
-	backoffLimit := int32(3)
-	ttlSeconds := int32(300)
+	backoffLimit := MigrationBackoffLimit
+	ttlSeconds := MigrationTTLSeconds
 
 	return &batchv1.Job{
 		ObjectMeta: ObjectMeta(kn, migrationJobName, "migration"),
@@ -75,12 +77,15 @@ func MigrationJob(kn *kubernautv1alpha1.Kubernaut) *batchv1.Job {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: ComponentLabels(kn, "migration")},
 				Spec: corev1.PodSpec{
-					RestartPolicy:   corev1.RestartPolicyOnFailure,
-					SecurityContext: PodSecurityContext(),
+					AutomountServiceAccountToken: boolPtr(false),
+					RestartPolicy:                corev1.RestartPolicyOnFailure,
+					SecurityContext:              PodSecurityContext(),
 					Containers: []corev1.Container{{
 						Name:            "db-migrate",
-						Image:           Image(&kn.Spec.Image, "db-migrate"),
+						Image:           img,
 						ImagePullPolicy: kn.Spec.Image.PullPolicy,
+						// $(VAR) references are expanded by the kubelet before
+						// container start using all env vars including envFrom.
 						Command: []string{"goose", "-dir", "/migrations", "postgres",
 							fmt.Sprintf("host=%s port=%d dbname=$(POSTGRES_DB) user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) sslmode=disable",
 								kn.Spec.PostgreSQL.Host, pgPort),
@@ -97,6 +102,7 @@ func MigrationJob(kn *kubernautv1alpha1.Kubernaut) *batchv1.Job {
 							ReadOnly:  true,
 						}},
 						SecurityContext: ContainerSecurityContext(),
+						Resources:       DefaultResources(),
 					}},
 					Volumes: []corev1.Volume{
 						configMapVolume("migrations", "kubernaut-migrations"),
@@ -105,5 +111,7 @@ func MigrationJob(kn *kubernautv1alpha1.Kubernaut) *batchv1.Job {
 				},
 			},
 		},
-	}
+	}, nil
 }
+
+func boolPtr(v bool) *bool { return &v }

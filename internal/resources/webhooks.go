@@ -24,93 +24,189 @@ import (
 )
 
 // MutatingWebhookConfiguration builds the AuthWebhook MutatingWebhookConfiguration.
-func MutatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut, caBundle []byte) *admissionregistrationv1.MutatingWebhookConfiguration {
-	ns := kn.Namespace
-	sideEffects := admissionregistrationv1.SideEffectClassNone
-	failurePolicy := admissionregistrationv1.Fail
-	matchPolicy := admissionregistrationv1.Equivalent
-	scope := admissionregistrationv1.AllScopes
-	port := int32(8443)
+// Mirrors the Helm chart's authwebhook/webhooks.yaml with three mutating
+// webhooks for workflowexecution, remediationapprovalrequest, and
+// remediationrequest status mutations (audit attribution).
+// OCP service-CA injects the caBundle via the inject-cabundle annotation.
+func MutatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut) *admissionregistrationv1.MutatingWebhookConfiguration {
+	namespacedScope := admissionregistrationv1.NamespacedScope
 
 	return &admissionregistrationv1.MutatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   "authwebhook-mutating",
-			Labels: CommonLabels(kn),
+			Name:        kn.Namespace + "-authwebhook-mutating",
+			Labels:      CommonLabels(kn),
+			Annotations: map[string]string{OCPServiceCAInjectAnnotation: "true"},
 		},
-		Webhooks: []admissionregistrationv1.MutatingWebhook{{
-			Name:                    "mutating.authwebhook.kubernaut.ai",
-			AdmissionReviewVersions: []string{"v1"},
-			SideEffects:             &sideEffects,
-			FailurePolicy:           &failurePolicy,
-			MatchPolicy:             &matchPolicy,
-			ClientConfig: admissionregistrationv1.WebhookClientConfig{
-				Service: &admissionregistrationv1.ServiceReference{
-					Namespace: ns,
-					Name:      "authwebhook-service",
-					Path:      strPtr("/mutate"),
-					Port:      &port,
-				},
-				CABundle: caBundle,
+		Webhooks: []admissionregistrationv1.MutatingWebhook{
+			{
+				Name:                    "workflowexecution.mutate.kubernaut.ai",
+				AdmissionReviewVersions: []string{"v1"},
+				SideEffects:             sideEffectPtr(admissionregistrationv1.SideEffectClassNone),
+				FailurePolicy:           failurePolicyPtr(admissionregistrationv1.Fail),
+				MatchPolicy:             matchPolicyPtr(admissionregistrationv1.Equivalent),
+				TimeoutSeconds:          int32Ptr(10),
+				ClientConfig:            webhookClientConfig(kn, "/mutate-workflowexecution"),
+				Rules: []admissionregistrationv1.RuleWithOperations{{
+					Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Update},
+					Rule: admissionregistrationv1.Rule{
+						APIGroups:   []string{"kubernaut.ai"},
+						APIVersions: []string{"v1alpha1"},
+						Resources:   []string{"workflowexecutions/status"},
+						Scope:       &namespacedScope,
+					},
+				}},
 			},
-			Rules: []admissionregistrationv1.RuleWithOperations{{
-				Operations: []admissionregistrationv1.OperationType{
-					admissionregistrationv1.Create,
-					admissionregistrationv1.Update,
-				},
-				Rule: admissionregistrationv1.Rule{
-					APIGroups:   []string{"kubernaut.ai"},
-					APIVersions: []string{"v1alpha1"},
-					Resources:   []string{"actiontypes"},
-					Scope:       &scope,
-				},
-			}},
-		}},
+			{
+				Name:                    "remediationapprovalrequest.mutate.kubernaut.ai",
+				AdmissionReviewVersions: []string{"v1"},
+				SideEffects:             sideEffectPtr(admissionregistrationv1.SideEffectClassNone),
+				FailurePolicy:           failurePolicyPtr(admissionregistrationv1.Fail),
+				MatchPolicy:             matchPolicyPtr(admissionregistrationv1.Equivalent),
+				TimeoutSeconds:          int32Ptr(10),
+				ClientConfig:            webhookClientConfig(kn, "/mutate-remediationapprovalrequest"),
+				Rules: []admissionregistrationv1.RuleWithOperations{{
+					Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Update},
+					Rule: admissionregistrationv1.Rule{
+						APIGroups:   []string{"kubernaut.ai"},
+						APIVersions: []string{"v1alpha1"},
+						Resources:   []string{"remediationapprovalrequests/status"},
+						Scope:       &namespacedScope,
+					},
+				}},
+			},
+			{
+				Name:                    "remediationrequest.mutate.kubernaut.ai",
+				AdmissionReviewVersions: []string{"v1"},
+				SideEffects:             sideEffectPtr(admissionregistrationv1.SideEffectClassNone),
+				FailurePolicy:           failurePolicyPtr(admissionregistrationv1.Fail),
+				MatchPolicy:             matchPolicyPtr(admissionregistrationv1.Equivalent),
+				TimeoutSeconds:          int32Ptr(10),
+				ClientConfig:            webhookClientConfig(kn, "/mutate-remediationrequest"),
+				Rules: []admissionregistrationv1.RuleWithOperations{{
+					Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Update},
+					Rule: admissionregistrationv1.Rule{
+						APIGroups:   []string{"kubernaut.ai"},
+						APIVersions: []string{"v1alpha1"},
+						Resources:   []string{"remediationrequests/status"},
+						Scope:       &namespacedScope,
+					},
+				}},
+			},
+		},
 	}
 }
 
 // ValidatingWebhookConfiguration builds the AuthWebhook ValidatingWebhookConfiguration.
-func ValidatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut, caBundle []byte) *admissionregistrationv1.ValidatingWebhookConfiguration {
-	ns := kn.Namespace
-	sideEffects := admissionregistrationv1.SideEffectClassNone
-	failurePolicy := admissionregistrationv1.Fail
-	matchPolicy := admissionregistrationv1.Equivalent
-	scope := admissionregistrationv1.AllScopes
-	port := int32(8443)
+// Mirrors the Helm chart's authwebhook/webhooks.yaml with three validating
+// webhooks: notificationrequest deletion (attribution), remediationworkflow
+// CUD (schema validation), and actiontype CUD (schema validation).
+// OCP service-CA injects the caBundle via the inject-cabundle annotation.
+func ValidatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut) *admissionregistrationv1.ValidatingWebhookConfiguration {
+	namespacedScope := admissionregistrationv1.NamespacedScope
 
 	return &admissionregistrationv1.ValidatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   "authwebhook-validating",
-			Labels: CommonLabels(kn),
+			Name:        kn.Namespace + "-authwebhook-validating",
+			Labels:      CommonLabels(kn),
+			Annotations: map[string]string{OCPServiceCAInjectAnnotation: "true"},
 		},
-		Webhooks: []admissionregistrationv1.ValidatingWebhook{{
-			Name:                    "validating.authwebhook.kubernaut.ai",
-			AdmissionReviewVersions: []string{"v1"},
-			SideEffects:             &sideEffects,
-			FailurePolicy:           &failurePolicy,
-			MatchPolicy:             &matchPolicy,
-			ClientConfig: admissionregistrationv1.WebhookClientConfig{
-				Service: &admissionregistrationv1.ServiceReference{
-					Namespace: ns,
-					Name:      "authwebhook-service",
-					Path:      strPtr("/validate"),
-					Port:      &port,
-				},
-				CABundle: caBundle,
+		Webhooks: []admissionregistrationv1.ValidatingWebhook{
+			{
+				Name:                    "notificationrequest.validate.kubernaut.ai",
+				AdmissionReviewVersions: []string{"v1"},
+				SideEffects:             sideEffectPtr(admissionregistrationv1.SideEffectClassNone),
+				FailurePolicy:           failurePolicyPtr(admissionregistrationv1.Fail),
+				MatchPolicy:             matchPolicyPtr(admissionregistrationv1.Equivalent),
+				TimeoutSeconds:          int32Ptr(10),
+				ClientConfig:            webhookClientConfig(kn, "/validate-notificationrequest-delete"),
+				Rules: []admissionregistrationv1.RuleWithOperations{{
+					Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Delete},
+					Rule: admissionregistrationv1.Rule{
+						APIGroups:   []string{"kubernaut.ai"},
+						APIVersions: []string{"v1alpha1"},
+						Resources:   []string{"notificationrequests"},
+						Scope:       &namespacedScope,
+					},
+				}},
 			},
-			Rules: []admissionregistrationv1.RuleWithOperations{{
-				Operations: []admissionregistrationv1.OperationType{
-					admissionregistrationv1.Create,
-					admissionregistrationv1.Update,
+			{
+				Name:                    "remediationworkflow.validate.kubernaut.ai",
+				AdmissionReviewVersions: []string{"v1"},
+				SideEffects:             sideEffectPtr(admissionregistrationv1.SideEffectClassNoneOnDryRun),
+				FailurePolicy:           failurePolicyPtr(admissionregistrationv1.Fail),
+				MatchPolicy:             matchPolicyPtr(admissionregistrationv1.Equivalent),
+				TimeoutSeconds:          int32Ptr(15),
+				ClientConfig:            webhookClientConfig(kn, "/validate-remediationworkflow"),
+				NamespaceSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"kubernetes.io/metadata.name": kn.Namespace,
+					},
 				},
-				Rule: admissionregistrationv1.Rule{
-					APIGroups:   []string{"kubernaut.ai"},
-					APIVersions: []string{"v1alpha1"},
-					Resources:   []string{"actiontypes"},
-					Scope:       &scope,
+				Rules: []admissionregistrationv1.RuleWithOperations{{
+					Operations: []admissionregistrationv1.OperationType{
+						admissionregistrationv1.Create,
+						admissionregistrationv1.Update,
+						admissionregistrationv1.Delete,
+					},
+					Rule: admissionregistrationv1.Rule{
+						APIGroups:   []string{"kubernaut.ai"},
+						APIVersions: []string{"v1alpha1"},
+						Resources:   []string{"remediationworkflows"},
+						Scope:       &namespacedScope,
+					},
+				}},
+			},
+			{
+				Name:                    "actiontype.validate.kubernaut.ai",
+				AdmissionReviewVersions: []string{"v1"},
+				SideEffects:             sideEffectPtr(admissionregistrationv1.SideEffectClassNoneOnDryRun),
+				FailurePolicy:           failurePolicyPtr(admissionregistrationv1.Fail),
+				MatchPolicy:             matchPolicyPtr(admissionregistrationv1.Equivalent),
+				TimeoutSeconds:          int32Ptr(15),
+				ClientConfig:            webhookClientConfig(kn, "/validate-actiontype"),
+				NamespaceSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"kubernetes.io/metadata.name": kn.Namespace,
+					},
 				},
-			}},
-		}},
+				Rules: []admissionregistrationv1.RuleWithOperations{{
+					Operations: []admissionregistrationv1.OperationType{
+						admissionregistrationv1.Create,
+						admissionregistrationv1.Update,
+						admissionregistrationv1.Delete,
+					},
+					Rule: admissionregistrationv1.Rule{
+						APIGroups:   []string{"kubernaut.ai"},
+						APIVersions: []string{"v1alpha1"},
+						Resources:   []string{"actiontypes"},
+						Scope:       &namespacedScope,
+					},
+				}},
+			},
+		},
+	}
+}
+
+func webhookClientConfig(kn *kubernautv1alpha1.Kubernaut, path string) admissionregistrationv1.WebhookClientConfig {
+	port := PortAuthWebhookService
+	return admissionregistrationv1.WebhookClientConfig{
+		Service: &admissionregistrationv1.ServiceReference{
+			Namespace: kn.Namespace,
+			Name:      "authwebhook-service",
+			Path:      strPtr(path),
+			Port:      &port,
+		},
 	}
 }
 
 func strPtr(s string) *string { return &s }
+func sideEffectPtr(v admissionregistrationv1.SideEffectClass) *admissionregistrationv1.SideEffectClass {
+	return &v
+}
+func failurePolicyPtr(v admissionregistrationv1.FailurePolicyType) *admissionregistrationv1.FailurePolicyType {
+	return &v
+}
+func matchPolicyPtr(v admissionregistrationv1.MatchPolicyType) *admissionregistrationv1.MatchPolicyType {
+	return &v
+}
+func int32Ptr(v int32) *int32 { return &v }

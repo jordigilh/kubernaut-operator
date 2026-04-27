@@ -1,0 +1,294 @@
+name: Release
+
+# Triggered by version tag push (e.g., v1.3.0, v1.4.0-rc1)
+# Builds multi-arch operator image (amd64 + arm64), creates manifest list,
+# builds and pushes the OLM bundle image, and creates a GitHub Release.
+# Pre-release tags (-rc*, -alpha*, -beta*) create a pre-release and skip :latest tagging.
+#
+# Prerequisites:
+#   - Quay.io robot account with push access to kubernaut-ai org
+#   - GitHub Actions secrets: QUAY_ROBOT_USERNAME, QUAY_ROBOT_TOKEN
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  IMAGE_REGISTRY: quay.io/kubernaut-ai
+  IMAGE_NAME: kubernaut-operator
+
+jobs:
+  # ========================================
+  # STAGE 0: PREPARE
+  # ========================================
+
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      build_date: ${{ steps.version.outputs.build_date }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "build_date=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+
+          if [[ "$VERSION" =~ -(rc|alpha|beta) ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "Pre-release: $TAG (version: $VERSION)"
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "Release: $TAG (version: $VERSION)"
+          fi
+
+  # ========================================
+  # STAGE 1a: BUILD & PUSH amd64 IMAGE
+  # Standard podman build using the multi-stage Dockerfile.
+  # ========================================
+
+  build-amd64:
+    name: Build Operator (amd64)
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Login to Quay.io
+        run: |
+          podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
+                       -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
+                       quay.io
+
+      - name: Build image
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          GIT_COMMIT: ${{ github.sha }}
+        run: |
+          IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-amd64"
+          echo "Building ${IMAGE}..."
+          podman build \
+            --platform linux/amd64 \
+            --build-arg TARGETOS=linux \
+            --build-arg TARGETARCH=amd64 \
+            --build-arg VERSION="${VERSION}" \
+            --build-arg GIT_COMMIT="${GIT_COMMIT}" \
+            -t "${IMAGE}" .
+
+      - name: Push image
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-amd64"
+          echo "Pushing ${IMAGE}..."
+          podman push "${IMAGE}"
+
+  # ========================================
+  # STAGE 1b: BUILD & PUSH arm64 IMAGE
+  # Cross-compiles the Go binary natively on the amd64 runner (no QEMU),
+  # then packages it with Dockerfile.runtime.
+  # ========================================
+
+  build-arm64:
+    name: Build Operator (arm64)
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Cross-compile binary (native, no QEMU)
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          GIT_COMMIT: ${{ github.sha }}
+        run: |
+          echo "Cross-compiling manager for arm64..."
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a \
+            -ldflags "-s -w -X main.Version=${VERSION} -X main.GitCommit=${GIT_COMMIT}" \
+            -o manager-arm64 cmd/main.go
+          ls -lh manager-arm64
+
+      - name: Login to Quay.io
+        run: |
+          podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
+                       -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
+                       quay.io
+
+      - name: Build runtime image (no QEMU)
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-arm64"
+          echo "Building ${IMAGE}..."
+          podman build \
+            --platform linux/arm64 \
+            -f Dockerfile.runtime \
+            --build-arg BINARY=manager-arm64 \
+            -t "${IMAGE}" .
+
+      - name: Push image
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-arm64"
+          echo "Pushing ${IMAGE}..."
+          podman push "${IMAGE}"
+
+  # ========================================
+  # STAGE 2: MULTI-ARCH MANIFESTS
+  # Creates a manifest list so a single tag (e.g., v1.3.0) resolves
+  # to the correct architecture automatically.
+  # Also tags :latest for GA releases.
+  # ========================================
+
+  create-manifests:
+    name: Create Multi-Arch Manifests
+    needs: [prepare, build-amd64, build-arm64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Login to Quay.io
+        run: |
+          podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
+                       -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
+                       quay.io
+
+      - name: Create and push version manifest
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          MANIFEST="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          echo "Creating manifest ${MANIFEST}..."
+          podman manifest rm "${MANIFEST}" 2>/dev/null || true
+          podman manifest create "${MANIFEST}" \
+            "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-amd64" \
+            "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-arm64"
+          podman manifest push "${MANIFEST}" "docker://${MANIFEST}"
+          echo "Pushed ${MANIFEST}"
+
+      - name: Tag as latest
+        if: needs.prepare.outputs.is_prerelease == 'false'
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          LATEST="${IMAGE_REGISTRY}/${IMAGE_NAME}:latest"
+          echo "Tagging ${LATEST}..."
+          podman manifest rm "${LATEST}" 2>/dev/null || true
+          podman manifest create "${LATEST}" \
+            "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-amd64" \
+            "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-arm64"
+          podman manifest push "${LATEST}" "docker://${LATEST}"
+          echo "Pushed ${LATEST}"
+
+  # ========================================
+  # STAGE 3: OLM BUNDLE IMAGE
+  # Builds and pushes the operator bundle image used by OLM / OperatorHub.
+  # The bundle version matches the release version.
+  # ========================================
+
+  bundle:
+    name: Build & Push OLM Bundle
+    needs: [prepare, create-manifests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Login to Quay.io
+        run: |
+          podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
+                       -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
+                       quay.io
+
+      - name: Regenerate bundle with release version
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}" \
+            VERSION="${VERSION}" \
+            make bundle
+
+      - name: Build bundle image
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          BUNDLE_IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}-bundle:v${VERSION}"
+          echo "Building bundle image ${BUNDLE_IMG}..."
+          podman build -f bundle.Dockerfile -t "${BUNDLE_IMG}" .
+
+      - name: Push bundle image
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          BUNDLE_IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}-bundle:v${VERSION}"
+          echo "Pushing ${BUNDLE_IMG}..."
+          podman push "${BUNDLE_IMG}"
+
+  # ========================================
+  # STAGE 4: GITHUB RELEASE
+  # Creates a GitHub Release with auto-generated notes.
+  # ========================================
+
+  release:
+    name: Create GitHub Release
+    needs: [prepare, create-manifests, bundle]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}
+        run: |
+          PRERELEASE_FLAG=""
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          gh release create "${TAG}" \
+            --title "Kubernaut Operator ${TAG}" \
+            --generate-notes \
+            ${PRERELEASE_FLAG} \
+            --notes-start-tag "$(git tag --sort=-creatordate | grep '^v' | sed -n '2p')" || \
+          gh release create "${TAG}" \
+            --title "Kubernaut Operator ${TAG}" \
+            --generate-notes \
+            ${PRERELEASE_FLAG}
+
+          echo ""
+          echo "Release created: https://github.com/${{ github.repository }}/releases/tag/${TAG}"
+          echo ""
+          echo "Images:"
+          echo "  Operator: ${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          echo "  Bundle:   ${IMAGE_REGISTRY}/${IMAGE_NAME}-bundle:v${VERSION}"

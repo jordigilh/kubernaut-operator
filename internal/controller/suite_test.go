@@ -25,6 +25,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	configv1 "github.com/openshift/api/config/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -56,11 +58,30 @@ func TestControllers(t *testing.T) {
 var _ = BeforeSuite(func() {
 	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
 
+	for k, v := range map[string]string{
+		"RELATED_IMAGE_GATEWAY":                 "quay.io/kubernaut-ai/gateway:test",
+		"RELATED_IMAGE_DATA_STORAGE":            "quay.io/kubernaut-ai/datastorage:test",
+		"RELATED_IMAGE_AIANALYSIS":              "quay.io/kubernaut-ai/aianalysis:test",
+		"RELATED_IMAGE_SIGNALPROCESSING":        "quay.io/kubernaut-ai/signalprocessing:test",
+		"RELATED_IMAGE_REMEDIATIONORCHESTRATOR": "quay.io/kubernaut-ai/remediationorchestrator:test",
+		"RELATED_IMAGE_WORKFLOWEXECUTION":       "quay.io/kubernaut-ai/workflowexecution:test",
+		"RELATED_IMAGE_EFFECTIVENESSMONITOR":    "quay.io/kubernaut-ai/effectivenessmonitor:test",
+		"RELATED_IMAGE_NOTIFICATION":            "quay.io/kubernaut-ai/notification:test",
+		"RELATED_IMAGE_KUBERNAUT_AGENT":         "quay.io/kubernaut-ai/kubernautagent:test",
+		"RELATED_IMAGE_AUTHWEBHOOK":             "quay.io/kubernaut-ai/authwebhook:test",
+		"RELATED_IMAGE_DB_MIGRATE":              "quay.io/kubernaut-ai/db-migrate:test",
+	} {
+		Expect(os.Setenv(k, v)).To(Succeed())
+	}
+
 	ctx, cancel = context.WithCancel(context.TODO())
 
 	var err error
 	err = kubernautaiv1alpha1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
+	err = apiextensionsv1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(configv1.Install(scheme.Scheme)).To(Succeed())
 
 	// +kubebuilder:scaffold:scheme
 

@@ -27,12 +27,12 @@ import (
 // PodDisruptionBudgets builds PDBs for all 10 Kubernaut components.
 // Each PDB allows at most 1 unavailable pod, matching the Helm chart.
 func PodDisruptionBudgets(kn *kubernautv1alpha1.Kubernaut) []*policyv1.PodDisruptionBudget {
-	maxUnavailable := intstr.FromInt32(1)
-	var pdbs []*policyv1.PodDisruptionBudget
+	maxUnavailable := intstr.FromInt32(PDBMaxUnavailable)
+	pdbs := make([]*policyv1.PodDisruptionBudget, 0, len(AllComponents()))
 
 	for _, component := range AllComponents() {
 		pdbs = append(pdbs, &policyv1.PodDisruptionBudget{
-			ObjectMeta: ObjectMeta(kn, component+"-pdb", component),
+			ObjectMeta: ObjectMeta(kn, component, component),
 			Spec: policyv1.PodDisruptionBudgetSpec{
 				MaxUnavailable: &maxUnavailable,
 				Selector:       &metav1.LabelSelector{MatchLabels: SelectorLabels(component)},

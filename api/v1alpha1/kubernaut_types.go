@@ -25,8 +25,9 @@ import (
 // The operator deploys all Kubernaut services into the CR's namespace and
 // auto-derives OCP platform configuration (monitoring, service-ca, Routes).
 type KubernautSpec struct {
-	// Image configuration for all Kubernaut service containers.
-	Image ImageSpec `json:"image"`
+	// Image pull policy, pull secrets, and optional per-component overrides.
+	// +optional
+	Image ImageSpec `json:"image,omitempty"`
 
 	// BYO PostgreSQL connection. The operator validates the secret and derives
 	// the DataStorage db-secrets.yaml Secret automatically.
@@ -67,8 +68,8 @@ type KubernautSpec struct {
 	// +optional
 	EffectivenessMonitor EffectivenessMonitorSpec `json:"effectivenessMonitor,omitempty"`
 
-	// LLM integration service (HolmesGPT-API, transitioning to KubernautAgent).
-	HolmesGPTAPI HolmesGPTAPISpec `json:"holmesgptApi"`
+	// Kubernaut Agent (KA) -- LLM-powered investigation and analysis service.
+	KubernautAgent KubernautAgentSpec `json:"kubernautAgent"`
 
 	// Gateway service settings.
 	// +optional
@@ -83,35 +84,12 @@ type KubernautSpec struct {
 	DataStorage DataStorageSpec `json:"dataStorage,omitempty"`
 }
 
-// ImageSpec configures how container images are resolved for all services.
-// Images are constructed as: {Registry}/{Namespace}{Separator}{service}:{Tag}
-// or {Registry}/{Namespace}{Separator}{service}@{Digest} when Digest is set.
+// ImageSpec configures container image policy for all services.
+// Service images are resolved from RELATED_IMAGE_* environment variables
+// set on the operator manager pod (populated at build time and rewritten
+// by OLM for disconnected/mirrored registries). Use Overrides only for
+// non-OLM or advanced deployments.
 type ImageSpec struct {
-	// Container registry hostname.
-	// +kubebuilder:validation:MinLength=1
-	Registry string `json:"registry"`
-
-	// Registry namespace / organization. Default: "kubernaut-ai".
-	// +kubebuilder:default="kubernaut-ai"
-	// +optional
-	Namespace string `json:"namespace,omitempty"`
-
-	// Separator between namespace and service name.
-	// "/" for nested registries (quay.io/kubernaut-ai/gateway),
-	// "-" for flat registries (quay.io/myorg/kubernaut-ai-gateway).
-	// +kubebuilder:default="/"
-	// +optional
-	Separator string `json:"separator,omitempty"`
-
-	// Image tag applied to all services. Required unless Digest is set.
-	// +optional
-	Tag string `json:"tag,omitempty"`
-
-	// Image digest (e.g. "sha256:abc..."). Overrides Tag for
-	// immutable or air-gapped deployments.
-	// +optional
-	Digest string `json:"digest,omitempty"`
-
 	// Pull policy for all containers.
 	// +kubebuilder:default="IfNotPresent"
 	// +optional
@@ -120,6 +98,13 @@ type ImageSpec struct {
 	// Pull secrets for private registries.
 	// +optional
 	PullSecrets []corev1.LocalObjectReference `json:"pullSecrets,omitempty"`
+
+	// Per-component image overrides. Keys are component names
+	// (e.g. "gateway", "datastorage", "kubernautagent"), values are full
+	// image references (e.g. "myregistry.example.com/gateway:v1.4.0").
+	// When set, overrides the RELATED_IMAGE env var for that component.
+	// +optional
+	Overrides map[string]string `json:"overrides,omitempty"`
 }
 
 // PostgreSQLSpec defines the BYO PostgreSQL connection.
@@ -135,6 +120,8 @@ type PostgreSQLSpec struct {
 
 	// PostgreSQL port.
 	// +kubebuilder:default=5432
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	Port int32 `json:"port,omitempty"`
 }
@@ -152,11 +139,14 @@ type ValkeySpec struct {
 
 	// Valkey port.
 	// +kubebuilder:default=6379
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	Port int32 `json:"port,omitempty"`
 }
 
 // AnsibleSpec configures the optional AWX/AAP integration.
+// +kubebuilder:validation:XValidation:rule="!self.enabled || has(self.apiURL)",message="ansible.apiURL is required when ansible.enabled is true"
 type AnsibleSpec struct {
 	// Whether AWX/AAP integration is enabled.
 	// +kubebuilder:default=false
@@ -169,6 +159,7 @@ type AnsibleSpec struct {
 
 	// AWX organization ID.
 	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=1
 	// +optional
 	OrganizationID int `json:"organizationID,omitempty"`
 
@@ -313,10 +304,11 @@ type ROTimeoutsSpec struct {
 }
 
 // RORoutingSpec defines routing thresholds for failure detection.
+// Integer thresholds use pointers to distinguish zero from unset.
 type RORoutingSpec struct {
 	// +kubebuilder:default=3
 	// +optional
-	ConsecutiveFailureThreshold int `json:"consecutiveFailureThreshold,omitempty"`
+	ConsecutiveFailureThreshold *int `json:"consecutiveFailureThreshold,omitempty"`
 	// +kubebuilder:default="1h"
 	// +optional
 	ConsecutiveFailureCooldown string `json:"consecutiveFailureCooldown,omitempty"`
@@ -325,10 +317,10 @@ type RORoutingSpec struct {
 	RecentlyRemediatedCooldown string `json:"recentlyRemediatedCooldown,omitempty"`
 	// +kubebuilder:default=3
 	// +optional
-	IneffectiveChainThreshold int `json:"ineffectiveChainThreshold,omitempty"`
+	IneffectiveChainThreshold *int `json:"ineffectiveChainThreshold,omitempty"`
 	// +kubebuilder:default=5
 	// +optional
-	RecurrenceCountThreshold int `json:"recurrenceCountThreshold,omitempty"`
+	RecurrenceCountThreshold *int `json:"recurrenceCountThreshold,omitempty"`
 	// +kubebuilder:default="4h"
 	// +optional
 	IneffectiveTimeWindow string `json:"ineffectiveTimeWindow,omitempty"`
@@ -392,9 +384,8 @@ type EMAssessmentSpec struct {
 	ValidityWindow string `json:"validityWindow,omitempty"`
 }
 
-// HolmesGPTAPISpec configures the LLM integration service.
-// Initially targets holmesgpt-api; will transition to KubernautAgent in v1.3.
-type HolmesGPTAPISpec struct {
+// KubernautAgentSpec configures the Kubernaut Agent (KA) LLM integration service.
+type KubernautAgentSpec struct {
 	// LLM provider and credentials configuration.
 	LLM LLMSpec `json:"llm"`
 
@@ -429,9 +420,32 @@ type GatewaySpec struct {
 	// +optional
 	Route RouteSpec `json:"route,omitempty"`
 
+	// Gateway server and middleware configuration.
+	// +optional
+	Config GatewayConfigSpec `json:"config,omitempty"`
+
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// GatewayConfigSpec configures Gateway server behaviour, middleware, and CORS.
+type GatewayConfigSpec struct {
+	// Timeout for outbound K8s API requests. Default: "15s".
+	// +kubebuilder:default="15s"
+	// +optional
+	K8sRequestTimeout string `json:"k8sRequestTimeout,omitempty"`
+
+	// Trusted proxy CIDRs for X-Forwarded-For / RealIP extraction.
+	// Empty = fail-closed (proxy headers never trusted).
+	// +optional
+	TrustedProxyCIDRs []string `json:"trustedProxyCIDRs,omitempty"`
+
+	// CORS allowed origins. Gateway is an M2M webhook API, not a browser
+	// target, so the default is a non-matching origin that blocks CORS.
+	// +kubebuilder:default="https://no-browser-clients.invalid"
+	// +optional
+	CORSAllowedOrigins string `json:"corsAllowedOrigins,omitempty"`
 }
 
 // RouteSpec configures the OCP Route for the Gateway.
@@ -504,21 +518,32 @@ type ServiceStatus struct {
 	DesiredReplicas int32 `json:"desiredReplicas"`
 }
 
+// ConditionType is a string alias for condition type names. It is an alias
+// (not a distinct type) so these constants can be passed directly to
+// metav1.Condition.Type without conversion.
+type ConditionType = string
+
 // Condition types used in KubernautStatus.Conditions.
 const (
-	ConditionBYOValidated       = "BYOValidated"
-	ConditionMigrationComplete  = "MigrationComplete"
-	ConditionCRDsInstalled      = "CRDsInstalled"
-	ConditionRBACProvisioned    = "RBACProvisioned"
-	ConditionWebhooksConfigured = "WebhooksConfigured"
-	ConditionServicesDeployed   = "ServicesDeployed"
-	ConditionRouteReady         = "RouteReady"
+	ConditionBYOValidated       ConditionType = "BYOValidated"
+	ConditionMigrationComplete  ConditionType = "MigrationComplete"
+	ConditionCRDsInstalled      ConditionType = "CRDsInstalled"
+	ConditionRBACProvisioned    ConditionType = "RBACProvisioned"
+	ConditionWebhooksConfigured ConditionType = "WebhooksConfigured"
+	ConditionServicesDeployed   ConditionType = "ServicesDeployed"
+	ConditionRouteReady         ConditionType = "RouteReady"
 )
 
 // Finalizer used for cluster-scoped resource cleanup.
 const FinalizerName = "kubernaut.ai/cleanup"
 
 // SingletonName is the only accepted CR name; the reconciler rejects others.
+// NOTE: The singleton guard operates at the namespace level. Two namespaces
+// could each contain a CR named "kubernaut", and both controllers would
+// compete over the same cluster-scoped resources (ClusterRoles, CRBs,
+// webhook configurations). A validating admission webhook that enforces
+// cluster-wide uniqueness is planned for a future release. Until then,
+// only one Kubernaut CR should exist per cluster.
 const SingletonName = "kubernaut"
 
 // +kubebuilder:object:root=true

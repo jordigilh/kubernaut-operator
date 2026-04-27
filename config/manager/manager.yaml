@@ -65,9 +65,33 @@ spec:
           - --health-probe-bind-address=:8081
         image: controller:latest
         name: manager
+        env:
+        - name: RELATED_IMAGE_GATEWAY
+          value: quay.io/kubernaut-ai/gateway@sha256:428da6f304ddf4813916884ea82b326041590ff9c4bc6b76a7b24a8f97dc7287
+        - name: RELATED_IMAGE_DATA_STORAGE
+          value: quay.io/kubernaut-ai/datastorage@sha256:1c9b865d4eaef05ea87c339eaf41fde4c6213816b195cb5fc9ea03788903013e
+        - name: RELATED_IMAGE_AIANALYSIS
+          value: quay.io/kubernaut-ai/aianalysis@sha256:b908326271741b903557605188f6303dfb966f32dab4c494127183b7b24d44db
+        - name: RELATED_IMAGE_SIGNALPROCESSING
+          value: quay.io/kubernaut-ai/signalprocessing@sha256:bd1c8dbeb186a2ec0c3e8aab9178bd11877a0a89b4f1bb4a1db3fde614589de5
+        - name: RELATED_IMAGE_REMEDIATIONORCHESTRATOR
+          value: quay.io/kubernaut-ai/remediationorchestrator@sha256:0f630935d0382a6093f0d7192cc65827d3b1a615b78a51725494296c11328355
+        - name: RELATED_IMAGE_WORKFLOWEXECUTION
+          value: quay.io/kubernaut-ai/workflowexecution@sha256:545d3c406ff7167f93400a93a2ca6a13b1cd9f45b004c048aec050968d4d10b1
+        - name: RELATED_IMAGE_EFFECTIVENESSMONITOR
+          value: quay.io/kubernaut-ai/effectivenessmonitor@sha256:7f8a505ac2587b954d8f9f3de5adf0b4119d4dd4375f66923f30c0eb691a1717
+        - name: RELATED_IMAGE_NOTIFICATION
+          value: quay.io/kubernaut-ai/notification@sha256:7fb5d3fa890f0e9bc7bf5f682a4d066e12e4b620b041ea991743b533b40585a5
+        - name: RELATED_IMAGE_KUBERNAUT_AGENT
+          value: quay.io/kubernaut-ai/kubernautagent@sha256:ac811a1d1c07b2567a04df1e0e2a2eaf7f3b6d40dd8a648ef255d3c22ecf0bdc
+        - name: RELATED_IMAGE_AUTHWEBHOOK
+          value: quay.io/kubernaut-ai/authwebhook@sha256:9de8ef5a47b1e6eeed758cffbff2ded11f19ab757789a8e7b981b2e2b2f2f047
+        - name: RELATED_IMAGE_DB_MIGRATE
+          value: quay.io/kubernaut-ai/db-migrate@sha256:99f65904b158132ffad21009736a45d5a4ba5c4ebece90938272e771eb4fcffe
         ports: []
         securityContext:
           allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
           capabilities:
             drop:
             - "ALL"
@@ -88,10 +112,10 @@ spec:
         resources:
           limits:
             cpu: 500m
-            memory: 128Mi
+            memory: 512Mi
           requests:
             cpu: 10m
-            memory: 64Mi
+            memory: 128Mi
         volumeMounts: []
       volumes: []
       serviceAccountName: controller-manager

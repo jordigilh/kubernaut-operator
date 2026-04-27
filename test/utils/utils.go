@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2" // nolint:revive,staticcheck
 )
@@ -165,16 +166,21 @@ func IsCertManagerCRDsInstalled() bool {
 	return false
 }
 
-// LoadImageToKindClusterWithName loads a local docker image to the kind cluster
-func LoadImageToKindClusterWithName(name string) error {
-	cluster := "kind"
-	if v, ok := os.LookupEnv("KIND_CLUSTER"); ok {
-		cluster = v
+// WaitForResource polls until the named resource exists or times out.
+func WaitForResource(kind, name, namespace string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		args := []string{"get", kind, name}
+		if namespace != "" {
+			args = append(args, "-n", namespace)
+		}
+		cmd := exec.Command("kubectl", args...)
+		if _, err := Run(cmd); err == nil {
+			return nil
+		}
+		time.Sleep(2 * time.Second)
 	}
-	kindOptions := []string{"load", "docker-image", name, "--name", cluster}
-	cmd := exec.Command("kind", kindOptions...)
-	_, err := Run(cmd)
-	return err
+	return fmt.Errorf("timed out waiting for %s/%s in namespace %q", kind, name, namespace)
 }
 
 // GetNonEmptyLines converts given command output string into individual objects

@@ -17,27 +17,35 @@ limitations under the License.
 package resources
 
 import (
+	"os"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
+
+const testSystemNamespace = "kubernaut-system"
+
+func TestMain(m *testing.M) {
+	cleanup := setTestRelatedImages()
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
+}
 
 func testKubernaut() *kubernautv1alpha1.Kubernaut {
 	return &kubernautv1alpha1.Kubernaut{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      kubernautv1alpha1.SingletonName,
-			Namespace: "kubernaut-system",
+			Namespace: testSystemNamespace,
 		},
 		Spec: kubernautv1alpha1.KubernautSpec{
 			Image: kubernautv1alpha1.ImageSpec{
-				Registry:   "quay.io",
-				Namespace:  "kubernaut-ai",
-				Separator:  "/",
-				Tag:        "v1.3.0",
 				PullPolicy: corev1.PullIfNotPresent,
 			},
 			PostgreSQL: kubernautv1alpha1.PostgreSQLSpec{
@@ -50,7 +58,7 @@ func testKubernaut() *kubernautv1alpha1.Kubernaut {
 				Host:       "valkey.example.com",
 				Port:       6379,
 			},
-			HolmesGPTAPI: kubernautv1alpha1.HolmesGPTAPISpec{
+			KubernautAgent: kubernautv1alpha1.KubernautAgentSpec{
 				LLM: kubernautv1alpha1.LLMSpec{
 					Provider:              "openai",
 					Model:                 "gpt-4o",
@@ -67,70 +75,97 @@ func testKubernaut() *kubernautv1alpha1.Kubernaut {
 	}
 }
 
-func TestImage_NestedRegistry(t *testing.T) {
-	spec := &kubernautv1alpha1.ImageSpec{
-		Registry:  "quay.io",
-		Namespace: "kubernaut-ai",
-		Separator: "/",
-		Tag:       "v1.3.0",
+// setTestRelatedImages sets RELATED_IMAGE env vars for all components
+// so that ResolveImage works in tests. Call cleanup() when done.
+func setTestRelatedImages() (cleanup func()) {
+	envs := map[string]string{
+		"RELATED_IMAGE_GATEWAY":                 "quay.io/kubernaut-ai/gateway:v1.3.0",
+		"RELATED_IMAGE_DATA_STORAGE":            "quay.io/kubernaut-ai/datastorage:v1.3.0",
+		"RELATED_IMAGE_AIANALYSIS":              "quay.io/kubernaut-ai/aianalysis:v1.3.0",
+		"RELATED_IMAGE_SIGNALPROCESSING":        "quay.io/kubernaut-ai/signalprocessing:v1.3.0",
+		"RELATED_IMAGE_REMEDIATIONORCHESTRATOR": "quay.io/kubernaut-ai/remediationorchestrator:v1.3.0",
+		"RELATED_IMAGE_WORKFLOWEXECUTION":       "quay.io/kubernaut-ai/workflowexecution:v1.3.0",
+		"RELATED_IMAGE_EFFECTIVENESSMONITOR":    "quay.io/kubernaut-ai/effectivenessmonitor:v1.3.0",
+		"RELATED_IMAGE_NOTIFICATION":            "quay.io/kubernaut-ai/notification:v1.3.0",
+		"RELATED_IMAGE_KUBERNAUT_AGENT":         "quay.io/kubernaut-ai/kubernautagent:v1.3.0",
+		"RELATED_IMAGE_AUTHWEBHOOK":             "quay.io/kubernaut-ai/authwebhook:v1.3.0",
+		"RELATED_IMAGE_DB_MIGRATE":              "quay.io/kubernaut-ai/db-migrate:v1.3.0",
 	}
-	got := Image(spec, "gateway")
+	for k, v := range envs {
+		if err := os.Setenv(k, v); err != nil {
+			panic(err)
+		}
+	}
+	return func() {
+		for k := range envs {
+			if err := os.Unsetenv(k); err != nil {
+				panic(err)
+			}
+		}
+	}
+}
+
+func TestResolveImage_FromEnvVar(t *testing.T) {
+	kn := testKubernaut()
+	got, err := ResolveImage(kn, "gateway")
+	if err != nil {
+		t.Fatalf("ResolveImage() unexpected error: %v", err)
+	}
 	want := "quay.io/kubernaut-ai/gateway:v1.3.0"
 	if got != want {
-		t.Errorf("Image() = %q, want %q", got, want)
+		t.Errorf("ResolveImage() = %q, want %q", got, want)
 	}
 }
 
-func TestImage_FlatRegistry(t *testing.T) {
-	spec := &kubernautv1alpha1.ImageSpec{
-		Registry:  "quay.io",
-		Namespace: "myorg",
-		Separator: "-",
-		Tag:       "latest",
+func TestResolveImage_OverrideTakesPrecedence(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Image.Overrides = map[string]string{
+		"gateway": "myregistry.internal/custom-gateway:v2.0.0",
 	}
-	got := Image(spec, "gateway")
-	want := "quay.io/myorg-gateway:latest"
+	got, err := ResolveImage(kn, "gateway")
+	if err != nil {
+		t.Fatalf("ResolveImage() unexpected error: %v", err)
+	}
+	want := "myregistry.internal/custom-gateway:v2.0.0"
 	if got != want {
-		t.Errorf("Image() = %q, want %q", got, want)
+		t.Errorf("ResolveImage() = %q, want %q", got, want)
 	}
 }
 
-func TestImage_Digest(t *testing.T) {
-	spec := &kubernautv1alpha1.ImageSpec{
-		Registry:  "quay.io",
-		Namespace: "kubernaut-ai",
-		Tag:       "v1.3.0",
-		Digest:    "sha256:abc123",
-	}
-	got := Image(spec, "gateway")
-	want := "quay.io/kubernaut-ai/gateway@sha256:abc123"
-	if got != want {
-		t.Errorf("Image() = %q, want %q", got, want)
+func TestResolveImage_NoEnvVar_ReturnsError(t *testing.T) {
+	t.Setenv("RELATED_IMAGE_GATEWAY", "")
+
+	kn := testKubernaut()
+	_, err := ResolveImage(kn, "gateway")
+	if err == nil {
+		t.Error("ResolveImage() should return error when no env var and no override")
 	}
 }
 
-func TestImage_EmptyNamespace(t *testing.T) {
-	spec := &kubernautv1alpha1.ImageSpec{
-		Registry: "myregistry.internal",
-		Tag:      "v1.0",
+func TestResolveImage_AllComponents(t *testing.T) {
+	kn := testKubernaut()
+	components := []string{
+		"gateway", "datastorage", "aianalysis", "signalprocessing",
+		"remediationorchestrator", "workflowexecution", "effectivenessmonitor",
+		"notification", "kubernautagent", "authwebhook",
 	}
-	got := Image(spec, "data-storage")
-	want := "myregistry.internal/data-storage:v1.0"
-	if got != want {
-		t.Errorf("Image() = %q, want %q", got, want)
+	for _, c := range components {
+		_, err := ResolveImage(kn, c)
+		if err != nil {
+			t.Errorf("ResolveImage(%q) unexpected error: %v", c, err)
+		}
 	}
 }
 
-func TestImage_DefaultSeparator(t *testing.T) {
-	spec := &kubernautv1alpha1.ImageSpec{
-		Registry:  "quay.io",
-		Namespace: "kubernaut-ai",
-		Tag:       "v1.3.0",
+func TestResolveImage_MigrationUsesDbMigrateImage(t *testing.T) {
+	kn := testKubernaut()
+	got, err := ResolveImage(kn, "db-migrate")
+	if err != nil {
+		t.Fatalf("ResolveImage(db-migrate) unexpected error: %v", err)
 	}
-	got := Image(spec, "gateway")
-	want := "quay.io/kubernaut-ai/gateway:v1.3.0"
+	want := "quay.io/kubernaut-ai/db-migrate:v1.3.0"
 	if got != want {
-		t.Errorf("Image() = %q, want %q (default separator should be /)", got, want)
+		t.Errorf("ResolveImage(db-migrate) = %q, want %q", got, want)
 	}
 }
 
@@ -154,11 +189,11 @@ func TestComponentLabels_IncludesAppLabel(t *testing.T) {
 	kn := testKubernaut()
 	labels := ComponentLabels(kn, ComponentGateway)
 
-	if got := labels["app"]; got != "gateway" {
-		t.Errorf("ComponentLabels[app] = %q, want %q", got, "gateway")
+	if got := labels["app"]; got != ComponentGateway {
+		t.Errorf("ComponentLabels[app] = %q, want %q", got, ComponentGateway)
 	}
-	if got := labels["app.kubernetes.io/component"]; got != "gateway" {
-		t.Errorf("ComponentLabels[component] = %q, want %q", got, "gateway")
+	if got := labels["app.kubernetes.io/component"]; got != ComponentGateway {
+		t.Errorf("ComponentLabels[component] = %q, want %q", got, ComponentGateway)
 	}
 	if _, ok := labels["app.kubernetes.io/managed-by"]; !ok {
 		t.Error("ComponentLabels should include common labels")
@@ -170,8 +205,8 @@ func TestSelectorLabels(t *testing.T) {
 	if len(labels) != 1 {
 		t.Fatalf("SelectorLabels should have exactly 1 key, got %d", len(labels))
 	}
-	if got := labels["app"]; got != "gateway" {
-		t.Errorf("SelectorLabels[app] = %q, want %q", got, "gateway")
+	if got := labels["app"]; got != ComponentGateway {
+		t.Errorf("SelectorLabels[app] = %q, want %q", got, ComponentGateway)
 	}
 }
 
@@ -182,27 +217,33 @@ func TestObjectMeta_NamespaceAndLabels(t *testing.T) {
 	if om.Name != "gateway-config" {
 		t.Errorf("ObjectMeta.Name = %q, want %q", om.Name, "gateway-config")
 	}
-	if om.Namespace != "kubernaut-system" {
-		t.Errorf("ObjectMeta.Namespace = %q, want %q", om.Namespace, "kubernaut-system")
+	if om.Namespace != testSystemNamespace {
+		t.Errorf("ObjectMeta.Namespace = %q, want %q", om.Namespace, testSystemNamespace)
 	}
-	if om.Labels["app"] != "gateway" {
-		t.Errorf("ObjectMeta.Labels[app] = %q, want %q", om.Labels["app"], "gateway")
+	if om.Labels["app"] != ComponentGateway {
+		t.Errorf("ObjectMeta.Labels[app] = %q, want %q", om.Labels["app"], ComponentGateway)
 	}
 }
 
 func TestDataStorageURL(t *testing.T) {
-	got := DataStorageURL("kubernaut-system")
-	want := "http://data-storage-service.kubernaut-system.svc.cluster.local:8080"
+	got := DataStorageURL(testSystemNamespace)
+	want := "https://data-storage-service.kubernaut-system.svc.cluster.local:8080"
 	if got != want {
 		t.Errorf("DataStorageURL() = %q, want %q", got, want)
 	}
 }
 
 func TestGatewayURL(t *testing.T) {
-	got := GatewayURL("kubernaut-system")
-	want := "http://gateway-service.kubernaut-system.svc.cluster.local:8080"
+	got := GatewayURL(testSystemNamespace)
+	want := "https://gateway-service.kubernaut-system.svc.cluster.local:8080"
 	if got != want {
 		t.Errorf("GatewayURL() = %q, want %q", got, want)
+	}
+}
+
+func TestInterServiceTLSCAFile_MatchesOCPServiceCA(t *testing.T) {
+	if InterServiceTLSCAFile != "/etc/tls-ca/service-ca.crt" {
+		t.Errorf("InterServiceTLSCAFile = %q, want /etc/tls-ca/service-ca.crt (OCP service-ca key)", InterServiceTLSCAFile)
 	}
 }
 
@@ -224,21 +265,19 @@ func TestValkeyAddr(t *testing.T) {
 	}
 }
 
-func TestPostgreSQLHost(t *testing.T) {
-	tests := []struct {
-		name string
-		spec kubernautv1alpha1.PostgreSQLSpec
-		want string
-	}{
-		{"explicit port", kubernautv1alpha1.PostgreSQLSpec{Host: "pg.local", Port: 5433}, "pg.local:5433"},
-		{"default port", kubernautv1alpha1.PostgreSQLSpec{Host: "pg.local"}, "pg.local:5432"},
+func TestValidateHostname_Valid(t *testing.T) {
+	for _, host := range []string{"pg.local", "192.168.1.1", "my-host.example.com", "[::1]"} {
+		if err := ValidateHostname(host); err != nil {
+			t.Errorf("ValidateHostname(%q) should be valid, got: %v", host, err)
+		}
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := PostgreSQLHost(&tt.spec); got != tt.want {
-				t.Errorf("PostgreSQLHost() = %q, want %q", got, tt.want)
-			}
-		})
+}
+
+func TestValidateHostname_Invalid(t *testing.T) {
+	for _, host := range []string{"", "host;rm -rf /", "host user=admin", "a b"} {
+		if err := ValidateHostname(host); err == nil {
+			t.Errorf("ValidateHostname(%q) should be invalid", host)
+		}
 	}
 }
 
@@ -289,5 +328,62 @@ func TestAllComponents_Count(t *testing.T) {
 	components := AllComponents()
 	if len(components) != 10 {
 		t.Errorf("AllComponents() should return 10 components, got %d", len(components))
+	}
+}
+
+func TestSetOwnerReference_SetsControllerRef(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := kubernautv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme core: %v", err)
+	}
+
+	kn := testKubernaut()
+	kn.UID = types.UID("test-uid-1234")
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cm", Namespace: kn.Namespace},
+	}
+	if err := SetOwnerReference(kn, cm, scheme); err != nil {
+		t.Fatalf("SetOwnerReference: %v", err)
+	}
+
+	refs := cm.GetOwnerReferences()
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 owner reference, got %d", len(refs))
+	}
+	ref := refs[0]
+	if ref.Kind != "Kubernaut" {
+		t.Errorf("OwnerRef.Kind = %q, want Kubernaut", ref.Kind)
+	}
+	if ref.UID != kn.UID {
+		t.Errorf("OwnerRef.UID = %q, want %q", ref.UID, kn.UID)
+	}
+	if ref.Controller == nil || !*ref.Controller {
+		t.Error("OwnerRef.Controller should be true")
+	}
+}
+
+func TestServiceAccountName_UnknownComponent_ReturnsSelf(t *testing.T) {
+	got := ServiceAccountName("custom-thing")
+	if got != "custom-thing" {
+		t.Errorf("ServiceAccountName(unknown) = %q, want %q", got, "custom-thing")
+	}
+}
+
+func TestIntPtrDefault_NonNil_ReturnsValue(t *testing.T) {
+	val := 0
+	got := intPtrDefault(&val, 42)
+	if got != 0 {
+		t.Errorf("intPtrDefault(ptr(0), 42) = %d, want 0", got)
+	}
+}
+
+func TestIntPtrDefault_Nil_ReturnsDefault(t *testing.T) {
+	got := intPtrDefault(nil, 42)
+	if got != 42 {
+		t.Errorf("intPtrDefault(nil, 42) = %d, want 42", got)
 	}
 }

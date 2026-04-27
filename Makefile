@@ -3,7 +3,7 @@
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 0.0.1
+VERSION ?= 1.3.2
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "candidate,fast,stable")
@@ -29,7 +29,7 @@ BUNDLE_METADATA_OPTS ?= $(BUNDLE_CHANNELS) $(BUNDLE_DEFAULT_CHANNEL)
 #
 # For example, running 'make bundle-build bundle-push catalog-build catalog-push' will build and push both
 # kubernaut.ai/kubernaut-operator-bundle:$VERSION and kubernaut.ai/kubernaut-operator-catalog:$VERSION.
-IMAGE_TAG_BASE ?= kubernaut.ai/kubernaut-operator
+IMAGE_TAG_BASE ?= quay.io/kubernaut-ai/kubernaut-operator
 
 # BUNDLE_IMG defines the image:tag used for the bundle.
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
@@ -50,7 +50,7 @@ endif
 # This is useful for CI or a project to utilize a specific version of the operator-sdk toolkit.
 OPERATOR_SDK_VERSION ?= v1.42.2
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+IMG ?= quay.io/kubernaut-ai/kubernaut-operator:v1.3.1
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -112,34 +112,14 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
-# TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
-# The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
-# CertManager is installed by default; skip with:
-# - CERT_MANAGER_INSTALL_SKIP=true
-KIND_CLUSTER ?= kubernaut-operator-test-e2e
-
-.PHONY: setup-test-e2e
-setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
-	@command -v $(KIND) >/dev/null 2>&1 || { \
-		echo "Kind is not installed. Please install Kind manually."; \
-		exit 1; \
-	}
-	@case "$$($(KIND) get clusters)" in \
-		*"$(KIND_CLUSTER)"*) \
-			echo "Kind cluster '$(KIND_CLUSTER)' already exists. Skipping creation." ;; \
-		*) \
-			echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
-			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
-	esac
+# E2E tests run against a live OCP cluster. Ensure you are logged in (oc login)
+# and IMG points to a registry reachable from the cluster.
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND_CLUSTER=$(KIND_CLUSTER) go test ./test/e2e/ -v -ginkgo.v
-	$(MAKE) cleanup-test-e2e
-
-.PHONY: cleanup-test-e2e
-cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
-	@$(KIND) delete cluster --name $(KIND_CLUSTER)
+test-e2e: manifests generate fmt vet ## Run the e2e tests against a live OCP cluster. Requires: oc login, IMG set.
+	@command -v oc >/dev/null 2>&1 || { echo "oc CLI not found. Install the OpenShift CLI."; exit 1; }
+	@oc whoami >/dev/null 2>&1 || { echo "Not logged in to OCP. Run 'oc login' first."; exit 1; }
+	go test ./test/e2e/ -v -ginkgo.v -timeout 30m
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
@@ -155,9 +135,12 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 
 ##@ Build
 
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+LDFLAGS := -X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT)
+
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary.
-	go build -o bin/manager cmd/main.go
+	go build -ldflags "$(LDFLAGS)" -o bin/manager cmd/main.go
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
@@ -166,9 +149,12 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "unknown")
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+	$(CONTAINER_TOOL) build --build-arg VERSION=$(VERSION) --build-arg GIT_COMMIT=$(GIT_COMMIT) -t ${IMG} .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
@@ -190,6 +176,21 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
 	- $(CONTAINER_TOOL) buildx rm kubernaut-operator-builder
 	rm Dockerfile.cross
+
+# TARGETARCH for cross-build (default: host arch).
+# Override to cross-compile: make cross-build TARGETARCH=amd64
+TARGETARCH ?= $(shell go env GOARCH)
+
+.PHONY: cross-build
+cross-build: manifests generate fmt vet ## Cross-compile the manager and build a container image (no emulation).
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(TARGETARCH) go build -a \
+		-ldflags "-s -w $(LDFLAGS)" \
+		-o bin/manager cmd/main.go
+	$(CONTAINER_TOOL) build -f Dockerfile.cross-runtime -t $(IMG) .
+
+.PHONY: cross-push
+cross-push: cross-build ## Cross-compile, build and push the container image.
+	$(CONTAINER_TOOL) push $(IMG)
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
@@ -229,7 +230,6 @@ $(LOCALBIN):
 
 ## Tool Binaries
 KUBECTL ?= kubectl
-KIND ?= kind
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
