@@ -2,12 +2,6 @@
 
 Kubernetes operator for deploying and managing the [Kubernaut](https://kubernaut.ai) autonomous remediation platform on OpenShift (OCP 4.18+).
 
-<p align="center">
-  <a href="docs/assets/kubernaut-console-animated.svg">
-    <img src="docs/assets/kubernaut-console-animated.svg" alt="Kubernaut Console — Incident Response" width="720"/>
-  </a>
-</p>
-
 ## Overview
 
 The Kubernaut Operator manages the full lifecycle of a Kubernaut deployment:
