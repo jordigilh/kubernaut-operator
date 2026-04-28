@@ -503,6 +503,20 @@ spec:
                 description: Kubernaut Agent (KA) -- LLM-powered investigation and
                   analysis service.
                 properties:
+                  additionalClusterRoleBindings:
+                    description: |-
+                      AdditionalClusterRoleBindings is an optional list of pre-existing
+                      ClusterRole names to bind to the Kubernaut Agent ServiceAccount.
+                      Use this to grant KA read access to environment-specific CRDs
+                      (e.g. Kafka, Knative, custom application resources) that the
+                      base investigator ClusterRole does not cover.
+                      The operator creates one ClusterRoleBinding per entry; it does
+                      NOT create or manage the ClusterRoles themselves.
+                    items:
+                      type: string
+                    maxItems: 64
+                    type: array
+                    x-kubernetes-list-type: set
                   llm:
                     description: LLM provider and credentials configuration.
                     properties:
@@ -1029,6 +1043,14 @@ spec:
             description: KubernautStatus defines the observed state of a Kubernaut
               deployment.
             properties:
+              boundAdditionalClusterRoles:
+                description: |-
+                  ClusterRole names for which the operator has created additional
+                  agent ClusterRoleBindings. Used for stale-pruning on spec changes
+                  and finalizer cleanup.
+                items:
+                  type: string
+                type: array
               conditions:
                 description: Standard conditions following the metav1.Condition contract.
                 items:

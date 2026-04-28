@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"strings"
 	"testing"
 
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -25,6 +26,7 @@ import (
 const (
 	testWorkflowRunnerSAName = "kubernaut-workflow-runner"
 	testCustomWorkflowNS     = "my-wf-ns"
+	testClusterRoleKind      = "ClusterRole"
 )
 
 func TestClusterRoles_Count(t *testing.T) {
@@ -154,7 +156,7 @@ func TestDataStorageClientRoleBindings_AllRefClusterRole(t *testing.T) {
 		if rb.RoleRef.Name != wantRef {
 			t.Errorf("RoleBinding %q should reference %q, got %q", rb.Name, wantRef, rb.RoleRef.Name)
 		}
-		if rb.RoleRef.Kind != "ClusterRole" {
+		if rb.RoleRef.Kind != testClusterRoleKind {
 			t.Errorf("RoleBinding %q should reference kind ClusterRole, got %q", rb.Name, rb.RoleRef.Kind)
 		}
 	}
@@ -357,7 +359,7 @@ func TestKubernautAgentClientRoleBinding_GrantsAIAnalysisAccess(t *testing.T) {
 	if rb.RoleRef.Name != wantRoleRef {
 		t.Errorf("RoleRef.Name = %q, want %q", rb.RoleRef.Name, wantRoleRef)
 	}
-	if rb.RoleRef.Kind != "ClusterRole" {
+	if rb.RoleRef.Kind != testClusterRoleKind {
 		t.Errorf("RoleRef.Kind = %q, want ClusterRole", rb.RoleRef.Kind)
 	}
 	if len(rb.Subjects) == 0 {
@@ -403,7 +405,7 @@ func TestMonitoringClusterRoleNames_ReturnsAll2(t *testing.T) {
 func TestClusterRoles_HaveCommonLabels(t *testing.T) {
 	kn := testKubernaut()
 	for _, cr := range ClusterRoles(kn) {
-		if cr.Labels["app.kubernetes.io/managed-by"] != "kubernaut-operator" {
+		if cr.Labels["app.kubernetes.io/managed-by"] != testOperatorManagedByValue {
 			t.Errorf("ClusterRole %q missing managed-by label", cr.Name)
 		}
 	}
@@ -503,5 +505,113 @@ func TestDataStorageClient_HasExpandedVerbs(t *testing.T) {
 		if !verbs[v] {
 			t.Errorf("data-storage-client missing verb %q", v)
 		}
+	}
+}
+
+// --- Additional Agent RBAC tests ---
+
+func TestAdditionalAgentCRBName_Short(t *testing.T) {
+	kn := testKubernaut()
+	name := AdditionalAgentCRBName(kn, "my-kafka-reader")
+	want := "kubernaut-system-kubernaut-agent-ext-my-kafka-reader"
+	if name != want {
+		t.Errorf("got %q, want %q", name, want)
+	}
+}
+
+func TestAdditionalAgentCRBName_ExactlyAtLimit(t *testing.T) {
+	kn := testKubernaut()
+	prefix := kn.Namespace + "-kubernaut-agent-ext-"
+	roleName := strings.Repeat("a", maxK8sNameLen-len(prefix))
+	name := AdditionalAgentCRBName(kn, roleName)
+	if len(name) != maxK8sNameLen {
+		t.Errorf("expected name length %d, got %d", maxK8sNameLen, len(name))
+	}
+	if name != prefix+roleName {
+		t.Error("name should not be truncated when exactly at limit")
+	}
+}
+
+func TestAdditionalAgentCRBName_Truncation(t *testing.T) {
+	kn := testKubernaut()
+	prefix := kn.Namespace + "-kubernaut-agent-ext-"
+	roleName := strings.Repeat("x", maxK8sNameLen-len(prefix)+50)
+	name := AdditionalAgentCRBName(kn, roleName)
+
+	if len(name) > maxK8sNameLen {
+		t.Errorf("name exceeds 253 chars: len=%d", len(name))
+	}
+	if !strings.HasPrefix(name, prefix) {
+		t.Errorf("name should start with %q, got %q", prefix, name)
+	}
+}
+
+func TestAdditionalAgentCRBName_DifferentLongNamesProduceDifferentHashes(t *testing.T) {
+	kn := testKubernaut()
+	prefix := kn.Namespace + "-kubernaut-agent-ext-"
+	base := strings.Repeat("a", maxK8sNameLen-len(prefix)+10)
+
+	name1 := AdditionalAgentCRBName(kn, base+"1")
+	name2 := AdditionalAgentCRBName(kn, base+"2")
+	if name1 == name2 {
+		t.Error("different long role names should produce different CRB names")
+	}
+}
+
+func TestAdditionalAgentCRB_Structure(t *testing.T) {
+	kn := testKubernaut()
+	crName := "strimzi-kafka-reader"
+	crb := AdditionalAgentCRB(kn, crName)
+
+	if crb.RoleRef.Kind != testClusterRoleKind {
+		t.Errorf("RoleRef.Kind = %q, want ClusterRole", crb.RoleRef.Kind)
+	}
+	if crb.RoleRef.Name != crName {
+		t.Errorf("RoleRef.Name = %q, want %q", crb.RoleRef.Name, crName)
+	}
+	if len(crb.Subjects) != 1 {
+		t.Fatalf("expected 1 subject, got %d", len(crb.Subjects))
+	}
+	if crb.Subjects[0].Name != ServiceAccountName(ComponentKubernautAgent) {
+		t.Errorf("subject SA = %q, want %q", crb.Subjects[0].Name, ServiceAccountName(ComponentKubernautAgent))
+	}
+	if crb.Subjects[0].Namespace != kn.Namespace {
+		t.Errorf("subject namespace = %q, want %q", crb.Subjects[0].Namespace, kn.Namespace)
+	}
+}
+
+func TestAdditionalAgentCRB_Labels(t *testing.T) {
+	kn := testKubernaut()
+	crb := AdditionalAgentCRB(kn, "test-role")
+
+	if crb.Labels["app.kubernetes.io/managed-by"] != testOperatorManagedByValue {
+		t.Error("missing managed-by label")
+	}
+	if crb.Labels["app.kubernetes.io/instance"] != kn.Name {
+		t.Error("missing instance label")
+	}
+	if crb.Labels[LabelAdditionalAgentRBAC] != LabelValueTrue {
+		t.Error("missing additional-agent-rbac label")
+	}
+}
+
+func TestAdditionalAgentCRB_EmptyList(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.KubernautAgent.AdditionalClusterRoleBindings = nil
+	if len(kn.Spec.KubernautAgent.AdditionalClusterRoleBindings) != 0 {
+		t.Error("empty additional list should have length 0")
+	}
+}
+
+func TestAdditionalAgentCRB_ReorderProducesSameNames(t *testing.T) {
+	kn := testKubernaut()
+	name1 := AdditionalAgentCRBName(kn, "role-a")
+	name2 := AdditionalAgentCRBName(kn, "role-b")
+
+	name1Again := AdditionalAgentCRBName(kn, "role-a")
+	name2Again := AdditionalAgentCRBName(kn, "role-b")
+
+	if name1 != name1Again || name2 != name2Again {
+		t.Error("reordering should not change CRB names (names are per-role, not positional)")
 	}
 }

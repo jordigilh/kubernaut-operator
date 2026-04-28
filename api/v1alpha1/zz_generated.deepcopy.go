@@ -238,6 +238,11 @@ func (in *Kubernaut) DeepCopyObject() runtime.Object {
 func (in *KubernautAgentSpec) DeepCopyInto(out *KubernautAgentSpec) {
 	*out = *in
 	out.LLM = in.LLM
+	if in.AdditionalClusterRoleBindings != nil {
+		in, out := &in.AdditionalClusterRoleBindings, &out.AdditionalClusterRoleBindings
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	in.Resources.DeepCopyInto(&out.Resources)
 }
 
@@ -326,6 +331,11 @@ func (in *KubernautStatus) DeepCopyInto(out *KubernautStatus) {
 	if in.Services != nil {
 		in, out := &in.Services, &out.Services
 		*out = make([]ServiceStatus, len(*in))
+		copy(*out, *in)
+	}
+	if in.BoundAdditionalClusterRoles != nil {
+		in, out := &in.BoundAdditionalClusterRoles, &out.BoundAdditionalClusterRoles
+		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
 }

@@ -17,10 +17,25 @@ limitations under the License.
 package resources
 
 import (
+	"crypto/sha256"
+	"fmt"
+
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+)
+
+const (
+	// LabelAdditionalAgentRBAC marks CRBs created for user-specified additional
+	// ClusterRoleBindings so the finalizer can perform a catch-all sweep.
+	LabelAdditionalAgentRBAC = "kubernaut.ai/additional-agent-rbac"
+
+	// LabelValueTrue is the canonical string value for boolean-true labels.
+	LabelValueTrue = "true"
+
+	// maxK8sNameLen is the maximum length for a Kubernetes object name.
+	maxK8sNameLen = 253
 )
 
 // clusterRoleName returns a namespace-scoped ClusterRole name to prevent
@@ -321,6 +336,48 @@ func AnsibleRBAC(kn *kubernautv1alpha1.Kubernaut) (*rbacv1.ClusterRole, *rbacv1.
 		"kubernaut-workflow-runner", wfNs, labels)
 
 	return cr, crb
+}
+
+// AdditionalAgentCRBName computes a name-safe CRB name for a user-provided
+// ClusterRole binding. If the computed name exceeds the K8s 253-char limit,
+// the role-name portion is truncated and a short SHA-256 suffix is appended
+// for uniqueness.
+func AdditionalAgentCRBName(kn *kubernautv1alpha1.Kubernaut, clusterRoleName string) string {
+	prefix := kn.Namespace + "-kubernaut-agent-ext-"
+	name := prefix + clusterRoleName
+	if len(name) <= maxK8sNameLen {
+		return name
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(clusterRoleName)))[:8]
+	maxRoleLen := maxK8sNameLen - len(prefix) - 1 - 8 // 1 for hyphen before hash
+	truncated := clusterRoleName[:maxRoleLen]
+	return prefix + truncated + "-" + hash
+}
+
+// AdditionalAgentCRB builds a ClusterRoleBinding that binds a user-specified
+// ClusterRole to the Kubernaut Agent ServiceAccount. The CRB is labeled with
+// CommonLabels plus a distinctive additional-agent-rbac label for the
+// finalizer catch-all sweep.
+func AdditionalAgentCRB(kn *kubernautv1alpha1.Kubernaut, crName string) *rbacv1.ClusterRoleBinding {
+	labels := CommonLabels(kn)
+	labels[LabelAdditionalAgentRBAC] = LabelValueTrue
+
+	return &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   AdditionalAgentCRBName(kn, crName),
+			Labels: labels,
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName,
+			Kind:     "ClusterRole",
+			Name:     crName,
+		},
+		Subjects: []rbacv1.Subject{{
+			Kind:      rbacv1.ServiceAccountKind,
+			Name:      ServiceAccountName(ComponentKubernautAgent),
+			Namespace: kn.Namespace,
+		}},
+	}
 }
 
 // --- private helpers ---
