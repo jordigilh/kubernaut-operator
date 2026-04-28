@@ -77,6 +77,9 @@ const (
 	ReasonAnsibleReady           = "Ready"
 	ReasonAnsibleTokenNotFound   = "TokenSecretNotFound"
 	ReasonAnsibleTokenKeyMissing = "TokenKeyMissing"
+
+	ReasonAdditionalRBACFullyBound   = "FullyBound"
+	ReasonAdditionalRBACPartialBound = "PartiallyBound"
 )
 
 // maxFinalizerAttempts is the number of consecutive reconcile attempts during
@@ -470,7 +473,119 @@ func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv
 			return fmt.Errorf("ensuring ds client rb %s: %w", rb.Name, err)
 		}
 	}
-	return r.ensureNamespaced(ctx, kn, resources.KubernautAgentClientRoleBinding(kn))
+	if err := r.ensureNamespaced(ctx, kn, resources.KubernautAgentClientRoleBinding(kn)); err != nil {
+		return err
+	}
+	return r.deployAdditionalAgentRBAC(ctx, kn)
+}
+
+// deployAdditionalAgentRBAC ensures user-specified additional ClusterRoleBindings
+// for the Kubernaut Agent SA, prunes stale ones removed from the spec, validates
+// that referenced ClusterRoles exist, and updates status + conditions.
+func (r *KubernautReconciler) deployAdditionalAgentRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
+	log := logf.FromContext(ctx)
+
+	desiredSet := deduplicate(kn.Spec.KubernautAgent.AdditionalClusterRoleBindings)
+	boundSet := kn.Status.BoundAdditionalClusterRoles
+
+	for _, crName := range desiredSet {
+		crb := resources.AdditionalAgentCRB(kn, crName)
+		if err := r.ensureUnowned(ctx, crb); err != nil {
+			return fmt.Errorf("ensuring additional agent CRB for %s: %w", crName, err)
+		}
+	}
+
+	desiredMap := make(map[string]struct{}, len(desiredSet))
+	for _, name := range desiredSet {
+		desiredMap[name] = struct{}{}
+	}
+	for _, name := range boundSet {
+		if _, ok := desiredMap[name]; !ok {
+			staleCRB := &rbacv1.ClusterRoleBinding{}
+			staleCRB.Name = resources.AdditionalAgentCRBName(kn, name)
+			if err := r.deleteIfExists(ctx, staleCRB); err != nil {
+				return fmt.Errorf("pruning stale additional agent CRB for %s: %w", name, err)
+			}
+			log.Info("pruned stale additional agent CRB", "clusterRole", name)
+			r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "AdditionalRBACUnbound", "Reconcile",
+				"Removed additional ClusterRoleBinding for %s", name)
+		}
+	}
+
+	for _, crName := range desiredSet {
+		if !contains(boundSet, crName) {
+			r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "AdditionalRBACBound", "Reconcile",
+				"Created additional ClusterRoleBinding for %s", crName)
+		}
+	}
+
+	var missingRoles []string
+	for _, crName := range desiredSet {
+		cr := &rbacv1.ClusterRole{}
+		if err := r.Get(ctx, types.NamespacedName{Name: crName}, cr); err != nil {
+			if apierrors.IsNotFound(err) {
+				missingRoles = append(missingRoles, crName)
+			} else {
+				return fmt.Errorf("checking ClusterRole %s: %w", crName, err)
+			}
+		}
+	}
+
+	if err := r.patchStatus(ctx, kn, func() {
+		kn.Status.BoundAdditionalClusterRoles = desiredSet
+
+		if len(desiredSet) == 0 {
+			meta.RemoveStatusCondition(&kn.Status.Conditions, kubernautv1alpha1.ConditionAdditionalRBACBound)
+			return
+		}
+
+		cond := metav1.Condition{
+			Type:               kubernautv1alpha1.ConditionAdditionalRBACBound,
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: kn.Generation,
+		}
+		if len(missingRoles) > 0 {
+			cond.Reason = ReasonAdditionalRBACPartialBound
+			cond.Message = fmt.Sprintf("CRBs created but ClusterRoles not found: %v", missingRoles)
+		} else {
+			cond.Reason = ReasonAdditionalRBACFullyBound
+			cond.Message = fmt.Sprintf("%d additional ClusterRoleBindings active", len(desiredSet))
+		}
+		meta.SetStatusCondition(&kn.Status.Conditions, cond)
+	}); err != nil {
+		return fmt.Errorf("patching additional RBAC status: %w", err)
+	}
+
+	if len(missingRoles) > 0 {
+		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "AdditionalRBACPartial", "Reconcile",
+			"ClusterRoles not found: %v", missingRoles)
+	}
+
+	return nil
+}
+
+func deduplicate(ss []string) []string {
+	if len(ss) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(ss))
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		if _, ok := seen[s]; !ok {
+			seen[s] = struct{}{}
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func contains(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 // deployWorkflowRBAC provisions roles and bindings in the workflow namespace.
@@ -854,6 +969,30 @@ func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kuber
 		monCR.Name = name
 		if err := r.deleteIfExists(ctx, monCR); err != nil {
 			errs = append(errs, fmt.Errorf("deleting monitoring ClusterRole %s: %w", name, err))
+		}
+	}
+
+	for _, name := range kn.Status.BoundAdditionalClusterRoles {
+		extCRB := &rbacv1.ClusterRoleBinding{}
+		extCRB.Name = resources.AdditionalAgentCRBName(kn, name)
+		if err := r.deleteIfExists(ctx, extCRB); err != nil {
+			errs = append(errs, fmt.Errorf("deleting additional agent CRB for %s: %w", name, err))
+		}
+	}
+
+	extCRBList := &rbacv1.ClusterRoleBindingList{}
+	if err := r.List(ctx, extCRBList,
+		client.MatchingLabels{
+			resources.LabelAdditionalAgentRBAC: "true",
+			"app.kubernetes.io/instance":       kn.Name,
+		},
+	); err != nil {
+		errs = append(errs, fmt.Errorf("listing additional agent CRBs: %w", err))
+	} else {
+		for i := range extCRBList.Items {
+			if err := r.deleteIfExists(ctx, &extCRBList.Items[i]); err != nil {
+				errs = append(errs, fmt.Errorf("deleting additional agent CRB %s: %w", extCRBList.Items[i].Name, err))
+			}
 		}
 	}
 

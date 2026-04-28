@@ -389,6 +389,18 @@ type KubernautAgentSpec struct {
 	// LLM provider and credentials configuration.
 	LLM LLMSpec `json:"llm"`
 
+	// AdditionalClusterRoleBindings is an optional list of pre-existing
+	// ClusterRole names to bind to the Kubernaut Agent ServiceAccount.
+	// Use this to grant KA read access to environment-specific CRDs
+	// (e.g. Kafka, Knative, custom application resources) that the
+	// base investigator ClusterRole does not cover.
+	// The operator creates one ClusterRoleBinding per entry; it does
+	// NOT create or manage the ClusterRoles themselves.
+	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	// +listType=set
+	AdditionalClusterRoleBindings []string `json:"additionalClusterRoleBindings,omitempty"`
+
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
@@ -504,6 +516,12 @@ type KubernautStatus struct {
 	// Per-service readiness.
 	// +optional
 	Services []ServiceStatus `json:"services,omitempty"`
+
+	// ClusterRole names for which the operator has created additional
+	// agent ClusterRoleBindings. Used for stale-pruning on spec changes
+	// and finalizer cleanup.
+	// +optional
+	BoundAdditionalClusterRoles []string `json:"boundAdditionalClusterRoles,omitempty"`
 }
 
 // ServiceStatus reports the readiness of a single managed service.
@@ -525,14 +543,15 @@ type ConditionType = string
 
 // Condition types used in KubernautStatus.Conditions.
 const (
-	ConditionBYOValidated       ConditionType = "BYOValidated"
-	ConditionMigrationComplete  ConditionType = "MigrationComplete"
-	ConditionCRDsInstalled      ConditionType = "CRDsInstalled"
-	ConditionRBACProvisioned    ConditionType = "RBACProvisioned"
-	ConditionWebhooksConfigured ConditionType = "WebhooksConfigured"
-	ConditionServicesDeployed   ConditionType = "ServicesDeployed"
-	ConditionRouteReady         ConditionType = "RouteReady"
-	ConditionAnsibleReady       ConditionType = "AnsibleReady"
+	ConditionBYOValidated        ConditionType = "BYOValidated"
+	ConditionMigrationComplete   ConditionType = "MigrationComplete"
+	ConditionCRDsInstalled       ConditionType = "CRDsInstalled"
+	ConditionRBACProvisioned     ConditionType = "RBACProvisioned"
+	ConditionWebhooksConfigured  ConditionType = "WebhooksConfigured"
+	ConditionServicesDeployed    ConditionType = "ServicesDeployed"
+	ConditionRouteReady          ConditionType = "RouteReady"
+	ConditionAnsibleReady        ConditionType = "AnsibleReady"
+	ConditionAdditionalRBACBound ConditionType = "AdditionalRBACBound"
 )
 
 // Finalizer used for cluster-scoped resource cleanup.

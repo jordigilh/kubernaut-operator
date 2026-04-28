@@ -205,6 +205,53 @@ oc get configmap -n kubernaut-system \
   proactive-signal-mappings
 ```
 
+## Additional RBAC for Kubernaut Agent
+
+By default, the operator creates a base `kubernaut-agent-investigator` ClusterRole
+covering well-known Kubernetes resources (pods, deployments, storage, networking,
+etc.). If your environment includes custom CRDs that the KA agent should be able
+to investigate, use `spec.kubernautAgent.additionalClusterRoleBindings` to layer
+on pre-existing ClusterRoles:
+
+```yaml
+spec:
+  kubernautAgent:
+    additionalClusterRoleBindings:
+      - strimzi-kafka-reader        # Kafka topics, brokers
+      - knative-service-reader      # Knative Serving resources
+      - my-app-crds-viewer          # Your custom application CRDs
+```
+
+The operator creates one ClusterRoleBinding per entry, binding the named
+ClusterRole to the `kubernaut-agent-sa` ServiceAccount. It does **not** create
+or manage the ClusterRoles themselves — you must create them separately.
+
+The `AdditionalRBACBound` status condition reports whether all referenced
+ClusterRoles exist:
+- `FullyBound` — all ClusterRoles found
+- `PartiallyBound` — CRBs created but some ClusterRoles don't exist yet (check
+  the condition message for details)
+
+### Security considerations
+
+Anyone with `update` permission on the `kubernauts.kubernaut.ai` CR can bind
+**any** ClusterRole to the KA ServiceAccount, including highly privileged roles
+like `cluster-admin`. RBAC on the Kubernaut CR itself is the access control
+boundary. Restrict who can edit the CR using standard Kubernetes RBAC.
+
+### Operational notes
+
+- The `AdditionalRBACBound` condition updates every reconcile cycle (~60s). If
+  you create a referenced ClusterRole after the CR, the condition will reflect it
+  within one minute.
+- Removing entries from the list automatically prunes the corresponding
+  ClusterRoleBindings.
+- **Downgrade cleanup**: If downgrading to an operator version without this
+  feature, remove orphaned CRBs manually:
+  ```bash
+  kubectl delete clusterrolebinding -l kubernaut.ai/additional-agent-rbac=true
+  ```
+
 ---
 
 Previous: [Infrastructure Prerequisites](01-infrastructure.md) | Next: [Deploy Kubernaut](03-deploy.md)
