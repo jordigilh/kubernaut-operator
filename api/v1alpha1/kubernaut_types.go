@@ -166,6 +166,23 @@ type AnsibleSpec struct {
 	// Reference to the Secret containing the AWX API token.
 	// +optional
 	TokenSecretRef *SecretKeyRef `json:"tokenSecretRef,omitempty"`
+
+	// CACertSecretRef references a Secret containing the PEM-encoded CA
+	// certificate for the AAP/AWX API endpoint. Use this when the AAP uses
+	// a self-signed certificate or a private CA. If omitted, the system
+	// trust store is used.
+	// +optional
+	CACertSecretRef *CACertSecretRef `json:"caCertSecretRef,omitempty"`
+}
+
+// CACertSecretRef references a Secret containing a PEM-encoded CA certificate.
+type CACertSecretRef struct {
+	// Name of the Secret.
+	Name string `json:"name"`
+	// Key within the Secret containing the CA PEM.
+	// +kubebuilder:default="ca.crt"
+	// +optional
+	Key string `json:"key,omitempty"`
 }
 
 // SecretKeyRef references a key within a Secret.

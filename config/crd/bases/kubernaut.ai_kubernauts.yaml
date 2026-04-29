@@ -139,6 +139,23 @@ spec:
                   apiURL:
                     description: AWX/AAP API URL. Required when Enabled is true.
                     type: string
+                  caCertSecretRef:
+                    description: |-
+                      CACertSecretRef references a Secret containing the PEM-encoded CA
+                      certificate for the AAP/AWX API endpoint. Use this when the AAP uses
+                      a self-signed certificate or a private CA. If omitted, the system
+                      trust store is used.
+                    properties:
+                      key:
+                        default: ca.crt
+                        description: Key within the Secret containing the CA PEM.
+                        type: string
+                      name:
+                        description: Name of the Secret.
+                        type: string
+                    required:
+                    - name
+                    type: object
                   enabled:
                     default: false
                     description: Whether AWX/AAP integration is enabled.
