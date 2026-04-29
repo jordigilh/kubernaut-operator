@@ -166,6 +166,7 @@ func TestRemediationOrchestratorConfigMap_Defaults(t *testing.T) {
 	defaults := []string{
 		"global: 1h", "processing: 5m", "analyzing: 10m", "executing: 30m", "verifying: 30m",
 		"ineffectiveChainThreshold: 3", "recurrenceCountThreshold: 5", "ineffectiveTimeWindow: 4h",
+		"dryRun: false", "dryRunHoldPeriod: 1h",
 	}
 	for _, d := range defaults {
 		if !strings.Contains(data, d) {
@@ -214,6 +215,109 @@ func TestRemediationOrchestratorConfigMap_CustomValues(t *testing.T) {
 	}
 	if !strings.Contains(data, "processing: 10m") {
 		t.Errorf("RO config should use custom processing timeout, got:\n%s", data)
+	}
+}
+
+// BAC-2: When dry-run is not explicitly configured, the RO must receive
+// dryRun: false so it operates in normal autonomous mode.
+func TestROConfig_DryRunDisabledByDefault(t *testing.T) {
+	kn := testKubernaut()
+	cm, err := RemediationOrchestratorConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["remediationorchestrator.yaml"]
+	if !strings.Contains(data, "dryRun: false") {
+		t.Errorf("BAC-2: default CR must render explicit 'dryRun: false', got:\n%s", data)
+	}
+}
+
+// BAC-3: The hold period must default to 1h so that re-triggering
+// suppression works out of the box.
+func TestROConfig_DryRunHoldPeriodDefaultsTo1h(t *testing.T) {
+	kn := testKubernaut()
+	cm, err := RemediationOrchestratorConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["remediationorchestrator.yaml"]
+	if !strings.Contains(data, "dryRunHoldPeriod: 1h") {
+		t.Errorf("BAC-3: default CR must render 'dryRunHoldPeriod: 1h', got:\n%s", data)
+	}
+}
+
+// BAC-1: An operator must be able to enable dry-run mode declaratively
+// via the Kubernaut CR.
+func TestROConfig_DryRunEnabled_RendersInConfigMap(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.RemediationOrchestrator.DryRun = true
+	cm, err := RemediationOrchestratorConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["remediationorchestrator.yaml"]
+	if !strings.Contains(data, "dryRun: true") {
+		t.Errorf("BAC-1: setting DryRun=true must render 'dryRun: true', got:\n%s", data)
+	}
+}
+
+// BAC-4: The operator must allow customizing the hold period and render
+// the value faithfully to the RO ConfigMap.
+func TestROConfig_CustomHoldPeriodOverride(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.RemediationOrchestrator.DryRun = true
+	kn.Spec.RemediationOrchestrator.DryRunHoldPeriod = "30m"
+	cm, err := RemediationOrchestratorConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["remediationorchestrator.yaml"]
+	if !strings.Contains(data, "dryRunHoldPeriod: 30m") {
+		t.Errorf("BAC-4: custom hold period must be rendered, got:\n%s", data)
+	}
+}
+
+// BAC-6: Changing dry-run settings must not disrupt other RO configuration.
+func TestROConfig_DryRunDoesNotAffectOtherSettings(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.RemediationOrchestrator.DryRun = true
+	kn.Spec.RemediationOrchestrator.DryRunHoldPeriod = "2h"
+	cm, err := RemediationOrchestratorConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["remediationorchestrator.yaml"]
+	unchanged := []string{
+		"global: 1h", "processing: 5m", "analyzing: 10m",
+		"consecutiveFailureThreshold: 3", "stabilizationWindow: 5m",
+		"gitOpsSyncDelay: 3m",
+	}
+	for _, want := range unchanged {
+		if !strings.Contains(data, want) {
+			t.Errorf("BAC-6: enabling dry-run must not alter %q, got:\n%s", want, data)
+		}
+	}
+}
+
+// BAC-7: An existing CR without dry-run fields must continue working
+// after operator upgrade (backward compatibility).
+func TestROConfig_EmptyCR_BackwardCompatible(t *testing.T) {
+	kn := testKubernaut()
+	cm, err := RemediationOrchestratorConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["remediationorchestrator.yaml"]
+	required := []string{
+		"dryRun: false",
+		"dryRunHoldPeriod: 1h",
+		"global: 1h",
+		"consecutiveFailureThreshold: 3",
+	}
+	for _, want := range required {
+		if !strings.Contains(data, want) {
+			t.Errorf("BAC-7: upgraded CR must still render %q, got:\n%s", want, data)
+		}
 	}
 }
 

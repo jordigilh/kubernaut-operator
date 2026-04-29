@@ -234,6 +234,8 @@ type remediationOrchestratorConfigYAML struct {
 	Routing                 roRoutingYAML          `json:"routing" yaml:"routing"`
 	EffectivenessAssessment roEffectivenessYAML    `json:"effectivenessAssessment" yaml:"effectivenessAssessment"`
 	AsyncPropagation        roAsyncPropagationYAML `json:"asyncPropagation" yaml:"asyncPropagation"`
+	DryRun                  bool                   `json:"dryRun" yaml:"dryRun"`
+	DryRunHoldPeriod        string                 `json:"dryRunHoldPeriod" yaml:"dryRunHoldPeriod"`
 }
 
 type weExecutionYAML struct {
@@ -741,6 +743,8 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...C
 			OperatorReconcileDelay: withDefault(ro.AsyncPropagation.OperatorReconcileDelay, "1m"),
 			ProactiveAlertDelay:    withDefault(ro.AsyncPropagation.ProactiveAlertDelay, "5m"),
 		},
+		DryRun:           ro.DryRun,
+		DryRunHoldPeriod: withDefault(ro.DryRunHoldPeriod, "1h"),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
