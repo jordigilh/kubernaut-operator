@@ -277,6 +277,7 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deplo
 			SecurityContext: ContainerSecurityContext(),
 		})
 		env = overrideTLSCAFile(env, "/etc/combined-ca/ca-bundle.crt")
+		env = append(env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: "/etc/combined-ca/ca-bundle.crt"})
 	}
 
 	return buildDeployment(kn, DeploymentParams{
