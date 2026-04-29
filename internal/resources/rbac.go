@@ -455,6 +455,7 @@ func kubernautAgentInvestigatorClusterRole(kn *kubernautv1alpha1.Kubernaut, labe
 		{APIGroups: []string{"networking.istio.io"}, Resources: []string{"virtualservices", "destinationrules", "gateways", "serviceentries"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"monitoring.coreos.com"}, Resources: []string{"prometheusrules", "servicemonitors", "podmonitors", "probes"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"metrics.k8s.io"}, Resources: []string{"pods", "nodes"}, Verbs: []string{"get", "list"}},
+		{APIGroups: []string{"config.openshift.io"}, Resources: []string{"nodes", "clusteroperators", "clusterversions", "infrastructures"}, Verbs: []string{"get", "list", "watch"}},
 	}
 
 	return &rbacv1.ClusterRole{
