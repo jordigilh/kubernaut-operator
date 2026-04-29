@@ -279,6 +279,20 @@ type RemediationOrchestratorSpec struct {
 	// +optional
 	AsyncPropagation ROAsyncPropagationSpec `json:"asyncPropagation,omitempty"`
 
+	// DryRun enables dry-run mode: the pipeline stops after AI analysis
+	// without executing remediation workflows. Operators use this to
+	// build confidence before enabling fully autonomous remediation.
+	// +kubebuilder:default=false
+	// +optional
+	DryRun bool `json:"dryRun,omitempty"`
+
+	// DryRunHoldPeriod suppresses re-triggering of the same signal after
+	// a dry-run completion. Must be a valid Go duration string.
+	// Only effective when DryRun is true.
+	// +kubebuilder:default="1h"
+	// +optional
+	DryRunHoldPeriod string `json:"dryRunHoldPeriod,omitempty"`
+
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
