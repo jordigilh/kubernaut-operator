@@ -588,6 +588,7 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 					ServiceAccountName: ServiceAccountName(p.Component),
 					SecurityContext:    PodSecurityContext(),
 					ImagePullSecrets:   kn.Spec.Image.PullSecrets,
+					Affinity:           preferredPodAntiAffinity(p.Component),
 					InitContainers:     p.InitContainers,
 					Containers: []corev1.Container{{
 						Name:            p.Component,
@@ -613,6 +614,24 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 	}
 
 	return dep, nil
+}
+
+func preferredPodAntiAffinity(component string) *corev1.Affinity {
+	return &corev1.Affinity{
+		PodAntiAffinity: &corev1.PodAntiAffinity{
+			PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
+				{
+					Weight: 100,
+					PodAffinityTerm: corev1.PodAffinityTerm{
+						LabelSelector: &metav1.LabelSelector{
+							MatchLabels: SelectorLabels(component),
+						},
+						TopologyKey: "kubernetes.io/hostname",
+					},
+				},
+			},
+		},
+	}
 }
 
 func configMapVolume(name, cmName string) corev1.Volume {
