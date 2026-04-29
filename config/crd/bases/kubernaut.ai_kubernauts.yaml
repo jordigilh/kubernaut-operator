@@ -744,6 +744,20 @@ spec:
                         default: 5m
                         type: string
                     type: object
+                  dryRun:
+                    default: false
+                    description: |-
+                      DryRun enables dry-run mode: the pipeline stops after AI analysis
+                      without executing remediation workflows. Operators use this to
+                      build confidence before enabling fully autonomous remediation.
+                    type: boolean
+                  dryRunHoldPeriod:
+                    default: 1h
+                    description: |-
+                      DryRunHoldPeriod suppresses re-triggering of the same signal after
+                      a dry-run completion. Must be a valid Go duration string.
+                      Only effective when DryRun is true.
+                    type: string
                   effectivenessAssessment:
                     description: Effectiveness assessment configuration.
                     properties:
