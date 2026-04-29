@@ -766,6 +766,291 @@ func TestAllDeployments_PodAntiAffinity(t *testing.T) {
 	}
 }
 
+// --- AAP CA cert tests (Issue #32) ---
+
+const (
+	testEnvTLSCAFile     = "TLS_CA_FILE"
+	testVolumeAAPCA      = "aap-ca"
+	testVolumeCombinedCA = "combined-ca"
+)
+
+func TestWFEDeployment_NoCACert_NoInitContainer(t *testing.T) {
+	kn := testKubernaut()
+	dep, err := WorkflowExecutionDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(dep.Spec.Template.Spec.InitContainers) != 0 {
+		t.Errorf("WFE without caCertSecretRef should have no init containers, got %d",
+			len(dep.Spec.Template.Spec.InitContainers))
+	}
+
+	for _, v := range dep.Spec.Template.Spec.Volumes {
+		if v.Name == testVolumeAAPCA || v.Name == testVolumeCombinedCA {
+			t.Errorf("WFE without caCertSecretRef should not have volume %q", v.Name)
+		}
+	}
+
+	container := dep.Spec.Template.Spec.Containers[0]
+	for _, e := range container.Env {
+		if e.Name == testEnvTLSCAFile && e.Value != InterServiceTLSCAFile {
+			t.Errorf("TLS_CA_FILE should be %q without CA override, got %q",
+				InterServiceTLSCAFile, e.Value)
+		}
+	}
+}
+
+func TestWFEDeployment_WithCACert_HasInitContainer(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
+		Name: "aap-ca-secret",
+	}
+	dep, err := WorkflowExecutionDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(dep.Spec.Template.Spec.InitContainers) != 1 {
+		t.Fatalf("WFE with caCertSecretRef should have 1 init container, got %d",
+			len(dep.Spec.Template.Spec.InitContainers))
+	}
+
+	init := dep.Spec.Template.Spec.InitContainers[0]
+	if init.Name != "build-ca-bundle" {
+		t.Errorf("init container name = %q, want %q", init.Name, "build-ca-bundle")
+	}
+}
+
+func TestWFEDeployment_WithCACert_MountsSecretVolume(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
+		Name: "aap-ca-secret",
+		Key:  "custom-ca.pem",
+	}
+	dep, err := WorkflowExecutionDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var found bool
+	for _, v := range dep.Spec.Template.Spec.Volumes {
+		if v.Name == testVolumeAAPCA {
+			found = true
+			if v.Secret == nil {
+				t.Fatal("aap-ca volume should be backed by a Secret")
+			}
+			if v.Secret.SecretName != "aap-ca-secret" {
+				t.Errorf("aap-ca secret name = %q, want %q", v.Secret.SecretName, "aap-ca-secret")
+			}
+			if len(v.Secret.Items) != 1 || v.Secret.Items[0].Key != "custom-ca.pem" {
+				t.Errorf("aap-ca secret key = %v, want key %q", v.Secret.Items, "custom-ca.pem")
+			}
+		}
+	}
+	if !found {
+		t.Error("WFE with caCertSecretRef should have aap-ca volume")
+	}
+}
+
+func TestWFEDeployment_WithCACert_DefaultKey(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
+		Name: "aap-ca-secret",
+	}
+	dep, err := WorkflowExecutionDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, v := range dep.Spec.Template.Spec.Volumes {
+		if v.Name == testVolumeAAPCA {
+			if len(v.Secret.Items) != 1 || v.Secret.Items[0].Key != "ca.crt" {
+				t.Errorf("aap-ca default key should be %q, got %v", "ca.crt", v.Secret.Items)
+			}
+			return
+		}
+	}
+	t.Error("aap-ca volume not found")
+}
+
+func TestWFEDeployment_WithCACert_CombinedCAEmptyDir(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
+		Name: "aap-ca-secret",
+	}
+	dep, err := WorkflowExecutionDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, v := range dep.Spec.Template.Spec.Volumes {
+		if v.Name == testVolumeCombinedCA {
+			if v.EmptyDir == nil {
+				t.Error("combined-ca volume should be EmptyDir")
+			}
+			return
+		}
+	}
+	t.Error("combined-ca volume not found")
+}
+
+func TestWFEDeployment_WithCACert_OverridesTLSCAFile(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
+		Name: "aap-ca-secret",
+	}
+	dep, err := WorkflowExecutionDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	container := dep.Spec.Template.Spec.Containers[0]
+	for _, e := range container.Env {
+		if e.Name == testEnvTLSCAFile {
+			if e.Value != "/etc/combined-ca/ca-bundle.crt" {
+				t.Errorf("TLS_CA_FILE = %q, want %q", e.Value, "/etc/combined-ca/ca-bundle.crt")
+			}
+			return
+		}
+	}
+	t.Error("TLS_CA_FILE env var not found")
+}
+
+func TestWFEDeployment_WithCACert_InitContainerConcatenatesCorrectSources(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
+		Name: "aap-ca-secret",
+	}
+	dep, err := WorkflowExecutionDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	init := dep.Spec.Template.Spec.InitContainers[0]
+
+	if len(init.Args) == 0 {
+		t.Fatal("init container should have args with the cat command")
+	}
+	cmd := init.Args[0]
+	if !strings.Contains(cmd, "/etc/tls-ca/service-ca.crt") {
+		t.Errorf("init container command should read inter-service CA, got: %s", cmd)
+	}
+	if !strings.Contains(cmd, "/aap-ca/aap-ca.crt") {
+		t.Errorf("init container command should read AAP CA, got: %s", cmd)
+	}
+	if !strings.Contains(cmd, "/combined/ca-bundle.crt") {
+		t.Errorf("init container command should write combined bundle, got: %s", cmd)
+	}
+}
+
+func TestWFEDeployment_WithCACert_InitContainerVolumeMounts(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
+		Name: "aap-ca-secret",
+	}
+	dep, err := WorkflowExecutionDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	init := dep.Spec.Template.Spec.InitContainers[0]
+	mountNames := make(map[string]bool)
+	for _, vm := range init.VolumeMounts {
+		mountNames[vm.Name] = true
+	}
+	for _, required := range []string{"tls-ca", testVolumeAAPCA, testVolumeCombinedCA} {
+		if !mountNames[required] {
+			t.Errorf("init container should mount volume %q", required)
+		}
+	}
+}
+
+func TestWFEDeployment_WithCACert_MainContainerMountsCombinedCA(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
+		Name: "aap-ca-secret",
+	}
+	dep, err := WorkflowExecutionDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	container := dep.Spec.Template.Spec.Containers[0]
+	for _, vm := range container.VolumeMounts {
+		if vm.Name == testVolumeCombinedCA {
+			if vm.MountPath != "/etc/combined-ca" {
+				t.Errorf("combined-ca mount path = %q, want %q", vm.MountPath, "/etc/combined-ca")
+			}
+			if !vm.ReadOnly {
+				t.Error("combined-ca mount should be read-only")
+			}
+			return
+		}
+	}
+	t.Error("main container should mount combined-ca volume")
+}
+
+func TestWFEDeployment_WithCACert_InitContainerSecurityContext(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
+		Name: "aap-ca-secret",
+	}
+	dep, err := WorkflowExecutionDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	init := dep.Spec.Template.Spec.InitContainers[0]
+	sc := init.SecurityContext
+	if sc == nil {
+		t.Fatal("init container should have a security context")
+	}
+	if sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {
+		t.Error("init container should disallow privilege escalation")
+	}
+	if sc.ReadOnlyRootFilesystem == nil || !*sc.ReadOnlyRootFilesystem {
+		t.Error("init container should have read-only root filesystem")
+	}
+	if sc.Capabilities == nil || len(sc.Capabilities.Drop) == 0 {
+		t.Error("init container should drop ALL capabilities")
+	}
+}
+
+func TestOverrideTLSCAFile_ReplacesExisting(t *testing.T) {
+	env := []corev1.EnvVar{
+		{Name: "OTHER", Value: "foo"},
+		{Name: testEnvTLSCAFile, Value: "/old/path"},
+	}
+	result := overrideTLSCAFile(env, "/new/path")
+	for _, e := range result {
+		if e.Name == testEnvTLSCAFile {
+			if e.Value != "/new/path" {
+				t.Errorf("TLS_CA_FILE = %q, want %q", e.Value, "/new/path")
+			}
+			return
+		}
+	}
+	t.Error("TLS_CA_FILE not found after override")
+}
+
+func TestOverrideTLSCAFile_AppendsWhenMissing(t *testing.T) {
+	env := []corev1.EnvVar{{Name: "OTHER", Value: "foo"}}
+	result := overrideTLSCAFile(env, "/new/path")
+	if len(result) != 2 {
+		t.Fatalf("expected 2 env vars, got %d", len(result))
+	}
+	found := false
+	for _, e := range result {
+		if e.Name == testEnvTLSCAFile && e.Value == "/new/path" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("TLS_CA_FILE should be appended when missing")
+	}
+}
+
 // --- helpers ---
 
 func getAllDeployments(t *testing.T, kn *kubernautv1alpha1.Kubernaut) []*appsv1.Deployment {

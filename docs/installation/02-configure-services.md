@@ -137,6 +137,30 @@ stringData:
 EOF
 ```
 
+### Custom CA for AAP/AWX TLS
+
+If your AAP/AWX endpoint uses a self-signed certificate or a private CA, provide the CA certificate so the operator can establish trust:
+
+```bash
+oc create secret generic aap-ca-cert \
+  --from-file=ca.crt=/path/to/aap-ca.pem \
+  -n kubernaut-system
+```
+
+Then reference it in the CR:
+
+```yaml
+spec:
+  ansible:
+    enabled: true
+    apiURL: "https://awx.example.com"
+    caCertSecretRef:
+      name: aap-ca-cert
+      key: ca.crt   # default, can be omitted
+```
+
+If your AAP uses a publicly trusted CA (e.g., Let's Encrypt), omit `caCertSecretRef` — the system trust store handles it automatically.
+
 If you do not use Ansible, omit the `ansible` block entirely (it defaults to disabled).
 
 ## ArgoCD / GitOps Integration

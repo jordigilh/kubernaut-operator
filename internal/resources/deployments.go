@@ -237,12 +237,54 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deplo
 	volumes := []corev1.Volume{configMapVolume("config", "workflowexecution-config")}
 	mounts := []corev1.VolumeMount{{Name: "config", MountPath: "/etc/config", ReadOnly: true}}
 	var env []corev1.EnvVar
+	var initContainers []corev1.Container
+
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
+
+	if ref := kn.Spec.Ansible.CACertSecretRef; ref != nil {
+		key := ref.Key
+		if key == "" {
+			key = "ca.crt"
+		}
+		volumes = append(volumes,
+			corev1.Volume{
+				Name: "aap-ca",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName: ref.Name,
+						Items:      []corev1.KeyToPath{{Key: key, Path: "aap-ca.crt"}},
+					},
+				},
+			},
+			corev1.Volume{
+				Name:         "combined-ca",
+				VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+			},
+		)
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: "combined-ca", MountPath: "/etc/combined-ca", ReadOnly: true,
+		})
+		initContainers = append(initContainers, corev1.Container{
+			Name:    "build-ca-bundle",
+			Image:   "registry.access.redhat.com/ubi10/ubi-minimal:latest",
+			Command: []string{"sh", "-c"},
+			Args:    []string{"cat /etc/tls-ca/service-ca.crt /aap-ca/aap-ca.crt > /combined/ca-bundle.crt"},
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
+				{Name: "aap-ca", MountPath: "/aap-ca", ReadOnly: true},
+				{Name: "combined-ca", MountPath: "/combined"},
+			},
+			SecurityContext: ContainerSecurityContext(),
+		})
+		env = overrideTLSCAFile(env, "/etc/combined-ca/ca-bundle.crt")
+	}
+
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentWorkflowExecution, ImageName: "workflowexecution",
 		Resources: kn.Spec.WorkflowExecution.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
-		Args:      []string{"--config=/etc/config/workflowexecution.yaml"},
-		ProbePort: PortHealthProbe,
+		InitContainers: initContainers,
+		Args:           []string{"--config=/etc/config/workflowexecution.yaml"},
+		ProbePort:      PortHealthProbe,
 		Ports: []corev1.ContainerPort{
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
@@ -672,6 +714,16 @@ func appendInterServiceTLSCA(volumes []corev1.Volume, mounts []corev1.VolumeMoun
 	mounts = append(mounts, corev1.VolumeMount{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true})
 	env = append(env, corev1.EnvVar{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile})
 	return volumes, mounts, env
+}
+
+func overrideTLSCAFile(env []corev1.EnvVar, path string) []corev1.EnvVar {
+	for i := range env {
+		if env[i].Name == "TLS_CA_FILE" {
+			env[i].Value = path
+			return env
+		}
+	}
+	return append(env, corev1.EnvVar{Name: "TLS_CA_FILE", Value: path})
 }
 
 // ProbeConfig holds per-component HTTP GET probe paths and timing, mirroring
