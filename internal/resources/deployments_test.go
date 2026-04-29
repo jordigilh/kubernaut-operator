@@ -719,6 +719,53 @@ func TestServiceAccountNaming_AllComponentsCovered(t *testing.T) {
 	}
 }
 
+func TestAllDeployments_PodAntiAffinity(t *testing.T) {
+	kn := testKubernaut()
+	deps := getAllDeployments(t, kn)
+
+	for _, dep := range deps {
+		component := dep.Spec.Template.Labels["app"]
+
+		affinity := dep.Spec.Template.Spec.Affinity
+		if affinity == nil {
+			t.Fatalf("Deployment %q: Affinity must not be nil", dep.Name)
+		}
+		paa := affinity.PodAntiAffinity
+		if paa == nil {
+			t.Fatalf("Deployment %q: PodAntiAffinity must not be nil", dep.Name)
+		}
+
+		preferred := paa.PreferredDuringSchedulingIgnoredDuringExecution
+		if len(preferred) == 0 {
+			t.Fatalf("Deployment %q: expected at least one preferred anti-affinity term", dep.Name)
+		}
+
+		term := preferred[0]
+
+		if term.Weight != 100 {
+			t.Errorf("Deployment %q: anti-affinity weight = %d, want 100", dep.Name, term.Weight)
+		}
+
+		if term.PodAffinityTerm.TopologyKey != "kubernetes.io/hostname" {
+			t.Errorf("Deployment %q: topology key = %q, want %q",
+				dep.Name, term.PodAffinityTerm.TopologyKey, "kubernetes.io/hostname")
+		}
+
+		sel := term.PodAffinityTerm.LabelSelector
+		if sel == nil {
+			t.Fatalf("Deployment %q: anti-affinity label selector must not be nil", dep.Name)
+		}
+
+		expectedLabels := SelectorLabels(component)
+		for k, v := range expectedLabels {
+			if sel.MatchLabels[k] != v {
+				t.Errorf("Deployment %q: anti-affinity selector label %q = %q, want %q",
+					dep.Name, k, sel.MatchLabels[k], v)
+			}
+		}
+	}
+}
+
 // --- helpers ---
 
 func getAllDeployments(t *testing.T, kn *kubernautv1alpha1.Kubernaut) []*appsv1.Deployment {
