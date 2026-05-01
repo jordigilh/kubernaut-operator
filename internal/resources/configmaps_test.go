@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
@@ -413,34 +414,34 @@ func TestNotificationControllerConfigMap_CredentialsInDelivery(t *testing.T) {
 	}
 }
 
-func TestKubernautAgentSDKConfigMap_GeneratedWhenNoExisting(t *testing.T) {
+func TestKubernautAgentLLMRuntimeConfigMap_GeneratedWhenNoExisting(t *testing.T) {
 	kn := testKubernaut()
-	cm, err := KubernautAgentSDKConfigMap(kn)
+	cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if cm == nil {
-		t.Fatal("KubernautAgentSDKConfigMap should not be nil when no existing CM specified")
+		t.Fatal("KubernautAgentLLMRuntimeConfigMap should not be nil when no existing CM specified")
 	}
-	data := cm.Data["sdk-config.yaml"]
-	if !strings.Contains(data, "provider: openai") {
-		t.Errorf("SDK config should contain llm.provider, got:\n%s", data)
-	}
+	data := cm.Data["llm-runtime.yaml"]
 	if !strings.Contains(data, "model: gpt-4o") {
-		t.Errorf("SDK config should contain model, got:\n%s", data)
+		t.Errorf("LLM runtime config should contain model, got:\n%s", data)
+	}
+	if !strings.Contains(data, "temperature:") {
+		t.Errorf("LLM runtime config should contain temperature, got:\n%s", data)
 	}
 }
 
-func TestKubernautAgentSDKConfigMap_NilWhenExistingProvided(t *testing.T) {
+func TestKubernautAgentLLMRuntimeConfigMap_NilWhenExistingProvided(t *testing.T) {
 	kn := testKubernaut()
-	kn.Spec.KubernautAgent.LLM.SdkConfigMapName = "my-sdk-config"
-	cm, err := KubernautAgentSDKConfigMap(kn)
+	kn.Spec.KubernautAgent.LLM.RuntimeConfigMapName = "my-llm-runtime-config"
+	cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if cm != nil {
-		t.Error("KubernautAgentSDKConfigMap should be nil when user provides existing CM")
+		t.Error("KubernautAgentLLMRuntimeConfigMap should be nil when user provides existing CM")
 	}
 }
 
@@ -528,11 +529,11 @@ func TestKubernautAgentConfigMap_MonitoringURL(t *testing.T) {
 	if !strings.Contains(data, OCPPrometheusURL) {
 		t.Errorf("KA config should contain Prometheus URL when monitoring enabled, got:\n%s", data)
 	}
-	if !strings.Contains(data, "data_storage:") {
-		t.Errorf("KA config should contain upstream data_storage section, got:\n%s", data)
+	if !strings.Contains(data, "dataStorage:") {
+		t.Errorf("KA config should contain dataStorage section, got:\n%s", data)
 	}
 	if !strings.Contains(data, "url: https://data-storage-service.kubernaut-system.svc.cluster.local:8080") {
-		t.Errorf("KA config should contain HTTPS data_storage.url, got:\n%s", data)
+		t.Errorf("KA config should contain HTTPS dataStorage.url, got:\n%s", data)
 	}
 	if !strings.Contains(data, "tools:") || !strings.Contains(data, "prometheus:") {
 		t.Errorf("KA config should contain upstream tools.prometheus section when monitoring enabled, got:\n%s", data)
@@ -755,5 +756,380 @@ func TestProactiveSignalMappingsConfigMap_NilWhenUserProvided(t *testing.T) {
 	cm := ProactiveSignalMappingsConfigMap(kn)
 	if cm != nil {
 		t.Error("ProactiveSignalMappingsConfigMap should return nil when user provides ConfigMapName")
+	}
+}
+
+func TestKubernautAgentConfigMap_V14Structure(t *testing.T) {
+	kn := testKubernaut()
+	cm, err := KubernautAgentConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root struct {
+		Runtime struct {
+			Logging struct {
+				Level string `yaml:"level"`
+			} `yaml:"logging"`
+			Server struct {
+				Address string `yaml:"address"`
+				Port    int    `yaml:"port"`
+			} `yaml:"server"`
+			Audit struct {
+				BufferSize int `yaml:"bufferSize"`
+			} `yaml:"audit"`
+		} `yaml:"runtime"`
+		AI struct {
+			LLM struct {
+				Provider string `yaml:"provider"`
+			} `yaml:"llm"`
+			Investigation struct {
+				MaxTurns int `yaml:"maxTurns"`
+			} `yaml:"investigation"`
+		} `yaml:"ai"`
+		Integrations struct {
+			DataStorage struct {
+				URL string `yaml:"url"`
+			} `yaml:"dataStorage"`
+			Tools *struct {
+				Prometheus struct {
+					URL string `yaml:"url"`
+				} `yaml:"prometheus"`
+			} `yaml:"tools,omitempty"`
+		} `yaml:"integrations"`
+	}
+	if err := yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root); err != nil {
+		t.Fatalf("unmarshal KA config: %v", err)
+	}
+	if root.Runtime.Logging.Level != "info" {
+		t.Errorf("runtime.logging.level = %q, want info", root.Runtime.Logging.Level)
+	}
+	if root.Runtime.Server.Port != 8080 || root.Runtime.Server.Address != "0.0.0.0" {
+		t.Errorf("runtime.server = %#v, want address 0.0.0.0 port 8080", root.Runtime.Server)
+	}
+	if root.Runtime.Audit.BufferSize != 10000 {
+		t.Errorf("runtime.audit.bufferSize = %d, want 10000", root.Runtime.Audit.BufferSize)
+	}
+	if root.AI.LLM.Provider != "openai" {
+		t.Errorf("ai.llm.provider = %q, want openai", root.AI.LLM.Provider)
+	}
+	if root.AI.Investigation.MaxTurns != 40 {
+		t.Errorf("ai.investigation.maxTurns = %d, want 40", root.AI.Investigation.MaxTurns)
+	}
+	wantDS := DataStorageURL(kn.Namespace)
+	if root.Integrations.DataStorage.URL != wantDS {
+		t.Errorf("integrations.dataStorage.url = %q, want %q", root.Integrations.DataStorage.URL, wantDS)
+	}
+	if root.Integrations.Tools == nil {
+		t.Fatal("integrations.tools should be present when monitoring is enabled by default")
+	}
+	if got := root.Integrations.Tools.Prometheus.URL; got != OCPPrometheusURL {
+		t.Errorf("integrations.tools.prometheus.url = %q, want %q", got, OCPPrometheusURL)
+	}
+}
+
+func TestKubernautAgentConfigMap_AlignmentCheck(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.KubernautAgent.AlignmentCheck.Enabled = true
+	kn.Spec.KubernautAgent.AlignmentCheck.Timeout = "20s"
+	kn.Spec.KubernautAgent.AlignmentCheck.MaxStepTokens = 1024
+	kn.Spec.KubernautAgent.AlignmentCheck.LLM = &kubernautv1alpha1.AlignmentCheckLLMSpec{
+		Provider: "openai",
+		Model:    "gpt-4o-mini",
+		Endpoint: "https://align.example/v1",
+	}
+	cm, err := KubernautAgentConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["config.yaml"]
+	for _, want := range []string{
+		"alignmentCheck:",
+		"enabled: true",
+		"timeout: 20s",
+		"maxStepTokens: 1024",
+		"llm:",
+		"provider: openai",
+		"model: gpt-4o-mini",
+		"endpoint: https://align.example/v1",
+	} {
+		if !strings.Contains(data, want) {
+			t.Errorf("KA config should contain %q when alignment check enabled, got:\n%s", want, data)
+		}
+	}
+}
+
+func TestKubernautAgentLLMRuntimeConfigMap_Defaults(t *testing.T) {
+	kn := testKubernaut()
+	cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["llm-runtime.yaml"]
+	for _, want := range []string{
+		"model: gpt-4o",
+		"temperature: 0.7",
+		"maxRetries: 3",
+		"timeoutSeconds: 120",
+	} {
+		if !strings.Contains(data, want) {
+			t.Errorf("llm-runtime defaults should contain %q, got:\n%s", want, data)
+		}
+	}
+}
+
+func TestKubernautAgentLLMRuntimeConfigMap_CustomValues(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.KubernautAgent.LLM.Temperature = "0.5"
+	kn.Spec.KubernautAgent.LLM.Endpoint = "https://llm-custom.example/v1"
+	maxR := 7
+	kn.Spec.KubernautAgent.LLM.MaxRetries = &maxR
+	cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["llm-runtime.yaml"]
+	for _, want := range []string{
+		"temperature: 0.5",
+		"endpoint: https://llm-custom.example/v1",
+		"maxRetries: 7",
+	} {
+		if !strings.Contains(data, want) {
+			t.Errorf("llm-runtime custom values should contain %q, got:\n%s", want, data)
+		}
+	}
+}
+
+func TestKubernautAgentLLMRuntimeConfigMap_BYO(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.KubernautAgent.LLM.RuntimeConfigMapName = "user-llm-runtime"
+	cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cm != nil {
+		t.Error("KubernautAgentLLMRuntimeConfigMap should return nil when runtimeConfigMapName is set (BYO)")
+	}
+}
+
+func TestGatewayConfigMap_V14Processing(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Gateway.Logging.Level = "debug"
+	cm, err := GatewayConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["config.yaml"]
+	for _, want := range []string{
+		"logging:",
+		"level: debug",
+		"processing:",
+		"deduplication:",
+		"cooldownPeriod: 5m",
+		"retry:",
+		"maxAttempts: 3",
+		"initialBackoff: 100ms",
+		"maxBackoff: 5s",
+		"datastorage:",
+		"buffer:",
+		"bufferSize: 10000",
+		"batchSize: 100",
+		"flushInterval: 1s",
+		"maxRetries: 3",
+	} {
+		if !strings.Contains(data, want) {
+			t.Errorf("gateway v1.4 config should contain %q, got:\n%s", want, data)
+		}
+	}
+}
+
+func TestRemediationOrchestratorConfigMap_V14Fields(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.RemediationOrchestrator.Logging.Level = "warn"
+	kn.Spec.RemediationOrchestrator.Notifications.NotifySelfResolved = true
+	kn.Spec.RemediationOrchestrator.Retention.Period = "72h"
+	kn.Spec.RemediationOrchestrator.Timeouts.AwaitingApproval = "25m"
+	kn.Spec.RemediationOrchestrator.Routing.ExponentialBackoffBase = "2m"
+	kn.Spec.RemediationOrchestrator.Routing.ExponentialBackoffMax = "20m"
+	exp := 6
+	kn.Spec.RemediationOrchestrator.Routing.ExponentialBackoffMaxExponent = &exp
+	kn.Spec.RemediationOrchestrator.Routing.ScopeBackoffBase = "10s"
+	kn.Spec.RemediationOrchestrator.Routing.ScopeBackoffMax = "10m"
+	delay := 48
+	kn.Spec.RemediationOrchestrator.Routing.NoActionRequiredDelayHours = &delay
+
+	cm, err := RemediationOrchestratorConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["remediationorchestrator.yaml"]
+	for _, want := range []string{
+		"logging:",
+		"level: warn",
+		"notifications:",
+		"notifySelfResolved: true",
+		"retention:",
+		"period: 72h",
+		"routing:",
+		"exponentialBackoffBase: 2m",
+		"exponentialBackoffMax: 20m",
+		"exponentialBackoffMaxExponent: 6",
+		"scopeBackoffBase: 10s",
+		"scopeBackoffMax: 10m",
+		"noActionRequiredDelayHours: 48",
+		"timeouts:",
+		"awaitingApproval: 25m",
+	} {
+		if !strings.Contains(data, want) {
+			t.Errorf("RO v1.4 config should contain %q, got:\n%s", want, data)
+		}
+	}
+}
+
+func TestWorkflowExecutionConfigMap_Logging(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.WorkflowExecution.Logging.Level = "error"
+	cm, err := WorkflowExecutionConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["workflowexecution.yaml"]
+	if !strings.Contains(data, "logging:") || !strings.Contains(data, "level: error") {
+		t.Errorf("WE config should render logging.level, got:\n%s", data)
+	}
+}
+
+func TestWorkflowExecutionConfigMap_TektonEnabled(t *testing.T) {
+	kn := testKubernaut()
+	on := true
+	kn.Spec.WorkflowExecution.Tekton.Enabled = &on
+	cm, err := WorkflowExecutionConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["workflowexecution.yaml"]
+	if !strings.Contains(data, "tekton:") || !strings.Contains(data, "enabled: true") {
+		t.Errorf("WE config should render tekton.enabled, got:\n%s", data)
+	}
+}
+
+func TestEffectivenessMonitorConfigMap_V14Buffer(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.EffectivenessMonitor.Logging.Level = "debug"
+	cm, err := EffectivenessMonitorConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["effectivenessmonitor.yaml"]
+	for _, want := range []string{
+		"logging:",
+		"level: debug",
+		"datastorage:",
+		"timeout: 10s",
+		"buffer:",
+		"bufferSize: 100",
+		"batchSize: 10",
+		"flushInterval: 1s",
+		"maxRetries: 3",
+	} {
+		if !strings.Contains(data, want) {
+			t.Errorf("EM v1.4 config should contain %q, got:\n%s", want, data)
+		}
+	}
+}
+
+func TestLoggingLevel_AllServices(t *testing.T) {
+	const lvl = "error"
+	tests := []struct {
+		name string
+		prep func(kn *kubernautv1alpha1.Kubernaut)
+		key  string
+		fn   func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error)
+	}{
+		{
+			name: "gateway",
+			prep: func(kn *kubernautv1alpha1.Kubernaut) { kn.Spec.Gateway.Logging.Level = lvl },
+			key:  "config.yaml",
+			fn:   func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) { return GatewayConfigMap(kn) },
+		},
+		{
+			name: "datastorage",
+			prep: func(kn *kubernautv1alpha1.Kubernaut) { kn.Spec.DataStorage.Logging.Level = lvl },
+			key:  "config.yaml",
+			fn: func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+				return DataStorageConfigMap(kn, "kubernautdb", "kubernautuser")
+			},
+		},
+		{
+			name: "aianalysis",
+			prep: func(kn *kubernautv1alpha1.Kubernaut) { kn.Spec.AIAnalysis.Logging.Level = lvl },
+			key:  "config.yaml",
+			fn:   func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) { return AIAnalysisConfigMap(kn) },
+		},
+		{
+			name: "signalprocessing",
+			prep: func(kn *kubernautv1alpha1.Kubernaut) { kn.Spec.SignalProcessing.Logging.Level = lvl },
+			key:  "config.yaml",
+			fn: func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+				return SignalProcessingConfigMap(kn)
+			},
+		},
+		{
+			name: "remediationorchestrator",
+			prep: func(kn *kubernautv1alpha1.Kubernaut) { kn.Spec.RemediationOrchestrator.Logging.Level = lvl },
+			key:  "remediationorchestrator.yaml",
+			fn: func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+				return RemediationOrchestratorConfigMap(kn)
+			},
+		},
+		{
+			name: "workflowexecution",
+			prep: func(kn *kubernautv1alpha1.Kubernaut) { kn.Spec.WorkflowExecution.Logging.Level = lvl },
+			key:  "workflowexecution.yaml",
+			fn: func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+				return WorkflowExecutionConfigMap(kn)
+			},
+		},
+		{
+			name: "effectivenessmonitor",
+			prep: func(kn *kubernautv1alpha1.Kubernaut) { kn.Spec.EffectivenessMonitor.Logging.Level = lvl },
+			key:  "effectivenessmonitor.yaml",
+			fn: func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+				return EffectivenessMonitorConfigMap(kn)
+			},
+		},
+		{
+			name: "notification-controller",
+			prep: func(kn *kubernautv1alpha1.Kubernaut) { kn.Spec.Notification.Logging.Level = lvl },
+			key:  "config.yaml",
+			fn: func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+				return NotificationControllerConfigMap(kn)
+			},
+		},
+		{
+			name: "kubernaut-agent",
+			prep: func(kn *kubernautv1alpha1.Kubernaut) { kn.Spec.KubernautAgent.Logging.Level = lvl },
+			key:  "config.yaml",
+			fn:   func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) { return KubernautAgentConfigMap(kn) },
+		},
+		{
+			name: "authwebhook",
+			prep: func(kn *kubernautv1alpha1.Kubernaut) { kn.Spec.AuthWebhook.Logging.Level = lvl },
+			key:  "authwebhook.yaml",
+			fn:   func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) { return AuthWebhookConfigMap(kn) },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kn := testKubernaut()
+			tt.prep(kn)
+			cm, err := tt.fn(kn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data := cm.Data[tt.key]
+			if !strings.Contains(data, "level: "+lvl) {
+				t.Errorf("expected logging level %q in %s, got:\n%s", lvl, tt.key, data)
+			}
+		})
 	}
 }
