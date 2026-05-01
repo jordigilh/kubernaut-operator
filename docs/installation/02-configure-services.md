@@ -4,26 +4,57 @@ This section covers the ConfigMaps and Secrets required by each Kubernaut servic
 
 ## Kubernaut Agent (KA) -- LLM Configuration
 
-The operator auto-generates the KA SDK config from the `provider` and `model` fields in the CR. For advanced LLM setups (Vertex AI, tool use, MCP servers, custom endpoints), create an SDK config ConfigMap and reference it via `sdkConfigMapName`:
+The operator auto-generates the KA LLM runtime config from the `provider`, `model`, and related fields in the CR. For advanced LLM setups (Vertex AI, Bedrock, Azure OpenAI, custom endpoints), set the relevant CR fields:
+
+```yaml
+spec:
+  kubernautAgent:
+    llm:
+      provider: openai
+      model: gpt-4o
+      credentialsSecretName: llm-credentials
+      endpoint: ""                  # custom LLM endpoint (optional)
+      temperature: "0.7"            # string, parsed to float (optional)
+      maxRetries: 3                 # retry count (optional)
+      timeoutSeconds: 120           # per-request timeout (optional)
+      # Vertex AI:
+      # vertexProject: my-project
+      # vertexLocation: us-central1
+      # Bedrock:
+      # bedrockRegion: us-east-1
+      # Azure OpenAI:
+      # azureApiVersion: "2024-02-01"
+      # Custom CA for LLM TLS:
+      # tlsCaFile: /path/to/ca.pem
+```
+
+For fully custom LLM runtime configs (e.g. MCP servers, tool-use), create an LLM runtime ConfigMap and reference it via `runtimeConfigMapName`:
 
 ```bash
 oc apply -f - <<EOF
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: kubernaut-agent-sdk-config
+  name: custom-llm-runtime
   namespace: kubernaut-system
 data:
-  sdk-config.yaml: |
+  llm-runtime.yaml: |
     llm:
       provider: vertex_ai
       model: claude-sonnet-4-6
 EOF
 ```
 
-When `sdkConfigMapName` is set in the CR, it overrides the `provider` and `model` fields.
+```yaml
+spec:
+  kubernautAgent:
+    llm:
+      runtimeConfigMapName: custom-llm-runtime
+```
 
-If you use a simple provider (OpenAI, Anthropic) with no advanced features, skip this step -- the operator generates the ConfigMap for you.
+When `runtimeConfigMapName` is set, the operator skips generating the LLM runtime ConfigMap and mounts the user-provided one instead.
+
+If you use a simple provider (OpenAI, Anthropic) with no advanced features, skip BYO config -- the operator generates the ConfigMap for you.
 
 ## Signal Processing (SP) -- Classification Policy
 
@@ -179,7 +210,7 @@ kubernaut-ocp/
   configmaps/
     signalprocessing-policy.yaml
     aianalysis-policies.yaml
-    kubernaut-agent-sdk-config.yaml  # if using advanced LLM
+    custom-llm-runtime.yaml          # if using BYO LLM runtime config
   kubernaut-cr.yaml
 ```
 
@@ -221,11 +252,11 @@ oc get configmap -n kubernaut-system \
   aianalysis-policies
 ```
 
-If using advanced LLM or proactive mappings:
+If using BYO LLM runtime config or proactive mappings:
 
 ```bash
 oc get configmap -n kubernaut-system \
-  kubernaut-agent-sdk-config \
+  custom-llm-runtime \
   proactive-signal-mappings
 ```
 
