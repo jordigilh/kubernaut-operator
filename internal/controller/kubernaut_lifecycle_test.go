@@ -690,16 +690,16 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(errors.IsNotFound(err)).To(BeTrue(), "AWX ClusterRole should be deleted")
 		})
 
-		It("should not generate SDK ConfigMap when sdkConfigMapName is set", func() {
-			cm, err := resources.KubernautAgentSDKConfigMap(newMinimalCR())
+		It("should not generate LLM runtime ConfigMap when runtimeConfigMapName is set", func() {
+			cm, err := resources.KubernautAgentLLMRuntimeConfigMap(newMinimalCR())
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cm).NotTo(BeNil(), "should generate default SDK ConfigMap")
+			Expect(cm).NotTo(BeNil(), "should generate default LLM runtime ConfigMap")
 
-			crWithSDK := newMinimalCR()
-			crWithSDK.Spec.KubernautAgent.LLM.SdkConfigMapName = "user-managed-sdk"
-			cm, err = resources.KubernautAgentSDKConfigMap(crWithSDK)
+			crWithExternal := newMinimalCR()
+			crWithExternal.Spec.KubernautAgent.LLM.RuntimeConfigMapName = "user-managed-llm-runtime"
+			cm, err = resources.KubernautAgentLLMRuntimeConfigMap(crWithExternal)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cm).To(BeNil(), "should not generate SDK ConfigMap when user provides one")
+			Expect(cm).To(BeNil(), "should not generate LLM runtime ConfigMap when user provides one")
 		})
 	})
 

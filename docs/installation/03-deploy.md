@@ -17,7 +17,7 @@ metadata:
   namespace: openshift-marketplace
 spec:
   sourceType: grpc
-  image: quay.io/kubernaut-ai/kubernaut-operator-catalog:v1.3.0
+  image: quay.io/kubernaut-ai/kubernaut-operator-catalog:v1.4.0
   displayName: Kubernaut Operator
   publisher: Kubernaut AI
 EOF
@@ -75,7 +75,17 @@ spec:
       provider: openai                     # or: anthropic, vertex_ai
       model: gpt-4o                        # or: claude-sonnet-4-6, etc.
       credentialsSecretName: llm-credentials
-      # sdkConfigMapName: kubernaut-agent-sdk-config  # uncomment for Vertex AI / advanced
+      # runtimeConfigMapName: custom-llm-runtime  # uncomment for BYO LLM config
+    # logging:
+    #   level: info                        # debug, info, warn, error
+
+  # --- NetworkPolicies (default: disabled) ---
+  # networkPolicies:
+  #   enabled: true
+  #   apiServerCIDR: "10.0.0.0/16"
+  #   monitoringNamespace: "openshift-monitoring"
+  #   gatewayIngressNamespaces:
+  #     - "openshift-ingress"
 
   # --- Policies (from Step 2: Configure Services) ---
   aiAnalysis:

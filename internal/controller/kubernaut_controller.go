@@ -27,6 +27,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -100,8 +101,10 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=kubernaut.ai,resources=kubernauts/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services;configmaps;secrets;serviceaccounts;namespaces,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings;roles;rolebindings,verbs=get;list;watch;create;update;patch;delete;escalate;bind
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingwebhookconfigurations;validatingwebhookconfigurations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
@@ -701,12 +704,16 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	if cm := resources.ProactiveSignalMappingsConfigMap(kn); cm != nil {
 		configMaps = append(configMaps, cm)
 	}
-	sdkCM, err := resources.KubernautAgentSDKConfigMap(kn)
+	llmRuntimeCM, err := resources.KubernautAgentLLMRuntimeConfigMap(kn)
 	if err != nil {
-		return nil, fmt.Errorf("building kubernaut-agent-sdk ConfigMap: %w", err)
+		return nil, fmt.Errorf("building kubernaut-agent-llm-runtime ConfigMap: %w", err)
 	}
-	if sdkCM != nil {
-		configMaps = append(configMaps, sdkCM)
+	if llmRuntimeCM != nil {
+		llmHash := resources.ConfigMapDataHash(llmRuntimeCM.Data)
+		if agentHash, ok := cmHashes["kubernaut-agent"]; ok {
+			cmHashes["kubernaut-agent"] = agentHash + "+" + llmHash
+		}
+		configMaps = append(configMaps, llmRuntimeCM)
 	}
 	configMaps = append(configMaps, resources.InterServiceCAConfigMap(kn))
 	if kn.Spec.Monitoring.MonitoringEnabled() {
@@ -798,6 +805,12 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 	for _, pdb := range resources.PodDisruptionBudgets(kn) {
 		if err := r.ensureNamespaced(ctx, kn, pdb); err != nil {
 			return false, fmt.Errorf("ensuring PDB %s: %w", pdb.Name, err)
+		}
+	}
+
+	for _, np := range resources.NetworkPolicies(kn) {
+		if err := r.ensureNamespaced(ctx, kn, np); err != nil {
+			return false, fmt.Errorf("ensuring NetworkPolicy %s: %w", np.Name, err)
 		}
 	}
 
@@ -1386,6 +1399,7 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Secret{}).
 		Owns(&batchv1.Job{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
+		Owns(&networkingv1.NetworkPolicy{}).
 		Owns(&rbacv1.Role{}).
 		Owns(&rbacv1.RoleBinding{}).
 		Watches(&configv1.APIServer{},

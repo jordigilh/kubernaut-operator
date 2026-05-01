@@ -82,6 +82,11 @@ type KubernautSpec struct {
 	// DataStorage service settings.
 	// +optional
 	DataStorage DataStorageSpec `json:"dataStorage,omitempty"`
+
+	// NetworkPolicies controls the creation of Kubernetes NetworkPolicy
+	// resources that enforce a default-deny posture with explicit allow rules.
+	// +optional
+	NetworkPolicies NetworkPoliciesSpec `json:"networkPolicies,omitempty"`
 }
 
 // ImageSpec configures container image policy for all services.
@@ -216,6 +221,9 @@ type NotificationSpec struct {
 	// +optional
 	Routing *ConfigMapRef `json:"routing,omitempty"`
 
+	// +optional
+	Logging LoggingSpec `json:"logging,omitempty"`
+
 	// Resource requirements for the notification controller.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
@@ -257,6 +265,9 @@ type AIAnalysisSpec struct {
 	// +optional
 	ConfidenceThreshold string `json:"confidenceThreshold,omitempty"`
 
+	// +optional
+	Logging LoggingSpec `json:"logging,omitempty"`
+
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
@@ -272,6 +283,9 @@ type SignalProcessingSpec struct {
 	// Must contain key "proactive-signal-mappings.yaml".
 	// +optional
 	ProactiveSignalMappings *ConfigMapRef `json:"proactiveSignalMappings,omitempty"`
+
+	// +optional
+	Logging LoggingSpec `json:"logging,omitempty"`
 
 	// Resource requirements.
 	// +optional
@@ -310,6 +324,17 @@ type RemediationOrchestratorSpec struct {
 	// +optional
 	DryRunHoldPeriod string `json:"dryRunHoldPeriod,omitempty"`
 
+	// Notification behaviour for remediation events.
+	// +optional
+	Notifications RONotificationsSpec `json:"notifications,omitempty"`
+
+	// Retention policy for completed remediation records.
+	// +optional
+	Retention RORetentionSpec `json:"retention,omitempty"`
+
+	// +optional
+	Logging LoggingSpec `json:"logging,omitempty"`
+
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
@@ -329,6 +354,9 @@ type ROTimeoutsSpec struct {
 	// +kubebuilder:default="30m"
 	// +optional
 	Executing string `json:"executing,omitempty"`
+	// +kubebuilder:default="15m"
+	// +optional
+	AwaitingApproval string `json:"awaitingApproval,omitempty"`
 	// +kubebuilder:default="30m"
 	// +optional
 	Verifying string `json:"verifying,omitempty"`
@@ -346,6 +374,24 @@ type RORoutingSpec struct {
 	// +kubebuilder:default="5m"
 	// +optional
 	RecentlyRemediatedCooldown string `json:"recentlyRemediatedCooldown,omitempty"`
+	// +kubebuilder:default="1m"
+	// +optional
+	ExponentialBackoffBase string `json:"exponentialBackoffBase,omitempty"`
+	// +kubebuilder:default="10m"
+	// +optional
+	ExponentialBackoffMax string `json:"exponentialBackoffMax,omitempty"`
+	// +kubebuilder:default=4
+	// +optional
+	ExponentialBackoffMaxExponent *int `json:"exponentialBackoffMaxExponent,omitempty"`
+	// +kubebuilder:default="5s"
+	// +optional
+	ScopeBackoffBase string `json:"scopeBackoffBase,omitempty"`
+	// +kubebuilder:default="5m"
+	// +optional
+	ScopeBackoffMax string `json:"scopeBackoffMax,omitempty"`
+	// +kubebuilder:default=24
+	// +optional
+	NoActionRequiredDelayHours *int `json:"noActionRequiredDelayHours,omitempty"`
 	// +kubebuilder:default=3
 	// +optional
 	IneffectiveChainThreshold *int `json:"ineffectiveChainThreshold,omitempty"`
@@ -377,6 +423,22 @@ type ROAsyncPropagationSpec struct {
 	ProactiveAlertDelay string `json:"proactiveAlertDelay,omitempty"`
 }
 
+// RONotificationsSpec configures RO notification behaviour.
+type RONotificationsSpec struct {
+	// Whether to notify on self-resolved remediations.
+	// +kubebuilder:default=false
+	// +optional
+	NotifySelfResolved bool `json:"notifySelfResolved,omitempty"`
+}
+
+// RORetentionSpec configures retention for completed remediation records.
+type RORetentionSpec struct {
+	// How long to retain completed remediation records.
+	// +kubebuilder:default="24h"
+	// +optional
+	Period string `json:"period,omitempty"`
+}
+
 // WorkflowExecutionSpec configures the WorkflowExecution controller.
 type WorkflowExecutionSpec struct {
 	// Namespace for workflow Job/PipelineRun execution.
@@ -389,9 +451,23 @@ type WorkflowExecutionSpec struct {
 	// +optional
 	CooldownPeriod string `json:"cooldownPeriod,omitempty"`
 
+	// Tekton integration configuration.
+	// +optional
+	Tekton TektonSpec `json:"tekton,omitempty"`
+
+	// +optional
+	Logging LoggingSpec `json:"logging,omitempty"`
+
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// TektonSpec configures Tekton PipelineRun integration for workflow execution.
+type TektonSpec struct {
+	// Whether Tekton integration is enabled. When nil, auto-detected.
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
 }
 
 // EffectivenessMonitorSpec configures the EffectivenessMonitor controller.
@@ -399,6 +475,9 @@ type EffectivenessMonitorSpec struct {
 	// Assessment windows for remediation effectiveness evaluation.
 	// +optional
 	Assessment EMAssessmentSpec `json:"assessment,omitempty"`
+
+	// +optional
+	Logging LoggingSpec `json:"logging,omitempty"`
 
 	// Resource requirements.
 	// +optional
@@ -410,7 +489,7 @@ type EMAssessmentSpec struct {
 	// +kubebuilder:default="30s"
 	// +optional
 	StabilizationWindow string `json:"stabilizationWindow,omitempty"`
-	// +kubebuilder:default="120s"
+	// +kubebuilder:default="300s"
 	// +optional
 	ValidityWindow string `json:"validityWindow,omitempty"`
 }
@@ -420,30 +499,160 @@ type KubernautAgentSpec struct {
 	// LLM provider and credentials configuration.
 	LLM LLMSpec `json:"llm"`
 
+	// MaxTurns is the maximum number of LLM conversation turns the
+	// investigator may execute per analysis session.
+	// +kubebuilder:default=40
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	MaxTurns int `json:"maxTurns,omitempty"`
+
+	// Session configuration.
+	// +optional
+	Session SessionSpec `json:"session,omitempty"`
+
+	// Audit logging configuration.
+	// +optional
+	Audit AuditSpec `json:"audit,omitempty"`
+
+	// Alignment check (shadow agent) configuration.
+	// +optional
+	AlignmentCheck AlignmentCheckSpec `json:"alignmentCheck,omitempty"`
+
+	// Summarizer configuration for tool output compression.
+	// +optional
+	Summarizer SummarizerSpec `json:"summarizer,omitempty"`
+
+	// Safety guardrails for LLM interactions.
+	// +optional
+	Safety SafetySpec `json:"safety,omitempty"`
+
 	// AdditionalClusterRoleBindings is an optional list of pre-existing
 	// ClusterRole names to bind to the Kubernaut Agent ServiceAccount.
-	// Use this to grant KA read access to environment-specific CRDs
-	// (e.g. Kafka, Knative, custom application resources) that the
-	// base investigator ClusterRole does not cover.
-	// The operator creates one ClusterRoleBinding per entry; it does
-	// NOT create or manage the ClusterRoles themselves.
 	// +optional
 	// +kubebuilder:validation:MaxItems=64
 	// +listType=set
 	AdditionalClusterRoleBindings []string `json:"additionalClusterRoleBindings,omitempty"`
+
+	// +optional
+	Logging LoggingSpec `json:"logging,omitempty"`
 
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
+// SessionSpec configures KA session behaviour.
+type SessionSpec struct {
+	// Session time-to-live.
+	// +kubebuilder:default="30m"
+	// +optional
+	TTL string `json:"ttl,omitempty"`
+}
+
+// AuditSpec configures KA audit logging.
+type AuditSpec struct {
+	// Whether audit logging is enabled.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+// AuditEnabled returns true when audit logging is active (default: true).
+func (s *AuditSpec) AuditEnabled() bool {
+	return s.Enabled == nil || *s.Enabled
+}
+
+// AlignmentCheckSpec configures the shadow agent alignment check.
+type AlignmentCheckSpec struct {
+	// Whether alignment check is enabled.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Timeout for alignment check requests.
+	// +kubebuilder:default="10s"
+	// +optional
+	Timeout string `json:"timeout,omitempty"`
+
+	// Maximum tokens per alignment step.
+	// +kubebuilder:default=500
+	// +optional
+	MaxStepTokens int `json:"maxStepTokens,omitempty"`
+
+	// Optional dedicated LLM for alignment checks.
+	// +optional
+	LLM *AlignmentCheckLLMSpec `json:"llm,omitempty"`
+}
+
+// AlignmentCheckLLMSpec configures a dedicated LLM for the alignment check shadow agent.
+type AlignmentCheckLLMSpec struct {
+	// +optional
+	Provider string `json:"provider,omitempty"`
+	// +optional
+	Model string `json:"model,omitempty"`
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+	// +optional
+	APIKey string `json:"apiKey,omitempty"`
+}
+
+// SummarizerSpec configures tool output summarization thresholds.
+type SummarizerSpec struct {
+	// Token threshold above which tool output is summarized.
+	// +kubebuilder:default=8000
+	// +optional
+	Threshold int `json:"threshold,omitempty"`
+	// Maximum tool output size in bytes before truncation.
+	// +kubebuilder:default=100000
+	// +optional
+	MaxToolOutputSize int `json:"maxToolOutputSize,omitempty"`
+}
+
+// SafetySpec configures LLM safety guardrails.
+type SafetySpec struct {
+	// Input sanitization rules.
+	// +optional
+	Sanitization SanitizationSpec `json:"sanitization,omitempty"`
+	// Anomaly detection thresholds.
+	// +optional
+	Anomaly AnomalySpec `json:"anomaly,omitempty"`
+}
+
+// SanitizationSpec configures input sanitization.
+type SanitizationSpec struct {
+	// Whether prompt injection pattern detection is enabled.
+	// +kubebuilder:default=true
+	// +optional
+	InjectionPatternsEnabled *bool `json:"injectionPatternsEnabled,omitempty"`
+	// Whether credential scrubbing is enabled.
+	// +kubebuilder:default=true
+	// +optional
+	CredentialScrubEnabled *bool `json:"credentialScrubEnabled,omitempty"`
+}
+
+// AnomalySpec configures tool call anomaly detection.
+type AnomalySpec struct {
+	// Max tool calls per individual tool.
+	// +kubebuilder:default=10
+	// +optional
+	MaxToolCallsPerTool *int `json:"maxToolCallsPerTool,omitempty"`
+	// Max total tool calls across all tools.
+	// +kubebuilder:default=30
+	// +optional
+	MaxTotalToolCalls *int `json:"maxTotalToolCalls,omitempty"`
+	// Max repeated failures before circuit-breaker.
+	// +kubebuilder:default=3
+	// +optional
+	MaxRepeatedFailures *int `json:"maxRepeatedFailures,omitempty"`
+}
+
 // LLMSpec defines the LLM provider configuration.
 type LLMSpec struct {
-	// LLM provider name (e.g. "openai", "anthropic").
+	// LLM provider name (e.g. "openai", "vertexai", "bedrock", "azure").
 	// +kubebuilder:validation:MinLength=1
 	Provider string `json:"provider"`
 
-	// LLM model name (e.g. "gpt-4o", "claude-sonnet-4-20250514").
+	// LLM model name (e.g. "gpt-4o", "gemini-2.5-pro").
 	// +kubebuilder:validation:MinLength=1
 	Model string `json:"model"`
 
@@ -451,10 +660,72 @@ type LLMSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	CredentialsSecretName string `json:"credentialsSecretName"`
 
-	// Name of a pre-existing ConfigMap for full SDK configuration.
-	// When set, overrides Provider and Model fields.
+	// LLM API endpoint override. When empty, uses the provider default.
 	// +optional
-	SdkConfigMapName string `json:"sdkConfigMapName,omitempty"`
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// Sampling temperature for LLM responses (e.g. "0.7").
+	// Serialized as string to avoid CRD float portability issues.
+	// +optional
+	Temperature string `json:"temperature,omitempty"`
+
+	// Maximum number of retries for LLM API calls.
+	// +kubebuilder:default=3
+	// +optional
+	MaxRetries *int `json:"maxRetries,omitempty"`
+
+	// Timeout in seconds for LLM API calls.
+	// +kubebuilder:default=120
+	// +optional
+	TimeoutSeconds *int `json:"timeoutSeconds,omitempty"`
+
+	// GCP Vertex AI project ID.
+	// +optional
+	VertexProject string `json:"vertexProject,omitempty"`
+
+	// GCP Vertex AI location (e.g. "us-central1").
+	// +optional
+	VertexLocation string `json:"vertexLocation,omitempty"`
+
+	// AWS Bedrock region.
+	// +optional
+	BedrockRegion string `json:"bedrockRegion,omitempty"`
+
+	// Azure OpenAI API version.
+	// +optional
+	AzureAPIVersion string `json:"azureApiVersion,omitempty"`
+
+	// Path to a CA certificate file for TLS to the LLM endpoint.
+	// +optional
+	TLSCaFile string `json:"tlsCaFile,omitempty"`
+
+	// OAuth2 configuration for LLM authentication.
+	// +optional
+	OAuth2 OAuth2Spec `json:"oauth2,omitempty"`
+
+	// Name of a pre-existing ConfigMap for the LLM runtime configuration.
+	// When set, the operator skips generating kubernaut-agent-llm-runtime
+	// and mounts this ConfigMap instead. Must contain key "llm-runtime.yaml".
+	// +optional
+	RuntimeConfigMapName string `json:"runtimeConfigMapName,omitempty"`
+}
+
+// OAuth2Spec configures OAuth2 token-based authentication for LLM endpoints.
+type OAuth2Spec struct {
+	// Whether OAuth2 authentication is enabled.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+	// Token endpoint URL.
+	// +optional
+	TokenURL string `json:"tokenURL,omitempty"`
+	// OAuth2 scopes.
+	// +optional
+	Scopes []string `json:"scopes,omitempty"`
+	// Name of the Secret containing OAuth2 client credentials
+	// (keys: "client-id", "client-secret").
+	// +optional
+	CredentialsSecretRef string `json:"credentialsSecretRef,omitempty"`
 }
 
 // GatewaySpec configures the Gateway service.
@@ -466,6 +737,9 @@ type GatewaySpec struct {
 	// Gateway server and middleware configuration.
 	// +optional
 	Config GatewayConfigSpec `json:"config,omitempty"`
+
+	// +optional
+	Logging LoggingSpec `json:"logging,omitempty"`
 
 	// Resource requirements.
 	// +optional
@@ -489,6 +763,11 @@ type GatewayConfigSpec struct {
 	// +kubebuilder:default="https://no-browser-clients.invalid"
 	// +optional
 	CORSAllowedOrigins string `json:"corsAllowedOrigins,omitempty"`
+
+	// Deduplication cooldown period for alert processing.
+	// +kubebuilder:default="5m"
+	// +optional
+	DeduplicationCooldown string `json:"deduplicationCooldown,omitempty"`
 }
 
 // RouteSpec configures the OCP Route for the Gateway.
@@ -505,6 +784,9 @@ type RouteSpec struct {
 
 // AuthWebhookSpec configures the AuthWebhook admission controller.
 type AuthWebhookSpec struct {
+	// +optional
+	Logging LoggingSpec `json:"logging,omitempty"`
+
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
@@ -512,9 +794,49 @@ type AuthWebhookSpec struct {
 
 // DataStorageSpec configures the DataStorage service.
 type DataStorageSpec struct {
+	// +optional
+	Logging LoggingSpec `json:"logging,omitempty"`
+
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// LoggingSpec configures the log level for a service.
+type LoggingSpec struct {
+	// Log level. One of: DEBUG, INFO, WARN, ERROR.
+	// +kubebuilder:default="info"
+	// +kubebuilder:validation:Enum=DEBUG;INFO;WARN;ERROR;debug;info;warn;error
+	// +optional
+	Level string `json:"level,omitempty"`
+}
+
+// NetworkPoliciesSpec controls creation of Kubernetes NetworkPolicy resources.
+type NetworkPoliciesSpec struct {
+	// Whether the operator creates NetworkPolicy resources.
+	// When true, a default-deny posture is applied with explicit allow rules
+	// matching the upstream Helm chart traffic matrix.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// API server CIDR for egress rules (e.g. "10.0.0.0/16").
+	// When empty, API server egress rules are omitted.
+	// +optional
+	APIServerCIDR string `json:"apiServerCIDR,omitempty"`
+
+	// Monitoring namespace for Prometheus scrape ingress (e.g. "openshift-monitoring").
+	// +optional
+	MonitoringNamespace string `json:"monitoringNamespace,omitempty"`
+
+	// Gateway ingress namespaces. Namespaces allowed to send traffic to the Gateway.
+	// +optional
+	GatewayIngressNamespaces []string `json:"gatewayIngressNamespaces,omitempty"`
+}
+
+// NetworkPoliciesEnabled returns true when NP creation is active (default: false).
+func (s *NetworkPoliciesSpec) NetworkPoliciesEnabled() bool {
+	return s.Enabled != nil && *s.Enabled
 }
 
 // ---------- Status ----------

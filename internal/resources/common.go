@@ -339,13 +339,13 @@ func SignalProcessingPolicyName(kn *kubernautv1alpha1.Kubernaut) string {
 	return "signalprocessing-policy"
 }
 
-// KubernautAgentSDKConfigName returns the Kubernaut Agent SDK ConfigMap name,
-// defaulting to "kubernaut-agent-sdk-config" when not overridden.
-func KubernautAgentSDKConfigName(kn *kubernautv1alpha1.Kubernaut) string {
-	if kn.Spec.KubernautAgent.LLM.SdkConfigMapName != "" {
-		return kn.Spec.KubernautAgent.LLM.SdkConfigMapName
+// KubernautAgentLLMRuntimeConfigName returns the Kubernaut Agent LLM runtime
+// ConfigMap name, defaulting to "kubernaut-agent-llm-runtime" when not overridden.
+func KubernautAgentLLMRuntimeConfigName(kn *kubernautv1alpha1.Kubernaut) string {
+	if kn.Spec.KubernautAgent.LLM.RuntimeConfigMapName != "" {
+		return kn.Spec.KubernautAgent.LLM.RuntimeConfigMapName
 	}
-	return "kubernaut-agent-sdk-config"
+	return "kubernaut-agent-llm-runtime"
 }
 
 // ValkeyAddr returns the Valkey address in host:port format.

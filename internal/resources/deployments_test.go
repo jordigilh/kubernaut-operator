@@ -253,7 +253,7 @@ func TestKubernautAgentDeployment_ConfigArgs(t *testing.T) {
 	container := dep.Spec.Template.Spec.Containers[0]
 	want := []string{
 		"-config", "/etc/kubernaut-agent/config.yaml",
-		"-sdk-config", "/etc/kubernaut-agent/sdk/sdk-config.yaml",
+		"-llm-runtime", "/etc/kubernaut-agent/llm-runtime/llm-runtime.yaml",
 	}
 	if len(container.Args) != len(want) {
 		t.Fatalf("KA args len = %d, want %d (%v)", len(container.Args), len(want), container.Args)
@@ -263,6 +263,57 @@ func TestKubernautAgentDeployment_ConfigArgs(t *testing.T) {
 			t.Errorf("KA args[%d] = %q, want %q", i, container.Args[i], want[i])
 		}
 	}
+}
+
+func TestKubernautAgentDeployment_LLMRuntime(t *testing.T) {
+	kn := testKubernaut()
+	dep, err := KubernautAgentDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, v := range dep.Spec.Template.Spec.Volumes {
+		if v.Name == "sdk-config" {
+			t.Error("Kubernaut Agent deployment should not use sdk-config volume; v1.4 uses llm-runtime")
+		}
+	}
+	assertHasVolume(t, dep, "llm-runtime")
+	assertVolumeSourceConfigMap(t, dep, "llm-runtime", "kubernaut-agent-llm-runtime")
+	assertHasVolumeMount(t, dep, "llm-runtime", "/etc/kubernaut-agent/llm-runtime")
+
+	container := dep.Spec.Template.Spec.Containers[0]
+	var hasPair bool
+	for i := 0; i < len(container.Args)-1; i++ {
+		if container.Args[i] == "-llm-runtime" && container.Args[i+1] == "/etc/kubernaut-agent/llm-runtime/llm-runtime.yaml" {
+			hasPair = true
+			break
+		}
+	}
+	if !hasPair {
+		t.Errorf("KA container should pass -llm-runtime with llm-runtime.yaml path, got args %v", container.Args)
+	}
+}
+
+func TestKubernautAgentDeployment_OAuth2(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.KubernautAgent.LLM.OAuth2.Enabled = true
+	kn.Spec.KubernautAgent.LLM.OAuth2.CredentialsSecretRef = "oauth2-credentials-secret"
+	dep, err := KubernautAgentDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertHasVolume(t, dep, "oauth2-credentials")
+	assertHasVolumeMount(t, dep, "oauth2-credentials", "/etc/kubernaut-agent/oauth2")
+	for _, v := range dep.Spec.Template.Spec.Volumes {
+		if v.Name == "oauth2-credentials" {
+			if v.Secret == nil || v.Secret.SecretName != "oauth2-credentials-secret" {
+				t.Errorf("oauth2-credentials volume: got %#v, want Secret secretName=%q", v.Secret, "oauth2-credentials-secret")
+			}
+			return
+		}
+	}
+	t.Error("oauth2-credentials volume not found")
 }
 
 func TestKubernautAgentDeployment_ServiceCA_WhenMonitoringEnabled(t *testing.T) {
@@ -536,7 +587,7 @@ func TestDeployments_ConfigArgs(t *testing.T) {
 		ComponentWorkflowExecution:       {"--config=/etc/config/workflowexecution.yaml"},
 		ComponentEffectivenessMonitor:    {"--config=/etc/effectivenessmonitor/effectivenessmonitor.yaml"},
 		ComponentNotification:            {"-config", "/etc/notification/config.yaml"},
-		ComponentKubernautAgent:          {"-config", "/etc/kubernaut-agent/config.yaml", "-sdk-config", "/etc/kubernaut-agent/sdk/sdk-config.yaml"},
+		ComponentKubernautAgent:          {"-config", "/etc/kubernaut-agent/config.yaml", "-llm-runtime", "/etc/kubernaut-agent/llm-runtime/llm-runtime.yaml"},
 		ComponentAuthWebhook:             {"-config=/etc/authwebhook/authwebhook.yaml"},
 	}
 
@@ -797,6 +848,24 @@ func TestWFEDeployment_NoCACert_NoInitContainer(t *testing.T) {
 		if e.Name == testEnvTLSCAFile && e.Value != InterServiceTLSCAFile {
 			t.Errorf("TLS_CA_FILE should be %q without CA override, got %q",
 				InterServiceTLSCAFile, e.Value)
+		}
+	}
+}
+
+func TestWFEDeployment_NoSSLCertFile(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
+		Name: "aap-ca-secret",
+	}
+	dep, err := WorkflowExecutionDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	container := dep.Spec.Template.Spec.Containers[0]
+	for _, e := range container.Env {
+		if e.Name == "SSL_CERT_FILE" {
+			t.Errorf("WFE must not set SSL_CERT_FILE env var (removed in v1.4); got %q", e.Value)
 		}
 	}
 }
