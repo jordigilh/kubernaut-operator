@@ -277,7 +277,6 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deplo
 			SecurityContext: ContainerSecurityContext(),
 		})
 		env = overrideTLSCAFile(env, "/etc/combined-ca/ca-bundle.crt")
-		env = append(env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: "/etc/combined-ca/ca-bundle.crt"})
 	}
 
 	return buildDeployment(kn, DeploymentParams{
@@ -421,13 +420,13 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 	}
 	volumes := []corev1.Volume{
 		configMapVolume("config", "kubernaut-agent-config"),
-		configMapVolume("sdk-config", KubernautAgentSDKConfigName(kn)),
+		configMapVolume("llm-runtime", KubernautAgentLLMRuntimeConfigName(kn)),
 		secretVolume("llm-credentials", kn.Spec.KubernautAgent.LLM.CredentialsSecretName),
 		secretVolume("tls-certs", KubernautAgentTLSSecretName),
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: "config", MountPath: "/etc/kubernaut-agent", ReadOnly: true},
-		{Name: "sdk-config", MountPath: "/etc/kubernaut-agent/sdk", ReadOnly: true},
+		{Name: "llm-runtime", MountPath: "/etc/kubernaut-agent/llm-runtime", ReadOnly: true},
 		{Name: "llm-credentials", MountPath: "/etc/kubernaut-agent/credentials", ReadOnly: true},
 		{Name: "tls-certs", MountPath: InterServiceTLSCertDir, ReadOnly: true},
 	}
@@ -455,6 +454,13 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 	}
 
 	volumes, mounts, envVars = appendInterServiceTLSCA(volumes, mounts, envVars)
+
+	if kn.Spec.KubernautAgent.LLM.OAuth2.Enabled {
+		volumes = append(volumes, secretVolume("oauth2-credentials", kn.Spec.KubernautAgent.LLM.OAuth2.CredentialsSecretRef))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: "oauth2-credentials", MountPath: "/etc/kubernaut-agent/oauth2", ReadOnly: true,
+		})
+	}
 
 	res := kn.Spec.KubernautAgent.Resources
 	if len(res.Requests) == 0 && len(res.Limits) == 0 {
@@ -498,7 +504,7 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 		ProbePort:      PortHealthProbe,
 		Args: []string{
 			"-config", "/etc/kubernaut-agent/config.yaml",
-			"-sdk-config", "/etc/kubernaut-agent/sdk/sdk-config.yaml",
+			"-llm-runtime", "/etc/kubernaut-agent/llm-runtime/llm-runtime.yaml",
 		},
 		Ports: []corev1.ContainerPort{
 			{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP},
