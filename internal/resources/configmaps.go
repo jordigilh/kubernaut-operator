@@ -440,10 +440,10 @@ type kubernautAgentServerTLSYAML struct {
 }
 
 type kaRuntimeYAML struct {
-	Logging    loggingYAML         `json:"logging" yaml:"logging"`
-	Server     kaRuntimeServerYAML `json:"server" yaml:"server"`
-	Audit      *kaAuditYAML        `json:"audit,omitempty" yaml:"audit,omitempty"`
-	Session    *kaSessionYAML      `json:"session,omitempty" yaml:"session,omitempty"`
+	Logging loggingYAML         `json:"logging" yaml:"logging"`
+	Server  kaRuntimeServerYAML `json:"server" yaml:"server"`
+	Audit   *kaAuditYAML        `json:"audit,omitempty" yaml:"audit,omitempty"`
+	Session *kaSessionYAML      `json:"session,omitempty" yaml:"session,omitempty"`
 }
 
 type kaRuntimeServerYAML struct {
