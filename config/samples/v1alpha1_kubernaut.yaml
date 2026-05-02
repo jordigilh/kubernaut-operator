@@ -26,7 +26,7 @@ spec:
       provider: vertex_ai
       model: claude-sonnet-4-6
       credentialsSecretName: llm-credentials
-      sdkConfigMapName: kubernaut-agent-sdk-config
+      runtimeConfigMapName: kubernaut-agent-llm-runtime
 
   # AIAnalysis controller — requires a Rego policy ConfigMap.
   aiAnalysis:

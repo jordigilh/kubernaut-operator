@@ -140,7 +140,7 @@ const (
 
 // DefaultPostgreSQLImage is the RHEL10 PostgreSQL 16 image used for the
 // data-storage init container on OCP (restricted-v2 SCC compatible).
-const DefaultPostgreSQLImage = "registry.redhat.io/rhel10/postgresql-16:latest"
+const DefaultPostgreSQLImage = "registry.redhat.io/rhel10/postgresql-16@sha256:6626034c7e8a171610212a220efd417eb5ab7792b5dbd912d38976ffe0627301"
 
 // AllComponents returns the ordered list of all managed components.
 func AllComponents() []string {

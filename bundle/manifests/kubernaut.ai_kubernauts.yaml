@@ -59,6 +59,23 @@ spec:
                       Optional confidence threshold override for the Rego policy.
                       Expressed as a decimal string, e.g. "0.85".
                     type: string
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: info
+                        description: 'Log level. One of: DEBUG, INFO, WARN, ERROR.'
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        - debug
+                        - info
+                        - warn
+                        - error
+                        type: string
+                    type: object
                   policy:
                     description: |-
                       Policy ConfigMap reference. Required.
@@ -139,6 +156,23 @@ spec:
                   apiURL:
                     description: AWX/AAP API URL. Required when Enabled is true.
                     type: string
+                  caCertSecretRef:
+                    description: |-
+                      CACertSecretRef references a Secret containing the PEM-encoded CA
+                      certificate for the AAP/AWX API endpoint. Use this when the AAP uses
+                      a self-signed certificate or a private CA. If omitted, the system
+                      trust store is used.
+                    properties:
+                      key:
+                        default: ca.crt
+                        description: Key within the Secret containing the CA PEM.
+                        type: string
+                      name:
+                        description: Name of the Secret.
+                        type: string
+                    required:
+                    - name
+                    type: object
                   enabled:
                     default: false
                     description: Whether AWX/AAP integration is enabled.
@@ -168,6 +202,23 @@ spec:
               authWebhook:
                 description: AuthWebhook admission controller settings.
                 properties:
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: info
+                        description: 'Log level. One of: DEBUG, INFO, WARN, ERROR.'
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        - debug
+                        - info
+                        - warn
+                        - error
+                        type: string
+                    type: object
                   resources:
                     description: Resource requirements.
                     properties:
@@ -231,6 +282,23 @@ spec:
               dataStorage:
                 description: DataStorage service settings.
                 properties:
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: info
+                        description: 'Log level. One of: DEBUG, INFO, WARN, ERROR.'
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        - debug
+                        - info
+                        - warn
+                        - error
+                        type: string
+                    type: object
                   resources:
                     description: Resource requirements.
                     properties:
@@ -302,7 +370,24 @@ spec:
                         default: 30s
                         type: string
                       validityWindow:
-                        default: 120s
+                        default: 300s
+                        type: string
+                    type: object
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: info
+                        description: 'Log level. One of: DEBUG, INFO, WARN, ERROR.'
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        - debug
+                        - info
+                        - warn
+                        - error
                         type: string
                     type: object
                   resources:
@@ -377,6 +462,10 @@ spec:
                           CORS allowed origins. Gateway is an M2M webhook API, not a browser
                           target, so the default is a non-matching origin that blocks CORS.
                         type: string
+                      deduplicationCooldown:
+                        default: 5m
+                        description: Deduplication cooldown period for alert processing.
+                        type: string
                       k8sRequestTimeout:
                         default: 15s
                         description: 'Timeout for outbound K8s API requests. Default:
@@ -389,6 +478,23 @@ spec:
                         items:
                           type: string
                         type: array
+                    type: object
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: info
+                        description: 'Log level. One of: DEBUG, INFO, WARN, ERROR.'
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        - debug
+                        - info
+                        - warn
+                        - error
+                        type: string
                     type: object
                   resources:
                     description: Resource requirements.
@@ -503,31 +609,156 @@ spec:
                 description: Kubernaut Agent (KA) -- LLM-powered investigation and
                   analysis service.
                 properties:
+                  additionalClusterRoleBindings:
+                    description: |-
+                      AdditionalClusterRoleBindings is an optional list of pre-existing
+                      ClusterRole names to bind to the Kubernaut Agent ServiceAccount.
+                    items:
+                      type: string
+                    maxItems: 64
+                    type: array
+                    x-kubernetes-list-type: set
+                  alignmentCheck:
+                    description: Alignment check (shadow agent) configuration.
+                    properties:
+                      enabled:
+                        default: false
+                        description: Whether alignment check is enabled.
+                        type: boolean
+                      llm:
+                        description: Optional dedicated LLM for alignment checks.
+                        properties:
+                          apiKey:
+                            type: string
+                          endpoint:
+                            type: string
+                          model:
+                            type: string
+                          provider:
+                            type: string
+                        type: object
+                      maxStepTokens:
+                        default: 500
+                        description: Maximum tokens per alignment step.
+                        type: integer
+                      timeout:
+                        default: 10s
+                        description: Timeout for alignment check requests.
+                        type: string
+                    type: object
+                  audit:
+                    description: Audit logging configuration.
+                    properties:
+                      enabled:
+                        default: true
+                        description: Whether audit logging is enabled.
+                        type: boolean
+                    type: object
                   llm:
                     description: LLM provider and credentials configuration.
                     properties:
+                      azureApiVersion:
+                        description: Azure OpenAI API version.
+                        type: string
+                      bedrockRegion:
+                        description: AWS Bedrock region.
+                        type: string
                       credentialsSecretName:
                         description: Name of the Secret containing LLM API credentials.
                         minLength: 1
                         type: string
+                      endpoint:
+                        description: LLM API endpoint override. When empty, uses the
+                          provider default.
+                        type: string
+                      maxRetries:
+                        default: 3
+                        description: Maximum number of retries for LLM API calls.
+                        type: integer
                       model:
-                        description: LLM model name (e.g. "gpt-4o", "claude-sonnet-4-20250514").
+                        description: LLM model name (e.g. "gpt-4o", "gemini-2.5-pro").
                         minLength: 1
                         type: string
+                      oauth2:
+                        description: OAuth2 configuration for LLM authentication.
+                        properties:
+                          credentialsSecretRef:
+                            description: |-
+                              Name of the Secret containing OAuth2 client credentials
+                              (keys: "client-id", "client-secret").
+                            type: string
+                          enabled:
+                            default: false
+                            description: Whether OAuth2 authentication is enabled.
+                            type: boolean
+                          scopes:
+                            description: OAuth2 scopes.
+                            items:
+                              type: string
+                            type: array
+                          tokenURL:
+                            description: Token endpoint URL.
+                            type: string
+                        type: object
                       provider:
-                        description: LLM provider name (e.g. "openai", "anthropic").
+                        description: LLM provider name (e.g. "openai", "vertexai",
+                          "bedrock", "azure").
                         minLength: 1
                         type: string
-                      sdkConfigMapName:
+                      runtimeConfigMapName:
                         description: |-
-                          Name of a pre-existing ConfigMap for full SDK configuration.
-                          When set, overrides Provider and Model fields.
+                          Name of a pre-existing ConfigMap for the LLM runtime configuration.
+                          When set, the operator skips generating kubernaut-agent-llm-runtime
+                          and mounts this ConfigMap instead. Must contain key "llm-runtime.yaml".
+                        type: string
+                      temperature:
+                        description: |-
+                          Sampling temperature for LLM responses (e.g. "0.7").
+                          Serialized as string to avoid CRD float portability issues.
+                        type: string
+                      timeoutSeconds:
+                        default: 120
+                        description: Timeout in seconds for LLM API calls.
+                        type: integer
+                      tlsCaFile:
+                        description: Path to a CA certificate file for TLS to the
+                          LLM endpoint.
+                        type: string
+                      vertexLocation:
+                        description: GCP Vertex AI location (e.g. "us-central1").
+                        type: string
+                      vertexProject:
+                        description: GCP Vertex AI project ID.
                         type: string
                     required:
                     - credentialsSecretName
                     - model
                     - provider
                     type: object
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: info
+                        description: 'Log level. One of: DEBUG, INFO, WARN, ERROR.'
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        - debug
+                        - info
+                        - warn
+                        - error
+                        type: string
+                    type: object
+                  maxTurns:
+                    default: 40
+                    description: |-
+                      MaxTurns is the maximum number of LLM conversation turns the
+                      investigator may execute per analysis session.
+                    minimum: 1
+                    type: integer
                   resources:
                     description: Resource requirements.
                     properties:
@@ -587,6 +818,59 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
+                  safety:
+                    description: Safety guardrails for LLM interactions.
+                    properties:
+                      anomaly:
+                        description: Anomaly detection thresholds.
+                        properties:
+                          maxRepeatedFailures:
+                            default: 3
+                            description: Max repeated failures before circuit-breaker.
+                            type: integer
+                          maxToolCallsPerTool:
+                            default: 10
+                            description: Max tool calls per individual tool.
+                            type: integer
+                          maxTotalToolCalls:
+                            default: 30
+                            description: Max total tool calls across all tools.
+                            type: integer
+                        type: object
+                      sanitization:
+                        description: Input sanitization rules.
+                        properties:
+                          credentialScrubEnabled:
+                            default: true
+                            description: Whether credential scrubbing is enabled.
+                            type: boolean
+                          injectionPatternsEnabled:
+                            default: true
+                            description: Whether prompt injection pattern detection
+                              is enabled.
+                            type: boolean
+                        type: object
+                    type: object
+                  session:
+                    description: Session configuration.
+                    properties:
+                      ttl:
+                        default: 30m
+                        description: Session time-to-live.
+                        type: string
+                    type: object
+                  summarizer:
+                    description: Summarizer configuration for tool output compression.
+                    properties:
+                      maxToolOutputSize:
+                        default: 100000
+                        description: Maximum tool output size in bytes before truncation.
+                        type: integer
+                      threshold:
+                        default: 8000
+                        description: Token threshold above which tool output is summarized.
+                        type: integer
+                    type: object
                 required:
                 - llm
                 type: object
@@ -601,9 +885,54 @@ spec:
                       and provisions monitoring RBAC.
                     type: boolean
                 type: object
+              networkPolicies:
+                description: |-
+                  NetworkPolicies controls the creation of Kubernetes NetworkPolicy
+                  resources that enforce a default-deny posture with explicit allow rules.
+                properties:
+                  apiServerCIDR:
+                    description: |-
+                      API server CIDR for egress rules (e.g. "10.0.0.0/16").
+                      When empty, API server egress rules are omitted.
+                    type: string
+                  enabled:
+                    default: false
+                    description: |-
+                      Whether the operator creates NetworkPolicy resources.
+                      When true, a default-deny posture is applied with explicit allow rules
+                      matching the upstream Helm chart traffic matrix.
+                    type: boolean
+                  gatewayIngressNamespaces:
+                    description: Gateway ingress namespaces. Namespaces allowed to
+                      send traffic to the Gateway.
+                    items:
+                      type: string
+                    type: array
+                  monitoringNamespace:
+                    description: Monitoring namespace for Prometheus scrape ingress
+                      (e.g. "openshift-monitoring").
+                    type: string
+                type: object
               notification:
                 description: Notification controller settings.
                 properties:
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: info
+                        description: 'Log level. One of: DEBUG, INFO, WARN, ERROR.'
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        - debug
+                        - info
+                        - warn
+                        - error
+                        type: string
+                    type: object
                   resources:
                     description: Resource requirements for the notification controller.
                     properties:
@@ -730,12 +1059,51 @@ spec:
                         default: 5m
                         type: string
                     type: object
+                  dryRun:
+                    default: false
+                    description: |-
+                      DryRun enables dry-run mode: the pipeline stops after AI analysis
+                      without executing remediation workflows. Operators use this to
+                      build confidence before enabling fully autonomous remediation.
+                    type: boolean
+                  dryRunHoldPeriod:
+                    default: 1h
+                    description: |-
+                      DryRunHoldPeriod suppresses re-triggering of the same signal after
+                      a dry-run completion. Must be a valid Go duration string.
+                      Only effective when DryRun is true.
+                    type: string
                   effectivenessAssessment:
                     description: Effectiveness assessment configuration.
                     properties:
                       stabilizationWindow:
                         default: 5m
                         type: string
+                    type: object
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: info
+                        description: 'Log level. One of: DEBUG, INFO, WARN, ERROR.'
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        - debug
+                        - info
+                        - warn
+                        - error
+                        type: string
+                    type: object
+                  notifications:
+                    description: Notification behaviour for remediation events.
+                    properties:
+                      notifySelfResolved:
+                        default: false
+                        description: Whether to notify on self-resolved remediations.
+                        type: boolean
                     type: object
                   resources:
                     description: Resource requirements.
@@ -796,6 +1164,14 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
+                  retention:
+                    description: Retention policy for completed remediation records.
+                    properties:
+                      period:
+                        default: 24h
+                        description: How long to retain completed remediation records.
+                        type: string
+                    type: object
                   routing:
                     description: Routing thresholds for failure detection and cooldowns.
                     properties:
@@ -805,24 +1181,45 @@ spec:
                       consecutiveFailureThreshold:
                         default: 3
                         type: integer
+                      exponentialBackoffBase:
+                        default: 1m
+                        type: string
+                      exponentialBackoffMax:
+                        default: 10m
+                        type: string
+                      exponentialBackoffMaxExponent:
+                        default: 4
+                        type: integer
                       ineffectiveChainThreshold:
                         default: 3
                         type: integer
                       ineffectiveTimeWindow:
                         default: 4h
                         type: string
+                      noActionRequiredDelayHours:
+                        default: 24
+                        type: integer
                       recentlyRemediatedCooldown:
                         default: 5m
                         type: string
                       recurrenceCountThreshold:
                         default: 5
                         type: integer
+                      scopeBackoffBase:
+                        default: 5s
+                        type: string
+                      scopeBackoffMax:
+                        default: 5m
+                        type: string
                     type: object
                   timeouts:
                     description: Timeout configuration for remediation phases.
                     properties:
                       analyzing:
                         default: 10m
+                        type: string
+                      awaitingApproval:
+                        default: 15m
                         type: string
                       executing:
                         default: 30m
@@ -841,6 +1238,23 @@ spec:
               signalProcessing:
                 description: SignalProcessing controller configuration.
                 properties:
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: info
+                        description: 'Log level. One of: DEBUG, INFO, WARN, ERROR.'
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        - debug
+                        - info
+                        - warn
+                        - error
+                        type: string
+                    type: object
                   policy:
                     description: |-
                       Policy ConfigMap reference. Required.
@@ -956,6 +1370,23 @@ spec:
                     default: 1m
                     description: Cooldown period between workflow executions.
                     type: string
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: info
+                        description: 'Log level. One of: DEBUG, INFO, WARN, ERROR.'
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        - debug
+                        - info
+                        - warn
+                        - error
+                        type: string
+                    type: object
                   resources:
                     description: Resource requirements.
                     properties:
@@ -1015,6 +1446,14 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
+                  tekton:
+                    description: Tekton integration configuration.
+                    properties:
+                      enabled:
+                        description: Whether Tekton integration is enabled. When nil,
+                          auto-detected.
+                        type: boolean
+                    type: object
                   workflowNamespace:
                     default: kubernaut-workflows
                     description: Namespace for workflow Job/PipelineRun execution.
@@ -1029,6 +1468,14 @@ spec:
             description: KubernautStatus defines the observed state of a Kubernaut
               deployment.
             properties:
+              boundAdditionalClusterRoles:
+                description: |-
+                  ClusterRole names for which the operator has created additional
+                  agent ClusterRoleBindings. Used for stale-pruning on spec changes
+                  and finalizer cleanup.
+                items:
+                  type: string
+                type: array
               conditions:
                 description: Standard conditions following the metav1.Condition contract.
                 items:

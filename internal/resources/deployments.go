@@ -266,7 +266,7 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deplo
 		})
 		initContainers = append(initContainers, corev1.Container{
 			Name:    "build-ca-bundle",
-			Image:   "registry.access.redhat.com/ubi10/ubi-minimal:latest",
+			Image:   "registry.access.redhat.com/ubi10/ubi-minimal@sha256:2a4785f399dc7ae2f3ca85f68bac0ccac47f3e73464a47c21e4f7ae46b55a053",
 			Command: []string{"sh", "-c"},
 			Args:    []string{"cat /etc/tls-ca/service-ca.crt /aap-ca/aap-ca.crt > /combined/ca-bundle.crt"},
 			VolumeMounts: []corev1.VolumeMount{
@@ -313,7 +313,7 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.De
 		})
 		initContainers = append(initContainers, corev1.Container{
 			Name:            "wait-for-service-ca",
-			Image:           "registry.access.redhat.com/ubi10/ubi-minimal:latest",
+			Image:           "registry.access.redhat.com/ubi10/ubi-minimal@sha256:2a4785f399dc7ae2f3ca85f68bac0ccac47f3e73464a47c21e4f7ae46b55a053",
 			ImagePullPolicy: kn.Spec.Image.PullPolicy,
 			Command:         []string{"sh", "-c"},
 			Args: []string{
@@ -480,7 +480,7 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		initContainers = append(initContainers, corev1.Container{
 			Name:  "build-ca-bundle",
-			Image: "registry.access.redhat.com/ubi10/ubi-minimal:latest",
+			Image: "registry.access.redhat.com/ubi10/ubi-minimal@sha256:2a4785f399dc7ae2f3ca85f68bac0ccac47f3e73464a47c21e4f7ae46b55a053",
 			Command: []string{"sh", "-c",
 				"cat /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /service-ca/service-ca.crt > /combined/ca-bundle.crt",
 			},
