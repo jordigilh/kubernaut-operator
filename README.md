@@ -92,7 +92,7 @@ make generate       # Regenerate deepcopy
 make bundle         # Regenerate the OLM bundle
 
 # Deploy to a connected cluster (non-OLM)
-make deploy IMG=quay.io/kubernaut-ai/kubernaut-operator:v1.3.0
+make deploy IMG=quay.io/kubernaut-ai/kubernaut-operator:v1.4.0
 
 # Undeploy
 make undeploy
