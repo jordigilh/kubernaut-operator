@@ -553,11 +553,14 @@ type kubernautAgentConfigYAML struct {
 }
 
 type llmRuntimeYAML struct {
+	Provider       string  `json:"provider,omitempty" yaml:"provider,omitempty"`
 	Model          string  `json:"model" yaml:"model"`
 	Endpoint       string  `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
 	Temperature    float64 `json:"temperature" yaml:"temperature"` //nolint:musttag
 	MaxRetries     int     `json:"maxRetries" yaml:"maxRetries"`
 	TimeoutSeconds int     `json:"timeoutSeconds" yaml:"timeoutSeconds"`
+	VertexProject  string  `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
+	VertexLocation string  `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
 }
 
 type authWebhookWebhookYAML struct {
@@ -1259,11 +1262,14 @@ func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1
 		}
 	}
 	cfg := llmRuntimeYAML{
+		Provider:       kn.Spec.KubernautAgent.LLM.Provider,
 		Model:          kn.Spec.KubernautAgent.LLM.Model,
 		Endpoint:       kn.Spec.KubernautAgent.LLM.Endpoint,
 		Temperature:    temp,
 		MaxRetries:     intPtrDefault(kn.Spec.KubernautAgent.LLM.MaxRetries, 3),
 		TimeoutSeconds: intPtrDefault(kn.Spec.KubernautAgent.LLM.TimeoutSeconds, 120),
+		VertexProject:  kn.Spec.KubernautAgent.LLM.VertexProject,
+		VertexLocation: kn.Spec.KubernautAgent.LLM.VertexLocation,
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
