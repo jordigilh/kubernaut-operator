@@ -793,12 +793,12 @@ func TestKubernautAgentConfigMap_V14Structure(t *testing.T) {
 			DataStorage struct {
 				URL string `yaml:"url"`
 			} `yaml:"dataStorage"`
-		Tools *struct {
-			Prometheus struct {
-				URL       string `yaml:"url"`
-				TLSCaFile string `yaml:"tlsCaFile"`
-			} `yaml:"prometheus"`
-		} `yaml:"tools,omitempty"`
+			Tools *struct {
+				Prometheus struct {
+					URL       string `yaml:"url"`
+					TLSCaFile string `yaml:"tlsCaFile"`
+				} `yaml:"prometheus"`
+			} `yaml:"tools,omitempty"`
 		} `yaml:"integrations"`
 	}
 	if err := yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root); err != nil {
