@@ -42,15 +42,92 @@ EOF
 
 Kubernaut requires Valkey 7+ (or Redis 7+) for deduplication and event streaming.
 
-**In-cluster example (testing only):**
+### Persistence
+
+By default Valkey enables RDB snapshots (`save` directives) and refuses writes when
+a background save fails (`stop-writes-on-bgsave-error yes`). If no writable volume is
+mounted at `/data`, the background save fails immediately and Valkey rejects all write
+commands, which prevents the DataStorage service from starting.
+
+Choose one of:
+
+| Strategy | When to use |
+|---|---|
+| **Disable RDB** (`save ""`) | Valkey is used only as a cache/stream broker; data loss on restart is acceptable (typical for Kubernaut). |
+| **Mount a PVC** on `/data` | You need persistence across pod restarts (HA / disaster recovery). |
+
+### In-cluster example (testing only)
+
+The example below disables RDB persistence so that no volume is required:
 
 ```bash
-oc new-app valkey/valkey:8 \
-  -e VALKEY_PASSWORD=changeme \
-  -n kubernaut-system
+oc apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: valkey
+  namespace: kubernaut-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: valkey
+  template:
+    metadata:
+      labels:
+        app: valkey
+    spec:
+      containers:
+        - name: valkey
+          image: valkey/valkey:8
+          args: ["--requirepass", "changeme", "--save", ""]
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 100m
+            limits:
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey
+  namespace: kubernaut-system
+spec:
+  selector:
+    app: valkey
+  ports:
+    - port: 6379
+      targetPort: 6379
+EOF
 ```
 
-Create the operator secret. The key must be `valkey-secrets.yaml` containing YAML with a `password` field:
+If you need persistence, add a PVC and mount it at `/data` instead of passing `--save ""`.
+
+### Production recommendations
+
+- **Resources**: set memory `requests` and `limits` to prevent OOM kills. Valkey is single-threaded; 1 CPU is sufficient for most workloads.
+- **High availability**: consider Valkey Sentinel or a managed Redis service (ElastiCache, Azure Cache, Memorystore) for production clusters.
+- **TLS**: Valkey supports TLS natively (`--tls-port`, `--tls-cert-file`, `--tls-key-file`). For in-cluster traffic behind NetworkPolicies, plaintext is acceptable.
+
+### Troubleshooting
+
+If the DataStorage pod logs show:
+
+```
+MISCONF Valkey is configured to save RDB snapshots, but it's currently unable to persist to disk.
+```
+
+Valkey cannot write its RDB dump file. Fix by either:
+
+1. Disabling RDB: `valkey-cli CONFIG SET save ""` and `valkey-cli CONFIG SET stop-writes-on-bgsave-error no`
+2. Mounting a writable volume at `/data`
+
+### Create the operator secret
+
+The key must be `valkey-secrets.yaml` containing YAML with a `password` field:
 
 ```bash
 oc apply -f - <<EOF

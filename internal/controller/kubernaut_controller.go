@@ -276,6 +276,10 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 	desiredHash := resources.SpecHash(migrationJob)
 	setHashAnnotation(migrationJob, desiredHash)
 
+	if kn.Status.LastMigrationHash == desiredHash {
+		return ctrl.Result{}, nil
+	}
+
 	existingJob := &batchv1.Job{}
 	created, err := r.createIfNotFound(ctx, kn, migrationJob, existingJob)
 	if err != nil {
@@ -288,7 +292,11 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 	for _, cond := range existingJob.Status.Conditions {
 		if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
 			if existingJob.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash {
-				return ctrl.Result{}, nil
+				now := metav1.Now()
+				return ctrl.Result{}, r.patchStatus(ctx, kn, func() {
+					kn.Status.LastMigrationHash = desiredHash
+					kn.Status.LastMigrationTime = &now
+				})
 			}
 			log.Info("completed migration job has stale spec-hash, deleting for re-run")
 			propagation := metav1.DeletePropagationBackground
