@@ -450,6 +450,10 @@ func (in *KubernautStatus) DeepCopyInto(out *KubernautStatus) {
 		*out = make([]ServiceStatus, len(*in))
 		copy(*out, *in)
 	}
+	if in.LastMigrationTime != nil {
+		in, out := &in.LastMigrationTime, &out.LastMigrationTime
+		*out = (*in).DeepCopy()
+	}
 	if in.BoundAdditionalClusterRoles != nil {
 		in, out := &in.BoundAdditionalClusterRoles, &out.BoundAdditionalClusterRoles
 		*out = make([]string, len(*in))

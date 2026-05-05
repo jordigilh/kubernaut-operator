@@ -637,7 +637,7 @@ type AnomalySpec struct {
 	// +optional
 	MaxToolCallsPerTool *int `json:"maxToolCallsPerTool,omitempty"`
 	// Max total tool calls across all tools.
-	// +kubebuilder:default=30
+	// +kubebuilder:default=40
 	// +optional
 	MaxTotalToolCalls *int `json:"maxTotalToolCalls,omitempty"`
 	// Max repeated failures before circuit-breaker.
@@ -869,6 +869,16 @@ type KubernautStatus struct {
 	// Per-service readiness.
 	// +optional
 	Services []ServiceStatus `json:"services,omitempty"`
+
+	// Hash of the last successfully completed migration Job spec.
+	// Used to skip re-running migration when the Job has been deleted
+	// (e.g. TTL cleanup, manual deletion) but nothing has changed.
+	// +optional
+	LastMigrationHash string `json:"lastMigrationHash,omitempty"`
+
+	// Timestamp of the last successfully completed migration.
+	// +optional
+	LastMigrationTime *metav1.Time `json:"lastMigrationTime,omitempty"`
 
 	// ClusterRole names for which the operator has created additional
 	// agent ClusterRoleBindings. Used for stale-pruning on spec changes

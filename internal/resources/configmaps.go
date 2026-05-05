@@ -543,7 +543,8 @@ type kaIntegrationsToolsYAML struct {
 }
 
 type kaIntegrationsPrometheusYAML struct {
-	URL string `json:"url" yaml:"url"`
+	URL       string `json:"url" yaml:"url"`
+	TLSCaFile string `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 }
 
 type kubernautAgentConfigYAML struct {
@@ -1217,25 +1218,26 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 	injEnabled := ka.Safety.Sanitization.InjectionPatternsEnabled == nil || *ka.Safety.Sanitization.InjectionPatternsEnabled
 	credEnabled := ka.Safety.Sanitization.CredentialScrubEnabled == nil || *ka.Safety.Sanitization.CredentialScrubEnabled
 	maxPerTool := intPtrDefault(ka.Safety.Anomaly.MaxToolCallsPerTool, 10)
-	maxTotal := intPtrDefault(ka.Safety.Anomaly.MaxTotalToolCalls, 30)
+	maxTotal := intPtrDefault(ka.Safety.Anomaly.MaxTotalToolCalls, 40)
 	maxFail := intPtrDefault(ka.Safety.Anomaly.MaxRepeatedFailures, 3)
-	if !injEnabled || !credEnabled || maxPerTool != 10 || maxTotal != 30 || maxFail != 3 {
-		cfg.AI.Safety = &kaSafetyYAML{
-			Sanitization: kaSanitizationYAML{
-				InjectionPatternsEnabled: injEnabled,
-				CredentialScrubEnabled:   credEnabled,
-			},
-			Anomaly: kaAnomalyYAML{
-				MaxToolCallsPerTool: maxPerTool,
-				MaxTotalToolCalls:   maxTotal,
-				MaxRepeatedFailures: maxFail,
-			},
-		}
+	cfg.AI.Safety = &kaSafetyYAML{
+		Sanitization: kaSanitizationYAML{
+			InjectionPatternsEnabled: injEnabled,
+			CredentialScrubEnabled:   credEnabled,
+		},
+		Anomaly: kaAnomalyYAML{
+			MaxToolCallsPerTool: maxPerTool,
+			MaxTotalToolCalls:   maxTotal,
+			MaxRepeatedFailures: maxFail,
+		},
 	}
 
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		cfg.Integrations.Tools = &kaIntegrationsToolsYAML{
-			Prometheus: kaIntegrationsPrometheusYAML{URL: OCPPrometheusURL},
+			Prometheus: kaIntegrationsPrometheusYAML{
+				URL:       OCPPrometheusURL,
+				TLSCaFile: "/etc/ssl/ka/service-ca.crt",
+			},
 		}
 	}
 

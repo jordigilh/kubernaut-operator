@@ -127,8 +127,11 @@ const InterServiceTLSCAFile = "/etc/tls-ca/service-ca.crt"
 
 // OCP monitoring stack endpoints. These are always available on OCP clusters
 // and are hardcoded rather than discovered (OCP-only operator).
+// Thanos Querier federates both cluster Prometheus and User Workload
+// Monitoring Prometheus, providing a unified view of all metrics including
+// user-namespace ServiceMonitors (Istio, app metrics, etc.).
 const (
-	OCPPrometheusURL   = "https://prometheus-k8s.openshift-monitoring.svc:9091"
+	OCPPrometheusURL   = "https://thanos-querier.openshift-monitoring.svc:9091"
 	OCPAlertManagerURL = "https://alertmanager-main.openshift-monitoring.svc:9094"
 )
 

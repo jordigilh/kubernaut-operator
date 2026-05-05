@@ -529,6 +529,9 @@ func TestKubernautAgentConfigMap_MonitoringURL(t *testing.T) {
 	if !strings.Contains(data, OCPPrometheusURL) {
 		t.Errorf("KA config should contain Prometheus URL when monitoring enabled, got:\n%s", data)
 	}
+	if !strings.Contains(data, "tlsCaFile: /etc/ssl/ka/service-ca.crt") {
+		t.Errorf("KA config should contain Prometheus tlsCaFile for SA bearer auth, got:\n%s", data)
+	}
 	if !strings.Contains(data, "dataStorage:") {
 		t.Errorf("KA config should contain dataStorage section, got:\n%s", data)
 	}
@@ -790,11 +793,12 @@ func TestKubernautAgentConfigMap_V14Structure(t *testing.T) {
 			DataStorage struct {
 				URL string `yaml:"url"`
 			} `yaml:"dataStorage"`
-			Tools *struct {
-				Prometheus struct {
-					URL string `yaml:"url"`
-				} `yaml:"prometheus"`
-			} `yaml:"tools,omitempty"`
+		Tools *struct {
+			Prometheus struct {
+				URL       string `yaml:"url"`
+				TLSCaFile string `yaml:"tlsCaFile"`
+			} `yaml:"prometheus"`
+		} `yaml:"tools,omitempty"`
 		} `yaml:"integrations"`
 	}
 	if err := yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root); err != nil {
@@ -824,6 +828,9 @@ func TestKubernautAgentConfigMap_V14Structure(t *testing.T) {
 	}
 	if got := root.Integrations.Tools.Prometheus.URL; got != OCPPrometheusURL {
 		t.Errorf("integrations.tools.prometheus.url = %q, want %q", got, OCPPrometheusURL)
+	}
+	if got := root.Integrations.Tools.Prometheus.TLSCaFile; got != "/etc/ssl/ka/service-ca.crt" {
+		t.Errorf("integrations.tools.prometheus.tlsCaFile = %q, want /etc/ssl/ka/service-ca.crt", got)
 	}
 }
 
