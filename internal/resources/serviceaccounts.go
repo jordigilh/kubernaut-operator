@@ -18,6 +18,7 @@ package resources
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/utils/ptr"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
@@ -47,9 +48,13 @@ func ServiceAccountName(component string) string {
 
 // ServiceAccount builds a ServiceAccount for the given component.
 func ServiceAccount(kn *kubernautv1alpha1.Kubernaut, component string) *corev1.ServiceAccount {
-	return &corev1.ServiceAccount{
+	sa := &corev1.ServiceAccount{
 		ObjectMeta: ObjectMeta(kn, ServiceAccountName(component), component),
 	}
+	if component == ComponentKubernautAgent {
+		sa.AutomountServiceAccountToken = ptr.To(false)
+	}
+	return sa
 }
 
 // WorkflowRunnerServiceAccount returns the SA used by workflow Jobs/PipelineRuns

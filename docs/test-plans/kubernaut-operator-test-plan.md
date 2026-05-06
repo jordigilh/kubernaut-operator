@@ -276,7 +276,7 @@ Each feature maps to a business outcome the operator must deliver.
 |-------|-------|
 | Precondition | Resource builders invoked |
 | Steps | 1. Inspect ClusterRole rules |
-| Expected | data-storage-client has only get/list (no create/delete); workflow-runner has no cluster-wide secrets access |
+| Expected | data-storage-client has create/get/list/update/delete scoped to named resources; workflow-runner has no cluster-wide secrets access |
 | Tests | `TestClusterRoles_ContainsExpectedNames`, `TestDataStorageClientRoleBindings_AllRefClusterRole`, lifecycle builder edge case tests |
 
 #### TC-T3-03: Workflow Runner Scoped Access
@@ -296,6 +296,15 @@ Each feature maps to a business outcome the operator must deliver.
 | Steps | 1. Inspect names |
 | Expected | Names are `<namespace>-authwebhook-mutating` and `<namespace>-authwebhook-validating` |
 | Tests | `TestMutatingWebhookConfiguration_Basic`, `TestValidatingWebhookConfiguration_Basic` |
+
+#### TC-T3-05: Investigator OCP/Platform Rule Completeness
+
+| Field | Value |
+|-------|-------|
+| Precondition | Resource builders invoked |
+| Steps | 1. Inspect kubernaut-agent-investigator ClusterRole rules |
+| Expected | All required OCP API groups present: operators.coreos.com, packages.operators.coreos.com, route.openshift.io, apps.openshift.io, security.openshift.io, image.openshift.io, build.openshift.io, machine.openshift.io, machineconfiguration.openshift.io, quota.openshift.io, network.operator.openshift.io. All core K8s meta groups present: rbac.authorization.k8s.io, admissionregistration.k8s.io, apiextensions.k8s.io, scheduling.k8s.io |
+| Tests | `TestKAInvestigator_HasOCPAndCoreK8sRules` |
 
 ### 6.4 Tier 4: Resource Builders
 
@@ -443,8 +452,8 @@ go test ./test/e2e/... -v -count=1
 Tests are executed on every pull request via GitHub Actions. The pipeline:
 1. Runs `go build ./...`
 2. Runs unit + integration tests with coverage
-3. Fails the build if coverage drops below thresholds
-4. Runs e2e tests against a Kind cluster (when Docker is available)
+3. Enforces minimum coverage thresholds (80% combined)
+4. E2E tests run via manual `workflow_dispatch` against a real OCP cluster
 
 ---
 
@@ -544,7 +553,7 @@ Tests are executed on every pull request via GitHub Actions. The pipeline:
 
 | File | Tests | Coverage |
 |------|-------|---------|
-| `rbac_test.go` | 18 | ClusterRoles, CRBs, DataStorage bindings, Namespace roles, Workflow NS, Ansible, Monitoring, Kubernaut Agent client RB, Monitoring name enumerators |
+| `rbac_test.go` | 30 | ClusterRoles, CRBs, DataStorage bindings, Namespace roles, Workflow NS, Ansible, Monitoring, Kubernaut Agent client RB, Monitoring name enumerators, Investigator OCP/K8s rules, Additional agent CRB |
 | `deployments_test.go` | 20+ | All 10 deployment builders, image construction, volume mounts, volume source CM accuracy, security contexts |
 | `configmaps_test.go` | 19+ | All ConfigMap builders, default values, YAML formatting, default Rego policies, Slack absence |
 | `common_test.go` | 19+ | Labels, selectors, Image(), ObjectMeta, ValkeyAddr, MergeResources, SetOwnerReference, ServiceAccountName fallback, intPtrDefault |

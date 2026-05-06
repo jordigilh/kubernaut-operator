@@ -79,6 +79,7 @@ const (
 	ReasonAnsibleTokenNotFound   = "TokenSecretNotFound"
 	ReasonAnsibleTokenKeyMissing = "TokenKeyMissing"
 
+	ReasonRBACApplyFailed            = "RBACApplyFailed"
 	ReasonAdditionalRBACFullyBound   = "FullyBound"
 	ReasonAdditionalRBACPartialBound = "PartiallyBound"
 )
@@ -360,6 +361,15 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		return err
 	}
 	if err := r.deployRBAC(ctx, kn); err != nil {
+		_ = r.patchStatus(ctx, kn, func() {
+			meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+				Type: kubernautv1alpha1.ConditionRBACProvisioned, Status: metav1.ConditionFalse,
+				Reason: ReasonRBACApplyFailed, Message: err.Error(),
+				ObservedGeneration: kn.Generation,
+			})
+		})
+		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, ReasonRBACApplyFailed, "Reconcile",
+			"Failed to provision RBAC: %v", err)
 		return err
 	}
 
@@ -552,13 +562,14 @@ func (r *KubernautReconciler) deployAdditionalAgentRBAC(ctx context.Context, kn 
 
 		cond := metav1.Condition{
 			Type:               kubernautv1alpha1.ConditionAdditionalRBACBound,
-			Status:             metav1.ConditionTrue,
 			ObservedGeneration: kn.Generation,
 		}
 		if len(missingRoles) > 0 {
+			cond.Status = metav1.ConditionFalse
 			cond.Reason = ReasonAdditionalRBACPartialBound
 			cond.Message = fmt.Sprintf("CRBs created but ClusterRoles not found: %v", missingRoles)
 		} else {
+			cond.Status = metav1.ConditionTrue
 			cond.Reason = ReasonAdditionalRBACFullyBound
 			cond.Message = fmt.Sprintf("%d additional ClusterRoleBindings active", len(desiredSet))
 		}
