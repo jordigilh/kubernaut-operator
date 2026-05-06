@@ -4,6 +4,7 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
+| 1.4.x   | :white_check_mark: |
 | 1.3.x   | :white_check_mark: |
 | < 1.3   | :x:                |
 
@@ -74,11 +75,31 @@ The operator requires these elevated permissions:
 
 | ClusterRole | Purpose | Scoped Resources |
 |---|---|---|
-| `<ns>-kubernaut-agent-investigator` | Root-cause analysis across namespaces | Pods, Events, Deployments, ReplicaSets, Secrets (read-only) |
+| `<ns>-kubernaut-agent-investigator` | Cluster-wide read-only access for root-cause analysis | Core K8s (pods, deployments, secrets, events, RBAC, etc.), OCP platform (routes, SCCs, DeploymentConfigs, ImageStreams, Builds), OCP machine management (Machines, MachineSets, MachineConfigs, MCPs), OLM (CSVs, Subscriptions, InstallPlans, CatalogSources), admission webhooks, CRDs, PriorityClasses. See `internal/resources/rbac.go` for the full rule set. |
 | `<ns>-kubernaut-agent-client` | AIAnalysis service calls the KA service | Services (get/create on `kubernaut-agent-service`) |
 | `<ns>-signalprocessing-controller` | Watch Kubernetes events for signal ingestion | Events (cluster-wide, read-only) |
 | `<ns>-alertmanager-view` | EffectivenessMonitor reads Prometheus/AlertManager metrics | Created only when `monitoring.enabled=true` |
-| `<ns>-awx-integration` | WorkflowExecution talks to AWX/AAP | Created only when `ansible.enabled=true` |
+| `<ns>-workflowexecution-awx` | WorkflowExecution talks to AWX/AAP | AWX Jobs (CRUD). Created only when `ansible.enabled=true` |
+
+#### Investigator RBAC Risk Assessment
+
+The `kubernaut-agent-investigator` ClusterRole grants **read-only** access to a
+broad set of resources across 30+ API groups. Key security considerations:
+
+- **Cluster-wide secret read** (pre-existing): The agent can read all secrets
+  in all namespaces. This is required for cross-namespace root-cause analysis.
+- **RBAC topology read**: The agent can enumerate all Roles, ClusterRoles, and
+  their bindings. An attacker who compromises the agent pod could map the
+  entire cluster's principal-to-privilege chains.
+- **SCC read** (OCP): Exposes which SecurityContextConstraints exist and which
+  SAs are bound to privileged SCCs.
+- **MachineConfig read** (OCP): Exposes node-level configuration (ignition
+  snippets, kubelet config).
+
+These capabilities are equivalent to a **cluster auditor** tier — high-sensitivity
+read access with no write or escalation capability. The accepted risk boundary
+is: "compromise of the agent SA = full cluster read reconnaissance, but no
+mutation or data exfiltration beyond secret content."
 
 ## Disclosure Policy
 

@@ -194,6 +194,33 @@ oc logs job/kubernaut-db-migration -n kubernaut-system
 
 Common causes: PostgreSQL not accepting connections, wrong credentials, database does not exist.
 
+**Agent RBAC / Permission Errors:**
+
+If the Kubernaut Agent exhausts tool call budgets on `403 Forbidden` errors during
+investigation, the agent SA may be missing required RBAC. Diagnose with:
+
+```bash
+# Check the investigator ClusterRole exists and has rules
+oc get clusterrole <ns>-kubernaut-agent-investigator -o yaml
+
+# Test specific access (e.g., SCCs)
+oc auth can-i list securitycontextconstraints \
+  --as=system:serviceaccount:kubernaut-system:kubernaut-agent-sa
+
+# Check the RBACProvisioned condition
+oc get kubernaut kubernaut -n kubernaut-system \
+  -o jsonpath='{.status.conditions[?(@.type=="RBACProvisioned")]}'
+```
+
+Common causes: operator SA lacks `escalate`/`bind` permissions (check the
+operator's own ClusterRole), manual edits to operator-managed ClusterRoles
+(the operator will overwrite on the next reconcile), or OLM permission
+conflicts with other operators managing the same ClusterRole names.
+
+If using `additionalClusterRoleBindings`, check the `AdditionalRBACBound`
+condition for `PartiallyBound` — one or more referenced ClusterRoles may
+not exist.
+
 **CR in Degraded:**
 
 One or more services are not ready. Check which:
