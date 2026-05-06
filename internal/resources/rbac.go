@@ -456,6 +456,26 @@ func kubernautAgentInvestigatorClusterRole(kn *kubernautv1alpha1.Kubernaut, labe
 		{APIGroups: []string{"monitoring.coreos.com"}, Resources: []string{"prometheusrules", "servicemonitors", "podmonitors", "probes"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"metrics.k8s.io"}, Resources: []string{"pods", "nodes"}, Verbs: []string{"get", "list"}},
 		{APIGroups: []string{"config.openshift.io"}, Resources: []string{"nodes", "clusteroperators", "clusterversions", "infrastructures"}, Verbs: []string{"get", "list", "watch"}},
+		// OCP: OLM
+		{APIGroups: []string{"operators.coreos.com"}, Resources: []string{"clusterserviceversions", "subscriptions", "installplans", "operatorgroups", "catalogsources", "operatorconditions"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"packages.operators.coreos.com"}, Resources: []string{"packagemanifests"}, Verbs: []string{"get", "list", "watch"}},
+		// OCP: networking, builds, images, legacy apps, SCCs
+		{APIGroups: []string{"route.openshift.io"}, Resources: []string{"routes"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"apps.openshift.io"}, Resources: []string{"deploymentconfigs"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"security.openshift.io"}, Resources: []string{"securitycontextconstraints"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"image.openshift.io"}, Resources: []string{"imagestreams", "imagestreamtags"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"build.openshift.io"}, Resources: []string{"builds", "buildconfigs"}, Verbs: []string{"get", "list", "watch"}},
+		// OCP: machine management
+		{APIGroups: []string{"machine.openshift.io"}, Resources: []string{"machines", "machinesets", "machinehealthchecks"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"machineconfiguration.openshift.io"}, Resources: []string{"machineconfigs", "machineconfigpools"}, Verbs: []string{"get", "list", "watch"}},
+		// OCP: quotas, network operator
+		{APIGroups: []string{"quota.openshift.io"}, Resources: []string{"clusterresourcequotas", "appliedclusterresourcequotas"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"network.operator.openshift.io"}, Resources: []string{"operatorpkis", "egressrouters"}, Verbs: []string{"get", "list", "watch"}},
+		// Core K8s: RBAC, admission, CRDs, scheduling
+		{APIGroups: []string{"rbac.authorization.k8s.io"}, Resources: []string{"roles", "rolebindings", "clusterroles", "clusterrolebindings"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"admissionregistration.k8s.io"}, Resources: []string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"apiextensions.k8s.io"}, Resources: []string{"customresourcedefinitions"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"scheduling.k8s.io"}, Resources: []string{"priorityclasses"}, Verbs: []string{"get", "list", "watch"}},
 	}
 
 	return &rbacv1.ClusterRole{
