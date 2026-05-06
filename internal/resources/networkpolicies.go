@@ -298,14 +298,22 @@ func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.
 		ingress = append(ingress, *m)
 	}
 
+	egress := []networkingv1.NetworkPolicyEgressRule{dnsEgressRule()}
+	if r := apiServerEgressRule(spec.APIServerCIDR); r != nil {
+		egress = append(egress, *r)
+	}
+	egress = append(egress, datastorageEgressRule())
+
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: ObjectMeta(kn, ComponentKubernautAgent+"-netpol", ComponentKubernautAgent),
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentKubernautAgent)},
 			PolicyTypes: []networkingv1.PolicyType{
 				networkingv1.PolicyTypeIngress,
+				networkingv1.PolicyTypeEgress,
 			},
 			Ingress: ingress,
+			Egress:  egress,
 		},
 	}
 }

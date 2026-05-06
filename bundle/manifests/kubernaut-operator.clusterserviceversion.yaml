@@ -119,6 +119,21 @@ spec:
     - LLM API credentials (e.g., OpenAI API key) in a Secret
     - Rego policy ConfigMaps for AI analysis and signal processing
 
+    ### Cluster Access
+
+    The operator provisions a `kubernaut-agent-investigator` ClusterRole with
+    **read-only** cluster-wide access for root-cause analysis:
+
+    - **Core Kubernetes**: pods, deployments, secrets, events, RBAC, CRDs, webhooks
+    - **OCP platform**: routes, SCCs, DeploymentConfigs, ImageStreams, Builds
+    - **OCP machine management**: Machines, MachineSets, MachineConfigs
+    - **OLM**: CSVs, Subscriptions, InstallPlans, CatalogSources
+    - **Ecosystem**: Istio, Linkerd, cert-manager, ArgoCD, Prometheus
+
+    Use `spec.kubernautAgent.additionalClusterRoleBindings` to extend the agent's
+    access to custom CRDs. See [SECURITY.md](https://github.com/jordigilh/kubernaut-operator/blob/main/SECURITY.md)
+    for full per-ClusterRole justification and risk assessment.
+
     ### Getting Started
 
     1. Create the required BYO secrets (PostgreSQL, Valkey, LLM credentials)

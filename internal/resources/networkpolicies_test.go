@@ -102,7 +102,7 @@ func TestNetworkPolicies_GatewayIngress(t *testing.T) {
 	}
 }
 
-func TestNetworkPolicies_KubernautAgentIngressOnly(t *testing.T) {
+func TestNetworkPolicies_KubernautAgentIngressAndEgress(t *testing.T) {
 	kn := testKubernaut()
 	enabled := true
 	kn.Spec.NetworkPolicies.Enabled = &enabled
@@ -116,11 +116,19 @@ func TestNetworkPolicies_KubernautAgentIngressOnly(t *testing.T) {
 	if agentNP == nil {
 		t.Fatal("kubernaut-agent NetworkPolicy not found")
 	}
-	if !slices.Equal(agentNP.Spec.PolicyTypes, []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}) {
-		t.Errorf("PolicyTypes = %v, want [Ingress] only", agentNP.Spec.PolicyTypes)
+	wantTypes := []networkingv1.PolicyType{
+		networkingv1.PolicyTypeIngress,
+		networkingv1.PolicyTypeEgress,
 	}
-	if len(agentNP.Spec.Egress) > 0 {
-		t.Errorf("kubernaut-agent NP should have no Egress rules, got %d", len(agentNP.Spec.Egress))
+	if !slices.Equal(agentNP.Spec.PolicyTypes, wantTypes) {
+		t.Errorf("PolicyTypes = %v, want %v", agentNP.Spec.PolicyTypes, wantTypes)
+	}
+	if len(agentNP.Spec.Ingress) < 1 {
+		t.Fatalf("kubernaut-agent ingress rule count = %d, want at least 1", len(agentNP.Spec.Ingress))
+	}
+	// Without APIServerCIDR in test fixture: DNS + data-storage egress only.
+	if want, got := 2, len(agentNP.Spec.Egress); got != want {
+		t.Errorf("kubernaut-agent egress rule count = %d, want %d", got, want)
 	}
 }
 
