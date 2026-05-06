@@ -497,6 +497,9 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 		})
 	}
 
+	// Projected SA token with short TTL replaces the default automounted token.
+	// Requires AutomountServiceAccountToken=false on the kubernaut-agent-sa
+	// ServiceAccount (see serviceaccounts.go).
 	volumes = append(volumes, corev1.Volume{
 		Name: "sa-token",
 		VolumeSource: corev1.VolumeSource{

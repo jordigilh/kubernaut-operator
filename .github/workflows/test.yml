@@ -29,6 +29,7 @@ jobs:
 
       - name: Check coverage threshold
         run: |
+          # cover.out is produced by `make test` (Makefile: -coverprofile cover.out)
           grep 'internal/' cover.out > cover-internal.out || true
           echo "mode: set" | cat - cover-internal.out > cover-internal-final.out
           COVERAGE=$(go tool cover -func=cover-internal-final.out | grep '^total:' | awk '{print $3}' | tr -d '%')

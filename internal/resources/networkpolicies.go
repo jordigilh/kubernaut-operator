@@ -303,6 +303,9 @@ func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.
 		egress = append(egress, *r)
 	}
 	egress = append(egress, datastorageEgressRule())
+	if spec.MonitoringNamespace != "" {
+		egress = append(egress, monitoringStackEgressRule(spec.MonitoringNamespace))
+	}
 
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: ObjectMeta(kn, ComponentKubernautAgent+"-netpol", ComponentKubernautAgent),
@@ -470,6 +473,24 @@ func metricsIngressRule(monitoringNS string) *networkingv1.NetworkPolicyIngressR
 		},
 		Ports: []networkingv1.NetworkPolicyPort{
 			{Protocol: &protoTCP, Port: &p9090},
+		},
+	}
+}
+
+// monitoringStackEgressRule allows TCP 9091 (Thanos Querier) and TCP 9094
+// (AlertManager) to pods in the monitoring namespace. The agent uses these
+// for Prometheus metric queries and alert correlation.
+func monitoringStackEgressRule(monitoringNS string) networkingv1.NetworkPolicyEgressRule {
+	protoTCP := corev1.ProtocolTCP
+	p9091 := intstr.FromInt32(9091)
+	p9094 := intstr.FromInt32(9094)
+	return networkingv1.NetworkPolicyEgressRule{
+		To: []networkingv1.NetworkPolicyPeer{
+			{NamespaceSelector: namespaceNameSelector(monitoringNS)},
+		},
+		Ports: []networkingv1.NetworkPolicyPort{
+			{Protocol: &protoTCP, Port: &p9091},
+			{Protocol: &protoTCP, Port: &p9094},
 		},
 	}
 }

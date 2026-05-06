@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -59,6 +60,8 @@ func (c *deleteFailingClient) Delete(ctx context.Context, obj client.Object, opt
 // rbacCreateFailingClient wraps a real client but returns an error on
 // Create and Update calls for ClusterRole objects, simulating an RBAC
 // provisioning failure during the deploy phase.
+// Note: ensureResource uses Create/Update, not Patch, for ClusterRoles.
+// If that changes, this mock must also override Patch.
 type rbacCreateFailingClient struct {
 	client.Client
 }
@@ -2049,6 +2052,27 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(cond).NotTo(BeNil(), "RBACProvisioned condition should exist")
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal(ReasonRBACApplyFailed))
+
+			By("verifying Warning event was emitted")
+			recorder := r.Recorder.(*events.FakeRecorder)
+			var collected []string
+		drainRBAC:
+			for {
+				select {
+				case ev := <-recorder.Events:
+					collected = append(collected, ev)
+				default:
+					break drainRBAC
+				}
+			}
+			found := false
+			for _, ev := range collected {
+				if strings.Contains(ev, "RBACApplyFailed") && strings.Contains(ev, "Warning") {
+					found = true
+					break
+				}
+			}
+			Expect(found).To(BeTrue(), "expected Warning RBACApplyFailed event, got: %v", collected)
 		})
 
 		It("should set AdditionalRBACBound=False when referenced ClusterRoles do not exist", func() {

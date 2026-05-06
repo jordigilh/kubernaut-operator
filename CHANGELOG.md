@@ -15,7 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - OCP machine management: Machines, MachineSets, MachineConfigs, MCPs
   - Core K8s: RBAC objects, admission webhooks, CRDs, PriorityClasses
 - **RBAC**: Added egress rules to `kubernaut-agent` NetworkPolicy for
-  API server and data-storage access when NetworkPolicies are enabled
+  API server, data-storage, and monitoring stack (Thanos Querier TCP 9091,
+  AlertManager TCP 9094) access when NetworkPolicies are enabled
 - **Security**: Agent deployment now uses projected service account tokens
   with 1-hour TTL and audience binding instead of long-lived automounted tokens
 - **UX**: `RBACProvisioned` condition now set to `False` with descriptive

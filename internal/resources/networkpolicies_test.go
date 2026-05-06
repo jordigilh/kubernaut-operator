@@ -126,9 +126,47 @@ func TestNetworkPolicies_KubernautAgentIngressAndEgress(t *testing.T) {
 	if len(agentNP.Spec.Ingress) < 1 {
 		t.Fatalf("kubernaut-agent ingress rule count = %d, want at least 1", len(agentNP.Spec.Ingress))
 	}
-	// Without APIServerCIDR in test fixture: DNS + data-storage egress only.
+	// Without APIServerCIDR or MonitoringNamespace: DNS + data-storage egress only.
 	if want, got := 2, len(agentNP.Spec.Egress); got != want {
 		t.Errorf("kubernaut-agent egress rule count = %d, want %d", got, want)
+	}
+}
+
+func TestNetworkPolicies_KubernautAgentMonitoringEgress(t *testing.T) {
+	kn := testKubernaut()
+	enabled := true
+	kn.Spec.NetworkPolicies.Enabled = &enabled
+	kn.Spec.NetworkPolicies.MonitoringNamespace = OCPMonitoringNamespace
+	var agentNP *networkingv1.NetworkPolicy
+	for _, np := range NetworkPolicies(kn) {
+		if np.Name == ComponentKubernautAgent+"-netpol" {
+			agentNP = np
+			break
+		}
+	}
+	if agentNP == nil {
+		t.Fatal("kubernaut-agent NetworkPolicy not found")
+	}
+	// With MonitoringNamespace: DNS + data-storage + monitoring egress.
+	if want, got := 3, len(agentNP.Spec.Egress); got != want {
+		t.Fatalf("kubernaut-agent egress rule count = %d, want %d", got, want)
+	}
+	monRule := agentNP.Spec.Egress[2]
+	if len(monRule.To) != 1 {
+		t.Fatalf("monitoring egress peer count = %d, want 1", len(monRule.To))
+	}
+	ns := monRule.To[0].NamespaceSelector
+	if ns == nil || ns.MatchLabels["kubernetes.io/metadata.name"] != OCPMonitoringNamespace {
+		t.Errorf("monitoring egress namespace selector = %v, want %s", ns, OCPMonitoringNamespace)
+	}
+	if len(monRule.Ports) != 2 {
+		t.Fatalf("monitoring egress port count = %d, want 2", len(monRule.Ports))
+	}
+	if monRule.Ports[0].Port.IntValue() != 9091 {
+		t.Errorf("monitoring egress port[0] = %d, want 9091 (Thanos)", monRule.Ports[0].Port.IntValue())
+	}
+	if monRule.Ports[1].Port.IntValue() != 9094 {
+		t.Errorf("monitoring egress port[1] = %d, want 9094 (AlertManager)", monRule.Ports[1].Port.IntValue())
 	}
 }
 
@@ -189,7 +227,7 @@ func TestNetworkPolicies_MetricsIngress(t *testing.T) {
 	kn := testKubernaut()
 	enabled := true
 	kn.Spec.NetworkPolicies.Enabled = &enabled
-	kn.Spec.NetworkPolicies.MonitoringNamespace = "openshift-monitoring"
+	kn.Spec.NetworkPolicies.MonitoringNamespace = OCPMonitoringNamespace
 	var dsNP *networkingv1.NetworkPolicy
 	for _, np := range NetworkPolicies(kn) {
 		if np.Name == ComponentDataStorage+"-netpol" {
@@ -207,7 +245,7 @@ func TestNetworkPolicies_MetricsIngress(t *testing.T) {
 		nsOK := false
 		for _, peer := range rule.From {
 			if peer.NamespaceSelector != nil && peer.NamespaceSelector.MatchLabels != nil &&
-				peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == "openshift-monitoring" {
+				peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == OCPMonitoringNamespace {
 				nsOK = true
 				break
 			}
