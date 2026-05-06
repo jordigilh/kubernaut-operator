@@ -445,6 +445,50 @@ func TestKAInvestigator_HasServiceMeshAndGitOpsRules(t *testing.T) {
 	}
 }
 
+func TestKAInvestigator_HasOCPAndCoreK8sRules(t *testing.T) {
+	kn := testKubernaut()
+	roles := ClusterRoles(kn)
+	var investigator *rbacv1.ClusterRole
+	for _, r := range roles {
+		if r.Name == kn.Namespace+"-kubernaut-agent-investigator" {
+			investigator = r
+			break
+		}
+	}
+	if investigator == nil {
+		t.Fatal("kubernaut-agent-investigator ClusterRole not found")
+	}
+
+	wantGroups := []string{
+		"operators.coreos.com",
+		"packages.operators.coreos.com",
+		"route.openshift.io",
+		"apps.openshift.io",
+		"security.openshift.io",
+		"image.openshift.io",
+		"build.openshift.io",
+		"machine.openshift.io",
+		"machineconfiguration.openshift.io",
+		"quota.openshift.io",
+		"network.operator.openshift.io",
+		"rbac.authorization.k8s.io",
+		"admissionregistration.k8s.io",
+		"apiextensions.k8s.io",
+		"scheduling.k8s.io",
+	}
+	foundGroups := make(map[string]bool)
+	for _, rule := range investigator.Rules {
+		for _, g := range rule.APIGroups {
+			foundGroups[g] = true
+		}
+	}
+	for _, g := range wantGroups {
+		if !foundGroups[g] {
+			t.Errorf("kubernaut-agent-investigator missing API group %q", g)
+		}
+	}
+}
+
 func TestWorkflowRunner_HasMeshAndGitOpsRules(t *testing.T) {
 	kn := testKubernaut()
 	roles := ClusterRoles(kn)

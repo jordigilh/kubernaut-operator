@@ -262,9 +262,21 @@ oc get configmap -n kubernaut-system \
 
 ## Additional RBAC for Kubernaut Agent
 
-By default, the operator creates a base `kubernaut-agent-investigator` ClusterRole
-covering well-known Kubernetes resources (pods, deployments, storage, networking,
-etc.). If your environment includes custom CRDs that the KA agent should be able
+By default, the operator creates a `kubernaut-agent-investigator` ClusterRole
+with **read-only** access to:
+
+- **Core Kubernetes**: Pods, Deployments, StatefulSets, DaemonSets, Jobs, Services,
+  Secrets, ConfigMaps, Events, RBAC (Roles/ClusterRoles/Bindings), PVCs, Ingresses,
+  NetworkPolicies, HPAs, PDBs, PriorityClasses, CRDs, admission webhooks
+- **OCP platform**: Routes, DeploymentConfigs, SecurityContextConstraints,
+  ImageStreams, Builds, ClusterOperators, ClusterVersions, Infrastructures
+- **OCP machine management**: Machines, MachineSets, MachineHealthChecks,
+  MachineConfigs, MachineConfigPools
+- **OLM**: ClusterServiceVersions, Subscriptions, InstallPlans, OperatorGroups,
+  CatalogSources, PackageManifests
+- **Ecosystem**: Istio, Linkerd, cert-manager, ArgoCD, Prometheus/monitoring
+
+If your environment includes custom CRDs that the KA agent should be able
 to investigate, use `spec.kubernautAgent.additionalClusterRoleBindings` to layer
 on pre-existing ClusterRoles:
 
