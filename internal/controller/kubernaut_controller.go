@@ -79,6 +79,7 @@ const (
 	ReasonAnsibleTokenNotFound   = "TokenSecretNotFound"
 	ReasonAnsibleTokenKeyMissing = "TokenKeyMissing"
 
+	ReasonRBACApplyFailed            = "RBACApplyFailed"
 	ReasonAdditionalRBACFullyBound   = "FullyBound"
 	ReasonAdditionalRBACPartialBound = "PartiallyBound"
 )
@@ -363,11 +364,11 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		_ = r.patchStatus(ctx, kn, func() {
 			meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 				Type: kubernautv1alpha1.ConditionRBACProvisioned, Status: metav1.ConditionFalse,
-				Reason: "RBACApplyFailed", Message: err.Error(),
+				Reason: ReasonRBACApplyFailed, Message: err.Error(),
 				ObservedGeneration: kn.Generation,
 			})
 		})
-		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "RBACApplyFailed", "Reconcile",
+		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, ReasonRBACApplyFailed, "Reconcile",
 			"Failed to provision RBAC: %v", err)
 		return err
 	}

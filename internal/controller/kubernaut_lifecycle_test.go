@@ -56,6 +56,27 @@ func (c *deleteFailingClient) Delete(ctx context.Context, obj client.Object, opt
 	return c.Client.Delete(ctx, obj, opts...)
 }
 
+// rbacCreateFailingClient wraps a real client but returns an error on
+// Create and Update calls for ClusterRole objects, simulating an RBAC
+// provisioning failure during the deploy phase.
+type rbacCreateFailingClient struct {
+	client.Client
+}
+
+func (c *rbacCreateFailingClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
+	if _, ok := obj.(*rbacv1.ClusterRole); ok {
+		return fmt.Errorf("simulated: forbidden creating ClusterRole %s", obj.GetName())
+	}
+	return c.Client.Create(ctx, obj, opts...)
+}
+
+func (c *rbacCreateFailingClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+	if _, ok := obj.(*rbacv1.ClusterRole); ok {
+		return fmt.Errorf("simulated: forbidden updating ClusterRole %s", obj.GetName())
+	}
+	return c.Client.Update(ctx, obj, opts...)
+}
+
 // markMigrationJobComplete creates or patches the migration Job to have a
 // JobComplete condition, allowing the reconciler to proceed past phaseMigrate.
 func markMigrationJobComplete(ctx context.Context) {
@@ -1976,6 +1997,100 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				}
 			}
 			Expect(collected).To(ContainElement(ContainSubstring("Warning FinalizerTimeout")))
+		})
+	})
+
+	// ======================================================================
+	// RBAC Condition Accuracy
+	// ======================================================================
+
+	Context("RBAC Condition Accuracy", func() {
+		BeforeEach(func() {
+			deleteCRIfExists(ctx)
+			cleanupNamespacedResources(ctx)
+			deleteBYOSecrets(ctx)
+			cleanupClusterScoped(ctx)
+		})
+		AfterEach(func() {
+			deleteCRIfExists(ctx)
+			cleanupNamespacedResources(ctx)
+			cleanupClusterScoped(ctx)
+		})
+
+		It("should set RBACProvisioned=False when RBAC apply fails", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+
+			r := newReconciler()
+			By("reconcile 1: add finalizer")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("reconcile 2: validate + start migration")
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("marking migration Job complete")
+			markMigrationJobComplete(ctx)
+
+			By("injecting a client that fails on ClusterRole create/update")
+			r.Client = &rbacCreateFailingClient{Client: k8sClient}
+
+			By("reconcile 3: migration complete + deploy — RBAC should fail")
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).To(HaveOccurred())
+
+			By("restoring real client to read status")
+			r.Client = k8sClient
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionRBACProvisioned)
+			Expect(cond).NotTo(BeNil(), "RBACProvisioned condition should exist")
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(ReasonRBACApplyFailed))
+		})
+
+		It("should set AdditionalRBACBound=False when referenced ClusterRoles do not exist", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			cr.Spec.KubernautAgent.AdditionalClusterRoleBindings = []string{"nonexistent-cluster-role"}
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			reconcileToDeployPhase(ctx)
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAdditionalRBACBound)
+			Expect(cond).NotTo(BeNil(), "AdditionalRBACBound condition should exist")
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(ReasonAdditionalRBACPartialBound))
+			Expect(cond.Message).To(ContainSubstring("nonexistent-cluster-role"))
+		})
+
+		It("should set AdditionalRBACBound=True when referenced ClusterRoles exist", func() {
+			createBYOSecrets(ctx)
+			existingCR := &rbacv1.ClusterRole{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-extra-role"},
+				Rules:      []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get"}}},
+			}
+			Expect(k8sClient.Create(ctx, existingCR)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, existingCR) }()
+
+			cr := newCRWithRouteDisabled()
+			cr.Spec.KubernautAgent.AdditionalClusterRoleBindings = []string{"test-extra-role"}
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			reconcileToDeployPhase(ctx)
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAdditionalRBACBound)
+			Expect(cond).NotTo(BeNil(), "AdditionalRBACBound condition should exist")
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(cond.Reason).To(Equal(ReasonAdditionalRBACFullyBound))
 		})
 	})
 
