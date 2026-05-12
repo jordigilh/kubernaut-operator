@@ -833,7 +833,7 @@ spec:
                             description: Max tool calls per individual tool.
                             type: integer
                           maxTotalToolCalls:
-                            default: 30
+                            default: 40
                             description: Max total tool calls across all tools.
                             type: integer
                         type: object
@@ -1536,6 +1536,16 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              lastMigrationHash:
+                description: |-
+                  Hash of the last successfully completed migration Job spec.
+                  Used to skip re-running migration when the Job has been deleted
+                  (e.g. TTL cleanup, manual deletion) but nothing has changed.
+                type: string
+              lastMigrationTime:
+                description: Timestamp of the last successfully completed migration.
+                format: date-time
+                type: string
               phase:
                 description: Aggregate lifecycle phase.
                 enum:

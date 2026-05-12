@@ -67,27 +67,27 @@ spec:
         name: manager
         env:
         - name: RELATED_IMAGE_GATEWAY
-          value: quay.io/kubernaut-ai/gateway@sha256:bf5e4b63ae3f36a3c71daaf667ac4992572cee345b85abc6fdb83f659da2e7b3
+          value: quay.io/kubernaut-ai/gateway@sha256:07f1f10a71f0d38a0eca8fa3ae883051e04395da1f0adddb90c790fd2fca94d8
         - name: RELATED_IMAGE_DATA_STORAGE
-          value: quay.io/kubernaut-ai/datastorage@sha256:f0ec9153f1d4a35e26afdbcde1c1d075588a5cb4ff40c157df86c07d1547de1b
+          value: quay.io/kubernaut-ai/datastorage@sha256:e91cddcf29ac4a18334c352db14d9913c0eb7f2dc2311f3ac7d460e7db1c8fa8
         - name: RELATED_IMAGE_AIANALYSIS
-          value: quay.io/kubernaut-ai/aianalysis@sha256:3ba532f7dde65b06e5d68432b4e8d1db872058a82f0fbaedf43fdeb59233a916
+          value: quay.io/kubernaut-ai/aianalysis@sha256:7d4d7b223ffd1753086084d5fc156adb05a3932db2b0c7c3c4f1d9dd517bcb30
         - name: RELATED_IMAGE_SIGNALPROCESSING
-          value: quay.io/kubernaut-ai/signalprocessing@sha256:07bc5384541079fbc227c2fff9e01ab3544f6134b07d9103388a37187b7a0c08
+          value: quay.io/kubernaut-ai/signalprocessing@sha256:7030e0b565a88922786d2703d2ee9284a4ae58bbf1da27cf79f840357470b518
         - name: RELATED_IMAGE_REMEDIATIONORCHESTRATOR
-          value: quay.io/kubernaut-ai/remediationorchestrator@sha256:16b3d5ac929d440b28c43da7cf9a2933adaab1e9a12b623d2ae70b824a3dc56f
+          value: quay.io/kubernaut-ai/remediationorchestrator@sha256:92a6aaedf993bdb3af07f00d90a1c607ea90ad4e9b9ff82cf02640f98cbf557e
         - name: RELATED_IMAGE_WORKFLOWEXECUTION
-          value: quay.io/kubernaut-ai/workflowexecution@sha256:4e95c7f3a1496dbd66480a09d0f0b827c63738cee830f9d2709c8dac63018809
+          value: quay.io/kubernaut-ai/workflowexecution@sha256:70642f30f72996098508a6af128334dd40a7faeaf569bba091cbab48a4c5ac8a
         - name: RELATED_IMAGE_EFFECTIVENESSMONITOR
-          value: quay.io/kubernaut-ai/effectivenessmonitor@sha256:ae3755460eea08a7069610db6272fcaaec51e1335a9620ecaa67343ca637f078
+          value: quay.io/kubernaut-ai/effectivenessmonitor@sha256:9a7216b5b96e5a17acdc7e38716d304d1eb3c79136bd6c6c9b36c8df058cc478
         - name: RELATED_IMAGE_NOTIFICATION
-          value: quay.io/kubernaut-ai/notification@sha256:160de7330fae1a17e6676739b3a8fac0e0d90657d07429ac8800b3411772835a
+          value: quay.io/kubernaut-ai/notification@sha256:ac1a5c6cff5af8e88a6401e4532c8ead2eb7b58ce747c15541dc3ccaf1837eab
         - name: RELATED_IMAGE_KUBERNAUT_AGENT
-          value: quay.io/kubernaut-ai/kubernautagent@sha256:4c787406164cd92d2f6bd3c9f34ca70dbf493d62702f7c7df31a05b948afcdae
+          value: quay.io/kubernaut-ai/kubernautagent@sha256:bfbdecadc52ff38cb34eb193da2eaa0322c905ccfdddf15f8845c90c24bd009d
         - name: RELATED_IMAGE_AUTHWEBHOOK
-          value: quay.io/kubernaut-ai/authwebhook@sha256:3605df575c2d31b650f0ab4c40656f29c2df89e9c5f581b9f0eace1a16ec0e28
+          value: quay.io/kubernaut-ai/authwebhook@sha256:d69214cfd2a1a9f3cf41e983a945e1ab02c853cee7291b20782e0f2edd827313
         - name: RELATED_IMAGE_DB_MIGRATE
-          value: quay.io/kubernaut-ai/db-migrate@sha256:f88a280e7fe8bd6fa197f00c4f2e4074ccfb388e09b76d30b5afc14e10865327
+          value: quay.io/kubernaut-ai/db-migrate@sha256:8f4bd62745bdd3f74393773cb49dc9b67496835440e7d2795f90e7a356611ef5
         ports: []
         securityContext:
           allowPrivilegeEscalation: false
