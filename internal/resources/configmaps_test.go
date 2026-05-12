@@ -204,7 +204,7 @@ func TestRemediationOrchestratorConfigMap_NestedStructure(t *testing.T) {
 func TestRemediationOrchestratorConfigMap_CustomValues(t *testing.T) {
 	kn := testKubernaut()
 	kn.Spec.RemediationOrchestrator.Timeouts.Global = "2h"
-	kn.Spec.RemediationOrchestrator.Timeouts.Processing = "10m"
+	kn.Spec.RemediationOrchestrator.Timeouts.Processing = "10m" //nolint:goconst // test value, not a meaningful constant
 	cm, err := RemediationOrchestratorConfigMap(kn)
 	if err != nil {
 		t.Fatal(err)
@@ -1125,7 +1125,7 @@ func TestLoggingLevel_AllServices(t *testing.T) {
 			fn:   func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) { return AuthWebhookConfigMap(kn) },
 		},
 	}
-		for _, tt := range tests {
+	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			kn := testKubernaut()
 			tt.prep(kn)
