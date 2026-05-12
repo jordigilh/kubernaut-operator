@@ -75,10 +75,21 @@ The operator requires these elevated permissions:
 
 | ClusterRole | Purpose | Scoped Resources |
 |---|---|---|
-| `<ns>-kubernaut-agent-investigator` | Cluster-wide read-only access for root-cause analysis | Core K8s (pods, deployments, secrets, events, RBAC, etc.), OCP platform (routes, SCCs, DeploymentConfigs, ImageStreams, Builds), OCP machine management (Machines, MachineSets, MachineConfigs, MCPs), OLM (CSVs, Subscriptions, InstallPlans, CatalogSources), admission webhooks, CRDs, PriorityClasses. See `internal/resources/rbac.go` for the full rule set. |
+| `<ns>-kubernaut-agent-investigator` | Cluster-wide read-only access for root-cause analysis | Core K8s (pods, deployments, secrets, events, RBAC, etc.), OCP platform (routes, SCCs, DeploymentConfigs, ImageStreams, Builds), OCP machine management (Machines, MachineSets, MachineConfigs, MCPs), OLM (CSVs, Subscriptions, InstallPlans, CatalogSources), admission webhooks, CRDs, PriorityClasses, Istio/Linkerd/cert-manager/ArgoCD/Prometheus. See `internal/resources/rbac.go` for the full rule set. |
 | `<ns>-kubernaut-agent-client` | AIAnalysis service calls the KA service | Services (get/create on `kubernaut-agent-service`) |
-| `<ns>-signalprocessing-controller` | Watch Kubernetes events for signal ingestion | Events (cluster-wide, read-only) |
+| `<ns>-gateway-role` | Signal fingerprinting and owner-chain resolution | Core K8s read-only (nodes, pods, services, PVs, PVCs), apps (deployments, replicasets, statefulsets, daemonsets), autoscaling (HPAs), batch (jobs), networking (ingresses) |
+| `<ns>-signalprocessing-controller` | Process signals and manage remediation lifecycle | Full CRUD on `kubernaut.ai` CRs (signalprocessings, remediationrequests), status/finalizer updates, read-only core K8s (pods, services, namespaces, nodes, deployments, replicasets, statefulsets, daemonsets, HPAs, PDBs, NetworkPolicies), event creation, leader election leases |
+| `<ns>-aianalysis-controller` | Manage AI analysis lifecycle | Full CRUD on `kubernaut.ai` CRs (aianalyses), status/finalizer updates, read-only core K8s, event creation, leader election leases |
+| `<ns>-remediationorchestrator-controller` | Orchestrate end-to-end remediation | Full CRUD on `kubernaut.ai` CRs (remediationrequests, remediationexecutions, workflowruns), status/finalizer updates, read-only core K8s, event creation, leader election leases |
+| `<ns>-workflowexecution-controller` | Execute remediation workflows | Full CRUD on `kubernaut.ai` CRs (workflowruns), Argo Workflows (workflows), status/finalizer updates, read-only core K8s, event creation, leader election leases |
+| `<ns>-workflow-runner` | Run remediation actions inside workflows | Broad read-write on core K8s (pods, deployments, statefulsets, daemonsets, services, configmaps, secrets, etc.), Istio/Linkerd/cert-manager/ArgoCD resources |
+| `<ns>-effectivenessmonitor-controller` | Monitor remediation effectiveness | Full CRUD on `kubernaut.ai` CRs (effectivenessassessments), read-only core K8s, event creation, leader election leases |
+| `<ns>-notification-controller` | Deliver notifications | Full CRUD on `kubernaut.ai` CRs (notifications), status/finalizer updates, event creation, leader election leases |
+| `<ns>-data-storage-auth-middleware` | Auth webhook token review | TokenReview create, SubjectAccessReview create |
+| `<ns>-data-storage-client` | Service-to-DataStorage API access | Full CRUD on `kubernaut.ai` CRs (datastorageapis). Bound per-service via RoleBindings |
+| `<ns>-authwebhook-role` | AuthWebhook admission control | TokenReview create, SubjectAccessReview create, webhook configuration read |
 | `<ns>-alertmanager-view` | EffectivenessMonitor reads Prometheus/AlertManager metrics | Created only when `monitoring.enabled=true` |
+| `<ns>-gateway-signal-source` | AlertManager pushes signals to Gateway | Created only when `monitoring.enabled=true`. Bound to OCP alertmanager SA |
 | `<ns>-workflowexecution-awx` | WorkflowExecution talks to AWX/AAP | AWX Jobs (CRUD). Created only when `ansible.enabled=true` |
 
 #### Investigator RBAC Risk Assessment
@@ -95,6 +106,11 @@ broad set of resources across 30+ API groups. Key security considerations:
   SAs are bound to privileged SCCs.
 - **MachineConfig read** (OCP): Exposes node-level configuration (ignition
   snippets, kubelet config).
+- **OCP networking read**: Includes EgressNetworkPolicies, HostSubnets, and
+  NetNamespaces, exposing network topology details.
+- **Ecosystem CRD read**: Istio/Linkerd security policies, cert-manager
+  certificates, and ArgoCD application state are readable, potentially
+  exposing service mesh mTLS configuration and GitOps deployment details.
 
 These capabilities are equivalent to a **cluster auditor** tier — high-sensitivity
 read access with no write or escalation capability. The accepted risk boundary

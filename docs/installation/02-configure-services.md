@@ -28,6 +28,85 @@ spec:
       # tlsCaFile: /path/to/ca.pem
 ```
 
+### OAuth2 authentication for LLM endpoints
+
+If your LLM endpoint requires OAuth2 token exchange (e.g. corporate proxy, IAP), configure it in the CR:
+
+```yaml
+spec:
+  kubernautAgent:
+    llm:
+      oauth2:
+        enabled: true
+        tokenURL: "https://auth.example.com/token"
+        scopes:
+          - "openai:chat"
+        credentialsSecretRef:
+          name: oauth2-credentials
+```
+
+Create the credentials secret containing client ID and secret:
+
+```bash
+oc apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: oauth2-credentials
+  namespace: kubernaut-system
+stringData:
+  client_id: "<YOUR_CLIENT_ID>"
+  client_secret: "<YOUR_CLIENT_SECRET>"
+EOF
+```
+
+### Alignment check (shadow agent verification)
+
+The alignment check feature runs a shadow agent that independently verifies each investigation step. Enable it in the CR:
+
+```yaml
+spec:
+  kubernautAgent:
+    alignmentCheck:
+      enabled: true
+      timeout: "10s"
+      maxStepTokens: 500
+      llm:                      # optional: use a different LLM for alignment
+        provider: openai
+        model: gpt-4o-mini
+```
+
+When enabled, the agent will flag investigation steps that diverge from the shadow agent's analysis.
+
+### Safety controls
+
+The agent ships with safety controls enabled by default. Customize thresholds in the CR:
+
+```yaml
+spec:
+  kubernautAgent:
+    safety:
+      sanitization:
+        injectionPatternsEnabled: true    # detect prompt injection patterns
+        credentialScrubEnabled: true      # scrub credentials from tool output
+      anomaly:
+        maxToolCallsPerTool: 10           # max calls to a single tool per investigation
+        maxTotalToolCalls: 40             # max total tool calls per investigation
+        maxRepeatedFailures: 3            # abort after N consecutive tool failures
+```
+
+### Tool output summarizer
+
+Large tool outputs are automatically summarized before being sent to the LLM. Configure thresholds:
+
+```yaml
+spec:
+  kubernautAgent:
+    summarizer:
+      threshold: 8000           # token count that triggers summarization
+      maxToolOutputSize: 100000 # max tool output size in bytes (truncated beyond this)
+```
+
 For fully custom LLM runtime configs (e.g. MCP servers, tool-use), create an LLM runtime ConfigMap and reference it via `runtimeConfigMapName`:
 
 ```bash
@@ -194,6 +273,63 @@ If your AAP uses a publicly trusted CA (e.g., Let's Encrypt), omit `caCertSecret
 
 If you do not use Ansible, omit the `ansible` block entirely (it defaults to disabled).
 
+## Gateway Configuration (optional)
+
+The Gateway accepts signals from AlertManager and routes them to Signal Processing. Tune its behavior in the CR:
+
+```yaml
+spec:
+  gateway:
+    route:
+      enabled: true
+    logging:
+      level: info               # debug, info, warn, error
+    config:
+      trustedProxyCIDRs:        # CIDRs trusted for X-Forwarded-For headers
+        - "10.128.0.0/14"
+      deduplicationCooldown: "5m"   # dedup window for identical signals
+      k8sRequestTimeout: "15s"     # timeout for K8s API calls during fingerprinting
+```
+
+All gateway config fields are optional; the operator uses sensible defaults when omitted.
+
+## Remediation Orchestrator Tuning (optional)
+
+The Remediation Orchestrator manages the full lifecycle of remediation requests. Customize timeouts, routing behavior, and dry-run mode:
+
+```yaml
+spec:
+  remediationOrchestrator:
+    dryRun: false                          # when true, plans are created but not executed
+    dryRunHoldPeriod: "1h"                 # how long dry-run plans are held before expiry
+    timeouts:
+      global: "1h"
+      processing: "5m"
+      analyzing: "10m"
+      executing: "30m"
+      awaitingApproval: "15m"
+      verifying: "30m"
+    routing:
+      consecutiveFailureThreshold: 3       # failures before circuit-breaker cooldown
+      consecutiveFailureCooldown: "1h"
+      recentlyRemediatedCooldown: "5m"     # dedup window for repeated signals
+      exponentialBackoffBase: "1m"
+      exponentialBackoffMax: "10m"
+      noActionRequiredDelayHours: 24       # re-evaluation delay for no-action signals
+    effectivenessAssessment:
+      stabilizationWindow: "5m"            # wait time before verifying remediation
+    asyncPropagation:
+      gitOpsSyncDelay: "3m"                # allow GitOps sync before verification
+      operatorReconcileDelay: "1m"
+      proactiveAlertDelay: "5m"
+    notifications:
+      notifySelfResolved: false            # notify when signals self-resolve
+    retention:
+      period: "24h"                        # data retention period
+```
+
+All fields are optional; the operator uses the defaults shown above.
+
 ## ArgoCD / GitOps Integration
 
 Kubernaut integrates with GitOps workflows natively. The Kubernaut CR and all prerequisite ConfigMaps and Secrets can be managed as manifests in a Git repository and synced by ArgoCD or Flux.
@@ -266,15 +402,24 @@ By default, the operator creates a `kubernaut-agent-investigator` ClusterRole
 with **read-only** access to:
 
 - **Core Kubernetes**: Pods, Deployments, StatefulSets, DaemonSets, Jobs, Services,
-  Secrets, ConfigMaps, Events, RBAC (Roles/ClusterRoles/Bindings), PVCs, Ingresses,
-  NetworkPolicies, HPAs, PDBs, PriorityClasses, CRDs, admission webhooks
+  Secrets, ConfigMaps, Events, Namespaces, Nodes, PersistentVolumes,
+  PersistentVolumeClaims, Ingresses, NetworkPolicies, HPAs, PDBs, ReplicaSets,
+  ResourceQuotas, LimitRanges, ServiceAccounts, Endpoints
+- **RBAC & admission**: Roles, ClusterRoles, RoleBindings, ClusterRoleBindings,
+  ValidatingWebhookConfigurations, MutatingWebhookConfigurations, CRDs,
+  PriorityClasses
 - **OCP platform**: Routes, DeploymentConfigs, SecurityContextConstraints,
-  ImageStreams, Builds, ClusterOperators, ClusterVersions, Infrastructures
+  ImageStreams, Builds, ClusterOperators, ClusterVersions, Infrastructures,
+  AppliedClusterResourceQuotas
 - **OCP machine management**: Machines, MachineSets, MachineHealthChecks,
   MachineConfigs, MachineConfigPools
+- **OCP networking**: EgressNetworkPolicies, HostSubnets, NetNamespaces
 - **OLM**: ClusterServiceVersions, Subscriptions, InstallPlans, OperatorGroups,
   CatalogSources, PackageManifests
-- **Ecosystem**: Istio, Linkerd, cert-manager, ArgoCD, Prometheus/monitoring
+- **Ecosystem**: Istio (AuthorizationPolicy, PeerAuthentication, VirtualService,
+  DestinationRule, Gateway, ServiceEntry), Linkerd (Server, ServerAuthorization),
+  cert-manager (Certificate, Issuer, ClusterIssuer), ArgoCD (Application,
+  AppProject), Prometheus (ServiceMonitor, PodMonitor, PrometheusRule)
 
 If your environment includes custom CRDs that the KA agent should be able
 to investigate, use `spec.kubernautAgent.additionalClusterRoleBindings` to layer

@@ -76,8 +76,33 @@ spec:
       model: gpt-4o                        # or: claude-sonnet-4-6, etc.
       credentialsSecretName: llm-credentials
       # runtimeConfigMapName: custom-llm-runtime  # uncomment for BYO LLM config
+      # tlsCaFile: /path/to/ca.pem         # custom CA for LLM endpoint TLS
+      # oauth2:                            # OAuth2-based LLM authentication
+      #   enabled: false
+      #   tokenURL: ""
+      #   scopes: []
+      #   credentialsSecretRef:
+      #     name: oauth2-credentials
     # logging:
     #   level: info                        # debug, info, warn, error
+    # alignmentCheck:                      # shadow agent alignment verification
+    #   enabled: false
+    #   timeout: "10s"
+    #   maxStepTokens: 500
+    #   llm:                               # optional separate LLM for alignment
+    #     provider: openai
+    #     model: gpt-4o-mini
+    # safety:                              # agent safety controls
+    #   sanitization:
+    #     injectionPatternsEnabled: true    # detect prompt injection patterns
+    #     credentialScrubEnabled: true      # scrub credentials from tool output
+    #   anomaly:
+    #     maxToolCallsPerTool: 10
+    #     maxTotalToolCalls: 40
+    #     maxRepeatedFailures: 3
+    # summarizer:                          # tool output summarization
+    #   threshold: 8000                    # token count to trigger summarization
+    #   maxToolOutputSize: 100000          # max tool output size in bytes
 
   # --- NetworkPolicies (default: disabled) ---
   # networkPolicies:
@@ -104,13 +129,44 @@ spec:
       secretName: slack-webhook            # omit to disable Slack delivery
       channel: "#kubernaut-alerts"
 
-  # --- OCP integration ---
-  monitoring:
-    enabled: true
-
+  # --- Gateway tuning (optional) ---
   gateway:
     route:
       enabled: true
+    # logging:
+    #   level: info
+    # config:
+    #   trustedProxyCIDRs:              # CIDRs trusted for X-Forwarded-For
+    #     - "10.128.0.0/14"
+    #   deduplicationCooldown: "5m"     # dedup window for identical signals
+    #   k8sRequestTimeout: "15s"        # timeout for K8s API calls
+
+  # --- Remediation orchestrator tuning (optional) ---
+  remediationOrchestrator:
+    # dryRun: false                     # enable dry-run mode (plans but does not execute)
+    # dryRunHoldPeriod: "1h"            # how long to hold dry-run plans before expiry
+    # logging:
+    #   level: info
+    # timeouts:
+    #   global: "1h"
+    #   processing: "5m"
+    #   analyzing: "10m"
+    #   executing: "30m"
+    #   awaitingApproval: "15m"
+    #   verifying: "30m"
+    # routing:
+    #   consecutiveFailureThreshold: 3
+    #   consecutiveFailureCooldown: "1h"
+    #   recentlyRemediatedCooldown: "5m"
+    #   exponentialBackoffBase: "1m"
+    #   exponentialBackoffMax: "10m"
+    #   noActionRequiredDelayHours: 24
+    # retention:
+    #   period: "24h"
+
+  # --- OCP integration ---
+  monitoring:
+    enabled: true
 EOF
 ```
 
