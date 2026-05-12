@@ -358,3 +358,16 @@ catalog-build: opm ## Build a catalog image.
 .PHONY: catalog-push
 catalog-push: ## Push a catalog image.
 	$(MAKE) docker-push IMG=$(CATALOG_IMG)
+
+##@ Security & Supply Chain
+
+.PHONY: sbom
+sbom: ## Generate CycloneDX SBOM for the operator image.
+	@which syft >/dev/null 2>&1 || { echo "syft not found — install: https://github.com/anchore/syft#installation"; exit 1; }
+	syft packages $(IMG) -o cyclonedx-json > sbom.cdx.json
+	@echo "SBOM generated: sbom.cdx.json"
+
+.PHONY: image-scan
+image-scan: ## Scan operator image for vulnerabilities (CRITICAL/HIGH).
+	@which trivy >/dev/null 2>&1 || { echo "trivy not found — install: https://aquasecurity.github.io/trivy/"; exit 1; }
+	trivy image --severity CRITICAL,HIGH --exit-code 1 --ignorefile .trivyignore $(IMG)

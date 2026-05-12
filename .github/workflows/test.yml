@@ -11,6 +11,34 @@ permissions:
   contents: read
 
 jobs:
+  sbom-scan:
+    name: SBOM and Vulnerability Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build image
+        run: docker build -t kubernaut-operator:ci .
+
+      - name: Install Syft
+        run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin v1.20.0
+
+      - name: Generate SBOM
+        run: syft packages kubernaut-operator:ci -o cyclonedx-json > sbom.cdx.json
+
+      - name: Install Trivy
+        run: curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.70.0
+
+      - name: Scan image
+        run: trivy image --severity CRITICAL,HIGH,MEDIUM --exit-code 1 --ignorefile .trivyignore kubernaut-operator:ci
+
   test:
     name: Unit & Integration Tests
     runs-on: ubuntu-latest

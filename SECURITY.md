@@ -117,6 +117,58 @@ read access with no write or escalation capability. The accepted risk boundary
 is: "compromise of the agent SA = full cluster read reconnaissance, but no
 mutation or data exfiltration beyond secret content."
 
+## Operator RBAC (`manager-role`)
+
+The operator's own ClusterRole (`config/rbac/role.yaml`, `manager-role`) grants the following API access:
+
+| API Group | Resources | Verbs | Justification |
+|-----------|-----------|-------|---------------|
+| `""` (core) | configmaps, namespaces, secrets, serviceaccounts, services | create, delete, get, list, patch, update, watch | Manage all namespace-scoped resources for the 10 kubernaut services |
+| `""` (core) | events | create, patch | Emit Kubernetes events for reconciliation status |
+| `admissionregistration.k8s.io` | mutatingwebhookconfigurations, validatingwebhookconfigurations | create, delete, get, list, patch, update, watch | Manage AuthWebhook admission configurations |
+| `apiextensions.k8s.io` | customresourcedefinitions | create, get, list, patch, update, watch | Install and update kubernaut workload CRDs |
+| `apps` | deployments | create, delete, get, list, patch, update, watch | Manage Deployments for all 10 services |
+| `batch` | jobs | create, delete, get, list, patch, update, watch | Manage database migration Jobs |
+| `config.openshift.io` | apiservers | get, list, watch | Read OCP APIServer CR to derive TLS profile |
+| `kubernaut.ai` | kubernauts, kubernauts/finalizers, kubernauts/status | full CRUD | Reconcile the Kubernaut CR |
+| `networking.k8s.io` | networkpolicies | create, delete, get, list, patch, update, watch | Manage NetworkPolicies when enabled |
+| `policy` | poddisruptionbudgets | create, delete, get, list, patch, update, watch | Manage PDBs for service availability |
+| `rbac.authorization.k8s.io` | clusterroles, clusterrolebindings, roles, rolebindings | bind, create, delete, escalate, get, list, patch, update, watch | Provision RBAC for managed workloads (requires escalate/bind) |
+| `route.openshift.io` | routes | create, delete, get, list, patch, update, watch | Manage OCP Routes for Gateway |
+
+## ServiceAccount Token Model
+
+- Kubernaut Agent uses projected SA tokens (not automounted).
+- `AutomountServiceAccountToken: false` on the `kubernaut-agent-sa` ServiceAccount.
+- Projected token: audience `https://kubernetes.default.svc`, expiration 3600s (1 hour), mount path `/var/run/secrets/kubernetes.io/serviceaccount/token`.
+- All other service SAs use standard automounted tokens.
+
+## Container Hardening
+
+- All containers run as non-root (`runAsNonRoot: true`).
+- Privilege escalation disabled (`allowPrivilegeEscalation: false`).
+- All Linux capabilities dropped (`capabilities.drop: ["ALL"]`).
+- Seccomp profile: `RuntimeDefault`.
+- Read-only root filesystem on the operator container.
+- Init containers follow the same security context as application containers.
+
+## Supply Chain Integrity
+
+- Operator images signed with Cosign (keyless, GitHub Actions OIDC).
+- SBOM (CycloneDX JSON) generated via Syft, attached to GitHub Releases.
+- SBOM attested to images via Cosign (`cosign attest --type cyclonedx`).
+- Image vulnerability scanning via Trivy (CRITICAL/HIGH gate in CI).
+- Build provenance: SLSA 1–2 via `actions/attest-build-provenance`.
+- Init container images pinned by digest and configurable via `RELATED_IMAGE_*` env vars.
+- Consumer verification:
+
+```bash
+cosign verify \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp="^https://github.com/jordigilh/kubernaut-operator/.github/workflows/release.yml@refs/tags/" \
+  quay.io/kubernaut-ai/kubernaut-operator:<version>
+```
+
 ## Disclosure Policy
 
 We follow coordinated disclosure. We ask that you give us reasonable time to address the vulnerability before public disclosure.
