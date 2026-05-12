@@ -696,7 +696,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string
 			Port:            pgPort,
 			Name:            dbName,
 			User:            dbUser,
-			SSLMode:         "disable",
+			SSLMode:         withDefault(kn.Spec.PostgreSQL.SSLMode, "disable"),
 			MaxOpenConns:    100,
 			MaxIdleConns:    20,
 			ConnMaxLifetime: "1h",

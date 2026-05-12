@@ -143,7 +143,12 @@ const (
 
 // DefaultPostgreSQLImage is the RHEL10 PostgreSQL 16 image used for the
 // data-storage init container on OCP (restricted-v2 SCC compatible).
+// Prefer ResolveImage(kn, "init-postgres") for mirror-friendly resolution.
 const DefaultPostgreSQLImage = "registry.redhat.io/rhel10/postgresql-16@sha256:6626034c7e8a171610212a220efd417eb5ab7792b5dbd912d38976ffe0627301"
+
+// DefaultUBIMinimalImage is used for CA-bundle init containers.
+// Prefer ResolveImage(kn, "init-ubi-minimal") for mirror-friendly resolution.
+const DefaultUBIMinimalImage = "registry.access.redhat.com/ubi10/ubi-minimal@sha256:2a4785f399dc7ae2f3ca85f68bac0ccac47f3e73464a47c21e4f7ae46b55a053"
 
 // AllComponents returns the ordered list of all managed components.
 func AllComponents() []string {
@@ -202,6 +207,8 @@ var componentEnvSuffix = map[string]string{
 	"kubernautagent":          "KUBERNAUT_AGENT",
 	"authwebhook":             "AUTHWEBHOOK",
 	"db-migrate":              "DB_MIGRATE",
+	"init-postgres":           "INIT_POSTGRES",
+	"init-ubi-minimal":        "INIT_UBI_MINIMAL",
 }
 
 // ResolveImage returns the fully-qualified container image for a component.

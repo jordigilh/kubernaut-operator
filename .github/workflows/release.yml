@@ -1,6 +1,6 @@
 name: Release
 
-# Triggered by version tag push (e.g., v1.3.0, v1.4.0-rc1)
+# Triggered by version tag push (e.g., v1.4.0, v1.5.0-rc1)
 # Builds multi-arch operator image (amd64 + arm64), creates manifest list,
 # builds and pushes the OLM bundle image, and creates a GitHub Release.
 # Pre-release tags (-rc*, -alpha*, -beta*) create a pre-release and skip :latest tagging.
@@ -154,7 +154,7 @@ jobs:
 
   # ========================================
   # STAGE 2: MULTI-ARCH MANIFESTS
-  # Creates a manifest list so a single tag (e.g., v1.3.0) resolves
+  # Creates a manifest list so a single tag (e.g., 1.4.0) resolves
   # to the correct architecture automatically.
   # Also tags :latest for GA releases.
   # ========================================

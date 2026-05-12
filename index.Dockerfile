@@ -1,4 +1,4 @@
-FROM quay.io/operator-framework/opm:v1.27.1
+FROM quay.io/operator-framework/opm:v1.55.0
 LABEL operators.operatorframework.io.index.database.v1=/database/index.db
 ADD database/index.db /database/index.db
 EXPOSE 50051

@@ -88,6 +88,10 @@ spec:
           value: quay.io/kubernaut-ai/authwebhook@sha256:d69214cfd2a1a9f3cf41e983a945e1ab02c853cee7291b20782e0f2edd827313
         - name: RELATED_IMAGE_DB_MIGRATE
           value: quay.io/kubernaut-ai/db-migrate@sha256:8f4bd62745bdd3f74393773cb49dc9b67496835440e7d2795f90e7a356611ef5
+        - name: RELATED_IMAGE_INIT_POSTGRES
+          value: registry.redhat.io/rhel10/postgresql-16@sha256:6626034c7e8a171610212a220efd417eb5ab7792b5dbd912d38976ffe0627301
+        - name: RELATED_IMAGE_INIT_UBI_MINIMAL
+          value: registry.access.redhat.com/ubi10/ubi-minimal@sha256:2a4785f399dc7ae2f3ca85f68bac0ccac47f3e73464a47c21e4f7ae46b55a053
         ports: []
         securityContext:
           allowPrivilegeEscalation: false

@@ -698,7 +698,12 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 		{"workflowexecution", func() (*corev1.ConfigMap, error) { return resources.WorkflowExecutionConfigMap(kn, tlsOpt) }},
 		{"effectivenessmonitor", func() (*corev1.ConfigMap, error) { return resources.EffectivenessMonitorConfigMap(kn, tlsOpt) }},
 		{"notification-controller", func() (*corev1.ConfigMap, error) { return resources.NotificationControllerConfigMap(kn, tlsOpt) }},
-		{"notification-routing", func() (*corev1.ConfigMap, error) { return resources.NotificationRoutingConfigMap(kn) }},
+		{"notification-routing", func() (*corev1.ConfigMap, error) {
+			if kn.Spec.Notification.Routing != nil && kn.Spec.Notification.Routing.ConfigMapName != "" {
+				return nil, nil
+			}
+			return resources.NotificationRoutingConfigMap(kn)
+		}},
 		{"kubernaut-agent", func() (*corev1.ConfigMap, error) { return resources.KubernautAgentConfigMap(kn, tlsOpt) }},
 		{"authwebhook", func() (*corev1.ConfigMap, error) { return resources.AuthWebhookConfigMap(kn, tlsOpt) }},
 	}
