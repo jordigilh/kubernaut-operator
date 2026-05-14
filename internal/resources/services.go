@@ -24,7 +24,7 @@ import (
 )
 
 // serviceDefinition maps a component to its Kubernetes Service name, ports,
-// and optional annotations. Matches the Helm chart v1.3.0-rc11 topology.
+// and optional annotations.
 type serviceDefinition struct {
 	Component   string
 	ServiceName string
@@ -100,8 +100,8 @@ func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
 }
 
 // MetricsServices builds dedicated metrics-only Services for controller-style
-// components that have no external HTTP API. Matches the Helm chart v1.3.0-rc11
-// topology where these components expose only a :9090 metrics port.
+// components that have no external HTTP API. These components expose only a
+// :9090 metrics port.
 func MetricsServices(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
 	services := make([]*corev1.Service, 0, len(metricsServiceDefinitions))
 	for _, def := range metricsServiceDefinitions {

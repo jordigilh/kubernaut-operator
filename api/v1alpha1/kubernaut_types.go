@@ -129,6 +129,12 @@ type PostgreSQLSpec struct {
 	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	Port int32 `json:"port,omitempty"`
+
+	// PostgreSQL SSL mode (disable, require, verify-ca, verify-full).
+	// +kubebuilder:default="disable"
+	// +kubebuilder:validation:Enum=disable;require;verify-ca;verify-full
+	// +optional
+	SSLMode string `json:"sslMode,omitempty"`
 }
 
 // ValkeySpec defines the BYO Valkey/Redis connection.

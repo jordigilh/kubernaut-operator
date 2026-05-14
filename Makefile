@@ -3,7 +3,7 @@
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 1.4.0
+VERSION ?= 1.4.1
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "candidate,fast,stable")
@@ -149,8 +149,6 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "unknown")
-GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
@@ -242,7 +240,7 @@ CONTROLLER_TOOLS_VERSION ?= v0.18.0
 ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
 ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
-GOLANGCI_LINT_VERSION ?= v2.1.0
+GOLANGCI_LINT_VERSION ?= v2.11.4
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -360,3 +358,16 @@ catalog-build: opm ## Build a catalog image.
 .PHONY: catalog-push
 catalog-push: ## Push a catalog image.
 	$(MAKE) docker-push IMG=$(CATALOG_IMG)
+
+##@ Security & Supply Chain
+
+.PHONY: sbom
+sbom: ## Generate CycloneDX SBOM for the operator image.
+	@which syft >/dev/null 2>&1 || { echo "syft not found — install: https://github.com/anchore/syft#installation"; exit 1; }
+	syft packages $(IMG) -o cyclonedx-json > sbom.cdx.json
+	@echo "SBOM generated: sbom.cdx.json"
+
+.PHONY: image-scan
+image-scan: ## Scan operator image for vulnerabilities (CRITICAL/HIGH).
+	@which trivy >/dev/null 2>&1 || { echo "trivy not found — install: https://aquasecurity.github.io/trivy/"; exit 1; }
+	trivy image --severity CRITICAL,HIGH --exit-code 1 --ignorefile .trivyignore $(IMG)

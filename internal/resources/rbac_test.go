@@ -411,6 +411,49 @@ func TestClusterRoles_HaveCommonLabels(t *testing.T) {
 	}
 }
 
+func TestGatewayClusterRole_HasPVCAndHPARules(t *testing.T) {
+	kn := testKubernaut()
+	roles := ClusterRoles(kn)
+	var gw *rbacv1.ClusterRole
+	for _, r := range roles {
+		if r.Name == kn.Namespace+"-gateway-role" {
+			gw = r
+			break
+		}
+	}
+	if gw == nil {
+		t.Fatal("gateway-role ClusterRole not found")
+	}
+
+	type resourceCheck struct {
+		apiGroup string
+		resource string
+	}
+	want := []resourceCheck{
+		{"", "persistentvolumeclaims"},
+		{"autoscaling", "horizontalpodautoscalers"},
+	}
+
+	for _, w := range want {
+		found := false
+		for _, rule := range gw.Rules {
+			for _, g := range rule.APIGroups {
+				if g != w.apiGroup {
+					continue
+				}
+				for _, r := range rule.Resources {
+					if r == w.resource {
+						found = true
+					}
+				}
+			}
+		}
+		if !found {
+			t.Errorf("gateway-role missing %s/%s", w.apiGroup, w.resource)
+		}
+	}
+}
+
 func TestKAInvestigator_HasServiceMeshAndGitOpsRules(t *testing.T) {
 	kn := testKubernaut()
 	roles := ClusterRoles(kn)

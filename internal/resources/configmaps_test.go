@@ -204,7 +204,7 @@ func TestRemediationOrchestratorConfigMap_NestedStructure(t *testing.T) {
 func TestRemediationOrchestratorConfigMap_CustomValues(t *testing.T) {
 	kn := testKubernaut()
 	kn.Spec.RemediationOrchestrator.Timeouts.Global = "2h"
-	kn.Spec.RemediationOrchestrator.Timeouts.Processing = "10m"
+	kn.Spec.RemediationOrchestrator.Timeouts.Processing = "10m" //nolint:goconst // test value, not a meaningful constant
 	cm, err := RemediationOrchestratorConfigMap(kn)
 	if err != nil {
 		t.Fatal(err)
@@ -1138,5 +1138,181 @@ func TestLoggingLevel_AllServices(t *testing.T) {
 				t.Errorf("expected logging level %q in %s, got:\n%s", lvl, tt.key, data)
 			}
 		})
+	}
+}
+
+func TestKubernautAgentConfigMap_LLMTLSCaFile(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.KubernautAgent.LLM.TLSCaFile = "/etc/custom-ca/llm.pem"
+	cm, err := KubernautAgentConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root struct {
+		AI struct {
+			LLM struct {
+				TLSCaFile string `yaml:"tlsCaFile"`
+			} `yaml:"llm"`
+		} `yaml:"ai"`
+	}
+	if err := yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root); err != nil {
+		t.Fatalf("unmarshal KA config: %v", err)
+	}
+	if root.AI.LLM.TLSCaFile != "/etc/custom-ca/llm.pem" {
+		t.Errorf("ai.llm.tlsCaFile = %q, want /etc/custom-ca/llm.pem", root.AI.LLM.TLSCaFile)
+	}
+}
+
+func TestKubernautAgentConfigMap_SummarizerNonDefault(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.KubernautAgent.Summarizer.Threshold = 5000
+	kn.Spec.KubernautAgent.Summarizer.MaxToolOutputSize = 50000
+	cm, err := KubernautAgentConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root struct {
+		AI struct {
+			Summarizer *struct {
+				Threshold         int `yaml:"threshold"`
+				MaxToolOutputSize int `yaml:"maxToolOutputSize"`
+			} `yaml:"summarizer"`
+		} `yaml:"ai"`
+	}
+	if err := yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root); err != nil {
+		t.Fatalf("unmarshal KA config: %v", err)
+	}
+	if root.AI.Summarizer == nil {
+		t.Fatal("expected ai.summarizer block for non-default summarizer settings")
+	}
+	if root.AI.Summarizer.Threshold != 5000 {
+		t.Errorf("summarizer.threshold = %d, want 5000", root.AI.Summarizer.Threshold)
+	}
+	if root.AI.Summarizer.MaxToolOutputSize != 50000 {
+		t.Errorf("summarizer.maxToolOutputSize = %d, want 50000", root.AI.Summarizer.MaxToolOutputSize)
+	}
+}
+
+func TestKubernautAgentConfigMap_SafetyAnomalyMaxToolCallsPerTool(t *testing.T) {
+	kn := testKubernaut()
+	maxPer := 5
+	kn.Spec.KubernautAgent.Safety.Anomaly.MaxToolCallsPerTool = &maxPer
+	cm, err := KubernautAgentConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root struct {
+		AI struct {
+			Safety struct {
+				Anomaly struct {
+					MaxToolCallsPerTool int `yaml:"maxToolCallsPerTool"`
+				} `yaml:"anomaly"`
+			} `yaml:"safety"`
+		} `yaml:"ai"`
+	}
+	if err := yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root); err != nil {
+		t.Fatalf("unmarshal KA config: %v", err)
+	}
+	if root.AI.Safety.Anomaly.MaxToolCallsPerTool != 5 {
+		t.Errorf("ai.safety.anomaly.maxToolCallsPerTool = %d, want 5", root.AI.Safety.Anomaly.MaxToolCallsPerTool)
+	}
+}
+
+func TestKubernautAgentConfigMap_LLMOAuth2Block(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.KubernautAgent.LLM.OAuth2.Enabled = true
+	kn.Spec.KubernautAgent.LLM.OAuth2.TokenURL = "https://idp.example/oauth/token"
+	kn.Spec.KubernautAgent.LLM.OAuth2.Scopes = []string{"openid", "api.read"}
+	cm, err := KubernautAgentConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root struct {
+		AI struct {
+			LLM struct {
+				OAuth2 *struct {
+					Enabled  bool     `yaml:"enabled"`
+					TokenURL string   `yaml:"tokenURL"`
+					Scopes   []string `yaml:"scopes"`
+				} `yaml:"oauth2"`
+			} `yaml:"llm"`
+		} `yaml:"ai"`
+	}
+	if err := yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root); err != nil {
+		t.Fatalf("unmarshal KA config: %v", err)
+	}
+	if root.AI.LLM.OAuth2 == nil {
+		t.Fatal("expected ai.llm.oauth2 block when OAuth2 enabled")
+	}
+	if !root.AI.LLM.OAuth2.Enabled {
+		t.Error("oauth2.enabled should be true")
+	}
+	if root.AI.LLM.OAuth2.TokenURL != "https://idp.example/oauth/token" {
+		t.Errorf("oauth2.tokenURL = %q", root.AI.LLM.OAuth2.TokenURL)
+	}
+	if len(root.AI.LLM.OAuth2.Scopes) != 2 || root.AI.LLM.OAuth2.Scopes[0] != "openid" || root.AI.LLM.OAuth2.Scopes[1] != "api.read" {
+		t.Errorf("oauth2.scopes = %#v, want [openid api.read]", root.AI.LLM.OAuth2.Scopes)
+	}
+}
+
+func TestGatewayConfigMap_TrustedProxyCIDRsCustom(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Gateway.Config.TrustedProxyCIDRs = []string{"10.0.0.0/8"}
+	cm, err := GatewayConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["config.yaml"]
+	if !strings.Contains(data, "trustedProxyCIDRs") || !strings.Contains(data, "10.0.0.0/8") {
+		t.Errorf("gateway config should contain trustedProxyCIDRs with 10.0.0.0/8, got:\n%s", data)
+	}
+}
+
+func TestGatewayConfigMap_DeduplicationCooldownCustom(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Gateway.Config.DeduplicationCooldown = "10m"
+	cm, err := GatewayConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := cm.Data["config.yaml"]
+	if !strings.Contains(data, "cooldownPeriod: 10m") {
+		t.Errorf("gateway config should contain cooldownPeriod 10m, got:\n%s", data)
+	}
+}
+
+func TestDataStorageConfigMap_PostgreSQLSSLModeRequire(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.PostgreSQL.SSLMode = "require"
+	cm, err := DataStorageConfigMap(kn, "kubernautdb", "kubernautuser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root struct {
+		Database struct {
+			SSLMode string `yaml:"sslMode"`
+		} `yaml:"database"`
+	}
+	if err := yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root); err != nil {
+		t.Fatalf("unmarshal datastorage config: %v", err)
+	}
+	if root.Database.SSLMode != "require" {
+		t.Errorf("database.sslMode = %q, want require", root.Database.SSLMode)
+	}
+}
+
+func TestNotificationRoutingConfigMap_StillBuildsWhenRoutingConfigMapNameBYO(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Notification.Routing = &kubernautv1alpha1.ConfigMapRef{ConfigMapName: "my-routing"}
+	cm, err := NotificationRoutingConfigMap(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cm.Name != "notification-routing-config" {
+		t.Errorf("NotificationRoutingConfigMap name = %q, want notification-routing-config (BYO affects deployment/controller, not this builder)", cm.Name)
+	}
+	data := cm.Data["routing.yaml"]
+	if !strings.Contains(data, "console") {
+		t.Errorf("expected default routing content when builder invoked, got:\n%s", data)
 	}
 }

@@ -67,8 +67,7 @@ manages is correct, idempotent, and privilege-minimal.
 
 ### 2.2 Version
 
-All tests target the current `main`/`fix/critical-review-p0-p3` branch at
-commit `f7da6d4` or later.
+All tests target the current `main` or `release/v1.4.0` branch.
 
 ---
 
@@ -91,7 +90,7 @@ Each feature maps to a business outcome the operator must deliver.
 | ID | Feature | Business Outcome |
 |----|---------|-----------------|
 | T2-01 | Spec update propagation (ConfigMap, image tag, resources) | Live upgrades are applied without manual intervention |
-| T2-02 | Feature toggle lifecycle (monitoring, ansible, route, SDK CM) | Conditional resources are created when enabled, removed when disabled |
+| T2-02 | Feature toggle lifecycle (monitoring, ansible, route, LLM runtime CM) | Conditional resources are created when enabled, removed when disabled |
 | T2-03 | Owner reference propagation | Kubernetes GC cleans up namespaced resources automatically |
 | T2-04 | BYO secret validation | Operator rejects invalid credentials early with actionable status |
 
@@ -239,7 +238,7 @@ Each feature maps to a business outcome the operator must deliver.
 | Precondition | CR at Running phase with monitoring/ansible enabled |
 | Steps | 1. Disable feature 2. Reconcile |
 | Expected | Feature resources deleted; re-enable recreates them |
-| Tests | "should create monitoring RBAC when monitoring is enabled", "should delete monitoring RBAC when monitoring is disabled", "should create AWX RBAC when ansible is enabled", "should delete AWX RBAC when ansible is disabled", "should not generate SDK ConfigMap when sdkConfigMapName is set" |
+| Tests | "should create monitoring RBAC when monitoring is enabled", "should delete monitoring RBAC when monitoring is disabled", "should create AWX RBAC when ansible is enabled", "should delete AWX RBAC when ansible is disabled", "should not generate LLM runtime ConfigMap when runtimeConfigMapName is set" |
 
 #### TC-T2-03: Owner References
 
@@ -490,7 +489,7 @@ Tests are executed on every pull request via GitHub Actions. The pipeline:
 
 ## Appendix A: Test Inventory
 
-### A.1 Controller Integration Tests (47 total)
+### A.1 Controller Integration Tests
 
 **Existing tests (10):**
 
@@ -525,7 +524,7 @@ Tests are executed on every pull request via GitHub Actions. The pipeline:
 | 22 | Feature Toggles | should delete monitoring RBAC when monitoring is disabled |
 | 23 | Feature Toggles | should create AWX RBAC when ansible is enabled |
 | 24 | Feature Toggles | should delete AWX RBAC when ansible is disabled |
-| 25 | Feature Toggles | should not generate SDK ConfigMap when sdkConfigMapName is set |
+| 25 | Feature Toggles | should not generate LLM runtime ConfigMap when runtimeConfigMapName is set |
 | 26 | Spec Propagation | should update ConfigMap data when spec changes |
 | 27 | Spec Propagation | should update Deployment image when spec.image.tag changes |
 | 28 | Spec Propagation | should set owner references on namespaced resources |
@@ -553,9 +552,10 @@ Tests are executed on every pull request via GitHub Actions. The pipeline:
 
 | File | Tests | Coverage |
 |------|-------|---------|
-| `rbac_test.go` | 30 | ClusterRoles, CRBs, DataStorage bindings, Namespace roles, Workflow NS, Ansible, Monitoring, Kubernaut Agent client RB, Monitoring name enumerators, Investigator OCP/K8s rules, Additional agent CRB |
-| `deployments_test.go` | 20+ | All 10 deployment builders, image construction, volume mounts, volume source CM accuracy, security contexts |
-| `configmaps_test.go` | 19+ | All ConfigMap builders, default values, YAML formatting, default Rego policies, Slack absence |
+| `rbac_test.go` | 31 | ClusterRoles, CRBs, DataStorage bindings, Namespace roles, Workflow NS, Ansible, Monitoring, Kubernaut Agent client RB, Monitoring name enumerators, Investigator OCP/K8s rules, Additional agent CRB, Gateway PVC/HPA |
+| `pdb_test.go` | 6 | PDB count, maxUnavailable, selectors, labels, namespace, names |
+| `deployments_test.go` | 21+ | All 10 deployment builders, image construction, volume mounts, volume source CM accuracy, security contexts, BYO notification routing |
+| `configmaps_test.go` | 27+ | All ConfigMap builders, default values, YAML formatting, default Rego policies, Slack absence, LLM tlsCaFile, summarizer, safety, OAuth2, gateway config, sslMode |
 | `common_test.go` | 19+ | Labels, selectors, Image(), ObjectMeta, ValkeyAddr, MergeResources, SetOwnerReference, ServiceAccountName fallback, intPtrDefault |
 | `services_test.go` | 8 | Service count, ports, authwebhook HTTPS, selector-to-component validation, PDB count/selectors |
 | `serviceaccounts_test.go` | 3 | ServiceAccount per-component, WorkflowRunnerServiceAccount default/custom namespace |

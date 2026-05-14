@@ -231,6 +231,18 @@ func TestNotificationDeployment_RoutingConfigMount(t *testing.T) {
 	assertHasVolumeMount(t, dep, "routing-config", "/etc/notification-routing")
 }
 
+func TestNotificationDeployment_BYORoutingConfigMapName(t *testing.T) {
+	kn := testKubernaut()
+	kn.Spec.Notification.Routing = &kubernautv1alpha1.ConfigMapRef{ConfigMapName: "my-routing"}
+	dep, err := NotificationDeployment(kn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasVolume(t, dep, "routing-config")
+	assertVolumeSourceConfigMap(t, dep, "routing-config", "my-routing")
+	assertHasVolumeMount(t, dep, "routing-config", "/etc/notification-routing")
+}
+
 func TestKubernautAgentDeployment_LLMCredentials(t *testing.T) {
 	kn := testKubernaut()
 	dep, err := KubernautAgentDeployment(kn)

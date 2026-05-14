@@ -79,9 +79,13 @@ func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, err
 func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	pgPort := PostgreSQLPort(kn)
 
+	pgInitImage, err := ResolveImage(kn, "init-postgres")
+	if err != nil {
+		pgInitImage = DefaultPostgreSQLImage
+	}
 	initContainer := corev1.Container{
 		Name:            "wait-for-postgres",
-		Image:           DefaultPostgreSQLImage,
+		Image:           pgInitImage,
 		ImagePullPolicy: kn.Spec.Image.PullPolicy,
 		Command: []string{"sh", "-c",
 			"until pg_isready -h \"$PGHOST\" -p \"$PGPORT\"; do echo waiting for postgres; sleep 2; done",
@@ -264,11 +268,16 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deplo
 		mounts = append(mounts, corev1.VolumeMount{
 			Name: "combined-ca", MountPath: "/etc/combined-ca", ReadOnly: true,
 		})
+		ubiImage, ubiErr := ResolveImage(kn, "init-ubi-minimal")
+		if ubiErr != nil {
+			ubiImage = DefaultUBIMinimalImage
+		}
 		initContainers = append(initContainers, corev1.Container{
-			Name:    "build-ca-bundle",
-			Image:   "registry.access.redhat.com/ubi10/ubi-minimal@sha256:2a4785f399dc7ae2f3ca85f68bac0ccac47f3e73464a47c21e4f7ae46b55a053",
-			Command: []string{"sh", "-c"},
-			Args:    []string{"cat /etc/tls-ca/service-ca.crt /aap-ca/aap-ca.crt > /combined/ca-bundle.crt"},
+			Name:            "build-ca-bundle",
+			Image:           ubiImage,
+			ImagePullPolicy: kn.Spec.Image.PullPolicy,
+			Command:         []string{"sh", "-c"},
+			Args:            []string{"cat /etc/tls-ca/service-ca.crt /aap-ca/aap-ca.crt > /combined/ca-bundle.crt"},
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
 				{Name: "aap-ca", MountPath: "/aap-ca", ReadOnly: true},
@@ -311,9 +320,13 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.De
 		mounts = append(mounts, corev1.VolumeMount{
 			Name: "service-ca", MountPath: "/etc/ssl/em", ReadOnly: true,
 		})
+		emUbiImage, emErr := ResolveImage(kn, "init-ubi-minimal")
+		if emErr != nil {
+			emUbiImage = DefaultUBIMinimalImage
+		}
 		initContainers = append(initContainers, corev1.Container{
 			Name:            "wait-for-service-ca",
-			Image:           "registry.access.redhat.com/ubi10/ubi-minimal@sha256:2a4785f399dc7ae2f3ca85f68bac0ccac47f3e73464a47c21e4f7ae46b55a053",
+			Image:           emUbiImage,
 			ImagePullPolicy: kn.Spec.Image.PullPolicy,
 			Command:         []string{"sh", "-c"},
 			Args: []string{
@@ -353,9 +366,13 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.De
 
 // NotificationDeployment builds the notification Deployment.
 func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+	routingCMName := "notification-routing-config"
+	if kn.Spec.Notification.Routing != nil && kn.Spec.Notification.Routing.ConfigMapName != "" {
+		routingCMName = kn.Spec.Notification.Routing.ConfigMapName
+	}
 	volumes := []corev1.Volume{
 		configMapVolume("config", "notification-controller-config"),
-		configMapVolume("routing-config", "notification-routing-config"),
+		configMapVolume("routing-config", routingCMName),
 		{Name: "notification-output", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	}
 	mounts := []corev1.VolumeMount{
@@ -478,9 +495,14 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 
 	var initContainers []corev1.Container
 	if kn.Spec.Monitoring.MonitoringEnabled() {
+		kaUbiImage, kaErr := ResolveImage(kn, "init-ubi-minimal")
+		if kaErr != nil {
+			kaUbiImage = DefaultUBIMinimalImage
+		}
 		initContainers = append(initContainers, corev1.Container{
-			Name:  "build-ca-bundle",
-			Image: "registry.access.redhat.com/ubi10/ubi-minimal@sha256:2a4785f399dc7ae2f3ca85f68bac0ccac47f3e73464a47c21e4f7ae46b55a053",
+			Name:            "build-ca-bundle",
+			Image:           kaUbiImage,
+			ImagePullPolicy: kn.Spec.Image.PullPolicy,
 			Command: []string{"sh", "-c",
 				"cat /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /service-ca/service-ca.crt > /combined/ca-bundle.crt",
 			},
@@ -553,7 +575,7 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 // AuthWebhookDeployment builds the authwebhook Deployment.
 //
 // OPERATIONAL NOTE — Admission blackout during rollout:
-// The deployment uses the Recreate strategy (matching the Helm chart) to
+// The deployment uses the Recreate strategy to
 // avoid TLS certificate routing conflicts between old and new pods. This
 // means that during a rollout the old pod is terminated before the new one
 // starts, creating a brief window (~15-30 s, depending on readiness probe
@@ -770,8 +792,8 @@ func overrideTLSCAFile(env []corev1.EnvVar, path string) []corev1.EnvVar {
 }
 
 // ProbeConfig holds per-component HTTP GET probe paths and timing, mirroring
-// the Helm chart values exactly so that cold-start and resource-constrained
-// nodes don't see premature restarts.
+// the upstream kubernaut service defaults so that cold-start and
+// resource-constrained nodes don't see premature restarts.
 type ProbeConfig struct {
 	LivenessPath              string
 	LivenessInitialDelay      int32
@@ -786,9 +808,9 @@ type ProbeConfig struct {
 }
 
 // probeConfigForComponent returns the probe configuration for a given
-// component, matching the Helm chart (v1.3.0-rc11) exactly.
-// Issue #753: Gateway, DataStorage, and KubernautAgent probes moved to the
-// dedicated health port (8081) using /healthz and /readyz paths.
+// component, aligned with upstream kubernaut v1.4.0 defaults.
+// Gateway, DataStorage, and KubernautAgent probes use the dedicated health
+// port (8081) with /healthz and /readyz paths.
 func probeConfigForComponent(component string) ProbeConfig {
 	switch component {
 	case ComponentGateway:

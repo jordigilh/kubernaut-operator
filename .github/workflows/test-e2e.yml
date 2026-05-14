@@ -8,10 +8,10 @@ on:
         required: true
         type: string
       operator_image:
-        description: "Operator image to test (e.g. quay.io/kubernaut-ai/kubernaut-operator:v1.3.0)"
+        description: "Operator image to test (e.g. quay.io/kubernaut-ai/kubernaut-operator:1.4.1-rc2)"
         required: true
         type: string
-        default: "quay.io/kubernaut-ai/kubernaut-operator:v1.3.0"
+        default: "quay.io/kubernaut-ai/kubernaut-operator:1.4.1"
 
 permissions:
   contents: read

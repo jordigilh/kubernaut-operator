@@ -25,8 +25,8 @@ import (
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
-// NetworkPolicies returns NetworkPolicy resources matching the upstream Helm
-// chart v1.4.0-rc3 traffic matrix. Returns nil when NetworkPolicies are
+// NetworkPolicies returns NetworkPolicy resources matching the upstream
+// kubernaut v1.4.0 traffic matrix. Returns nil when NetworkPolicies are
 // disabled on the CR.
 func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut) []*networkingv1.NetworkPolicy {
 	spec := kn.Spec.NetworkPolicies
