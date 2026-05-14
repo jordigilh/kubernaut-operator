@@ -111,11 +111,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
-      - name: Login to Quay.io
+      - name: Login to Quay.io (podman)
         run: |
           podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
                        -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
                        quay.io
+
+      - name: Login to Quay.io (docker credentials)
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_ROBOT_USERNAME }}
+          password: ${{ secrets.QUAY_ROBOT_TOKEN }}
 
       - name: Install Syft
         run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
@@ -262,10 +269,11 @@ jobs:
         uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62
 
       - name: Login to Quay.io
-        run: |
-          podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
-                       -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
-                       quay.io
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_ROBOT_USERNAME }}
+          password: ${{ secrets.QUAY_ROBOT_TOKEN }}
 
       - name: Sign version manifest
         env:
@@ -304,11 +312,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Login to Quay.io
+      - name: Login to Quay.io (podman)
         run: |
           podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
                        -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
                        quay.io
+
+      - name: Login to Quay.io (docker credentials)
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_ROBOT_USERNAME }}
+          password: ${{ secrets.QUAY_ROBOT_TOKEN }}
 
       - name: Pull amd64 image and get digest
         id: amd64-digest
