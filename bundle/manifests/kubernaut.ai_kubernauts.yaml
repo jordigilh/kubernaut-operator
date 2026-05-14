@@ -1039,6 +1039,16 @@ spec:
                       Required keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB.
                     minLength: 1
                     type: string
+                  sslMode:
+                    default: disable
+                    description: PostgreSQL SSL mode (disable, require, verify-ca,
+                      verify-full).
+                    enum:
+                    - disable
+                    - require
+                    - verify-ca
+                    - verify-full
+                    type: string
                 required:
                 - host
                 - secretName
