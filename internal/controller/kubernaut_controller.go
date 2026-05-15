@@ -25,6 +25,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -856,6 +857,17 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		}
 	}
 
+	dsHPA := resources.DataStorageHPA(kn)
+	if err := r.ensureNamespaced(ctx, kn, dsHPA); err != nil {
+		return false, fmt.Errorf("ensuring DS HPA: %w", err)
+	}
+	if kn.Spec.APIFrontendEnabled() {
+		afHPA := resources.APIFrontendHPA(kn)
+		if err := r.ensureNamespaced(ctx, kn, afHPA); err != nil {
+			return false, fmt.Errorf("ensuring AF HPA: %w", err)
+		}
+	}
+
 	if route := resources.GatewayRoute(kn); route != nil {
 		if err := r.ensureNamespaced(ctx, kn, route); err != nil {
 			return false, fmt.Errorf("ensuring Gateway Route: %w", err)
@@ -1444,6 +1456,7 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&networkingv1.NetworkPolicy{}).
 		Owns(&rbacv1.Role{}).
 		Owns(&rbacv1.RoleBinding{}).
+		Owns(&autoscalingv2.HorizontalPodAutoscaler{}).
 		Watches(&configv1.APIServer{},
 			handler.EnqueueRequestsFromMapFunc(r.apiServerToKubernaut)).
 		Named("kubernaut").
