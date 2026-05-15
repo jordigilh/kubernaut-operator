@@ -891,6 +891,13 @@ func (s *KubernautSpec) APIFrontendEnabled() bool {
 
 // DataStorageSpec configures the DataStorage service.
 type DataStorageSpec struct {
+	// EndpointPropagationDelay is the delay before newly created endpoints
+	// are considered ready. Prevents traffic routing to pods that haven't
+	// finished warming up. Must be a valid Go duration string.
+	// +kubebuilder:default="10s"
+	// +optional
+	EndpointPropagationDelay string `json:"endpointPropagationDelay,omitempty"`
+
 	// +optional
 	Logging LoggingSpec `json:"logging,omitempty"`
 

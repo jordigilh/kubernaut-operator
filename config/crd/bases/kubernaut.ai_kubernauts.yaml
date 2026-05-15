@@ -423,6 +423,13 @@ spec:
               dataStorage:
                 description: DataStorage service settings.
                 properties:
+                  endpointPropagationDelay:
+                    default: 10s
+                    description: |-
+                      EndpointPropagationDelay is the delay before newly created endpoints
+                      are considered ready. Prevents traffic routing to pods that haven't
+                      finished warming up. Must be a valid Go duration string.
+                    type: string
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:

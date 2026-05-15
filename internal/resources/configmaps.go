@@ -143,11 +143,12 @@ type dataStorageLoggingYAML struct {
 }
 
 type dataStorageConfigYAML struct {
-	TLSProfile string                  `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
-	Server     dataStorageServerYAML   `json:"server" yaml:"server"`
-	Database   dataStorageDatabaseYAML `json:"database" yaml:"database"`
-	Redis      dataStorageRedisYAML    `json:"redis" yaml:"redis"`
-	Logging    dataStorageLoggingYAML  `json:"logging" yaml:"logging"`
+	TLSProfile                string                  `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
+	Server                    dataStorageServerYAML   `json:"server" yaml:"server"`
+	Database                  dataStorageDatabaseYAML `json:"database" yaml:"database"`
+	Redis                     dataStorageRedisYAML    `json:"redis" yaml:"redis"`
+	Logging                   dataStorageLoggingYAML  `json:"logging" yaml:"logging"`
+	EndpointPropagationDelay  string                  `json:"endpointPropagationDelay,omitempty" yaml:"endpointPropagationDelay,omitempty"`
 }
 
 type dataStorageBufferYAML struct {
@@ -718,6 +719,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string
 			Level:  withDefault(kn.Spec.DataStorage.Logging.Level, "info"),
 			Format: "json",
 		},
+		EndpointPropagationDelay: withDefault(kn.Spec.DataStorage.EndpointPropagationDelay, "10s"),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
