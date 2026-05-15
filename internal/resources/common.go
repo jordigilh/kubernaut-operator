@@ -45,6 +45,7 @@ const (
 	ComponentNotification            = "notification"
 	ComponentKubernautAgent          = "kubernaut-agent"
 	ComponentAuthWebhook             = "authwebhook"
+	ComponentAPIFrontend             = "apifrontend"
 )
 
 // controllerSuffix lists components that are actual Kubernetes controllers
@@ -163,7 +164,31 @@ func AllComponents() []string {
 		ComponentNotification,
 		ComponentKubernautAgent,
 		ComponentAuthWebhook,
+		ComponentAPIFrontend,
 	}
+}
+
+// isComponentActive returns whether a component should be deployed.
+// Always-on components return true; opt-in components check their spec gate.
+func isComponentActive(kn *kubernautv1alpha1.Kubernaut, component string) bool {
+	switch component {
+	case ComponentAPIFrontend:
+		return kn.Spec.APIFrontendEnabled()
+	default:
+		return true
+	}
+}
+
+// ActiveComponents returns the list of components that should be deployed
+// for the given CR spec.
+func ActiveComponents(kn *kubernautv1alpha1.Kubernaut) []string {
+	var active []string
+	for _, c := range AllComponents() {
+		if isComponentActive(kn, c) {
+			active = append(active, c)
+		}
+	}
+	return active
 }
 
 // CommonLabels returns the base label set applied to every managed resource.
@@ -206,6 +231,7 @@ var componentEnvSuffix = map[string]string{
 	"notification":            "NOTIFICATION",
 	"kubernautagent":          "KUBERNAUT_AGENT",
 	"authwebhook":             "AUTHWEBHOOK",
+	"apifrontend":             "API_FRONTEND",
 	"db-migrate":              "DB_MIGRATE",
 	"init-postgres":           "INIT_POSTGRES",
 	"init-ubi-minimal":        "INIT_UBI_MINIMAL",

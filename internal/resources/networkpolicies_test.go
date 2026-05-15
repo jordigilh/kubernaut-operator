@@ -53,18 +53,17 @@ var _ = Describe("NetworkPolicies", func() {
 			kn.Spec.NetworkPolicies.Enabled = &enabled
 		})
 
-		It("returns ten policies", func() {
+		It("returns ten policies for always-on components", func() {
 			nps := NetworkPolicies(kn)
 			Expect(nps).To(HaveLen(10), "len(NetworkPolicies()) = %d, want 10", len(nps))
 		})
 
-		It("names match component netpol names", func() {
+		It("names match component netpol names for always-on components", func() {
 			nps := NetworkPolicies(kn)
 			wantNames := make(map[string]bool)
-			for _, c := range AllComponents() {
+			for _, c := range ActiveComponents(kn) {
 				wantNames[c+"-netpol"] = true
 			}
-			Expect(wantNames).To(HaveLen(10), "internal: expected 10 component netpol names, got %d", len(wantNames))
 			for _, np := range nps {
 				Expect(wantNames[np.Name]).To(BeTrue(), "unexpected NetworkPolicy name %q", np.Name)
 				delete(wantNames, np.Name)

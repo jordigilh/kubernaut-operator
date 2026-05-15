@@ -22,10 +22,10 @@ import (
 )
 
 var _ = Describe("PodDisruptionBudgets", func() {
-	It("returns 10 PDBs", func() {
+	It("returns PDBs only for active components", func() {
 		kn := testKubernaut()
 		pdbs := PodDisruptionBudgets(kn)
-		Expect(len(pdbs)).To(Equal(10))
+		Expect(len(pdbs)).To(Equal(len(ActiveComponents(kn))))
 	})
 
 	It("sets MaxUnavailable to 1 on every PDB", func() {
@@ -38,7 +38,7 @@ var _ = Describe("PodDisruptionBudgets", func() {
 
 	It("aligns selectors with component selector labels by index", func() {
 		kn := testKubernaut()
-		components := AllComponents()
+		components := ActiveComponents(kn)
 		pdbs := PodDisruptionBudgets(kn)
 		Expect(len(pdbs)).To(Equal(len(components)), "PDB count = %d, component count = %d", len(pdbs), len(components))
 		for i, pdb := range pdbs {
@@ -71,7 +71,7 @@ var _ = Describe("PodDisruptionBudgets", func() {
 	It("names PDBs after components without a -pdb suffix", func() {
 		kn := testKubernaut()
 		pdbs := PodDisruptionBudgets(kn)
-		components := AllComponents()
+		components := ActiveComponents(kn)
 		Expect(len(pdbs)).To(Equal(len(components)), "PDB count = %d, component count = %d", len(pdbs), len(components))
 		for i, pdb := range pdbs {
 			Expect(pdb.Name).To(Equal(components[i]), "PDB[%d] name = %q, want %q (no -pdb suffix)", i, pdb.Name, components[i])

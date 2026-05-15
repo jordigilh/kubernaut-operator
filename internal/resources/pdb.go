@@ -24,13 +24,17 @@ import (
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
-// PodDisruptionBudgets builds PDBs for all 10 Kubernaut components.
+// PodDisruptionBudgets builds PDBs for all active Kubernaut components.
 // Each PDB allows at most 1 unavailable pod, matching the Helm chart.
+// Opt-in components (e.g. APIFrontend) are skipped when not configured.
 func PodDisruptionBudgets(kn *kubernautv1alpha1.Kubernaut) []*policyv1.PodDisruptionBudget {
 	maxUnavailable := intstr.FromInt32(PDBMaxUnavailable)
 	pdbs := make([]*policyv1.PodDisruptionBudget, 0, len(AllComponents()))
 
 	for _, component := range AllComponents() {
+		if !isComponentActive(kn, component) {
+			continue
+		}
 		pdbs = append(pdbs, &policyv1.PodDisruptionBudget{
 			ObjectMeta: ObjectMeta(kn, component, component),
 			Spec: policyv1.PodDisruptionBudgetSpec{

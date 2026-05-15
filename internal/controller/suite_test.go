@@ -69,6 +69,7 @@ var _ = BeforeSuite(func() {
 		"RELATED_IMAGE_NOTIFICATION":            "quay.io/kubernaut-ai/notification:test",
 		"RELATED_IMAGE_KUBERNAUT_AGENT":         "quay.io/kubernaut-ai/kubernautagent:test",
 		"RELATED_IMAGE_AUTHWEBHOOK":             "quay.io/kubernaut-ai/authwebhook:test",
+		"RELATED_IMAGE_API_FRONTEND":            "quay.io/kubernaut-ai/apifrontend:test",
 		"RELATED_IMAGE_DB_MIGRATE":              "quay.io/kubernaut-ai/db-migrate:test",
 	} {
 		Expect(os.Setenv(k, v)).To(Succeed())

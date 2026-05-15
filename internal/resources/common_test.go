@@ -240,8 +240,8 @@ var _ = Describe("MergeResources", func() {
 })
 
 var _ = Describe("AllComponents", func() {
-	It("returns 10 components", func() {
-		Expect(AllComponents()).To(HaveLen(10))
+	It("returns 11 components", func() {
+		Expect(AllComponents()).To(HaveLen(11))
 	})
 })
 

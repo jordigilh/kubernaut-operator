@@ -191,8 +191,9 @@ func NamespaceRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Role {
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
 
-	roles := make([]*rbacv1.Role, 0, len(componentsNeedingNSRole))
-	for _, c := range componentsNeedingNSRole {
+	active := ActiveComponents(kn)
+	roles := make([]*rbacv1.Role, 0, len(active))
+	for _, c := range active {
 		roles = append(roles, &rbacv1.Role{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      c + "-ns-role",
@@ -214,8 +215,9 @@ func NamespaceRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.RoleBindin
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
 
-	rbs := make([]*rbacv1.RoleBinding, 0, len(componentsNeedingNSRole))
-	for _, c := range componentsNeedingNSRole {
+	active := ActiveComponents(kn)
+	rbs := make([]*rbacv1.RoleBinding, 0, len(active))
+	for _, c := range active {
 		rbs = append(rbs, &rbacv1.RoleBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      c + "-ns-rolebinding",
