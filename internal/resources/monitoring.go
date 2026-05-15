@@ -152,5 +152,102 @@ func APIFrontendPrometheusRule(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.Pr
 	}
 }
 
+// DataStorageServiceMonitor builds the ServiceMonitor for the DataStorage service.
+func DataStorageServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+	return &monitoringv1.ServiceMonitor{
+		ObjectMeta: ObjectMeta(kn, "datastorage-monitor", ComponentDataStorage),
+		Spec: monitoringv1.ServiceMonitorSpec{
+			JobLabel: "app.kubernetes.io/name",
+			Selector: metav1.LabelSelector{
+				MatchLabels: SelectorLabels(ComponentDataStorage),
+			},
+			Endpoints: []monitoringv1.Endpoint{
+				{
+					Port:     "metrics",
+					Path:     "/metrics",
+					Interval: monitoringv1.Duration("15s"),
+					Scheme:   schemePtr(monitoringv1.SchemeHTTP),
+					RelabelConfigs: []monitoringv1.RelabelConfig{
+						{
+							SourceLabels: []monitoringv1.LabelName{"__address__"},
+							TargetLabel:  "job",
+							Replacement:  strPtr("datastorage"),
+						},
+					},
+				},
+			},
+			NamespaceSelector: monitoringv1.NamespaceSelector{
+				MatchNames: []string{kn.Namespace},
+			},
+		},
+	}
+}
+
+// DataStoragePrometheusRule builds the PrometheusRule with DLQ and health alerts for DS.
+func DataStoragePrometheusRule(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.PrometheusRule {
+	return &monitoringv1.PrometheusRule{
+		ObjectMeta: ObjectMeta(kn, "datastorage-rules", ComponentDataStorage),
+		Spec: monitoringv1.PrometheusRuleSpec{
+			Groups: []monitoringv1.RuleGroup{
+				{
+					Name: "datastorage.availability",
+					Rules: []monitoringv1.Rule{
+						{
+							Alert:       "DataStorageDown",
+							Expr:        intstr.FromString(`up{job="datastorage"} == 0`),
+							For:         durationPtr("5m"),
+							Labels:      map[string]string{"severity": "critical"},
+							Annotations: map[string]string{"summary": "DataStorage is down"},
+						},
+					},
+				},
+				{
+					Name: "datastorage.dlq",
+					Rules: []monitoringv1.Rule{
+						{
+							Alert:       "DataStorageDLQDepthHigh",
+							Expr:        intstr.FromString(`ds_dlq_depth{job="datastorage"} > 100`),
+							For:         durationPtr("5m"),
+							Labels:      map[string]string{"severity": "warning"},
+							Annotations: map[string]string{"summary": "DS DLQ depth > 100 for 5m"},
+						},
+						{
+							Alert:       "DataStorageDLQProcessingErrors",
+							Expr:        intstr.FromString(`rate(ds_dlq_processing_errors_total{job="datastorage"}[5m]) > 0.1`),
+							For:         durationPtr("5m"),
+							Labels:      map[string]string{"severity": "critical"},
+							Annotations: map[string]string{"summary": "DS DLQ processing error rate elevated"},
+						},
+					},
+				},
+				{
+					Name: "datastorage.latency",
+					Rules: []monitoringv1.Rule{
+						{
+							Alert:       "DataStorageHighLatencyP95",
+							Expr:        intstr.FromString(`histogram_quantile(0.95, sum(rate(ds_http_request_duration_seconds_bucket{job="datastorage"}[5m])) by (le)) > 1`),
+							For:         durationPtr("5m"),
+							Labels:      map[string]string{"severity": "warning"},
+							Annotations: map[string]string{"summary": "DataStorage P95 latency > 1s"},
+						},
+					},
+				},
+				{
+					Name: "datastorage.database",
+					Rules: []monitoringv1.Rule{
+						{
+							Alert:       "DataStorageDBConnectionPoolExhausted",
+							Expr:        intstr.FromString(`ds_db_pool_idle_connections{job="datastorage"} == 0 and ds_db_pool_active_connections{job="datastorage"} >= ds_db_pool_max_connections{job="datastorage"}`),
+							For:         durationPtr("2m"),
+							Labels:      map[string]string{"severity": "critical"},
+							Annotations: map[string]string{"summary": "DS database connection pool exhausted"},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 func durationPtr(d monitoringv1.Duration) *monitoringv1.Duration { return &d }
 func schemePtr(s monitoringv1.Scheme) *monitoringv1.Scheme         { return &s }

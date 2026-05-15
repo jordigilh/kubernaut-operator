@@ -862,6 +862,18 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 	if err := r.ensureNamespaced(ctx, kn, dsHPA); err != nil {
 		return false, fmt.Errorf("ensuring DS HPA: %w", err)
 	}
+
+	if kn.Spec.Monitoring.MonitoringEnabled() {
+		dsSM := resources.DataStorageServiceMonitor(kn)
+		if err := r.ensureNamespaced(ctx, kn, dsSM); err != nil {
+			return false, fmt.Errorf("ensuring DS ServiceMonitor: %w", err)
+		}
+		dsPR := resources.DataStoragePrometheusRule(kn)
+		if err := r.ensureNamespaced(ctx, kn, dsPR); err != nil {
+			return false, fmt.Errorf("ensuring DS PrometheusRule: %w", err)
+		}
+	}
+
 	if kn.Spec.APIFrontendEnabled() {
 		afHPA := resources.APIFrontendHPA(kn)
 		if err := r.ensureNamespaced(ctx, kn, afHPA); err != nil {
