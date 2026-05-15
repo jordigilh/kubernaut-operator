@@ -24,6 +24,7 @@ import (
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
@@ -866,6 +867,17 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		if err := r.ensureNamespaced(ctx, kn, afHPA); err != nil {
 			return false, fmt.Errorf("ensuring AF HPA: %w", err)
 		}
+
+		if kn.Spec.Monitoring.MonitoringEnabled() {
+			sm := resources.APIFrontendServiceMonitor(kn)
+			if err := r.ensureNamespaced(ctx, kn, sm); err != nil {
+				return false, fmt.Errorf("ensuring AF ServiceMonitor: %w", err)
+			}
+			pr := resources.APIFrontendPrometheusRule(kn)
+			if err := r.ensureNamespaced(ctx, kn, pr); err != nil {
+				return false, fmt.Errorf("ensuring AF PrometheusRule: %w", err)
+			}
+		}
 	}
 
 	if route := resources.GatewayRoute(kn); route != nil {
@@ -1457,6 +1469,8 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&rbacv1.Role{}).
 		Owns(&rbacv1.RoleBinding{}).
 		Owns(&autoscalingv2.HorizontalPodAutoscaler{}).
+		Owns(&monitoringv1.ServiceMonitor{}).
+		Owns(&monitoringv1.PrometheusRule{}).
 		Watches(&configv1.APIServer{},
 			handler.EnqueueRequestsFromMapFunc(r.apiServerToKubernaut)).
 		Named("kubernaut").
