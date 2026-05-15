@@ -333,12 +333,12 @@ func ServicePort(name string, port int32) corev1.ServicePort {
 
 // DataStorageURL returns the in-cluster DataStorage service URL.
 func DataStorageURL(namespace string) string {
-	return fmt.Sprintf("https://data-storage-service.%s.svc.cluster.local:8080", namespace)
+	return fmt.Sprintf("https://data-storage-service.%s.svc.cluster.local:8443", namespace)
 }
 
 // GatewayURL returns the in-cluster Gateway service URL (HTTPS via service-ca).
 func GatewayURL(namespace string) string {
-	return fmt.Sprintf("https://gateway-service.%s.svc.cluster.local:8080", namespace)
+	return fmt.Sprintf("https://gateway-service.%s.svc.cluster.local:8443", namespace)
 }
 
 // PostgreSQLPort returns the effective PostgreSQL port, defaulting to 5432.

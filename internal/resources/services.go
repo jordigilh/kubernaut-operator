@@ -35,16 +35,16 @@ type serviceDefinition struct {
 // apiServices are multi-port Services for components that expose HTTP APIs.
 var apiServices = []serviceDefinition{
 	{ComponentGateway, "gateway-service",
-		[]corev1.ServicePort{ServicePort("http", PortHTTP), ServicePort("health", PortHealthProbe), ServicePort("metrics", PortMetrics)},
+		[]corev1.ServicePort{ServicePort("https", PortHTTPS), ServicePort("health", PortHealthProbe), ServicePort("metrics", PortMetrics)},
 		map[string]string{OCPServingCertAnnotation: GatewayTLSSecretName}},
 	{ComponentDataStorage, "data-storage-service",
-		[]corev1.ServicePort{ServicePort("http", PortHTTP), ServicePort("health", PortHealthProbe)},
+		[]corev1.ServicePort{ServicePort("https", PortHTTPS), ServicePort("health", PortHealthProbe)},
 		map[string]string{OCPServingCertAnnotation: DataStorageTLSSecretName}},
 	{ComponentAIAnalysis, "aianalysis-service",
-		[]corev1.ServicePort{ServicePort("api", PortHTTP), ServicePort("metrics", PortMetrics), ServicePort("health", PortHealthProbe)},
+		[]corev1.ServicePort{ServicePort("https", PortHTTPS), ServicePort("metrics", PortMetrics), ServicePort("health", PortHealthProbe)},
 		nil},
 	{ComponentKubernautAgent, "kubernaut-agent",
-		[]corev1.ServicePort{ServicePort("http", PortHTTP), ServicePort("health", PortHealthProbe), ServicePort("metrics", PortMetrics)},
+		[]corev1.ServicePort{ServicePort("https", PortHTTPS), ServicePort("health", PortHealthProbe), ServicePort("metrics", PortMetrics)},
 		map[string]string{OCPServingCertAnnotation: KubernautAgentTLSSecretName}},
 }
 

@@ -53,7 +53,7 @@ var _ = Describe("Services", func() {
 			Expect(found).To(BeTrue(), "Services() should contain authwebhook-service")
 		})
 
-		It("gives non-authwebhook API services port 8080", func() {
+		It("gives non-authwebhook API services port 8443", func() {
 			kn := testKubernaut()
 			for _, svc := range Services(kn) {
 				if svc.Name == testAuthWebhookServiceName {
@@ -61,12 +61,12 @@ var _ = Describe("Services", func() {
 				}
 				found := false
 				for _, p := range svc.Spec.Ports {
-					if p.Port == 8080 {
+					if p.Port == 8443 {
 						found = true
 						break
 					}
 				}
-				Expect(found).To(BeTrue(), "Service %q should have port 8080", svc.Name)
+				Expect(found).To(BeTrue(), "Service %q should have port 8443", svc.Name)
 			}
 		})
 
@@ -95,7 +95,7 @@ var _ = Describe("Services", func() {
 			for _, svc := range Services(kn) {
 				if svc.Name == "gateway-service" {
 					found = true
-					wantPorts := map[string]int32{"http": 8080, "health": 8081, "metrics": 9090}
+					wantPorts := map[string]int32{"https": 8443, "health": 8081, "metrics": 9090}
 					gotPorts := make(map[string]int32)
 					for _, p := range svc.Spec.Ports {
 						gotPorts[p.Name] = p.Port

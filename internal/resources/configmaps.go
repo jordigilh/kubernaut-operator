@@ -647,7 +647,7 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) 
 			Retry: gatewayRetryYAML{MaxAttempts: 3, InitialBackoff: "100ms", MaxBackoff: "5s"},
 		},
 		Server: gatewayServerYAML{
-			ListenAddr:            ":8080",
+			ListenAddr:            ":8443",
 			HealthAddr:            ":8081",
 			MetricsAddr:           ":9090",
 			MaxConcurrentRequests: 100,
@@ -684,7 +684,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string
 	cfg := dataStorageConfigYAML{
 		TLSProfile: o.tlsProfile,
 		Server: dataStorageServerYAML{
-			Port:         8080,
+			Port:         8443,
 			Host:         "0.0.0.0",
 			HealthPort:   8081,
 			MetricsPort:  9090,
@@ -746,7 +746,7 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOptio
 		Logging:    loggingYAML{Level: withDefault(kn.Spec.AIAnalysis.Logging.Level, "info")},
 		Controller: newControllerBlock("aianalysis.kubernaut.ai"),
 		Agent: aiAnalysisKubernautAgentYAML{
-			URL:                 fmt.Sprintf("https://kubernaut-agent.%s.svc.cluster.local:8080", ns),
+			URL:                 fmt.Sprintf("https://kubernaut-agent.%s.svc.cluster.local:8443", ns),
 			Timeout:             "180s",
 			SessionPollInterval: "15s",
 		},
@@ -1136,7 +1136,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 			Logging: loggingYAML{Level: withDefault(ka.Logging.Level, "info")},
 			Server: kaRuntimeServerYAML{
 				Address:     "0.0.0.0",
-				Port:        8080,
+				Port:        8443,
 				HealthAddr:  ":8081",
 				MetricsAddr: ":9090",
 				TLS:         kubernautAgentServerTLSYAML{CertDir: InterServiceTLSCertDir},

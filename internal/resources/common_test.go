@@ -161,12 +161,12 @@ var _ = Describe("ObjectMeta", func() {
 var _ = Describe("URL helpers", func() {
 	It("DataStorageURL returns correct HTTPS URL", func() {
 		got := DataStorageURL(testSystemNamespace)
-		Expect(got).To(Equal("https://data-storage-service.kubernaut-system.svc.cluster.local:8080"))
+		Expect(got).To(Equal("https://data-storage-service.kubernaut-system.svc.cluster.local:8443"))
 	})
 
 	It("GatewayURL returns correct HTTPS URL", func() {
 		got := GatewayURL(testSystemNamespace)
-		Expect(got).To(Equal("https://gateway-service.kubernaut-system.svc.cluster.local:8080"))
+		Expect(got).To(Equal("https://gateway-service.kubernaut-system.svc.cluster.local:8443"))
 	})
 })
 

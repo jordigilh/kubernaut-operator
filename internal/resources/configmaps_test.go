@@ -538,7 +538,7 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring(OCPPrometheusURL), "KA config should contain Prometheus URL when monitoring enabled, got:\n%s", data)
 			Expect(data).To(ContainSubstring("tlsCaFile: /etc/ssl/ka/service-ca.crt"), "KA config should contain Prometheus tlsCaFile for SA bearer auth, got:\n%s", data)
 			Expect(data).To(ContainSubstring("dataStorage:"), "KA config should contain dataStorage section, got:\n%s", data)
-			Expect(data).To(ContainSubstring("url: https://data-storage-service.kubernaut-system.svc.cluster.local:8080"), "KA config should contain HTTPS dataStorage.url, got:\n%s", data)
+			Expect(data).To(ContainSubstring("url: https://data-storage-service.kubernaut-system.svc.cluster.local:8443"), "KA config should contain HTTPS dataStorage.url, got:\n%s", data)
 			Expect(strings.Contains(data, "tools:") && strings.Contains(data, "prometheus:")).To(BeTrue(), "KA config should contain upstream tools.prometheus section when monitoring enabled, got:\n%s", data)
 		})
 
@@ -593,7 +593,7 @@ var _ = Describe("ConfigMaps", func() {
 			err = yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(root.Runtime.Logging.Level).To(Equal("info"), "runtime.logging.level = %q, want info", root.Runtime.Logging.Level)
-			Expect(root.Runtime.Server.Port == 8080 && root.Runtime.Server.Address == "0.0.0.0").To(BeTrue(), "runtime.server = %#v, want address 0.0.0.0 port 8080", root.Runtime.Server)
+			Expect(root.Runtime.Server.Port == 8443 && root.Runtime.Server.Address == "0.0.0.0").To(BeTrue(), "runtime.server = %#v, want address 0.0.0.0 port 8443", root.Runtime.Server)
 			Expect(root.Runtime.Audit.BufferSize).To(Equal(10000), "runtime.audit.bufferSize = %d, want 10000", root.Runtime.Audit.BufferSize)
 			Expect(root.AI.LLM.Provider).To(Equal("openai"), "ai.llm.provider = %q, want openai", root.AI.LLM.Provider)
 			Expect(root.AI.Investigation.MaxTurns).To(Equal(40), "ai.investigation.maxTurns = %d, want 40", root.AI.Investigation.MaxTurns)

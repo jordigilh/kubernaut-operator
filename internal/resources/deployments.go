@@ -67,7 +67,7 @@ func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, err
 		Args:      []string{"--config=/etc/gateway/config.yaml"},
 		ProbePort: PortHealthProbe,
 		Ports: []corev1.ContainerPort{
-			{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP},
+			{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		},
@@ -151,7 +151,7 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		InitContainers: []corev1.Container{initContainer}, Env: env,
 		ProbePort: PortHealthProbe,
 		Ports: []corev1.ContainerPort{
-			{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP},
+			{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		},
@@ -180,7 +180,7 @@ func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, 
 		Env: env, ProbePort: PortHealthProbe,
 		Args: []string{"-config", "/etc/aianalysis/config.yaml"},
 		Ports: []corev1.ContainerPort{
-			{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP},
+			{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 		},
@@ -571,7 +571,7 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 			"-llm-runtime", "/etc/kubernaut-agent/llm-runtime/llm-runtime.yaml",
 		},
 		Ports: []corev1.ContainerPort{
-			{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP},
+			{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		},
@@ -713,7 +713,7 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 
 	ports := p.Ports
 	if len(ports) == 0 {
-		ports = []corev1.ContainerPort{{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP}}
+		ports = []corev1.ContainerPort{{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP}}
 	}
 
 	probePort := p.ProbePort
