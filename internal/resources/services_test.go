@@ -17,218 +17,201 @@ limitations under the License.
 package resources
 
 import (
-	"testing"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 const testAuthWebhookServiceName = "authwebhook-service"
 
-func TestServices_APIServiceCount(t *testing.T) {
-	kn := testKubernaut()
-	svcs := Services(kn)
-	// 4 API services + 1 authwebhook = 5
-	if len(svcs) != 5 {
-		t.Errorf("Services() should return 5, got %d", len(svcs))
-	}
-}
+var _ = Describe("Services", func() {
+	Context("Services()", func() {
+		It("returns 5 API services", func() {
+			kn := testKubernaut()
+			svcs := Services(kn)
+			Expect(len(svcs)).To(Equal(5))
+		})
 
-func TestServices_MetricsServiceCount(t *testing.T) {
-	kn := testKubernaut()
-	svcs := MetricsServices(kn)
-	if len(svcs) != 5 {
-		t.Errorf("MetricsServices() should return 5, got %d", len(svcs))
-	}
-}
-
-func TestServices_AllInCorrectNamespace(t *testing.T) {
-	kn := testKubernaut()
-	all := append(Services(kn), MetricsServices(kn)...)
-	for _, svc := range all {
-		if svc.Namespace != testSystemNamespace {
-			t.Errorf("Service %q namespace = %q, want %q", svc.Name, svc.Namespace, testSystemNamespace)
-		}
-	}
-}
-
-func TestServices_AuthWebhookOn443(t *testing.T) {
-	kn := testKubernaut()
-	for _, svc := range Services(kn) {
-		if svc.Name == testAuthWebhookServiceName {
-			if len(svc.Spec.Ports) == 0 || svc.Spec.Ports[0].Port != 443 {
-				t.Errorf("authwebhook-service port should be 443, got %v", svc.Spec.Ports)
+		It("places all services in the system namespace", func() {
+			kn := testKubernaut()
+			for _, svc := range Services(kn) {
+				Expect(svc.Namespace).To(Equal(testSystemNamespace), "Service %q namespace = %q, want %q", svc.Name, svc.Namespace, testSystemNamespace)
 			}
-			if svc.Annotations[OCPServingCertAnnotation] != "authwebhook-tls" {
-				t.Errorf("authwebhook-service should have serving-cert annotation, got %v", svc.Annotations)
-			}
-			return
-		}
-	}
-	t.Error("Services() should contain authwebhook-service")
-}
+		})
 
-func TestServices_APIServicesHaveHTTPPort(t *testing.T) {
-	kn := testKubernaut()
-	for _, svc := range Services(kn) {
-		if svc.Name == testAuthWebhookServiceName {
-			continue
-		}
-		found := false
-		for _, p := range svc.Spec.Ports {
-			if p.Port == 8080 {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("Service %q should have port 8080", svc.Name)
-		}
-	}
-}
-
-func TestServices_ExpectedAPIServiceNames(t *testing.T) {
-	kn := testKubernaut()
-	svcs := Services(kn)
-	names := make(map[string]bool, len(svcs))
-	for _, svc := range svcs {
-		names[svc.Name] = true
-	}
-
-	expected := []string{
-		"gateway-service",
-		"data-storage-service",
-		"aianalysis-service",
-		"kubernaut-agent",
-		testAuthWebhookServiceName,
-	}
-	for _, name := range expected {
-		if !names[name] {
-			t.Errorf("Services() missing expected service %q", name)
-		}
-	}
-}
-
-func TestServices_ExpectedMetricsServiceNames(t *testing.T) {
-	kn := testKubernaut()
-	svcs := MetricsServices(kn)
-	names := make(map[string]bool, len(svcs))
-	for _, svc := range svcs {
-		names[svc.Name] = true
-	}
-
-	expected := []string{
-		"signalprocessing-controller-metrics",
-		"remediationorchestrator-controller",
-		"workflowexecution-controller-metrics",
-		"effectivenessmonitor-metrics",
-		"notification-metrics",
-	}
-	for _, name := range expected {
-		if !names[name] {
-			t.Errorf("MetricsServices() missing expected service %q", name)
-		}
-	}
-}
-
-func TestServices_SelectorsMatchComponents(t *testing.T) {
-	kn := testKubernaut()
-	all := append(Services(kn), MetricsServices(kn)...)
-
-	knownComponents := make(map[string]bool)
-	for _, c := range AllComponents() {
-		knownComponents[c] = true
-	}
-
-	for _, svc := range all {
-		app, ok := svc.Spec.Selector["app"]
-		if !ok {
-			t.Errorf("Service %q missing 'app' selector", svc.Name)
-			continue
-		}
-		if !knownComponents[app] {
-			t.Errorf("Service %q selector app=%q is not a known component", svc.Name, app)
-		}
-	}
-}
-
-func TestServices_GatewayMultiPort(t *testing.T) {
-	kn := testKubernaut()
-	for _, svc := range Services(kn) {
-		if svc.Name == "gateway-service" {
-			wantPorts := map[string]int32{"http": 8080, "health": 8081, "metrics": 9090}
-			gotPorts := make(map[string]int32)
-			for _, p := range svc.Spec.Ports {
-				gotPorts[p.Name] = p.Port
-			}
-			for name, port := range wantPorts {
-				if gotPorts[name] != port {
-					t.Errorf("gateway-service port %q = %d, want %d", name, gotPorts[name], port)
+		It("exposes authwebhook on 443 with serving cert annotation", func() {
+			kn := testKubernaut()
+			found := false
+			for _, svc := range Services(kn) {
+				if svc.Name == testAuthWebhookServiceName {
+					found = true
+					Expect(svc.Spec.Ports).NotTo(BeEmpty())
+					Expect(svc.Spec.Ports[0].Port).To(Equal(int32(443)))
+					Expect(svc.Annotations[OCPServingCertAnnotation]).To(Equal("authwebhook-tls"))
+					break
 				}
 			}
-			return
-		}
-	}
-	t.Fatal("gateway-service not found")
-}
+			Expect(found).To(BeTrue(), "Services() should contain authwebhook-service")
+		})
 
-func TestServices_KubernautAgentServingCert(t *testing.T) {
-	kn := testKubernaut()
-	for _, svc := range Services(kn) {
-		if svc.Name == "kubernaut-agent" {
-			v, ok := svc.Annotations[OCPServingCertAnnotation]
-			if !ok {
-				t.Fatal("kubernaut-agent missing serving-cert-secret-name annotation")
+		It("gives non-authwebhook API services port 8080", func() {
+			kn := testKubernaut()
+			for _, svc := range Services(kn) {
+				if svc.Name == testAuthWebhookServiceName {
+					continue
+				}
+				found := false
+				for _, p := range svc.Spec.Ports {
+					if p.Port == 8080 {
+						found = true
+						break
+					}
+				}
+				Expect(found).To(BeTrue(), "Service %q should have port 8080", svc.Name)
 			}
-			if v != KubernautAgentTLSSecretName {
-				t.Errorf("kubernaut-agent annotation = %q, want %q", v, KubernautAgentTLSSecretName)
-			}
-			return
-		}
-	}
-	t.Fatal("kubernaut-agent service not found")
-}
+		})
 
-func TestServices_GatewayHasServingCertAnnotation(t *testing.T) {
-	kn := testKubernaut()
-	for _, svc := range Services(kn) {
-		if svc.Name == "gateway-service" {
-			v, ok := svc.Annotations[OCPServingCertAnnotation]
-			if !ok {
-				t.Fatal("gateway-service missing serving-cert-secret-name annotation")
+		It("includes expected service names", func() {
+			kn := testKubernaut()
+			svcs := Services(kn)
+			names := make(map[string]bool, len(svcs))
+			for _, svc := range svcs {
+				names[svc.Name] = true
 			}
-			if v != GatewayTLSSecretName {
-				t.Errorf("gateway-service annotation = %q, want %q", v, GatewayTLSSecretName)
+			expected := []string{
+				"gateway-service",
+				"data-storage-service",
+				"aianalysis-service",
+				"kubernaut-agent",
+				testAuthWebhookServiceName,
 			}
-			return
-		}
-	}
-	t.Fatal("gateway-service not found")
-}
+			for _, name := range expected {
+				Expect(names[name]).To(BeTrue(), "Services() missing expected service %q", name)
+			}
+		})
 
-func TestServices_DataStorageHasServingCertAnnotation(t *testing.T) {
-	kn := testKubernaut()
-	for _, svc := range Services(kn) {
-		if svc.Name == "data-storage-service" {
-			v, ok := svc.Annotations[OCPServingCertAnnotation]
-			if !ok {
-				t.Fatal("data-storage-service missing serving-cert-secret-name annotation")
+		It("maps gateway-service to multi-port spec", func() {
+			kn := testKubernaut()
+			found := false
+			for _, svc := range Services(kn) {
+				if svc.Name == "gateway-service" {
+					found = true
+					wantPorts := map[string]int32{"http": 8080, "health": 8081, "metrics": 9090}
+					gotPorts := make(map[string]int32)
+					for _, p := range svc.Spec.Ports {
+						gotPorts[p.Name] = p.Port
+					}
+					for name, port := range wantPorts {
+						Expect(gotPorts[name]).To(Equal(port), "gateway-service port %q = %d, want %d", name, gotPorts[name], port)
+					}
+					break
+				}
 			}
-			if v != DataStorageTLSSecretName {
-				t.Errorf("data-storage-service annotation = %q, want %q", v, DataStorageTLSSecretName)
-			}
-			return
-		}
-	}
-	t.Fatal("data-storage-service not found")
-}
+			Expect(found).To(BeTrue(), "gateway-service not found")
+		})
 
-func TestServices_MetricsServicesOnlyExposePort9090(t *testing.T) {
-	kn := testKubernaut()
-	for _, svc := range MetricsServices(kn) {
-		if len(svc.Spec.Ports) != 1 {
-			t.Errorf("metrics service %q should have exactly 1 port, got %d", svc.Name, len(svc.Spec.Ports))
-			continue
-		}
-		if svc.Spec.Ports[0].Port != 9090 {
-			t.Errorf("metrics service %q port = %d, want 9090", svc.Name, svc.Spec.Ports[0].Port)
-		}
-	}
-}
+		It("annotates kubernaut-agent with serving cert secret name", func() {
+			kn := testKubernaut()
+			found := false
+			for _, svc := range Services(kn) {
+				if svc.Name == "kubernaut-agent" {
+					found = true
+					v, ok := svc.Annotations[OCPServingCertAnnotation]
+					Expect(ok).To(BeTrue(), "kubernaut-agent missing serving-cert-secret-name annotation")
+					Expect(v).To(Equal(KubernautAgentTLSSecretName))
+					break
+				}
+			}
+			Expect(found).To(BeTrue(), "kubernaut-agent service not found")
+		})
+
+		It("annotates gateway-service with serving cert secret name", func() {
+			kn := testKubernaut()
+			found := false
+			for _, svc := range Services(kn) {
+				if svc.Name == "gateway-service" {
+					found = true
+					v, ok := svc.Annotations[OCPServingCertAnnotation]
+					Expect(ok).To(BeTrue(), "gateway-service missing serving-cert-secret-name annotation")
+					Expect(v).To(Equal(GatewayTLSSecretName))
+					break
+				}
+			}
+			Expect(found).To(BeTrue(), "gateway-service not found")
+		})
+
+		It("annotates data-storage-service with serving cert secret name", func() {
+			kn := testKubernaut()
+			found := false
+			for _, svc := range Services(kn) {
+				if svc.Name == "data-storage-service" {
+					found = true
+					v, ok := svc.Annotations[OCPServingCertAnnotation]
+					Expect(ok).To(BeTrue(), "data-storage-service missing serving-cert-secret-name annotation")
+					Expect(v).To(Equal(DataStorageTLSSecretName))
+					break
+				}
+			}
+			Expect(found).To(BeTrue(), "data-storage-service not found")
+		})
+	})
+
+	Context("MetricsServices()", func() {
+		It("returns 5 metrics services", func() {
+			kn := testKubernaut()
+			svcs := MetricsServices(kn)
+			Expect(len(svcs)).To(Equal(5))
+		})
+
+		It("places all metrics services in the system namespace", func() {
+			kn := testKubernaut()
+			for _, svc := range MetricsServices(kn) {
+				Expect(svc.Namespace).To(Equal(testSystemNamespace), "Service %q namespace = %q, want %q", svc.Name, svc.Namespace, testSystemNamespace)
+			}
+		})
+
+		It("includes expected metrics service names", func() {
+			kn := testKubernaut()
+			svcs := MetricsServices(kn)
+			names := make(map[string]bool, len(svcs))
+			for _, svc := range svcs {
+				names[svc.Name] = true
+			}
+			expected := []string{
+				"signalprocessing-controller-metrics",
+				"remediationorchestrator-controller",
+				"workflowexecution-controller-metrics",
+				"effectivenessmonitor-metrics",
+				"notification-metrics",
+			}
+			for _, name := range expected {
+				Expect(names[name]).To(BeTrue(), "MetricsServices() missing expected service %q", name)
+			}
+		})
+
+		It("exposes only port 9090 on each metrics service", func() {
+			kn := testKubernaut()
+			for _, svc := range MetricsServices(kn) {
+				Expect(len(svc.Spec.Ports)).To(Equal(1), "metrics service %q should have exactly 1 port, got %d", svc.Name, len(svc.Spec.Ports))
+				Expect(svc.Spec.Ports[0].Port).To(Equal(int32(9090)), "metrics service %q port = %d, want 9090", svc.Name, svc.Spec.Ports[0].Port)
+			}
+		})
+	})
+
+	Context("selectors", func() {
+		It("use app labels that match known components", func() {
+			kn := testKubernaut()
+			all := append(Services(kn), MetricsServices(kn)...)
+
+			knownComponents := make(map[string]bool)
+			for _, c := range AllComponents() {
+				knownComponents[c] = true
+			}
+
+			for _, svc := range all {
+				app, ok := svc.Spec.Selector["app"]
+				Expect(ok).To(BeTrue(), "Service %q missing 'app' selector", svc.Name)
+				Expect(knownComponents[app]).To(BeTrue(), "Service %q selector app=%q is not a known component", svc.Name, app)
+			}
+		})
+	})
+})

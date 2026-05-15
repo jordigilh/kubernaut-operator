@@ -17,8 +17,8 @@ limitations under the License.
 package resources
 
 import (
-	"strings"
-	"testing"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -26,1116 +26,13 @@ import (
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
-func TestGatewayDeployment_Basic(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := GatewayDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertDeploymentBasics(t, dep, "gateway")
-	assertHasVolume(t, dep, "config")
-	assertVolumeSourceConfigMap(t, dep, "config", "gateway-config")
-	assertHasVolumeMount(t, dep, "config", "/etc/gateway")
-}
-
-func TestGatewayDeployment_CORSEnvVar(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := GatewayDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	container := dep.Spec.Template.Spec.Containers[0]
-	found := false
-	for _, env := range container.Env {
-		if env.Name == "CORS_ALLOWED_ORIGINS" {
-			found = true
-			if env.Value != "https://no-browser-clients.invalid" {
-				t.Errorf("CORS_ALLOWED_ORIGINS = %q, want default deny-all origin", env.Value)
-			}
-		}
-	}
-	if !found {
-		t.Error("Gateway deployment should have CORS_ALLOWED_ORIGINS env var")
-	}
-}
-
-func TestGatewayDeployment_CustomCORS(t *testing.T) {
-	kn := testKubernaut()
-	kn.Spec.Gateway.Config.CORSAllowedOrigins = "https://my-dashboard.example.com"
-	dep, err := GatewayDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	container := dep.Spec.Template.Spec.Containers[0]
-	for _, env := range container.Env {
-		if env.Name == "CORS_ALLOWED_ORIGINS" {
-			if env.Value != "https://my-dashboard.example.com" {
-				t.Errorf("CORS_ALLOWED_ORIGINS = %q, want custom value", env.Value)
-			}
-			return
-		}
-	}
-	t.Error("CORS_ALLOWED_ORIGINS env var not found")
-}
-
-func TestDataStorageDeployment_InitContainer(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := DataStorageDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertDeploymentBasics(t, dep, "datastorage")
-
-	if len(dep.Spec.Template.Spec.InitContainers) != 1 {
-		t.Fatalf("DataStorage should have 1 init container, got %d", len(dep.Spec.Template.Spec.InitContainers))
-	}
-	init := dep.Spec.Template.Spec.InitContainers[0]
-	if init.Name != "wait-for-postgres" {
-		t.Errorf("init container name = %q, want %q", init.Name, "wait-for-postgres")
-	}
-	if init.Resources.Requests == nil {
-		t.Error("init container should have resource requests")
-	}
-}
-
-func TestDataStorageDeployment_ProjectedSecretsVolume(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := DataStorageDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var found bool
-	for _, v := range dep.Spec.Template.Spec.Volumes {
-		if v.Name == "secrets" && v.Projected != nil {
-			found = true
-			if len(v.Projected.Sources) != 2 {
-				t.Errorf("secrets projected volume should have 2 sources, got %d", len(v.Projected.Sources))
-			}
-		}
-	}
-	if !found {
-		t.Error("DataStorage should have a 'secrets' projected volume")
-	}
-}
-
-func TestAIAnalysisDeployment_PolicyVolume(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := AIAnalysisDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertDeploymentBasics(t, dep, "aianalysis")
-	assertHasVolume(t, dep, "rego-policies")
-	assertVolumeSourceConfigMap(t, dep, "rego-policies", "aianalysis-policies")
-	assertHasVolumeMount(t, dep, "rego-policies", "/etc/aianalysis/policies")
-}
-
-func TestSignalProcessingDeployment_PolicyMount(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := SignalProcessingDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertHasVolume(t, dep, "policy")
-	assertVolumeSourceConfigMap(t, dep, "policy", "signalprocessing-policy")
-	assertHasVolumeMount(t, dep, "policy", "/etc/signalprocessing/policies")
-}
-
-func TestSignalProcessingDeployment_ProactiveSignalMappings(t *testing.T) {
-	kn := testKubernaut()
-	kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha1.ConfigMapRef{ConfigMapName: "my-mappings"}
-	dep, err := SignalProcessingDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertHasVolume(t, dep, "proactive-mappings")
-	assertHasVolumeMount(t, dep, "proactive-mappings", "/etc/signalprocessing/proactive-signal-mappings.yaml")
-}
-
-func TestSignalProcessingDeployment_DefaultProactiveSignalMappings(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := SignalProcessingDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertHasVolume(t, dep, "proactive-mappings")
-	assertVolumeSourceConfigMap(t, dep, "proactive-mappings", "signalprocessing-proactive-signal-mappings")
-	assertHasVolumeMount(t, dep, "proactive-mappings", "/etc/signalprocessing/proactive-signal-mappings.yaml")
-}
-
-func TestNotificationDeployment_SlackCredentialsVolume(t *testing.T) {
-	kn := testKubernaut()
-	kn.Spec.Notification.Slack.SecretName = "slack-secret"
-	dep, err := NotificationDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertHasVolume(t, dep, "credentials")
-	assertHasVolumeMount(t, dep, "credentials", "/etc/notification/credentials")
-}
-
-func TestNotificationDeployment_NoSlack_EmptyDirCredentials(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := NotificationDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, v := range dep.Spec.Template.Spec.Volumes {
-		if v.Name == "credentials" {
-			if v.EmptyDir == nil {
-				t.Error("Notification credentials volume should be an emptyDir when Slack is not configured")
-			}
-			return
-		}
-	}
-	t.Error("Notification should still have a credentials volume (emptyDir) even without Slack")
-}
-
-func TestNotificationDeployment_OutputEmptyDir(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := NotificationDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertHasVolume(t, dep, "notification-output")
-	for _, v := range dep.Spec.Template.Spec.Volumes {
-		if v.Name == "notification-output" {
-			if v.EmptyDir == nil {
-				t.Error("notification-output volume should be an emptyDir")
-			}
-		}
-	}
-}
-
-func TestNotificationDeployment_RoutingConfigMount(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := NotificationDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertHasVolume(t, dep, "routing-config")
-	assertVolumeSourceConfigMap(t, dep, "routing-config", "notification-routing-config")
-	assertHasVolumeMount(t, dep, "routing-config", "/etc/notification-routing")
-}
-
-func TestNotificationDeployment_BYORoutingConfigMapName(t *testing.T) {
-	kn := testKubernaut()
-	kn.Spec.Notification.Routing = &kubernautv1alpha1.ConfigMapRef{ConfigMapName: "my-routing"}
-	dep, err := NotificationDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertHasVolume(t, dep, "routing-config")
-	assertVolumeSourceConfigMap(t, dep, "routing-config", "my-routing")
-	assertHasVolumeMount(t, dep, "routing-config", "/etc/notification-routing")
-}
-
-func TestKubernautAgentDeployment_LLMCredentials(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := KubernautAgentDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertDeploymentBasics(t, dep, "kubernautagent")
-	assertHasVolume(t, dep, "llm-credentials")
-	assertHasVolumeMount(t, dep, "llm-credentials", "/etc/kubernaut-agent/credentials")
-}
-
-func TestKubernautAgentDeployment_ConfigArgs(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := KubernautAgentDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	container := dep.Spec.Template.Spec.Containers[0]
-	want := []string{
-		"-config", "/etc/kubernaut-agent/config.yaml",
-		"-llm-runtime", "/etc/kubernaut-agent/llm-runtime/llm-runtime.yaml",
-	}
-	if len(container.Args) != len(want) {
-		t.Fatalf("KA args len = %d, want %d (%v)", len(container.Args), len(want), container.Args)
-	}
-	for i := range want {
-		if container.Args[i] != want[i] {
-			t.Errorf("KA args[%d] = %q, want %q", i, container.Args[i], want[i])
-		}
-	}
-}
-
-func TestKubernautAgentDeployment_LLMRuntime(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := KubernautAgentDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, v := range dep.Spec.Template.Spec.Volumes {
-		if v.Name == "sdk-config" {
-			t.Error("Kubernaut Agent deployment should not use sdk-config volume; v1.4 uses llm-runtime")
-		}
-	}
-	assertHasVolume(t, dep, "llm-runtime")
-	assertVolumeSourceConfigMap(t, dep, "llm-runtime", "kubernaut-agent-llm-runtime")
-	assertHasVolumeMount(t, dep, "llm-runtime", "/etc/kubernaut-agent/llm-runtime")
-
-	container := dep.Spec.Template.Spec.Containers[0]
-	var hasPair bool
-	for i := 0; i < len(container.Args)-1; i++ {
-		if container.Args[i] == "-llm-runtime" && container.Args[i+1] == "/etc/kubernaut-agent/llm-runtime/llm-runtime.yaml" {
-			hasPair = true
-			break
-		}
-	}
-	if !hasPair {
-		t.Errorf("KA container should pass -llm-runtime with llm-runtime.yaml path, got args %v", container.Args)
-	}
-}
-
-func TestKubernautAgentDeployment_OAuth2(t *testing.T) {
-	kn := testKubernaut()
-	kn.Spec.KubernautAgent.LLM.OAuth2.Enabled = true
-	kn.Spec.KubernautAgent.LLM.OAuth2.CredentialsSecretRef = "oauth2-credentials-secret"
-	dep, err := KubernautAgentDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertHasVolume(t, dep, "oauth2-credentials")
-	assertHasVolumeMount(t, dep, "oauth2-credentials", "/etc/kubernaut-agent/oauth2")
-	for _, v := range dep.Spec.Template.Spec.Volumes {
-		if v.Name == "oauth2-credentials" {
-			if v.Secret == nil || v.Secret.SecretName != "oauth2-credentials-secret" {
-				t.Errorf("oauth2-credentials volume: got %#v, want Secret secretName=%q", v.Secret, "oauth2-credentials-secret")
-			}
-			return
-		}
-	}
-	t.Error("oauth2-credentials volume not found")
-}
-
-func TestKubernautAgentDeployment_ServiceCA_WhenMonitoringEnabled(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := KubernautAgentDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertHasVolume(t, dep, "service-ca")
-	assertHasVolumeMount(t, dep, "service-ca", "/etc/ssl/ka")
-}
-
-func TestKubernautAgentDeployment_IsOpenShiftEnv_WhenMonitoringEnabled(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := KubernautAgentDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	container := dep.Spec.Template.Spec.Containers[0]
-	found := false
-	for _, env := range container.Env {
-		if env.Name == "IS_OPENSHIFT" && env.Value == "True" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("KA container should have IS_OPENSHIFT=True env var when monitoring is enabled")
-	}
-}
-
-func TestKubernautAgentDeployment_NoIsOpenShiftEnv_WhenMonitoringDisabled(t *testing.T) {
-	kn := testKubernaut()
-	disabled := false
-	kn.Spec.Monitoring.Enabled = &disabled
-	dep, err := KubernautAgentDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	container := dep.Spec.Template.Spec.Containers[0]
-	for _, env := range container.Env {
-		if env.Name == "IS_OPENSHIFT" {
-			t.Error("KA container should not have IS_OPENSHIFT env var when monitoring is disabled")
-		}
-	}
-}
-
-func TestKubernautAgentDeployment_NoServiceCA_WhenMonitoringDisabled(t *testing.T) {
-	kn := testKubernaut()
-	disabled := false
-	kn.Spec.Monitoring.Enabled = &disabled
-	dep, err := KubernautAgentDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, v := range dep.Spec.Template.Spec.Volumes {
-		if v.Name == "service-ca" {
-			t.Error("KA should not have service-ca volume when monitoring is disabled")
-		}
-	}
-}
-
-func TestEffectivenessMonitorDeployment_ServiceCA(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := EffectivenessMonitorDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertHasVolume(t, dep, "service-ca")
-}
-
-func TestEffectivenessMonitorDeployment_WaitForServiceCA_InitContainer(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := EffectivenessMonitorDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(dep.Spec.Template.Spec.InitContainers) != 1 {
-		t.Fatalf("EM should have 1 init container when monitoring enabled, got %d", len(dep.Spec.Template.Spec.InitContainers))
-	}
-	init := dep.Spec.Template.Spec.InitContainers[0]
-	if init.Name != "wait-for-service-ca" {
-		t.Errorf("init container name = %q, want %q", init.Name, "wait-for-service-ca")
-	}
-	if init.Resources.Requests == nil {
-		t.Error("init container should have resource requests")
-	}
-
-	hasMount := false
-	for _, vm := range init.VolumeMounts {
-		if vm.Name == "service-ca" && vm.MountPath == "/etc/ssl/em" {
-			hasMount = true
-		}
-	}
-	if !hasMount {
-		t.Error("init container should mount service-ca at /etc/ssl/em")
-	}
-}
-
-func TestEffectivenessMonitorDeployment_NoInitContainer_MonitoringDisabled(t *testing.T) {
-	kn := testKubernaut()
-	disabled := false
-	kn.Spec.Monitoring.Enabled = &disabled
-	dep, err := EffectivenessMonitorDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(dep.Spec.Template.Spec.InitContainers) != 0 {
-		t.Errorf("EM should have 0 init containers when monitoring disabled, got %d", len(dep.Spec.Template.Spec.InitContainers))
-	}
-}
-
-func TestAuthWebhookDeployment_TLSAndPort(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := AuthWebhookDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertDeploymentBasics(t, dep, "authwebhook")
-	assertHasVolume(t, dep, "webhook-certs")
-	assertHasVolumeMount(t, dep, "webhook-certs", "/tmp/k8s-webhook-server/serving-certs")
-
-	container := dep.Spec.Template.Spec.Containers[0]
-	found := false
-	for _, p := range container.Ports {
-		if p.ContainerPort == 9443 && p.Name == "webhook" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("AuthWebhook should expose port 9443 named 'webhook'")
-	}
-}
-
-func TestAuthWebhookDeployment_RecreateStrategy(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := AuthWebhookDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if dep.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType {
-		t.Errorf("AuthWebhook strategy = %q, want Recreate", dep.Spec.Strategy.Type)
-	}
-}
-
-func TestAllDeployments_HTTPGetProbes(t *testing.T) {
-	kn := testKubernaut()
-	deps := getAllDeployments(t, kn)
-
-	for _, dep := range deps {
-		container := dep.Spec.Template.Spec.Containers[0]
-		component := dep.Spec.Template.Labels["app"]
-
-		if container.LivenessProbe == nil {
-			t.Fatalf("Deployment %q should have liveness probe", dep.Name)
-		}
-		if container.ReadinessProbe == nil {
-			t.Fatalf("Deployment %q should have readiness probe", dep.Name)
-		}
-
-		if container.LivenessProbe.HTTPGet == nil {
-			t.Errorf("Deployment %q liveness probe should use HTTPGet (not TCPSocket)", dep.Name)
-		}
-		if container.ReadinessProbe.HTTPGet == nil {
-			t.Errorf("Deployment %q readiness probe should use HTTPGet (not TCPSocket)", dep.Name)
-		}
-
-		pc := probeConfigForComponent(component)
-		lp := container.LivenessProbe
-		rp := container.ReadinessProbe
-
-		if lp.HTTPGet != nil && lp.HTTPGet.Path != pc.LivenessPath {
-			t.Errorf("Deployment %q liveness path = %q, want %q", dep.Name, lp.HTTPGet.Path, pc.LivenessPath)
-		}
-		if rp.HTTPGet != nil && rp.HTTPGet.Path != pc.ReadinessPath {
-			t.Errorf("Deployment %q readiness path = %q, want %q", dep.Name, rp.HTTPGet.Path, pc.ReadinessPath)
-		}
-	}
-}
-
-func TestAllDeployments_ProbeTimingMatchesHelmChart(t *testing.T) {
-	kn := testKubernaut()
-	deps := getAllDeployments(t, kn)
-
-	for _, dep := range deps {
-		container := dep.Spec.Template.Spec.Containers[0]
-		component := dep.Spec.Template.Labels["app"]
-		pc := probeConfigForComponent(component)
-
-		lp := container.LivenessProbe
-		rp := container.ReadinessProbe
-
-		if lp.InitialDelaySeconds != pc.LivenessInitialDelay {
-			t.Errorf("%s liveness InitialDelaySeconds = %d, want %d", dep.Name, lp.InitialDelaySeconds, pc.LivenessInitialDelay)
-		}
-		if lp.PeriodSeconds != pc.LivenessPeriod {
-			t.Errorf("%s liveness PeriodSeconds = %d, want %d", dep.Name, lp.PeriodSeconds, pc.LivenessPeriod)
-		}
-		if lp.TimeoutSeconds != pc.LivenessTimeout {
-			t.Errorf("%s liveness TimeoutSeconds = %d, want %d", dep.Name, lp.TimeoutSeconds, pc.LivenessTimeout)
-		}
-		if lp.FailureThreshold != pc.LivenessFailureThreshold {
-			t.Errorf("%s liveness FailureThreshold = %d, want %d", dep.Name, lp.FailureThreshold, pc.LivenessFailureThreshold)
-		}
-
-		if rp.InitialDelaySeconds != pc.ReadinessInitialDelay {
-			t.Errorf("%s readiness InitialDelaySeconds = %d, want %d", dep.Name, rp.InitialDelaySeconds, pc.ReadinessInitialDelay)
-		}
-		if rp.PeriodSeconds != pc.ReadinessPeriod {
-			t.Errorf("%s readiness PeriodSeconds = %d, want %d", dep.Name, rp.PeriodSeconds, pc.ReadinessPeriod)
-		}
-		if rp.TimeoutSeconds != pc.ReadinessTimeout {
-			t.Errorf("%s readiness TimeoutSeconds = %d, want %d", dep.Name, rp.TimeoutSeconds, pc.ReadinessTimeout)
-		}
-		if rp.FailureThreshold != pc.ReadinessFailureThreshold {
-			t.Errorf("%s readiness FailureThreshold = %d, want %d", dep.Name, rp.FailureThreshold, pc.ReadinessFailureThreshold)
-		}
-	}
-}
-
-func TestDeployments_MetricsPort(t *testing.T) {
-	kn := testKubernaut()
-	withMetrics := map[string]bool{
-		ComponentGateway:                 true,
-		ComponentDataStorage:             true,
-		ComponentAIAnalysis:              true,
-		ComponentSignalProcessing:        true,
-		ComponentRemediationOrchestrator: true,
-		ComponentWorkflowExecution:       true,
-		ComponentEffectivenessMonitor:    true,
-		ComponentNotification:            true,
-		ComponentKubernautAgent:          true,
-	}
-
-	for _, dep := range getAllDeployments(t, kn) {
-		component := dep.Spec.Template.Labels["app"]
-		container := dep.Spec.Template.Spec.Containers[0]
-
-		hasMetrics := false
-		for _, p := range container.Ports {
-			if p.ContainerPort == PortMetrics && p.Name == "metrics" {
-				hasMetrics = true
-			}
-		}
-
-		if withMetrics[component] && !hasMetrics {
-			t.Errorf("Deployment %q should expose metrics port 9090", dep.Name)
-		}
-		if !withMetrics[component] && hasMetrics {
-			t.Errorf("Deployment %q should NOT expose metrics port 9090", dep.Name)
-		}
-	}
-}
-
-func TestDeployments_ConfigArgs(t *testing.T) {
-	kn := testKubernaut()
-
-	wantArgs := map[string][]string{
-		ComponentGateway:                 {"--config=/etc/gateway/config.yaml"},
-		ComponentAIAnalysis:              {"-config", "/etc/aianalysis/config.yaml"},
-		ComponentSignalProcessing:        {"--config=/etc/signalprocessing/config.yaml"},
-		ComponentRemediationOrchestrator: {"--config=/etc/config/remediationorchestrator.yaml"},
-		ComponentWorkflowExecution:       {"--config=/etc/config/workflowexecution.yaml"},
-		ComponentEffectivenessMonitor:    {"--config=/etc/effectivenessmonitor/effectivenessmonitor.yaml"},
-		ComponentNotification:            {"-config", "/etc/notification/config.yaml"},
-		ComponentKubernautAgent:          {"-config", "/etc/kubernaut-agent/config.yaml", "-llm-runtime", "/etc/kubernaut-agent/llm-runtime/llm-runtime.yaml"},
-		ComponentAuthWebhook:             {"-config=/etc/authwebhook/authwebhook.yaml"},
-	}
-
-	for _, dep := range getAllDeployments(t, kn) {
-		component := dep.Spec.Template.Labels["app"]
-		container := dep.Spec.Template.Spec.Containers[0]
-
-		want, hasExpected := wantArgs[component]
-		if !hasExpected {
-			if len(container.Args) != 0 {
-				t.Errorf("Deployment %q should have no args, got %v", dep.Name, container.Args)
-			}
-			continue
-		}
-
-		if len(container.Args) != len(want) {
-			t.Errorf("Deployment %q args len = %d, want %d (%v vs %v)", dep.Name, len(container.Args), len(want), container.Args, want)
-			continue
-		}
-		for i := range want {
-			if container.Args[i] != want[i] {
-				t.Errorf("Deployment %q args[%d] = %q, want %q", dep.Name, i, container.Args[i], want[i])
-			}
-		}
-	}
-}
-
-func TestAllDeployments_SecurityContexts(t *testing.T) {
-	kn := testKubernaut()
-	allDeps := getAllDeployments(t, kn)
-	for _, dep := range allDeps {
-		psc := dep.Spec.Template.Spec.SecurityContext
-		if psc == nil {
-			t.Errorf("Deployment %q should have pod security context", dep.Name)
-			continue
-		}
-		if psc.RunAsNonRoot == nil || !*psc.RunAsNonRoot {
-			t.Errorf("Deployment %q should have RunAsNonRoot=true", dep.Name)
-		}
-
-		for _, c := range dep.Spec.Template.Spec.Containers {
-			if c.SecurityContext == nil {
-				t.Errorf("Deployment %q container %q should have security context", dep.Name, c.Name)
-				continue
-			}
-			if c.SecurityContext.AllowPrivilegeEscalation == nil || *c.SecurityContext.AllowPrivilegeEscalation {
-				t.Errorf("Deployment %q container %q should have AllowPrivilegeEscalation=false", dep.Name, c.Name)
-			}
-		}
-	}
-}
-
-func TestAllDeployments_ImagePullPolicy(t *testing.T) {
-	kn := testKubernaut()
-	for _, dep := range getAllDeployments(t, kn) {
-		for _, c := range dep.Spec.Template.Spec.Containers {
-			if c.ImagePullPolicy != corev1.PullIfNotPresent {
-				t.Errorf("Deployment %q container %q pullPolicy = %q, want %q",
-					dep.Name, c.Name, c.ImagePullPolicy, corev1.PullIfNotPresent)
-			}
-		}
-	}
-}
-
-func TestAllDeployments_ServiceAccounts(t *testing.T) {
-	kn := testKubernaut()
-	for _, dep := range getAllDeployments(t, kn) {
-		component := dep.Spec.Template.Labels["app"]
-		if component == "" {
-			t.Fatalf("Deployment %q missing 'app' label on pod template", dep.Name)
-		}
-		wantSA := ServiceAccountName(component)
-		gotSA := dep.Spec.Template.Spec.ServiceAccountName
-		if gotSA != wantSA {
-			t.Errorf("Deployment %q SA = %q, want %q (component %q)", dep.Name, gotSA, wantSA, component)
-		}
-	}
-}
-
-func TestAllDeployments_HaveInterServiceTLSCA(t *testing.T) {
-	kn := testKubernaut()
-	deps := getAllDeployments(t, kn)
-
-	for _, dep := range deps {
-		name := dep.Name
-		container := dep.Spec.Template.Spec.Containers[0]
-
-		hasCAVolume := false
-		for _, v := range dep.Spec.Template.Spec.Volumes {
-			if v.Name == "tls-ca" && v.ConfigMap != nil && v.ConfigMap.Name == InterServiceCAConfigMapName {
-				hasCAVolume = true
-			}
-		}
-		if !hasCAVolume {
-			t.Errorf("Deployment %q missing tls-ca volume backed by %q ConfigMap", name, InterServiceCAConfigMapName)
-		}
-
-		hasCAMount := false
-		for _, vm := range container.VolumeMounts {
-			if vm.Name == "tls-ca" && vm.MountPath == "/etc/tls-ca" {
-				hasCAMount = true
-			}
-		}
-		if !hasCAMount {
-			t.Errorf("Deployment %q missing tls-ca volume mount at /etc/tls-ca", name)
-		}
-
-		hasCAEnv := false
-		for _, env := range container.Env {
-			if env.Name == "TLS_CA_FILE" && env.Value == InterServiceTLSCAFile {
-				hasCAEnv = true
-			}
-		}
-		if !hasCAEnv {
-			t.Errorf("Deployment %q missing TLS_CA_FILE env var", name)
-		}
-	}
-}
-
-func TestGatewayDeployment_NoTLSCertVolume(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := GatewayDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, v := range dep.Spec.Template.Spec.Volumes {
-		if v.Name == "tls-certs" {
-			t.Error("Gateway should NOT have tls-certs volume (OCP Route handles TLS)")
-		}
-	}
-}
-
-func TestKubernautAgentDeployment_HasTLSCertVolume(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := KubernautAgentDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertHasVolume(t, dep, "tls-certs")
-	assertHasVolumeMount(t, dep, "tls-certs", InterServiceTLSCertDir)
-}
-
-func TestDataStorageDeployment_HasTLSCertVolume(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := DataStorageDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertHasVolume(t, dep, "tls-certs")
-	assertHasVolumeMount(t, dep, "tls-certs", InterServiceTLSCertDir)
-}
-
-func TestServiceAccountNaming(t *testing.T) {
-	expected := map[string]string{
-		ComponentGateway:                 "gateway",
-		ComponentDataStorage:             "data-storage-sa",
-		ComponentAIAnalysis:              "aianalysis-controller",
-		ComponentSignalProcessing:        "signalprocessing-controller",
-		ComponentRemediationOrchestrator: "remediationorchestrator-controller",
-		ComponentWorkflowExecution:       "workflowexecution-controller",
-		ComponentEffectivenessMonitor:    "effectivenessmonitor-controller",
-		ComponentNotification:            "notification-controller",
-		ComponentKubernautAgent:          "kubernaut-agent-sa",
-		ComponentAuthWebhook:             "authwebhook",
-	}
-	for component, wantName := range expected {
-		got := ServiceAccountName(component)
-		if got != wantName {
-			t.Errorf("ServiceAccountName(%q) = %q, want %q", component, got, wantName)
-		}
-	}
-}
-
-func TestServiceAccountNaming_AllComponentsCovered(t *testing.T) {
-	for _, component := range AllComponents() {
-		name := ServiceAccountName(component)
-		if name == "" {
-			t.Errorf("ServiceAccountName(%q) returned empty string", component)
-		}
-	}
-}
-
-func TestAllDeployments_PodAntiAffinity(t *testing.T) {
-	kn := testKubernaut()
-	deps := getAllDeployments(t, kn)
-
-	for _, dep := range deps {
-		component := dep.Spec.Template.Labels["app"]
-
-		affinity := dep.Spec.Template.Spec.Affinity
-		if affinity == nil {
-			t.Fatalf("Deployment %q: Affinity must not be nil", dep.Name)
-		}
-		paa := affinity.PodAntiAffinity
-		if paa == nil {
-			t.Fatalf("Deployment %q: PodAntiAffinity must not be nil", dep.Name)
-		}
-
-		preferred := paa.PreferredDuringSchedulingIgnoredDuringExecution
-		if len(preferred) == 0 {
-			t.Fatalf("Deployment %q: expected at least one preferred anti-affinity term", dep.Name)
-		}
-
-		term := preferred[0]
-
-		if term.Weight != 100 {
-			t.Errorf("Deployment %q: anti-affinity weight = %d, want 100", dep.Name, term.Weight)
-		}
-
-		if term.PodAffinityTerm.TopologyKey != "kubernetes.io/hostname" {
-			t.Errorf("Deployment %q: topology key = %q, want %q",
-				dep.Name, term.PodAffinityTerm.TopologyKey, "kubernetes.io/hostname")
-		}
-
-		sel := term.PodAffinityTerm.LabelSelector
-		if sel == nil {
-			t.Fatalf("Deployment %q: anti-affinity label selector must not be nil", dep.Name)
-		}
-
-		expectedLabels := SelectorLabels(component)
-		for k, v := range expectedLabels {
-			if sel.MatchLabels[k] != v {
-				t.Errorf("Deployment %q: anti-affinity selector label %q = %q, want %q",
-					dep.Name, k, sel.MatchLabels[k], v)
-			}
-		}
-	}
-}
-
-// --- AAP CA cert tests (Issue #32) ---
-
 const (
 	testEnvTLSCAFile     = "TLS_CA_FILE"
 	testVolumeAAPCA      = "aap-ca"
 	testVolumeCombinedCA = "combined-ca"
 )
 
-func TestWFEDeployment_NoCACert_NoInitContainer(t *testing.T) {
-	kn := testKubernaut()
-	dep, err := WorkflowExecutionDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(dep.Spec.Template.Spec.InitContainers) != 0 {
-		t.Errorf("WFE without caCertSecretRef should have no init containers, got %d",
-			len(dep.Spec.Template.Spec.InitContainers))
-	}
-
-	for _, v := range dep.Spec.Template.Spec.Volumes {
-		if v.Name == testVolumeAAPCA || v.Name == testVolumeCombinedCA {
-			t.Errorf("WFE without caCertSecretRef should not have volume %q", v.Name)
-		}
-	}
-
-	container := dep.Spec.Template.Spec.Containers[0]
-	for _, e := range container.Env {
-		if e.Name == testEnvTLSCAFile && e.Value != InterServiceTLSCAFile {
-			t.Errorf("TLS_CA_FILE should be %q without CA override, got %q",
-				InterServiceTLSCAFile, e.Value)
-		}
-	}
-}
-
-func TestWFEDeployment_NoSSLCertFile(t *testing.T) {
-	kn := testKubernaut()
-	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
-		Name: "aap-ca-secret",
-	}
-	dep, err := WorkflowExecutionDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	container := dep.Spec.Template.Spec.Containers[0]
-	for _, e := range container.Env {
-		if e.Name == "SSL_CERT_FILE" {
-			t.Errorf("WFE must not set SSL_CERT_FILE env var (removed in v1.4); got %q", e.Value)
-		}
-	}
-}
-
-func TestWFEDeployment_WithCACert_HasInitContainer(t *testing.T) {
-	kn := testKubernaut()
-	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
-		Name: "aap-ca-secret",
-	}
-	dep, err := WorkflowExecutionDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(dep.Spec.Template.Spec.InitContainers) != 1 {
-		t.Fatalf("WFE with caCertSecretRef should have 1 init container, got %d",
-			len(dep.Spec.Template.Spec.InitContainers))
-	}
-
-	init := dep.Spec.Template.Spec.InitContainers[0]
-	if init.Name != "build-ca-bundle" {
-		t.Errorf("init container name = %q, want %q", init.Name, "build-ca-bundle")
-	}
-}
-
-func TestWFEDeployment_WithCACert_MountsSecretVolume(t *testing.T) {
-	kn := testKubernaut()
-	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
-		Name: "aap-ca-secret",
-		Key:  "custom-ca.pem",
-	}
-	dep, err := WorkflowExecutionDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var found bool
-	for _, v := range dep.Spec.Template.Spec.Volumes {
-		if v.Name == testVolumeAAPCA {
-			found = true
-			if v.Secret == nil {
-				t.Fatal("aap-ca volume should be backed by a Secret")
-			}
-			if v.Secret.SecretName != "aap-ca-secret" {
-				t.Errorf("aap-ca secret name = %q, want %q", v.Secret.SecretName, "aap-ca-secret")
-			}
-			if len(v.Secret.Items) != 1 || v.Secret.Items[0].Key != "custom-ca.pem" {
-				t.Errorf("aap-ca secret key = %v, want key %q", v.Secret.Items, "custom-ca.pem")
-			}
-		}
-	}
-	if !found {
-		t.Error("WFE with caCertSecretRef should have aap-ca volume")
-	}
-}
-
-func TestWFEDeployment_WithCACert_DefaultKey(t *testing.T) {
-	kn := testKubernaut()
-	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
-		Name: "aap-ca-secret",
-	}
-	dep, err := WorkflowExecutionDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, v := range dep.Spec.Template.Spec.Volumes {
-		if v.Name == testVolumeAAPCA {
-			if len(v.Secret.Items) != 1 || v.Secret.Items[0].Key != "ca.crt" {
-				t.Errorf("aap-ca default key should be %q, got %v", "ca.crt", v.Secret.Items)
-			}
-			return
-		}
-	}
-	t.Error("aap-ca volume not found")
-}
-
-func TestWFEDeployment_WithCACert_CombinedCAEmptyDir(t *testing.T) {
-	kn := testKubernaut()
-	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
-		Name: "aap-ca-secret",
-	}
-	dep, err := WorkflowExecutionDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, v := range dep.Spec.Template.Spec.Volumes {
-		if v.Name == testVolumeCombinedCA {
-			if v.EmptyDir == nil {
-				t.Error("combined-ca volume should be EmptyDir")
-			}
-			return
-		}
-	}
-	t.Error("combined-ca volume not found")
-}
-
-func TestWFEDeployment_WithCACert_OverridesTLSCAFile(t *testing.T) {
-	kn := testKubernaut()
-	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
-		Name: "aap-ca-secret",
-	}
-	dep, err := WorkflowExecutionDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	container := dep.Spec.Template.Spec.Containers[0]
-	for _, e := range container.Env {
-		if e.Name == testEnvTLSCAFile {
-			if e.Value != "/etc/combined-ca/ca-bundle.crt" {
-				t.Errorf("TLS_CA_FILE = %q, want %q", e.Value, "/etc/combined-ca/ca-bundle.crt")
-			}
-			return
-		}
-	}
-	t.Error("TLS_CA_FILE env var not found")
-}
-
-func TestWFEDeployment_WithCACert_InitContainerConcatenatesCorrectSources(t *testing.T) {
-	kn := testKubernaut()
-	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
-		Name: "aap-ca-secret",
-	}
-	dep, err := WorkflowExecutionDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	init := dep.Spec.Template.Spec.InitContainers[0]
-
-	if len(init.Args) == 0 {
-		t.Fatal("init container should have args with the cat command")
-	}
-	cmd := init.Args[0]
-	if !strings.Contains(cmd, "/etc/tls-ca/service-ca.crt") {
-		t.Errorf("init container command should read inter-service CA, got: %s", cmd)
-	}
-	if !strings.Contains(cmd, "/aap-ca/aap-ca.crt") {
-		t.Errorf("init container command should read AAP CA, got: %s", cmd)
-	}
-	if !strings.Contains(cmd, "/combined/ca-bundle.crt") {
-		t.Errorf("init container command should write combined bundle, got: %s", cmd)
-	}
-}
-
-func TestWFEDeployment_WithCACert_InitContainerVolumeMounts(t *testing.T) {
-	kn := testKubernaut()
-	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
-		Name: "aap-ca-secret",
-	}
-	dep, err := WorkflowExecutionDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	init := dep.Spec.Template.Spec.InitContainers[0]
-	mountNames := make(map[string]bool)
-	for _, vm := range init.VolumeMounts {
-		mountNames[vm.Name] = true
-	}
-	for _, required := range []string{"tls-ca", testVolumeAAPCA, testVolumeCombinedCA} {
-		if !mountNames[required] {
-			t.Errorf("init container should mount volume %q", required)
-		}
-	}
-}
-
-func TestWFEDeployment_WithCACert_MainContainerMountsCombinedCA(t *testing.T) {
-	kn := testKubernaut()
-	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
-		Name: "aap-ca-secret",
-	}
-	dep, err := WorkflowExecutionDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	container := dep.Spec.Template.Spec.Containers[0]
-	for _, vm := range container.VolumeMounts {
-		if vm.Name == testVolumeCombinedCA {
-			if vm.MountPath != "/etc/combined-ca" {
-				t.Errorf("combined-ca mount path = %q, want %q", vm.MountPath, "/etc/combined-ca")
-			}
-			if !vm.ReadOnly {
-				t.Error("combined-ca mount should be read-only")
-			}
-			return
-		}
-	}
-	t.Error("main container should mount combined-ca volume")
-}
-
-func TestWFEDeployment_WithCACert_InitContainerSecurityContext(t *testing.T) {
-	kn := testKubernaut()
-	kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
-		Name: "aap-ca-secret",
-	}
-	dep, err := WorkflowExecutionDeployment(kn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	init := dep.Spec.Template.Spec.InitContainers[0]
-	sc := init.SecurityContext
-	if sc == nil {
-		t.Fatal("init container should have a security context")
-	}
-	if sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {
-		t.Error("init container should disallow privilege escalation")
-	}
-	if sc.ReadOnlyRootFilesystem == nil || !*sc.ReadOnlyRootFilesystem {
-		t.Error("init container should have read-only root filesystem")
-	}
-	if sc.Capabilities == nil || len(sc.Capabilities.Drop) == 0 {
-		t.Error("init container should drop ALL capabilities")
-	}
-}
-
-func TestOverrideTLSCAFile_ReplacesExisting(t *testing.T) {
-	env := []corev1.EnvVar{
-		{Name: "OTHER", Value: "foo"},
-		{Name: testEnvTLSCAFile, Value: "/old/path"},
-	}
-	result := overrideTLSCAFile(env, "/new/path")
-	for _, e := range result {
-		if e.Name == testEnvTLSCAFile {
-			if e.Value != "/new/path" {
-				t.Errorf("TLS_CA_FILE = %q, want %q", e.Value, "/new/path")
-			}
-			return
-		}
-	}
-	t.Error("TLS_CA_FILE not found after override")
-}
-
-func TestOverrideTLSCAFile_AppendsWhenMissing(t *testing.T) {
-	env := []corev1.EnvVar{{Name: "OTHER", Value: "foo"}}
-	result := overrideTLSCAFile(env, "/new/path")
-	if len(result) != 2 {
-		t.Fatalf("expected 2 env vars, got %d", len(result))
-	}
-	found := false
-	for _, e := range result {
-		if e.Name == testEnvTLSCAFile && e.Value == "/new/path" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("TLS_CA_FILE should be appended when missing")
-	}
-}
-
-// --- helpers ---
-
-func getAllDeployments(t *testing.T, kn *kubernautv1alpha1.Kubernaut) []*appsv1.Deployment {
-	t.Helper()
+func getAllDeployments(kn *kubernautv1alpha1.Kubernaut) []*appsv1.Deployment {
 	type builder func(*kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error)
 	builders := []builder{
 		GatewayDeployment,
@@ -1152,75 +49,893 @@ func getAllDeployments(t *testing.T, kn *kubernautv1alpha1.Kubernaut) []*appsv1.
 	deps := make([]*appsv1.Deployment, 0, len(builders))
 	for _, b := range builders {
 		dep, err := b(kn)
-		if err != nil {
-			t.Fatalf("unexpected error building deployment: %v", err)
-		}
+		Expect(err).NotTo(HaveOccurred())
 		deps = append(deps, dep)
 	}
 	return deps
 }
 
-func assertDeploymentBasics(t *testing.T, dep *appsv1.Deployment, imageSuffix string) {
-	t.Helper()
-
-	if dep.Namespace != testSystemNamespace {
-		t.Errorf("Deployment %q namespace = %q, want %q", dep.Name, dep.Namespace, testSystemNamespace)
-	}
-	if dep.Spec.Replicas == nil || *dep.Spec.Replicas != 1 {
-		t.Errorf("Deployment %q should have 1 replica", dep.Name)
-	}
-	if len(dep.Spec.Template.Spec.Containers) == 0 {
-		t.Fatalf("Deployment %q should have at least 1 container", dep.Name)
-	}
+func expectDeploymentBasics(dep *appsv1.Deployment, imageSuffix string) {
+	Expect(dep.Namespace).To(Equal(testSystemNamespace), "Deployment %q namespace", dep.Name)
+	Expect(dep.Spec.Replicas).NotTo(BeNil(), "Deployment %q replicas", dep.Name)
+	Expect(*dep.Spec.Replicas).To(Equal(int32(1)), "Deployment %q replicas", dep.Name)
+	Expect(dep.Spec.Template.Spec.Containers).NotTo(BeEmpty(), "Deployment %q containers", dep.Name)
 
 	container := dep.Spec.Template.Spec.Containers[0]
-	if container.Image == "" {
-		t.Errorf("Deployment %q should have a non-empty image", dep.Name)
-	}
-	if !strings.Contains(container.Image, imageSuffix) {
-		t.Errorf("Deployment %q image %q should contain %q", dep.Name, container.Image, imageSuffix)
-	}
+	Expect(container.Image).NotTo(BeEmpty(), "Deployment %q image", dep.Name)
+	Expect(container.Image).To(ContainSubstring(imageSuffix), "Deployment %q image should contain %q", dep.Name, imageSuffix)
 }
 
-func assertHasVolume(t *testing.T, dep *appsv1.Deployment, name string) {
-	t.Helper()
+func expectHasVolume(dep *appsv1.Deployment, name string) {
+	found := false
 	for _, v := range dep.Spec.Template.Spec.Volumes {
 		if v.Name == name {
-			return
+			found = true
+			break
 		}
 	}
-	t.Errorf("Deployment %q should have volume %q", dep.Name, name)
+	Expect(found).To(BeTrue(), "Deployment %q should have volume %q", dep.Name, name)
 }
 
-func assertVolumeSourceConfigMap(t *testing.T, dep *appsv1.Deployment, volumeName, expectedCMName string) {
-	t.Helper()
+func expectVolumeSourceConfigMap(dep *appsv1.Deployment, volumeName, expectedCMName string) {
 	for _, v := range dep.Spec.Template.Spec.Volumes {
 		if v.Name == volumeName {
-			if v.ConfigMap == nil {
-				t.Errorf("Deployment %q volume %q should be backed by a ConfigMap", dep.Name, volumeName)
-				return
-			}
-			if v.ConfigMap.Name != expectedCMName {
-				t.Errorf("Deployment %q volume %q ConfigMap = %q, want %q",
-					dep.Name, volumeName, v.ConfigMap.Name, expectedCMName)
-			}
+			Expect(v.ConfigMap).NotTo(BeNil(), "Deployment %q volume %q should be backed by a ConfigMap", dep.Name, volumeName)
+			Expect(v.ConfigMap.Name).To(Equal(expectedCMName), "Deployment %q volume %q ConfigMap name", dep.Name, volumeName)
 			return
 		}
 	}
-	t.Errorf("Deployment %q should have volume %q", dep.Name, volumeName)
+	Fail("Deployment " + dep.Name + " should have volume " + volumeName)
 }
 
-func assertHasVolumeMount(t *testing.T, dep *appsv1.Deployment, name, mountPath string) {
-	t.Helper()
+func expectHasVolumeMount(dep *appsv1.Deployment, name, mountPath string) {
 	container := dep.Spec.Template.Spec.Containers[0]
 	for _, vm := range container.VolumeMounts {
 		if vm.Name == name {
-			if vm.MountPath != mountPath {
-				t.Errorf("Deployment %q volume mount %q path = %q, want %q",
-					dep.Name, name, vm.MountPath, mountPath)
-			}
+			Expect(vm.MountPath).To(Equal(mountPath), "Deployment %q volume mount %q path", dep.Name, name)
 			return
 		}
 	}
-	t.Errorf("Deployment %q container should have volume mount %q", dep.Name, name)
+	Fail("Deployment " + dep.Name + " container should have volume mount " + name)
 }
+
+var _ = Describe("Deployments", func() {
+	Context("Gateway", func() {
+		It("has basic deployment properties", func() {
+			kn := testKubernaut()
+			dep, err := GatewayDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectDeploymentBasics(dep, "gateway")
+			expectHasVolume(dep, "config")
+			expectVolumeSourceConfigMap(dep, "config", "gateway-config")
+			expectHasVolumeMount(dep, "config", "/etc/gateway")
+		})
+
+		It("sets default CORS_ALLOWED_ORIGINS", func() {
+			kn := testKubernaut()
+			dep, err := GatewayDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			container := dep.Spec.Template.Spec.Containers[0]
+			found := false
+			for _, env := range container.Env {
+				if env.Name == "CORS_ALLOWED_ORIGINS" {
+					found = true
+					Expect(env.Value).To(Equal("https://no-browser-clients.invalid"))
+				}
+			}
+			Expect(found).To(BeTrue(), "Gateway deployment should have CORS_ALLOWED_ORIGINS env var")
+		})
+
+		It("uses custom CORS when specified", func() {
+			kn := testKubernaut()
+			kn.Spec.Gateway.Config.CORSAllowedOrigins = "https://my-dashboard.example.com"
+			dep, err := GatewayDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			container := dep.Spec.Template.Spec.Containers[0]
+			found := false
+			for _, env := range container.Env {
+				if env.Name == "CORS_ALLOWED_ORIGINS" {
+					found = true
+					Expect(env.Value).To(Equal("https://my-dashboard.example.com"))
+				}
+			}
+			Expect(found).To(BeTrue(), "CORS_ALLOWED_ORIGINS env var not found")
+		})
+
+		It("does not have tls-certs volume", func() {
+			kn := testKubernaut()
+			dep, err := GatewayDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				Expect(v.Name).NotTo(Equal("tls-certs"), "Gateway should NOT have tls-certs volume")
+			}
+		})
+	})
+
+	Context("DataStorage", func() {
+		It("has init container for postgres", func() {
+			kn := testKubernaut()
+			dep, err := DataStorageDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectDeploymentBasics(dep, "datastorage")
+			Expect(dep.Spec.Template.Spec.InitContainers).To(HaveLen(1))
+			init := dep.Spec.Template.Spec.InitContainers[0]
+			Expect(init.Name).To(Equal("wait-for-postgres"))
+			Expect(init.Resources.Requests).NotTo(BeNil())
+		})
+
+		It("has projected secrets volume", func() {
+			kn := testKubernaut()
+			dep, err := DataStorageDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			found := false
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == "secrets" && v.Projected != nil {
+					found = true
+					Expect(v.Projected.Sources).To(HaveLen(2))
+				}
+			}
+			Expect(found).To(BeTrue(), "DataStorage should have a 'secrets' projected volume")
+		})
+
+		It("has TLS cert volume", func() {
+			kn := testKubernaut()
+			dep, err := DataStorageDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, "tls-certs")
+			expectHasVolumeMount(dep, "tls-certs", InterServiceTLSCertDir)
+		})
+	})
+
+	Context("AIAnalysis", func() {
+		It("has policy volume", func() {
+			kn := testKubernaut()
+			dep, err := AIAnalysisDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectDeploymentBasics(dep, "aianalysis")
+			expectHasVolume(dep, "rego-policies")
+			expectVolumeSourceConfigMap(dep, "rego-policies", "aianalysis-policies")
+			expectHasVolumeMount(dep, "rego-policies", "/etc/aianalysis/policies")
+		})
+	})
+
+	Context("SignalProcessing", func() {
+		It("has policy mount", func() {
+			kn := testKubernaut()
+			dep, err := SignalProcessingDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectHasVolume(dep, "policy")
+			expectVolumeSourceConfigMap(dep, "policy", "signalprocessing-policy")
+			expectHasVolumeMount(dep, "policy", "/etc/signalprocessing/policies")
+		})
+
+		It("uses custom proactive signal mappings", func() {
+			kn := testKubernaut()
+			kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha1.ConfigMapRef{ConfigMapName: "my-mappings"}
+			dep, err := SignalProcessingDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectHasVolume(dep, "proactive-mappings")
+			expectHasVolumeMount(dep, "proactive-mappings", "/etc/signalprocessing/proactive-signal-mappings.yaml")
+		})
+
+		It("uses default proactive signal mappings", func() {
+			kn := testKubernaut()
+			dep, err := SignalProcessingDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectHasVolume(dep, "proactive-mappings")
+			expectVolumeSourceConfigMap(dep, "proactive-mappings", "signalprocessing-proactive-signal-mappings")
+			expectHasVolumeMount(dep, "proactive-mappings", "/etc/signalprocessing/proactive-signal-mappings.yaml")
+		})
+	})
+
+	Context("Notification", func() {
+		It("mounts Slack credentials when configured", func() {
+			kn := testKubernaut()
+			kn.Spec.Notification.Slack.SecretName = "slack-secret"
+			dep, err := NotificationDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectHasVolume(dep, "credentials")
+			expectHasVolumeMount(dep, "credentials", "/etc/notification/credentials")
+		})
+
+		It("uses emptyDir credentials when Slack is not configured", func() {
+			kn := testKubernaut()
+			dep, err := NotificationDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			found := false
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == "credentials" {
+					found = true
+					Expect(v.EmptyDir).NotTo(BeNil(), "credentials volume should be an emptyDir without Slack")
+				}
+			}
+			Expect(found).To(BeTrue(), "Notification should have a credentials volume even without Slack")
+		})
+
+		It("has notification-output emptyDir volume", func() {
+			kn := testKubernaut()
+			dep, err := NotificationDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectHasVolume(dep, "notification-output")
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == "notification-output" {
+					Expect(v.EmptyDir).NotTo(BeNil())
+				}
+			}
+		})
+
+		It("has routing config mount", func() {
+			kn := testKubernaut()
+			dep, err := NotificationDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectHasVolume(dep, "routing-config")
+			expectVolumeSourceConfigMap(dep, "routing-config", "notification-routing-config")
+			expectHasVolumeMount(dep, "routing-config", "/etc/notification-routing")
+		})
+
+		It("uses BYO routing config map name", func() {
+			kn := testKubernaut()
+			kn.Spec.Notification.Routing = &kubernautv1alpha1.ConfigMapRef{ConfigMapName: "my-routing"}
+			dep, err := NotificationDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, "routing-config")
+			expectVolumeSourceConfigMap(dep, "routing-config", "my-routing")
+			expectHasVolumeMount(dep, "routing-config", "/etc/notification-routing")
+		})
+	})
+
+	Context("KubernautAgent", func() {
+		It("has LLM credentials volume", func() {
+			kn := testKubernaut()
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectDeploymentBasics(dep, "kubernautagent")
+			expectHasVolume(dep, "llm-credentials")
+			expectHasVolumeMount(dep, "llm-credentials", "/etc/kubernaut-agent/credentials")
+		})
+
+		It("passes config args", func() {
+			kn := testKubernaut()
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			container := dep.Spec.Template.Spec.Containers[0]
+			want := []string{
+				"-config", "/etc/kubernaut-agent/config.yaml",
+				"-llm-runtime", "/etc/kubernaut-agent/llm-runtime/llm-runtime.yaml",
+			}
+			Expect(container.Args).To(Equal(want))
+		})
+
+		It("uses llm-runtime volume instead of sdk-config", func() {
+			kn := testKubernaut()
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				Expect(v.Name).NotTo(Equal("sdk-config"), "should not use sdk-config volume")
+			}
+			expectHasVolume(dep, "llm-runtime")
+			expectVolumeSourceConfigMap(dep, "llm-runtime", "kubernaut-agent-llm-runtime")
+			expectHasVolumeMount(dep, "llm-runtime", "/etc/kubernaut-agent/llm-runtime")
+
+			container := dep.Spec.Template.Spec.Containers[0]
+			hasPair := false
+			for i := 0; i < len(container.Args)-1; i++ {
+				if container.Args[i] == "-llm-runtime" && container.Args[i+1] == "/etc/kubernaut-agent/llm-runtime/llm-runtime.yaml" {
+					hasPair = true
+					break
+				}
+			}
+			Expect(hasPair).To(BeTrue(), "should pass -llm-runtime with llm-runtime.yaml path")
+		})
+
+		It("mounts OAuth2 credentials when enabled", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.LLM.OAuth2.Enabled = true
+			kn.Spec.KubernautAgent.LLM.OAuth2.CredentialsSecretRef = "oauth2-credentials-secret"
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectHasVolume(dep, "oauth2-credentials")
+			expectHasVolumeMount(dep, "oauth2-credentials", "/etc/kubernaut-agent/oauth2")
+			found := false
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == "oauth2-credentials" {
+					found = true
+					Expect(v.Secret).NotTo(BeNil())
+					Expect(v.Secret.SecretName).To(Equal("oauth2-credentials-secret"))
+				}
+			}
+			Expect(found).To(BeTrue(), "oauth2-credentials volume not found")
+		})
+
+		It("has service-ca volume when monitoring enabled", func() {
+			kn := testKubernaut()
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectHasVolume(dep, "service-ca")
+			expectHasVolumeMount(dep, "service-ca", "/etc/ssl/ka")
+		})
+
+		It("sets IS_OPENSHIFT env when monitoring enabled", func() {
+			kn := testKubernaut()
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			container := dep.Spec.Template.Spec.Containers[0]
+			found := false
+			for _, env := range container.Env {
+				if env.Name == "IS_OPENSHIFT" && env.Value == "True" {
+					found = true
+				}
+			}
+			Expect(found).To(BeTrue(), "should have IS_OPENSHIFT=True when monitoring enabled")
+		})
+
+		It("omits IS_OPENSHIFT env when monitoring disabled", func() {
+			kn := testKubernaut()
+			disabled := false
+			kn.Spec.Monitoring.Enabled = &disabled
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			container := dep.Spec.Template.Spec.Containers[0]
+			for _, env := range container.Env {
+				Expect(env.Name).NotTo(Equal("IS_OPENSHIFT"), "should not have IS_OPENSHIFT when monitoring disabled")
+			}
+		})
+
+		It("omits service-ca volume when monitoring disabled", func() {
+			kn := testKubernaut()
+			disabled := false
+			kn.Spec.Monitoring.Enabled = &disabled
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				Expect(v.Name).NotTo(Equal("service-ca"), "should not have service-ca when monitoring disabled")
+			}
+		})
+
+		It("has TLS cert volume", func() {
+			kn := testKubernaut()
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, "tls-certs")
+			expectHasVolumeMount(dep, "tls-certs", InterServiceTLSCertDir)
+		})
+	})
+
+	Context("EffectivenessMonitor", func() {
+		It("has service-ca volume", func() {
+			kn := testKubernaut()
+			dep, err := EffectivenessMonitorDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, "service-ca")
+		})
+
+		It("has wait-for-service-ca init container when monitoring enabled", func() {
+			kn := testKubernaut()
+			dep, err := EffectivenessMonitorDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(dep.Spec.Template.Spec.InitContainers).To(HaveLen(1))
+			init := dep.Spec.Template.Spec.InitContainers[0]
+			Expect(init.Name).To(Equal("wait-for-service-ca"))
+			Expect(init.Resources.Requests).NotTo(BeNil())
+
+			hasMount := false
+			for _, vm := range init.VolumeMounts {
+				if vm.Name == "service-ca" && vm.MountPath == "/etc/ssl/em" {
+					hasMount = true
+				}
+			}
+			Expect(hasMount).To(BeTrue(), "init container should mount service-ca at /etc/ssl/em")
+		})
+
+		It("has no init container when monitoring disabled", func() {
+			kn := testKubernaut()
+			disabled := false
+			kn.Spec.Monitoring.Enabled = &disabled
+			dep, err := EffectivenessMonitorDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(dep.Spec.Template.Spec.InitContainers).To(BeEmpty())
+		})
+	})
+
+	Context("AuthWebhook", func() {
+		It("has TLS and webhook port", func() {
+			kn := testKubernaut()
+			dep, err := AuthWebhookDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectDeploymentBasics(dep, "authwebhook")
+			expectHasVolume(dep, "webhook-certs")
+			expectHasVolumeMount(dep, "webhook-certs", "/tmp/k8s-webhook-server/serving-certs")
+
+			container := dep.Spec.Template.Spec.Containers[0]
+			found := false
+			for _, p := range container.Ports {
+				if p.ContainerPort == 9443 && p.Name == "webhook" {
+					found = true
+				}
+			}
+			Expect(found).To(BeTrue(), "AuthWebhook should expose port 9443 named 'webhook'")
+		})
+
+		It("uses Recreate strategy", func() {
+			kn := testKubernaut()
+			dep, err := AuthWebhookDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(dep.Spec.Strategy.Type).To(Equal(appsv1.RecreateDeploymentStrategyType))
+		})
+	})
+
+	Context("WorkflowExecution AAP CA cert", func() {
+		It("has no init container without caCertSecretRef", func() {
+			kn := testKubernaut()
+			dep, err := WorkflowExecutionDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(dep.Spec.Template.Spec.InitContainers).To(BeEmpty())
+
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				Expect(v.Name).NotTo(Equal(testVolumeAAPCA))
+				Expect(v.Name).NotTo(Equal(testVolumeCombinedCA))
+			}
+
+			container := dep.Spec.Template.Spec.Containers[0]
+			for _, e := range container.Env {
+				if e.Name == testEnvTLSCAFile {
+					Expect(e.Value).To(Equal(InterServiceTLSCAFile))
+				}
+			}
+		})
+
+		It("does not set SSL_CERT_FILE", func() {
+			kn := testKubernaut()
+			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			dep, err := WorkflowExecutionDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			container := dep.Spec.Template.Spec.Containers[0]
+			for _, e := range container.Env {
+				Expect(e.Name).NotTo(Equal("SSL_CERT_FILE"), "WFE must not set SSL_CERT_FILE env var")
+			}
+		})
+
+		It("has init container with caCertSecretRef", func() {
+			kn := testKubernaut()
+			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			dep, err := WorkflowExecutionDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(dep.Spec.Template.Spec.InitContainers).To(HaveLen(1))
+			Expect(dep.Spec.Template.Spec.InitContainers[0].Name).To(Equal("build-ca-bundle"))
+		})
+
+		It("mounts secret volume with custom key", func() {
+			kn := testKubernaut()
+			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
+				Name: "aap-ca-secret",
+				Key:  "custom-ca.pem",
+			}
+			dep, err := WorkflowExecutionDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			found := false
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == testVolumeAAPCA {
+					found = true
+					Expect(v.Secret).NotTo(BeNil())
+					Expect(v.Secret.SecretName).To(Equal("aap-ca-secret"))
+					Expect(v.Secret.Items).To(HaveLen(1))
+					Expect(v.Secret.Items[0].Key).To(Equal("custom-ca.pem"))
+				}
+			}
+			Expect(found).To(BeTrue(), "WFE with caCertSecretRef should have aap-ca volume")
+		})
+
+		It("uses default key ca.crt", func() {
+			kn := testKubernaut()
+			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			dep, err := WorkflowExecutionDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == testVolumeAAPCA {
+					Expect(v.Secret.Items).To(HaveLen(1))
+					Expect(v.Secret.Items[0].Key).To(Equal("ca.crt"))
+					return
+				}
+			}
+			Fail("aap-ca volume not found")
+		})
+
+		It("has combined-ca emptyDir volume", func() {
+			kn := testKubernaut()
+			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			dep, err := WorkflowExecutionDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == testVolumeCombinedCA {
+					Expect(v.EmptyDir).NotTo(BeNil())
+					return
+				}
+			}
+			Fail("combined-ca volume not found")
+		})
+
+		It("overrides TLS_CA_FILE", func() {
+			kn := testKubernaut()
+			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			dep, err := WorkflowExecutionDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			container := dep.Spec.Template.Spec.Containers[0]
+			for _, e := range container.Env {
+				if e.Name == testEnvTLSCAFile {
+					Expect(e.Value).To(Equal("/etc/combined-ca/ca-bundle.crt"))
+					return
+				}
+			}
+			Fail("TLS_CA_FILE env var not found")
+		})
+
+		It("init container concatenates correct sources", func() {
+			kn := testKubernaut()
+			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			dep, err := WorkflowExecutionDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			init := dep.Spec.Template.Spec.InitContainers[0]
+			Expect(init.Args).NotTo(BeEmpty())
+			cmd := init.Args[0]
+			Expect(cmd).To(ContainSubstring("/etc/tls-ca/service-ca.crt"))
+			Expect(cmd).To(ContainSubstring("/aap-ca/aap-ca.crt"))
+			Expect(cmd).To(ContainSubstring("/combined/ca-bundle.crt"))
+		})
+
+		It("init container has required volume mounts", func() {
+			kn := testKubernaut()
+			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			dep, err := WorkflowExecutionDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			init := dep.Spec.Template.Spec.InitContainers[0]
+			mountNames := make(map[string]bool)
+			for _, vm := range init.VolumeMounts {
+				mountNames[vm.Name] = true
+			}
+			for _, required := range []string{"tls-ca", testVolumeAAPCA, testVolumeCombinedCA} {
+				Expect(mountNames[required]).To(BeTrue(), "init container should mount volume %q", required)
+			}
+		})
+
+		It("main container mounts combined-ca", func() {
+			kn := testKubernaut()
+			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			dep, err := WorkflowExecutionDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			container := dep.Spec.Template.Spec.Containers[0]
+			for _, vm := range container.VolumeMounts {
+				if vm.Name == testVolumeCombinedCA {
+					Expect(vm.MountPath).To(Equal("/etc/combined-ca"))
+					Expect(vm.ReadOnly).To(BeTrue())
+					return
+				}
+			}
+			Fail("main container should mount combined-ca volume")
+		})
+
+		It("init container has restricted security context", func() {
+			kn := testKubernaut()
+			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			dep, err := WorkflowExecutionDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			init := dep.Spec.Template.Spec.InitContainers[0]
+			sc := init.SecurityContext
+			Expect(sc).NotTo(BeNil())
+			Expect(sc.AllowPrivilegeEscalation).NotTo(BeNil())
+			Expect(*sc.AllowPrivilegeEscalation).To(BeFalse())
+			Expect(sc.ReadOnlyRootFilesystem).NotTo(BeNil())
+			Expect(*sc.ReadOnlyRootFilesystem).To(BeTrue())
+			Expect(sc.Capabilities).NotTo(BeNil())
+			Expect(sc.Capabilities.Drop).NotTo(BeEmpty())
+		})
+	})
+
+	Context("overrideTLSCAFile helper", func() {
+		It("replaces existing TLS_CA_FILE", func() {
+			env := []corev1.EnvVar{
+				{Name: "OTHER", Value: "foo"},
+				{Name: testEnvTLSCAFile, Value: "/old/path"},
+			}
+			result := overrideTLSCAFile(env, "/new/path")
+			found := false
+			for _, e := range result {
+				if e.Name == testEnvTLSCAFile {
+					found = true
+					Expect(e.Value).To(Equal("/new/path"))
+				}
+			}
+			Expect(found).To(BeTrue(), "TLS_CA_FILE not found after override")
+		})
+
+		It("appends when missing", func() {
+			env := []corev1.EnvVar{{Name: "OTHER", Value: "foo"}}
+			result := overrideTLSCAFile(env, "/new/path")
+			Expect(result).To(HaveLen(2))
+			found := false
+			for _, e := range result {
+				if e.Name == testEnvTLSCAFile && e.Value == "/new/path" {
+					found = true
+				}
+			}
+			Expect(found).To(BeTrue(), "TLS_CA_FILE should be appended when missing")
+		})
+	})
+
+	Context("cross-cutting: all deployments", func() {
+		It("have HTTPGet probes with correct paths and timing", func() {
+			kn := testKubernaut()
+			deps := getAllDeployments(kn)
+
+			for _, dep := range deps {
+				container := dep.Spec.Template.Spec.Containers[0]
+				component := dep.Spec.Template.Labels["app"]
+
+				Expect(container.LivenessProbe).NotTo(BeNil(), "Deployment %q should have liveness probe", dep.Name)
+				Expect(container.ReadinessProbe).NotTo(BeNil(), "Deployment %q should have readiness probe", dep.Name)
+
+				Expect(container.LivenessProbe.HTTPGet).NotTo(BeNil(), "Deployment %q liveness probe should use HTTPGet", dep.Name)
+				Expect(container.ReadinessProbe.HTTPGet).NotTo(BeNil(), "Deployment %q readiness probe should use HTTPGet", dep.Name)
+
+				pc := probeConfigForComponent(component)
+				lp := container.LivenessProbe
+				rp := container.ReadinessProbe
+
+				Expect(lp.HTTPGet.Path).To(Equal(pc.LivenessPath), "Deployment %q liveness path", dep.Name)
+				Expect(rp.HTTPGet.Path).To(Equal(pc.ReadinessPath), "Deployment %q readiness path", dep.Name)
+
+				Expect(lp.InitialDelaySeconds).To(Equal(pc.LivenessInitialDelay), "%s liveness InitialDelaySeconds", dep.Name)
+				Expect(lp.PeriodSeconds).To(Equal(pc.LivenessPeriod), "%s liveness PeriodSeconds", dep.Name)
+				Expect(lp.TimeoutSeconds).To(Equal(pc.LivenessTimeout), "%s liveness TimeoutSeconds", dep.Name)
+				Expect(lp.FailureThreshold).To(Equal(pc.LivenessFailureThreshold), "%s liveness FailureThreshold", dep.Name)
+
+				Expect(rp.InitialDelaySeconds).To(Equal(pc.ReadinessInitialDelay), "%s readiness InitialDelaySeconds", dep.Name)
+				Expect(rp.PeriodSeconds).To(Equal(pc.ReadinessPeriod), "%s readiness PeriodSeconds", dep.Name)
+				Expect(rp.TimeoutSeconds).To(Equal(pc.ReadinessTimeout), "%s readiness TimeoutSeconds", dep.Name)
+				Expect(rp.FailureThreshold).To(Equal(pc.ReadinessFailureThreshold), "%s readiness FailureThreshold", dep.Name)
+			}
+		})
+
+		It("expose metrics port on expected components", func() {
+			kn := testKubernaut()
+			withMetrics := map[string]bool{
+				ComponentGateway:                 true,
+				ComponentDataStorage:             true,
+				ComponentAIAnalysis:              true,
+				ComponentSignalProcessing:        true,
+				ComponentRemediationOrchestrator: true,
+				ComponentWorkflowExecution:       true,
+				ComponentEffectivenessMonitor:    true,
+				ComponentNotification:            true,
+				ComponentKubernautAgent:          true,
+			}
+
+			for _, dep := range getAllDeployments(kn) {
+				component := dep.Spec.Template.Labels["app"]
+				container := dep.Spec.Template.Spec.Containers[0]
+
+				hasMetrics := false
+				for _, p := range container.Ports {
+					if p.ContainerPort == PortMetrics && p.Name == "metrics" {
+						hasMetrics = true
+					}
+				}
+
+				if withMetrics[component] {
+					Expect(hasMetrics).To(BeTrue(), "Deployment %q should expose metrics port 9090", dep.Name)
+				} else {
+					Expect(hasMetrics).To(BeFalse(), "Deployment %q should NOT expose metrics port 9090", dep.Name)
+				}
+			}
+		})
+
+		It("pass correct config args", func() {
+			kn := testKubernaut()
+
+			wantArgs := map[string][]string{
+				ComponentGateway:                 {"--config=/etc/gateway/config.yaml"},
+				ComponentAIAnalysis:              {"-config", "/etc/aianalysis/config.yaml"},
+				ComponentSignalProcessing:        {"--config=/etc/signalprocessing/config.yaml"},
+				ComponentRemediationOrchestrator: {"--config=/etc/config/remediationorchestrator.yaml"},
+				ComponentWorkflowExecution:       {"--config=/etc/config/workflowexecution.yaml"},
+				ComponentEffectivenessMonitor:    {"--config=/etc/effectivenessmonitor/effectivenessmonitor.yaml"},
+				ComponentNotification:            {"-config", "/etc/notification/config.yaml"},
+				ComponentKubernautAgent:          {"-config", "/etc/kubernaut-agent/config.yaml", "-llm-runtime", "/etc/kubernaut-agent/llm-runtime/llm-runtime.yaml"},
+				ComponentAuthWebhook:             {"-config=/etc/authwebhook/authwebhook.yaml"},
+			}
+
+			for _, dep := range getAllDeployments(kn) {
+				component := dep.Spec.Template.Labels["app"]
+				container := dep.Spec.Template.Spec.Containers[0]
+
+				want, hasExpected := wantArgs[component]
+				if !hasExpected {
+					Expect(container.Args).To(BeEmpty(), "Deployment %q should have no args", dep.Name)
+					continue
+				}
+				Expect(container.Args).To(Equal(want), "Deployment %q args", dep.Name)
+			}
+		})
+
+		It("have restricted security contexts", func() {
+			kn := testKubernaut()
+			for _, dep := range getAllDeployments(kn) {
+				psc := dep.Spec.Template.Spec.SecurityContext
+				Expect(psc).NotTo(BeNil(), "Deployment %q should have pod security context", dep.Name)
+				Expect(psc.RunAsNonRoot).NotTo(BeNil(), "Deployment %q RunAsNonRoot", dep.Name)
+				Expect(*psc.RunAsNonRoot).To(BeTrue(), "Deployment %q RunAsNonRoot should be true", dep.Name)
+
+				for _, c := range dep.Spec.Template.Spec.Containers {
+					Expect(c.SecurityContext).NotTo(BeNil(), "Deployment %q container %q security context", dep.Name, c.Name)
+					Expect(c.SecurityContext.AllowPrivilegeEscalation).NotTo(BeNil(), "Deployment %q container %q AllowPrivilegeEscalation", dep.Name, c.Name)
+					Expect(*c.SecurityContext.AllowPrivilegeEscalation).To(BeFalse(), "Deployment %q container %q AllowPrivilegeEscalation should be false", dep.Name, c.Name)
+				}
+			}
+		})
+
+		It("use IfNotPresent pull policy", func() {
+			kn := testKubernaut()
+			for _, dep := range getAllDeployments(kn) {
+				for _, c := range dep.Spec.Template.Spec.Containers {
+					Expect(c.ImagePullPolicy).To(Equal(corev1.PullIfNotPresent), "Deployment %q container %q pullPolicy", dep.Name, c.Name)
+				}
+			}
+		})
+
+		It("set correct service accounts", func() {
+			kn := testKubernaut()
+			for _, dep := range getAllDeployments(kn) {
+				component := dep.Spec.Template.Labels["app"]
+				Expect(component).NotTo(BeEmpty(), "Deployment %q missing 'app' label", dep.Name)
+				wantSA := ServiceAccountName(component)
+				Expect(dep.Spec.Template.Spec.ServiceAccountName).To(Equal(wantSA), "Deployment %q SA", dep.Name)
+			}
+		})
+
+		It("have inter-service TLS CA volume, mount, and env var", func() {
+			kn := testKubernaut()
+			for _, dep := range getAllDeployments(kn) {
+				container := dep.Spec.Template.Spec.Containers[0]
+
+				hasCAVolume := false
+				for _, v := range dep.Spec.Template.Spec.Volumes {
+					if v.Name == "tls-ca" && v.ConfigMap != nil && v.ConfigMap.Name == InterServiceCAConfigMapName {
+						hasCAVolume = true
+					}
+				}
+				Expect(hasCAVolume).To(BeTrue(), "Deployment %q missing tls-ca volume", dep.Name)
+
+				hasCAMount := false
+				for _, vm := range container.VolumeMounts {
+					if vm.Name == "tls-ca" && vm.MountPath == "/etc/tls-ca" {
+						hasCAMount = true
+					}
+				}
+				Expect(hasCAMount).To(BeTrue(), "Deployment %q missing tls-ca volume mount", dep.Name)
+
+				hasCAEnv := false
+				for _, env := range container.Env {
+					if env.Name == "TLS_CA_FILE" && env.Value == InterServiceTLSCAFile {
+						hasCAEnv = true
+					}
+				}
+				Expect(hasCAEnv).To(BeTrue(), "Deployment %q missing TLS_CA_FILE env var", dep.Name)
+			}
+		})
+
+		It("map ServiceAccountName correctly for all components", func() {
+			expected := map[string]string{
+				ComponentGateway:                 "gateway",
+				ComponentDataStorage:             "data-storage-sa",
+				ComponentAIAnalysis:              "aianalysis-controller",
+				ComponentSignalProcessing:        "signalprocessing-controller",
+				ComponentRemediationOrchestrator: "remediationorchestrator-controller",
+				ComponentWorkflowExecution:       "workflowexecution-controller",
+				ComponentEffectivenessMonitor:    "effectivenessmonitor-controller",
+				ComponentNotification:            "notification-controller",
+				ComponentKubernautAgent:          "kubernaut-agent-sa",
+				ComponentAuthWebhook:             "authwebhook",
+			}
+			for component, wantName := range expected {
+				Expect(ServiceAccountName(component)).To(Equal(wantName), "ServiceAccountName(%q)", component)
+			}
+		})
+
+		It("cover all components in ServiceAccountName", func() {
+			for _, component := range AllComponents() {
+				Expect(ServiceAccountName(component)).NotTo(BeEmpty(), "ServiceAccountName(%q)", component)
+			}
+		})
+
+		It("have preferred pod anti-affinity", func() {
+			kn := testKubernaut()
+			for _, dep := range getAllDeployments(kn) {
+				component := dep.Spec.Template.Labels["app"]
+
+				affinity := dep.Spec.Template.Spec.Affinity
+				Expect(affinity).NotTo(BeNil(), "Deployment %q Affinity", dep.Name)
+				paa := affinity.PodAntiAffinity
+				Expect(paa).NotTo(BeNil(), "Deployment %q PodAntiAffinity", dep.Name)
+
+				preferred := paa.PreferredDuringSchedulingIgnoredDuringExecution
+				Expect(preferred).NotTo(BeEmpty(), "Deployment %q preferred anti-affinity terms", dep.Name)
+
+				term := preferred[0]
+				Expect(term.Weight).To(Equal(int32(100)), "Deployment %q anti-affinity weight", dep.Name)
+				Expect(term.PodAffinityTerm.TopologyKey).To(Equal("kubernetes.io/hostname"), "Deployment %q topology key", dep.Name)
+
+				sel := term.PodAffinityTerm.LabelSelector
+				Expect(sel).NotTo(BeNil(), "Deployment %q anti-affinity label selector", dep.Name)
+
+				for k, v := range SelectorLabels(component) {
+					Expect(sel.MatchLabels[k]).To(Equal(v), "Deployment %q anti-affinity selector label %q", dep.Name, k)
+				}
+			}
+		})
+	})
+})
+
+var _ = Describe("overrideTLSCAFile standalone", func() {
+	It("replaces existing entry", func() {
+		env := []corev1.EnvVar{
+			{Name: "OTHER", Value: "foo"},
+			{Name: testEnvTLSCAFile, Value: "/old/path"},
+		}
+		result := overrideTLSCAFile(env, "/new/path")
+		for _, e := range result {
+			if e.Name == testEnvTLSCAFile {
+				Expect(e.Value).To(Equal("/new/path"))
+				return
+			}
+		}
+		Fail("TLS_CA_FILE not found after override")
+	})
+
+	It("appends when missing", func() {
+		env := []corev1.EnvVar{{Name: "OTHER", Value: "foo"}}
+		result := overrideTLSCAFile(env, "/new/path")
+		Expect(result).To(HaveLen(2))
+		found := false
+		for _, e := range result {
+			if e.Name == testEnvTLSCAFile && e.Value == "/new/path" {
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue())
+	})
+})

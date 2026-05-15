@@ -17,107 +17,90 @@ limitations under the License.
 package resources
 
 import (
-	"testing"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	configv1 "github.com/openshift/api/config/v1"
 )
 
-func TestMapTLSProfile_Nil(t *testing.T) {
-	if got := MapTLSProfile(nil); got != "" {
-		t.Fatalf("nil profile should return empty string, got %q", got)
-	}
-}
+var _ = Describe("MapTLSProfile", func() {
+	It("returns empty when profile is nil", func() {
+		Expect(MapTLSProfile(nil)).To(BeEmpty())
+	})
 
-func TestMapTLSProfile_Old(t *testing.T) {
-	p := &configv1.TLSSecurityProfile{Type: configv1.TLSProfileOldType}
-	if got := MapTLSProfile(p); got != TLSProfileNameOld {
-		t.Fatalf("expected Old, got %q", got)
-	}
-}
+	It("maps Old type to TLSProfileNameOld", func() {
+		p := &configv1.TLSSecurityProfile{Type: configv1.TLSProfileOldType}
+		Expect(MapTLSProfile(p)).To(Equal(TLSProfileNameOld))
+	})
 
-func TestMapTLSProfile_Intermediate(t *testing.T) {
-	p := &configv1.TLSSecurityProfile{Type: configv1.TLSProfileIntermediateType}
-	if got := MapTLSProfile(p); got != TLSProfileNameIntermediate {
-		t.Fatalf("expected Intermediate, got %q", got)
-	}
-}
+	It("maps Intermediate type to TLSProfileNameIntermediate", func() {
+		p := &configv1.TLSSecurityProfile{Type: configv1.TLSProfileIntermediateType}
+		Expect(MapTLSProfile(p)).To(Equal(TLSProfileNameIntermediate))
+	})
 
-func TestMapTLSProfile_Modern(t *testing.T) {
-	p := &configv1.TLSSecurityProfile{Type: configv1.TLSProfileModernType}
-	if got := MapTLSProfile(p); got != TLSProfileNameModern {
-		t.Fatalf("expected Modern, got %q", got)
-	}
-}
+	It("maps Modern type to TLSProfileNameModern", func() {
+		p := &configv1.TLSSecurityProfile{Type: configv1.TLSProfileModernType}
+		Expect(MapTLSProfile(p)).To(Equal(TLSProfileNameModern))
+	})
 
-func TestMapTLSProfile_CustomTLS13(t *testing.T) {
-	p := &configv1.TLSSecurityProfile{
-		Type: configv1.TLSProfileCustomType,
-		Custom: &configv1.CustomTLSProfile{
-			TLSProfileSpec: configv1.TLSProfileSpec{
-				MinTLSVersion: configv1.VersionTLS13,
-				Ciphers:       []string{"TLS_AES_128_GCM_SHA256"},
+	It("maps Custom with TLS 1.3 minimum to Modern", func() {
+		p := &configv1.TLSSecurityProfile{
+			Type: configv1.TLSProfileCustomType,
+			Custom: &configv1.CustomTLSProfile{
+				TLSProfileSpec: configv1.TLSProfileSpec{
+					MinTLSVersion: configv1.VersionTLS13,
+					Ciphers:       []string{"TLS_AES_128_GCM_SHA256"},
+				},
 			},
-		},
-	}
-	if got := MapTLSProfile(p); got != TLSProfileNameModern {
-		t.Fatalf("Custom with TLS 1.3 should map to Modern, got %q", got)
-	}
-}
+		}
+		Expect(MapTLSProfile(p)).To(Equal(TLSProfileNameModern))
+	})
 
-func TestMapTLSProfile_CustomTLS12(t *testing.T) {
-	p := &configv1.TLSSecurityProfile{
-		Type: configv1.TLSProfileCustomType,
-		Custom: &configv1.CustomTLSProfile{
-			TLSProfileSpec: configv1.TLSProfileSpec{
-				MinTLSVersion: configv1.VersionTLS12,
-				Ciphers:       []string{"ECDHE-RSA-AES128-GCM-SHA256"},
+	It("maps Custom with TLS 1.2 minimum to Intermediate", func() {
+		p := &configv1.TLSSecurityProfile{
+			Type: configv1.TLSProfileCustomType,
+			Custom: &configv1.CustomTLSProfile{
+				TLSProfileSpec: configv1.TLSProfileSpec{
+					MinTLSVersion: configv1.VersionTLS12,
+					Ciphers:       []string{"ECDHE-RSA-AES128-GCM-SHA256"},
+				},
 			},
-		},
-	}
-	if got := MapTLSProfile(p); got != TLSProfileNameIntermediate {
-		t.Fatalf("Custom with TLS 1.2 should map to Intermediate, got %q", got)
-	}
-}
+		}
+		Expect(MapTLSProfile(p)).To(Equal(TLSProfileNameIntermediate))
+	})
 
-func TestMapTLSProfile_CustomTLS10(t *testing.T) {
-	p := &configv1.TLSSecurityProfile{
-		Type: configv1.TLSProfileCustomType,
-		Custom: &configv1.CustomTLSProfile{
-			TLSProfileSpec: configv1.TLSProfileSpec{
-				MinTLSVersion: configv1.VersionTLS10,
-				Ciphers:       []string{"AES128-SHA"},
+	It("maps Custom with TLS 1.0 minimum to Old", func() {
+		p := &configv1.TLSSecurityProfile{
+			Type: configv1.TLSProfileCustomType,
+			Custom: &configv1.CustomTLSProfile{
+				TLSProfileSpec: configv1.TLSProfileSpec{
+					MinTLSVersion: configv1.VersionTLS10,
+					Ciphers:       []string{"AES128-SHA"},
+				},
 			},
-		},
-	}
-	if got := MapTLSProfile(p); got != TLSProfileNameOld {
-		t.Fatalf("Custom with TLS 1.0 should map to Old, got %q", got)
-	}
-}
+		}
+		Expect(MapTLSProfile(p)).To(Equal(TLSProfileNameOld))
+	})
 
-func TestMapTLSProfile_CustomTLS11(t *testing.T) {
-	p := &configv1.TLSSecurityProfile{
-		Type: configv1.TLSProfileCustomType,
-		Custom: &configv1.CustomTLSProfile{
-			TLSProfileSpec: configv1.TLSProfileSpec{
-				MinTLSVersion: configv1.VersionTLS11,
+	It("maps Custom with TLS 1.1 minimum to Old", func() {
+		p := &configv1.TLSSecurityProfile{
+			Type: configv1.TLSProfileCustomType,
+			Custom: &configv1.CustomTLSProfile{
+				TLSProfileSpec: configv1.TLSProfileSpec{
+					MinTLSVersion: configv1.VersionTLS11,
+				},
 			},
-		},
-	}
-	if got := MapTLSProfile(p); got != TLSProfileNameOld {
-		t.Fatalf("Custom with TLS 1.1 should map to Old, got %q", got)
-	}
-}
+		}
+		Expect(MapTLSProfile(p)).To(Equal(TLSProfileNameOld))
+	})
 
-func TestMapTLSProfile_CustomNilCustomField(t *testing.T) {
-	p := &configv1.TLSSecurityProfile{Type: configv1.TLSProfileCustomType}
-	if got := MapTLSProfile(p); got != TLSProfileNameIntermediate {
-		t.Fatalf("Custom with nil custom field should default to Intermediate, got %q", got)
-	}
-}
+	It("defaults Custom with nil custom field to Intermediate", func() {
+		p := &configv1.TLSSecurityProfile{Type: configv1.TLSProfileCustomType}
+		Expect(MapTLSProfile(p)).To(Equal(TLSProfileNameIntermediate))
+	})
 
-func TestMapTLSProfile_UnknownType(t *testing.T) {
-	p := &configv1.TLSSecurityProfile{Type: "FutureProfile"}
-	if got := MapTLSProfile(p); got != "" {
-		t.Fatalf("unknown type should return empty string, got %q", got)
-	}
-}
+	It("returns empty for an unknown type", func() {
+		p := &configv1.TLSSecurityProfile{Type: "FutureProfile"}
+		Expect(MapTLSProfile(p)).To(BeEmpty())
+	})
+})

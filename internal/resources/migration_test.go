@@ -18,174 +18,136 @@ package resources
 
 import (
 	"strings"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	batchv1 "k8s.io/api/batch/v1"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
-func TestMigrationConfigMap_ContainsSQL(t *testing.T) {
-	kn := testKubernaut()
-	cm, err := MigrationConfigMap(kn)
-	if err != nil {
-		t.Fatalf("MigrationConfigMap() error: %v", err)
-	}
-
-	if cm.Name != "kubernaut-migrations" {
-		t.Errorf("name = %q, want %q", cm.Name, "kubernaut-migrations")
-	}
-
-	if len(cm.Data) < 7 {
-		t.Fatalf("migration ConfigMap should contain at least 7 SQL files (v1.3.0), got %d", len(cm.Data))
-	}
-
-	for name, content := range cm.Data {
-		if !strings.HasSuffix(name, ".sql") {
-			t.Errorf("migration file %q should have .sql extension", name)
-		}
-		hasDDL := strings.Contains(content, "CREATE") ||
-			strings.Contains(content, "ALTER") ||
-			strings.Contains(content, "DROP")
-		if !hasDDL {
-			t.Errorf("migration file %q should contain SQL DDL, got %d bytes", name, len(content))
-		}
-	}
-}
-
-func TestMigrationConfigMap_Contains001Schema(t *testing.T) {
-	kn := testKubernaut()
-	cm, err := MigrationConfigMap(kn)
-	if err != nil {
-		t.Fatalf("MigrationConfigMap() error: %v", err)
-	}
-
-	if _, ok := cm.Data["001_v1_schema.sql"]; !ok {
-		t.Error("migration ConfigMap should contain 001_v1_schema.sql")
-	}
-}
-
-func mustMigrationJob(t *testing.T, kn *kubernautv1alpha1.Kubernaut) *batchv1.Job {
-	t.Helper()
+func mustMigrationJob(kn *kubernautv1alpha1.Kubernaut) *batchv1.Job {
 	job, err := MigrationJob(kn)
-	if err != nil {
-		t.Fatalf("MigrationJob() unexpected error: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred())
 	return job
 }
 
-func TestMigrationJob_Structure(t *testing.T) {
-	kn := testKubernaut()
-	job := mustMigrationJob(t, kn)
+var _ = Describe("MigrationConfigMap", func() {
+	It("contains SQL migration files", func() {
+		kn := testKubernaut()
+		cm, err := MigrationConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
 
-	if job.Name != "kubernaut-db-migration" {
-		t.Errorf("name = %q, want %q", job.Name, "kubernaut-db-migration")
-	}
-	if job.Namespace != testSystemNamespace {
-		t.Errorf("namespace = %q, want %q", job.Namespace, testSystemNamespace)
-	}
+		Expect(cm.Name).To(Equal("kubernaut-migrations"), "name = %q, want %q", cm.Name, "kubernaut-migrations")
 
-	if job.Spec.BackoffLimit == nil || *job.Spec.BackoffLimit != 3 {
-		t.Error("Job should have backoffLimit=3")
-	}
-	if job.Spec.TTLSecondsAfterFinished == nil || *job.Spec.TTLSecondsAfterFinished != 300 {
-		t.Error("Job should have TTLSecondsAfterFinished=300")
-	}
-}
+		Expect(len(cm.Data)).To(BeNumerically(">=", 7), "migration ConfigMap should contain at least 7 SQL files (v1.3.0), got %d", len(cm.Data))
 
-func TestMigrationJob_Container(t *testing.T) {
-	kn := testKubernaut()
-	job := mustMigrationJob(t, kn)
-
-	if len(job.Spec.Template.Spec.Containers) != 1 {
-		t.Fatalf("Job should have 1 container, got %d", len(job.Spec.Template.Spec.Containers))
-	}
-
-	container := job.Spec.Template.Spec.Containers[0]
-	if container.Name != "db-migrate" {
-		t.Errorf("container name = %q, want %q", container.Name, "db-migrate")
-	}
-
-	wantImage := "quay.io/kubernaut-ai/db-migrate:v1.3.0"
-	if container.Image != wantImage {
-		t.Errorf("image = %q, want %q", container.Image, wantImage)
-	}
-
-	if len(container.Command) == 0 || container.Command[0] != "goose" {
-		t.Errorf("command should start with goose, got %v", container.Command)
-	}
-
-	if container.Resources.Requests == nil {
-		t.Error("migration container should have resource requests")
-	}
-}
-
-func TestMigrationJob_EnvFromPGSecret(t *testing.T) {
-	kn := testKubernaut()
-	job := mustMigrationJob(t, kn)
-
-	container := job.Spec.Template.Spec.Containers[0]
-	if len(container.EnvFrom) == 0 {
-		t.Fatal("container should have EnvFrom for PG secret")
-	}
-
-	ref := container.EnvFrom[0].SecretRef
-	if ref == nil || ref.Name != "postgresql-secret" {
-		t.Errorf("EnvFrom should reference postgresql-secret, got %v", ref)
-	}
-}
-
-func TestMigrationJob_MountsMigrationsCM(t *testing.T) {
-	kn := testKubernaut()
-	job := mustMigrationJob(t, kn)
-
-	container := job.Spec.Template.Spec.Containers[0]
-	found := false
-	for _, vm := range container.VolumeMounts {
-		if vm.Name == "migrations" && vm.MountPath == "/migrations" {
-			found = true
+		for name, content := range cm.Data {
+			Expect(strings.HasSuffix(name, ".sql")).To(BeTrue(), "migration file %q should have .sql extension", name)
+			hasDDL := strings.Contains(content, "CREATE") ||
+				strings.Contains(content, "ALTER") ||
+				strings.Contains(content, "DROP")
+			Expect(hasDDL).To(BeTrue(), "migration file %q should contain SQL DDL, got %d bytes", name, len(content))
 		}
-	}
-	if !found {
-		t.Error("container should mount migrations volume at /migrations")
-	}
+	})
 
-	volFound := false
-	for _, v := range job.Spec.Template.Spec.Volumes {
-		if v.Name == "migrations" && v.ConfigMap != nil && v.ConfigMap.Name == "kubernaut-migrations" {
-			volFound = true
+	It("contains 001_v1_schema.sql", func() {
+		kn := testKubernaut()
+		cm, err := MigrationConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, ok := cm.Data["001_v1_schema.sql"]
+		Expect(ok).To(BeTrue(), "migration ConfigMap should contain 001_v1_schema.sql")
+	})
+})
+
+var _ = Describe("MigrationJob", func() {
+	It("has expected Job metadata and lifecycle fields", func() {
+		kn := testKubernaut()
+		job := mustMigrationJob(kn)
+
+		Expect(job.Name).To(Equal("kubernaut-db-migration"), "name = %q, want %q", job.Name, "kubernaut-db-migration")
+		Expect(job.Namespace).To(Equal(testSystemNamespace), "namespace = %q, want %q", job.Namespace, testSystemNamespace)
+
+		Expect(job.Spec.BackoffLimit).NotTo(BeNil())
+		Expect(*job.Spec.BackoffLimit).To(Equal(int32(3)), "Job should have backoffLimit=3")
+		Expect(job.Spec.TTLSecondsAfterFinished).NotTo(BeNil())
+		Expect(*job.Spec.TTLSecondsAfterFinished).To(Equal(int32(300)), "Job should have TTLSecondsAfterFinished=300")
+	})
+
+	It("configures the db-migrate container", func() {
+		kn := testKubernaut()
+		job := mustMigrationJob(kn)
+
+		Expect(job.Spec.Template.Spec.Containers).To(HaveLen(1), "Job should have 1 container, got %d", len(job.Spec.Template.Spec.Containers))
+
+		container := job.Spec.Template.Spec.Containers[0]
+		Expect(container.Name).To(Equal("db-migrate"), "container name = %q, want %q", container.Name, "db-migrate")
+
+		wantImage := "quay.io/kubernaut-ai/db-migrate:v1.3.0"
+		Expect(container.Image).To(Equal(wantImage), "image = %q, want %q", container.Image, wantImage)
+
+		Expect(len(container.Command)).To(BeNumerically(">", 0))
+		Expect(container.Command[0]).To(Equal("goose"), "command should start with goose, got %v", container.Command)
+
+		Expect(container.Resources.Requests).NotTo(BeNil(), "migration container should have resource requests")
+	})
+
+	It("loads env from the PostgreSQL secret", func() {
+		kn := testKubernaut()
+		job := mustMigrationJob(kn)
+
+		container := job.Spec.Template.Spec.Containers[0]
+		Expect(container.EnvFrom).NotTo(BeEmpty(), "container should have EnvFrom for PG secret")
+
+		ref := container.EnvFrom[0].SecretRef
+		Expect(ref).NotTo(BeNil(), "EnvFrom should reference postgresql-secret, got %v", ref)
+		Expect(ref.Name).To(Equal("postgresql-secret"), "EnvFrom should reference postgresql-secret, got %v", ref)
+	})
+
+	It("mounts the migrations ConfigMap", func() {
+		kn := testKubernaut()
+		job := mustMigrationJob(kn)
+
+		container := job.Spec.Template.Spec.Containers[0]
+		found := false
+		for _, vm := range container.VolumeMounts {
+			if vm.Name == "migrations" && vm.MountPath == "/migrations" {
+				found = true
+			}
 		}
-	}
-	if !volFound {
-		t.Error("Job should have a migrations volume backed by kubernaut-migrations ConfigMap")
-	}
-}
+		Expect(found).To(BeTrue(), "container should mount migrations volume at /migrations")
 
-func TestMigrationJob_SecurityContext(t *testing.T) {
-	kn := testKubernaut()
-	job := mustMigrationJob(t, kn)
+		volFound := false
+		for _, v := range job.Spec.Template.Spec.Volumes {
+			if v.Name == "migrations" && v.ConfigMap != nil && v.ConfigMap.Name == "kubernaut-migrations" {
+				volFound = true
+			}
+		}
+		Expect(volFound).To(BeTrue(), "Job should have a migrations volume backed by kubernaut-migrations ConfigMap")
+	})
 
-	psc := job.Spec.Template.Spec.SecurityContext
-	if psc == nil || psc.RunAsNonRoot == nil || !*psc.RunAsNonRoot {
-		t.Error("Job pod should have RunAsNonRoot=true")
-	}
+	It("sets security contexts", func() {
+		kn := testKubernaut()
+		job := mustMigrationJob(kn)
 
-	container := job.Spec.Template.Spec.Containers[0]
-	if container.SecurityContext == nil {
-		t.Error("Job container should have security context")
-	}
-}
+		psc := job.Spec.Template.Spec.SecurityContext
+		Expect(psc).NotTo(BeNil())
+		Expect(psc.RunAsNonRoot).NotTo(BeNil())
+		Expect(*psc.RunAsNonRoot).To(BeTrue(), "Job pod should have RunAsNonRoot=true")
 
-func TestMigrationJob_GooseCommand_ContainsPGHost(t *testing.T) {
-	kn := testKubernaut()
-	job := mustMigrationJob(t, kn)
+		container := job.Spec.Template.Spec.Containers[0]
+		Expect(container.SecurityContext).NotTo(BeNil(), "Job container should have security context")
+	})
 
-	container := job.Spec.Template.Spec.Containers[0]
-	cmdStr := strings.Join(container.Command, " ")
-	if !strings.Contains(cmdStr, "pg.example.com") {
-		t.Errorf("goose command should reference PG host, got:\n%s", cmdStr)
-	}
-	if !strings.Contains(cmdStr, "5432") {
-		t.Errorf("goose command should reference PG port, got:\n%s", cmdStr)
-	}
-}
+	It("runs goose with the PostgreSQL host and port", func() {
+		kn := testKubernaut()
+		job := mustMigrationJob(kn)
+
+		container := job.Spec.Template.Spec.Containers[0]
+		cmdStr := strings.Join(container.Command, " ")
+		Expect(cmdStr).To(ContainSubstring("pg.example.com"), "goose command should reference PG host, got:\n%s", cmdStr)
+		Expect(cmdStr).To(ContainSubstring("5432"), "goose command should reference PG port, got:\n%s", cmdStr)
+	})
+})
