@@ -1517,6 +1517,28 @@ spec:
                       Required key: valkey-secrets.yaml (YAML content: "password: <value>").
                     minLength: 1
                     type: string
+                  tls:
+                    description: |-
+                      TLS configures client-side TLS for the Valkey/Redis connection.
+                      Server-side TLS provisioning is the platform admin's responsibility
+                      (Valkey is BYO).
+                    properties:
+                      caSecretName:
+                        description: |-
+                          Name of the Secret containing the CA certificate to verify the server.
+                          Required key: ca.crt
+                        type: string
+                      clientCertSecretName:
+                        description: |-
+                          Name of the Secret containing client certificate and key for mTLS.
+                          Required keys: tls.crt, tls.key
+                        type: string
+                      enabled:
+                        description: Whether TLS is enabled for the Valkey/Redis connection.
+                        type: boolean
+                    required:
+                    - enabled
+                    type: object
                 required:
                 - host
                 - secretName
