@@ -1377,3 +1377,196 @@ func intPtrDefault(val *int, def int) int {
 	}
 	return def
 }
+
+// ---------- APIFrontend ConfigMaps ----------
+
+type afConfigYAML struct {
+	Server        afServerYAML        `yaml:"server"`
+	Agent         afAgentYAML         `yaml:"agent"`
+	MCP           afMCPYAML           `yaml:"mcp"`
+	AgentCard     afAgentCardYAML     `yaml:"agentCard"`
+	Auth          afAuthYAML          `yaml:"auth"`
+	Logging       afLoggingYAML       `yaml:"logging"`
+	RateLimit     afRateLimitYAML     `yaml:"rateLimit"`
+	Shutdown      afShutdownYAML      `yaml:"shutdown"`
+	SeverityTriage afSeverityTriageYAML `yaml:"severityTriage"`
+	Resilience    afResilienceYAML    `yaml:"resilience"`
+}
+
+type afServerYAML struct {
+	Port int          `yaml:"port"`
+	TLS  afTLSYAML    `yaml:"tls"`
+}
+
+type afTLSYAML struct {
+	CertDir  string `yaml:"certDir"`
+	Required bool   `yaml:"required"`
+}
+
+type afAgentYAML struct {
+	KABaseURL      string `yaml:"kaBaseURL"`
+	KAMCPEndpoint  string `yaml:"kaMCPEndpoint"`
+	DSBaseURL      string `yaml:"dsBaseURL"`
+	KATLSCAFile    string `yaml:"kaTlsCaFile"`
+	DSTLSCAFile    string `yaml:"dsTlsCaFile"`
+}
+
+type afMCPYAML struct {
+	Enabled            bool   `yaml:"enabled"`
+	SessionIdleTimeout string `yaml:"sessionIdleTimeout"`
+}
+
+type afAgentCardYAML struct {
+	URL string `yaml:"url"`
+}
+
+type afAuthYAML struct {
+	IssuerURL string `yaml:"issuerURL"`
+	Audience  string `yaml:"audience"`
+}
+
+type afLoggingYAML struct {
+	Level string `yaml:"level"`
+}
+
+type afRateLimitYAML struct {
+	IPRequestsPerSec      int `yaml:"ipRequestsPerSec"`
+	UserRequestsPerSec    int `yaml:"userRequestsPerSec"`
+	MaxConcurrentSessions int `yaml:"maxConcurrentSessions"`
+	ToolCallsPerMinute    int `yaml:"toolCallsPerMinute"`
+}
+
+type afShutdownYAML struct {
+	DrainSeconds int `yaml:"drainSeconds"`
+}
+
+type afSeverityTriageYAML struct {
+	Enabled                  bool   `yaml:"enabled"`
+	PrometheusURL            string `yaml:"prometheusURL"`
+	PrometheusTLSCAFile      string `yaml:"prometheusTlsCaFile"`
+	PrometheusBearerTokenFile string `yaml:"prometheusBearerTokenFile"`
+	CacheTTLSeconds          int    `yaml:"cacheTTLSeconds"`
+	MaxQueriesPerCall        int    `yaml:"maxQueriesPerCall"`
+	MaxRulesEvaluated        int    `yaml:"maxRulesEvaluated"`
+	LLMConfidence            float64 `yaml:"llmConfidence"`
+}
+
+type afCircuitBreakerYAML struct {
+	ConnectTimeout     string `yaml:"connectTimeout"`
+	RequestTimeout     string `yaml:"requestTimeout"`
+	CBMaxRequests      int    `yaml:"cbMaxRequests"`
+	CBInterval         string `yaml:"cbInterval"`
+	CBTimeout          string `yaml:"cbTimeout"`
+	CBFailureThreshold int    `yaml:"cbFailureThreshold"`
+	RetryMax           int    `yaml:"retryMax"`
+	RetryInitBackoff   string `yaml:"retryInitBackoff,omitempty"`
+	RetryMaxBackoff    string `yaml:"retryMaxBackoff,omitempty"`
+	RetryableStatuses  []int  `yaml:"retryableStatuses"`
+}
+
+type afResilienceYAML struct {
+	KA  afCircuitBreakerYAML `yaml:"ka"`
+	DS  afCircuitBreakerYAML `yaml:"ds"`
+	K8s afCircuitBreakerYAML `yaml:"k8s"`
+}
+
+// APIFrontendConfigMap generates the apifrontend-config ConfigMap.
+func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+	af := kn.Spec.APIFrontend
+	ns := kn.Namespace
+
+	kaBaseURL := fmt.Sprintf("https://kubernaut-agent.%s.svc.cluster.local:%d", ns, PortHTTPS)
+	dsBaseURL := fmt.Sprintf("https://data-storage-service.%s.svc.cluster.local:%d", ns, PortHTTPS)
+	agentCardURL := af.AgentCardURL
+	if agentCardURL == "" {
+		agentCardURL = fmt.Sprintf("https://apifrontend-service.%s.svc.cluster.local:%d", ns, PortHTTPS)
+	}
+
+	cfg := afConfigYAML{
+		Server: afServerYAML{
+			Port: int(PortHTTPS),
+			TLS:  afTLSYAML{CertDir: "/etc/apifrontend/tls", Required: true},
+		},
+		Agent: afAgentYAML{
+			KABaseURL:     kaBaseURL,
+			KAMCPEndpoint: kaBaseURL + "/api/v1/mcp/",
+			DSBaseURL:     dsBaseURL,
+			KATLSCAFile:   "/etc/apifrontend/tls-ca/ca.crt",
+			DSTLSCAFile:   "/etc/apifrontend/tls-ca/ca.crt",
+		},
+		MCP: afMCPYAML{
+			Enabled:            true,
+			SessionIdleTimeout: "30m",
+		},
+		AgentCard: afAgentCardYAML{URL: agentCardURL},
+		Auth: afAuthYAML{
+			IssuerURL: af.Auth.IssuerURL,
+			Audience:  withDefault(af.Auth.Audience, "kubernaut-apifrontend"),
+		},
+		Logging: afLoggingYAML{
+			Level: withDefault(af.Logging.Level, "info"),
+		},
+		RateLimit: afRateLimitYAML{
+			IPRequestsPerSec:      intPtrDefault(af.RateLimit.IPRequestsPerSec, 50),
+			UserRequestsPerSec:    intPtrDefault(af.RateLimit.UserRequestsPerSec, 20),
+			MaxConcurrentSessions: intPtrDefault(af.RateLimit.MaxConcurrentSessions, 100),
+			ToolCallsPerMinute:    intPtrDefault(af.RateLimit.ToolCallsPerMinute, 60),
+		},
+		Shutdown: afShutdownYAML{
+			DrainSeconds: intPtrDefault(af.Shutdown.DrainSeconds, 15),
+		},
+		SeverityTriage: afSeverityTriageYAML{
+			Enabled:                   kn.Spec.Monitoring.MonitoringEnabled(),
+			PrometheusURL:             OCPPrometheusURL,
+			PrometheusTLSCAFile:       "/etc/apifrontend/tls-ca/ca.crt",
+			PrometheusBearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
+			CacheTTLSeconds:           30,
+			MaxQueriesPerCall:         10,
+			MaxRulesEvaluated:         100,
+			LLMConfidence:             0.7,
+		},
+		Resilience: afResilienceYAML{
+			KA: afCircuitBreakerYAML{
+				ConnectTimeout: "5s", RequestTimeout: "30s",
+				CBMaxRequests: 3, CBInterval: "10s", CBTimeout: "30s", CBFailureThreshold: 5,
+				RetryMax: 2, RetryInitBackoff: "500ms", RetryMaxBackoff: "5s",
+				RetryableStatuses: []int{502, 503, 504},
+			},
+			DS: afCircuitBreakerYAML{
+				ConnectTimeout: "3s", RequestTimeout: "10s",
+				CBMaxRequests: 3, CBInterval: "10s", CBTimeout: "15s", CBFailureThreshold: 3,
+				RetryMax: 3, RetryInitBackoff: "200ms", RetryMaxBackoff: "3s",
+				RetryableStatuses: []int{502, 503, 504},
+			},
+			K8s: afCircuitBreakerYAML{
+				ConnectTimeout: "5s", RequestTimeout: "30s",
+				CBMaxRequests: 3, CBInterval: "10s", CBTimeout: "30s", CBFailureThreshold: 5,
+				RetryMax: 0, RetryableStatuses: []int{},
+			},
+		},
+	}
+
+	data, err := marshalYAML(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("apifrontend config: %w", err)
+	}
+	return &corev1.ConfigMap{
+		ObjectMeta: ObjectMeta(kn, "apifrontend-config", ComponentAPIFrontend),
+		Data:       map[string]string{"config.yaml": data},
+	}, nil
+}
+
+// APIFrontendRBACRolesConfigMap generates the default RBAC roles mapping
+// ConfigMap. Users can override this by setting spec.apiFrontend.rbacRolesConfigMapRef.
+func APIFrontendRBACRolesConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+	defaultRoles := `roles:
+  admin:
+    tools: ["*"]
+  viewer:
+    tools: ["list_investigations", "get_investigation", "search_signals"]
+`
+	return &corev1.ConfigMap{
+		ObjectMeta: ObjectMeta(kn, "apifrontend-rbac-roles", ComponentAPIFrontend),
+		Data:       map[string]string{"rbac_roles.yaml": defaultRoles},
+	}
+}

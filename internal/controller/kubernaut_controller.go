@@ -741,6 +741,19 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 		}
 		configMaps = append(configMaps, llmRuntimeCM)
 	}
+	if kn.Spec.APIFrontendEnabled() {
+		afCM, err := resources.APIFrontendConfigMap(kn)
+		if err != nil {
+			return nil, fmt.Errorf("building apifrontend ConfigMap: %w", err)
+		}
+		configMaps = append(configMaps, afCM)
+		cmHashes["apifrontend"] = resources.ConfigMapDataHash(afCM.Data)
+
+		if kn.Spec.APIFrontend.RBACRolesConfigMapRef == nil {
+			configMaps = append(configMaps, resources.APIFrontendRBACRolesConfigMap(kn))
+		}
+	}
+
 	configMaps = append(configMaps, resources.InterServiceCAConfigMap(kn))
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		configMaps = append(configMaps,
