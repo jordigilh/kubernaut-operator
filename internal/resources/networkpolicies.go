@@ -288,14 +288,19 @@ func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.
 	protoTCP := corev1.ProtocolTCP
 	p8443 := intstr.FromInt32(PortHTTPS)
 
+	kaIngressPeers := []networkingv1.NetworkPolicyPeer{
+		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentAIAnalysis)}},
+	}
+	if kn.Spec.APIFrontendEnabled() {
+		kaIngressPeers = append(kaIngressPeers,
+			networkingv1.NetworkPolicyPeer{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentAPIFrontend)}},
+		)
+	}
+
 	ingress := []networkingv1.NetworkPolicyIngressRule{
 		{
-			From: []networkingv1.NetworkPolicyPeer{
-				{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentAIAnalysis)}},
-			},
-			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protoTCP, Port: &p8443},
-			},
+			From:  kaIngressPeers,
+			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protoTCP, Port: &p8443}},
 		},
 	}
 	if m := metricsIngressRule(spec.MonitoringNamespace); m != nil {
