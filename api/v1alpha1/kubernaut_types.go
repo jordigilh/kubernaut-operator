@@ -87,6 +87,11 @@ type KubernautSpec struct {
 	// resources that enforce a default-deny posture with explicit allow rules.
 	// +optional
 	NetworkPolicies NetworkPoliciesSpec `json:"networkPolicies,omitempty"`
+
+	// APIFrontend configures the optional API Frontend (MCP/A2A gateway) service.
+	// When nil, the apifrontend service is not deployed (opt-in).
+	// +optional
+	APIFrontend *APIFrontendSpec `json:"apiFrontend,omitempty"`
 }
 
 // ImageSpec configures container image policy for all services.
@@ -796,6 +801,92 @@ type AuthWebhookSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// APIFrontendSpec configures the API Frontend (MCP Streamable HTTP / A2A) service.
+// The API Frontend is an opt-in component that provides external access to
+// Kubernaut Agent via MCP and A2A protocols with OIDC authentication,
+// rate limiting, and RBAC-scoped tool access.
+type APIFrontendSpec struct {
+	// OIDC authentication configuration.
+	// +optional
+	Auth APIFrontendAuthSpec `json:"auth,omitempty"`
+
+	// Request rate limiting configuration.
+	// +optional
+	RateLimit APIFrontendRateLimitSpec `json:"rateLimit,omitempty"`
+
+	// Graceful shutdown configuration.
+	// +optional
+	Shutdown APIFrontendShutdownSpec `json:"shutdown,omitempty"`
+
+	// External URL for the A2A agent card discovery endpoint.
+	// When empty, auto-derived from the in-cluster service FQDN.
+	// +optional
+	AgentCardURL string `json:"agentCardURL,omitempty"`
+
+	// Reference to a pre-existing ConfigMap containing RBAC role-to-tool
+	// mappings (key: "rbac_roles.yaml"). When empty, the operator generates
+	// a default RBAC roles ConfigMap.
+	// +optional
+	RBACRolesConfigMapRef *ConfigMapRef `json:"rbacRolesConfigMapRef,omitempty"`
+
+	// +optional
+	Logging LoggingSpec `json:"logging,omitempty"`
+
+	// Resource requirements.
+	// +optional
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// APIFrontendAuthSpec configures OIDC authentication for the API Frontend.
+type APIFrontendAuthSpec struct {
+	// OIDC issuer URL (e.g. "https://login.kubernaut.ai/realms/kubernaut").
+	// +optional
+	IssuerURL string `json:"issuerURL,omitempty"`
+
+	// Expected JWT audience claim.
+	// +kubebuilder:default="kubernaut-apifrontend"
+	// +optional
+	Audience string `json:"audience,omitempty"`
+}
+
+// APIFrontendRateLimitSpec configures request rate limiting for the API Frontend.
+type APIFrontendRateLimitSpec struct {
+	// Per-IP requests per second.
+	// +kubebuilder:default=50
+	// +optional
+	IPRequestsPerSec *int `json:"ipRequestsPerSec,omitempty"`
+
+	// Per-user requests per second.
+	// +kubebuilder:default=20
+	// +optional
+	UserRequestsPerSec *int `json:"userRequestsPerSec,omitempty"`
+
+	// Maximum concurrent MCP/A2A sessions.
+	// +kubebuilder:default=100
+	// +optional
+	MaxConcurrentSessions *int `json:"maxConcurrentSessions,omitempty"`
+
+	// Tool calls per minute per user.
+	// +kubebuilder:default=60
+	// +optional
+	ToolCallsPerMinute *int `json:"toolCallsPerMinute,omitempty"`
+}
+
+// APIFrontendShutdownSpec configures graceful shutdown for the API Frontend.
+type APIFrontendShutdownSpec struct {
+	// Seconds to wait for in-flight requests to drain during shutdown.
+	// +kubebuilder:default=15
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=300
+	// +optional
+	DrainSeconds *int `json:"drainSeconds,omitempty"`
+}
+
+// APIFrontendEnabled returns true when the API Frontend is configured.
+func (s *KubernautSpec) APIFrontendEnabled() bool {
+	return s.APIFrontend != nil
 }
 
 // DataStorageSpec configures the DataStorage service.
