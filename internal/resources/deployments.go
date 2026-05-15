@@ -136,6 +136,17 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		{Name: "data", MountPath: "/data"},
 	}
 
+	if kn.Spec.Valkey.ValkeyTLSEnabled() {
+		if kn.Spec.Valkey.TLS.CASecretName != "" {
+			volumes = append(volumes, secretVolume("valkey-ca", kn.Spec.Valkey.TLS.CASecretName))
+			mounts = append(mounts, corev1.VolumeMount{Name: "valkey-ca", MountPath: "/etc/valkey-tls/ca", ReadOnly: true})
+		}
+		if kn.Spec.Valkey.TLS.ClientCertSecretName != "" {
+			volumes = append(volumes, secretVolume("valkey-client-cert", kn.Spec.Valkey.TLS.ClientCertSecretName))
+			mounts = append(mounts, corev1.VolumeMount{Name: "valkey-client-cert", MountPath: "/etc/valkey-tls/client", ReadOnly: true})
+		}
+	}
+
 	env := []corev1.EnvVar{
 		{Name: "CONFIG_PATH", Value: "/etc/datastorage/config.yaml"},
 		{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{

@@ -159,6 +159,33 @@ type ValkeySpec struct {
 	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	Port int32 `json:"port,omitempty"`
+
+	// TLS configures client-side TLS for the Valkey/Redis connection.
+	// Server-side TLS provisioning is the platform admin's responsibility
+	// (Valkey is BYO).
+	// +optional
+	TLS *ValkeyTLSSpec `json:"tls,omitempty"`
+}
+
+// ValkeyTLSSpec configures client-side TLS for BYO Valkey/Redis.
+type ValkeyTLSSpec struct {
+	// Whether TLS is enabled for the Valkey/Redis connection.
+	Enabled bool `json:"enabled"`
+
+	// Name of the Secret containing the CA certificate to verify the server.
+	// Required key: ca.crt
+	// +optional
+	CASecretName string `json:"caSecretName,omitempty"`
+
+	// Name of the Secret containing client certificate and key for mTLS.
+	// Required keys: tls.crt, tls.key
+	// +optional
+	ClientCertSecretName string `json:"clientCertSecretName,omitempty"`
+}
+
+// ValkeyTLSEnabled returns true when Valkey TLS is configured and enabled.
+func (v *ValkeySpec) ValkeyTLSEnabled() bool {
+	return v.TLS != nil && v.TLS.Enabled
 }
 
 // AnsibleSpec configures the optional AWX/AAP integration.

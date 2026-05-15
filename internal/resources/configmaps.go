@@ -128,13 +128,21 @@ type dataStorageDatabaseYAML struct {
 }
 
 type dataStorageRedisYAML struct {
-	Addr             string `json:"addr" yaml:"addr"`
-	DB               int    `json:"db" yaml:"db"`
-	DLQStreamName    string `json:"dlqStreamName" yaml:"dlqStreamName"`
-	DLQMaxLen        int    `json:"dlqMaxLen" yaml:"dlqMaxLen"`
-	DLQConsumerGroup string `json:"dlqConsumerGroup" yaml:"dlqConsumerGroup"`
-	SecretsFile      string `json:"secretsFile" yaml:"secretsFile"`
-	PasswordKey      string `json:"passwordKey" yaml:"passwordKey"`
+	Addr             string              `json:"addr" yaml:"addr"`
+	DB               int                 `json:"db" yaml:"db"`
+	DLQStreamName    string              `json:"dlqStreamName" yaml:"dlqStreamName"`
+	DLQMaxLen        int                 `json:"dlqMaxLen" yaml:"dlqMaxLen"`
+	DLQConsumerGroup string              `json:"dlqConsumerGroup" yaml:"dlqConsumerGroup"`
+	SecretsFile      string              `json:"secretsFile" yaml:"secretsFile"`
+	PasswordKey      string              `json:"passwordKey" yaml:"passwordKey"`
+	TLS              *dataStorageRedisTLSYAML `json:"tls,omitempty" yaml:"tls,omitempty"`
+}
+
+type dataStorageRedisTLSYAML struct {
+	Enabled  bool   `json:"enabled" yaml:"enabled"`
+	CAFile   string `json:"caFile,omitempty" yaml:"caFile,omitempty"`
+	CertFile string `json:"certFile,omitempty" yaml:"certFile,omitempty"`
+	KeyFile  string `json:"keyFile,omitempty" yaml:"keyFile,omitempty"`
 }
 
 type dataStorageLoggingYAML struct {
@@ -706,15 +714,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string
 			UsernameKey:     "username",
 			PasswordKey:     "password",
 		},
-		Redis: dataStorageRedisYAML{
-			Addr:             ValkeyAddr(&kn.Spec.Valkey),
-			DB:               0,
-			DLQStreamName:    "dlq-stream",
-			DLQMaxLen:        1000,
-			DLQConsumerGroup: "dlq-group",
-			SecretsFile:      "/etc/datastorage/secrets/valkey-secrets.yaml",
-			PasswordKey:      "password",
-		},
+		Redis: dataStorageRedisConfig(kn),
 		Logging: dataStorageLoggingYAML{
 			Level:  withDefault(kn.Spec.DataStorage.Logging.Level, "info"),
 			Format: "json",
@@ -729,6 +729,30 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string
 		ObjectMeta: ObjectMeta(kn, "datastorage-config", ComponentDataStorage),
 		Data:       map[string]string{"config.yaml": data},
 	}, nil
+}
+
+func dataStorageRedisConfig(kn *kubernautv1alpha1.Kubernaut) dataStorageRedisYAML {
+	r := dataStorageRedisYAML{
+		Addr:             ValkeyAddr(&kn.Spec.Valkey),
+		DB:               0,
+		DLQStreamName:    "dlq-stream",
+		DLQMaxLen:        1000,
+		DLQConsumerGroup: "dlq-group",
+		SecretsFile:      "/etc/datastorage/secrets/valkey-secrets.yaml",
+		PasswordKey:      "password",
+	}
+	if kn.Spec.Valkey.ValkeyTLSEnabled() {
+		t := &dataStorageRedisTLSYAML{Enabled: true}
+		if kn.Spec.Valkey.TLS.CASecretName != "" {
+			t.CAFile = "/etc/valkey-tls/ca/ca.crt"
+		}
+		if kn.Spec.Valkey.TLS.ClientCertSecretName != "" {
+			t.CertFile = "/etc/valkey-tls/client/tls.crt"
+			t.KeyFile = "/etc/valkey-tls/client/tls.key"
+		}
+		r.TLS = t
+	}
+	return r
 }
 
 // AIAnalysisConfigMap builds the aianalysis-config ConfigMap.
