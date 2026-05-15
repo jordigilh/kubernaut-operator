@@ -98,7 +98,7 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		Resources:       DefaultResources(),
 	}
 
-	volumes := make([]corev1.Volume, 0, 4)
+	volumes := make([]corev1.Volume, 0, 6)
 	volumes = append(volumes,
 		configMapVolume("config", "datastorage-config"),
 		corev1.Volume{
@@ -123,6 +123,8 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 	volumes = append(volumes,
 		secretVolume("tls-certs", DataStorageTLSSecretName),
 		configMapVolume("tls-ca", InterServiceCAConfigMapName),
+		corev1.Volume{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		corev1.Volume{Name: "data", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	)
 
 	mounts := []corev1.VolumeMount{
@@ -130,6 +132,8 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		{Name: "secrets", MountPath: "/etc/datastorage/secrets", ReadOnly: true},
 		{Name: "tls-certs", MountPath: InterServiceTLSCertDir, ReadOnly: true},
 		{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
+		{Name: "tmp", MountPath: "/tmp"},
+		{Name: "data", MountPath: "/data"},
 	}
 
 	env := []corev1.EnvVar{
@@ -140,6 +144,7 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile},
 	}
 
+	var gracePeriod int64 = 60
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentDataStorage, ImageName: "datastorage",
 		Resources: kn.Spec.DataStorage.Resources, VolumeMounts: mounts, Volumes: volumes,
@@ -150,6 +155,7 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		},
+		TerminationGracePeriodSeconds: &gracePeriod,
 	})
 }
 
@@ -682,20 +688,21 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 // DeploymentParams collects the parameters for building a workload Deployment,
 // replacing what was previously a 9-argument function signature.
 type DeploymentParams struct {
-	Component      string
-	ImageName      string
-	Resources      corev1.ResourceRequirements
-	VolumeMounts   []corev1.VolumeMount
-	Volumes        []corev1.Volume
-	InitContainers []corev1.Container
-	Ports          []corev1.ContainerPort
-	Env            []corev1.EnvVar
-	Args           []string
-	ProbePort      int32
-	Strategy       *appsv1.DeploymentStrategy
-	LivenessPath   string
-	ReadinessPath  string
-	PodAnnotations map[string]string
+	Component                     string
+	ImageName                     string
+	Resources                     corev1.ResourceRequirements
+	VolumeMounts                  []corev1.VolumeMount
+	Volumes                       []corev1.Volume
+	InitContainers                []corev1.Container
+	Ports                         []corev1.ContainerPort
+	Env                           []corev1.EnvVar
+	Args                          []string
+	ProbePort                     int32
+	Strategy                      *appsv1.DeploymentStrategy
+	LivenessPath                  string
+	ReadinessPath                 string
+	PodAnnotations                map[string]string
+	TerminationGracePeriodSeconds *int64
 }
 
 func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*appsv1.Deployment, error) {
@@ -776,7 +783,8 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 						LivenessProbe:   liveness,
 						ReadinessProbe:  readiness,
 					}},
-					Volumes: p.Volumes,
+					Volumes:                       p.Volumes,
+				TerminationGracePeriodSeconds: p.TerminationGracePeriodSeconds,
 				},
 			},
 		},

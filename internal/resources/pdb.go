@@ -29,19 +29,26 @@ import (
 // Opt-in components (e.g. APIFrontend) are skipped when not configured.
 func PodDisruptionBudgets(kn *kubernautv1alpha1.Kubernaut) []*policyv1.PodDisruptionBudget {
 	maxUnavailable := intstr.FromInt32(PDBMaxUnavailable)
+	minAvailableOne := intstr.FromInt32(1)
 	pdbs := make([]*policyv1.PodDisruptionBudget, 0, len(AllComponents()))
 
 	for _, component := range AllComponents() {
 		if !isComponentActive(kn, component) {
 			continue
 		}
-		pdbs = append(pdbs, &policyv1.PodDisruptionBudget{
+		pdb := &policyv1.PodDisruptionBudget{
 			ObjectMeta: ObjectMeta(kn, component, component),
 			Spec: policyv1.PodDisruptionBudgetSpec{
-				MaxUnavailable: &maxUnavailable,
-				Selector:       &metav1.LabelSelector{MatchLabels: SelectorLabels(component)},
+				Selector: &metav1.LabelSelector{MatchLabels: SelectorLabels(component)},
 			},
-		})
+		}
+		switch component {
+		case ComponentDataStorage, ComponentAPIFrontend:
+			pdb.Spec.MinAvailable = &minAvailableOne
+		default:
+			pdb.Spec.MaxUnavailable = &maxUnavailable
+		}
+		pdbs = append(pdbs, pdb)
 	}
 
 	return pdbs
