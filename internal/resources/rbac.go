@@ -69,6 +69,10 @@ func ClusterRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRole {
 		roles = append(roles, gatewaySignalSourceClusterRole(kn, labels))
 	}
 
+	if kn.Spec.APIFrontendEnabled() {
+		roles = append(roles, apifrontendClusterRole(kn, labels))
+	}
+
 	return roles
 }
 
@@ -108,6 +112,13 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 				ServiceAccountName(ComponentKubernautAgent), ns, labels),
 			clusterRoleBinding(p("alertmanager-gateway-signal-source"), p("gateway-signal-source"),
 				OCPAlertManagerSAName, OCPMonitoringNamespace, labels),
+		)
+	}
+
+	if kn.Spec.APIFrontendEnabled() {
+		crbs = append(crbs,
+			clusterRoleBinding(p("apifrontend-binding"), p("apifrontend-role"),
+				ServiceAccountName(ComponentAPIFrontend), ns, labels),
 		)
 	}
 
@@ -649,6 +660,18 @@ func gatewaySignalSourceClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "gateway-signal-source"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
 			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"gateway-service"}, Verbs: []string{"create"}},
+		},
+	}
+}
+
+func apifrontendClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
+	return &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "apifrontend-role"), Labels: labels},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{"apifrontend.kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+			{APIGroups: []string{"apifrontend.kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
+			{APIGroups: []string{""}, Resources: []string{"users", "groups", "serviceaccounts"}, Verbs: []string{"impersonate"}},
 		},
 	}
 }

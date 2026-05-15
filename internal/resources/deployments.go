@@ -611,6 +611,72 @@ func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 	})
 }
 
+// APIFrontendDeployment builds the apifrontend Deployment.
+// The AF service exposes HTTPS (8443), health (8081), and metrics (9090) ports.
+// It mounts projected config (config.yaml + rbac_roles.yaml), TLS server cert,
+// and CA cert for inter-service trust.
+func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+	env := []corev1.EnvVar{
+		{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{
+			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
+		}},
+		{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
+			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
+		}},
+		{Name: "TLS_CA_FILE", Value: "/etc/apifrontend/tls-ca/ca.crt"},
+	}
+
+	rbacCMName := "apifrontend-rbac-roles"
+	if ref := kn.Spec.APIFrontend.RBACRolesConfigMapRef; ref != nil {
+		rbacCMName = ref.ConfigMapName
+	}
+
+	volumes := []corev1.Volume{
+		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: "config", VolumeSource: corev1.VolumeSource{
+			Projected: &corev1.ProjectedVolumeSource{
+				Sources: []corev1.VolumeProjection{
+					{ConfigMap: &corev1.ConfigMapProjection{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "apifrontend-config"},
+						Items:                []corev1.KeyToPath{{Key: "config.yaml", Path: "config.yaml"}},
+					}},
+					{ConfigMap: &corev1.ConfigMapProjection{
+						LocalObjectReference: corev1.LocalObjectReference{Name: rbacCMName},
+						Items:                []corev1.KeyToPath{{Key: "rbac_roles.yaml", Path: "rbac_roles.yaml"}},
+					}},
+				},
+			},
+		}},
+		secretVolume("tls-server", APIFrontendTLSSecretName),
+		optionalConfigMapVolume("tls-ca", InterServiceCAConfigMapName),
+	}
+
+	mounts := []corev1.VolumeMount{
+		{Name: "tmp", MountPath: "/tmp"},
+		{Name: "config", MountPath: "/etc/apifrontend", ReadOnly: true},
+		{Name: "tls-server", MountPath: "/etc/apifrontend/tls", ReadOnly: true},
+		{Name: "tls-ca", MountPath: "/etc/apifrontend/tls-ca", ReadOnly: true},
+	}
+
+	return buildDeployment(kn, DeploymentParams{
+		Component: ComponentAPIFrontend, ImageName: "apifrontend",
+		Resources: kn.Spec.APIFrontend.Resources, VolumeMounts: mounts, Volumes: volumes,
+		Env:  env,
+		Args: []string{"--config=/etc/apifrontend/config.yaml"},
+		Ports: []corev1.ContainerPort{
+			{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
+			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
+		},
+		ProbePort: PortHealthProbe,
+		PodAnnotations: map[string]string{
+			"prometheus.io/scrape": "true",
+			"prometheus.io/port":   "9090",
+			"prometheus.io/path":   "/metrics",
+		},
+	})
+}
+
 // --- internal helpers ---
 
 // DeploymentParams collects the parameters for building a workload Deployment,
@@ -847,6 +913,11 @@ func probeConfigForComponent(component string) ProbeConfig {
 		return ProbeConfig{
 			LivenessPath: "/healthz", LivenessInitialDelay: 15, LivenessPeriod: 20, LivenessTimeout: 5, LivenessFailureThreshold: 3,
 			ReadinessPath: "/readyz", ReadinessInitialDelay: 15, ReadinessPeriod: 10, ReadinessTimeout: 5, ReadinessFailureThreshold: 6,
+		}
+	case ComponentAPIFrontend:
+		return ProbeConfig{
+			LivenessPath: "/healthz", LivenessInitialDelay: 15, LivenessPeriod: 10, LivenessTimeout: 5, LivenessFailureThreshold: 3,
+			ReadinessPath: "/readyz", ReadinessInitialDelay: 5, ReadinessPeriod: 5, ReadinessTimeout: 3, ReadinessFailureThreshold: 3,
 		}
 	default:
 		// SignalProcessing, RemediationOrchestrator, WorkflowExecution

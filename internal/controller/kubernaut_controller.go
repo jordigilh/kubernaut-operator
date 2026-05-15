@@ -805,6 +805,9 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		resources.KubernautAgentDeployment,
 		resources.AuthWebhookDeployment,
 	}
+	if kn.Spec.APIFrontendEnabled() {
+		depBuilders = append(depBuilders, resources.APIFrontendDeployment)
+	}
 	for _, build := range depBuilders {
 		dep, err := build(kn)
 		if err != nil {
@@ -864,7 +867,7 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 	// Update per-service status from Deployment readiness.
 	var serviceStatuses []kubernautv1alpha1.ServiceStatus
 	allReady := true
-	for _, component := range resources.AllComponents() {
+	for _, component := range resources.ActiveComponents(kn) {
 		dep := &appsv1.Deployment{}
 		err := r.Get(ctx, types.NamespacedName{
 			Name:      resources.DeploymentName(component),
