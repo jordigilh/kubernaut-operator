@@ -17,47 +17,40 @@ limitations under the License.
 package resources
 
 import (
-	"testing"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestServiceAccount_PerComponent(t *testing.T) {
-	kn := testKubernaut()
-	for _, component := range AllComponents() {
-		sa := ServiceAccount(kn, component)
-		wantName := ServiceAccountName(component)
-		if sa.Name != wantName {
-			t.Errorf("ServiceAccount(%q).Name = %q, want %q", component, sa.Name, wantName)
-		}
-		if sa.Namespace != kn.Namespace {
-			t.Errorf("ServiceAccount(%q).Namespace = %q, want %q", component, sa.Namespace, kn.Namespace)
-		}
-		if got := sa.Labels["app"]; got != component {
-			t.Errorf("ServiceAccount(%q).Labels[app] = %q, want %q", component, got, component)
-		}
-	}
-}
+var _ = Describe("ServiceAccount", func() {
+	Context("per component", func() {
+		It("names, namespaces, and labels each service account", func() {
+			kn := testKubernaut()
+			for _, component := range AllComponents() {
+				sa := ServiceAccount(kn, component)
+				wantName := ServiceAccountName(component)
+				Expect(sa.Name).To(Equal(wantName), "ServiceAccount(%q).Name = %q, want %q", component, sa.Name, wantName)
+				Expect(sa.Namespace).To(Equal(kn.Namespace), "ServiceAccount(%q).Namespace = %q, want %q", component, sa.Namespace, kn.Namespace)
+				Expect(sa.Labels["app"]).To(Equal(component), "ServiceAccount(%q).Labels[app] = %q, want %q", component, sa.Labels["app"], component)
+			}
+		})
+	})
 
-func TestWorkflowRunnerServiceAccount_DefaultNamespace(t *testing.T) {
-	kn := testKubernaut()
-	sa := WorkflowRunnerServiceAccount(kn)
+	Context("WorkflowRunnerServiceAccount", func() {
+		It("uses default workflow namespace", func() {
+			kn := testKubernaut()
+			sa := WorkflowRunnerServiceAccount(kn)
 
-	if sa.Name != "kubernaut-workflow-runner" {
-		t.Errorf("Name = %q, want %q", sa.Name, "kubernaut-workflow-runner")
-	}
-	if sa.Namespace != "kubernaut-workflows" {
-		t.Errorf("Namespace = %q, want %q", sa.Namespace, "kubernaut-workflows")
-	}
-}
+			Expect(sa.Name).To(Equal("kubernaut-workflow-runner"))
+			Expect(sa.Namespace).To(Equal("kubernaut-workflows"))
+		})
 
-func TestWorkflowRunnerServiceAccount_CustomNamespace(t *testing.T) {
-	kn := testKubernaut()
-	kn.Spec.WorkflowExecution.WorkflowNamespace = "custom-wf-ns"
-	sa := WorkflowRunnerServiceAccount(kn)
+		It("uses custom workflow namespace from spec", func() {
+			kn := testKubernaut()
+			kn.Spec.WorkflowExecution.WorkflowNamespace = "custom-wf-ns"
+			sa := WorkflowRunnerServiceAccount(kn)
 
-	if sa.Name != "kubernaut-workflow-runner" {
-		t.Errorf("Name = %q, want %q", sa.Name, "kubernaut-workflow-runner")
-	}
-	if sa.Namespace != "custom-wf-ns" {
-		t.Errorf("Namespace = %q, want %q", sa.Namespace, "custom-wf-ns")
-	}
-}
+			Expect(sa.Name).To(Equal("kubernaut-workflow-runner"))
+			Expect(sa.Namespace).To(Equal("custom-wf-ns"))
+		})
+	})
+})

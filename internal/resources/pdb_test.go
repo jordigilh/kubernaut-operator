@@ -17,88 +17,64 @@ limitations under the License.
 package resources
 
 import (
-	"testing"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestPodDisruptionBudgets_Count10(t *testing.T) {
-	kn := testKubernaut()
-	pdbs := PodDisruptionBudgets(kn)
-	if len(pdbs) != 10 {
-		t.Errorf("PodDisruptionBudgets() should return 10, got %d", len(pdbs))
-	}
-}
+var _ = Describe("PodDisruptionBudgets", func() {
+	It("returns 10 PDBs", func() {
+		kn := testKubernaut()
+		pdbs := PodDisruptionBudgets(kn)
+		Expect(len(pdbs)).To(Equal(10))
+	})
 
-func TestPodDisruptionBudgets_MaxUnavailable1(t *testing.T) {
-	kn := testKubernaut()
-	for _, pdb := range PodDisruptionBudgets(kn) {
-		if pdb.Spec.MaxUnavailable == nil {
-			t.Errorf("PDB %q should have MaxUnavailable set", pdb.Name)
-			continue
+	It("sets MaxUnavailable to 1 on every PDB", func() {
+		kn := testKubernaut()
+		for _, pdb := range PodDisruptionBudgets(kn) {
+			Expect(pdb.Spec.MaxUnavailable).NotTo(BeNil(), "PDB %q should have MaxUnavailable set", pdb.Name)
+			Expect(pdb.Spec.MaxUnavailable.IntValue()).To(Equal(1), "PDB %q MaxUnavailable = %d, want 1", pdb.Name, pdb.Spec.MaxUnavailable.IntValue())
 		}
-		if pdb.Spec.MaxUnavailable.IntValue() != 1 {
-			t.Errorf("PDB %q MaxUnavailable = %d, want 1", pdb.Name, pdb.Spec.MaxUnavailable.IntValue())
-		}
-	}
-}
+	})
 
-func TestPodDisruptionBudgets_SelectorsMatchComponentSelectorLabels(t *testing.T) {
-	kn := testKubernaut()
-	components := AllComponents()
-	pdbs := PodDisruptionBudgets(kn)
-	if len(pdbs) != len(components) {
-		t.Fatalf("PDB count = %d, component count = %d", len(pdbs), len(components))
-	}
-	for i, pdb := range pdbs {
-		component := components[i]
-		if pdb.Name != component {
-			t.Fatalf("PDB[%d] name = %q, want %q (index mismatch)", i, pdb.Name, component)
-		}
-		want := SelectorLabels(component)
-		if pdb.Spec.Selector == nil {
-			t.Errorf("PDB %q should have selector", pdb.Name)
-			continue
-		}
-		got := pdb.Spec.Selector.MatchLabels
-		if len(got) != len(want) {
-			t.Errorf("PDB %q selector len = %d, want %d (got %#v want %#v)", pdb.Name, len(got), len(want), got, want)
-			continue
-		}
-		for k, v := range want {
-			if got[k] != v {
-				t.Errorf("PDB %q selector %q = %q, want %q", pdb.Name, k, got[k], v)
+	It("aligns selectors with component selector labels by index", func() {
+		kn := testKubernaut()
+		components := AllComponents()
+		pdbs := PodDisruptionBudgets(kn)
+		Expect(len(pdbs)).To(Equal(len(components)), "PDB count = %d, component count = %d", len(pdbs), len(components))
+		for i, pdb := range pdbs {
+			component := components[i]
+			Expect(pdb.Name).To(Equal(component), "PDB[%d] name = %q, want %q (index mismatch)", i, pdb.Name, component)
+			want := SelectorLabels(component)
+			Expect(pdb.Spec.Selector).NotTo(BeNil(), "PDB %q should have selector", pdb.Name)
+			got := pdb.Spec.Selector.MatchLabels
+			Expect(len(got)).To(Equal(len(want)), "PDB %q selector len = %d, want %d (got %#v want %#v)", pdb.Name, len(got), len(want), got, want)
+			for k, v := range want {
+				Expect(got[k]).To(Equal(v), "PDB %q selector %q = %q, want %q", pdb.Name, k, got[k], v)
 			}
 		}
-	}
-}
+	})
 
-func TestPodDisruptionBudgets_LabelsIncludeManagedBy(t *testing.T) {
-	kn := testKubernaut()
-	for _, pdb := range PodDisruptionBudgets(kn) {
-		if pdb.Labels["app.kubernetes.io/managed-by"] != "kubernaut-operator" {
-			t.Errorf("PDB %q labels missing app.kubernetes.io/managed-by=kubernaut-operator, got %#v", pdb.Name, pdb.Labels)
+	It("labels every PDB with managed-by kubernaut-operator", func() {
+		kn := testKubernaut()
+		for _, pdb := range PodDisruptionBudgets(kn) {
+			Expect(pdb.Labels["app.kubernetes.io/managed-by"]).To(Equal("kubernaut-operator"), "PDB %q labels missing app.kubernetes.io/managed-by=kubernaut-operator, got %#v", pdb.Name, pdb.Labels)
 		}
-	}
-}
+	})
 
-func TestPodDisruptionBudgets_CorrectNamespace(t *testing.T) {
-	kn := testKubernaut()
-	for _, pdb := range PodDisruptionBudgets(kn) {
-		if pdb.Namespace != testSystemNamespace {
-			t.Errorf("PDB %q namespace = %q, want %q", pdb.Name, pdb.Namespace, testSystemNamespace)
+	It("places every PDB in the system namespace", func() {
+		kn := testKubernaut()
+		for _, pdb := range PodDisruptionBudgets(kn) {
+			Expect(pdb.Namespace).To(Equal(testSystemNamespace), "PDB %q namespace = %q, want %q", pdb.Name, pdb.Namespace, testSystemNamespace)
 		}
-	}
-}
+	})
 
-func TestPodDisruptionBudgets_NamesMatchComponents(t *testing.T) {
-	kn := testKubernaut()
-	pdbs := PodDisruptionBudgets(kn)
-	components := AllComponents()
-	if len(pdbs) != len(components) {
-		t.Fatalf("PDB count = %d, component count = %d", len(pdbs), len(components))
-	}
-	for i, pdb := range pdbs {
-		if pdb.Name != components[i] {
-			t.Errorf("PDB[%d] name = %q, want %q (no -pdb suffix)", i, pdb.Name, components[i])
+	It("names PDBs after components without a -pdb suffix", func() {
+		kn := testKubernaut()
+		pdbs := PodDisruptionBudgets(kn)
+		components := AllComponents()
+		Expect(len(pdbs)).To(Equal(len(components)), "PDB count = %d, component count = %d", len(pdbs), len(components))
+		for i, pdb := range pdbs {
+			Expect(pdb.Name).To(Equal(components[i]), "PDB[%d] name = %q, want %q (no -pdb suffix)", i, pdb.Name, components[i])
 		}
-	}
-}
+	})
+})

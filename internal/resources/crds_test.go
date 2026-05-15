@@ -17,9 +17,12 @@ limitations under the License.
 package resources
 
 import (
+	"fmt"
 	"io/fs"
 	"strings"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	sigsyaml "sigs.k8s.io/yaml"
@@ -27,87 +30,73 @@ import (
 	"github.com/jordigilh/kubernaut/pkg/shared/assets"
 )
 
-func TestEnsureCRDs_EmbeddedYAMLParses(t *testing.T) {
-	entries, err := fs.ReadDir(assets.CRDsFS, "crds")
-	if err != nil {
-		t.Fatalf("reading embedded CRDs: %v", err)
-	}
+var _ = Describe("EnsureCRDs embedded assets", func() {
+	It("parses each embedded CRD YAML", func() {
+		entries, err := fs.ReadDir(assets.CRDsFS, "crds")
+		Expect(err).NotTo(HaveOccurred())
 
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		data, err := fs.ReadFile(assets.CRDsFS, "crds/"+entry.Name())
-		if err != nil {
-			t.Errorf("reading %s: %v", entry.Name(), err)
-			continue
-		}
+		var errs []string
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			data, err := fs.ReadFile(assets.CRDsFS, "crds/"+entry.Name())
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("reading %s: %v", entry.Name(), err))
+				continue
+			}
 
-		crd := &apiextensionsv1.CustomResourceDefinition{}
-		if err := sigsyaml.Unmarshal(data, crd); err != nil {
-			t.Errorf("CRD %s fails to unmarshal: %v", entry.Name(), err)
-			continue
-		}
+			crd := &apiextensionsv1.CustomResourceDefinition{}
+			if err := sigsyaml.Unmarshal(data, crd); err != nil {
+				errs = append(errs, fmt.Sprintf("CRD %s fails to unmarshal: %v", entry.Name(), err))
+				continue
+			}
 
-		if crd.Name == "" {
-			t.Errorf("CRD %s has no metadata.name", entry.Name())
-		}
-		if crd.Spec.Group == "" {
-			t.Errorf("CRD %s has no spec.group", entry.Name())
-		}
-	}
-}
-
-func TestEnsureCRDs_YamlToUnstructured_PreservesAllFields(t *testing.T) {
-	entries, err := fs.ReadDir(assets.CRDsFS, "crds")
-	if err != nil {
-		t.Fatalf("reading embedded CRDs: %v", err)
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		data, err := fs.ReadFile(assets.CRDsFS, "crds/"+entry.Name())
-		if err != nil {
-			t.Fatalf("reading %s: %v", entry.Name(), err)
-		}
-		raw := string(data)
-
-		obj, err := yamlToUnstructured(data)
-		if err != nil {
-			t.Fatalf("yamlToUnstructured(%s): %v", entry.Name(), err)
-		}
-
-		roundTripped, err := obj.MarshalJSON()
-		if err != nil {
-			t.Fatalf("re-marshalling %s: %v", entry.Name(), err)
-		}
-
-		if strings.Contains(raw, "serviceAccountName") {
-			if !strings.Contains(string(roundTripped), "serviceAccountName") {
-				t.Errorf("%s: raw YAML has serviceAccountName but yamlToUnstructured round-trip lost it", entry.Name())
+			if crd.Name == "" {
+				errs = append(errs, fmt.Sprintf("CRD %s has no metadata.name", entry.Name()))
+			}
+			if crd.Spec.Group == "" {
+				errs = append(errs, fmt.Sprintf("CRD %s has no spec.group", entry.Name()))
 			}
 		}
+		Expect(errs).To(BeEmpty())
+	})
 
-		if obj.GetName() == "" {
-			t.Errorf("%s has no metadata.name after yamlToUnstructured", entry.Name())
-		}
-	}
-}
+	It("preserves fields through yamlToUnstructured JSON round-trip", func() {
+		entries, err := fs.ReadDir(assets.CRDsFS, "crds")
+		Expect(err).NotTo(HaveOccurred())
 
-func TestEnsureCRDs_EmbeddedCRDCount(t *testing.T) {
-	entries, err := fs.ReadDir(assets.CRDsFS, "crds")
-	if err != nil {
-		t.Fatalf("reading embedded CRDs: %v", err)
-	}
-	count := 0
-	for _, e := range entries {
-		if !e.IsDir() {
-			count++
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			data, err := fs.ReadFile(assets.CRDsFS, "crds/"+entry.Name())
+			Expect(err).NotTo(HaveOccurred(), "reading %s", entry.Name())
+			raw := string(data)
+
+			obj, err := yamlToUnstructured(data)
+			Expect(err).NotTo(HaveOccurred(), "yamlToUnstructured(%s)", entry.Name())
+
+			roundTripped, err := obj.MarshalJSON()
+			Expect(err).NotTo(HaveOccurred(), "re-marshalling %s", entry.Name())
+
+			if strings.Contains(raw, "serviceAccountName") {
+				Expect(string(roundTripped)).To(ContainSubstring("serviceAccountName"), "%s: raw YAML has serviceAccountName but yamlToUnstructured round-trip lost it", entry.Name())
+			}
+
+			Expect(obj.GetName()).NotTo(BeEmpty(), "%s has no metadata.name after yamlToUnstructured", entry.Name())
 		}
-	}
-	if count < 9 {
-		t.Errorf("expected at least 9 embedded CRD files, got %d", count)
-	}
-}
+	})
+
+	It("embeds at least 9 CRD files", func() {
+		entries, err := fs.ReadDir(assets.CRDsFS, "crds")
+		Expect(err).NotTo(HaveOccurred())
+		count := 0
+		for _, e := range entries {
+			if !e.IsDir() {
+				count++
+			}
+		}
+		Expect(count).To(BeNumerically(">=", 9))
+	})
+})
