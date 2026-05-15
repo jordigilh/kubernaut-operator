@@ -33,7 +33,7 @@ func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut) []*networkingv1.NetworkPol
 	if !spec.NetworkPoliciesEnabled() {
 		return nil
 	}
-	return []*networkingv1.NetworkPolicy{
+	nps := []*networkingv1.NetworkPolicy{
 		gatewayNetworkPolicy(kn),
 		dataStorageNetworkPolicy(kn),
 		aiAnalysisNetworkPolicy(kn),
@@ -45,6 +45,10 @@ func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut) []*networkingv1.NetworkPol
 		authWebhookNetworkPolicy(kn),
 		kubernautAgentNetworkPolicy(kn),
 	}
+	if kn.Spec.APIFrontendEnabled() {
+		nps = append(nps, apifrontendNetworkPolicy(kn))
+	}
+	return nps
 }
 
 func gatewayNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
@@ -491,6 +495,86 @@ func monitoringStackEgressRule(monitoringNS string) networkingv1.NetworkPolicyEg
 		Ports: []networkingv1.NetworkPolicyPort{
 			{Protocol: &protoTCP, Port: &p9091},
 			{Protocol: &protoTCP, Port: &p9094},
+		},
+	}
+}
+
+func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
+	spec := kn.Spec.NetworkPolicies
+	protoTCP := corev1.ProtocolTCP
+	p8443 := intstr.FromInt32(PortHTTPS)
+	p8081 := intstr.FromInt32(PortHealthProbe)
+	p9090 := intstr.FromInt32(PortMetrics)
+
+	ingress := []networkingv1.NetworkPolicyIngressRule{
+		{
+			From: []networkingv1.NetworkPolicyPeer{
+				{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+					"kubernetes.io/metadata.name": kn.Namespace,
+				}}},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protoTCP, Port: &p8443},
+			},
+		},
+		{
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protoTCP, Port: &p8081},
+			},
+		},
+	}
+	if spec.MonitoringNamespace != "" {
+		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+			From: []networkingv1.NetworkPolicyPeer{
+				{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+					"kubernetes.io/metadata.name": spec.MonitoringNamespace,
+				}}},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protoTCP, Port: &p9090},
+			},
+		})
+	}
+
+	egress := []networkingv1.NetworkPolicyEgressRule{
+		dnsEgressRule(),
+		{
+			To: []networkingv1.NetworkPolicyPeer{
+				{PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+					"app.kubernetes.io/part-of": "kubernaut",
+				}}},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protoTCP, Port: &p8443},
+			},
+		},
+	}
+	if r := apiServerEgressRule(spec.APIServerCIDR); r != nil {
+		egress = append(egress, *r)
+	}
+	if spec.MonitoringNamespace != "" {
+		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
+			To: []networkingv1.NetworkPolicyPeer{
+				{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+					"kubernetes.io/metadata.name": spec.MonitoringNamespace,
+				}}},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protoTCP, Port: &p9090},
+			},
+		})
+	}
+
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: ObjectMeta(kn, ComponentAPIFrontend+"-netpol", ComponentAPIFrontend),
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentAPIFrontend)},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeIngress,
+				networkingv1.PolicyTypeEgress,
+			},
+			Ingress: ingress,
+			Egress:  egress,
 		},
 	}
 }
