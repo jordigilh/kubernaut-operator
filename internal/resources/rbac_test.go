@@ -32,10 +32,10 @@ const (
 )
 
 var _ = Describe("ClusterRoles", func() {
-	It("returns exactly 15 roles (13 base + 2 monitoring)", func() {
+	It("returns exactly 16 roles (14 base + 2 monitoring)", func() {
 		kn := testKubernaut()
 		roles := ClusterRoles(kn)
-		Expect(roles).To(HaveLen(15), "ClusterRoles() should return exactly 15 roles (13 base + 2 monitoring), got %d", len(roles))
+		Expect(roles).To(HaveLen(16), "ClusterRoles() should return exactly 16 roles (14 base + 2 monitoring), got %d", len(roles))
 	})
 
 	It("reduces count when monitoring is disabled", func() {
@@ -394,7 +394,7 @@ var _ = Describe("NamespaceRoles", func() {
 		kn := testKubernaut()
 		roles := NamespaceRoles(kn)
 
-		Expect(roles).To(HaveLen(10), "NamespaceRoles() should return 10, got %d", len(roles))
+		Expect(roles).To(HaveLen(11), "NamespaceRoles() should return 11, got %d", len(roles))
 
 		for _, role := range roles {
 			Expect(role.Rules).To(HaveLen(1), "Role %q should have exactly 1 rule, got %d", role.Name, len(role.Rules))
@@ -627,15 +627,6 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 			}
 		}
 		Expect(found).To(BeTrue(), "apifrontend ClusterRole should be present when AF is enabled")
-	})
-
-	It("is not included when AF is disabled", func() {
-		kn := testKubernaut()
-		roles := ClusterRoles(kn)
-		for _, r := range roles {
-			Expect(r.Name).NotTo(ContainSubstring("apifrontend"),
-				"apifrontend ClusterRole should NOT be present when AF is disabled")
-		}
 	})
 
 	It("grants InvestigationSession CRUD and impersonation", func() {

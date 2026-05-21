@@ -414,14 +414,14 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(deployCond.Status).To(Equal(metav1.ConditionTrue))
 		})
 
-		It("should set per-service status for all 10 components", func() {
+		It("should set per-service status for all 11 components", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 			reconcileToRunning(ctx)
 
 			kn := &kubernautv1alpha1.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Services).To(HaveLen(10))
+			Expect(kn.Status.Services).To(HaveLen(11))
 
 			for _, svc := range kn.Status.Services {
 				Expect(svc.Ready).To(BeTrue(), "service %q should be ready", svc.Name)

@@ -55,9 +55,9 @@ var _ = Describe("NetworkPolicies", func() {
 			kn.Spec.NetworkPolicies.Enabled = &enabled
 		})
 
-		It("returns ten policies for always-on components", func() {
+		It("returns eleven policies for all components", func() {
 			nps := NetworkPolicies(kn)
-			Expect(nps).To(HaveLen(10), "len(NetworkPolicies()) = %d, want 10", len(nps))
+			Expect(nps).To(HaveLen(11), "len(NetworkPolicies()) = %d, want 11", len(nps))
 		})
 
 		It("names match component netpol names for always-on components", func() {
@@ -271,16 +271,6 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 			}
 		}
 		Expect(found).To(BeTrue(), "apifrontend-netpol should be present when AF is enabled")
-	})
-
-	It("is not included when AF is disabled", func() {
-		kn := testKubernaut()
-		enableNP(kn)
-		nps := NetworkPolicies(kn)
-		for _, np := range nps {
-			Expect(np.Name).NotTo(Equal(ComponentAPIFrontend+"-netpol"),
-				"apifrontend-netpol should NOT be present when AF is disabled")
-		}
 	})
 
 	It("allows ingress on HTTPS (8443), health (8081), and metrics (9090)", func() {

@@ -22,11 +22,6 @@ import (
 )
 
 var _ = Describe("MCPGatewayHTTPRoute", func() {
-	It("returns nil when AF is disabled", func() {
-		kn := testKubernaut()
-		Expect(MCPGatewayHTTPRoute(kn)).To(BeNil())
-	})
-
 	It("returns an HTTPRoute when AF is enabled", func() {
 		kn := testKubernautWithAF()
 		route := MCPGatewayHTTPRoute(kn)
@@ -42,11 +37,6 @@ var _ = Describe("MCPGatewayHTTPRoute", func() {
 })
 
 var _ = Describe("MCPServerRegistration", func() {
-	It("returns nil when AF is disabled", func() {
-		kn := testKubernaut()
-		Expect(MCPServerRegistration(kn)).To(BeNil())
-	})
-
 	It("returns an MCPServerRegistration when AF is enabled", func() {
 		kn := testKubernautWithAF()
 		reg := MCPServerRegistration(kn)

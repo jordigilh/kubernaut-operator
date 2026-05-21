@@ -25,10 +25,10 @@ const testAuthWebhookServiceName = "authwebhook-service"
 
 var _ = Describe("Services", func() {
 	Context("Services()", func() {
-		It("returns 5 API services", func() {
+		It("returns 6 API services", func() {
 			kn := testKubernaut()
 			svcs := Services(kn)
-			Expect(svcs).To(HaveLen(5))
+			Expect(svcs).To(HaveLen(6))
 		})
 
 		It("places all services in the system namespace", func() {

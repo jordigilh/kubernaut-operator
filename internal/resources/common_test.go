@@ -72,7 +72,7 @@ func testKubernaut() *kubernautv1alpha1.Kubernaut {
 
 func testKubernautWithAF() *kubernautv1alpha1.Kubernaut {
 	kn := testKubernaut()
-	kn.Spec.APIFrontend = &kubernautv1alpha1.APIFrontendSpec{
+	kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
 		Auth: kubernautv1alpha1.APIFrontendAuthSpec{
 			IssuerURL: "https://login.kubernaut.ai/realms/kubernaut",
 			Audience:  "kubernaut-apifrontend",
