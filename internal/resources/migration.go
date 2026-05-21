@@ -88,7 +88,7 @@ func MigrationJob(kn *kubernautv1alpha1.Kubernaut) (*batchv1.Job, error) {
 						// container start using all env vars including envFrom.
 						Command: []string{"goose", "-dir", "/migrations", "postgres",
 							fmt.Sprintf("host=%s port=%d dbname=$(POSTGRES_DB) user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) sslmode=%s",
-								kn.Spec.PostgreSQL.Host, pgPort, withDefault(kn.Spec.PostgreSQL.SSLMode, "disable")),
+								kn.Spec.PostgreSQL.Host, pgPort, withDefault(kn.Spec.PostgreSQL.SSLMode, "verify-full")),
 							"up",
 						},
 						EnvFrom: []corev1.EnvFromSource{{

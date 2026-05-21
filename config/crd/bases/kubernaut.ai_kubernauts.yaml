@@ -200,9 +200,8 @@ spec:
                 - message: ansible.apiURL is required when ansible.enabled is true
                   rule: '!self.enabled || has(self.apiURL)'
               apiFrontend:
-                description: |-
-                  APIFrontend configures the optional API Frontend (MCP/A2A gateway) service.
-                  When nil, the apifrontend service is not deployed (opt-in).
+                description: APIFrontend configures the API Frontend (MCP/A2A gateway)
+                  service.
                 properties:
                   agentCardURL:
                     description: |-
@@ -1287,11 +1286,10 @@ spec:
                     minLength: 1
                     type: string
                   sslMode:
-                    default: disable
+                    default: verify-full
                     description: PostgreSQL SSL mode (disable, require, verify-ca,
                       verify-full).
                     enum:
-                    - disable
                     - require
                     - verify-ca
                     - verify-full

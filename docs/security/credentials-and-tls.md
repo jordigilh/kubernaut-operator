@@ -62,7 +62,7 @@ The following table summarizes primary east-west trust patterns for the managed 
 | Modern | TLS 1.3 | TLS 1.3 only |
 | Custom | Configurable | Administrator-defined |
 
-**PostgreSQL:** Use `spec.postgresql.sslMode` with values such as `disable`, `require`, `verify-ca`, or `verify-full`. For production deployments, **verify-full** is recommended so both server authenticity and hostname verification are enforced.
+**PostgreSQL:** Use `spec.postgresql.sslMode` with values `require`, `verify-ca`, or `verify-full`. The default is **verify-full**, which enforces both server authenticity and hostname verification. The `disable` value is rejected at validation time (FedRAMP SC-8).
 
 **Admission webhooks:** TLS for the AuthWebhook admission endpoints is managed using OpenShift service CA patterns appropriate for in-cluster webhook servers.
 

@@ -88,10 +88,8 @@ type KubernautSpec struct {
 	// +optional
 	NetworkPolicies NetworkPoliciesSpec `json:"networkPolicies,omitempty"`
 
-	// APIFrontend configures the optional API Frontend (MCP/A2A gateway) service.
-	// When nil, the apifrontend service is not deployed (opt-in).
-	// +optional
-	APIFrontend *APIFrontendSpec `json:"apiFrontend,omitempty"`
+	// APIFrontend configures the API Frontend (MCP/A2A gateway) service.
+	APIFrontend APIFrontendSpec `json:"apiFrontend,omitempty"`
 }
 
 // ImageSpec configures container image policy for all services.
@@ -136,8 +134,8 @@ type PostgreSQLSpec struct {
 	Port int32 `json:"port,omitempty"`
 
 	// PostgreSQL SSL mode (disable, require, verify-ca, verify-full).
-	// +kubebuilder:default="disable"
-	// +kubebuilder:validation:Enum=disable;require;verify-ca;verify-full
+	// +kubebuilder:default="verify-full"
+	// +kubebuilder:validation:Enum=require;verify-ca;verify-full
 	// +optional
 	SSLMode string `json:"sslMode,omitempty"`
 }
@@ -949,9 +947,9 @@ type APIFrontendShutdownSpec struct {
 	DrainSeconds *int `json:"drainSeconds,omitempty"`
 }
 
-// APIFrontendEnabled returns true when the API Frontend is configured.
+// APIFrontendEnabled returns true. The API Frontend is always deployed.
 func (s *KubernautSpec) APIFrontendEnabled() bool {
-	return s.APIFrontend != nil
+	return true
 }
 
 // DataStorageSpec configures the DataStorage service.
