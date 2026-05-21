@@ -11,6 +11,7 @@
 # Stage 1: Build
 # ============================================================================
 FROM registry.access.redhat.com/ubi10/go-toolset:1.25 AS builder
+ENV GOTOOLCHAIN=auto
 
 ARG TARGETOS
 ARG TARGETARCH
