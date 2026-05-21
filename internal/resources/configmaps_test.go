@@ -22,6 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
@@ -96,6 +97,41 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("cooldownPeriod: 10m"), "gateway config should contain cooldownPeriod 10m, got:\n%s", data)
+		})
+
+		It("renders default CORS config", func() {
+			kn := testKubernaut()
+			cm, err := GatewayConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("cors:"))
+			Expect(data).To(ContainSubstring("allowedOrigins:"))
+			Expect(data).To(ContainSubstring("https://no-browser-clients.invalid"))
+			Expect(data).To(ContainSubstring("allowedMethods:"))
+			Expect(data).To(ContainSubstring("allowCredentials: false"))
+			Expect(data).To(ContainSubstring("maxAge: 300"))
+		})
+
+		It("renders custom CORS origins", func() {
+			kn := testKubernaut()
+			kn.Spec.Gateway.Config.CORS.AllowedOrigins = []string{"https://dashboard.example.com", "https://admin.example.com"}
+			cm, err := GatewayConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("https://dashboard.example.com"))
+			Expect(data).To(ContainSubstring("https://admin.example.com"))
+			Expect(data).NotTo(ContainSubstring("no-browser-clients"))
+		})
+
+		It("renders custom CORS credentials and maxAge", func() {
+			kn := testKubernaut()
+			kn.Spec.Gateway.Config.CORS.AllowCredentials = ptr.To(true)
+			kn.Spec.Gateway.Config.CORS.MaxAge = ptr.To(600)
+			cm, err := GatewayConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("allowCredentials: true"))
+			Expect(data).To(ContainSubstring("maxAge: 600"))
 		})
 	})
 
@@ -1017,6 +1053,35 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).To(ContainSubstring("issuerURL"))
 	})
 
+	It("renders config with empty issuerURL when auth is not configured", func() {
+		kn := testKubernaut()
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("port: 8443"))
+		Expect(data).NotTo(ContainSubstring("issuerURL: https://"))
+	})
+
+	It("disables severityTriage when monitoring is disabled", func() {
+		kn := testKubernautWithAF()
+		disabled := false
+		kn.Spec.Monitoring.Enabled = &disabled
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("enabled: false"))
+		Expect(data).NotTo(ContainSubstring("thanos-querier"),
+			"disabled severityTriage should not reference Thanos Querier URL")
+	})
+
+	It("uses SA token CA for severity triage when monitoring is enabled", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("prometheusTlsCaFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt"))
+	})
+
 	It("renders auth issuerURL and audience from spec", func() {
 		kn := testKubernautWithAF()
 		cm, err := APIFrontendConfigMap(kn)
@@ -1064,6 +1129,29 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).NotTo(ContainSubstring("replayCache:"))
+	})
+})
+
+var _ = Describe("APIFrontendConfigMap SAR", func() {
+	It("includes rbac.sarCacheTTL with default 30s", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("sarCacheTTL: 30s"),
+			"AF config should include rbac.sarCacheTTL default 30s, got:\n%s", data)
+	})
+
+	It("renders custom sarCacheTTL from spec", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			SARCacheTTL: "2m",
+		}
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("sarCacheTTL: 2m"),
+			"AF config should render custom sarCacheTTL, got:\n%s", data)
 	})
 })
 

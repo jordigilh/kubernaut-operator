@@ -112,37 +112,16 @@ var _ = Describe("Deployments", func() {
 			expectHasVolumeMount(dep, "config", "/etc/gateway")
 		})
 
-		It("sets default CORS_ALLOWED_ORIGINS", func() {
+		It("does not set CORS_ALLOWED_ORIGINS env var (CORS moved to config YAML)", func() {
 			kn := testKubernaut()
 			dep, err := GatewayDeployment(kn)
 			Expect(err).NotTo(HaveOccurred())
 
 			container := dep.Spec.Template.Spec.Containers[0]
-			found := false
 			for _, env := range container.Env {
-				if env.Name == "CORS_ALLOWED_ORIGINS" {
-					found = true
-					Expect(env.Value).To(Equal("https://no-browser-clients.invalid"))
-				}
+				Expect(env.Name).NotTo(Equal("CORS_ALLOWED_ORIGINS"),
+					"CORS is configured via config.yaml, not env vars")
 			}
-			Expect(found).To(BeTrue(), "Gateway deployment should have CORS_ALLOWED_ORIGINS env var")
-		})
-
-		It("uses custom CORS when specified", func() {
-			kn := testKubernaut()
-			kn.Spec.Gateway.Config.CORSAllowedOrigins = "https://my-dashboard.example.com"
-			dep, err := GatewayDeployment(kn)
-			Expect(err).NotTo(HaveOccurred())
-
-			container := dep.Spec.Template.Spec.Containers[0]
-			found := false
-			for _, env := range container.Env {
-				if env.Name == "CORS_ALLOWED_ORIGINS" {
-					found = true
-					Expect(env.Value).To(Equal("https://my-dashboard.example.com"))
-				}
-			}
-			Expect(found).To(BeTrue(), "CORS_ALLOWED_ORIGINS env var not found")
 		})
 
 		It("does not have tls-certs volume", func() {
@@ -994,6 +973,84 @@ var _ = Describe("APIFrontendDeployment", func() {
 		ann := dep.Spec.Template.Annotations
 		Expect(ann["prometheus.io/scrape"]).To(Equal("true"))
 		Expect(ann["prometheus.io/port"]).To(Equal("9090"))
+	})
+
+	It("ignores deprecated rbacRolesConfigMapRef (volume is plain ConfigMap)", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBACRolesConfigMapRef = &kubernautv1alpha1.ConfigMapRef{
+			ConfigMapName: "my-custom-rbac",
+		}
+		dep, err := APIFrontendDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		for _, v := range dep.Spec.Template.Spec.Volumes {
+			if v.Name == "config" {
+				Expect(v.Projected).To(BeNil(),
+					"config volume should be plain ConfigMap, not projected")
+				Expect(v.ConfigMap).NotTo(BeNil())
+				Expect(v.ConfigMap.Name).To(Equal("apifrontend-config"))
+				return
+			}
+		}
+		Fail("AF deployment should have a 'config' volume")
+	})
+
+	It("sets terminationGracePeriodSeconds to drainSeconds + 5", func() {
+		kn := testKubernautWithAF()
+		dep, err := APIFrontendDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(dep.Spec.Template.Spec.TerminationGracePeriodSeconds).NotTo(BeNil())
+		Expect(*dep.Spec.Template.Spec.TerminationGracePeriodSeconds).To(Equal(int64(20)),
+			"default drainSeconds=15 + 5 buffer = 20")
+	})
+
+	It("adjusts terminationGracePeriodSeconds for custom drainSeconds", func() {
+		kn := testKubernautWithAF()
+		drain := 60
+		kn.Spec.APIFrontend.Shutdown.DrainSeconds = &drain
+		dep, err := APIFrontendDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(*dep.Spec.Template.Spec.TerminationGracePeriodSeconds).To(Equal(int64(65)))
+	})
+
+	It("uses plain ConfigMap volume, not projected", func() {
+		kn := testKubernautWithAF()
+		dep, err := APIFrontendDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		for _, v := range dep.Spec.Template.Spec.Volumes {
+			if v.Name == "config" {
+				Expect(v.Projected).To(BeNil(),
+					"AF config volume should be a plain ConfigMap, not projected")
+				Expect(v.ConfigMap).NotTo(BeNil(),
+					"AF config volume should use ConfigMap source")
+				Expect(v.ConfigMap.Name).To(Equal("apifrontend-config"))
+				return
+			}
+		}
+		Fail("AF deployment should have a 'config' volume")
+	})
+
+	It("does not reference rbac_roles.yaml", func() {
+		kn := testKubernautWithAF()
+		dep, err := APIFrontendDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		for _, v := range dep.Spec.Template.Spec.Volumes {
+			if v.Projected != nil {
+				for _, src := range v.Projected.Sources {
+					if src.ConfigMap != nil {
+						for _, item := range src.ConfigMap.Items {
+							Expect(item.Key).NotTo(Equal("rbac_roles.yaml"),
+								"AF deployment should not reference rbac_roles.yaml")
+						}
+					}
+				}
+			}
+			if v.ConfigMap != nil {
+				for _, item := range v.ConfigMap.Items {
+					Expect(item.Key).NotTo(Equal("rbac_roles.yaml"),
+						"AF deployment should not reference rbac_roles.yaml")
+				}
+			}
+		}
 	})
 })
 

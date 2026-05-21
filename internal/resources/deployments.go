@@ -35,11 +35,6 @@ import (
 // the OCP Route handles TLS termination for external traffic. The pod only
 // mounts the inter-service CA for outbound client trust (TLS_CA_FILE).
 func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
-	corsOrigin := kn.Spec.Gateway.Config.CORSAllowedOrigins
-	if corsOrigin == "" {
-		corsOrigin = "https://no-browser-clients.invalid"
-	}
-
 	env := []corev1.EnvVar{
 		{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
@@ -47,7 +42,6 @@ func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, err
 		{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
-		{Name: "CORS_ALLOWED_ORIGINS", Value: corsOrigin},
 		{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile},
 	}
 
@@ -657,27 +651,9 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		{Name: "TLS_CA_FILE", Value: "/etc/apifrontend/tls-ca/ca.crt"},
 	}
 
-	rbacCMName := "apifrontend-rbac-roles"
-	if ref := kn.Spec.APIFrontend.RBACRolesConfigMapRef; ref != nil {
-		rbacCMName = ref.ConfigMapName
-	}
-
 	volumes := []corev1.Volume{
 		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-		{Name: "config", VolumeSource: corev1.VolumeSource{
-			Projected: &corev1.ProjectedVolumeSource{
-				Sources: []corev1.VolumeProjection{
-					{ConfigMap: &corev1.ConfigMapProjection{
-						LocalObjectReference: corev1.LocalObjectReference{Name: "apifrontend-config"},
-						Items:                []corev1.KeyToPath{{Key: "config.yaml", Path: "config.yaml"}},
-					}},
-					{ConfigMap: &corev1.ConfigMapProjection{
-						LocalObjectReference: corev1.LocalObjectReference{Name: rbacCMName},
-						Items:                []corev1.KeyToPath{{Key: "rbac_roles.yaml", Path: "rbac_roles.yaml"}},
-					}},
-				},
-			},
-		}},
+		configMapVolume("config", "apifrontend-config"),
 		secretVolume("tls-server", APIFrontendTLSSecretName),
 		{Name: "tls-ca", VolumeSource: corev1.VolumeSource{
 			ConfigMap: &corev1.ConfigMapVolumeSource{
@@ -702,6 +678,12 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		})
 	}
 
+	drainSec := int64(15)
+	if kn.Spec.APIFrontend.Shutdown.DrainSeconds != nil {
+		drainSec = int64(*kn.Spec.APIFrontend.Shutdown.DrainSeconds)
+	}
+	gracePeriod := drainSec + 5
+
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentAPIFrontend, ImageName: "apifrontend",
 		Resources: kn.Spec.APIFrontend.Resources, VolumeMounts: mounts, Volumes: volumes,
@@ -718,6 +700,7 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 			"prometheus.io/port":   "9090",
 			"prometheus.io/path":   "/metrics",
 		},
+		TerminationGracePeriodSeconds: &gracePeriod,
 	})
 }
 
