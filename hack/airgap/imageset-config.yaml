@@ -39,36 +39,36 @@ mirror:
   # Use this section when the operator catalog is not yet published, or
   # when you need full control over the exact image set.
   additionalImages:
-    # Operator
-    - name: quay.io/kubernaut-ai/kubernaut-operator:v1.5.0-rc2
-    # Operator bundle
+    # Operator — digest will be added after operator v1.5.0-rc2 release
+    - name: quay.io/kubernaut-ai/kubernaut-operator:1.5.0-rc2
+    # Operator bundle — digest will be added after operator v1.5.0-rc2 release
     - name: quay.io/kubernaut-ai/kubernaut-operator-bundle:v1.5.0-rc2
 
-    # ── Kubernaut operand images (pinned by digest) ───────────────────
+    # ── Kubernaut operand images (multi-arch, pinned by digest) ───────
     # Gateway — signal ingestion webhook
-    - name: quay.io/kubernaut-ai/gateway@sha256:de9534f89a6d2ade9eee7efe7801d17d59b3eac1ead61ed62bda4c2f490190f7
+    - name: quay.io/kubernaut-ai/gateway@sha256:ff68ebaaa6574047c27d481ddb3bb772c1bf94296f533de648777eccc880955e
     # DataStorage — audit trail and workflow catalog persistence
-    - name: quay.io/kubernaut-ai/datastorage@sha256:7b4d66fe1c2d366e3210a37e38f4c40b909f625e7ebd657d96eb57fb3418cb1d
+    - name: quay.io/kubernaut-ai/datastorage@sha256:5385dcafd0fb80f62f161fa5f8fbfd56e44ea194ee48ca447a9132a2c0643342
     # AIAnalysis — root cause analysis controller
-    - name: quay.io/kubernaut-ai/aianalysis@sha256:267210d9439e72151043eacf28ae21076903f860e0e7e6ee2cc843d0aabc8519
+    - name: quay.io/kubernaut-ai/aianalysis@sha256:2237925196aba44a0b5e1d3839ac6d197bda3fcf2249302b1ff31b4bfcaa898f
     # SignalProcessing — signal deduplication and enrichment
-    - name: quay.io/kubernaut-ai/signalprocessing@sha256:a978dde4a35e3fa0fcdb72296241f868fd2e1c7b20558bc7723dd002912ab818
+    - name: quay.io/kubernaut-ai/signalprocessing@sha256:d657136bd4c22eca45a1a609c095bfd7bade957175601d8a1cb4fa2ed06744b7
     # RemediationOrchestrator — remediation workflow orchestration
-    - name: quay.io/kubernaut-ai/remediationorchestrator@sha256:1bdc3e42226266b07add75ae888469a4f27771e456c1d9fb1f238610ca26fd50
+    - name: quay.io/kubernaut-ai/remediationorchestrator@sha256:ebfd9f62674464a7e4a017213d96d9fcce7acfc5f1908418e8a18f705dc5e13f
     # WorkflowExecution — job / Tekton execution engine
-    - name: quay.io/kubernaut-ai/workflowexecution@sha256:4230b7cf90a4c9e5044c355814a90c5e6fbafb24c50cfa3f4f9c4909c425f294
+    - name: quay.io/kubernaut-ai/workflowexecution@sha256:b5c5bd778010b7f1295edf8402f1916faa13ba56c331f77b3a1984f67382b5cf
     # EffectivenessMonitor — post-remediation effectiveness verification
-    - name: quay.io/kubernaut-ai/effectivenessmonitor@sha256:1ee4f65e1b6d6c5851e560966b1b74f907891e985d0b480256baf7ba9ffc93c6
+    - name: quay.io/kubernaut-ai/effectivenessmonitor@sha256:d88f8cb62fdd6f9b92c16591dd8430d191a75edf4fa0f09786fbd54edd548cb3
     # Notification — notification delivery (Slack, console)
-    - name: quay.io/kubernaut-ai/notification@sha256:18663bdb4b3ce60e249f08c501f4acd6597420ac780aca4fb5c8da7d075bacc8
+    - name: quay.io/kubernaut-ai/notification@sha256:70da5992ad5a6fd1ea5cd44f35fc0e32e9ed7e91f770ea02c485c8fc708f5908
     # KubernautAgent — LLM integration service
-    - name: quay.io/kubernaut-ai/kubernautagent@sha256:e9117c440c842efc6349765bd49ae71733337857c86c7966f638dbba8dc16422
+    - name: quay.io/kubernaut-ai/kubernautagent@sha256:e6bf56b2c86f1c2d60417bde25e1abbc348a92f1735dfc6f9104e32bd352f9b1
     # AuthWebhook — admission controller for CRD authorization
-    - name: quay.io/kubernaut-ai/authwebhook@sha256:1187bfaaf0017bd19395113c55e9052ea663525869e8ca32e0b0ad6454466d58
+    - name: quay.io/kubernaut-ai/authwebhook@sha256:9bcbb57dc3f9fb9134663318e631a9a8b8f058480d857820dd05338edfd26595
     # APIFrontend — MCP/A2A gateway service
-    - name: quay.io/kubernaut-ai/apifrontend@sha256:47704df2fd868ce7ea39f02acc859e1ba8c1779777985f9cd8bb44658b5bea33
+    - name: quay.io/kubernaut-ai/apifrontend@sha256:bb172d2c9e09f59929dc395f785cf4e88a953a23d7e696f5d9c3e0571ab9f342
     # DB-Migrate — database schema migration
-    - name: quay.io/kubernaut-ai/db-migrate@sha256:1360584ff25a907f86f376391d2e944e2ecde2b6e2581b9b8e63f40e4d9eb03e
+    - name: quay.io/kubernaut-ai/db-migrate@sha256:fe6662f5bcf6a9b5ed6c424d17d1006b0099e95bc727628494d0091d07c5770e
 
     # ── Init / infrastructure images ──────────────────────────────────
     # PostgreSQL 16 client (init containers)
