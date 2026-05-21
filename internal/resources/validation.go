@@ -28,7 +28,7 @@ const maxJWKSURLLength = 2048
 
 // ValidateKubernaut runs all CR-level validations and returns accumulated errors.
 func ValidateKubernaut(kn *kubernautv1alpha1.Kubernaut) []error {
-	var errs []error
+	errs := make([]error, 0, 2)
 	errs = append(errs, validatePostgreSQLSSLMode(kn)...)
 	errs = append(errs, validateJWKSProviders(kn)...)
 	return errs

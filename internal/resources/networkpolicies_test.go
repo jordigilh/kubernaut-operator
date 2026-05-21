@@ -29,6 +29,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
+const testAPIServerCIDR = "10.0.0.0/16"
+
 var _ = Describe("NetworkPolicies", func() {
 	Context("when disabled or default", func() {
 		It("returns nil when enabled is false", func() {
@@ -105,8 +107,8 @@ var _ = Describe("NetworkPolicies", func() {
 				networkingv1.PolicyTypeEgress,
 			}
 			Expect(slices.Equal(agentNP.Spec.PolicyTypes, wantTypes)).To(BeTrue(), "PolicyTypes = %v, want %v", agentNP.Spec.PolicyTypes, wantTypes)
-			Expect(len(agentNP.Spec.Ingress)).To(BeNumerically(">=", 1), "kubernaut-agent ingress rule count = %d, want at least 1", len(agentNP.Spec.Ingress))
-			Expect(len(agentNP.Spec.Egress)).To(Equal(2), "kubernaut-agent egress rule count = %d, want %d", len(agentNP.Spec.Egress), 2)
+			Expect(agentNP.Spec.Ingress).ToNot(BeEmpty(), "kubernaut-agent ingress rule count = %d, want at least 1", len(agentNP.Spec.Ingress))
+			Expect(agentNP.Spec.Egress).To(HaveLen(2), "kubernaut-agent egress rule count = %d, want %d", len(agentNP.Spec.Egress), 2)
 		})
 
 		It("adds monitoring egress when MonitoringNamespace is set", func() {
@@ -119,7 +121,7 @@ var _ = Describe("NetworkPolicies", func() {
 				}
 			}
 			Expect(agentNP).NotTo(BeNil(), "kubernaut-agent NetworkPolicy not found")
-			Expect(len(agentNP.Spec.Egress)).To(Equal(3), "kubernaut-agent egress rule count = %d, want %d", len(agentNP.Spec.Egress), 3)
+			Expect(agentNP.Spec.Egress).To(HaveLen(3), "kubernaut-agent egress rule count = %d, want %d", len(agentNP.Spec.Egress), 3)
 			monRule := agentNP.Spec.Egress[2]
 			Expect(monRule.To).To(HaveLen(1), "monitoring egress peer count = %d, want 1", len(monRule.To))
 			ns := monRule.To[0].NamespaceSelector
@@ -139,7 +141,7 @@ var _ = Describe("NetworkPolicies", func() {
 				}
 			}
 			Expect(dsNP).NotTo(BeNil(), "data-storage NetworkPolicy not found")
-			Expect(len(dsNP.Spec.Ingress)).To(BeNumerically(">=", 1), "data-storage should have at least one ingress rule")
+			Expect(dsNP.Spec.Ingress).ToNot(BeEmpty(), "data-storage should have at least one ingress rule")
 			rule := dsNP.Spec.Ingress[0]
 			Expect(rule.From).To(HaveLen(9), "data-storage client ingress peers = %d, want 9", len(rule.From))
 			wantApps := map[string]struct{}{
@@ -211,7 +213,7 @@ var _ = Describe("NetworkPolicies", func() {
 		kn := testKubernaut()
 		enabled := true
 		kn.Spec.NetworkPolicies.Enabled = &enabled
-		kn.Spec.NetworkPolicies.APIServerCIDR = "10.0.0.0/16"
+		kn.Spec.NetworkPolicies.APIServerCIDR = testAPIServerCIDR
 		nps := NetworkPolicies(kn)
 		p443 := intstr.FromInt32(443)
 		proto := corev1.ProtocolTCP
@@ -220,7 +222,7 @@ var _ = Describe("NetworkPolicies", func() {
 		for _, np := range nps {
 			for _, rule := range np.Spec.Egress {
 				for _, peer := range rule.To {
-					if peer.IPBlock == nil || peer.IPBlock.CIDR != "10.0.0.0/16" {
+					if peer.IPBlock == nil || peer.IPBlock.CIDR != testAPIServerCIDR {
 						continue
 					}
 					for _, port := range rule.Ports {
@@ -253,7 +255,7 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 	enableNP := func(kn *kubernautv1alpha1.Kubernaut) {
 		enabled := true
 		kn.Spec.NetworkPolicies.Enabled = &enabled
-		kn.Spec.NetworkPolicies.APIServerCIDR = "10.0.0.0/16"
+		kn.Spec.NetworkPolicies.APIServerCIDR = testAPIServerCIDR
 		kn.Spec.NetworkPolicies.MonitoringNamespace = "openshift-monitoring"
 	}
 

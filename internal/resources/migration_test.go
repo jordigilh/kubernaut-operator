@@ -88,7 +88,7 @@ var _ = Describe("MigrationJob", func() {
 		wantImage := "quay.io/kubernaut-ai/db-migrate:v1.3.0"
 		Expect(container.Image).To(Equal(wantImage), "image = %q, want %q", container.Image, wantImage)
 
-		Expect(len(container.Command)).To(BeNumerically(">", 0))
+		Expect(container.Command).ToNot(BeEmpty())
 		Expect(container.Command[0]).To(Equal("goose"), "command should start with goose, got %v", container.Command)
 
 		Expect(container.Resources.Requests).NotTo(BeNil(), "migration container should have resource requests")

@@ -25,7 +25,7 @@ var _ = Describe("PodDisruptionBudgets", func() {
 	It("returns PDBs only for active components", func() {
 		kn := testKubernaut()
 		pdbs := PodDisruptionBudgets(kn)
-		Expect(len(pdbs)).To(Equal(len(ActiveComponents(kn))))
+		Expect(pdbs).To(HaveLen(len(ActiveComponents(kn))))
 	})
 
 	It("sets MaxUnavailable=1 on default components and MinAvailable=1 on DS/AF", func() {
@@ -46,14 +46,14 @@ var _ = Describe("PodDisruptionBudgets", func() {
 		kn := testKubernaut()
 		components := ActiveComponents(kn)
 		pdbs := PodDisruptionBudgets(kn)
-		Expect(len(pdbs)).To(Equal(len(components)), "PDB count = %d, component count = %d", len(pdbs), len(components))
+		Expect(pdbs).To(HaveLen(len(components)), "PDB count = %d, component count = %d", len(pdbs), len(components))
 		for i, pdb := range pdbs {
 			component := components[i]
 			Expect(pdb.Name).To(Equal(component), "PDB[%d] name = %q, want %q (index mismatch)", i, pdb.Name, component)
 			want := SelectorLabels(component)
 			Expect(pdb.Spec.Selector).NotTo(BeNil(), "PDB %q should have selector", pdb.Name)
 			got := pdb.Spec.Selector.MatchLabels
-			Expect(len(got)).To(Equal(len(want)), "PDB %q selector len = %d, want %d (got %#v want %#v)", pdb.Name, len(got), len(want), got, want)
+			Expect(got).To(HaveLen(len(want)), "PDB %q selector len = %d, want %d (got %#v want %#v)", pdb.Name, len(got), len(want), got, want)
 			for k, v := range want {
 				Expect(got[k]).To(Equal(v), "PDB %q selector %q = %q, want %q", pdb.Name, k, got[k], v)
 			}
@@ -78,7 +78,7 @@ var _ = Describe("PodDisruptionBudgets", func() {
 		kn := testKubernaut()
 		pdbs := PodDisruptionBudgets(kn)
 		components := ActiveComponents(kn)
-		Expect(len(pdbs)).To(Equal(len(components)), "PDB count = %d, component count = %d", len(pdbs), len(components))
+		Expect(pdbs).To(HaveLen(len(components)), "PDB count = %d, component count = %d", len(pdbs), len(components))
 		for i, pdb := range pdbs {
 			Expect(pdb.Name).To(Equal(components[i]), "PDB[%d] name = %q, want %q (no -pdb suffix)", i, pdb.Name, components[i])
 		}

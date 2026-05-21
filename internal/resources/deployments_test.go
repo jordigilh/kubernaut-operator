@@ -957,9 +957,9 @@ var _ = Describe("APIFrontendDeployment", func() {
 		for _, p := range container.Ports {
 			portMap[p.Name] = p.ContainerPort
 		}
-		Expect(portMap).To(HaveKeyWithValue("https", int32(PortHTTPS)))
-		Expect(portMap).To(HaveKeyWithValue("health", int32(PortHealthProbe)))
-		Expect(portMap).To(HaveKeyWithValue("metrics", int32(PortMetrics)))
+		Expect(portMap).To(HaveKeyWithValue("https", PortHTTPS))
+		Expect(portMap).To(HaveKeyWithValue("health", PortHealthProbe))
+		Expect(portMap).To(HaveKeyWithValue("metrics", PortMetrics))
 	})
 
 	It("mounts config, tls-server, tls-ca, and tmp volumes", func() {

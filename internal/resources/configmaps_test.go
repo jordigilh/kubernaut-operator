@@ -91,7 +91,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("renders custom deduplication cooldown", func() {
 			kn := testKubernaut()
-			kn.Spec.Gateway.Config.DeduplicationCooldown = "10m"
+			kn.Spec.Gateway.Config.DeduplicationCooldown = "10m" //nolint:goconst // test value
 			cm, err := GatewayConfigMap(kn)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
@@ -307,7 +307,7 @@ var _ = Describe("ConfigMaps", func() {
 			exp := 6
 			kn.Spec.RemediationOrchestrator.Routing.ExponentialBackoffMaxExponent = &exp
 			kn.Spec.RemediationOrchestrator.Routing.ScopeBackoffBase = "10s"
-			kn.Spec.RemediationOrchestrator.Routing.ScopeBackoffMax = "10m"
+			kn.Spec.RemediationOrchestrator.Routing.ScopeBackoffMax = "10m" //nolint:goconst // test value
 			delay := 48
 			kn.Spec.RemediationOrchestrator.Routing.NoActionRequiredDelayHours = &delay
 

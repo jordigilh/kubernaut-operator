@@ -393,11 +393,6 @@ func ValkeyAddr(spec *kubernautv1alpha1.ValkeySpec) string {
 	return fmt.Sprintf("%s:%d", spec.Host, port)
 }
 
-// componentsNeedingNSRole lists components that require namespace-scoped Roles
-// and RoleBindings. Currently all components need NS roles; split from
-// AllComponents() if a component is added without RBAC needs.
-var componentsNeedingNSRole = AllComponents()
-
 // validHostname matches DNS names and IPv4/IPv6 addresses. Rejects strings
 // containing shell metacharacters, whitespace, or DSN parameter separators.
 var validHostname = regexp.MustCompile(`^[a-zA-Z0-9._:[\]-]+$`)

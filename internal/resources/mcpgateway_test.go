@@ -35,8 +35,7 @@ var _ = Describe("MCPGatewayHTTPRoute", func() {
 		Expect(route.GetName()).To(Equal("apifrontend-mcp"))
 		Expect(route.GetNamespace()).To(Equal(kn.Namespace))
 
-		rules, found, err := unstructuredNestedSlice(route.Object, "spec", "rules")
-		Expect(err).NotTo(HaveOccurred())
+		rules, found := unstructuredNestedSlice(route.Object, "spec", "rules")
 		Expect(found).To(BeTrue())
 		Expect(rules).To(HaveLen(1))
 	})
@@ -56,8 +55,7 @@ var _ = Describe("MCPServerRegistration", func() {
 		Expect(reg.GetName()).To(Equal("kubernaut-apifrontend"))
 		Expect(reg.GetNamespace()).To(Equal(kn.Namespace))
 
-		spec, found, err := unstructuredNestedMap(reg.Object, "spec")
-		Expect(err).NotTo(HaveOccurred())
+		spec, found := unstructuredNestedMap(reg.Object, "spec")
 		Expect(found).To(BeTrue())
 		Expect(spec["serverName"]).To(Equal("kubernaut-apifrontend"))
 		Expect(spec["transport"]).To(Equal("streamable-http"))
@@ -70,7 +68,7 @@ var _ = Describe("MCPServerRegistration", func() {
 		reg := MCPServerRegistration(kn)
 		Expect(reg).NotTo(BeNil())
 
-		spec, _, _ := unstructuredNestedMap(reg.Object, "spec")
+		spec, _ := unstructuredNestedMap(reg.Object, "spec")
 		auth, ok := spec["authentication"].(map[string]interface{})
 		Expect(ok).To(BeTrue())
 		Expect(auth["type"]).To(Equal("bearer-jwt"))
@@ -78,35 +76,35 @@ var _ = Describe("MCPServerRegistration", func() {
 	})
 })
 
-func unstructuredNestedSlice(obj map[string]interface{}, fields ...string) ([]interface{}, bool, error) {
-	val, found, err := unstructuredNestedField(obj, fields...)
-	if err != nil || !found {
-		return nil, found, err
+func unstructuredNestedSlice(obj map[string]interface{}, fields ...string) ([]interface{}, bool) {
+	val, found := unstructuredNestedField(obj, fields...)
+	if !found {
+		return nil, false
 	}
 	s, ok := val.([]interface{})
-	return s, ok, nil
+	return s, ok
 }
 
-func unstructuredNestedMap(obj map[string]interface{}, fields ...string) (map[string]interface{}, bool, error) {
-	val, found, err := unstructuredNestedField(obj, fields...)
-	if err != nil || !found {
-		return nil, found, err
+func unstructuredNestedMap(obj map[string]interface{}, fields ...string) (map[string]interface{}, bool) {
+	val, found := unstructuredNestedField(obj, fields...)
+	if !found {
+		return nil, false
 	}
 	m, ok := val.(map[string]interface{})
-	return m, ok, nil
+	return m, ok
 }
 
-func unstructuredNestedField(obj map[string]interface{}, fields ...string) (interface{}, bool, error) {
+func unstructuredNestedField(obj map[string]interface{}, fields ...string) (interface{}, bool) {
 	var val interface{} = obj
 	for _, f := range fields {
 		m, ok := val.(map[string]interface{})
 		if !ok {
-			return nil, false, nil
+			return nil, false
 		}
 		val, ok = m[f]
 		if !ok {
-			return nil, false, nil
+			return nil, false
 		}
 	}
-	return val, true, nil
+	return val, true
 }

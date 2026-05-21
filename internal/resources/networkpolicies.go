@@ -598,7 +598,7 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 
 	if len(spec.ExternalEgressCIDRs) > 0 {
 		p443 := intstr.FromInt32(443)
-		var peers []networkingv1.NetworkPolicyPeer
+		peers := make([]networkingv1.NetworkPolicyPeer, 0, len(spec.ExternalEgressCIDRs))
 		for _, cidr := range spec.ExternalEgressCIDRs {
 			peers = append(peers, networkingv1.NetworkPolicyPeer{
 				IPBlock: &networkingv1.IPBlock{CIDR: cidr},

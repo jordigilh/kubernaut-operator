@@ -811,7 +811,7 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 						ReadinessProbe:  readiness,
 					}},
 					Volumes:                       p.Volumes,
-				TerminationGracePeriodSeconds: p.TerminationGracePeriodSeconds,
+					TerminationGracePeriodSeconds: p.TerminationGracePeriodSeconds,
 				},
 			},
 		},

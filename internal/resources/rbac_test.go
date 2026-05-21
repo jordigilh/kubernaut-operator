@@ -35,7 +35,7 @@ var _ = Describe("ClusterRoles", func() {
 	It("returns exactly 15 roles (13 base + 2 monitoring)", func() {
 		kn := testKubernaut()
 		roles := ClusterRoles(kn)
-		Expect(len(roles)).To(Equal(15), "ClusterRoles() should return exactly 15 roles (13 base + 2 monitoring), got %d", len(roles))
+		Expect(roles).To(HaveLen(15), "ClusterRoles() should return exactly 15 roles (13 base + 2 monitoring), got %d", len(roles))
 	})
 
 	It("reduces count when monitoring is disabled", func() {
@@ -46,7 +46,7 @@ var _ = Describe("ClusterRoles", func() {
 		withMonitoring := ClusterRoles(testKubernaut())
 		withoutMonitoring := ClusterRoles(kn)
 
-		Expect(len(withoutMonitoring) < len(withMonitoring)).To(BeTrue(),
+		Expect(len(withoutMonitoring) < len(withMonitoring)).To(BeTrue(), //nolint:ginkgolinter // comparing lengths of two dynamic slices
 			"disabling monitoring should reduce ClusterRole count: %d vs %d",
 			len(withoutMonitoring), len(withMonitoring))
 	})
@@ -248,7 +248,7 @@ var _ = Describe("ClusterRoles", func() {
 				}
 			}
 			Expect(dsClient).NotTo(BeNil(), "data-storage-client ClusterRole not found")
-			Expect(len(dsClient.Rules)).NotTo(BeZero(), "data-storage-client has no rules")
+			Expect(dsClient.Rules).NotTo(BeEmpty(), "data-storage-client has no rules")
 			rule := dsClient.Rules[0]
 			wantVerbs := []string{"create", "get", "list", "update", "delete"}
 			verbs := make(map[string]bool)
@@ -373,7 +373,7 @@ var _ = Describe("DataStorageClientRoleBindings", func() {
 	It("returns ten bindings", func() {
 		kn := testKubernaut()
 		rbs := DataStorageClientRoleBindings(kn)
-		Expect(len(rbs)).To(Equal(10), "DataStorageClientRoleBindings() should return 10, got %d", len(rbs))
+		Expect(rbs).To(HaveLen(10), "DataStorageClientRoleBindings() should return 10, got %d", len(rbs))
 	})
 
 	It("all reference the data-storage-client ClusterRole", func() {
@@ -394,7 +394,7 @@ var _ = Describe("NamespaceRoles", func() {
 		kn := testKubernaut()
 		roles := NamespaceRoles(kn)
 
-		Expect(len(roles)).To(Equal(10), "NamespaceRoles() should return 10, got %d", len(roles))
+		Expect(roles).To(HaveLen(10), "NamespaceRoles() should return 10, got %d", len(roles))
 
 		for _, role := range roles {
 			Expect(role.Rules).To(HaveLen(1), "Role %q should have exactly 1 rule, got %d", role.Name, len(role.Rules))
@@ -420,7 +420,7 @@ var _ = Describe("NamespaceRoleBindings", func() {
 		roles := NamespaceRoles(kn)
 		rbs := NamespaceRoleBindings(kn)
 
-		Expect(len(rbs)).To(Equal(len(roles)),
+		Expect(rbs).To(HaveLen(len(roles)),
 			"NamespaceRoleBindings count %d != NamespaceRoles count %d", len(rbs), len(roles))
 
 		roleNames := make(map[string]bool)
@@ -515,7 +515,7 @@ var _ = Describe("MonitoringCRBNames", func() {
 		Expect(names).To(HaveLen(4), "MonitoringCRBNames() count = %d, want 4", len(names))
 		ns := kn.Namespace
 		for _, name := range names {
-			Expect(len(name) > len(ns) && name[:len(ns)] == ns).To(BeTrue(),
+			Expect(name).To(HavePrefix(ns),
 				"MonitoringCRBNames entry %q should be namespace-prefixed with %q", name, ns)
 		}
 	})
@@ -528,7 +528,7 @@ var _ = Describe("MonitoringClusterRoleNames", func() {
 		Expect(names).To(HaveLen(2), "MonitoringClusterRoleNames() count = %d, want 2", len(names))
 		ns := kn.Namespace
 		for _, name := range names {
-			Expect(len(name) > len(ns) && name[:len(ns)] == ns).To(BeTrue(),
+			Expect(name).To(HavePrefix(ns),
 				"MonitoringClusterRoleNames entry %q should be namespace-prefixed with %q", name, ns)
 		}
 	})
@@ -548,7 +548,7 @@ var _ = Describe("AdditionalAgentCRB", func() {
 			prefix := kn.Namespace + "-kubernaut-agent-ext-"
 			roleName := strings.Repeat("a", maxK8sNameLen-len(prefix))
 			name := AdditionalAgentCRBName(kn, roleName)
-			Expect(len(name)).To(Equal(maxK8sNameLen), "expected name length %d, got %d", maxK8sNameLen, len(name))
+			Expect(name).To(HaveLen(maxK8sNameLen), "expected name length %d, got %d", maxK8sNameLen, len(name))
 			Expect(name).To(Equal(prefix+roleName), "name should not be truncated when exactly at limit")
 		})
 
@@ -558,7 +558,7 @@ var _ = Describe("AdditionalAgentCRB", func() {
 			roleName := strings.Repeat("x", maxK8sNameLen-len(prefix)+50)
 			name := AdditionalAgentCRBName(kn, roleName)
 
-			Expect(len(name)).To(BeNumerically("<=", maxK8sNameLen), "name exceeds 253 chars: len=%d", len(name))
+			Expect(len(name)).To(BeNumerically("<=", maxK8sNameLen), "name exceeds 253 chars: len=%d", len(name)) //nolint:ginkgolinter // dynamic length bound
 			Expect(strings.HasPrefix(name, prefix)).To(BeTrue(), "name should start with %q, got %q", prefix, name)
 		})
 
@@ -611,7 +611,7 @@ var _ = Describe("AdditionalAgentCRB", func() {
 	It("has no entries when the spec list is nil", func() {
 		kn := testKubernaut()
 		kn.Spec.KubernautAgent.AdditionalClusterRoleBindings = nil
-		Expect(kn.Spec.KubernautAgent.AdditionalClusterRoleBindings).To(HaveLen(0), "empty additional list should have length 0")
+		Expect(kn.Spec.KubernautAgent.AdditionalClusterRoleBindings).To(BeEmpty(), "empty additional list should have length 0")
 	})
 })
 

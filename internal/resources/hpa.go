@@ -25,10 +25,10 @@ import (
 
 // HPASpec configures the common HPA parameters.
 type HPASpec struct {
-	Component          string
-	MinReplicas        int32
-	MaxReplicas        int32
-	CPUTargetPercent   int32
+	Component           string
+	MinReplicas         int32
+	MaxReplicas         int32
+	CPUTargetPercent    int32
 	MemoryTargetPercent int32
 }
 
@@ -77,10 +77,10 @@ func buildHPA(kn *kubernautv1alpha1.Kubernaut, spec HPASpec) *autoscalingv2.Hori
 // DataStorageHPA builds the HPA for the DataStorage component.
 func DataStorageHPA(kn *kubernautv1alpha1.Kubernaut) *autoscalingv2.HorizontalPodAutoscaler {
 	return buildHPA(kn, HPASpec{
-		Component:          ComponentDataStorage,
-		MinReplicas:        1,
-		MaxReplicas:        5,
-		CPUTargetPercent:   75,
+		Component:           ComponentDataStorage,
+		MinReplicas:         1,
+		MaxReplicas:         5,
+		CPUTargetPercent:    75,
 		MemoryTargetPercent: 80,
 	})
 }
@@ -88,10 +88,10 @@ func DataStorageHPA(kn *kubernautv1alpha1.Kubernaut) *autoscalingv2.HorizontalPo
 // APIFrontendHPA builds the HPA for the APIFrontend component.
 func APIFrontendHPA(kn *kubernautv1alpha1.Kubernaut) *autoscalingv2.HorizontalPodAutoscaler {
 	return buildHPA(kn, HPASpec{
-		Component:          ComponentAPIFrontend,
-		MinReplicas:        1,
-		MaxReplicas:        5,
-		CPUTargetPercent:   75,
+		Component:           ComponentAPIFrontend,
+		MinReplicas:         1,
+		MaxReplicas:         5,
+		CPUTargetPercent:    75,
 		MemoryTargetPercent: 80,
 	})
 }

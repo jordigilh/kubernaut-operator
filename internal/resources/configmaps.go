@@ -129,13 +129,13 @@ type dataStorageDatabaseYAML struct {
 }
 
 type dataStorageRedisYAML struct {
-	Addr             string              `json:"addr" yaml:"addr"`
-	DB               int                 `json:"db" yaml:"db"`
-	DLQStreamName    string              `json:"dlqStreamName" yaml:"dlqStreamName"`
-	DLQMaxLen        int                 `json:"dlqMaxLen" yaml:"dlqMaxLen"`
-	DLQConsumerGroup string              `json:"dlqConsumerGroup" yaml:"dlqConsumerGroup"`
-	SecretsFile      string              `json:"secretsFile" yaml:"secretsFile"`
-	PasswordKey      string              `json:"passwordKey" yaml:"passwordKey"`
+	Addr             string                   `json:"addr" yaml:"addr"`
+	DB               int                      `json:"db" yaml:"db"`
+	DLQStreamName    string                   `json:"dlqStreamName" yaml:"dlqStreamName"`
+	DLQMaxLen        int                      `json:"dlqMaxLen" yaml:"dlqMaxLen"`
+	DLQConsumerGroup string                   `json:"dlqConsumerGroup" yaml:"dlqConsumerGroup"`
+	SecretsFile      string                   `json:"secretsFile" yaml:"secretsFile"`
+	PasswordKey      string                   `json:"passwordKey" yaml:"passwordKey"`
 	TLS              *dataStorageRedisTLSYAML `json:"tls,omitempty" yaml:"tls,omitempty"`
 }
 
@@ -152,13 +152,13 @@ type dataStorageLoggingYAML struct {
 }
 
 type dataStorageConfigYAML struct {
-	TLSProfile                string                       `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
-	Server                    dataStorageServerYAML         `json:"server" yaml:"server"`
-	Database                  dataStorageDatabaseYAML       `json:"database" yaml:"database"`
-	Redis                     dataStorageRedisYAML          `json:"redis" yaml:"redis"`
-	Logging                   dataStorageLoggingYAML        `json:"logging" yaml:"logging"`
-	EndpointPropagationDelay  string                        `json:"endpointPropagationDelay,omitempty" yaml:"endpointPropagationDelay,omitempty"`
-	Retention                 *dataStorageRetentionYAML     `json:"retention,omitempty" yaml:"retention,omitempty"`
+	TLSProfile               string                    `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
+	Server                   dataStorageServerYAML     `json:"server" yaml:"server"`
+	Database                 dataStorageDatabaseYAML   `json:"database" yaml:"database"`
+	Redis                    dataStorageRedisYAML      `json:"redis" yaml:"redis"`
+	Logging                  dataStorageLoggingYAML    `json:"logging" yaml:"logging"`
+	EndpointPropagationDelay string                    `json:"endpointPropagationDelay,omitempty" yaml:"endpointPropagationDelay,omitempty"`
+	Retention                *dataStorageRetentionYAML `json:"retention,omitempty" yaml:"retention,omitempty"`
 }
 
 type dataStorageRetentionYAML struct {
@@ -700,7 +700,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string
 	pgPort := PostgreSQLPort(kn)
 	cfg := dataStorageConfigYAML{
 		TLSProfile: o.tlsProfile,
-		Server: dataStorageServerConfig(kn),
+		Server:     dataStorageServerConfig(kn),
 		Database: dataStorageDatabaseYAML{
 			Host:            kn.Spec.PostgreSQL.Host,
 			Port:            pgPort,
@@ -1484,9 +1484,9 @@ type afAgentCardYAML struct {
 }
 
 type afAuthYAML struct {
-	IssuerURL   string               `json:"issuerURL" yaml:"issuerURL"`
-	Audience    string               `json:"audience" yaml:"audience"`
-	ReplayCache *afReplayCacheYAML   `json:"replayCache,omitempty" yaml:"replayCache,omitempty"`
+	IssuerURL   string             `json:"issuerURL" yaml:"issuerURL"`
+	Audience    string             `json:"audience" yaml:"audience"`
+	ReplayCache *afReplayCacheYAML `json:"replayCache,omitempty" yaml:"replayCache,omitempty"`
 }
 
 type afReplayCacheYAML struct {
@@ -1570,7 +1570,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 			SessionIdleTimeout: "30m",
 		},
 		AgentCard: afAgentCardYAML{URL: agentCardURL},
-		Auth: afAuthConfig(kn),
+		Auth:      afAuthConfig(kn),
 		Logging: afLoggingYAML{
 			Level: withDefault(af.Logging.Level, "info"),
 		},

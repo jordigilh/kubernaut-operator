@@ -887,33 +887,8 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 	}
 
 	if kn.Spec.APIFrontendEnabled() {
-		afHPA := resources.APIFrontendHPA(kn)
-		if err := r.ensureNamespaced(ctx, kn, afHPA); err != nil {
-			return false, fmt.Errorf("ensuring AF HPA: %w", err)
-		}
-
-		if kn.Spec.Monitoring.MonitoringEnabled() {
-			sm := resources.APIFrontendServiceMonitor(kn)
-			if err := r.ensureNamespaced(ctx, kn, sm); err != nil {
-				return false, fmt.Errorf("ensuring AF ServiceMonitor: %w", err)
-			}
-			pr := resources.APIFrontendPrometheusRule(kn)
-			if err := r.ensureNamespaced(ctx, kn, pr); err != nil {
-				return false, fmt.Errorf("ensuring AF PrometheusRule: %w", err)
-			}
-		}
-
-		if r.hasCRD(ctx, "mcpserverregistrations.kagenti.dev") {
-			if route := resources.MCPGatewayHTTPRoute(kn); route != nil {
-				if err := r.ensureNamespaced(ctx, kn, route); err != nil {
-					return false, fmt.Errorf("ensuring MCP HTTPRoute: %w", err)
-				}
-			}
-			if reg := resources.MCPServerRegistration(kn); reg != nil {
-				if err := r.ensureNamespaced(ctx, kn, reg); err != nil {
-					return false, fmt.Errorf("ensuring MCPServerRegistration: %w", err)
-				}
-			}
+		if err := r.deployAPIFrontendExtras(ctx, kn); err != nil {
+			return false, err
 		}
 	}
 
@@ -931,6 +906,38 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		return false, fmt.Errorf("deleting stale Gateway Route: %w", err)
 	}
 	return false, nil
+}
+
+func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
+	afHPA := resources.APIFrontendHPA(kn)
+	if err := r.ensureNamespaced(ctx, kn, afHPA); err != nil {
+		return fmt.Errorf("ensuring AF HPA: %w", err)
+	}
+
+	if kn.Spec.Monitoring.MonitoringEnabled() {
+		sm := resources.APIFrontendServiceMonitor(kn)
+		if err := r.ensureNamespaced(ctx, kn, sm); err != nil {
+			return fmt.Errorf("ensuring AF ServiceMonitor: %w", err)
+		}
+		pr := resources.APIFrontendPrometheusRule(kn)
+		if err := r.ensureNamespaced(ctx, kn, pr); err != nil {
+			return fmt.Errorf("ensuring AF PrometheusRule: %w", err)
+		}
+	}
+
+	if r.hasCRD(ctx, "mcpserverregistrations.kagenti.dev") {
+		if route := resources.MCPGatewayHTTPRoute(kn); route != nil {
+			if err := r.ensureNamespaced(ctx, kn, route); err != nil {
+				return fmt.Errorf("ensuring MCP HTTPRoute: %w", err)
+			}
+		}
+		if reg := resources.MCPServerRegistration(kn); reg != nil {
+			if err := r.ensureNamespaced(ctx, kn, reg); err != nil {
+				return fmt.Errorf("ensuring MCPServerRegistration: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 // ---------- Phase: Running ----------
