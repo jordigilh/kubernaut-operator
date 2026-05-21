@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
@@ -28,9 +29,10 @@ const maxJWKSURLLength = 2048
 
 // ValidateKubernaut runs all CR-level validations and returns accumulated errors.
 func ValidateKubernaut(kn *kubernautv1alpha1.Kubernaut) []error {
-	errs := make([]error, 0, 2)
+	errs := make([]error, 0, 4)
 	errs = append(errs, validatePostgreSQLSSLMode(kn)...)
 	errs = append(errs, validateJWKSProviders(kn)...)
+	errs = append(errs, validateAPIFrontend(kn)...)
 	return errs
 }
 
@@ -73,5 +75,63 @@ func validateJWKSProviders(kn *kubernautv1alpha1.Kubernaut) []error {
 				path, u.Scheme))
 		}
 	}
+	return errs
+}
+
+func validateAPIFrontend(kn *kubernautv1alpha1.Kubernaut) []error {
+	if !kn.Spec.APIFrontendEnabled() {
+		return nil
+	}
+	var errs []error
+
+	af := kn.Spec.APIFrontend
+	if af.AgentCardURL != "" {
+		u, err := url.Parse(af.AgentCardURL)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			errs = append(errs, fmt.Errorf("spec.apiFrontend.agentCardURL: must be a valid URL with scheme and host"))
+		}
+	}
+
+	if ref := af.RBACRolesConfigMapRef; ref != nil && ref.ConfigMapName == "" {
+		errs = append(errs, fmt.Errorf("spec.apiFrontend.rbacRolesConfigMapRef.configMapName: must not be empty when rbacRolesConfigMapRef is set"))
+	}
+
+	errs = append(errs, validateToolRoleBindings(kn)...)
+	return errs
+}
+
+// validToolPersonas is the set of known persona names for tool role bindings.
+var validToolPersonas = map[string]bool{
+	"sre": true, "ai-orchestrator": true, "cicd": true,
+	"observability": true, "l3-audit": true, "remediation-approver": true,
+}
+
+func validateToolRoleBindings(kn *kubernautv1alpha1.Kubernaut) []error {
+	rbac := kn.Spec.APIFrontend.RBAC
+	if rbac == nil {
+		return nil
+	}
+
+	var errs []error
+
+	if rbac.SARCacheTTL != "" {
+		if _, err := time.ParseDuration(rbac.SARCacheTTL); err != nil {
+			errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.sarCacheTTL: invalid Go duration %q: %w", rbac.SARCacheTTL, err))
+		}
+	}
+
+	seen := make(map[string]bool, len(rbac.RoleBindings))
+	for _, rb := range rbac.RoleBindings {
+		if seen[rb.Role] {
+			errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings: duplicate role %q", rb.Role))
+			continue
+		}
+		seen[rb.Role] = true
+
+		if !validToolPersonas[rb.Role] {
+			errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings: unknown persona %q", rb.Role))
+		}
+	}
+
 	return errs
 }

@@ -133,3 +133,100 @@ var _ = Describe("PostgreSQL SSLMode Validation", func() {
 		Expect(errs).To(BeEmpty())
 	})
 })
+
+var _ = Describe("APIFrontend Validation", func() {
+	It("rejects invalid agentCardURL", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.AgentCardURL = "not-a-url"
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("agentCardURL"))
+	})
+
+	It("accepts valid agentCardURL", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.AgentCardURL = "https://kubernaut.example.com/.well-known/agent.json"
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("accepts empty agentCardURL", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.AgentCardURL = ""
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("rejects empty configMapName in rbacRolesConfigMapRef", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBACRolesConfigMapRef = &kubernautv1alpha1.ConfigMapRef{ConfigMapName: ""}
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("configMapName"))
+	})
+
+	It("skips validation when AF is disabled", func() {
+		kn := testKubernautWithAF()
+		disabled := false
+		kn.Spec.APIFrontend.Enabled = &disabled
+		kn.Spec.APIFrontend.AgentCardURL = "not-a-url"
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+})
+
+var _ = Describe("ToolRoleBinding Validation", func() {
+	It("rejects duplicate role names in roleBindings", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Role: "sre", Groups: []string{"team-a"}},
+				{Role: "sre", Groups: []string{"team-b"}},
+			},
+		}
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("duplicate"))
+	})
+
+	It("accepts valid roleBindings with known persona names", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Role: "sre", Groups: []string{"sre-team"}},
+				{Role: "cicd", Groups: []string{"ci-bots"}},
+			},
+		}
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("accepts empty roleBindings list", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{}
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("rejects unknown persona name in roleBindings", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Role: "unknown-persona", Groups: []string{"team-x"}},
+			},
+		}
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("unknown"))
+	})
+
+	It("rejects invalid sarCacheTTL format", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			SARCacheTTL: "not-a-duration",
+		}
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("sarCacheTTL"))
+	})
+})
