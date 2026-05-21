@@ -1042,13 +1042,19 @@ var _ = Describe("DataStorage Signing Cert", func() {
 		expectHasVolumeMount(dep, "signing-cert", "/custom/certs")
 	})
 
-	It("does not mount signing cert when not configured", func() {
+	It("falls back to service-ca TLS cert when signing cert is not configured", func() {
 		kn := testKubernaut()
 		dep, err := DataStorageDeployment(kn)
 		Expect(err).NotTo(HaveOccurred())
+		expectHasVolumeMount(dep, "signing-cert", "/etc/certs")
+		found := false
 		for _, v := range dep.Spec.Template.Spec.Volumes {
-			Expect(v.Name).NotTo(Equal("signing-cert"),
-				"should not have signing-cert volume when not configured")
+			if v.Name == "signing-cert" {
+				Expect(v.Secret).NotTo(BeNil())
+				Expect(v.Secret.SecretName).To(Equal(DataStorageTLSSecretName))
+				found = true
+			}
 		}
+		Expect(found).To(BeTrue(), "signing-cert volume should use the service-ca TLS secret")
 	})
 })

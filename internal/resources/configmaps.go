@@ -760,13 +760,11 @@ func dataStorageServerConfig(kn *kubernautv1alpha1.Kubernaut) dataStorageServerY
 		WriteTimeout: "30s",
 		TLS:          tlsConfigYAML{CertDir: InterServiceTLSCertDir},
 	}
-	if sc := kn.Spec.DataStorage.SigningCert; sc != nil {
-		dir := sc.MountPath
-		if dir == "" {
-			dir = "/etc/certs"
-		}
-		s.SignerCertDir = dir
+	dir := "/etc/certs"
+	if sc := kn.Spec.DataStorage.SigningCert; sc != nil && sc.MountPath != "" {
+		dir = sc.MountPath
 	}
+	s.SignerCertDir = dir
 	return s
 }
 
@@ -1645,10 +1643,8 @@ func afAuthConfig(kn *kubernautv1alpha1.Kubernaut) afAuthYAML {
 // ConfigMap. Users can override this by setting spec.apiFrontend.rbacRolesConfigMapRef.
 func APIFrontendRBACRolesConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 	defaultRoles := `roles:
-  admin:
-    tools: ["*"]
-  viewer:
-    tools: ["list_investigations", "get_investigation", "search_signals"]
+  admin: ["*"]
+  viewer: ["list_investigations", "get_investigation", "search_signals"]
 `
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "apifrontend-rbac-roles", ComponentAPIFrontend),

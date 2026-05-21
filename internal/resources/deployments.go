@@ -154,6 +154,11 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		}
 		volumes = append(volumes, secretVolume("signing-cert", sc.SecretName))
 		mounts = append(mounts, corev1.VolumeMount{Name: "signing-cert", MountPath: mountPath, ReadOnly: true})
+	} else {
+		// When no explicit signing cert is configured, reuse the service-ca
+		// serving cert so the data-storage binary finds a cert at /etc/certs.
+		volumes = append(volumes, secretVolume("signing-cert", DataStorageTLSSecretName))
+		mounts = append(mounts, corev1.VolumeMount{Name: "signing-cert", MountPath: "/etc/certs", ReadOnly: true})
 	}
 
 	env := []corev1.EnvVar{
@@ -674,7 +679,13 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 			},
 		}},
 		secretVolume("tls-server", APIFrontendTLSSecretName),
-		optionalConfigMapVolume("tls-ca", InterServiceCAConfigMapName),
+		{Name: "tls-ca", VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: InterServiceCAConfigMapName},
+				Items:                []corev1.KeyToPath{{Key: "service-ca.crt", Path: "ca.crt"}},
+				Optional:             ptr.To(true),
+			},
+		}},
 	}
 
 	mounts := []corev1.VolumeMount{

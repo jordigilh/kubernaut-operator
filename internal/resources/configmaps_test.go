@@ -1076,6 +1076,8 @@ var _ = Describe("APIFrontendRBACRolesConfigMap", func() {
 		Expect(ok).To(BeTrue(), "rbac_roles.yaml key missing")
 		Expect(data).To(ContainSubstring("admin:"))
 		Expect(data).To(ContainSubstring("viewer:"))
+		Expect(data).NotTo(ContainSubstring("tools:"),
+			"RBAC roles must use flat list format (role: [...]), not nested map (role: {tools: [...]})")
 	})
 })
 
@@ -1091,12 +1093,12 @@ var _ = Describe("DataStorage SignerCertDir Config", func() {
 		Expect(data).To(ContainSubstring("signerCertDir: /etc/certs"))
 	})
 
-	It("omits signerCertDir when signing cert is not configured", func() {
+	It("defaults signerCertDir to /etc/certs when signing cert is not configured", func() {
 		kn := testKubernaut()
 		cm, err := DataStorageConfigMap(kn, "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
-		Expect(data).NotTo(ContainSubstring("signerCertDir"))
+		Expect(data).To(ContainSubstring("signerCertDir: /etc/certs"))
 	})
 })
 

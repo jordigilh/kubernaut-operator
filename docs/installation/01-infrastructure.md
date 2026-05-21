@@ -15,14 +15,58 @@ Kubernaut requires PostgreSQL 15+ for persistent storage. Use any managed servic
 **In-cluster example (testing only):**
 
 ```bash
-oc new-app postgresql:16-el9 \
+oc new-app --image=registry.redhat.io/rhel10/postgresql-16:latest \
   -e POSTGRESQL_USER=kubernaut \
   -e POSTGRESQL_PASSWORD=changeme \
   -e POSTGRESQL_DATABASE=kubernaut \
+  --name=postgresql \
   -n kubernaut-system
 ```
 
-Create the operator secret. Keys must be `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`:
+### Enable TLS
+
+Kubernaut requires TLS connections to PostgreSQL (`sslMode` defaults to `verify-full`; `disable` is rejected). On OCP, use the service-ca operator to provision a serving certificate:
+
+```bash
+# Request a service-ca TLS certificate
+oc annotate service postgresql -n kubernaut-system \
+  service.beta.openshift.io/serving-cert-secret-name=postgresql-tls
+
+# Create a PostgreSQL config snippet to enable SSL
+oc create configmap postgresql-ssl-config -n kubernaut-system \
+  --from-literal=ssl.conf="$(cat <<CONF
+ssl = on
+ssl_cert_file = '/etc/pki/tls/certs/postgresql/tls.crt'
+ssl_key_file = '/etc/pki/tls/certs/postgresql/tls.key'
+CONF
+)"
+
+# Mount the TLS cert and config into the PostgreSQL deployment
+oc patch deployment postgresql -n kubernaut-system --type=json -p '[
+  {"op": "add", "path": "/spec/template/spec/volumes", "value": [
+    {"name": "tls-certs", "secret": {"secretName": "postgresql-tls", "defaultMode": 384}},
+    {"name": "ssl-config", "configMap": {"name": "postgresql-ssl-config"}}
+  ]},
+  {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts", "value": [
+    {"name": "tls-certs", "mountPath": "/etc/pki/tls/certs/postgresql", "readOnly": true},
+    {"name": "ssl-config", "mountPath": "/opt/app-root/src/postgresql-cfg", "readOnly": true}
+  ]}
+]'
+```
+
+Verify TLS is enabled after the pod restarts:
+
+```bash
+oc exec deployment/postgresql -n kubernaut-system -- \
+  bash -c 'psql -h localhost -U kubernaut -d kubernaut -c "SHOW ssl"'
+# Expected output: ssl = on
+```
+
+For testing with the service-ca certificate (not externally verifiable), set `sslMode: require` in the Kubernaut CR. For production with a trusted CA, use `verify-full` (the default).
+
+### Create the operator secret
+
+Keys must be `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`:
 
 ```bash
 oc apply -f - <<EOF
