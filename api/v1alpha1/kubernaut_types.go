@@ -832,16 +832,38 @@ type GatewayConfigSpec struct {
 	// +optional
 	TrustedProxyCIDRs []string `json:"trustedProxyCIDRs,omitempty"`
 
-	// CORS allowed origins. Gateway is an M2M webhook API, not a browser
-	// target, so the default is a non-matching origin that blocks CORS.
-	// +kubebuilder:default="https://no-browser-clients.invalid"
+	// CORS configuration. Gateway is an M2M webhook API, not a browser
+	// target, so the defaults block all cross-origin requests.
 	// +optional
-	CORSAllowedOrigins string `json:"corsAllowedOrigins,omitempty"`
+	CORS GatewayCORSSpec `json:"cors,omitempty"`
 
 	// Deduplication cooldown period for alert processing.
 	// +kubebuilder:default="5m"
 	// +optional
 	DeduplicationCooldown string `json:"deduplicationCooldown,omitempty"`
+}
+
+// GatewayCORSSpec configures CORS for the Gateway HTTP API.
+type GatewayCORSSpec struct {
+	// Allowed origins for CORS requests.
+	// Default: ["https://no-browser-clients.invalid"] (blocks all browser clients).
+	// +optional
+	AllowedOrigins []string `json:"allowedOrigins,omitempty"`
+
+	// HTTP methods allowed for cross-origin requests.
+	// Default: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"].
+	// +optional
+	AllowedMethods []string `json:"allowedMethods,omitempty"`
+
+	// Whether cross-origin requests may include credentials.
+	// +kubebuilder:default=false
+	// +optional
+	AllowCredentials *bool `json:"allowCredentials,omitempty"`
+
+	// Preflight cache duration in seconds.
+	// +kubebuilder:default=300
+	// +optional
+	MaxAge *int `json:"maxAge,omitempty"`
 }
 
 // RouteSpec configures the OCP Route for the Gateway.
@@ -867,10 +889,15 @@ type AuthWebhookSpec struct {
 }
 
 // APIFrontendSpec configures the API Frontend (MCP Streamable HTTP / A2A) service.
-// The API Frontend is an opt-in component that provides external access to
-// Kubernaut Agent via MCP and A2A protocols with OIDC authentication,
-// rate limiting, and RBAC-scoped tool access.
+// The API Frontend provides external access to Kubernaut Agent via MCP and A2A
+// protocols with OIDC authentication, rate limiting, and RBAC-scoped tool access.
 type APIFrontendSpec struct {
+	// Whether the API Frontend component is deployed. Defaults to true.
+	// Set to false to skip all AF resources (Deployment, Service, RBAC, etc.).
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
 	// OIDC authentication configuration.
 	// +optional
 	Auth APIFrontendAuthSpec `json:"auth,omitempty"`
@@ -885,14 +912,23 @@ type APIFrontendSpec struct {
 
 	// External URL for the A2A agent card discovery endpoint.
 	// When empty, auto-derived from the in-cluster service FQDN.
+	// Must be a valid HTTPS URL when set.
+	// +kubebuilder:validation:Pattern=`^$|^https?://`
 	// +optional
 	AgentCardURL string `json:"agentCardURL,omitempty"`
 
 	// Reference to a pre-existing ConfigMap containing RBAC role-to-tool
 	// mappings (key: "rbac_roles.yaml"). When empty, the operator generates
 	// a default RBAC roles ConfigMap.
+	// Deprecated: replaced by RBAC field with SAR-based tool authorization.
 	// +optional
 	RBACRolesConfigMapRef *ConfigMapRef `json:"rbacRolesConfigMapRef,omitempty"`
+
+	// SAR-based RBAC configuration for tool authorization.
+	// When set, the operator provisions persona-based tool ClusterRoles
+	// and group-to-role ClusterRoleBindings instead of file-based RBAC.
+	// +optional
+	RBAC *APIFrontendRBACSpec `json:"rbac,omitempty"`
 
 	// +optional
 	Logging LoggingSpec `json:"logging,omitempty"`
@@ -900,6 +936,31 @@ type APIFrontendSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// APIFrontendRBACSpec configures SAR-based tool authorization for the API Frontend.
+type APIFrontendRBACSpec struct {
+	// SARCacheTTL is the cache duration for SubjectAccessReview results.
+	// Must be a valid Go duration string (e.g. "30s", "2m").
+	// +kubebuilder:default="30s"
+	// +optional
+	SARCacheTTL string `json:"sarCacheTTL,omitempty"`
+
+	// RoleBindings maps persona-based tool roles to OIDC groups.
+	// +optional
+	RoleBindings []ToolRoleBinding `json:"roleBindings,omitempty"`
+}
+
+// ToolRoleBinding binds a persona-based tool role to one or more OIDC groups.
+type ToolRoleBinding struct {
+	// Role is the persona name. Must be one of: sre, ai-orchestrator, cicd,
+	// observability, l3-audit, remediation-approver.
+	// +kubebuilder:validation:Enum=sre;ai-orchestrator;cicd;observability;l3-audit;remediation-approver
+	Role string `json:"role"`
+
+	// Groups are the OIDC group names to bind to this role.
+	// +kubebuilder:validation:MinItems=1
+	Groups []string `json:"groups"`
 }
 
 // APIFrontendAuthSpec configures OIDC authentication for the API Frontend.
@@ -947,9 +1008,10 @@ type APIFrontendShutdownSpec struct {
 	DrainSeconds *int `json:"drainSeconds,omitempty"`
 }
 
-// APIFrontendEnabled returns true. The API Frontend is always deployed.
+// APIFrontendEnabled returns whether the API Frontend component should be deployed.
+// Defaults to true when Enabled is nil.
 func (s *KubernautSpec) APIFrontendEnabled() bool {
-	return true
+	return s.APIFrontend.Enabled == nil || *s.APIFrontend.Enabled
 }
 
 // DataStorageSpec configures the DataStorage service.
@@ -1112,6 +1174,11 @@ type KubernautStatus struct {
 	// and finalizer cleanup.
 	// +optional
 	BoundAdditionalClusterRoles []string `json:"boundAdditionalClusterRoles,omitempty"`
+
+	// BoundToolRoleBindings tracks the set of tool role binding CRB names
+	// currently managed by the operator for stale-pruning and finalizer cleanup.
+	// +optional
+	BoundToolRoleBindings []string `json:"boundToolRoleBindings,omitempty"`
 }
 
 // ServiceStatus reports the readiness of a single managed service.
@@ -1142,6 +1209,7 @@ const (
 	ConditionRouteReady          ConditionType = "RouteReady"
 	ConditionAnsibleReady        ConditionType = "AnsibleReady"
 	ConditionAdditionalRBACBound ConditionType = "AdditionalRBACBound"
+	ConditionToolRBACBound       ConditionType = "ToolRBACBound"
 )
 
 // Finalizer used for cluster-scoped resource cleanup.

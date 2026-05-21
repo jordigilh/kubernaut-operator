@@ -34,6 +34,17 @@ var _ = Describe("MCPGatewayHTTPRoute", func() {
 		Expect(found).To(BeTrue())
 		Expect(rules).To(HaveLen(1))
 	})
+
+	It("includes parentRefs for kagenti-gateway", func() {
+		kn := testKubernautWithAF()
+		route := MCPGatewayHTTPRoute(kn)
+		Expect(route).NotTo(BeNil())
+		parentRefs, found := unstructuredNestedSlice(route.Object, "spec", "parentRefs")
+		Expect(found).To(BeTrue(), "parentRefs should be set")
+		Expect(parentRefs).To(HaveLen(1))
+		ref := parentRefs[0].(map[string]interface{})
+		Expect(ref["name"]).To(Equal("kagenti-gateway"))
+	})
 })
 
 var _ = Describe("MCPServerRegistration", func() {

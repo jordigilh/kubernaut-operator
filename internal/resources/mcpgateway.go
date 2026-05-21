@@ -49,6 +49,14 @@ func MCPGatewayHTTPRoute(kn *kubernautv1alpha1.Kubernaut) *unstructured.Unstruct
 
 	_ = unstructured.SetNestedSlice(route.Object, []interface{}{
 		map[string]interface{}{
+			"group": gatewayAPIGroup,
+			"kind":  "Gateway",
+			"name":  "kagenti-gateway",
+		},
+	}, "spec", "parentRefs")
+
+	_ = unstructured.SetNestedSlice(route.Object, []interface{}{
+		map[string]interface{}{
 			"matches": []interface{}{
 				map[string]interface{}{
 					"path": map[string]interface{}{

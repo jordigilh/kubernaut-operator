@@ -2180,4 +2180,287 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(cond.Message).To(ContainSubstring("manual intervention required"))
 		})
 	})
+
+	// ======================================================================
+	// API Frontend Lifecycle
+	// ======================================================================
+
+	Context("API Frontend Lifecycle", func() {
+		It("creates AF Deployment, ConfigMap, Service, and ClusterRole when AF is enabled (default)", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			dep := &appsv1.Deployment{}
+			err := k8sClient.Get(ctx, types.NamespacedName{
+				Name: resources.DeploymentName(resources.ComponentAPIFrontend), Namespace: testNamespace,
+			}, dep)
+			Expect(err).NotTo(HaveOccurred(), "AF Deployment should be created")
+
+			cm := &corev1.ConfigMap{}
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: "apifrontend-config", Namespace: testNamespace}, cm)
+			Expect(err).NotTo(HaveOccurred(), "AF ConfigMap should be created")
+			Expect(cm.Data).To(HaveKey("config.yaml"))
+
+			rbacCM := &corev1.ConfigMap{}
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: "apifrontend-rbac-roles", Namespace: testNamespace}, rbacCM)
+			Expect(errors.IsNotFound(err)).To(BeTrue(),
+				"legacy apifrontend-rbac-roles ConfigMap should not be created (replaced by SAR)")
+
+			cr := &rbacv1.ClusterRole{}
+			crName := testNamespace + "-apifrontend-role"
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: crName}, cr)
+			Expect(err).NotTo(HaveOccurred(), "AF ClusterRole should be created")
+		})
+
+		It("skips AF resources when AF is explicitly disabled", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			disabled := false
+			cr.Spec.APIFrontend.Enabled = &disabled
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			dep := &appsv1.Deployment{}
+			err := k8sClient.Get(ctx, types.NamespacedName{
+				Name: resources.DeploymentName(resources.ComponentAPIFrontend), Namespace: testNamespace,
+			}, dep)
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "AF Deployment should not be created when disabled")
+
+			cm := &corev1.ConfigMap{}
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: "apifrontend-config", Namespace: testNamespace}, cm)
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "AF ConfigMap should not be created when disabled")
+		})
+
+		It("includes AF in per-service status when reaching Running", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			reconcileToRunning(ctx)
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+
+			found := false
+			for _, svc := range kn.Status.Services {
+				if svc.Name == resources.ComponentAPIFrontend {
+					found = true
+					Expect(svc.Ready).To(BeTrue())
+				}
+			}
+			Expect(found).To(BeTrue(), "AF should appear in per-service status")
+		})
+
+		It("cleans up AF ClusterRole and CRB on CR deletion", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			crName := testNamespace + "-apifrontend-role"
+			cr := &rbacv1.ClusterRole{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crName}, cr)).To(Succeed())
+
+			By("deleting the CR")
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
+			stripWorkflowNamespaceCreatedByAnnotation(ctx)
+
+			By("reconciling the finalizer")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: crName}, cr)
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "AF ClusterRole should be deleted by finalizer")
+		})
+	})
+
+	Context("SAR Tool RBAC Lifecycle", func() {
+		It("creates tool ClusterRoles during deploy phase", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			toolRoleNames := resources.ToolClusterRoleNames(&kubernautv1alpha1.Kubernaut{
+				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
+			})
+			Expect(toolRoleNames).To(HaveLen(6), "should have 6 tool ClusterRole names")
+			for _, name := range toolRoleNames {
+				cr := &rbacv1.ClusterRole{}
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, cr)
+				Expect(err).NotTo(HaveOccurred(), "tool ClusterRole %q should exist after deploy", name)
+			}
+		})
+
+		It("creates tool CRBs when roleBindings are specified in CR", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+				RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+					{Role: "sre", Groups: []string{"sre-team"}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			crbNames := resources.ToolCRBNames(&kubernautv1alpha1.Kubernaut{
+				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
+				Spec:       cr.Spec,
+			})
+			Expect(crbNames).To(HaveLen(1))
+			crb := &rbacv1.ClusterRoleBinding{}
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: crbNames[0]}, crb)
+			Expect(err).NotTo(HaveOccurred(), "tool CRB should exist after deploy")
+		})
+
+		It("prunes stale CRBs when roleBindings removed from spec", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+				RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+					{Role: "sre", Groups: []string{"sre-team"}},
+					{Role: "cicd", Groups: []string{"ci-bots"}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			By("removing cicd role binding from spec")
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			kn.Spec.APIFrontend.RBAC.RoleBindings = []kubernautv1alpha1.ToolRoleBinding{
+				{Role: "sre", Groups: []string{"sre-team"}},
+			}
+			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
+
+			By("reconciling to prune stale CRBs")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			staleCRBName := testNamespace + "-tool-cicd-binding"
+			crb := &rbacv1.ClusterRoleBinding{}
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: staleCRBName}, crb)
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "stale tool CRB %q should be pruned", staleCRBName)
+		})
+
+		It("sets ConditionToolRBACBound True when all bindings active", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+				RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+					{Role: "sre", Groups: []string{"sre-team"}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			reconcileToRunning(ctx)
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+
+			found := false
+			for _, c := range kn.Status.Conditions {
+				if c.Type == kubernautv1alpha1.ConditionToolRBACBound {
+					found = true
+					Expect(c.Status).To(Equal(metav1.ConditionTrue))
+				}
+			}
+			Expect(found).To(BeTrue(), "ConditionToolRBACBound should be present and True")
+		})
+
+		It("removes ConditionToolRBACBound when no bindings specified", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			reconcileToRunning(ctx)
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+
+			for _, c := range kn.Status.Conditions {
+				Expect(c.Type).NotTo(Equal(kubernautv1alpha1.ConditionToolRBACBound),
+					"ConditionToolRBACBound should not be present when no bindings specified")
+			}
+		})
+
+		It("deletes orphaned apifrontend-rbac-roles ConfigMap on upgrade", func() {
+			createBYOSecrets(ctx)
+
+			By("pre-creating the legacy RBAC CM")
+			legacyCM := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "apifrontend-rbac-roles",
+					Namespace: testNamespace,
+				},
+				Data: map[string]string{"rbac_roles.yaml": "roles:\n  admin: [\"*\"]"},
+			}
+			Expect(k8sClient.Create(ctx, legacyCM)).To(Succeed())
+
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			cm := &corev1.ConfigMap{}
+			err := k8sClient.Get(ctx, types.NamespacedName{
+				Name: "apifrontend-rbac-roles", Namespace: testNamespace,
+			}, cm)
+			Expect(errors.IsNotFound(err)).To(BeTrue(),
+				"orphaned apifrontend-rbac-roles ConfigMap should be deleted on upgrade")
+		})
+
+		It("deletes tool ClusterRoles and CRBs by finalizer", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+				RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+					{Role: "sre", Groups: []string{"sre-team"}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			toolRoleNames := resources.ToolClusterRoleNames(&kubernautv1alpha1.Kubernaut{
+				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
+			})
+			Expect(toolRoleNames).NotTo(BeEmpty())
+			for _, name := range toolRoleNames {
+				toolCR := &rbacv1.ClusterRole{}
+				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, toolCR)).To(Succeed())
+			}
+
+			By("deleting the CR")
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
+			stripWorkflowNamespaceCreatedByAnnotation(ctx)
+
+			By("reconciling the finalizer")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			for _, name := range toolRoleNames {
+				toolCR := &rbacv1.ClusterRole{}
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, toolCR)
+				Expect(errors.IsNotFound(err)).To(BeTrue(),
+					"tool ClusterRole %q should be deleted by finalizer", name)
+			}
+		})
+
+		It("AF Deployment uses plain ConfigMap volume after SAR migration", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			dep := &appsv1.Deployment{}
+			err := k8sClient.Get(ctx, types.NamespacedName{
+				Name: resources.DeploymentName(resources.ComponentAPIFrontend), Namespace: testNamespace,
+			}, dep)
+			Expect(err).NotTo(HaveOccurred())
+
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == "config" {
+					Expect(v.Projected).To(BeNil(),
+						"AF config volume should be plain ConfigMap, not projected")
+					Expect(v.ConfigMap).NotTo(BeNil())
+					break
+				}
+			}
+		})
+	})
 })

@@ -98,8 +98,16 @@ type gatewayConfigYAML struct {
 	Logging     loggingYAML            `json:"logging" yaml:"logging"`
 	Processing  gatewayProcessingYAML  `json:"processing" yaml:"processing"`
 	Server      gatewayServerYAML      `json:"server" yaml:"server"`
+	CORS        gatewayCORSYAML        `json:"cors" yaml:"cors"`
 	Middleware  gatewayMiddlewareYAML  `json:"middleware" yaml:"middleware"`
 	Datastorage gatewayDatastorageYAML `json:"datastorage" yaml:"datastorage"`
+}
+
+type gatewayCORSYAML struct {
+	AllowedOrigins   []string `json:"allowedOrigins" yaml:"allowedOrigins"`
+	AllowedMethods   []string `json:"allowedMethods" yaml:"allowedMethods"`
+	AllowCredentials bool     `json:"allowCredentials" yaml:"allowCredentials"`
+	MaxAge           int      `json:"maxAge" yaml:"maxAge"`
 }
 
 type dataStorageServerYAML struct {
@@ -652,6 +660,23 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) 
 		proxyCIDRs = []string{}
 	}
 
+	corsOrigins := gwCfg.CORS.AllowedOrigins
+	if len(corsOrigins) == 0 {
+		corsOrigins = []string{"https://no-browser-clients.invalid"}
+	}
+	corsMethods := gwCfg.CORS.AllowedMethods
+	if len(corsMethods) == 0 {
+		corsMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+	}
+	corsCredentials := false
+	if gwCfg.CORS.AllowCredentials != nil {
+		corsCredentials = *gwCfg.CORS.AllowCredentials
+	}
+	corsMaxAge := 300
+	if gwCfg.CORS.MaxAge != nil {
+		corsMaxAge = *gwCfg.CORS.MaxAge
+	}
+
 	cfg := gatewayConfigYAML{
 		TLSProfile: o.tlsProfile,
 		Logging: loggingYAML{
@@ -672,6 +697,12 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) 
 			WriteTimeout:          "30s",
 			IdleTimeout:           "120s",
 			K8sRequestTimeout:     withDefault(gwCfg.K8sRequestTimeout, "15s"),
+		},
+		CORS: gatewayCORSYAML{
+			AllowedOrigins:   corsOrigins,
+			AllowedMethods:   corsMethods,
+			AllowCredentials: corsCredentials,
+			MaxAge:           corsMaxAge,
 		},
 		Middleware: gatewayMiddlewareYAML{
 			TrustedProxyCIDRs: proxyCIDRs,
@@ -760,13 +791,11 @@ func dataStorageServerConfig(kn *kubernautv1alpha1.Kubernaut) dataStorageServerY
 		WriteTimeout: "30s",
 		TLS:          tlsConfigYAML{CertDir: InterServiceTLSCertDir},
 	}
-	if sc := kn.Spec.DataStorage.SigningCert; sc != nil {
-		dir := sc.MountPath
-		if dir == "" {
-			dir = "/etc/certs"
-		}
-		s.SignerCertDir = dir
+	dir := "/etc/certs"
+	if sc := kn.Spec.DataStorage.SigningCert; sc != nil && sc.MountPath != "" {
+		dir = sc.MountPath
 	}
+	s.SignerCertDir = dir
 	return s
 }
 
@@ -1449,11 +1478,16 @@ type afConfigYAML struct {
 	MCP            afMCPYAML            `json:"mcp" yaml:"mcp"`
 	AgentCard      afAgentCardYAML      `json:"agentCard" yaml:"agentCard"`
 	Auth           afAuthYAML           `json:"auth" yaml:"auth"`
+	RBAC           afRBACYAML           `json:"rbac" yaml:"rbac"`
 	Logging        afLoggingYAML        `json:"logging" yaml:"logging"`
 	RateLimit      afRateLimitYAML      `json:"rateLimit" yaml:"rateLimit"`
 	Shutdown       afShutdownYAML       `json:"shutdown" yaml:"shutdown"`
 	SeverityTriage afSeverityTriageYAML `json:"severityTriage" yaml:"severityTriage"`
 	Resilience     afResilienceYAML     `json:"resilience" yaml:"resilience"`
+}
+
+type afRBACYAML struct {
+	SARCacheTTL string `json:"sarCacheTTL" yaml:"sarCacheTTL"`
 }
 
 type afServerYAML struct {
@@ -1571,6 +1605,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 		},
 		AgentCard: afAgentCardYAML{URL: agentCardURL},
 		Auth:      afAuthConfig(kn),
+		RBAC:      afRBACConfig(kn),
 		Logging: afLoggingYAML{
 			Level: withDefault(af.Logging.Level, "info"),
 		},
@@ -1583,16 +1618,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 		Shutdown: afShutdownYAML{
 			DrainSeconds: intPtrDefault(af.Shutdown.DrainSeconds, 15),
 		},
-		SeverityTriage: afSeverityTriageYAML{
-			Enabled:                   kn.Spec.Monitoring.MonitoringEnabled(),
-			PrometheusURL:             OCPPrometheusURL,
-			PrometheusTLSCAFile:       "/etc/apifrontend/tls-ca/ca.crt",
-			PrometheusBearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
-			CacheTTLSeconds:           30,
-			MaxQueriesPerCall:         10,
-			MaxRulesEvaluated:         100,
-			LLMConfidence:             0.7,
-		},
+		SeverityTriage: afSeverityTriageConfig(kn),
 		Resilience: afResilienceYAML{
 			KA: afCircuitBreakerYAML{
 				ConnectTimeout: "5s", RequestTimeout: "30s",
@@ -1624,6 +1650,22 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 	}, nil
 }
 
+func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut) afSeverityTriageYAML {
+	if !kn.Spec.Monitoring.MonitoringEnabled() {
+		return afSeverityTriageYAML{Enabled: false}
+	}
+	return afSeverityTriageYAML{
+		Enabled:                   true,
+		PrometheusURL:             OCPPrometheusURL,
+		PrometheusTLSCAFile:       "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+		PrometheusBearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
+		CacheTTLSeconds:           30,
+		MaxQueriesPerCall:         10,
+		MaxRulesEvaluated:         100,
+		LLMConfidence:             0.7,
+	}
+}
+
 func afAuthConfig(kn *kubernautv1alpha1.Kubernaut) afAuthYAML {
 	af := kn.Spec.APIFrontend
 	auth := afAuthYAML{
@@ -1641,14 +1683,20 @@ func afAuthConfig(kn *kubernautv1alpha1.Kubernaut) afAuthYAML {
 	return auth
 }
 
+func afRBACConfig(kn *kubernautv1alpha1.Kubernaut) afRBACYAML {
+	ttl := "30s"
+	if kn.Spec.APIFrontend.RBAC != nil && kn.Spec.APIFrontend.RBAC.SARCacheTTL != "" {
+		ttl = kn.Spec.APIFrontend.RBAC.SARCacheTTL
+	}
+	return afRBACYAML{SARCacheTTL: ttl}
+}
+
 // APIFrontendRBACRolesConfigMap generates the default RBAC roles mapping
 // ConfigMap. Users can override this by setting spec.apiFrontend.rbacRolesConfigMapRef.
 func APIFrontendRBACRolesConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 	defaultRoles := `roles:
-  admin:
-    tools: ["*"]
-  viewer:
-    tools: ["list_investigations", "get_investigation", "search_signals"]
+  admin: ["*"]
+  viewer: ["list_investigations", "get_investigation", "search_signals"]
 `
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, "apifrontend-rbac-roles", ComponentAPIFrontend),

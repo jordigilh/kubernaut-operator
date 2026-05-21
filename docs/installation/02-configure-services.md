@@ -156,15 +156,15 @@ data:
     default priority = "P2"
     default remediation_path = "automated"
 
-    priority = "P1" {
+    priority = "P1" if {
       input.severity == "critical"
     }
 
-    priority = "P3" {
+    priority = "P3" if {
       input.severity == "info"
     }
 
-    remediation_path = "manual" {
+    remediation_path = "manual" if {
       input.environment == "production"
       input.severity == "critical"
     }
@@ -211,7 +211,7 @@ data:
 
     default allow = false
 
-    allow {
+    allow if {
       input.confidence >= 0.8
       input.risk_level != "critical"
     }

@@ -207,6 +207,8 @@ spec:
                     description: |-
                       External URL for the A2A agent card discovery endpoint.
                       When empty, auto-derived from the in-cluster service FQDN.
+                      Must be a valid HTTPS URL when set.
+                    pattern: ^$|^https?://
                     type: string
                   auth:
                     description: OIDC authentication configuration.
@@ -219,6 +221,12 @@ spec:
                         description: OIDC issuer URL (e.g. "https://login.kubernaut.ai/realms/kubernaut").
                         type: string
                     type: object
+                  enabled:
+                    default: true
+                    description: |-
+                      Whether the API Frontend component is deployed. Defaults to true.
+                      Set to false to skip all AF resources (Deployment, Service, RBAC, etc.).
+                    type: boolean
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -256,11 +264,56 @@ spec:
                         description: Per-user requests per second.
                         type: integer
                     type: object
+                  rbac:
+                    description: |-
+                      SAR-based RBAC configuration for tool authorization.
+                      When set, the operator provisions persona-based tool ClusterRoles
+                      and group-to-role ClusterRoleBindings instead of file-based RBAC.
+                    properties:
+                      roleBindings:
+                        description: RoleBindings maps persona-based tool roles to
+                          OIDC groups.
+                        items:
+                          description: ToolRoleBinding binds a persona-based tool
+                            role to one or more OIDC groups.
+                          properties:
+                            groups:
+                              description: Groups are the OIDC group names to bind
+                                to this role.
+                              items:
+                                type: string
+                              minItems: 1
+                              type: array
+                            role:
+                              description: |-
+                                Role is the persona name. Must be one of: sre, ai-orchestrator, cicd,
+                                observability, l3-audit, remediation-approver.
+                              enum:
+                              - sre
+                              - ai-orchestrator
+                              - cicd
+                              - observability
+                              - l3-audit
+                              - remediation-approver
+                              type: string
+                          required:
+                          - groups
+                          - role
+                          type: object
+                        type: array
+                      sarCacheTTL:
+                        default: 30s
+                        description: |-
+                          SARCacheTTL is the cache duration for SubjectAccessReview results.
+                          Must be a valid Go duration string (e.g. "30s", "2m").
+                        type: string
+                    type: object
                   rbacRolesConfigMapRef:
                     description: |-
                       Reference to a pre-existing ConfigMap containing RBAC role-to-tool
                       mappings (key: "rbac_roles.yaml"). When empty, the operator generates
                       a default RBAC roles ConfigMap.
+                      Deprecated: replaced by RBAC field with SAR-based tool authorization.
                     properties:
                       configMapName:
                         description: Name of the ConfigMap.
@@ -648,12 +701,35 @@ spec:
                   config:
                     description: Gateway server and middleware configuration.
                     properties:
-                      corsAllowedOrigins:
-                        default: https://no-browser-clients.invalid
+                      cors:
                         description: |-
-                          CORS allowed origins. Gateway is an M2M webhook API, not a browser
-                          target, so the default is a non-matching origin that blocks CORS.
-                        type: string
+                          CORS configuration. Gateway is an M2M webhook API, not a browser
+                          target, so the defaults block all cross-origin requests.
+                        properties:
+                          allowCredentials:
+                            default: false
+                            description: Whether cross-origin requests may include
+                              credentials.
+                            type: boolean
+                          allowedMethods:
+                            description: |-
+                              HTTP methods allowed for cross-origin requests.
+                              Default: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"].
+                            items:
+                              type: string
+                            type: array
+                          allowedOrigins:
+                            description: |-
+                              Allowed origins for CORS requests.
+                              Default: ["https://no-browser-clients.invalid"] (blocks all browser clients).
+                            items:
+                              type: string
+                            type: array
+                          maxAge:
+                            default: 300
+                            description: Preflight cache duration in seconds.
+                            type: integer
+                        type: object
                       deduplicationCooldown:
                         default: 5m
                         description: Deduplication cooldown period for alert processing.
@@ -1750,6 +1826,13 @@ spec:
                   ClusterRole names for which the operator has created additional
                   agent ClusterRoleBindings. Used for stale-pruning on spec changes
                   and finalizer cleanup.
+                items:
+                  type: string
+                type: array
+              boundToolRoleBindings:
+                description: |-
+                  BoundToolRoleBindings tracks the set of tool role binding CRB names
+                  currently managed by the operator for stale-pruning and finalizer cleanup.
                 items:
                   type: string
                 type: array

@@ -23,6 +23,8 @@ import (
 	. "github.com/onsi/gomega"
 
 	rbacv1 "k8s.io/api/rbac/v1"
+
+	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
 const (
@@ -615,6 +617,164 @@ var _ = Describe("AdditionalAgentCRB", func() {
 	})
 })
 
+// --- SAR Tool Authorization Tests (issue #118) ---
+
+var _ = Describe("ToolClusterRoles", func() {
+	It("returns 6 roles when AF is enabled", func() {
+		kn := testKubernautWithAF()
+		roles := ToolClusterRoles(kn)
+		Expect(roles).To(HaveLen(6), "ToolClusterRoles() should return exactly 6 persona-based tool roles")
+	})
+
+	It("returns empty when AF is disabled", func() {
+		kn := testKubernautWithAF()
+		disabled := false
+		kn.Spec.APIFrontend.Enabled = &disabled
+		roles := ToolClusterRoles(kn)
+		Expect(roles).To(BeEmpty(), "ToolClusterRoles() should return empty when AF is disabled")
+	})
+
+	It("each tool ClusterRole uses apiGroup kubernaut.ai, resource tools, verb use", func() {
+		kn := testKubernautWithAF()
+		for _, cr := range ToolClusterRoles(kn) {
+			Expect(cr.Rules).To(HaveLen(1), "tool ClusterRole %q should have exactly 1 rule", cr.Name)
+			rule := cr.Rules[0]
+			Expect(rule.APIGroups).To(ConsistOf("kubernaut.ai"), "tool ClusterRole %q apiGroup", cr.Name)
+			Expect(rule.Resources).To(ConsistOf("tools"), "tool ClusterRole %q resource", cr.Name)
+			Expect(rule.Verbs).To(ConsistOf("use"), "tool ClusterRole %q verb", cr.Name)
+			Expect(rule.ResourceNames).NotTo(BeEmpty(), "tool ClusterRole %q should have resourceNames", cr.Name)
+		}
+	})
+
+	DescribeTable("persona tool counts",
+		func(suffix string, expectedCount int) {
+			kn := testKubernautWithAF()
+			roles := ToolClusterRoles(kn)
+			var found *rbacv1.ClusterRole
+			for _, r := range roles {
+				if strings.HasSuffix(r.Name, suffix) {
+					found = r
+					break
+				}
+			}
+			Expect(found).NotTo(BeNil(), "tool ClusterRole with suffix %q not found", suffix)
+			Expect(found.Rules[0].ResourceNames).To(HaveLen(expectedCount),
+				"tool ClusterRole %q should have %d resourceNames, got %d",
+				found.Name, expectedCount, len(found.Rules[0].ResourceNames))
+		},
+		Entry("SRE", "tool-sre", 19),
+		Entry("AI-orchestrator", "tool-ai-orchestrator", 15),
+		Entry("CICD", "tool-cicd", 3),
+		Entry("Observability", "tool-observability", 8),
+		Entry("L3-audit", "tool-l3-audit", 6),
+		Entry("Remediation-approver", "tool-remediation-approver", 4),
+	)
+
+	It("tool ClusterRole names are namespace-prefixed", func() {
+		kn := testKubernautWithAF()
+		for _, cr := range ToolClusterRoles(kn) {
+			Expect(cr.Name).To(HavePrefix(kn.Namespace+"-"),
+				"tool ClusterRole %q should be namespace-prefixed", cr.Name)
+		}
+	})
+
+	It("ToolClusterRoleNames returns all 6 names for finalizer cleanup", func() {
+		kn := testKubernautWithAF()
+		names := ToolClusterRoleNames(kn)
+		Expect(names).To(HaveLen(6), "ToolClusterRoleNames() should return 6 names")
+		for _, n := range names {
+			Expect(n).To(HavePrefix(kn.Namespace+"-"),
+				"ToolClusterRoleNames entry %q should be namespace-prefixed", n)
+		}
+	})
+})
+
+var _ = Describe("ToolClusterRoleBindings", func() {
+	It("returns CRBs matching spec roleBindings", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Role: "sre", Groups: []string{"sre-team"}},
+				{Role: "cicd", Groups: []string{"ci-bots"}},
+			},
+		}
+		crbs := ToolClusterRoleBindings(kn)
+		Expect(crbs).To(HaveLen(2), "ToolClusterRoleBindings() should return 2 CRBs")
+	})
+
+	It("returns empty when no roleBindings specified", func() {
+		kn := testKubernautWithAF()
+		crbs := ToolClusterRoleBindings(kn)
+		Expect(crbs).To(BeEmpty(), "ToolClusterRoleBindings() should return empty when no roleBindings")
+	})
+
+	It("CRB subjects are Group kind with correct group names", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Role: "sre", Groups: []string{"sre-team", "platform-eng"}},
+			},
+		}
+		crbs := ToolClusterRoleBindings(kn)
+		Expect(crbs).To(HaveLen(1))
+		for _, subj := range crbs[0].Subjects {
+			Expect(subj.Kind).To(Equal("Group"), "CRB subject kind should be Group")
+		}
+		subjectNames := make([]string, 0, len(crbs[0].Subjects))
+		for _, s := range crbs[0].Subjects {
+			subjectNames = append(subjectNames, s.Name)
+		}
+		Expect(subjectNames).To(ConsistOf("sre-team", "platform-eng"))
+	})
+
+	It("CRB roleRef points to namespace-prefixed tool ClusterRole", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Role: "sre", Groups: []string{"sre-team"}},
+			},
+		}
+		crbs := ToolClusterRoleBindings(kn)
+		Expect(crbs).To(HaveLen(1))
+		Expect(crbs[0].RoleRef.Name).To(Equal(kn.Namespace+"-tool-sre"),
+			"CRB roleRef should point to namespace-prefixed tool ClusterRole")
+		Expect(crbs[0].RoleRef.Kind).To(Equal("ClusterRole"))
+	})
+
+	It("duplicate roles with different groups are merged", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Role: "sre", Groups: []string{"team-a"}},
+				{Role: "sre", Groups: []string{"team-b"}},
+			},
+		}
+		crbs := ToolClusterRoleBindings(kn)
+		Expect(crbs).To(HaveLen(1), "duplicate roles should be merged into a single CRB")
+		subjectNames := make([]string, 0, len(crbs[0].Subjects))
+		for _, s := range crbs[0].Subjects {
+			subjectNames = append(subjectNames, s.Name)
+		}
+		Expect(subjectNames).To(ConsistOf("team-a", "team-b"))
+	})
+
+	It("ToolCRBNames returns all CRB names for finalizer cleanup", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Role: "sre", Groups: []string{"sre-team"}},
+				{Role: "cicd", Groups: []string{"ci-bots"}},
+			},
+		}
+		names := ToolCRBNames(kn)
+		Expect(names).To(HaveLen(2))
+		for _, n := range names {
+			Expect(n).To(HavePrefix(kn.Namespace+"-"),
+				"ToolCRBNames entry %q should be namespace-prefixed", n)
+		}
+	})
+})
+
 var _ = Describe("APIFrontend ClusterRole", func() {
 	It("is included when AF is enabled", func() {
 		kn := testKubernautWithAF()
@@ -671,5 +831,79 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 			}
 		}
 		Expect(found).To(BeTrue(), "ClusterRoleBinding for apifrontend should exist")
+	})
+
+	It("is excluded when AF is disabled", func() {
+		kn := testKubernautWithAF()
+		disabled := false
+		kn.Spec.APIFrontend.Enabled = &disabled
+		roles := ClusterRoles(kn)
+		for _, r := range roles {
+			Expect(r.Name).NotTo(Equal(clusterRoleName(kn, "apifrontend-role")),
+				"apifrontend ClusterRole should not be present when AF is disabled")
+		}
+		bindings := ClusterRoleBindings(kn)
+		for _, crb := range bindings {
+			Expect(crb.RoleRef.Name).NotTo(Equal(clusterRoleName(kn, "apifrontend-role")),
+				"apifrontend CRB should not be present when AF is disabled")
+		}
+	})
+
+	It("includes subjectaccessreviews/create permission", func() {
+		kn := testKubernautWithAF()
+		roles := ClusterRoles(kn)
+		var afRole *rbacv1.ClusterRole
+		for _, r := range roles {
+			if r.Name == clusterRoleName(kn, "apifrontend-role") {
+				afRole = r
+				break
+			}
+		}
+		Expect(afRole).NotTo(BeNil())
+
+		found := false
+		for _, rule := range afRole.Rules {
+			for _, g := range rule.APIGroups {
+				if g != "authorization.k8s.io" {
+					continue
+				}
+				for _, res := range rule.Resources {
+					if res == "subjectaccessreviews" {
+						Expect(rule.Verbs).To(ContainElement("create"))
+						found = true
+					}
+				}
+			}
+		}
+		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include subjectaccessreviews/create")
+	})
+
+	It("includes remediationrequests get/list/create permission", func() {
+		kn := testKubernautWithAF()
+		roles := ClusterRoles(kn)
+		var afRole *rbacv1.ClusterRole
+		for _, r := range roles {
+			if r.Name == clusterRoleName(kn, "apifrontend-role") {
+				afRole = r
+				break
+			}
+		}
+		Expect(afRole).NotTo(BeNil())
+
+		found := false
+		for _, rule := range afRole.Rules {
+			for _, g := range rule.APIGroups {
+				if g != "kubernaut.ai" {
+					continue
+				}
+				for _, res := range rule.Resources {
+					if res == "remediationrequests" {
+						Expect(rule.Verbs).To(ContainElements("get", "list", "create"))
+						found = true
+					}
+				}
+			}
+		}
+		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include remediationrequests get/list/create")
 	})
 })
