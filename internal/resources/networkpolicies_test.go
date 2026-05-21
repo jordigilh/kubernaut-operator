@@ -304,9 +304,9 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 				}
 			}
 		}
-		Expect(ingressPorts).To(HaveKey(int32(PortHTTPS)))
-		Expect(ingressPorts).To(HaveKey(int32(PortHealthProbe)))
-		Expect(ingressPorts).To(HaveKey(int32(PortMetrics)))
+		Expect(ingressPorts).To(HaveKey(PortHTTPS))
+		Expect(ingressPorts).To(HaveKey(PortHealthProbe))
+		Expect(ingressPorts).To(HaveKey(PortMetrics))
 	})
 
 	It("allows egress to DNS, API server, and kubernaut pods", func() {

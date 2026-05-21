@@ -89,10 +89,10 @@ var _ = Describe("HPA Builders", func() {
 	Describe("buildHPA without memory metric", func() {
 		It("omits memory metric when MemoryTargetPercent is 0", func() {
 			hpa := buildHPA(kn(), HPASpec{
-				Component:          ComponentDataStorage,
-				MinReplicas:        2,
-				MaxReplicas:        10,
-				CPUTargetPercent:   60,
+				Component:           ComponentDataStorage,
+				MinReplicas:         2,
+				MaxReplicas:         10,
+				CPUTargetPercent:    60,
 				MemoryTargetPercent: 0,
 			})
 			Expect(hpa.Spec.Metrics).To(HaveLen(1))
