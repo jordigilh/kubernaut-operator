@@ -99,6 +99,18 @@ var _ = Describe("Monitoring Builders", func() {
 					"Rule group %q should be prefixed with apifrontend.", g.Name)
 			}
 		})
+
+		It("all alerts include runbook_url annotation", func() {
+			pr := APIFrontendPrometheusRule(kn())
+			for _, g := range pr.Spec.Groups {
+				for _, r := range g.Rules {
+					if r.Alert != "" {
+						Expect(r.Annotations).To(HaveKey("runbook_url"),
+							"Alert %q should have a runbook_url annotation", r.Alert)
+					}
+				}
+			}
+		})
 	})
 
 	Describe("DataStorageServiceMonitor", func() {

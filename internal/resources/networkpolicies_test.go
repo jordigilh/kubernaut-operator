@@ -436,3 +436,52 @@ var _ = Describe("KubernautAgent NetworkPolicy with AF", func() {
 		Expect(found).To(BeTrue(), "KA ingress should include apifrontend pods")
 	})
 })
+
+var _ = Describe("APIFrontend NetworkPolicy OIDC egress", func() {
+	It("adds HTTPS egress rule when issuerURL is set", func() {
+		kn := testKubernautWithAF()
+		enabled := true
+		kn.Spec.NetworkPolicies.Enabled = &enabled
+		var afNP *networkingv1.NetworkPolicy
+		for _, np := range NetworkPolicies(kn) {
+			if np.Name == ComponentAPIFrontend+"-netpol" {
+				afNP = np
+				break
+			}
+		}
+		Expect(afNP).NotTo(BeNil())
+
+		hasHTTPSEgress := false
+		for _, rule := range afNP.Spec.Egress {
+			for _, port := range rule.Ports {
+				if port.Port != nil && port.Port.IntValue() == 443 && len(rule.To) == 0 {
+					hasHTTPSEgress = true
+				}
+			}
+		}
+		Expect(hasHTTPSEgress).To(BeTrue(), "AF should allow HTTPS egress for OIDC when issuerURL is set")
+	})
+
+	It("omits HTTPS egress rule when issuerURL is empty", func() {
+		kn := testKubernaut()
+		enabled := true
+		kn.Spec.NetworkPolicies.Enabled = &enabled
+		kn.Spec.NetworkPolicies.APIServerCIDR = testAPIServerCIDR
+		var afNP *networkingv1.NetworkPolicy
+		for _, np := range NetworkPolicies(kn) {
+			if np.Name == ComponentAPIFrontend+"-netpol" {
+				afNP = np
+				break
+			}
+		}
+		Expect(afNP).NotTo(BeNil())
+
+		for _, rule := range afNP.Spec.Egress {
+			for _, port := range rule.Ports {
+				if port.Port != nil && port.Port.IntValue() == 443 && len(rule.To) == 0 {
+					Fail("AF should not allow blanket HTTPS egress when issuerURL is empty")
+				}
+			}
+		}
+	})
+})

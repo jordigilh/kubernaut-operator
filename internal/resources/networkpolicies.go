@@ -583,6 +583,15 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 		})
 	}
 
+	if kn.Spec.APIFrontend.Auth.IssuerURL != "" {
+		p443 := intstr.FromInt32(443)
+		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protoTCP, Port: &p443},
+			},
+		})
+	}
+
 	if spec.IngressNamespace != "" {
 		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
 			From: []networkingv1.NetworkPolicyPeer{
