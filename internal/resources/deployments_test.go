@@ -939,3 +939,116 @@ var _ = Describe("overrideTLSCAFile standalone", func() {
 		Expect(found).To(BeTrue())
 	})
 })
+
+var _ = Describe("APIFrontendDeployment", func() {
+	It("builds successfully with AF enabled", func() {
+		kn := testKubernautWithAF()
+		dep, err := APIFrontendDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		expectDeploymentBasics(dep, "apifrontend")
+	})
+
+	It("exposes HTTPS (8443), health (8081), and metrics (9090) ports", func() {
+		kn := testKubernautWithAF()
+		dep, err := APIFrontendDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		container := dep.Spec.Template.Spec.Containers[0]
+		portMap := map[string]int32{}
+		for _, p := range container.Ports {
+			portMap[p.Name] = p.ContainerPort
+		}
+		Expect(portMap).To(HaveKeyWithValue("https", PortHTTPS))
+		Expect(portMap).To(HaveKeyWithValue("health", PortHealthProbe))
+		Expect(portMap).To(HaveKeyWithValue("metrics", PortMetrics))
+	})
+
+	It("mounts config, tls-server, tls-ca, and tmp volumes", func() {
+		kn := testKubernautWithAF()
+		dep, err := APIFrontendDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(dep, "config")
+		expectHasVolume(dep, "tls-server")
+		expectHasVolume(dep, "tls-ca")
+		expectHasVolume(dep, "tmp")
+		expectHasVolumeMount(dep, "config", "/etc/apifrontend")
+		expectHasVolumeMount(dep, "tls-server", "/etc/apifrontend/tls")
+		expectHasVolumeMount(dep, "tls-ca", "/etc/apifrontend/tls-ca")
+		expectHasVolumeMount(dep, "tmp", "/tmp")
+	})
+
+	It("sets liveness and readiness probes", func() {
+		kn := testKubernautWithAF()
+		dep, err := APIFrontendDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		container := dep.Spec.Template.Spec.Containers[0]
+		Expect(container.LivenessProbe).NotTo(BeNil())
+		Expect(container.ReadinessProbe).NotTo(BeNil())
+		Expect(container.LivenessProbe.HTTPGet.Path).To(Equal("/healthz"))
+		Expect(container.ReadinessProbe.HTTPGet.Path).To(Equal("/readyz"))
+	})
+
+	It("includes Prometheus annotations", func() {
+		kn := testKubernautWithAF()
+		dep, err := APIFrontendDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		ann := dep.Spec.Template.Annotations
+		Expect(ann["prometheus.io/scrape"]).To(Equal("true"))
+		Expect(ann["prometheus.io/port"]).To(Equal("9090"))
+	})
+})
+
+var _ = Describe("DataStorageDeployment with Valkey TLS", func() {
+	It("mounts valkey-ca and valkey-client-cert when TLS is enabled", func() {
+		kn := testKubernautWithValkeyTLS()
+		dep, err := DataStorageDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(dep, "valkey-ca")
+		expectHasVolume(dep, "valkey-client-cert")
+		expectHasVolumeMount(dep, "valkey-ca", "/etc/valkey-tls/ca")
+		expectHasVolumeMount(dep, "valkey-client-cert", "/etc/valkey-tls/client")
+	})
+
+	It("does not mount valkey TLS volumes when TLS is disabled", func() {
+		kn := testKubernaut()
+		dep, err := DataStorageDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		for _, v := range dep.Spec.Template.Spec.Volumes {
+			Expect(v.Name).NotTo(HavePrefix("valkey-"),
+				"should not have valkey TLS volume %q when TLS is disabled", v.Name)
+		}
+	})
+})
+
+var _ = Describe("DataStorage Signing Cert", func() {
+	It("mounts signing cert when configured", func() {
+		kn := testKubernaut()
+		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha1.SigningCertSpec{
+			SecretName: "datastorage-signing-cert",
+		}
+		dep, err := DataStorageDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(dep, "signing-cert")
+		expectHasVolumeMount(dep, "signing-cert", "/etc/certs")
+	})
+
+	It("uses custom mount path when specified", func() {
+		kn := testKubernaut()
+		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha1.SigningCertSpec{
+			SecretName: "datastorage-signing-cert",
+			MountPath:  "/custom/certs",
+		}
+		dep, err := DataStorageDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolumeMount(dep, "signing-cert", "/custom/certs")
+	})
+
+	It("does not mount signing cert when not configured", func() {
+		kn := testKubernaut()
+		dep, err := DataStorageDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		for _, v := range dep.Spec.Template.Spec.Volumes {
+			Expect(v.Name).NotTo(Equal("signing-cert"),
+				"should not have signing-cert volume when not configured")
+		}
+	})
+})

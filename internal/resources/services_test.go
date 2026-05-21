@@ -25,10 +25,10 @@ const testAuthWebhookServiceName = "authwebhook-service"
 
 var _ = Describe("Services", func() {
 	Context("Services()", func() {
-		It("returns 5 API services", func() {
+		It("returns 6 API services", func() {
 			kn := testKubernaut()
 			svcs := Services(kn)
-			Expect(len(svcs)).To(Equal(5))
+			Expect(svcs).To(HaveLen(6))
 		})
 
 		It("places all services in the system namespace", func() {
@@ -53,7 +53,7 @@ var _ = Describe("Services", func() {
 			Expect(found).To(BeTrue(), "Services() should contain authwebhook-service")
 		})
 
-		It("gives non-authwebhook API services port 8080", func() {
+		It("gives non-authwebhook API services port 8443", func() {
 			kn := testKubernaut()
 			for _, svc := range Services(kn) {
 				if svc.Name == testAuthWebhookServiceName {
@@ -61,12 +61,12 @@ var _ = Describe("Services", func() {
 				}
 				found := false
 				for _, p := range svc.Spec.Ports {
-					if p.Port == 8080 {
+					if p.Port == 8443 {
 						found = true
 						break
 					}
 				}
-				Expect(found).To(BeTrue(), "Service %q should have port 8080", svc.Name)
+				Expect(found).To(BeTrue(), "Service %q should have port 8443", svc.Name)
 			}
 		})
 
@@ -95,7 +95,7 @@ var _ = Describe("Services", func() {
 			for _, svc := range Services(kn) {
 				if svc.Name == "gateway-service" {
 					found = true
-					wantPorts := map[string]int32{"http": 8080, "health": 8081, "metrics": 9090}
+					wantPorts := map[string]int32{"https": 8443, "health": 8081, "metrics": 9090}
 					gotPorts := make(map[string]int32)
 					for _, p := range svc.Spec.Ports {
 						gotPorts[p.Name] = p.Port
@@ -159,7 +159,7 @@ var _ = Describe("Services", func() {
 		It("returns 5 metrics services", func() {
 			kn := testKubernaut()
 			svcs := MetricsServices(kn)
-			Expect(len(svcs)).To(Equal(5))
+			Expect(svcs).To(HaveLen(5))
 		})
 
 		It("places all metrics services in the system namespace", func() {
@@ -191,7 +191,7 @@ var _ = Describe("Services", func() {
 		It("exposes only port 9090 on each metrics service", func() {
 			kn := testKubernaut()
 			for _, svc := range MetricsServices(kn) {
-				Expect(len(svc.Spec.Ports)).To(Equal(1), "metrics service %q should have exactly 1 port, got %d", svc.Name, len(svc.Spec.Ports))
+				Expect(svc.Spec.Ports).To(HaveLen(1), "metrics service %q should have exactly 1 port, got %d", svc.Name, len(svc.Spec.Ports))
 				Expect(svc.Spec.Ports[0].Port).To(Equal(int32(9090)), "metrics service %q port = %d, want 9090", svc.Name, svc.Spec.Ports[0].Port)
 			}
 		})

@@ -37,6 +37,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	routev1 "github.com/openshift/api/route/v1"
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 
 	kubernautaiv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	"github.com/jordigilh/kubernaut-operator/internal/controller"
@@ -60,6 +61,7 @@ func init() {
 	utilruntime.Must(configv1.Install(scheme))
 	utilruntime.Must(routev1.Install(scheme))
 	utilruntime.Must(kubernautaiv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(monitoringv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 

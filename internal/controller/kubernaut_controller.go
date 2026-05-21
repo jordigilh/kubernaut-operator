@@ -21,10 +21,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -33,7 +36,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/events"
@@ -111,6 +116,8 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get;list;watch
+// +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors;prometheusrules,verbs=get;list;watch;create;update;patch;delete
 
 func (r *KubernautReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -194,6 +201,15 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 		[]string{"valkey-secrets.yaml"}); err != nil {
 		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionBYOValidated,
 			"ValkeySecretInvalid", fmt.Sprintf("Valkey secret validation failed: %v", err))
+	}
+
+	if validationErrs := resources.ValidateKubernaut(kn); len(validationErrs) > 0 {
+		msgs := make([]string, len(validationErrs))
+		for i, e := range validationErrs {
+			msgs[i] = e.Error()
+		}
+		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionBYOValidated,
+			"SpecValidationFailed", fmt.Sprintf("CR validation failed: %s", strings.Join(msgs, "; ")))
 	}
 
 	log.Info("BYO secrets validated")
@@ -739,6 +755,19 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 		}
 		configMaps = append(configMaps, llmRuntimeCM)
 	}
+	if kn.Spec.APIFrontendEnabled() {
+		afCM, err := resources.APIFrontendConfigMap(kn)
+		if err != nil {
+			return nil, fmt.Errorf("building apifrontend ConfigMap: %w", err)
+		}
+		configMaps = append(configMaps, afCM)
+		cmHashes["apifrontend"] = resources.ConfigMapDataHash(afCM.Data)
+
+		if kn.Spec.APIFrontend.RBACRolesConfigMapRef == nil {
+			configMaps = append(configMaps, resources.APIFrontendRBACRolesConfigMap(kn))
+		}
+	}
+
 	configMaps = append(configMaps, resources.InterServiceCAConfigMap(kn))
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		configMaps = append(configMaps,
@@ -803,6 +832,9 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		resources.KubernautAgentDeployment,
 		resources.AuthWebhookDeployment,
 	}
+	if kn.Spec.APIFrontendEnabled() {
+		depBuilders = append(depBuilders, resources.APIFrontendDeployment)
+	}
 	for _, build := range depBuilders {
 		dep, err := build(kn)
 		if err != nil {
@@ -838,6 +870,28 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		}
 	}
 
+	dsHPA := resources.DataStorageHPA(kn)
+	if err := r.ensureNamespaced(ctx, kn, dsHPA); err != nil {
+		return false, fmt.Errorf("ensuring DS HPA: %w", err)
+	}
+
+	if kn.Spec.Monitoring.MonitoringEnabled() && r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com") {
+		dsSM := resources.DataStorageServiceMonitor(kn)
+		if err := r.ensureNamespaced(ctx, kn, dsSM); err != nil {
+			return false, fmt.Errorf("ensuring DS ServiceMonitor: %w", err)
+		}
+		dsPR := resources.DataStoragePrometheusRule(kn)
+		if err := r.ensureNamespaced(ctx, kn, dsPR); err != nil {
+			return false, fmt.Errorf("ensuring DS PrometheusRule: %w", err)
+		}
+	}
+
+	if kn.Spec.APIFrontendEnabled() {
+		if err := r.deployAPIFrontendExtras(ctx, kn); err != nil {
+			return false, err
+		}
+	}
+
 	if route := resources.GatewayRoute(kn); route != nil {
 		if err := r.ensureNamespaced(ctx, kn, route); err != nil {
 			return false, fmt.Errorf("ensuring Gateway Route: %w", err)
@@ -854,6 +908,38 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 	return false, nil
 }
 
+func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
+	afHPA := resources.APIFrontendHPA(kn)
+	if err := r.ensureNamespaced(ctx, kn, afHPA); err != nil {
+		return fmt.Errorf("ensuring AF HPA: %w", err)
+	}
+
+	if kn.Spec.Monitoring.MonitoringEnabled() && r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com") {
+		sm := resources.APIFrontendServiceMonitor(kn)
+		if err := r.ensureNamespaced(ctx, kn, sm); err != nil {
+			return fmt.Errorf("ensuring AF ServiceMonitor: %w", err)
+		}
+		pr := resources.APIFrontendPrometheusRule(kn)
+		if err := r.ensureNamespaced(ctx, kn, pr); err != nil {
+			return fmt.Errorf("ensuring AF PrometheusRule: %w", err)
+		}
+	}
+
+	if r.hasCRD(ctx, "mcpserverregistrations.kagenti.dev") {
+		if route := resources.MCPGatewayHTTPRoute(kn); route != nil {
+			if err := r.ensureNamespaced(ctx, kn, route); err != nil {
+				return fmt.Errorf("ensuring MCP HTTPRoute: %w", err)
+			}
+		}
+		if reg := resources.MCPServerRegistration(kn); reg != nil {
+			if err := r.ensureNamespaced(ctx, kn, reg); err != nil {
+				return fmt.Errorf("ensuring MCPServerRegistration: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
 // ---------- Phase: Running ----------
 
 func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (ctrl.Result, error) {
@@ -862,7 +948,7 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 	// Update per-service status from Deployment readiness.
 	var serviceStatuses []kubernautv1alpha1.ServiceStatus
 	allReady := true
-	for _, component := range resources.AllComponents() {
+	for _, component := range resources.ActiveComponents(kn) {
 		dep := &appsv1.Deployment{}
 		err := r.Get(ctx, types.NamespacedName{
 			Name:      resources.DeploymentName(component),
@@ -1249,6 +1335,23 @@ func (r *KubernautReconciler) resolveClusterTLSProfile(ctx context.Context) stri
 	return profile
 }
 
+// hasCRD checks if a CRD with the given name exists in the cluster.
+func (r *KubernautReconciler) hasCRD(ctx context.Context, crdName string) bool {
+	_, err := r.RESTMapper().ResourceFor(schema.GroupVersionResource{
+		Group: strings.SplitN(crdName, ".", 2)[1] + "",
+	})
+	if err == nil {
+		return true
+	}
+	crd := &unstructured.Unstructured{}
+	crd.SetAPIVersion("apiextensions.k8s.io/v1")
+	crd.SetKind("CustomResourceDefinition")
+	if err := r.Get(ctx, client.ObjectKey{Name: crdName}, crd); err != nil {
+		return false
+	}
+	return true
+}
+
 // ensureNamespaced creates or updates a namespaced resource, setting the
 // Kubernaut CR as owner for garbage collection.
 func (r *KubernautReconciler) ensureNamespaced(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, obj client.Object) error {
@@ -1414,7 +1517,7 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.now == nil {
 		r.now = time.Now
 	}
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&kubernautv1alpha1.Kubernaut{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
@@ -1426,9 +1529,17 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&networkingv1.NetworkPolicy{}).
 		Owns(&rbacv1.Role{}).
 		Owns(&rbacv1.RoleBinding{}).
+		Owns(&autoscalingv2.HorizontalPodAutoscaler{}).
 		Watches(&configv1.APIServer{},
-			handler.EnqueueRequestsFromMapFunc(r.apiServerToKubernaut)).
-		Named("kubernaut").
+			handler.EnqueueRequestsFromMapFunc(r.apiServerToKubernaut))
+
+	if _, err := mgr.GetRESTMapper().RESTMapping(
+		schema.GroupKind{Group: "monitoring.coreos.com", Kind: "ServiceMonitor"}); err == nil {
+		b = b.Owns(&monitoringv1.ServiceMonitor{}).
+			Owns(&monitoringv1.PrometheusRule{})
+	}
+
+	return b.Named("kubernaut").
 		Complete(r)
 }
 

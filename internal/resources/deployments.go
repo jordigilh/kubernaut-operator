@@ -67,7 +67,7 @@ func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, err
 		Args:      []string{"--config=/etc/gateway/config.yaml"},
 		ProbePort: PortHealthProbe,
 		Ports: []corev1.ContainerPort{
-			{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP},
+			{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		},
@@ -98,7 +98,7 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		Resources:       DefaultResources(),
 	}
 
-	volumes := make([]corev1.Volume, 0, 4)
+	volumes := make([]corev1.Volume, 0, 6)
 	volumes = append(volumes,
 		configMapVolume("config", "datastorage-config"),
 		corev1.Volume{
@@ -123,6 +123,8 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 	volumes = append(volumes,
 		secretVolume("tls-certs", DataStorageTLSSecretName),
 		configMapVolume("tls-ca", InterServiceCAConfigMapName),
+		corev1.Volume{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		corev1.Volume{Name: "data", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	)
 
 	mounts := []corev1.VolumeMount{
@@ -130,6 +132,28 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		{Name: "secrets", MountPath: "/etc/datastorage/secrets", ReadOnly: true},
 		{Name: "tls-certs", MountPath: InterServiceTLSCertDir, ReadOnly: true},
 		{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
+		{Name: "tmp", MountPath: "/tmp"},
+		{Name: "data", MountPath: "/data"},
+	}
+
+	if kn.Spec.Valkey.ValkeyTLSEnabled() {
+		if kn.Spec.Valkey.TLS.CASecretName != "" {
+			volumes = append(volumes, secretVolume("valkey-ca", kn.Spec.Valkey.TLS.CASecretName))
+			mounts = append(mounts, corev1.VolumeMount{Name: "valkey-ca", MountPath: "/etc/valkey-tls/ca", ReadOnly: true})
+		}
+		if kn.Spec.Valkey.TLS.ClientCertSecretName != "" {
+			volumes = append(volumes, secretVolume("valkey-client-cert", kn.Spec.Valkey.TLS.ClientCertSecretName))
+			mounts = append(mounts, corev1.VolumeMount{Name: "valkey-client-cert", MountPath: "/etc/valkey-tls/client", ReadOnly: true})
+		}
+	}
+
+	if sc := kn.Spec.DataStorage.SigningCert; sc != nil {
+		mountPath := sc.MountPath
+		if mountPath == "" {
+			mountPath = "/etc/certs"
+		}
+		volumes = append(volumes, secretVolume("signing-cert", sc.SecretName))
+		mounts = append(mounts, corev1.VolumeMount{Name: "signing-cert", MountPath: mountPath, ReadOnly: true})
 	}
 
 	env := []corev1.EnvVar{
@@ -140,16 +164,18 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile},
 	}
 
+	var gracePeriod int64 = 60
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentDataStorage, ImageName: "datastorage",
 		Resources: kn.Spec.DataStorage.Resources, VolumeMounts: mounts, Volumes: volumes,
 		InitContainers: []corev1.Container{initContainer}, Env: env,
 		ProbePort: PortHealthProbe,
 		Ports: []corev1.ContainerPort{
-			{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP},
+			{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		},
+		TerminationGracePeriodSeconds: &gracePeriod,
 	})
 }
 
@@ -174,7 +200,7 @@ func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, 
 		Env: env, ProbePort: PortHealthProbe,
 		Args: []string{"-config", "/etc/aianalysis/config.yaml"},
 		Ports: []corev1.ContainerPort{
-			{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP},
+			{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 		},
@@ -565,7 +591,7 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 			"-llm-runtime", "/etc/kubernaut-agent/llm-runtime/llm-runtime.yaml",
 		},
 		Ports: []corev1.ContainerPort{
-			{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP},
+			{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		},
@@ -611,25 +637,99 @@ func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 	})
 }
 
+// APIFrontendDeployment builds the apifrontend Deployment.
+// The AF service exposes HTTPS (8443), health (8081), and metrics (9090) ports.
+// It mounts projected config (config.yaml + rbac_roles.yaml), TLS server cert,
+// and CA cert for inter-service trust.
+func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+	env := []corev1.EnvVar{
+		{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{
+			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
+		}},
+		{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
+			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
+		}},
+		{Name: "TLS_CA_FILE", Value: "/etc/apifrontend/tls-ca/ca.crt"},
+	}
+
+	rbacCMName := "apifrontend-rbac-roles"
+	if ref := kn.Spec.APIFrontend.RBACRolesConfigMapRef; ref != nil {
+		rbacCMName = ref.ConfigMapName
+	}
+
+	volumes := []corev1.Volume{
+		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: "config", VolumeSource: corev1.VolumeSource{
+			Projected: &corev1.ProjectedVolumeSource{
+				Sources: []corev1.VolumeProjection{
+					{ConfigMap: &corev1.ConfigMapProjection{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "apifrontend-config"},
+						Items:                []corev1.KeyToPath{{Key: "config.yaml", Path: "config.yaml"}},
+					}},
+					{ConfigMap: &corev1.ConfigMapProjection{
+						LocalObjectReference: corev1.LocalObjectReference{Name: rbacCMName},
+						Items:                []corev1.KeyToPath{{Key: "rbac_roles.yaml", Path: "rbac_roles.yaml"}},
+					}},
+				},
+			},
+		}},
+		secretVolume("tls-server", APIFrontendTLSSecretName),
+		optionalConfigMapVolume("tls-ca", InterServiceCAConfigMapName),
+	}
+
+	mounts := []corev1.VolumeMount{
+		{Name: "tmp", MountPath: "/tmp"},
+		{Name: "config", MountPath: "/etc/apifrontend", ReadOnly: true},
+		{Name: "tls-server", MountPath: "/etc/apifrontend/tls", ReadOnly: true},
+		{Name: "tls-ca", MountPath: "/etc/apifrontend/tls-ca", ReadOnly: true},
+	}
+
+	if kn.Spec.Valkey.SecretName != "" {
+		volumes = append(volumes, secretVolume("valkey-secrets", kn.Spec.Valkey.SecretName))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: "valkey-secrets", MountPath: "/etc/apifrontend/valkey", ReadOnly: true,
+		})
+	}
+
+	return buildDeployment(kn, DeploymentParams{
+		Component: ComponentAPIFrontend, ImageName: "apifrontend",
+		Resources: kn.Spec.APIFrontend.Resources, VolumeMounts: mounts, Volumes: volumes,
+		Env:  env,
+		Args: []string{"--config=/etc/apifrontend/config.yaml"},
+		Ports: []corev1.ContainerPort{
+			{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
+			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
+		},
+		ProbePort: PortHealthProbe,
+		PodAnnotations: map[string]string{
+			"prometheus.io/scrape": "true",
+			"prometheus.io/port":   "9090",
+			"prometheus.io/path":   "/metrics",
+		},
+	})
+}
+
 // --- internal helpers ---
 
 // DeploymentParams collects the parameters for building a workload Deployment,
 // replacing what was previously a 9-argument function signature.
 type DeploymentParams struct {
-	Component      string
-	ImageName      string
-	Resources      corev1.ResourceRequirements
-	VolumeMounts   []corev1.VolumeMount
-	Volumes        []corev1.Volume
-	InitContainers []corev1.Container
-	Ports          []corev1.ContainerPort
-	Env            []corev1.EnvVar
-	Args           []string
-	ProbePort      int32
-	Strategy       *appsv1.DeploymentStrategy
-	LivenessPath   string
-	ReadinessPath  string
-	PodAnnotations map[string]string
+	Component                     string
+	ImageName                     string
+	Resources                     corev1.ResourceRequirements
+	VolumeMounts                  []corev1.VolumeMount
+	Volumes                       []corev1.Volume
+	InitContainers                []corev1.Container
+	Ports                         []corev1.ContainerPort
+	Env                           []corev1.EnvVar
+	Args                          []string
+	ProbePort                     int32
+	Strategy                      *appsv1.DeploymentStrategy
+	LivenessPath                  string
+	ReadinessPath                 string
+	PodAnnotations                map[string]string
+	TerminationGracePeriodSeconds *int64
 }
 
 func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*appsv1.Deployment, error) {
@@ -640,7 +740,7 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 
 	ports := p.Ports
 	if len(ports) == 0 {
-		ports = []corev1.ContainerPort{{Name: "http", ContainerPort: PortHTTP, Protocol: corev1.ProtocolTCP}}
+		ports = []corev1.ContainerPort{{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP}}
 	}
 
 	probePort := p.ProbePort
@@ -710,7 +810,8 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 						LivenessProbe:   liveness,
 						ReadinessProbe:  readiness,
 					}},
-					Volumes: p.Volumes,
+					Volumes:                       p.Volumes,
+					TerminationGracePeriodSeconds: p.TerminationGracePeriodSeconds,
 				},
 			},
 		},
@@ -847,6 +948,11 @@ func probeConfigForComponent(component string) ProbeConfig {
 		return ProbeConfig{
 			LivenessPath: "/healthz", LivenessInitialDelay: 15, LivenessPeriod: 20, LivenessTimeout: 5, LivenessFailureThreshold: 3,
 			ReadinessPath: "/readyz", ReadinessInitialDelay: 15, ReadinessPeriod: 10, ReadinessTimeout: 5, ReadinessFailureThreshold: 6,
+		}
+	case ComponentAPIFrontend:
+		return ProbeConfig{
+			LivenessPath: "/healthz", LivenessInitialDelay: 15, LivenessPeriod: 10, LivenessTimeout: 5, LivenessFailureThreshold: 3,
+			ReadinessPath: "/readyz", ReadinessInitialDelay: 5, ReadinessPeriod: 5, ReadinessTimeout: 3, ReadinessFailureThreshold: 3,
 		}
 	default:
 		// SignalProcessing, RemediationOrchestrator, WorkflowExecution

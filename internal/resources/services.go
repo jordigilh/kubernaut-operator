@@ -35,16 +35,16 @@ type serviceDefinition struct {
 // apiServices are multi-port Services for components that expose HTTP APIs.
 var apiServices = []serviceDefinition{
 	{ComponentGateway, "gateway-service",
-		[]corev1.ServicePort{ServicePort("http", PortHTTP), ServicePort("health", PortHealthProbe), ServicePort("metrics", PortMetrics)},
+		[]corev1.ServicePort{ServicePort("https", PortHTTPS), ServicePort("health", PortHealthProbe), ServicePort("metrics", PortMetrics)},
 		map[string]string{OCPServingCertAnnotation: GatewayTLSSecretName}},
 	{ComponentDataStorage, "data-storage-service",
-		[]corev1.ServicePort{ServicePort("http", PortHTTP), ServicePort("health", PortHealthProbe)},
+		[]corev1.ServicePort{ServicePort("https", PortHTTPS), ServicePort("health", PortHealthProbe)},
 		map[string]string{OCPServingCertAnnotation: DataStorageTLSSecretName}},
 	{ComponentAIAnalysis, "aianalysis-service",
-		[]corev1.ServicePort{ServicePort("api", PortHTTP), ServicePort("metrics", PortMetrics), ServicePort("health", PortHealthProbe)},
+		[]corev1.ServicePort{ServicePort("https", PortHTTPS), ServicePort("metrics", PortMetrics), ServicePort("health", PortHealthProbe)},
 		nil},
 	{ComponentKubernautAgent, "kubernaut-agent",
-		[]corev1.ServicePort{ServicePort("http", PortHTTP), ServicePort("health", PortHealthProbe), ServicePort("metrics", PortMetrics)},
+		[]corev1.ServicePort{ServicePort("https", PortHTTPS), ServicePort("health", PortHealthProbe), ServicePort("metrics", PortMetrics)},
 		map[string]string{OCPServingCertAnnotation: KubernautAgentTLSSecretName}},
 }
 
@@ -68,12 +68,13 @@ const (
 	GatewayTLSSecretName        = "gateway-tls"
 	DataStorageTLSSecretName    = "datastorage-tls"
 	KubernautAgentTLSSecretName = "kubernautagent-tls"
+	APIFrontendTLSSecretName    = "apifrontend-tls"
 )
 
 // Services builds all API Services for the Kubernaut deployment.
 // Annotations for OCP service-ca TLS provisioning are set per-service.
 func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
-	services := make([]*corev1.Service, 0, len(apiServices)+1)
+	services := make([]*corev1.Service, 0, len(apiServices)+2)
 	for _, def := range apiServices {
 		services = append(services, buildService(kn, def))
 	}
@@ -95,6 +96,18 @@ func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
 		OCPServingCertAnnotation: "authwebhook-tls",
 	}
 	services = append(services, awSvc)
+
+	if kn.Spec.APIFrontendEnabled() {
+		services = append(services, buildService(kn, serviceDefinition{
+			ComponentAPIFrontend, "apifrontend-service",
+			[]corev1.ServicePort{
+				ServicePort("https", PortHTTPS),
+				ServicePort("health", PortHealthProbe),
+				ServicePort("metrics", PortMetrics),
+			},
+			map[string]string{OCPServingCertAnnotation: APIFrontendTLSSecretName},
+		}))
+	}
 
 	return services
 }

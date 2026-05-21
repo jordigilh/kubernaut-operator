@@ -41,6 +41,7 @@ var _ = BeforeSuite(func() {
 		"RELATED_IMAGE_NOTIFICATION":            "quay.io/kubernaut-ai/notification:v1.3.0",
 		"RELATED_IMAGE_KUBERNAUT_AGENT":         "quay.io/kubernaut-ai/kubernautagent:v1.3.0",
 		"RELATED_IMAGE_AUTHWEBHOOK":             "quay.io/kubernaut-ai/authwebhook:v1.3.0",
+		"RELATED_IMAGE_API_FRONTEND":            "quay.io/kubernaut-ai/apifrontend:v1.3.0",
 		"RELATED_IMAGE_DB_MIGRATE":              "quay.io/kubernaut-ai/db-migrate:v1.3.0",
 	} {
 		Expect(os.Setenv(k, v)).To(Succeed())
@@ -59,6 +60,7 @@ var _ = AfterSuite(func() {
 		"RELATED_IMAGE_NOTIFICATION",
 		"RELATED_IMAGE_KUBERNAUT_AGENT",
 		"RELATED_IMAGE_AUTHWEBHOOK",
+		"RELATED_IMAGE_API_FRONTEND",
 		"RELATED_IMAGE_DB_MIGRATE",
 	} {
 		Expect(os.Unsetenv(k)).To(Succeed())

@@ -22,32 +22,38 @@ import (
 )
 
 var _ = Describe("PodDisruptionBudgets", func() {
-	It("returns 10 PDBs", func() {
+	It("returns PDBs only for active components", func() {
 		kn := testKubernaut()
 		pdbs := PodDisruptionBudgets(kn)
-		Expect(len(pdbs)).To(Equal(10))
+		Expect(pdbs).To(HaveLen(len(ActiveComponents(kn))))
 	})
 
-	It("sets MaxUnavailable to 1 on every PDB", func() {
+	It("sets MaxUnavailable=1 on default components and MinAvailable=1 on DS/AF", func() {
 		kn := testKubernaut()
 		for _, pdb := range PodDisruptionBudgets(kn) {
-			Expect(pdb.Spec.MaxUnavailable).NotTo(BeNil(), "PDB %q should have MaxUnavailable set", pdb.Name)
-			Expect(pdb.Spec.MaxUnavailable.IntValue()).To(Equal(1), "PDB %q MaxUnavailable = %d, want 1", pdb.Name, pdb.Spec.MaxUnavailable.IntValue())
+			switch pdb.Name {
+			case ComponentDataStorage, ComponentAPIFrontend:
+				Expect(pdb.Spec.MinAvailable).NotTo(BeNil(), "PDB %q should have MinAvailable set", pdb.Name)
+				Expect(pdb.Spec.MinAvailable.IntValue()).To(Equal(1), "PDB %q MinAvailable = %d, want 1", pdb.Name, pdb.Spec.MinAvailable.IntValue())
+			default:
+				Expect(pdb.Spec.MaxUnavailable).NotTo(BeNil(), "PDB %q should have MaxUnavailable set", pdb.Name)
+				Expect(pdb.Spec.MaxUnavailable.IntValue()).To(Equal(1), "PDB %q MaxUnavailable = %d, want 1", pdb.Name, pdb.Spec.MaxUnavailable.IntValue())
+			}
 		}
 	})
 
 	It("aligns selectors with component selector labels by index", func() {
 		kn := testKubernaut()
-		components := AllComponents()
+		components := ActiveComponents(kn)
 		pdbs := PodDisruptionBudgets(kn)
-		Expect(len(pdbs)).To(Equal(len(components)), "PDB count = %d, component count = %d", len(pdbs), len(components))
+		Expect(pdbs).To(HaveLen(len(components)), "PDB count = %d, component count = %d", len(pdbs), len(components))
 		for i, pdb := range pdbs {
 			component := components[i]
 			Expect(pdb.Name).To(Equal(component), "PDB[%d] name = %q, want %q (index mismatch)", i, pdb.Name, component)
 			want := SelectorLabels(component)
 			Expect(pdb.Spec.Selector).NotTo(BeNil(), "PDB %q should have selector", pdb.Name)
 			got := pdb.Spec.Selector.MatchLabels
-			Expect(len(got)).To(Equal(len(want)), "PDB %q selector len = %d, want %d (got %#v want %#v)", pdb.Name, len(got), len(want), got, want)
+			Expect(got).To(HaveLen(len(want)), "PDB %q selector len = %d, want %d (got %#v want %#v)", pdb.Name, len(got), len(want), got, want)
 			for k, v := range want {
 				Expect(got[k]).To(Equal(v), "PDB %q selector %q = %q, want %q", pdb.Name, k, got[k], v)
 			}
@@ -71,8 +77,8 @@ var _ = Describe("PodDisruptionBudgets", func() {
 	It("names PDBs after components without a -pdb suffix", func() {
 		kn := testKubernaut()
 		pdbs := PodDisruptionBudgets(kn)
-		components := AllComponents()
-		Expect(len(pdbs)).To(Equal(len(components)), "PDB count = %d, component count = %d", len(pdbs), len(components))
+		components := ActiveComponents(kn)
+		Expect(pdbs).To(HaveLen(len(components)), "PDB count = %d, component count = %d", len(pdbs), len(components))
 		for i, pdb := range pdbs {
 			Expect(pdb.Name).To(Equal(components[i]), "PDB[%d] name = %q, want %q (no -pdb suffix)", i, pdb.Name, components[i])
 		}

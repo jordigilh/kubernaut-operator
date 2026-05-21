@@ -33,7 +33,7 @@ func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut) []*networkingv1.NetworkPol
 	if !spec.NetworkPoliciesEnabled() {
 		return nil
 	}
-	return []*networkingv1.NetworkPolicy{
+	nps := []*networkingv1.NetworkPolicy{
 		gatewayNetworkPolicy(kn),
 		dataStorageNetworkPolicy(kn),
 		aiAnalysisNetworkPolicy(kn),
@@ -45,12 +45,16 @@ func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut) []*networkingv1.NetworkPol
 		authWebhookNetworkPolicy(kn),
 		kubernautAgentNetworkPolicy(kn),
 	}
+	if kn.Spec.APIFrontendEnabled() {
+		nps = append(nps, apifrontendNetworkPolicy(kn))
+	}
+	return nps
 }
 
 func gatewayNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
 	spec := kn.Spec.NetworkPolicies
 	protoTCP := corev1.ProtocolTCP
-	p8080 := intstr.FromInt32(PortHTTP)
+	p8443 := intstr.FromInt32(PortHTTPS)
 
 	var ingressFrom []networkingv1.NetworkPolicyPeer
 	for _, ns := range spec.GatewayIngressNamespaces {
@@ -72,7 +76,7 @@ func gatewayNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Network
 		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
 			From: ingressFrom,
 			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protoTCP, Port: &p8080},
+				{Protocol: &protoTCP, Port: &p8443},
 			},
 		})
 	}
@@ -100,7 +104,7 @@ func gatewayNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Network
 func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
 	spec := kn.Spec.NetworkPolicies
 	protoTCP := corev1.ProtocolTCP
-	p8080 := intstr.FromInt32(PortHTTP)
+	p8443 := intstr.FromInt32(PortHTTPS)
 
 	dataIngressPeers := []networkingv1.NetworkPolicyPeer{
 		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentGateway)}},
@@ -118,7 +122,7 @@ func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 		{
 			From: dataIngressPeers,
 			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protoTCP, Port: &p8080},
+				{Protocol: &protoTCP, Port: &p8443},
 			},
 		},
 	}
@@ -282,16 +286,21 @@ func authWebhookNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
 	spec := kn.Spec.NetworkPolicies
 	protoTCP := corev1.ProtocolTCP
-	p8080 := intstr.FromInt32(PortHTTP)
+	p8443 := intstr.FromInt32(PortHTTPS)
+
+	kaIngressPeers := []networkingv1.NetworkPolicyPeer{
+		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentAIAnalysis)}},
+	}
+	if kn.Spec.APIFrontendEnabled() {
+		kaIngressPeers = append(kaIngressPeers,
+			networkingv1.NetworkPolicyPeer{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentAPIFrontend)}},
+		)
+	}
 
 	ingress := []networkingv1.NetworkPolicyIngressRule{
 		{
-			From: []networkingv1.NetworkPolicyPeer{
-				{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentAIAnalysis)}},
-			},
-			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protoTCP, Port: &p8080},
-			},
+			From:  kaIngressPeers,
+			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protoTCP, Port: &p8443}},
 		},
 	}
 	if m := metricsIngressRule(spec.MonitoringNamespace); m != nil {
@@ -382,7 +391,7 @@ func controllerWithDataStorageAndHTTPSEgress(kn *kubernautv1alpha1.Kubernaut, co
 func controllerWithDataStorageAndAgentEgress(kn *kubernautv1alpha1.Kubernaut, component string, ingress []networkingv1.NetworkPolicyIngressRule) *networkingv1.NetworkPolicy {
 	spec := kn.Spec.NetworkPolicies
 	protoTCP := corev1.ProtocolTCP
-	p8080 := intstr.FromInt32(PortHTTP)
+	p8443 := intstr.FromInt32(PortHTTPS)
 
 	egress := []networkingv1.NetworkPolicyEgressRule{dnsEgressRule()}
 	if r := apiServerEgressRule(spec.APIServerCIDR); r != nil {
@@ -393,7 +402,7 @@ func controllerWithDataStorageAndAgentEgress(kn *kubernautv1alpha1.Kubernaut, co
 			{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentKubernautAgent)}},
 		},
 		Ports: []networkingv1.NetworkPolicyPort{
-			{Protocol: &protoTCP, Port: &p8080},
+			{Protocol: &protoTCP, Port: &p8443},
 		},
 	})
 	return &networkingv1.NetworkPolicy{
@@ -495,17 +504,137 @@ func monitoringStackEgressRule(monitoringNS string) networkingv1.NetworkPolicyEg
 	}
 }
 
-// datastorageEgressRule allows TCP 8080 to DataStorage pods in the same
+func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
+	spec := kn.Spec.NetworkPolicies
+	protoTCP := corev1.ProtocolTCP
+	p8443 := intstr.FromInt32(PortHTTPS)
+	p8081 := intstr.FromInt32(PortHealthProbe)
+	p9090 := intstr.FromInt32(PortMetrics)
+
+	ingress := []networkingv1.NetworkPolicyIngressRule{
+		{
+			From: []networkingv1.NetworkPolicyPeer{
+				{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+					"kubernetes.io/metadata.name": kn.Namespace,
+				}}},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protoTCP, Port: &p8443},
+			},
+		},
+		{
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protoTCP, Port: &p8081},
+			},
+		},
+	}
+	if spec.MonitoringNamespace != "" {
+		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+			From: []networkingv1.NetworkPolicyPeer{
+				{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+					"kubernetes.io/metadata.name": spec.MonitoringNamespace,
+				}}},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protoTCP, Port: &p9090},
+			},
+		})
+	}
+
+	egress := []networkingv1.NetworkPolicyEgressRule{
+		dnsEgressRule(),
+		{
+			To: []networkingv1.NetworkPolicyPeer{
+				{PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+					"app.kubernetes.io/part-of": "kubernaut",
+				}}},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protoTCP, Port: &p8443},
+			},
+		},
+	}
+	if r := apiServerEgressRule(spec.APIServerCIDR); r != nil {
+		egress = append(egress, *r)
+	}
+	if spec.MonitoringNamespace != "" {
+		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
+			To: []networkingv1.NetworkPolicyPeer{
+				{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+					"kubernetes.io/metadata.name": spec.MonitoringNamespace,
+				}}},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protoTCP, Port: &p9090},
+			},
+		})
+	}
+
+	if kn.Spec.Valkey.SecretName != "" {
+		valkeyPort := kn.Spec.Valkey.Port
+		if valkeyPort == 0 {
+			valkeyPort = DefaultValkeyPort
+		}
+		pValkey := intstr.FromInt32(valkeyPort)
+		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protoTCP, Port: &pValkey},
+			},
+		})
+	}
+
+	if spec.IngressNamespace != "" {
+		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+			From: []networkingv1.NetworkPolicyPeer{
+				{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+					"kubernetes.io/metadata.name": spec.IngressNamespace,
+				}}},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protoTCP, Port: &p8443},
+			},
+		})
+	}
+
+	if len(spec.ExternalEgressCIDRs) > 0 {
+		p443 := intstr.FromInt32(443)
+		peers := make([]networkingv1.NetworkPolicyPeer, 0, len(spec.ExternalEgressCIDRs))
+		for _, cidr := range spec.ExternalEgressCIDRs {
+			peers = append(peers, networkingv1.NetworkPolicyPeer{
+				IPBlock: &networkingv1.IPBlock{CIDR: cidr},
+			})
+		}
+		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
+			To:    peers,
+			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protoTCP, Port: &p443}},
+		})
+	}
+
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: ObjectMeta(kn, ComponentAPIFrontend+"-netpol", ComponentAPIFrontend),
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentAPIFrontend)},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeIngress,
+				networkingv1.PolicyTypeEgress,
+			},
+			Ingress: ingress,
+			Egress:  egress,
+		},
+	}
+}
+
+// datastorageEgressRule allows TCP 8443 to DataStorage pods in the same
 // namespace as the NetworkPolicy.
 func datastorageEgressRule() networkingv1.NetworkPolicyEgressRule {
 	protoTCP := corev1.ProtocolTCP
-	p8080 := intstr.FromInt32(PortHTTP)
+	p8443 := intstr.FromInt32(PortHTTPS)
 	return networkingv1.NetworkPolicyEgressRule{
 		To: []networkingv1.NetworkPolicyPeer{
 			{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentDataStorage)}},
 		},
 		Ports: []networkingv1.NetworkPolicyPort{
-			{Protocol: &protoTCP, Port: &p8080},
+			{Protocol: &protoTCP, Port: &p8443},
 		},
 	}
 }

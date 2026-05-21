@@ -91,7 +91,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("renders custom deduplication cooldown", func() {
 			kn := testKubernaut()
-			kn.Spec.Gateway.Config.DeduplicationCooldown = "10m"
+			kn.Spec.Gateway.Config.DeduplicationCooldown = "10m" //nolint:goconst // test value
 			cm, err := GatewayConfigMap(kn)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
@@ -307,7 +307,7 @@ var _ = Describe("ConfigMaps", func() {
 			exp := 6
 			kn.Spec.RemediationOrchestrator.Routing.ExponentialBackoffMaxExponent = &exp
 			kn.Spec.RemediationOrchestrator.Routing.ScopeBackoffBase = "10s"
-			kn.Spec.RemediationOrchestrator.Routing.ScopeBackoffMax = "10m"
+			kn.Spec.RemediationOrchestrator.Routing.ScopeBackoffMax = "10m" //nolint:goconst // test value
 			delay := 48
 			kn.Spec.RemediationOrchestrator.Routing.NoActionRequiredDelayHours = &delay
 
@@ -538,7 +538,7 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring(OCPPrometheusURL), "KA config should contain Prometheus URL when monitoring enabled, got:\n%s", data)
 			Expect(data).To(ContainSubstring("tlsCaFile: /etc/ssl/ka/service-ca.crt"), "KA config should contain Prometheus tlsCaFile for SA bearer auth, got:\n%s", data)
 			Expect(data).To(ContainSubstring("dataStorage:"), "KA config should contain dataStorage section, got:\n%s", data)
-			Expect(data).To(ContainSubstring("url: https://data-storage-service.kubernaut-system.svc.cluster.local:8080"), "KA config should contain HTTPS dataStorage.url, got:\n%s", data)
+			Expect(data).To(ContainSubstring("url: https://data-storage-service.kubernaut-system.svc.cluster.local:8443"), "KA config should contain HTTPS dataStorage.url, got:\n%s", data)
 			Expect(strings.Contains(data, "tools:") && strings.Contains(data, "prometheus:")).To(BeTrue(), "KA config should contain upstream tools.prometheus section when monitoring enabled, got:\n%s", data)
 		})
 
@@ -593,7 +593,7 @@ var _ = Describe("ConfigMaps", func() {
 			err = yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(root.Runtime.Logging.Level).To(Equal("info"), "runtime.logging.level = %q, want info", root.Runtime.Logging.Level)
-			Expect(root.Runtime.Server.Port == 8080 && root.Runtime.Server.Address == "0.0.0.0").To(BeTrue(), "runtime.server = %#v, want address 0.0.0.0 port 8080", root.Runtime.Server)
+			Expect(root.Runtime.Server.Port == 8443 && root.Runtime.Server.Address == "0.0.0.0").To(BeTrue(), "runtime.server = %#v, want address 0.0.0.0 port 8443", root.Runtime.Server)
 			Expect(root.Runtime.Audit.BufferSize).To(Equal(10000), "runtime.audit.bufferSize = %d, want 10000", root.Runtime.Audit.BufferSize)
 			Expect(root.AI.LLM.Provider).To(Equal("openai"), "ai.llm.provider = %q, want openai", root.AI.LLM.Provider)
 			Expect(root.AI.Investigation.MaxTurns).To(Equal(40), "ai.investigation.maxTurns = %d, want 40", root.AI.Investigation.MaxTurns)
@@ -1000,5 +1000,182 @@ var _ = Describe("ConfigMaps", func() {
 				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) { return AuthWebhookConfigMap(kn) },
 			),
 		)
+	})
+})
+
+var _ = Describe("APIFrontendConfigMap", func() {
+	It("generates a valid config.yaml", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cm.Name).To(Equal("apifrontend-config"))
+		data, ok := cm.Data["config.yaml"]
+		Expect(ok).To(BeTrue(), "config.yaml key missing")
+		Expect(data).To(ContainSubstring("port: 8443"))
+		Expect(data).To(ContainSubstring("kaBaseURL"))
+		Expect(data).To(ContainSubstring("dsBaseURL"))
+		Expect(data).To(ContainSubstring("issuerURL"))
+	})
+
+	It("renders auth issuerURL and audience from spec", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("https://login.kubernaut.ai/realms/kubernaut"))
+		Expect(data).To(ContainSubstring("kubernaut-apifrontend"))
+	})
+
+	It("renders rate limit defaults", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("ipRequestsPerSec: 50"))
+		Expect(data).To(ContainSubstring("userRequestsPerSec: 20"))
+	})
+
+	It("renders resilience circuit breaker config", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("cbFailureThreshold:"))
+		Expect(data).To(ContainSubstring("retryMax:"))
+	})
+
+	It("renders replayCache when Valkey secret is set", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.Valkey.SecretName = "my-valkey-secret"
+		kn.Spec.Valkey.Host = "valkey.kubernaut-system.svc.cluster.local"
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("replayCache:"))
+		Expect(data).To(ContainSubstring("backend: redis"))
+		Expect(data).To(ContainSubstring("redisDB: 1"))
+		Expect(data).To(ContainSubstring("credentialsPath: /etc/apifrontend/valkey/valkey-secrets.yaml"))
+	})
+
+	It("omits replayCache when Valkey secret is empty", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.Valkey.SecretName = ""
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).NotTo(ContainSubstring("replayCache:"))
+	})
+})
+
+var _ = Describe("APIFrontendRBACRolesConfigMap", func() {
+	It("generates default RBAC roles", func() {
+		kn := testKubernautWithAF()
+		cm := APIFrontendRBACRolesConfigMap(kn)
+		Expect(cm.Name).To(Equal("apifrontend-rbac-roles"))
+		data, ok := cm.Data["rbac_roles.yaml"]
+		Expect(ok).To(BeTrue(), "rbac_roles.yaml key missing")
+		Expect(data).To(ContainSubstring("admin:"))
+		Expect(data).To(ContainSubstring("viewer:"))
+	})
+})
+
+var _ = Describe("DataStorage SignerCertDir Config", func() {
+	It("renders signerCertDir when signing cert is configured", func() {
+		kn := testKubernaut()
+		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha1.SigningCertSpec{
+			SecretName: "datastorage-signing-cert",
+		}
+		cm, err := DataStorageConfigMap(kn, "testdb", "testuser")
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("signerCertDir: /etc/certs"))
+	})
+
+	It("omits signerCertDir when signing cert is not configured", func() {
+		kn := testKubernaut()
+		cm, err := DataStorageConfigMap(kn, "testdb", "testuser")
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).NotTo(ContainSubstring("signerCertDir"))
+	})
+})
+
+var _ = Describe("DataStorage Redis TLS Config", func() {
+	It("renders TLS config when Valkey TLS is enabled", func() {
+		kn := testKubernautWithValkeyTLS()
+		cm, err := DataStorageConfigMap(kn, "testdb", "testuser")
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("enabled: true"))
+		Expect(data).To(ContainSubstring("caFile: /etc/valkey-tls/ca/ca.crt"))
+		Expect(data).To(ContainSubstring("certFile: /etc/valkey-tls/client/tls.crt"))
+		Expect(data).To(ContainSubstring("keyFile: /etc/valkey-tls/client/tls.key"))
+	})
+
+	It("omits TLS block when Valkey TLS is not configured", func() {
+		kn := testKubernaut()
+		cm, err := DataStorageConfigMap(kn, "testdb", "testuser")
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).NotTo(ContainSubstring("caFile:"))
+	})
+})
+
+var _ = Describe("DataStorage Retention Config", func() {
+	It("renders retention block with defaults when spec is provided", func() {
+		kn := testKubernaut()
+		enabled := true
+		kn.Spec.DataStorage.Retention = &kubernautv1alpha1.RetentionSpec{
+			Enabled: &enabled,
+		}
+		cm, err := DataStorageConfigMap(kn, "testdb", "testuser")
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("retention:"))
+		Expect(data).To(ContainSubstring("enabled: true"))
+		Expect(data).To(ContainSubstring("interval: 24h"))
+		Expect(data).To(ContainSubstring("batchSize: 1000"))
+		Expect(data).To(ContainSubstring("defaultDays: 2555"))
+	})
+
+	It("omits retention block when spec is nil", func() {
+		kn := testKubernaut()
+		cm, err := DataStorageConfigMap(kn, "testdb", "testuser")
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).NotTo(ContainSubstring("retention:"))
+	})
+
+	It("clamps defaultDays to 2555", func() {
+		kn := testKubernaut()
+		days := 5000
+		kn.Spec.DataStorage.Retention = &kubernautv1alpha1.RetentionSpec{
+			DefaultDays: &days,
+		}
+		cm, err := DataStorageConfigMap(kn, "testdb", "testuser")
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("defaultDays: 2555"))
+		Expect(data).NotTo(ContainSubstring("defaultDays: 5000"))
+	})
+
+	It("respects custom values", func() {
+		kn := testKubernaut()
+		enabled := false
+		batch := 500
+		days := 365
+		kn.Spec.DataStorage.Retention = &kubernautv1alpha1.RetentionSpec{
+			Enabled:     &enabled,
+			Interval:    "12h",
+			BatchSize:   &batch,
+			DefaultDays: &days,
+		}
+		cm, err := DataStorageConfigMap(kn, "testdb", "testuser")
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("enabled: false"))
+		Expect(data).To(ContainSubstring("interval: 12h"))
+		Expect(data).To(ContainSubstring("batchSize: 500"))
+		Expect(data).To(ContainSubstring("defaultDays: 365"))
 	})
 })

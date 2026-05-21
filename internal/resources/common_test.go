@@ -70,6 +70,27 @@ func testKubernaut() *kubernautv1alpha1.Kubernaut {
 	}
 }
 
+func testKubernautWithAF() *kubernautv1alpha1.Kubernaut {
+	kn := testKubernaut()
+	kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
+		Auth: kubernautv1alpha1.APIFrontendAuthSpec{
+			IssuerURL: "https://login.kubernaut.ai/realms/kubernaut",
+			Audience:  "kubernaut-apifrontend",
+		},
+	}
+	return kn
+}
+
+func testKubernautWithValkeyTLS() *kubernautv1alpha1.Kubernaut {
+	kn := testKubernaut()
+	kn.Spec.Valkey.TLS = &kubernautv1alpha1.ValkeyTLSSpec{
+		Enabled:              true,
+		CASecretName:         "valkey-ca",
+		ClientCertSecretName: "valkey-client-cert",
+	}
+	return kn
+}
+
 var _ = Describe("ResolveImage", func() {
 	It("resolves from env var", func() {
 		kn := testKubernaut()
@@ -161,12 +182,12 @@ var _ = Describe("ObjectMeta", func() {
 var _ = Describe("URL helpers", func() {
 	It("DataStorageURL returns correct HTTPS URL", func() {
 		got := DataStorageURL(testSystemNamespace)
-		Expect(got).To(Equal("https://data-storage-service.kubernaut-system.svc.cluster.local:8080"))
+		Expect(got).To(Equal("https://data-storage-service.kubernaut-system.svc.cluster.local:8443"))
 	})
 
 	It("GatewayURL returns correct HTTPS URL", func() {
 		got := GatewayURL(testSystemNamespace)
-		Expect(got).To(Equal("https://gateway-service.kubernaut-system.svc.cluster.local:8080"))
+		Expect(got).To(Equal("https://gateway-service.kubernaut-system.svc.cluster.local:8443"))
 	})
 })
 
@@ -240,8 +261,8 @@ var _ = Describe("MergeResources", func() {
 })
 
 var _ = Describe("AllComponents", func() {
-	It("returns 10 components", func() {
-		Expect(AllComponents()).To(HaveLen(10))
+	It("returns 11 components", func() {
+		Expect(AllComponents()).To(HaveLen(11))
 	})
 })
 

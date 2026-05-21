@@ -163,7 +163,7 @@ var _ = Describe("ValidatingWebhookConfiguration", func() {
 				Expect(rule.Operations).To(HaveLen(1))
 				Expect(rule.Operations[0]).To(Equal(admissionregistrationv1.Delete), "webhook[%d] should only have DELETE, got %v", i, rule.Operations)
 			} else {
-				Expect(len(rule.Operations)).To(Equal(3), "webhook[%d] should have CREATE, UPDATE, DELETE, got %v", i, rule.Operations)
+				Expect(rule.Operations).To(HaveLen(3), "webhook[%d] should have CREATE, UPDATE, DELETE, got %v", i, rule.Operations)
 			}
 
 			Expect(rule.Resources).NotTo(BeEmpty())

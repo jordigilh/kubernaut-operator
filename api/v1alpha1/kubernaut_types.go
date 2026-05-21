@@ -87,6 +87,9 @@ type KubernautSpec struct {
 	// resources that enforce a default-deny posture with explicit allow rules.
 	// +optional
 	NetworkPolicies NetworkPoliciesSpec `json:"networkPolicies,omitempty"`
+
+	// APIFrontend configures the API Frontend (MCP/A2A gateway) service.
+	APIFrontend APIFrontendSpec `json:"apiFrontend,omitempty"`
 }
 
 // ImageSpec configures container image policy for all services.
@@ -131,8 +134,8 @@ type PostgreSQLSpec struct {
 	Port int32 `json:"port,omitempty"`
 
 	// PostgreSQL SSL mode (disable, require, verify-ca, verify-full).
-	// +kubebuilder:default="disable"
-	// +kubebuilder:validation:Enum=disable;require;verify-ca;verify-full
+	// +kubebuilder:default="verify-full"
+	// +kubebuilder:validation:Enum=require;verify-ca;verify-full
 	// +optional
 	SSLMode string `json:"sslMode,omitempty"`
 }
@@ -154,6 +157,33 @@ type ValkeySpec struct {
 	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	Port int32 `json:"port,omitempty"`
+
+	// TLS configures client-side TLS for the Valkey/Redis connection.
+	// Server-side TLS provisioning is the platform admin's responsibility
+	// (Valkey is BYO).
+	// +optional
+	TLS *ValkeyTLSSpec `json:"tls,omitempty"`
+}
+
+// ValkeyTLSSpec configures client-side TLS for BYO Valkey/Redis.
+type ValkeyTLSSpec struct {
+	// Whether TLS is enabled for the Valkey/Redis connection.
+	Enabled bool `json:"enabled"`
+
+	// Name of the Secret containing the CA certificate to verify the server.
+	// Required key: ca.crt
+	// +optional
+	CASecretName string `json:"caSecretName,omitempty"`
+
+	// Name of the Secret containing client certificate and key for mTLS.
+	// Required keys: tls.crt, tls.key
+	// +optional
+	ClientCertSecretName string `json:"clientCertSecretName,omitempty"`
+}
+
+// ValkeyTLSEnabled returns true when Valkey TLS is configured and enabled.
+func (v *ValkeySpec) ValkeyTLSEnabled() bool {
+	return v.TLS != nil && v.TLS.Enabled
 }
 
 // AnsibleSpec configures the optional AWX/AAP integration.
@@ -532,6 +562,10 @@ type KubernautAgentSpec struct {
 	// +optional
 	Safety SafetySpec `json:"safety,omitempty"`
 
+	// Interactive mode JWT identity delegation configuration.
+	// +optional
+	Interactive *InteractiveSpec `json:"interactive,omitempty"`
+
 	// AdditionalClusterRoleBindings is an optional list of pre-existing
 	// ClusterRole names to bind to the Kubernaut Agent ServiceAccount.
 	// +optional
@@ -545,6 +579,40 @@ type KubernautAgentSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// InteractiveSpec configures KA interactive mode with JWT-based identity delegation.
+type InteractiveSpec struct {
+	// JWT providers for OIDC-based identity delegation.
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	JWTProviders []JWTProviderSpec `json:"jwtProviders,omitempty"`
+
+	// AllowInsecureJWKS permits HTTP (non-TLS) JWKS URLs for dev/test.
+	// Production deployments MUST leave this false.
+	// +optional
+	AllowInsecureJWKS bool `json:"allowInsecureJWKS,omitempty"`
+}
+
+// JWTProviderSpec configures a single OIDC JWT provider.
+type JWTProviderSpec struct {
+	// Human-readable name for this provider (e.g. "rhbk", "auth0").
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// JWKS endpoint URL. Must use HTTPS unless allowInsecureJWKS is true.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=2048
+	JWKSURL string `json:"jwksURL"`
+
+	// Expected audience claim value.
+	// +optional
+	Audience string `json:"audience,omitempty"`
+
+	// Expected issuer claim value.
+	// +optional
+	Issuer string `json:"issuer,omitempty"`
 }
 
 // SessionSpec configures KA session behaviour.
@@ -798,14 +866,154 @@ type AuthWebhookSpec struct {
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
-// DataStorageSpec configures the DataStorage service.
-type DataStorageSpec struct {
+// APIFrontendSpec configures the API Frontend (MCP Streamable HTTP / A2A) service.
+// The API Frontend is an opt-in component that provides external access to
+// Kubernaut Agent via MCP and A2A protocols with OIDC authentication,
+// rate limiting, and RBAC-scoped tool access.
+type APIFrontendSpec struct {
+	// OIDC authentication configuration.
+	// +optional
+	Auth APIFrontendAuthSpec `json:"auth,omitempty"`
+
+	// Request rate limiting configuration.
+	// +optional
+	RateLimit APIFrontendRateLimitSpec `json:"rateLimit,omitempty"`
+
+	// Graceful shutdown configuration.
+	// +optional
+	Shutdown APIFrontendShutdownSpec `json:"shutdown,omitempty"`
+
+	// External URL for the A2A agent card discovery endpoint.
+	// When empty, auto-derived from the in-cluster service FQDN.
+	// +optional
+	AgentCardURL string `json:"agentCardURL,omitempty"`
+
+	// Reference to a pre-existing ConfigMap containing RBAC role-to-tool
+	// mappings (key: "rbac_roles.yaml"). When empty, the operator generates
+	// a default RBAC roles ConfigMap.
+	// +optional
+	RBACRolesConfigMapRef *ConfigMapRef `json:"rbacRolesConfigMapRef,omitempty"`
+
 	// +optional
 	Logging LoggingSpec `json:"logging,omitempty"`
 
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// APIFrontendAuthSpec configures OIDC authentication for the API Frontend.
+type APIFrontendAuthSpec struct {
+	// OIDC issuer URL (e.g. "https://login.kubernaut.ai/realms/kubernaut").
+	// +optional
+	IssuerURL string `json:"issuerURL,omitempty"`
+
+	// Expected JWT audience claim.
+	// +kubebuilder:default="kubernaut-apifrontend"
+	// +optional
+	Audience string `json:"audience,omitempty"`
+}
+
+// APIFrontendRateLimitSpec configures request rate limiting for the API Frontend.
+type APIFrontendRateLimitSpec struct {
+	// Per-IP requests per second.
+	// +kubebuilder:default=50
+	// +optional
+	IPRequestsPerSec *int `json:"ipRequestsPerSec,omitempty"`
+
+	// Per-user requests per second.
+	// +kubebuilder:default=20
+	// +optional
+	UserRequestsPerSec *int `json:"userRequestsPerSec,omitempty"`
+
+	// Maximum concurrent MCP/A2A sessions.
+	// +kubebuilder:default=100
+	// +optional
+	MaxConcurrentSessions *int `json:"maxConcurrentSessions,omitempty"`
+
+	// Tool calls per minute per user.
+	// +kubebuilder:default=60
+	// +optional
+	ToolCallsPerMinute *int `json:"toolCallsPerMinute,omitempty"`
+}
+
+// APIFrontendShutdownSpec configures graceful shutdown for the API Frontend.
+type APIFrontendShutdownSpec struct {
+	// Seconds to wait for in-flight requests to drain during shutdown.
+	// +kubebuilder:default=15
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=300
+	// +optional
+	DrainSeconds *int `json:"drainSeconds,omitempty"`
+}
+
+// APIFrontendEnabled returns true. The API Frontend is always deployed.
+func (s *KubernautSpec) APIFrontendEnabled() bool {
+	return true
+}
+
+// DataStorageSpec configures the DataStorage service.
+type DataStorageSpec struct {
+	// EndpointPropagationDelay is the delay before newly created endpoints
+	// are considered ready. Prevents traffic routing to pods that haven't
+	// finished warming up. Must be a valid Go duration string.
+	// +kubebuilder:default="10s"
+	// +optional
+	EndpointPropagationDelay string `json:"endpointPropagationDelay,omitempty"`
+
+	// +optional
+	Logging LoggingSpec `json:"logging,omitempty"`
+
+	// Resource requirements.
+	// +optional
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Retention configures periodic purge of expired audit events (FedRAMP AU-11).
+	// +optional
+	Retention *RetentionSpec `json:"retention,omitempty"`
+
+	// SigningCert configures the audit export signing certificate (FedRAMP AU-9).
+	// When set, the named Secret is mounted into the DS pod at /etc/certs.
+	// +optional
+	SigningCert *SigningCertSpec `json:"signingCert,omitempty"`
+}
+
+// SigningCertSpec configures the audit export signing certificate.
+type SigningCertSpec struct {
+	// Name of the Kubernetes Secret containing the signing cert (tls.crt, tls.key).
+	SecretName string `json:"secretName"`
+
+	// Mount path inside the container. Defaults to /etc/certs.
+	// +kubebuilder:default="/etc/certs"
+	// +optional
+	MountPath string `json:"mountPath,omitempty"`
+}
+
+// RetentionSpec configures audit event retention and purge for FedRAMP AU-11.
+type RetentionSpec struct {
+	// Whether the retention purge worker is active.
+	// Defaults to false (safe default — no data is deleted without opt-in).
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// How often the purge worker runs. Must be a valid Go duration string.
+	// +kubebuilder:default="24h"
+	// +optional
+	Interval string `json:"interval,omitempty"`
+
+	// Maximum number of rows deleted per batch.
+	// +kubebuilder:default=1000
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	BatchSize *int `json:"batchSize,omitempty"`
+
+	// Number of days to retain audit events before purge.
+	// Clamped to a maximum of 2555 (≈7 years per ADR-034 / SOC 2 / ISO 27001).
+	// +kubebuilder:default=2555
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=2555
+	// +optional
+	DefaultDays *int `json:"defaultDays,omitempty"`
 }
 
 // LoggingSpec configures the log level for a service.
@@ -838,6 +1046,19 @@ type NetworkPoliciesSpec struct {
 	// Gateway ingress namespaces. Namespaces allowed to send traffic to the Gateway.
 	// +optional
 	GatewayIngressNamespaces []string `json:"gatewayIngressNamespaces,omitempty"`
+
+	// IngressNamespace is the namespace where the OpenShift Router (or ingress
+	// controller) runs. AF needs ingress from this namespace for Route-based traffic.
+	// Typically "openshift-ingress" on OCP.
+	// +optional
+	IngressNamespace string `json:"ingressNamespace,omitempty"`
+
+	// ExternalEgressCIDRs lists CIDRs that AF is allowed to reach for external
+	// services (OIDC/Keycloak JWKS endpoints, etc.) on port 443.
+	// Example: ["10.128.0.0/14"] for cluster-internal Keycloak, or
+	// ["0.0.0.0/0"] to allow any external HTTPS destination.
+	// +optional
+	ExternalEgressCIDRs []string `json:"externalEgressCIDRs,omitempty"`
 }
 
 // NetworkPoliciesEnabled returns true when NP creation is active (default: false).
