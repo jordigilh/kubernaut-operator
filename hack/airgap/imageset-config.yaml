@@ -16,7 +16,7 @@
 # After mirroring, apply the generated IDMS and CatalogSource:
 #   oc apply -f oc-mirror-workspace/results-*/
 #
-# Version: v1.5.0-rc3
+# Version: v1.5.0-rc4
 kind: ImageSetConfiguration
 apiVersion: mirror.openshift.io/v2alpha1
 storageConfig:
@@ -29,7 +29,7 @@ mirror:
   # operand images automatically from the CSV relatedImages.
   #
   # operators:
-  #   - catalog: quay.io/kubernaut-ai/kubernaut-operator-catalog:v1.5.0-rc3
+  #   - catalog: quay.io/kubernaut-ai/kubernaut-operator-catalog:v1.5.0-rc4
   #     packages:
   #       - name: kubernaut-operator
   #         channels:
@@ -40,9 +40,9 @@ mirror:
   # when you need full control over the exact image set.
   additionalImages:
     # Operator
-    - name: quay.io/kubernaut-ai/kubernaut-operator@sha256:e33ee52428c95af64a692b087d35606e437b5bdab7348e8bc19fa3744ab5671a
+    - name: quay.io/kubernaut-ai/kubernaut-operator@sha256:21855f379c67fdb6ed444c6685f1f071cf9676242fcfa575ceb8f3cd8d8cf5bb
     # Operator bundle
-    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle@sha256:a8ca166776ef17e5443aa0bba8b370ff4159bb4dc212f49696b41159bc426cbc
+    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle@sha256:d359feeaf699b7b49c51a01af648473aa95ae38492d7b2ec79c6de72eadb1728
 
     # ── Kubernaut operand images (multi-arch, pinned by digest) ───────
     # Gateway — signal ingestion webhook
