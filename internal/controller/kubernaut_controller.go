@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -35,7 +36,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/events"
@@ -198,6 +201,15 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 		[]string{"valkey-secrets.yaml"}); err != nil {
 		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionBYOValidated,
 			"ValkeySecretInvalid", fmt.Sprintf("Valkey secret validation failed: %v", err))
+	}
+
+	if validationErrs := resources.ValidateKubernaut(kn); len(validationErrs) > 0 {
+		msgs := make([]string, len(validationErrs))
+		for i, e := range validationErrs {
+			msgs[i] = e.Error()
+		}
+		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionBYOValidated,
+			"SpecValidationFailed", fmt.Sprintf("CR validation failed: %s", strings.Join(msgs, "; ")))
 	}
 
 	log.Info("BYO secrets validated")
@@ -890,6 +902,19 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 				return false, fmt.Errorf("ensuring AF PrometheusRule: %w", err)
 			}
 		}
+
+		if r.hasCRD(ctx, "mcpserverregistrations.kagenti.dev") {
+			if route := resources.MCPGatewayHTTPRoute(kn); route != nil {
+				if err := r.ensureNamespaced(ctx, kn, route); err != nil {
+					return false, fmt.Errorf("ensuring MCP HTTPRoute: %w", err)
+				}
+			}
+			if reg := resources.MCPServerRegistration(kn); reg != nil {
+				if err := r.ensureNamespaced(ctx, kn, reg); err != nil {
+					return false, fmt.Errorf("ensuring MCPServerRegistration: %w", err)
+				}
+			}
+		}
 	}
 
 	if route := resources.GatewayRoute(kn); route != nil {
@@ -1301,6 +1326,23 @@ func (r *KubernautReconciler) resolveClusterTLSProfile(ctx context.Context) stri
 		log.V(1).Info("resolved cluster TLS profile", "profile", profile)
 	}
 	return profile
+}
+
+// hasCRD checks if a CRD with the given name exists in the cluster.
+func (r *KubernautReconciler) hasCRD(ctx context.Context, crdName string) bool {
+	_, err := r.RESTMapper().ResourceFor(schema.GroupVersionResource{
+		Group: strings.SplitN(crdName, ".", 2)[1] + "",
+	})
+	if err == nil {
+		return true
+	}
+	crd := &unstructured.Unstructured{}
+	crd.SetAPIVersion("apiextensions.k8s.io/v1")
+	crd.SetKind("CustomResourceDefinition")
+	if err := r.Get(ctx, client.ObjectKey{Name: crdName}, crd); err != nil {
+		return false
+	}
+	return true
 }
 
 // ensureNamespaced creates or updates a namespaced resource, setting the
