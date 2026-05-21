@@ -1,0 +1,77 @@
+# ImageSetConfiguration for mirroring all Kubernaut images to a disconnected
+# OpenShift cluster. Use with oc-mirror v2 (OCP 4.18+).
+#
+# Usage (bastion host with internet access):
+#
+#   # Mirror directly to registry:
+#   oc-mirror --config hack/airgap/imageset-config.yaml \
+#     docker://<mirror-registry>
+#
+#   # Or two-step (archive to disk, then push from disconnected side):
+#   oc-mirror --config hack/airgap/imageset-config.yaml \
+#     file://kubernaut-archive
+#   oc-mirror --from kubernaut-archive \
+#     docker://<mirror-registry>
+#
+# After mirroring, apply the generated IDMS and CatalogSource:
+#   oc apply -f oc-mirror-workspace/results-*/
+#
+# Version: v1.5.0-rc2 (kubernaut main c72e31f1)
+kind: ImageSetConfiguration
+apiVersion: mirror.openshift.io/v2alpha1
+storageConfig:
+  local:
+    path: ./kubernaut-mirror
+mirror:
+  # ── Operator catalog (OLM) ──────────────────────────────────────────
+  # If the operator catalog is published, uncomment this block and remove
+  # the additionalImages section below. oc-mirror will discover all
+  # operand images automatically from the CSV relatedImages.
+  #
+  # operators:
+  #   - catalog: quay.io/kubernaut-ai/kubernaut-operator-catalog:v1.5.0-rc2
+  #     packages:
+  #       - name: kubernaut-operator
+  #         channels:
+  #           - name: alpha
+
+  # ── All images (explicit) ───────────────────────────────────────────
+  # Use this section when the operator catalog is not yet published, or
+  # when you need full control over the exact image set.
+  additionalImages:
+    # Operator — digest will be added after operator v1.5.0-rc2 release
+    - name: quay.io/kubernaut-ai/kubernaut-operator:1.5.0-rc2
+    # Operator bundle — digest will be added after operator v1.5.0-rc2 release
+    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle:v1.5.0-rc2
+
+    # ── Kubernaut operand images (multi-arch, pinned by digest) ───────
+    # Gateway — signal ingestion webhook
+    - name: quay.io/kubernaut-ai/gateway@sha256:ff68ebaaa6574047c27d481ddb3bb772c1bf94296f533de648777eccc880955e
+    # DataStorage — audit trail and workflow catalog persistence
+    - name: quay.io/kubernaut-ai/datastorage@sha256:5385dcafd0fb80f62f161fa5f8fbfd56e44ea194ee48ca447a9132a2c0643342
+    # AIAnalysis — root cause analysis controller
+    - name: quay.io/kubernaut-ai/aianalysis@sha256:2237925196aba44a0b5e1d3839ac6d197bda3fcf2249302b1ff31b4bfcaa898f
+    # SignalProcessing — signal deduplication and enrichment
+    - name: quay.io/kubernaut-ai/signalprocessing@sha256:d657136bd4c22eca45a1a609c095bfd7bade957175601d8a1cb4fa2ed06744b7
+    # RemediationOrchestrator — remediation workflow orchestration
+    - name: quay.io/kubernaut-ai/remediationorchestrator@sha256:ebfd9f62674464a7e4a017213d96d9fcce7acfc5f1908418e8a18f705dc5e13f
+    # WorkflowExecution — job / Tekton execution engine
+    - name: quay.io/kubernaut-ai/workflowexecution@sha256:b5c5bd778010b7f1295edf8402f1916faa13ba56c331f77b3a1984f67382b5cf
+    # EffectivenessMonitor — post-remediation effectiveness verification
+    - name: quay.io/kubernaut-ai/effectivenessmonitor@sha256:d88f8cb62fdd6f9b92c16591dd8430d191a75edf4fa0f09786fbd54edd548cb3
+    # Notification — notification delivery (Slack, console)
+    - name: quay.io/kubernaut-ai/notification@sha256:70da5992ad5a6fd1ea5cd44f35fc0e32e9ed7e91f770ea02c485c8fc708f5908
+    # KubernautAgent — LLM integration service
+    - name: quay.io/kubernaut-ai/kubernautagent@sha256:e6bf56b2c86f1c2d60417bde25e1abbc348a92f1735dfc6f9104e32bd352f9b1
+    # AuthWebhook — admission controller for CRD authorization
+    - name: quay.io/kubernaut-ai/authwebhook@sha256:9bcbb57dc3f9fb9134663318e631a9a8b8f058480d857820dd05338edfd26595
+    # APIFrontend — MCP/A2A gateway service
+    - name: quay.io/kubernaut-ai/apifrontend@sha256:bb172d2c9e09f59929dc395f785cf4e88a953a23d7e696f5d9c3e0571ab9f342
+    # DB-Migrate — database schema migration
+    - name: quay.io/kubernaut-ai/db-migrate@sha256:fe6662f5bcf6a9b5ed6c424d17d1006b0099e95bc727628494d0091d07c5770e
+
+    # ── Init / infrastructure images ──────────────────────────────────
+    # PostgreSQL 16 client (init containers)
+    - name: registry.redhat.io/rhel10/postgresql-16@sha256:6626034c7e8a171610212a220efd417eb5ab7792b5dbd912d38976ffe0627301
+    # UBI minimal (init containers)
+    - name: registry.access.redhat.com/ubi10/ubi-minimal@sha256:2a4785f399dc7ae2f3ca85f68bac0ccac47f3e73464a47c21e4f7ae46b55a053
