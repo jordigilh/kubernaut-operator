@@ -39,10 +39,10 @@ mirror:
   # Use this section when the operator catalog is not yet published, or
   # when you need full control over the exact image set.
   additionalImages:
-    # Operator — digest will be added after operator v1.5.0-rc3 release
-    - name: quay.io/kubernaut-ai/kubernaut-operator:1.5.0-rc3
-    # Operator bundle — digest will be added after operator v1.5.0-rc3 release
-    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle:v1.5.0-rc3
+    # Operator
+    - name: quay.io/kubernaut-ai/kubernaut-operator@sha256:e33ee52428c95af64a692b087d35606e437b5bdab7348e8bc19fa3744ab5671a
+    # Operator bundle
+    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle@sha256:a8ca166776ef17e5443aa0bba8b370ff4159bb4dc212f49696b41159bc426cbc
 
     # ── Kubernaut operand images (multi-arch, pinned by digest) ───────
     # Gateway — signal ingestion webhook
