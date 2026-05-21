@@ -393,6 +393,159 @@ func AdditionalAgentCRB(kn *kubernautv1alpha1.Kubernaut, crName string) *rbacv1.
 	}
 }
 
+// toolPersona defines a persona-based tool role with its allowed tool resourceNames.
+type toolPersona struct {
+	name          string
+	resourceNames []string
+}
+
+// toolPersonas lists the 6 upstream persona-based tool roles and their allowed tools,
+// matching the merged kubernaut PR#1222 values.yaml definitions.
+var toolPersonas = []toolPersona{
+	{
+		name: "tool-sre",
+		resourceNames: []string{
+			"list_investigations", "get_investigation", "start_investigation",
+			"search_signals", "get_signal_details", "get_remediation_details",
+			"list_remediations", "get_investigation_history", "search_knowledge_base",
+			"get_cluster_health", "list_nodes", "get_node_details",
+			"list_pods", "get_pod_details", "get_pod_logs",
+			"list_deployments", "get_deployment_details",
+			"list_namespaces", "get_namespace_details",
+		},
+	},
+	{
+		name: "tool-ai-orchestrator",
+		resourceNames: []string{
+			"list_investigations", "get_investigation", "start_investigation",
+			"search_signals", "get_signal_details", "get_remediation_details",
+			"list_remediations", "get_investigation_history", "search_knowledge_base",
+			"get_cluster_health", "list_nodes", "get_node_details",
+			"list_pods", "get_pod_details", "get_pod_logs",
+		},
+	},
+	{
+		name: "tool-cicd",
+		resourceNames: []string{
+			"list_investigations", "get_investigation", "get_investigation_history",
+		},
+	},
+	{
+		name: "tool-observability",
+		resourceNames: []string{
+			"search_signals", "get_signal_details", "get_cluster_health",
+			"list_nodes", "get_node_details",
+			"list_pods", "get_pod_details", "get_pod_logs",
+		},
+	},
+	{
+		name: "tool-l3-audit",
+		resourceNames: []string{
+			"list_investigations", "get_investigation", "get_investigation_history",
+			"search_signals", "get_signal_details", "get_remediation_details",
+		},
+	},
+	{
+		name: "tool-remediation-approver",
+		resourceNames: []string{
+			"list_remediations", "get_remediation_details",
+			"list_investigations", "get_investigation",
+		},
+	},
+}
+
+// ToolClusterRoles builds persona-based tool ClusterRoles for SAR authorization.
+// Each role grants verb "use" on resource "tools" in apiGroup "kubernaut.ai"
+// with specific resourceNames matching upstream kubernaut tool definitions.
+// Returns empty when AF is disabled.
+func ToolClusterRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRole {
+	if !kn.Spec.APIFrontendEnabled() {
+		return nil
+	}
+	labels := CommonLabels(kn)
+	roles := make([]*rbacv1.ClusterRole, 0, len(toolPersonas))
+	for _, p := range toolPersonas {
+		roles = append(roles, &rbacv1.ClusterRole{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   clusterRoleName(kn, p.name),
+				Labels: labels,
+			},
+			Rules: []rbacv1.PolicyRule{{
+				APIGroups:     []string{"kubernaut.ai"},
+				Resources:     []string{"tools"},
+				ResourceNames: p.resourceNames,
+				Verbs:         []string{"use"},
+			}},
+		})
+	}
+	return roles
+}
+
+// ToolClusterRoleNames returns the names of all tool ClusterRoles for finalizer cleanup.
+func ToolClusterRoleNames(kn *kubernautv1alpha1.Kubernaut) []string {
+	names := make([]string, 0, len(toolPersonas))
+	for _, p := range toolPersonas {
+		names = append(names, clusterRoleName(kn, p.name))
+	}
+	return names
+}
+
+// ToolClusterRoleBindings builds CRBs that bind tool ClusterRoles to OIDC groups
+// as specified in spec.apiFrontend.rbac.roleBindings.
+// Duplicate roles are merged: subjects from all entries with the same role are
+// combined into a single CRB.
+// Returns empty when no roleBindings are specified.
+func ToolClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleBinding {
+	if kn.Spec.APIFrontend.RBAC == nil || len(kn.Spec.APIFrontend.RBAC.RoleBindings) == 0 {
+		return nil
+	}
+
+	merged := make(map[string][]string) // role -> groups (deduped)
+	order := make([]string, 0)
+	for _, rb := range kn.Spec.APIFrontend.RBAC.RoleBindings {
+		if _, exists := merged[rb.Role]; !exists {
+			order = append(order, rb.Role)
+		}
+		merged[rb.Role] = append(merged[rb.Role], rb.Groups...)
+	}
+
+	labels := CommonLabels(kn)
+	crbs := make([]*rbacv1.ClusterRoleBinding, 0, len(merged))
+	for _, role := range order {
+		groups := merged[role]
+		subjects := make([]rbacv1.Subject, 0, len(groups))
+		for _, g := range groups {
+			subjects = append(subjects, rbacv1.Subject{
+				Kind: "Group",
+				Name: g,
+			})
+		}
+		crbs = append(crbs, &rbacv1.ClusterRoleBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   clusterRoleName(kn, "tool-"+role+"-binding"),
+				Labels: labels,
+			},
+			RoleRef: rbacv1.RoleRef{
+				APIGroup: rbacv1.GroupName,
+				Kind:     "ClusterRole",
+				Name:     clusterRoleName(kn, "tool-"+role),
+			},
+			Subjects: subjects,
+		})
+	}
+	return crbs
+}
+
+// ToolCRBNames returns the names of all tool CRBs for finalizer cleanup.
+func ToolCRBNames(kn *kubernautv1alpha1.Kubernaut) []string {
+	crbs := ToolClusterRoleBindings(kn)
+	names := make([]string, 0, len(crbs))
+	for _, crb := range crbs {
+		names = append(names, crb.Name)
+	}
+	return names
+}
+
 // --- private helpers ---
 
 func clusterRoleBinding(name, roleName, saName, saNamespace string, labels map[string]string) *rbacv1.ClusterRoleBinding {
@@ -672,6 +825,8 @@ func apifrontendClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]s
 			{APIGroups: []string{"apifrontend.kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update", "patch"}},
 			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
 			{APIGroups: []string{""}, Resources: []string{"users", "groups", "serviceaccounts"}, Verbs: []string{"impersonate"}},
+			{APIGroups: []string{"authorization.k8s.io"}, Resources: []string{"subjectaccessreviews"}, Verbs: []string{"create"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"get", "list", "create"}},
 		},
 	}
 }
