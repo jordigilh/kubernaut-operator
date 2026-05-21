@@ -410,6 +410,11 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		return err
 	}
 
+	if kn.Spec.APIFrontendEnabled() && kn.Spec.APIFrontend.Auth.IssuerURL == "" {
+		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "APIFrontendAuthDisabled", "Reconcile",
+			"API Frontend is deployed without OIDC authentication (spec.apiFrontend.auth.issuerURL is empty); all requests will be unauthenticated")
+	}
+
 	r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, ReasonManifestsApplied, "Reconcile", "All service manifests applied")
 	return r.patchStatus(ctx, kn, func() {
 		r.setPhase(kn, kubernautv1alpha1.PhaseDeploying)
@@ -479,7 +484,10 @@ func (r *KubernautReconciler) deployRBAC(ctx context.Context, kn *kubernautv1alp
 	if err := r.deployWorkflowRBAC(ctx, kn); err != nil {
 		return err
 	}
-	return r.deployToggleRBAC(ctx, kn)
+	if err := r.deployToggleRBAC(ctx, kn); err != nil {
+		return err
+	}
+	return r.deployToolRBAC(ctx, kn)
 }
 
 // deployCoreRBAC provisions ClusterRoles, ClusterRoleBindings, namespace-scoped
@@ -600,6 +608,66 @@ func (r *KubernautReconciler) deployAdditionalAgentRBAC(ctx context.Context, kn 
 	}
 
 	return nil
+}
+
+// deployToolRBAC provisions persona-based tool ClusterRoles and group-to-role
+// ClusterRoleBindings for SAR-based tool authorization (issue #118).
+// It also prunes stale CRBs when role bindings are removed from the spec,
+// deletes the orphaned legacy apifrontend-rbac-roles ConfigMap,
+// and sets the ConditionToolRBACBound condition.
+func (r *KubernautReconciler) deployToolRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
+	log := logf.FromContext(ctx)
+
+	for _, cr := range resources.ToolClusterRoles(kn) {
+		if err := r.ensureUnowned(ctx, cr); err != nil {
+			return fmt.Errorf("ensuring tool ClusterRole %s: %w", cr.Name, err)
+		}
+	}
+
+	for _, crb := range resources.ToolClusterRoleBindings(kn) {
+		if err := r.ensureUnowned(ctx, crb); err != nil {
+			return fmt.Errorf("ensuring tool CRB %s: %w", crb.Name, err)
+		}
+	}
+
+	desiredCRBNames := resources.ToolCRBNames(kn)
+	desiredMap := make(map[string]struct{}, len(desiredCRBNames))
+	for _, n := range desiredCRBNames {
+		desiredMap[n] = struct{}{}
+	}
+	for _, name := range kn.Status.BoundToolRoleBindings {
+		if _, ok := desiredMap[name]; !ok {
+			staleCRB := &rbacv1.ClusterRoleBinding{}
+			staleCRB.Name = name
+			if err := r.deleteIfExists(ctx, staleCRB); err != nil {
+				return fmt.Errorf("pruning stale tool CRB %s: %w", name, err)
+			}
+			log.Info("pruned stale tool CRB", "name", name)
+		}
+	}
+
+	legacyCM := &corev1.ConfigMap{}
+	legacyCM.Name = "apifrontend-rbac-roles"
+	legacyCM.Namespace = kn.Namespace
+	if err := r.deleteIfExists(ctx, legacyCM); err != nil {
+		return fmt.Errorf("deleting orphaned apifrontend-rbac-roles ConfigMap: %w", err)
+	}
+
+	return r.patchStatus(ctx, kn, func() {
+		kn.Status.BoundToolRoleBindings = desiredCRBNames
+
+		if len(desiredCRBNames) == 0 {
+			meta.RemoveStatusCondition(&kn.Status.Conditions, kubernautv1alpha1.ConditionToolRBACBound)
+			return
+		}
+		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+			Type:               kubernautv1alpha1.ConditionToolRBACBound,
+			Status:             metav1.ConditionTrue,
+			Reason:             "ToolRBACProvisioned",
+			Message:            fmt.Sprintf("%d tool role bindings active", len(desiredCRBNames)),
+			ObservedGeneration: kn.Generation,
+		})
+	})
 }
 
 func deduplicate(ss []string) []string {
@@ -762,10 +830,6 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 		}
 		configMaps = append(configMaps, afCM)
 		cmHashes["apifrontend"] = resources.ConfigMapDataHash(afCM.Data)
-
-		if kn.Spec.APIFrontend.RBACRolesConfigMapRef == nil {
-			configMaps = append(configMaps, resources.APIFrontendRBACRolesConfigMap(kn))
-		}
 	}
 
 	configMaps = append(configMaps, resources.InterServiceCAConfigMap(kn))
@@ -1100,6 +1164,21 @@ func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kuber
 		extCRB.Name = resources.AdditionalAgentCRBName(kn, name)
 		if err := r.deleteIfExists(ctx, extCRB); err != nil {
 			errs = append(errs, fmt.Errorf("deleting additional agent CRB for %s: %w", name, err))
+		}
+	}
+
+	for _, name := range resources.ToolClusterRoleNames(kn) {
+		toolCR := &rbacv1.ClusterRole{}
+		toolCR.Name = name
+		if err := r.deleteIfExists(ctx, toolCR); err != nil {
+			errs = append(errs, fmt.Errorf("deleting tool ClusterRole %s: %w", name, err))
+		}
+	}
+	for _, name := range kn.Status.BoundToolRoleBindings {
+		toolCRB := &rbacv1.ClusterRoleBinding{}
+		toolCRB.Name = name
+		if err := r.deleteIfExists(ctx, toolCRB); err != nil {
+			errs = append(errs, fmt.Errorf("deleting tool CRB %s: %w", name, err))
 		}
 	}
 
