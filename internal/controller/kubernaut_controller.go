@@ -875,7 +875,7 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		return false, fmt.Errorf("ensuring DS HPA: %w", err)
 	}
 
-	if kn.Spec.Monitoring.MonitoringEnabled() {
+	if kn.Spec.Monitoring.MonitoringEnabled() && r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com") {
 		dsSM := resources.DataStorageServiceMonitor(kn)
 		if err := r.ensureNamespaced(ctx, kn, dsSM); err != nil {
 			return false, fmt.Errorf("ensuring DS ServiceMonitor: %w", err)
@@ -914,7 +914,7 @@ func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *k
 		return fmt.Errorf("ensuring AF HPA: %w", err)
 	}
 
-	if kn.Spec.Monitoring.MonitoringEnabled() {
+	if kn.Spec.Monitoring.MonitoringEnabled() && r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com") {
 		sm := resources.APIFrontendServiceMonitor(kn)
 		if err := r.ensureNamespaced(ctx, kn, sm); err != nil {
 			return fmt.Errorf("ensuring AF ServiceMonitor: %w", err)
@@ -1517,7 +1517,7 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.now == nil {
 		r.now = time.Now
 	}
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&kubernautv1alpha1.Kubernaut{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
@@ -1530,11 +1530,16 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&rbacv1.Role{}).
 		Owns(&rbacv1.RoleBinding{}).
 		Owns(&autoscalingv2.HorizontalPodAutoscaler{}).
-		Owns(&monitoringv1.ServiceMonitor{}).
-		Owns(&monitoringv1.PrometheusRule{}).
 		Watches(&configv1.APIServer{},
-			handler.EnqueueRequestsFromMapFunc(r.apiServerToKubernaut)).
-		Named("kubernaut").
+			handler.EnqueueRequestsFromMapFunc(r.apiServerToKubernaut))
+
+	if _, err := mgr.GetRESTMapper().RESTMapping(
+		schema.GroupKind{Group: "monitoring.coreos.com", Kind: "ServiceMonitor"}); err == nil {
+		b = b.Owns(&monitoringv1.ServiceMonitor{}).
+			Owns(&monitoringv1.PrometheusRule{})
+	}
+
+	return b.Named("kubernaut").
 		Complete(r)
 }
 
