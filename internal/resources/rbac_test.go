@@ -614,3 +614,71 @@ var _ = Describe("AdditionalAgentCRB", func() {
 		Expect(kn.Spec.KubernautAgent.AdditionalClusterRoleBindings).To(HaveLen(0), "empty additional list should have length 0")
 	})
 })
+
+var _ = Describe("APIFrontend ClusterRole", func() {
+	It("is included when AF is enabled", func() {
+		kn := testKubernautWithAF()
+		roles := ClusterRoles(kn)
+		found := false
+		for _, r := range roles {
+			if r.Name == clusterRoleName(kn, "apifrontend-role") {
+				found = true
+				break
+			}
+		}
+		Expect(found).To(BeTrue(), "apifrontend ClusterRole should be present when AF is enabled")
+	})
+
+	It("is not included when AF is disabled", func() {
+		kn := testKubernaut()
+		roles := ClusterRoles(kn)
+		for _, r := range roles {
+			Expect(r.Name).NotTo(ContainSubstring("apifrontend"),
+				"apifrontend ClusterRole should NOT be present when AF is disabled")
+		}
+	})
+
+	It("grants InvestigationSession CRUD and impersonation", func() {
+		kn := testKubernautWithAF()
+		roles := ClusterRoles(kn)
+		var afRole *rbacv1.ClusterRole
+		for _, r := range roles {
+			if r.Name == clusterRoleName(kn, "apifrontend-role") {
+				afRole = r
+				break
+			}
+		}
+		Expect(afRole).NotTo(BeNil())
+
+		ruleMap := map[string][]string{}
+		for _, rule := range afRole.Rules {
+			for _, res := range rule.Resources {
+				key := rule.APIGroups[0] + "/" + res
+				ruleMap[key] = rule.Verbs
+			}
+		}
+
+		Expect(ruleMap).To(HaveKey("apifrontend.kubernaut.ai/investigationsessions"))
+		Expect(ruleMap["apifrontend.kubernaut.ai/investigationsessions"]).To(ContainElements("get", "list", "watch", "create", "update", "patch", "delete"))
+
+		Expect(ruleMap).To(HaveKey("/users"))
+		impersonateVerbs := ruleMap["/users"]
+		Expect(impersonateVerbs).To(ContainElement("impersonate"))
+	})
+
+	It("has a matching ClusterRoleBinding when AF is enabled", func() {
+		kn := testKubernautWithAF()
+		bindings := ClusterRoleBindings(kn)
+		roleName := clusterRoleName(kn, "apifrontend-role")
+		found := false
+		for _, crb := range bindings {
+			if crb.RoleRef.Name == roleName {
+				found = true
+				Expect(crb.Subjects).NotTo(BeEmpty())
+				Expect(crb.Subjects[0].Name).To(Equal(ServiceAccountName(ComponentAPIFrontend)))
+				break
+			}
+		}
+		Expect(found).To(BeTrue(), "ClusterRoleBinding for apifrontend should exist")
+	})
+})

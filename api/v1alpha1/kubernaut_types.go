@@ -564,6 +564,10 @@ type KubernautAgentSpec struct {
 	// +optional
 	Safety SafetySpec `json:"safety,omitempty"`
 
+	// Interactive mode JWT identity delegation configuration.
+	// +optional
+	Interactive *InteractiveSpec `json:"interactive,omitempty"`
+
 	// AdditionalClusterRoleBindings is an optional list of pre-existing
 	// ClusterRole names to bind to the Kubernaut Agent ServiceAccount.
 	// +optional
@@ -577,6 +581,40 @@ type KubernautAgentSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// InteractiveSpec configures KA interactive mode with JWT-based identity delegation.
+type InteractiveSpec struct {
+	// JWT providers for OIDC-based identity delegation.
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	JWTProviders []JWTProviderSpec `json:"jwtProviders,omitempty"`
+
+	// AllowInsecureJWKS permits HTTP (non-TLS) JWKS URLs for dev/test.
+	// Production deployments MUST leave this false.
+	// +optional
+	AllowInsecureJWKS bool `json:"allowInsecureJWKS,omitempty"`
+}
+
+// JWTProviderSpec configures a single OIDC JWT provider.
+type JWTProviderSpec struct {
+	// Human-readable name for this provider (e.g. "rhbk", "auth0").
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// JWKS endpoint URL. Must use HTTPS unless allowInsecureJWKS is true.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=2048
+	JWKSURL string `json:"jwksURL"`
+
+	// Expected audience claim value.
+	// +optional
+	Audience string `json:"audience,omitempty"`
+
+	// Expected issuer claim value.
+	// +optional
+	Issuer string `json:"issuer,omitempty"`
 }
 
 // SessionSpec configures KA session behaviour.
@@ -931,6 +969,53 @@ type DataStorageSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Retention configures periodic purge of expired audit events (FedRAMP AU-11).
+	// +optional
+	Retention *RetentionSpec `json:"retention,omitempty"`
+
+	// SigningCert configures the audit export signing certificate (FedRAMP AU-9).
+	// When set, the named Secret is mounted into the DS pod at /etc/certs.
+	// +optional
+	SigningCert *SigningCertSpec `json:"signingCert,omitempty"`
+}
+
+// SigningCertSpec configures the audit export signing certificate.
+type SigningCertSpec struct {
+	// Name of the Kubernetes Secret containing the signing cert (tls.crt, tls.key).
+	SecretName string `json:"secretName"`
+
+	// Mount path inside the container. Defaults to /etc/certs.
+	// +kubebuilder:default="/etc/certs"
+	// +optional
+	MountPath string `json:"mountPath,omitempty"`
+}
+
+// RetentionSpec configures audit event retention and purge for FedRAMP AU-11.
+type RetentionSpec struct {
+	// Whether the retention purge worker is active.
+	// Defaults to false (safe default — no data is deleted without opt-in).
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// How often the purge worker runs. Must be a valid Go duration string.
+	// +kubebuilder:default="24h"
+	// +optional
+	Interval string `json:"interval,omitempty"`
+
+	// Maximum number of rows deleted per batch.
+	// +kubebuilder:default=1000
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	BatchSize *int `json:"batchSize,omitempty"`
+
+	// Number of days to retain audit events before purge.
+	// Clamped to a maximum of 2555 (≈7 years per ADR-034 / SOC 2 / ISO 27001).
+	// +kubebuilder:default=2555
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=2555
+	// +optional
+	DefaultDays *int `json:"defaultDays,omitempty"`
 }
 
 // LoggingSpec configures the log level for a service.
@@ -963,6 +1048,19 @@ type NetworkPoliciesSpec struct {
 	// Gateway ingress namespaces. Namespaces allowed to send traffic to the Gateway.
 	// +optional
 	GatewayIngressNamespaces []string `json:"gatewayIngressNamespaces,omitempty"`
+
+	// IngressNamespace is the namespace where the OpenShift Router (or ingress
+	// controller) runs. AF needs ingress from this namespace for Route-based traffic.
+	// Typically "openshift-ingress" on OCP.
+	// +optional
+	IngressNamespace string `json:"ingressNamespace,omitempty"`
+
+	// ExternalEgressCIDRs lists CIDRs that AF is allowed to reach for external
+	// services (OIDC/Keycloak JWKS endpoints, etc.) on port 443.
+	// Example: ["10.128.0.0/14"] for cluster-internal Keycloak, or
+	// ["0.0.0.0/0"] to allow any external HTTPS destination.
+	// +optional
+	ExternalEgressCIDRs []string `json:"externalEgressCIDRs,omitempty"`
 }
 
 // NetworkPoliciesEnabled returns true when NP creation is active (default: false).

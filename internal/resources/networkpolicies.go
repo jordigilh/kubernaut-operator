@@ -570,6 +570,46 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 		})
 	}
 
+	if kn.Spec.Valkey.SecretName != "" {
+		valkeyPort := kn.Spec.Valkey.Port
+		if valkeyPort == 0 {
+			valkeyPort = DefaultValkeyPort
+		}
+		pValkey := intstr.FromInt32(valkeyPort)
+		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protoTCP, Port: &pValkey},
+			},
+		})
+	}
+
+	if spec.IngressNamespace != "" {
+		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+			From: []networkingv1.NetworkPolicyPeer{
+				{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+					"kubernetes.io/metadata.name": spec.IngressNamespace,
+				}}},
+			},
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protoTCP, Port: &p8443},
+			},
+		})
+	}
+
+	if len(spec.ExternalEgressCIDRs) > 0 {
+		p443 := intstr.FromInt32(443)
+		var peers []networkingv1.NetworkPolicyPeer
+		for _, cidr := range spec.ExternalEgressCIDRs {
+			peers = append(peers, networkingv1.NetworkPolicyPeer{
+				IPBlock: &networkingv1.IPBlock{CIDR: cidr},
+			})
+		}
+		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
+			To:    peers,
+			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protoTCP, Port: &p443}},
+		})
+	}
+
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: ObjectMeta(kn, ComponentAPIFrontend+"-netpol", ComponentAPIFrontend),
 		Spec: networkingv1.NetworkPolicySpec{

@@ -103,13 +103,14 @@ type gatewayConfigYAML struct {
 }
 
 type dataStorageServerYAML struct {
-	Port         int           `json:"port" yaml:"port"`
-	Host         string        `json:"host" yaml:"host"`
-	HealthPort   int           `json:"healthPort" yaml:"healthPort"`
-	MetricsPort  int           `json:"metricsPort" yaml:"metricsPort"`
-	ReadTimeout  string        `json:"readTimeout" yaml:"readTimeout"`
-	WriteTimeout string        `json:"writeTimeout" yaml:"writeTimeout"`
-	TLS          tlsConfigYAML `json:"tls" yaml:"tls"`
+	Port          int           `json:"port" yaml:"port"`
+	Host          string        `json:"host" yaml:"host"`
+	HealthPort    int           `json:"healthPort" yaml:"healthPort"`
+	MetricsPort   int           `json:"metricsPort" yaml:"metricsPort"`
+	ReadTimeout   string        `json:"readTimeout" yaml:"readTimeout"`
+	WriteTimeout  string        `json:"writeTimeout" yaml:"writeTimeout"`
+	TLS           tlsConfigYAML `json:"tls" yaml:"tls"`
+	SignerCertDir string        `json:"signerCertDir,omitempty" yaml:"signerCertDir,omitempty"`
 }
 
 type dataStorageDatabaseYAML struct {
@@ -151,12 +152,20 @@ type dataStorageLoggingYAML struct {
 }
 
 type dataStorageConfigYAML struct {
-	TLSProfile                string                  `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
-	Server                    dataStorageServerYAML   `json:"server" yaml:"server"`
-	Database                  dataStorageDatabaseYAML `json:"database" yaml:"database"`
-	Redis                     dataStorageRedisYAML    `json:"redis" yaml:"redis"`
-	Logging                   dataStorageLoggingYAML  `json:"logging" yaml:"logging"`
-	EndpointPropagationDelay  string                  `json:"endpointPropagationDelay,omitempty" yaml:"endpointPropagationDelay,omitempty"`
+	TLSProfile                string                       `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
+	Server                    dataStorageServerYAML         `json:"server" yaml:"server"`
+	Database                  dataStorageDatabaseYAML       `json:"database" yaml:"database"`
+	Redis                     dataStorageRedisYAML          `json:"redis" yaml:"redis"`
+	Logging                   dataStorageLoggingYAML        `json:"logging" yaml:"logging"`
+	EndpointPropagationDelay  string                        `json:"endpointPropagationDelay,omitempty" yaml:"endpointPropagationDelay,omitempty"`
+	Retention                 *dataStorageRetentionYAML     `json:"retention,omitempty" yaml:"retention,omitempty"`
+}
+
+type dataStorageRetentionYAML struct {
+	Enabled     bool   `json:"enabled" yaml:"enabled"`
+	Interval    string `json:"interval" yaml:"interval"`
+	BatchSize   int    `json:"batchSize" yaml:"batchSize"`
+	DefaultDays int    `json:"defaultDays" yaml:"defaultDays"`
 }
 
 type dataStorageBufferYAML struct {
@@ -691,21 +700,13 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string
 	pgPort := PostgreSQLPort(kn)
 	cfg := dataStorageConfigYAML{
 		TLSProfile: o.tlsProfile,
-		Server: dataStorageServerYAML{
-			Port:         8443,
-			Host:         "0.0.0.0",
-			HealthPort:   8081,
-			MetricsPort:  9090,
-			ReadTimeout:  "30s",
-			WriteTimeout: "30s",
-			TLS:          tlsConfigYAML{CertDir: InterServiceTLSCertDir},
-		},
+		Server: dataStorageServerConfig(kn),
 		Database: dataStorageDatabaseYAML{
 			Host:            kn.Spec.PostgreSQL.Host,
 			Port:            pgPort,
 			Name:            dbName,
 			User:            dbUser,
-			SSLMode:         withDefault(kn.Spec.PostgreSQL.SSLMode, "disable"),
+			SSLMode:         withDefault(kn.Spec.PostgreSQL.SSLMode, "verify-full"),
 			MaxOpenConns:    100,
 			MaxIdleConns:    20,
 			ConnMaxLifetime: "1h",
@@ -720,6 +721,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string
 			Format: "json",
 		},
 		EndpointPropagationDelay: withDefault(kn.Spec.DataStorage.EndpointPropagationDelay, "10s"),
+		Retention:                dataStorageRetentionConfig(kn),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -729,6 +731,43 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string
 		ObjectMeta: ObjectMeta(kn, "datastorage-config", ComponentDataStorage),
 		Data:       map[string]string{"config.yaml": data},
 	}, nil
+}
+
+func dataStorageRetentionConfig(kn *kubernautv1alpha1.Kubernaut) *dataStorageRetentionYAML {
+	r := kn.Spec.DataStorage.Retention
+	if r == nil {
+		return nil
+	}
+	days := intPtrDefault(r.DefaultDays, 2555)
+	if days > 2555 {
+		days = 2555
+	}
+	return &dataStorageRetentionYAML{
+		Enabled:     r.Enabled != nil && *r.Enabled,
+		Interval:    withDefault(r.Interval, "24h"),
+		BatchSize:   intPtrDefault(r.BatchSize, 1000),
+		DefaultDays: days,
+	}
+}
+
+func dataStorageServerConfig(kn *kubernautv1alpha1.Kubernaut) dataStorageServerYAML {
+	s := dataStorageServerYAML{
+		Port:         8443,
+		Host:         "0.0.0.0",
+		HealthPort:   8081,
+		MetricsPort:  9090,
+		ReadTimeout:  "30s",
+		WriteTimeout: "30s",
+		TLS:          tlsConfigYAML{CertDir: InterServiceTLSCertDir},
+	}
+	if sc := kn.Spec.DataStorage.SigningCert; sc != nil {
+		dir := sc.MountPath
+		if dir == "" {
+			dir = "/etc/certs"
+		}
+		s.SignerCertDir = dir
+	}
+	return s
 }
 
 func dataStorageRedisConfig(kn *kubernautv1alpha1.Kubernaut) dataStorageRedisYAML {
@@ -1405,93 +1444,101 @@ func intPtrDefault(val *int, def int) int {
 // ---------- APIFrontend ConfigMaps ----------
 
 type afConfigYAML struct {
-	Server        afServerYAML        `yaml:"server"`
-	Agent         afAgentYAML         `yaml:"agent"`
-	MCP           afMCPYAML           `yaml:"mcp"`
-	AgentCard     afAgentCardYAML     `yaml:"agentCard"`
-	Auth          afAuthYAML          `yaml:"auth"`
-	Logging       afLoggingYAML       `yaml:"logging"`
-	RateLimit     afRateLimitYAML     `yaml:"rateLimit"`
-	Shutdown      afShutdownYAML      `yaml:"shutdown"`
-	SeverityTriage afSeverityTriageYAML `yaml:"severityTriage"`
-	Resilience    afResilienceYAML    `yaml:"resilience"`
+	Server         afServerYAML         `json:"server" yaml:"server"`
+	Agent          afAgentYAML          `json:"agent" yaml:"agent"`
+	MCP            afMCPYAML            `json:"mcp" yaml:"mcp"`
+	AgentCard      afAgentCardYAML      `json:"agentCard" yaml:"agentCard"`
+	Auth           afAuthYAML           `json:"auth" yaml:"auth"`
+	Logging        afLoggingYAML        `json:"logging" yaml:"logging"`
+	RateLimit      afRateLimitYAML      `json:"rateLimit" yaml:"rateLimit"`
+	Shutdown       afShutdownYAML       `json:"shutdown" yaml:"shutdown"`
+	SeverityTriage afSeverityTriageYAML `json:"severityTriage" yaml:"severityTriage"`
+	Resilience     afResilienceYAML     `json:"resilience" yaml:"resilience"`
 }
 
 type afServerYAML struct {
-	Port int          `yaml:"port"`
-	TLS  afTLSYAML    `yaml:"tls"`
+	Port int       `json:"port" yaml:"port"`
+	TLS  afTLSYAML `json:"tls" yaml:"tls"`
 }
 
 type afTLSYAML struct {
-	CertDir  string `yaml:"certDir"`
-	Required bool   `yaml:"required"`
+	CertDir  string `json:"certDir" yaml:"certDir"`
+	Required bool   `json:"required" yaml:"required"`
 }
 
 type afAgentYAML struct {
-	KABaseURL      string `yaml:"kaBaseURL"`
-	KAMCPEndpoint  string `yaml:"kaMCPEndpoint"`
-	DSBaseURL      string `yaml:"dsBaseURL"`
-	KATLSCAFile    string `yaml:"kaTlsCaFile"`
-	DSTLSCAFile    string `yaml:"dsTlsCaFile"`
+	KABaseURL     string `json:"kaBaseURL" yaml:"kaBaseURL"`
+	KAMCPEndpoint string `json:"kaMCPEndpoint" yaml:"kaMCPEndpoint"`
+	DSBaseURL     string `json:"dsBaseURL" yaml:"dsBaseURL"`
+	KATLSCAFile   string `json:"kaTlsCaFile" yaml:"kaTlsCaFile"`
+	DSTLSCAFile   string `json:"dsTlsCaFile" yaml:"dsTlsCaFile"`
 }
 
 type afMCPYAML struct {
-	Enabled            bool   `yaml:"enabled"`
-	SessionIdleTimeout string `yaml:"sessionIdleTimeout"`
+	Enabled            bool   `json:"enabled" yaml:"enabled"`
+	SessionIdleTimeout string `json:"sessionIdleTimeout" yaml:"sessionIdleTimeout"`
 }
 
 type afAgentCardYAML struct {
-	URL string `yaml:"url"`
+	URL string `json:"url" yaml:"url"`
 }
 
 type afAuthYAML struct {
-	IssuerURL string `yaml:"issuerURL"`
-	Audience  string `yaml:"audience"`
+	IssuerURL   string               `json:"issuerURL" yaml:"issuerURL"`
+	Audience    string               `json:"audience" yaml:"audience"`
+	ReplayCache *afReplayCacheYAML   `json:"replayCache,omitempty" yaml:"replayCache,omitempty"`
+}
+
+type afReplayCacheYAML struct {
+	Backend         string `json:"backend" yaml:"backend"`
+	RedisAddr       string `json:"redisAddr,omitempty" yaml:"redisAddr,omitempty"`
+	RedisDB         int    `json:"redisDB,omitempty" yaml:"redisDB,omitempty"`
+	CredentialsPath string `json:"credentialsPath,omitempty" yaml:"credentialsPath,omitempty"`
 }
 
 type afLoggingYAML struct {
-	Level string `yaml:"level"`
+	Level string `json:"level" yaml:"level"`
 }
 
 type afRateLimitYAML struct {
-	IPRequestsPerSec      int `yaml:"ipRequestsPerSec"`
-	UserRequestsPerSec    int `yaml:"userRequestsPerSec"`
-	MaxConcurrentSessions int `yaml:"maxConcurrentSessions"`
-	ToolCallsPerMinute    int `yaml:"toolCallsPerMinute"`
+	IPRequestsPerSec      int `json:"ipRequestsPerSec" yaml:"ipRequestsPerSec"`
+	UserRequestsPerSec    int `json:"userRequestsPerSec" yaml:"userRequestsPerSec"`
+	MaxConcurrentSessions int `json:"maxConcurrentSessions" yaml:"maxConcurrentSessions"`
+	ToolCallsPerMinute    int `json:"toolCallsPerMinute" yaml:"toolCallsPerMinute"`
 }
 
 type afShutdownYAML struct {
-	DrainSeconds int `yaml:"drainSeconds"`
+	DrainSeconds int `json:"drainSeconds" yaml:"drainSeconds"`
 }
 
 type afSeverityTriageYAML struct {
-	Enabled                  bool   `yaml:"enabled"`
-	PrometheusURL            string `yaml:"prometheusURL"`
-	PrometheusTLSCAFile      string `yaml:"prometheusTlsCaFile"`
-	PrometheusBearerTokenFile string `yaml:"prometheusBearerTokenFile"`
-	CacheTTLSeconds          int    `yaml:"cacheTTLSeconds"`
-	MaxQueriesPerCall        int    `yaml:"maxQueriesPerCall"`
-	MaxRulesEvaluated        int    `yaml:"maxRulesEvaluated"`
-	LLMConfidence            float64 `yaml:"llmConfidence"`
+	Enabled                   bool    `json:"enabled" yaml:"enabled"`
+	PrometheusURL             string  `json:"prometheusURL" yaml:"prometheusURL"`
+	PrometheusTLSCAFile       string  `json:"prometheusTlsCaFile" yaml:"prometheusTlsCaFile"`
+	PrometheusBearerTokenFile string  `json:"prometheusBearerTokenFile" yaml:"prometheusBearerTokenFile"`
+	CacheTTLSeconds           int     `json:"cacheTTLSeconds" yaml:"cacheTTLSeconds"`
+	MaxQueriesPerCall         int     `json:"maxQueriesPerCall" yaml:"maxQueriesPerCall"`
+	MaxRulesEvaluated         int     `json:"maxRulesEvaluated" yaml:"maxRulesEvaluated"`
+	LLMConfidence             float64 `json:"llmConfidence" yaml:"llmConfidence"`
 }
 
 type afCircuitBreakerYAML struct {
-	ConnectTimeout     string `yaml:"connectTimeout"`
-	RequestTimeout     string `yaml:"requestTimeout"`
-	CBMaxRequests      int    `yaml:"cbMaxRequests"`
-	CBInterval         string `yaml:"cbInterval"`
-	CBTimeout          string `yaml:"cbTimeout"`
-	CBFailureThreshold int    `yaml:"cbFailureThreshold"`
-	RetryMax           int    `yaml:"retryMax"`
-	RetryInitBackoff   string `yaml:"retryInitBackoff,omitempty"`
-	RetryMaxBackoff    string `yaml:"retryMaxBackoff,omitempty"`
-	RetryableStatuses  []int  `yaml:"retryableStatuses"`
+	ConnectTimeout     string `json:"connectTimeout" yaml:"connectTimeout"`
+	RequestTimeout     string `json:"requestTimeout" yaml:"requestTimeout"`
+	CBMaxRequests      int    `json:"cbMaxRequests" yaml:"cbMaxRequests"`
+	CBInterval         string `json:"cbInterval" yaml:"cbInterval"`
+	CBTimeout          string `json:"cbTimeout" yaml:"cbTimeout"`
+	CBFailureThreshold int    `json:"cbFailureThreshold" yaml:"cbFailureThreshold"`
+	RetryMax           int    `json:"retryMax" yaml:"retryMax"`
+	RetryInitBackoff   string `json:"retryInitBackoff,omitempty" yaml:"retryInitBackoff,omitempty"`
+	RetryMaxBackoff    string `json:"retryMaxBackoff,omitempty" yaml:"retryMaxBackoff,omitempty"`
+	RetryableStatuses  []int  `json:"retryableStatuses" yaml:"retryableStatuses"`
 }
 
 type afResilienceYAML struct {
-	KA  afCircuitBreakerYAML `yaml:"ka"`
-	DS  afCircuitBreakerYAML `yaml:"ds"`
-	K8s afCircuitBreakerYAML `yaml:"k8s"`
+	KA  afCircuitBreakerYAML `json:"ka" yaml:"ka"`
+	DS  afCircuitBreakerYAML `json:"ds" yaml:"ds"`
+	K8s afCircuitBreakerYAML `json:"k8s" yaml:"k8s"`
 }
 
 // APIFrontendConfigMap generates the apifrontend-config ConfigMap.
@@ -1523,10 +1570,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 			SessionIdleTimeout: "30m",
 		},
 		AgentCard: afAgentCardYAML{URL: agentCardURL},
-		Auth: afAuthYAML{
-			IssuerURL: af.Auth.IssuerURL,
-			Audience:  withDefault(af.Auth.Audience, "kubernaut-apifrontend"),
-		},
+		Auth: afAuthConfig(kn),
 		Logging: afLoggingYAML{
 			Level: withDefault(af.Logging.Level, "info"),
 		},
@@ -1578,6 +1622,23 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 		ObjectMeta: ObjectMeta(kn, "apifrontend-config", ComponentAPIFrontend),
 		Data:       map[string]string{"config.yaml": data},
 	}, nil
+}
+
+func afAuthConfig(kn *kubernautv1alpha1.Kubernaut) afAuthYAML {
+	af := kn.Spec.APIFrontend
+	auth := afAuthYAML{
+		IssuerURL: af.Auth.IssuerURL,
+		Audience:  withDefault(af.Auth.Audience, "kubernaut-apifrontend"),
+	}
+	if kn.Spec.Valkey.SecretName != "" {
+		auth.ReplayCache = &afReplayCacheYAML{
+			Backend:         "redis",
+			RedisAddr:       ValkeyAddr(&kn.Spec.Valkey),
+			RedisDB:         1,
+			CredentialsPath: "/etc/apifrontend/valkey/valkey-secrets.yaml",
+		}
+	}
+	return auth
 }
 
 // APIFrontendRBACRolesConfigMap generates the default RBAC roles mapping

@@ -147,6 +147,15 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		}
 	}
 
+	if sc := kn.Spec.DataStorage.SigningCert; sc != nil {
+		mountPath := sc.MountPath
+		if mountPath == "" {
+			mountPath = "/etc/certs"
+		}
+		volumes = append(volumes, secretVolume("signing-cert", sc.SecretName))
+		mounts = append(mounts, corev1.VolumeMount{Name: "signing-cert", MountPath: mountPath, ReadOnly: true})
+	}
+
 	env := []corev1.EnvVar{
 		{Name: "CONFIG_PATH", Value: "/etc/datastorage/config.yaml"},
 		{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
@@ -673,6 +682,13 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		{Name: "config", MountPath: "/etc/apifrontend", ReadOnly: true},
 		{Name: "tls-server", MountPath: "/etc/apifrontend/tls", ReadOnly: true},
 		{Name: "tls-ca", MountPath: "/etc/apifrontend/tls-ca", ReadOnly: true},
+	}
+
+	if kn.Spec.Valkey.SecretName != "" {
+		volumes = append(volumes, secretVolume("valkey-secrets", kn.Spec.Valkey.SecretName))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: "valkey-secrets", MountPath: "/etc/apifrontend/valkey", ReadOnly: true,
+		})
 	}
 
 	return buildDeployment(kn, DeploymentParams{

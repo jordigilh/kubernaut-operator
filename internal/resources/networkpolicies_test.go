@@ -248,3 +248,199 @@ func ingressNamespaceNames(rule networkingv1.NetworkPolicyIngressRule) map[strin
 	}
 	return out
 }
+
+var _ = Describe("APIFrontend NetworkPolicy", func() {
+	enableNP := func(kn *kubernautv1alpha1.Kubernaut) {
+		enabled := true
+		kn.Spec.NetworkPolicies.Enabled = &enabled
+		kn.Spec.NetworkPolicies.APIServerCIDR = "10.0.0.0/16"
+		kn.Spec.NetworkPolicies.MonitoringNamespace = "openshift-monitoring"
+	}
+
+	It("is included when AF is enabled", func() {
+		kn := testKubernautWithAF()
+		enableNP(kn)
+		nps := NetworkPolicies(kn)
+		found := false
+		for _, np := range nps {
+			if np.Name == ComponentAPIFrontend+"-netpol" {
+				found = true
+				break
+			}
+		}
+		Expect(found).To(BeTrue(), "apifrontend-netpol should be present when AF is enabled")
+	})
+
+	It("is not included when AF is disabled", func() {
+		kn := testKubernaut()
+		enableNP(kn)
+		nps := NetworkPolicies(kn)
+		for _, np := range nps {
+			Expect(np.Name).NotTo(Equal(ComponentAPIFrontend+"-netpol"),
+				"apifrontend-netpol should NOT be present when AF is disabled")
+		}
+	})
+
+	It("allows ingress on HTTPS (8443), health (8081), and metrics (9090)", func() {
+		kn := testKubernautWithAF()
+		enableNP(kn)
+		var afNP *networkingv1.NetworkPolicy
+		for _, np := range NetworkPolicies(kn) {
+			if np.Name == ComponentAPIFrontend+"-netpol" {
+				afNP = np
+				break
+			}
+		}
+		Expect(afNP).NotTo(BeNil())
+		Expect(afNP.Spec.Ingress).NotTo(BeEmpty())
+
+		ingressPorts := map[int32]bool{}
+		for _, rule := range afNP.Spec.Ingress {
+			for _, port := range rule.Ports {
+				if port.Port != nil {
+					ingressPorts[int32(port.Port.IntValue())] = true
+				}
+			}
+		}
+		Expect(ingressPorts).To(HaveKey(int32(PortHTTPS)))
+		Expect(ingressPorts).To(HaveKey(int32(PortHealthProbe)))
+		Expect(ingressPorts).To(HaveKey(int32(PortMetrics)))
+	})
+
+	It("allows egress to DNS, API server, and kubernaut pods", func() {
+		kn := testKubernautWithAF()
+		enableNP(kn)
+		var afNP *networkingv1.NetworkPolicy
+		for _, np := range NetworkPolicies(kn) {
+			if np.Name == ComponentAPIFrontend+"-netpol" {
+				afNP = np
+				break
+			}
+		}
+		Expect(afNP).NotTo(BeNil())
+		Expect(afNP.Spec.Egress).NotTo(BeEmpty())
+	})
+
+	It("allows ingress from IngressNamespace (OpenShift Router)", func() {
+		kn := testKubernautWithAF()
+		enableNP(kn)
+		kn.Spec.NetworkPolicies.IngressNamespace = "openshift-ingress"
+		var afNP *networkingv1.NetworkPolicy
+		for _, np := range NetworkPolicies(kn) {
+			if np.Name == ComponentAPIFrontend+"-netpol" {
+				afNP = np
+				break
+			}
+		}
+		Expect(afNP).NotTo(BeNil())
+
+		found := false
+		for _, rule := range afNP.Spec.Ingress {
+			for _, peer := range rule.From {
+				if peer.NamespaceSelector != nil {
+					if peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == "openshift-ingress" {
+						found = true
+					}
+				}
+			}
+		}
+		Expect(found).To(BeTrue(), "should allow ingress from openshift-ingress namespace")
+	})
+
+	It("does not add router ingress when IngressNamespace is empty", func() {
+		kn := testKubernautWithAF()
+		enableNP(kn)
+		var afNP *networkingv1.NetworkPolicy
+		for _, np := range NetworkPolicies(kn) {
+			if np.Name == ComponentAPIFrontend+"-netpol" {
+				afNP = np
+				break
+			}
+		}
+		Expect(afNP).NotTo(BeNil())
+		for _, rule := range afNP.Spec.Ingress {
+			for _, peer := range rule.From {
+				if peer.NamespaceSelector != nil {
+					Expect(peer.NamespaceSelector.MatchLabels).NotTo(HaveKey("openshift-ingress"))
+				}
+			}
+		}
+	})
+
+	It("allows egress to ExternalEgressCIDRs on port 443", func() {
+		kn := testKubernautWithAF()
+		enableNP(kn)
+		kn.Spec.NetworkPolicies.ExternalEgressCIDRs = []string{"10.128.0.0/14", "192.168.1.0/24"}
+		var afNP *networkingv1.NetworkPolicy
+		for _, np := range NetworkPolicies(kn) {
+			if np.Name == ComponentAPIFrontend+"-netpol" {
+				afNP = np
+				break
+			}
+		}
+		Expect(afNP).NotTo(BeNil())
+
+		var externalRule *networkingv1.NetworkPolicyEgressRule
+		for i, rule := range afNP.Spec.Egress {
+			for _, peer := range rule.To {
+				if peer.IPBlock != nil && peer.IPBlock.CIDR == "10.128.0.0/14" {
+					externalRule = &afNP.Spec.Egress[i]
+					break
+				}
+			}
+		}
+		Expect(externalRule).NotTo(BeNil(), "should have egress rule for external CIDRs")
+		Expect(externalRule.To).To(HaveLen(2))
+		Expect(externalRule.Ports).To(HaveLen(1))
+		Expect(externalRule.Ports[0].Port.IntValue()).To(Equal(443))
+	})
+
+	It("does not add external egress when ExternalEgressCIDRs is empty", func() {
+		kn := testKubernautWithAF()
+		enableNP(kn)
+		var afNP *networkingv1.NetworkPolicy
+		for _, np := range NetworkPolicies(kn) {
+			if np.Name == ComponentAPIFrontend+"-netpol" {
+				afNP = np
+				break
+			}
+		}
+		Expect(afNP).NotTo(BeNil())
+		for _, rule := range afNP.Spec.Egress {
+			for _, peer := range rule.To {
+				Expect(peer.IPBlock == nil || peer.IPBlock.CIDR == kn.Spec.NetworkPolicies.APIServerCIDR).To(BeTrue(),
+					"should not have IPBlock egress rules other than API server")
+			}
+		}
+	})
+})
+
+var _ = Describe("KubernautAgent NetworkPolicy with AF", func() {
+	It("allows ingress from apifrontend pods when AF is enabled", func() {
+		kn := testKubernautWithAF()
+		enabled := true
+		kn.Spec.NetworkPolicies.Enabled = &enabled
+		nps := NetworkPolicies(kn)
+		var kaNP *networkingv1.NetworkPolicy
+		for _, np := range nps {
+			if np.Name == ComponentKubernautAgent+"-netpol" {
+				kaNP = np
+				break
+			}
+		}
+		Expect(kaNP).NotTo(BeNil())
+
+		found := false
+		for _, rule := range kaNP.Spec.Ingress {
+			for _, peer := range rule.From {
+				if peer.PodSelector != nil {
+					labels := peer.PodSelector.MatchLabels
+					if labels["app"] == ComponentAPIFrontend {
+						found = true
+					}
+				}
+			}
+		}
+		Expect(found).To(BeTrue(), "KA ingress should include apifrontend pods")
+	})
+})

@@ -70,6 +70,27 @@ func testKubernaut() *kubernautv1alpha1.Kubernaut {
 	}
 }
 
+func testKubernautWithAF() *kubernautv1alpha1.Kubernaut {
+	kn := testKubernaut()
+	kn.Spec.APIFrontend = &kubernautv1alpha1.APIFrontendSpec{
+		Auth: kubernautv1alpha1.APIFrontendAuthSpec{
+			IssuerURL: "https://login.kubernaut.ai/realms/kubernaut",
+			Audience:  "kubernaut-apifrontend",
+		},
+	}
+	return kn
+}
+
+func testKubernautWithValkeyTLS() *kubernautv1alpha1.Kubernaut {
+	kn := testKubernaut()
+	kn.Spec.Valkey.TLS = &kubernautv1alpha1.ValkeyTLSSpec{
+		Enabled:              true,
+		CASecretName:         "valkey-ca",
+		ClientCertSecretName: "valkey-client-cert",
+	}
+	return kn
+}
+
 var _ = Describe("ResolveImage", func() {
 	It("resolves from env var", func() {
 		kn := testKubernaut()
