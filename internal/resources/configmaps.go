@@ -1530,6 +1530,8 @@ type afAgentYAML struct {
 	DSBaseURL     string `json:"dsBaseURL" yaml:"dsBaseURL"`
 	KATLSCAFile   string `json:"kaTlsCaFile" yaml:"kaTlsCaFile"`
 	DSTLSCAFile   string `json:"dsTlsCaFile" yaml:"dsTlsCaFile"`
+	LLMEndpoint   string `json:"llmEndpoint,omitempty" yaml:"llmEndpoint,omitempty"`
+	LLMModel      string `json:"llmModel,omitempty" yaml:"llmModel,omitempty"`
 }
 
 type afMCPYAML struct {
@@ -1622,6 +1624,8 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 			DSBaseURL:     dsBaseURL,
 			KATLSCAFile:   "/etc/apifrontend/tls-ca/ca.crt",
 			DSTLSCAFile:   "/etc/apifrontend/tls-ca/ca.crt",
+			LLMEndpoint:   afLLMEndpoint(kn),
+			LLMModel:      kn.Spec.KubernautAgent.LLM.Model,
 		},
 		MCP: afMCPYAML{
 			Enabled:            true,
@@ -1688,6 +1692,20 @@ func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut) afSeverityTriageYAM
 		MaxRulesEvaluated:         100,
 		LLMConfidence:             0.7,
 	}
+}
+
+// afLLMEndpoint derives the Gemini API endpoint for the AF's A2A handler.
+// For Vertex AI, constructs the regional endpoint; for other providers,
+// uses the explicit endpoint or the Gemini API default.
+func afLLMEndpoint(kn *kubernautv1alpha1.Kubernaut) string {
+	llm := kn.Spec.KubernautAgent.LLM
+	if llm.Endpoint != "" {
+		return llm.Endpoint
+	}
+	if llm.Provider == "vertex_ai" && llm.VertexLocation != "" {
+		return fmt.Sprintf("https://%s-aiplatform.googleapis.com/", llm.VertexLocation) // pre-commit:allow-sensitive
+	}
+	return ""
 }
 
 func afAuthConfig(kn *kubernautv1alpha1.Kubernaut) afAuthYAML {

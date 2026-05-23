@@ -672,6 +672,23 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		{Name: "tls-ca", MountPath: "/etc/apifrontend/tls-ca", ReadOnly: true},
 	}
 
+	if secretName := kn.Spec.KubernautAgent.LLM.CredentialsSecretName; secretName != "" {
+		volumes = append(volumes, secretVolume("llm-credentials", secretName))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: "llm-credentials", MountPath: "/etc/apifrontend/llm-credentials", ReadOnly: true,
+		})
+		env = append(env,
+			corev1.EnvVar{Name: "GOOGLE_APPLICATION_CREDENTIALS", Value: "/etc/apifrontend/llm-credentials/credentials.json"},
+			corev1.EnvVar{Name: "LLM_API_KEY", ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+					Key:                  "api_key",
+					Optional:             ptr.To(true),
+				},
+			}},
+		)
+	}
+
 	if kn.Spec.Valkey.SecretName != "" {
 		volumes = append(volumes, secretVolume("valkey-secrets", kn.Spec.Valkey.SecretName))
 		mounts = append(mounts, corev1.VolumeMount{
