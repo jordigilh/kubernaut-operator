@@ -26,6 +26,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
@@ -950,6 +951,12 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		}
 	}
 
+	if amCfg := resources.GatewayAlertManagerConfig(kn); amCfg != nil && r.hasCRD(ctx, "alertmanagerconfigs.monitoring.coreos.com") {
+		if err := r.ensureNamespaced(ctx, kn, amCfg); err != nil {
+			return false, fmt.Errorf("ensuring Gateway AlertManagerConfig: %w", err)
+		}
+	}
+
 	if kn.Spec.APIFrontendEnabled() {
 		if err := r.deployAPIFrontendExtras(ctx, kn); err != nil {
 			return false, err
@@ -1615,7 +1622,8 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if _, err := mgr.GetRESTMapper().RESTMapping(
 		schema.GroupKind{Group: "monitoring.coreos.com", Kind: "ServiceMonitor"}); err == nil {
 		b = b.Owns(&monitoringv1.ServiceMonitor{}).
-			Owns(&monitoringv1.PrometheusRule{})
+			Owns(&monitoringv1.PrometheusRule{}).
+			Owns(&monitoringv1alpha1.AlertmanagerConfig{})
 	}
 
 	return b.Named("kubernaut").
