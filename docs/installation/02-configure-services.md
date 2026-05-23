@@ -135,9 +135,9 @@ When `runtimeConfigMapName` is set, the operator skips generating the LLM runtim
 
 If you use a simple provider (OpenAI, Anthropic) with no advanced features, skip BYO config -- the operator generates the ConfigMap for you.
 
-## Signal Processing (SP) -- Classification Policy
+## Signal Processing (SP) -- Classification Policy (Required)
 
-The SP controller uses a Rego policy to classify incoming signals by priority and remediation path. If you omit `policy.configMapName` from the CR, the operator creates a permissive stub. For production, provide a real policy.
+The SP controller uses a Rego policy to classify incoming signals by priority and remediation path. **This is a required prerequisite** -- the operator will not create a default policy. You must provide a ConfigMap with your Rego policy and reference it in `spec.signalProcessing.policy.configMapName`. The operator will reject the CR with a validation error if this field is empty.
 
 The ConfigMap must contain the key `policy.rego`:
 
@@ -194,9 +194,11 @@ EOF
 
 Reference it in the CR under `spec.signalProcessing.proactiveSignalMappings.configMapName`.
 
-## AI Analysis (AA) -- Approval Policy
+## AI Analysis (AA) -- Approval Policy (Required)
 
-The AA controller uses a Rego policy to decide whether an AI-generated remediation plan should be auto-approved or require human review. The ConfigMap must contain the key `approval.rego`:
+The AA controller uses a Rego policy to decide whether an AI-generated remediation plan should be auto-approved or require human review. **This is a required prerequisite** -- the operator will not create a default policy. You must provide a ConfigMap with your Rego policy and reference it in `spec.aiAnalysis.policy.configMapName`. The operator will reject the CR with a validation error if this field is empty.
+
+The ConfigMap must contain the key `approval.rego`:
 
 ```bash
 oc apply -f - <<EOF
@@ -380,13 +382,15 @@ If omitted, notifications are delivered to the console log and file output only.
 
 ## Verification
 
-Confirm all ConfigMaps are created:
+Confirm all required prerequisite ConfigMaps exist before applying the Kubernaut CR:
 
 ```bash
 oc get configmap -n kubernaut-system \
   signalprocessing-policy \
   aianalysis-policies
 ```
+
+> **Note**: The operator validates that `spec.signalProcessing.policy.configMapName` and `spec.aiAnalysis.policy.configMapName` are set. If either is missing, reconciliation will fail with a clear validation error on the CR status.
 
 If using BYO LLM runtime config or proactive mappings:
 

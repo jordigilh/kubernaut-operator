@@ -1186,16 +1186,42 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	})
 
 	// ======================================================================
-	// 11. Monitoring + Default Policy Coverage Gaps
+	// 11. Policy Prerequisite Validation
 	// ======================================================================
 
-	Context("Monitoring and Default Policy Resources", func() {
-		It("should create service-CA ConfigMaps and default policy CMs when user omits policy names", func() {
-			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+	Context("Policy Prerequisite Validation", func() {
+		It("should reject CR when policy configMapNames are missing", func() {
+			cr := newMinimalCR()
 			cr.Spec.AIAnalysis.Policy.ConfigMapName = ""
 			cr.Spec.SignalProcessing.Policy.ConfigMapName = ""
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			createBYOSecrets(ctx)
+
+			r := newReconciler()
+			By("reconcile 1: add finalizer")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("reconcile 2: validate — should fail on missing policy configMapNames")
+			result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseError))
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionBYOValidated)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal("SpecValidationFailed"))
+			Expect(cond.Message).To(ContainSubstring("aiAnalysis.policy.configMapName"))
+			Expect(cond.Message).To(ContainSubstring("signalProcessing.policy.configMapName"))
+		})
+
+		It("should create service-CA and proactive-signal-mappings CMs with valid policy names", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 			reconcileToRunning(ctx)
 
 			By("verifying effectivenessmonitor-service-ca exists with inject-cabundle annotation")
@@ -1214,19 +1240,19 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(kaCA.Annotations).To(HaveKeyWithValue(
 				"service.beta.openshift.io/inject-cabundle", "true"))
 
-			By("verifying aianalysis-policies CM exists with approval.rego key")
+			By("verifying operator does NOT create aianalysis-policies (user-provided prerequisite)")
 			aiPolicyCM := &corev1.ConfigMap{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{
+			err := k8sClient.Get(ctx, types.NamespacedName{
 				Name: "aianalysis-policies", Namespace: testNamespace,
-			}, aiPolicyCM)).To(Succeed())
-			Expect(aiPolicyCM.Data).To(HaveKey("approval.rego"))
+			}, aiPolicyCM)
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "operator must not create default aianalysis-policies CM")
 
-			By("verifying signalprocessing-policy CM exists with policy.rego key")
+			By("verifying operator does NOT create signalprocessing-policy (user-provided prerequisite)")
 			spPolicyCM := &corev1.ConfigMap{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{
+			err = k8sClient.Get(ctx, types.NamespacedName{
 				Name: "signalprocessing-policy", Namespace: testNamespace,
-			}, spPolicyCM)).To(Succeed())
-			Expect(spPolicyCM.Data).To(HaveKey("policy.rego"))
+			}, spPolicyCM)
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "operator must not create default signalprocessing-policy CM")
 
 			By("verifying signalprocessing-proactive-signal-mappings CM exists with proactive-signal-mappings.yaml key")
 			proactiveCM := &corev1.ConfigMap{}

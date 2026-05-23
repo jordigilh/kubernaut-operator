@@ -854,44 +854,22 @@ var _ = Describe("ConfigMaps", func() {
 	})
 
 	Describe("Policy ConfigMaps", func() {
-		It("AIAnalysis policies default Rego Policy is generated when ConfigMapName is empty", func() {
+		It("AIAnalysis policies always returns nil (user-provided prerequisite)", func() {
 			kn := testKubernaut()
 			kn.Spec.AIAnalysis.Policy.ConfigMapName = ""
+			Expect(AIAnalysisPoliciesConfigMap(kn)).To(BeNil(), "should not create a default policy")
 
-			cm := AIAnalysisPoliciesConfigMap(kn)
-			Expect(cm).NotTo(BeNil(), "AIAnalysisPoliciesConfigMap should return non-nil when ConfigMapName is empty")
-			Expect(cm.Name).To(Equal("aianalysis-policies"), "Name = %q, want %q", cm.Name, "aianalysis-policies")
-			rego, ok := cm.Data["approval.rego"]
-			Expect(ok).To(BeTrue(), "ConfigMap should contain approval.rego key")
-			Expect(rego).To(ContainSubstring("package kubernaut.aianalysis"), "approval.rego should contain Rego package declaration, got:\n%s", rego)
-		})
-
-		It("AIAnalysis policies returns nil when user provides ConfigMapName", func() {
-			kn := testKubernaut()
 			kn.Spec.AIAnalysis.Policy.ConfigMapName = "user-custom-policies"
-
-			cm := AIAnalysisPoliciesConfigMap(kn)
-			Expect(cm).To(BeNil(), "AIAnalysisPoliciesConfigMap should return nil when user provides ConfigMapName")
+			Expect(AIAnalysisPoliciesConfigMap(kn)).To(BeNil(), "should not create a policy when user provides ConfigMapName either")
 		})
 
-		It("SignalProcessing policy default Rego is generated when ConfigMapName is empty", func() {
+		It("SignalProcessing policy always returns nil (user-provided prerequisite)", func() {
 			kn := testKubernaut()
 			kn.Spec.SignalProcessing.Policy.ConfigMapName = ""
+			Expect(SignalProcessingPolicyConfigMap(kn)).To(BeNil(), "should not create a default policy")
 
-			cm := SignalProcessingPolicyConfigMap(kn)
-			Expect(cm).NotTo(BeNil(), "SignalProcessingPolicyConfigMap should return non-nil when ConfigMapName is empty")
-			Expect(cm.Name).To(Equal("signalprocessing-policy"), "Name = %q, want %q", cm.Name, "signalprocessing-policy")
-			rego, ok := cm.Data["policy.rego"]
-			Expect(ok).To(BeTrue(), "ConfigMap should contain policy.rego key")
-			Expect(rego).To(ContainSubstring("package kubernaut.signalprocessing"), "policy.rego should contain Rego package declaration, got:\n%s", rego)
-		})
-
-		It("SignalProcessing policy returns nil when user provides ConfigMapName", func() {
-			kn := testKubernaut()
 			kn.Spec.SignalProcessing.Policy.ConfigMapName = "user-sp-policy"
-
-			cm := SignalProcessingPolicyConfigMap(kn)
-			Expect(cm).To(BeNil(), "SignalProcessingPolicyConfigMap should return nil when user provides ConfigMapName")
+			Expect(SignalProcessingPolicyConfigMap(kn)).To(BeNil(), "should not create a policy when user provides ConfigMapName either")
 		})
 	})
 

@@ -31,6 +31,8 @@ const maxJWKSURLLength = 2048
 func ValidateKubernaut(kn *kubernautv1alpha1.Kubernaut) []error {
 	errs := make([]error, 0, 4)
 	errs = append(errs, validatePostgreSQLSSLMode(kn)...)
+	errs = append(errs, validatePolicyPrerequisites(kn)...)
+	errs = append(errs, validateLLMPrerequisites(kn)...)
 	errs = append(errs, validateJWKSProviders(kn)...)
 	errs = append(errs, validateAPIFrontend(kn)...)
 	errs = append(errs, validateAlignmentCheck(kn)...)
@@ -46,6 +48,35 @@ func validatePostgreSQLSSLMode(kn *kubernautv1alpha1.Kubernaut) []error {
 			"spec.postgresql.sslMode: \"disable\" is rejected (FedRAMP SC-8); use \"verify-full\" or \"verify-ca\"")}
 	}
 	return nil
+}
+
+func validatePolicyPrerequisites(kn *kubernautv1alpha1.Kubernaut) []error {
+	var errs []error
+	if kn.Spec.AIAnalysis.Policy.ConfigMapName == "" {
+		errs = append(errs, fmt.Errorf(
+			"spec.aiAnalysis.policy.configMapName: required — provide a ConfigMap containing key \"approval.rego\" with your Rego policy"))
+	}
+	if kn.Spec.SignalProcessing.Policy.ConfigMapName == "" {
+		errs = append(errs, fmt.Errorf(
+			"spec.signalProcessing.policy.configMapName: required — provide a ConfigMap containing key \"policy.rego\" with your Rego policy"))
+	}
+	return errs
+}
+
+func validateLLMPrerequisites(kn *kubernautv1alpha1.Kubernaut) []error {
+	var errs []error
+	const base = "spec.kubernautAgent.llm"
+	llm := &kn.Spec.KubernautAgent.LLM
+	if llm.Provider == "" {
+		errs = append(errs, fmt.Errorf("%s.provider: required — specify the LLM provider (e.g. \"openai\", \"vertexai\")", base))
+	}
+	if llm.Model == "" {
+		errs = append(errs, fmt.Errorf("%s.model: required — specify the LLM model name (e.g. \"gpt-4o\", \"gemini-2.5-pro\")", base))
+	}
+	if llm.CredentialsSecretName == "" {
+		errs = append(errs, fmt.Errorf("%s.credentialsSecretName: required — provide a Secret with LLM API credentials", base))
+	}
+	return errs
 }
 
 func validateJWKSProviders(kn *kubernautv1alpha1.Kubernaut) []error {

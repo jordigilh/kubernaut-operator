@@ -875,18 +875,10 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOptio
 	}, nil
 }
 
-// AIAnalysisPoliciesConfigMap builds the default aianalysis-policies ConfigMap
-// containing the approval Rego policy.
-func AIAnalysisPoliciesConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
-	if kn.Spec.AIAnalysis.Policy.ConfigMapName != "" {
-		return nil
-	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, AIAnalysisPolicyName(kn), ComponentAIAnalysis),
-		Data: map[string]string{
-			"approval.rego": "package kubernaut.aianalysis\ndefault allow = true\n",
-		},
-	}
+// AIAnalysisPoliciesConfigMap returns nil — the approval Rego policy is a
+// user-provided prerequisite and must not be defaulted by the operator.
+func AIAnalysisPoliciesConfigMap(_ *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+	return nil
 }
 
 // SignalProcessingConfigMap builds the signalprocessing-config ConfigMap.
@@ -928,18 +920,10 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMa
 	}, nil
 }
 
-// SignalProcessingPolicyConfigMap builds the default signalprocessing-policy ConfigMap
-// containing the classification Rego policy.
-func SignalProcessingPolicyConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
-	if kn.Spec.SignalProcessing.Policy.ConfigMapName != "" {
-		return nil
-	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, SignalProcessingPolicyName(kn), ComponentSignalProcessing),
-		Data: map[string]string{
-			"policy.rego": "package kubernaut.signalprocessing\ndefault allow = true\n",
-		},
-	}
+// SignalProcessingPolicyConfigMap returns nil — the classification Rego policy
+// is a user-provided prerequisite and must not be defaulted by the operator.
+func SignalProcessingPolicyConfigMap(_ *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+	return nil
 }
 
 // ProactiveSignalMappingsConfigMap builds the default signalprocessing-proactive-signal-mappings

@@ -468,3 +468,78 @@ var _ = Describe("Interactive Mode Validation", func() {
 		Expect(errs).To(HaveLen(2))
 	})
 })
+
+var _ = Describe("Policy Prerequisite Validation", func() {
+	It("rejects empty aiAnalysis policy configMapName", func() {
+		kn := testKubernaut()
+		kn.Spec.AIAnalysis.Policy.ConfigMapName = ""
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.aiAnalysis.policy.configMapName"))
+		Expect(errs[0].Error()).To(ContainSubstring("approval.rego"))
+	})
+
+	It("rejects empty signalProcessing policy configMapName", func() {
+		kn := testKubernaut()
+		kn.Spec.SignalProcessing.Policy.ConfigMapName = ""
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.signalProcessing.policy.configMapName"))
+		Expect(errs[0].Error()).To(ContainSubstring("policy.rego"))
+	})
+
+	It("rejects both empty policy configMapNames", func() {
+		kn := testKubernaut()
+		kn.Spec.AIAnalysis.Policy.ConfigMapName = ""
+		kn.Spec.SignalProcessing.Policy.ConfigMapName = ""
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(2))
+	})
+
+	It("accepts user-provided policy configMapNames", func() {
+		kn := testKubernaut()
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+})
+
+var _ = Describe("LLM Prerequisite Validation", func() {
+	It("rejects empty llm provider", func() {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.LLM.Provider = ""
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("llm.provider"))
+	})
+
+	It("rejects empty llm model", func() {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.LLM.Model = ""
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("llm.model"))
+	})
+
+	It("rejects empty llm credentialsSecretName", func() {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.LLM.CredentialsSecretName = ""
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("llm.credentialsSecretName"))
+	})
+
+	It("accumulates all missing LLM fields", func() {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.LLM.Provider = ""
+		kn.Spec.KubernautAgent.LLM.Model = ""
+		kn.Spec.KubernautAgent.LLM.CredentialsSecretName = ""
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(3))
+	})
+
+	It("accepts valid llm configuration", func() {
+		kn := testKubernaut()
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+})
