@@ -31,9 +31,8 @@ import (
 )
 
 // GatewayDeployment builds the gateway Deployment.
-// Issue #753: Gateway no longer terminates TLS at the application layer —
-// the OCP Route handles TLS termination for external traffic. The pod only
-// mounts the inter-service CA for outbound client trust (TLS_CA_FILE).
+// Issue #126: Gateway serves TLS on 8443 using the OCP service-ca provisioned
+// gateway-tls Secret (FedRAMP SC-8 — encryption in transit for inter-service traffic).
 func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	env := []corev1.EnvVar{
 		{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{
@@ -47,10 +46,12 @@ func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, err
 
 	volumes := []corev1.Volume{
 		configMapVolume("config", "gateway-config"),
+		secretVolume("tls-certs", GatewayTLSSecretName),
 		optionalConfigMapVolume("tls-ca", InterServiceCAConfigMapName),
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: "config", MountPath: "/etc/gateway", ReadOnly: true},
+		{Name: "tls-certs", MountPath: InterServiceTLSCertDir, ReadOnly: true},
 		{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
 	}
 

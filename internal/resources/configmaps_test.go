@@ -45,6 +45,15 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("maxConcurrentRequests"))
 		})
 
+		It("includes TLS certDir for inter-service encryption", func() {
+			kn := testKubernaut()
+			cm, err := GatewayConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("tls:"))
+			Expect(data).To(ContainSubstring("certDir: /etc/tls"))
+		})
+
 		It("respects custom K8s request timeout", func() {
 			kn := testKubernaut()
 			kn.Spec.Gateway.Config.K8sRequestTimeout = "30s"

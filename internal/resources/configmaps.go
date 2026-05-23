@@ -54,14 +54,15 @@ type tlsConfigYAML struct {
 }
 
 type gatewayServerYAML struct {
-	ListenAddr            string `json:"listenAddr" yaml:"listenAddr"`
-	HealthAddr            string `json:"healthAddr" yaml:"healthAddr"`
-	MetricsAddr           string `json:"metricsAddr" yaml:"metricsAddr"`
-	MaxConcurrentRequests int    `json:"maxConcurrentRequests" yaml:"maxConcurrentRequests"`
-	ReadTimeout           string `json:"readTimeout" yaml:"readTimeout"`
-	WriteTimeout          string `json:"writeTimeout" yaml:"writeTimeout"`
-	IdleTimeout           string `json:"idleTimeout" yaml:"idleTimeout"`
-	K8sRequestTimeout     string `json:"k8sRequestTimeout" yaml:"k8sRequestTimeout"`
+	ListenAddr            string        `json:"listenAddr" yaml:"listenAddr"`
+	HealthAddr            string        `json:"healthAddr" yaml:"healthAddr"`
+	MetricsAddr           string        `json:"metricsAddr" yaml:"metricsAddr"`
+	MaxConcurrentRequests int           `json:"maxConcurrentRequests" yaml:"maxConcurrentRequests"`
+	ReadTimeout           string        `json:"readTimeout" yaml:"readTimeout"`
+	WriteTimeout          string        `json:"writeTimeout" yaml:"writeTimeout"`
+	IdleTimeout           string        `json:"idleTimeout" yaml:"idleTimeout"`
+	K8sRequestTimeout     string        `json:"k8sRequestTimeout" yaml:"k8sRequestTimeout"`
+	TLS                   tlsConfigYAML `json:"tls" yaml:"tls"`
 }
 
 type loggingYAML struct {
@@ -706,6 +707,7 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) 
 			WriteTimeout:          "30s",
 			IdleTimeout:           "120s",
 			K8sRequestTimeout:     withDefault(gwCfg.K8sRequestTimeout, "15s"),
+			TLS:                   tlsConfigYAML{CertDir: InterServiceTLSCertDir},
 		},
 		CORS: gatewayCORSYAML{
 			AllowedOrigins:   corsOrigins,
