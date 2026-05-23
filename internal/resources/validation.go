@@ -33,6 +33,9 @@ func ValidateKubernaut(kn *kubernautv1alpha1.Kubernaut) []error {
 	errs = append(errs, validatePostgreSQLSSLMode(kn)...)
 	errs = append(errs, validateJWKSProviders(kn)...)
 	errs = append(errs, validateAPIFrontend(kn)...)
+	errs = append(errs, validateAlignmentCheck(kn)...)
+	errs = append(errs, validateDryRun(kn)...)
+	errs = append(errs, validateInteractive(kn)...)
 	return errs
 }
 
@@ -130,6 +133,85 @@ func validateToolRoleBindings(kn *kubernautv1alpha1.Kubernaut) []error {
 
 		if !validToolPersonas[rb.Role] {
 			errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings: unknown persona %q", rb.Role))
+		}
+	}
+
+	return errs
+}
+
+const (
+	alignmentCheckTimeoutMin = time.Second
+	alignmentCheckTimeoutMax = 60 * time.Second
+)
+
+func validateAlignmentCheck(kn *kubernautv1alpha1.Kubernaut) []error {
+	ac := &kn.Spec.KubernautAgent.AlignmentCheck
+	if !ac.Enabled {
+		return nil
+	}
+
+	var errs []error
+	const base = "spec.kubernautAgent.alignmentCheck"
+
+	if ac.Timeout != "" {
+		d, err := time.ParseDuration(ac.Timeout)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s.timeout: invalid Go duration %q: %w", base, ac.Timeout, err))
+		} else if d < alignmentCheckTimeoutMin || d > alignmentCheckTimeoutMax {
+			errs = append(errs, fmt.Errorf("%s.timeout: must be between %s and %s, got %s", base, alignmentCheckTimeoutMin, alignmentCheckTimeoutMax, d))
+		}
+	}
+
+	if ac.MaxStepTokens < 0 {
+		errs = append(errs, fmt.Errorf("%s.maxStepTokens: must be positive, got %d", base, ac.MaxStepTokens))
+	}
+
+	if llm := ac.LLM; llm != nil {
+		if llm.Provider == "" {
+			errs = append(errs, fmt.Errorf("%s.llm.provider: must not be empty when llm is set", base))
+		}
+		if llm.Model == "" {
+			errs = append(errs, fmt.Errorf("%s.llm.model: must not be empty when llm is set", base))
+		}
+	}
+
+	return errs
+}
+
+func validateDryRun(kn *kubernautv1alpha1.Kubernaut) []error {
+	ro := &kn.Spec.RemediationOrchestrator
+	if !ro.DryRun {
+		return nil
+	}
+
+	if ro.DryRunHoldPeriod == "" {
+		return nil
+	}
+
+	if _, err := time.ParseDuration(ro.DryRunHoldPeriod); err != nil {
+		return []error{fmt.Errorf("spec.remediationOrchestrator.dryRunHoldPeriod: invalid Go duration %q: %w", ro.DryRunHoldPeriod, err)}
+	}
+	return nil
+}
+
+func validateInteractive(kn *kubernautv1alpha1.Kubernaut) []error {
+	interactive := kn.Spec.KubernautAgent.Interactive
+	if interactive == nil || !interactive.InteractiveEnabled() {
+		return nil
+	}
+
+	var errs []error
+	const base = "spec.kubernautAgent.interactive"
+
+	if interactive.SessionTTL != "" {
+		if _, err := time.ParseDuration(interactive.SessionTTL); err != nil {
+			errs = append(errs, fmt.Errorf("%s.sessionTTL: invalid Go duration %q: %w", base, interactive.SessionTTL, err))
+		}
+	}
+
+	if interactive.InactivityTimeout != "" {
+		if _, err := time.ParseDuration(interactive.InactivityTimeout); err != nil {
+			errs = append(errs, fmt.Errorf("%s.inactivityTimeout: invalid Go duration %q: %w", base, interactive.InactivityTimeout, err))
 		}
 	}
 

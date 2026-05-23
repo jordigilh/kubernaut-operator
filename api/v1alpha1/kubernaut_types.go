@@ -583,6 +583,32 @@ type KubernautAgentSpec struct {
 
 // InteractiveSpec configures KA interactive mode with JWT-based identity delegation.
 type InteractiveSpec struct {
+	// Whether MCP interactive mode endpoint and Lease-based session
+	// management are enabled. When true, KA exposes a Streamable HTTP
+	// MCP endpoint at POST /api/v1/mcp.
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Maximum duration for an interactive session before auto-release.
+	// Must be a valid Go duration string (e.g. "30m").
+	// +optional
+	SessionTTL string `json:"sessionTTL,omitempty"`
+
+	// Session timeout after last operator activity.
+	// Must be a valid Go duration string (e.g. "10m").
+	// +optional
+	InactivityTimeout string `json:"inactivityTimeout,omitempty"`
+
+	// Maximum concurrent interactive sessions per agent replica.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	MaxConcurrentSessions *int `json:"maxConcurrentSessions,omitempty"`
+
+	// Maximum MCP requests per second per authenticated user.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	RateLimitPerUser *int `json:"rateLimitPerUser,omitempty"`
+
 	// JWT providers for OIDC-based identity delegation.
 	// +optional
 	// +kubebuilder:validation:MaxItems=8
@@ -592,6 +618,11 @@ type InteractiveSpec struct {
 	// Production deployments MUST leave this false.
 	// +optional
 	AllowInsecureJWKS bool `json:"allowInsecureJWKS,omitempty"`
+}
+
+// InteractiveEnabled returns true when interactive mode is explicitly enabled.
+func (s *InteractiveSpec) InteractiveEnabled() bool {
+	return s.Enabled != nil && *s.Enabled
 }
 
 // JWTProviderSpec configures a single OIDC JWT provider.

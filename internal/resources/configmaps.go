@@ -577,6 +577,15 @@ type kubernautAgentConfigYAML struct {
 	Runtime      kaRuntimeYAML      `json:"runtime" yaml:"runtime"`
 	AI           kaAIYAML           `json:"ai" yaml:"ai"`
 	Integrations kaIntegrationsYAML `json:"integrations" yaml:"integrations"`
+	Interactive  *kaInteractiveYAML `json:"interactive,omitempty" yaml:"interactive,omitempty"`
+}
+
+type kaInteractiveYAML struct {
+	Enabled               bool   `json:"enabled" yaml:"enabled"`
+	SessionTTL            string `json:"sessionTTL,omitempty" yaml:"sessionTTL,omitempty"`
+	InactivityTimeout     string `json:"inactivityTimeout,omitempty" yaml:"inactivityTimeout,omitempty"`
+	MaxConcurrentSessions *int   `json:"maxConcurrentSessions,omitempty" yaml:"maxConcurrentSessions,omitempty"`
+	RateLimitPerUser      *int   `json:"rateLimitPerUser,omitempty" yaml:"rateLimitPerUser,omitempty"`
 }
 
 type llmRuntimeYAML struct {
@@ -1333,6 +1342,19 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 				TLSCaFile: "/etc/ssl/ka/service-ca.crt",
 			},
 		}
+	}
+
+	if interactive := ka.Interactive; interactive != nil && interactive.InteractiveEnabled() {
+		ic := &kaInteractiveYAML{Enabled: true}
+		if interactive.SessionTTL != "" {
+			ic.SessionTTL = interactive.SessionTTL
+		}
+		if interactive.InactivityTimeout != "" {
+			ic.InactivityTimeout = interactive.InactivityTimeout
+		}
+		ic.MaxConcurrentSessions = interactive.MaxConcurrentSessions
+		ic.RateLimitPerUser = interactive.RateLimitPerUser
+		cfg.Interactive = ic
 	}
 
 	data, err := marshalYAML(cfg)

@@ -230,3 +230,241 @@ var _ = Describe("ToolRoleBinding Validation", func() {
 		Expect(errs[0].Error()).To(ContainSubstring("sarCacheTTL"))
 	})
 })
+
+var _ = Describe("AlignmentCheck Validation", func() {
+	withAlignmentCheck := func(ac kubernautv1alpha1.AlignmentCheckSpec) *kubernautv1alpha1.Kubernaut {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.AlignmentCheck = ac
+		return kn
+	}
+
+	It("skips validation when alignmentCheck is disabled", func() {
+		kn := withAlignmentCheck(kubernautv1alpha1.AlignmentCheckSpec{
+			Enabled: false,
+			Timeout: "not-a-duration",
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("accepts valid alignmentCheck configuration", func() {
+		kn := withAlignmentCheck(kubernautv1alpha1.AlignmentCheckSpec{
+			Enabled:       true,
+			Timeout:       "10s",
+			MaxStepTokens: 500,
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("rejects invalid timeout duration", func() {
+		kn := withAlignmentCheck(kubernautv1alpha1.AlignmentCheckSpec{
+			Enabled: true,
+			Timeout: "not-a-duration",
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("timeout"))
+		Expect(errs[0].Error()).To(ContainSubstring("invalid Go duration"))
+	})
+
+	It("rejects timeout below 1s", func() {
+		kn := withAlignmentCheck(kubernautv1alpha1.AlignmentCheckSpec{
+			Enabled: true,
+			Timeout: "500ms",
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("timeout"))
+		Expect(errs[0].Error()).To(ContainSubstring("between"))
+	})
+
+	It("rejects timeout above 60s", func() {
+		kn := withAlignmentCheck(kubernautv1alpha1.AlignmentCheckSpec{
+			Enabled: true,
+			Timeout: "120s",
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("timeout"))
+		Expect(errs[0].Error()).To(ContainSubstring("between"))
+	})
+
+	It("accepts timeout at lower bound (1s)", func() {
+		kn := withAlignmentCheck(kubernautv1alpha1.AlignmentCheckSpec{
+			Enabled: true,
+			Timeout: "1s",
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("accepts timeout at upper bound (60s)", func() {
+		kn := withAlignmentCheck(kubernautv1alpha1.AlignmentCheckSpec{
+			Enabled: true,
+			Timeout: "60s",
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("rejects negative maxStepTokens", func() {
+		kn := withAlignmentCheck(kubernautv1alpha1.AlignmentCheckSpec{
+			Enabled:       true,
+			MaxStepTokens: -1,
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("maxStepTokens"))
+		Expect(errs[0].Error()).To(ContainSubstring("positive"))
+	})
+
+	It("rejects empty provider when llm is set", func() {
+		kn := withAlignmentCheck(kubernautv1alpha1.AlignmentCheckSpec{
+			Enabled: true,
+			LLM: &kubernautv1alpha1.AlignmentCheckLLMSpec{
+				Model: "gpt-4o",
+			},
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("llm.provider"))
+	})
+
+	It("rejects empty model when llm is set", func() {
+		kn := withAlignmentCheck(kubernautv1alpha1.AlignmentCheckSpec{
+			Enabled: true,
+			LLM: &kubernautv1alpha1.AlignmentCheckLLMSpec{
+				Provider: "openai",
+			},
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("llm.model"))
+	})
+
+	It("accepts valid llm configuration", func() {
+		kn := withAlignmentCheck(kubernautv1alpha1.AlignmentCheckSpec{
+			Enabled: true,
+			LLM: &kubernautv1alpha1.AlignmentCheckLLMSpec{
+				Provider: "openai",
+				Model:    "gpt-4o",
+			},
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("accumulates multiple errors", func() {
+		kn := withAlignmentCheck(kubernautv1alpha1.AlignmentCheckSpec{
+			Enabled:       true,
+			Timeout:       "not-a-duration",
+			MaxStepTokens: -1,
+			LLM:           &kubernautv1alpha1.AlignmentCheckLLMSpec{},
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(4))
+	})
+})
+
+var _ = Describe("DryRun Validation", func() {
+	It("skips validation when dryRun is disabled", func() {
+		kn := testKubernaut()
+		kn.Spec.RemediationOrchestrator.DryRun = false
+		kn.Spec.RemediationOrchestrator.DryRunHoldPeriod = "not-a-duration"
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("accepts valid dryRunHoldPeriod", func() {
+		kn := testKubernaut()
+		kn.Spec.RemediationOrchestrator.DryRun = true
+		kn.Spec.RemediationOrchestrator.DryRunHoldPeriod = "1h"
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("rejects invalid dryRunHoldPeriod", func() {
+		kn := testKubernaut()
+		kn.Spec.RemediationOrchestrator.DryRun = true
+		kn.Spec.RemediationOrchestrator.DryRunHoldPeriod = "not-a-duration"
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("dryRunHoldPeriod"))
+		Expect(errs[0].Error()).To(ContainSubstring("invalid Go duration"))
+	})
+
+	It("accepts empty dryRunHoldPeriod (uses kubebuilder default)", func() {
+		kn := testKubernaut()
+		kn.Spec.RemediationOrchestrator.DryRun = true
+		kn.Spec.RemediationOrchestrator.DryRunHoldPeriod = ""
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+})
+
+var _ = Describe("Interactive Mode Validation", func() {
+	boolPtr := func(v bool) *bool { return &v }
+
+	withInteractiveMode := func(spec kubernautv1alpha1.InteractiveSpec) *kubernautv1alpha1.Kubernaut {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.Interactive = &spec
+		return kn
+	}
+
+	It("skips validation when interactive is nil", func() {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.Interactive = nil
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("skips validation when interactive is disabled", func() {
+		kn := withInteractiveMode(kubernautv1alpha1.InteractiveSpec{
+			Enabled:    boolPtr(false),
+			SessionTTL: "not-a-duration",
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("accepts valid interactive configuration", func() {
+		kn := withInteractiveMode(kubernautv1alpha1.InteractiveSpec{
+			Enabled:           boolPtr(true),
+			SessionTTL:        "30m",
+			InactivityTimeout: "10m",
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("rejects invalid sessionTTL", func() {
+		kn := withInteractiveMode(kubernautv1alpha1.InteractiveSpec{
+			Enabled:    boolPtr(true),
+			SessionTTL: "not-a-duration",
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("sessionTTL"))
+	})
+
+	It("rejects invalid inactivityTimeout", func() {
+		kn := withInteractiveMode(kubernautv1alpha1.InteractiveSpec{
+			Enabled:           boolPtr(true),
+			InactivityTimeout: "not-a-duration",
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("inactivityTimeout"))
+	})
+
+	It("accumulates multiple duration errors", func() {
+		kn := withInteractiveMode(kubernautv1alpha1.InteractiveSpec{
+			Enabled:           boolPtr(true),
+			SessionTTL:        "bad1",
+			InactivityTimeout: "bad2",
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(2))
+	})
+})

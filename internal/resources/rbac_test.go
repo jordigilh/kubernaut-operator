@@ -132,6 +132,38 @@ var _ = Describe("ClusterRoles", func() {
 				Expect(found).To(BeTrue(), "gateway-role missing %s/%s", w.apiGroup, w.resource)
 			}
 		})
+
+		It("has owner-chain resolution rules", func() {
+			kn := testKubernaut()
+			roles := ClusterRoles(kn)
+			var gw *rbacv1.ClusterRole
+			for _, r := range roles {
+				if r.Name == kn.Namespace+"-gateway-role" {
+					gw = r
+					break
+				}
+			}
+			Expect(gw).NotTo(BeNil(), "gateway-role ClusterRole not found")
+
+			wantGroups := []string{
+				"operators.coreos.com",
+				"packages.operators.coreos.com",
+				"security.istio.io",
+				"networking.istio.io",
+				"cert-manager.io",
+				"argoproj.io",
+				"route.openshift.io",
+			}
+			foundGroups := make(map[string]bool)
+			for _, rule := range gw.Rules {
+				for _, g := range rule.APIGroups {
+					foundGroups[g] = true
+				}
+			}
+			for _, g := range wantGroups {
+				Expect(foundGroups[g]).To(BeTrue(), "gateway-role missing owner-chain API group %q", g)
+			}
+		})
 	})
 
 	Describe("KubernautAgent investigator", func() {
@@ -234,6 +266,40 @@ var _ = Describe("ClusterRoles", func() {
 			}
 			for _, g := range wantGroups {
 				Expect(foundGroups[g]).To(BeTrue(), "workflow-runner missing API group %q", g)
+			}
+		})
+	})
+
+	Describe("EffectivenessMonitor controller", func() {
+		It("has owner-chain resolution rules", func() {
+			kn := testKubernaut()
+			roles := ClusterRoles(kn)
+			var em *rbacv1.ClusterRole
+			for _, r := range roles {
+				if r.Name == kn.Namespace+"-effectivenessmonitor-controller" {
+					em = r
+					break
+				}
+			}
+			Expect(em).NotTo(BeNil(), "effectivenessmonitor-controller ClusterRole not found")
+
+			wantGroups := []string{
+				"operators.coreos.com",
+				"packages.operators.coreos.com",
+				"security.istio.io",
+				"networking.istio.io",
+				"cert-manager.io",
+				"argoproj.io",
+				"route.openshift.io",
+			}
+			foundGroups := make(map[string]bool)
+			for _, rule := range em.Rules {
+				for _, g := range rule.APIGroups {
+					foundGroups[g] = true
+				}
+			}
+			for _, g := range wantGroups {
+				Expect(foundGroups[g]).To(BeTrue(), "effectivenessmonitor-controller missing owner-chain API group %q", g)
 			}
 		})
 	})
