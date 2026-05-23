@@ -662,12 +662,12 @@ var _ = Describe("ToolClusterRoles", func() {
 				"tool ClusterRole %q should have %d resourceNames, got %d",
 				found.Name, expectedCount, len(found.Rules[0].ResourceNames))
 		},
-		Entry("SRE", "tool-sre", 19),
-		Entry("AI-orchestrator", "tool-ai-orchestrator", 15),
+		Entry("SRE", "tool-sre", 25),
+		Entry("AI-orchestrator", "tool-ai-orchestrator", 20),
 		Entry("CICD", "tool-cicd", 3),
-		Entry("Observability", "tool-observability", 8),
+		Entry("Observability", "tool-observability", 5),
 		Entry("L3-audit", "tool-l3-audit", 6),
-		Entry("Remediation-approver", "tool-remediation-approver", 4),
+		Entry("Remediation-approver", "tool-remediation-approver", 6),
 	)
 
 	It("tool ClusterRole names are namespace-prefixed", func() {
@@ -789,7 +789,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		Expect(found).To(BeTrue(), "apifrontend ClusterRole should be present when AF is enabled")
 	})
 
-	It("grants InvestigationSession CRUD and impersonation", func() {
+	It("grants InvestigationSession CRUD under kubernaut.ai API group", func() {
 		kn := testKubernautWithAF()
 		roles := ClusterRoles(kn)
 		var afRole *rbacv1.ClusterRole
@@ -809,12 +809,82 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 			}
 		}
 
-		Expect(ruleMap).To(HaveKey("apifrontend.kubernaut.ai/investigationsessions"))
-		Expect(ruleMap["apifrontend.kubernaut.ai/investigationsessions"]).To(ContainElements("get", "list", "watch", "create", "update", "patch", "delete"))
+		Expect(ruleMap).To(HaveKey("kubernaut.ai/investigationsessions"))
+		Expect(ruleMap["kubernaut.ai/investigationsessions"]).To(ContainElements("get", "list", "watch", "create", "update", "patch", "delete"))
 
-		Expect(ruleMap).To(HaveKey("/users"))
-		impersonateVerbs := ruleMap["/users"]
-		Expect(impersonateVerbs).To(ContainElement("impersonate"))
+		Expect(ruleMap).NotTo(HaveKey("apifrontend.kubernaut.ai/investigationsessions"),
+			"old apifrontend.kubernaut.ai API group must not be present")
+
+		Expect(ruleMap).NotTo(HaveKey("/users"),
+			"impersonate verb removed per unified security model (ADR-022)")
+	})
+
+	It("grants expanded remediationrequests and remediationapprovalrequests permissions", func() {
+		kn := testKubernautWithAF()
+		roles := ClusterRoles(kn)
+		var afRole *rbacv1.ClusterRole
+		for _, r := range roles {
+			if r.Name == clusterRoleName(kn, "apifrontend-role") {
+				afRole = r
+				break
+			}
+		}
+		Expect(afRole).NotTo(BeNil())
+
+		ruleMap := map[string][]string{}
+		for _, rule := range afRole.Rules {
+			for _, res := range rule.Resources {
+				key := rule.APIGroups[0] + "/" + res
+				ruleMap[key] = rule.Verbs
+			}
+		}
+
+		Expect(ruleMap).To(HaveKey("kubernaut.ai/remediationrequests"))
+		Expect(ruleMap["kubernaut.ai/remediationrequests"]).To(ContainElements("get", "list", "watch", "create", "update", "patch"))
+
+		Expect(ruleMap).To(HaveKey("kubernaut.ai/remediationapprovalrequests"))
+		Expect(ruleMap["kubernaut.ai/remediationapprovalrequests"]).To(ContainElements("get", "list", "create", "update", "patch"))
+
+		Expect(ruleMap).To(HaveKey("kubernaut.ai/remediationapprovalrequests/status"))
+		Expect(ruleMap["kubernaut.ai/remediationapprovalrequests/status"]).To(ContainElements("get", "update", "patch"))
+	})
+
+	It("grants core resource read access for kubectl_get/kubectl_list tools", func() {
+		kn := testKubernautWithAF()
+		roles := ClusterRoles(kn)
+		var afRole *rbacv1.ClusterRole
+		for _, r := range roles {
+			if r.Name == clusterRoleName(kn, "apifrontend-role") {
+				afRole = r
+				break
+			}
+		}
+		Expect(afRole).NotTo(BeNil())
+
+		ruleMap := map[string][]string{}
+		for _, rule := range afRole.Rules {
+			for _, res := range rule.Resources {
+				key := rule.APIGroups[0] + "/" + res
+				ruleMap[key] = rule.Verbs
+			}
+		}
+
+		Expect(ruleMap).To(HaveKey("/pods"))
+		Expect(ruleMap["/pods"]).To(ContainElements("get", "list"))
+		Expect(ruleMap).To(HaveKey("/replicationcontrollers"))
+		Expect(ruleMap["/replicationcontrollers"]).To(ContainElements("get", "list"))
+		Expect(ruleMap).To(HaveKey("/events"))
+		Expect(ruleMap["/events"]).To(ContainElements("get", "list", "create", "patch"))
+
+		Expect(ruleMap).To(HaveKey("apps/deployments"))
+		Expect(ruleMap["apps/deployments"]).To(ContainElements("get", "list"))
+		Expect(ruleMap).To(HaveKey("apps/replicasets"))
+		Expect(ruleMap).To(HaveKey("apps/statefulsets"))
+		Expect(ruleMap).To(HaveKey("apps/daemonsets"))
+
+		Expect(ruleMap).To(HaveKey("batch/jobs"))
+		Expect(ruleMap["batch/jobs"]).To(ContainElements("get"))
+		Expect(ruleMap).To(HaveKey("batch/cronjobs"))
 	})
 
 	It("has a matching ClusterRoleBinding when AF is enabled", func() {
@@ -878,7 +948,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include subjectaccessreviews/create")
 	})
 
-	It("includes remediationrequests get/list/create permission", func() {
+	It("includes remediationrequests with full CRUD+watch verbs", func() {
 		kn := testKubernautWithAF()
 		roles := ClusterRoles(kn)
 		var afRole *rbacv1.ClusterRole
@@ -898,12 +968,12 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 				}
 				for _, res := range rule.Resources {
 					if res == "remediationrequests" {
-						Expect(rule.Verbs).To(ContainElements("get", "list", "create"))
+						Expect(rule.Verbs).To(ContainElements("get", "list", "watch", "create", "update", "patch"))
 						found = true
 					}
 				}
 			}
 		}
-		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include remediationrequests get/list/create")
+		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include remediationrequests with full CRUD+watch verbs")
 	})
 })

@@ -400,56 +400,64 @@ type toolPersona struct {
 }
 
 // toolPersonas lists the 6 upstream persona-based tool roles and their allowed tools,
-// matching the merged kubernaut PR#1222 values.yaml definitions.
+// aligned with the kubernaut Helm chart values.yaml after PRs #1231, #1233, #1236.
 var toolPersonas = []toolPersona{
 	{
 		name: "tool-sre",
 		resourceNames: []string{
-			"list_investigations", "get_investigation", "start_investigation",
-			"search_signals", "get_signal_details", "get_remediation_details",
-			"list_remediations", "get_investigation_history", "search_knowledge_base",
-			"get_cluster_health", "list_nodes", "get_node_details",
-			"list_pods", "get_pod_details", "get_pod_logs",
-			"list_deployments", "get_deployment_details",
-			"list_namespaces", "get_namespace_details",
+			"kubernaut_list_remediations", "kubernaut_get_remediation",
+			"kubernaut_cancel_remediation", "kubernaut_watch",
+			"kubernaut_start_investigation", "kubernaut_poll_investigation",
+			"kubernaut_discover_workflows", "kubernaut_select_workflow", "kubernaut_present_decision",
+			"kubernaut_list_workflows", "kubernaut_get_remediation_history",
+			"kubernaut_get_effectiveness", "kubernaut_get_audit_trail",
+			"kubernaut_takeover", "kubernaut_message", "kubernaut_complete",
+			"kubernaut_cancel", "kubernaut_status", "kubernaut_reconnect",
+			"kubernaut_stream_investigation",
+			"kubectl_get", "kubectl_list", "kubectl_list_events",
+			"af_check_existing_rr", "af_create_rr",
 		},
 	},
 	{
 		name: "tool-ai-orchestrator",
 		resourceNames: []string{
-			"list_investigations", "get_investigation", "start_investigation",
-			"search_signals", "get_signal_details", "get_remediation_details",
-			"list_remediations", "get_investigation_history", "search_knowledge_base",
-			"get_cluster_health", "list_nodes", "get_node_details",
-			"list_pods", "get_pod_details", "get_pod_logs",
+			"kubernaut_list_remediations", "kubernaut_get_remediation", "kubernaut_watch",
+			"kubernaut_start_investigation", "kubernaut_poll_investigation",
+			"kubernaut_discover_workflows", "kubernaut_select_workflow", "kubernaut_present_decision",
+			"kubernaut_takeover", "kubernaut_message", "kubernaut_complete",
+			"kubernaut_cancel", "kubernaut_status", "kubernaut_reconnect",
+			"kubernaut_stream_investigation",
+			"kubectl_get", "kubectl_list", "kubectl_list_events",
+			"af_check_existing_rr", "af_create_rr",
 		},
 	},
 	{
 		name: "tool-cicd",
 		resourceNames: []string{
-			"list_investigations", "get_investigation", "get_investigation_history",
+			"kubernaut_list_remediations", "kubernaut_get_remediation", "kubernaut_watch",
 		},
 	},
 	{
 		name: "tool-observability",
 		resourceNames: []string{
-			"search_signals", "get_signal_details", "get_cluster_health",
-			"list_nodes", "get_node_details",
-			"list_pods", "get_pod_details", "get_pod_logs",
+			"kubernaut_list_remediations", "kubernaut_get_remediation", "kubernaut_watch",
+			"kubernaut_get_effectiveness", "kubernaut_list_workflows",
 		},
 	},
 	{
 		name: "tool-l3-audit",
 		resourceNames: []string{
-			"list_investigations", "get_investigation", "get_investigation_history",
-			"search_signals", "get_signal_details", "get_remediation_details",
+			"kubernaut_list_remediations", "kubernaut_get_remediation",
+			"kubernaut_list_workflows", "kubernaut_get_remediation_history",
+			"kubernaut_get_effectiveness", "kubernaut_get_audit_trail",
 		},
 	},
 	{
 		name: "tool-remediation-approver",
 		resourceNames: []string{
-			"list_remediations", "get_remediation_details",
-			"list_investigations", "get_investigation",
+			"kubernaut_approve", "kubernaut_list_approval_requests",
+			"kubernaut_get_approval_request",
+			"kubernaut_list_remediations", "kubernaut_get_remediation", "kubernaut_watch",
 		},
 	},
 }
@@ -821,12 +829,16 @@ func apifrontendClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]s
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "apifrontend-role"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"apifrontend.kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
-			{APIGroups: []string{"apifrontend.kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"users", "groups", "serviceaccounts"}, Verbs: []string{"impersonate"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests"}, Verbs: []string{"get", "list", "create", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests/status"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"get", "list", "create", "patch"}},
+			{APIGroups: []string{""}, Resources: []string{"pods", "replicationcontrollers"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get"}},
 			{APIGroups: []string{"authorization.k8s.io"}, Resources: []string{"subjectaccessreviews"}, Verbs: []string{"create"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"get", "list", "create"}},
 		},
 	}
 }
