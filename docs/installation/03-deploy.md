@@ -222,14 +222,64 @@ done
 
 ## Configure AlertManager
 
-For signals to flow into Kubernaut, OCP AlertManager must route alerts to the Gateway:
+For signals to flow into Kubernaut, OCP AlertManager must route alerts to the Gateway webhook endpoint.
+
+### Option A: Operator-managed AlertmanagerConfig (recommended)
+
+When `spec.monitoring.enabled` is true (the default), the operator creates a namespace-scoped `AlertmanagerConfig` CR that routes alerts originating from the `kubernaut-system` namespace to the Gateway. No manual AlertManager configuration is required.
+
+The operator also provisions the RBAC binding (`alertmanager-main` SA → `gateway-signal-source` ClusterRole) so that the AlertManager bearer token is authorized by the Gateway's SAR middleware.
+
+To route alerts from **other** namespaces (e.g. `demo-*`), you must use Option B or add additional `AlertmanagerConfig` CRs in those namespaces.
+
+### Option B: Manual global AlertManager configuration
+
+For cluster-wide alert routing (e.g. matching alerts from any namespace), edit the global AlertManager secret. The Gateway serves HTTPS on port 8443 with SAR-based bearer token authentication:
 
 ```bash
-GATEWAY_URL=$(oc get route gateway -n kubernaut-system -o jsonpath='{.spec.host}')
-echo "Configure AlertManager receiver → https://${GATEWAY_URL}/api/v1/alerts"
+oc apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: alertmanager-main
+  namespace: openshift-monitoring
+type: Opaque
+stringData:
+  alertmanager.yaml: |
+    global:
+      resolve_timeout: 1m
+
+    route:
+      receiver: default
+      group_wait: 5s
+      group_interval: 5s
+      repeat_interval: 1m
+      routes:
+        - match_re:
+            namespace: "demo-.*"
+          receiver: gateway-webhook
+          group_by: [alertname, namespace]
+          continue: false
+
+    receivers:
+      - name: default
+      - name: gateway-webhook
+        webhook_configs:
+          - url: "https://gateway-service.kubernaut-system.svc.cluster.local:8443/api/v1/signals/prometheus"
+            send_resolved: false
+            http_config:
+              authorization:
+                type: Bearer
+                credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+              tls_config:
+                insecure_skip_verify: true
+EOF
 ```
 
-Add a receiver in your AlertManager configuration (via the OCP console under **Administration > Cluster Settings > Configuration > Alertmanager**) pointing to this URL.
+Key points:
+- **HTTPS required**: The Gateway serves TLS on port 8443 (inter-service encryption per FedRAMP SC-8).
+- **Bearer token auth**: The Gateway validates the caller's identity via Kubernetes SubjectAccessReview. The `alertmanager-main` ServiceAccount is bound to the `gateway-signal-source` ClusterRole by the operator.
+- **`insecure_skip_verify`**: The Gateway uses an OCP service-ca certificate. Set this to `true` for intra-cluster traffic, or mount the service CA and set `ca_file` for strict verification.
 
 ## Troubleshooting
 
