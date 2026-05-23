@@ -853,26 +853,6 @@ var _ = Describe("ConfigMaps", func() {
 		)
 	})
 
-	Describe("Policy ConfigMaps", func() {
-		It("AIAnalysis policies always returns nil (user-provided prerequisite)", func() {
-			kn := testKubernaut()
-			kn.Spec.AIAnalysis.Policy.ConfigMapName = ""
-			Expect(AIAnalysisPoliciesConfigMap(kn)).To(BeNil(), "should not create a default policy")
-
-			kn.Spec.AIAnalysis.Policy.ConfigMapName = "user-custom-policies"
-			Expect(AIAnalysisPoliciesConfigMap(kn)).To(BeNil(), "should not create a policy when user provides ConfigMapName either")
-		})
-
-		It("SignalProcessing policy always returns nil (user-provided prerequisite)", func() {
-			kn := testKubernaut()
-			kn.Spec.SignalProcessing.Policy.ConfigMapName = ""
-			Expect(SignalProcessingPolicyConfigMap(kn)).To(BeNil(), "should not create a default policy")
-
-			kn.Spec.SignalProcessing.Policy.ConfigMapName = "user-sp-policy"
-			Expect(SignalProcessingPolicyConfigMap(kn)).To(BeNil(), "should not create a policy when user provides ConfigMapName either")
-		})
-	})
-
 	Describe("ProactiveSignalMappings", func() {
 		It("default mappings are generated when no user override", func() {
 			kn := testKubernaut()

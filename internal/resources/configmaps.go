@@ -875,12 +875,6 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOptio
 	}, nil
 }
 
-// AIAnalysisPoliciesConfigMap returns nil — the approval Rego policy is a
-// user-provided prerequisite and must not be defaulted by the operator.
-func AIAnalysisPoliciesConfigMap(_ *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
-	return nil
-}
-
 // SignalProcessingConfigMap builds the signalprocessing-config ConfigMap.
 func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
@@ -918,12 +912,6 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMa
 		ObjectMeta: ObjectMeta(kn, "signalprocessing-config", ComponentSignalProcessing),
 		Data:       map[string]string{"config.yaml": data},
 	}, nil
-}
-
-// SignalProcessingPolicyConfigMap returns nil — the classification Rego policy
-// is a user-provided prerequisite and must not be defaulted by the operator.
-func SignalProcessingPolicyConfigMap(_ *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
-	return nil
 }
 
 // ProactiveSignalMappingsConfigMap builds the default signalprocessing-proactive-signal-mappings

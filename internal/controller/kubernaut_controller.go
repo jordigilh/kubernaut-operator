@@ -804,12 +804,6 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 		cmHashes[b.name] = resources.ConfigMapDataHash(cm.Data)
 	}
 
-	if cm := resources.AIAnalysisPoliciesConfigMap(kn); cm != nil {
-		configMaps = append(configMaps, cm)
-	}
-	if cm := resources.SignalProcessingPolicyConfigMap(kn); cm != nil {
-		configMaps = append(configMaps, cm)
-	}
 	if cm := resources.ProactiveSignalMappingsConfigMap(kn); cm != nil {
 		configMaps = append(configMaps, cm)
 	}
