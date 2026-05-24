@@ -909,6 +909,9 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		if err := r.ensureNamespaced(ctx, kn, svc); err != nil {
 			return false, fmt.Errorf("ensuring Service %s: %w", svc.Name, err)
 		}
+		if err := r.clearStaleServingCertErrors(ctx, svc); err != nil {
+			return false, fmt.Errorf("clearing stale serving-cert annotations on %s: %w", svc.Name, err)
+		}
 	}
 
 	for _, svc := range resources.MetricsServices(kn) {
@@ -1578,6 +1581,51 @@ func (r *KubernautReconciler) createIfNotFound(ctx context.Context, kn *kubernau
 		return false, fmt.Errorf("getting %s: %w", key, err)
 	}
 	return false, nil
+}
+
+// clearStaleServingCertErrors checks whether a Service with the OCP
+// serving-cert annotation has stale generation-error annotations (e.g. after
+// a service rename) and clears them so the service-CA controller retries
+// certificate generation.
+func (r *KubernautReconciler) clearStaleServingCertErrors(ctx context.Context, desired *corev1.Service) error {
+	secretName, ok := desired.Annotations[resources.OCPServingCertAnnotation]
+	if !ok || secretName == "" {
+		return nil
+	}
+
+	live := &corev1.Service{}
+	if err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, live); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+
+	const errAnnotation = "service.beta.openshift.io/serving-cert-generation-error"
+	const errNumAnnotation = "service.beta.openshift.io/serving-cert-generation-error-num"
+	const alphaErrAnnotation = "service.alpha.openshift.io/serving-cert-generation-error"
+	const alphaErrNumAnnotation = "service.alpha.openshift.io/serving-cert-generation-error-num"
+
+	annotations := live.GetAnnotations()
+	if annotations[errAnnotation] == "" && annotations[alphaErrAnnotation] == "" {
+		return nil
+	}
+
+	secret := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: desired.Namespace}, secret)
+	if err == nil {
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	log := logf.FromContext(ctx)
+	log.Info("clearing stale serving-cert error annotations", "service", desired.Name, "secret", secretName)
+
+	delete(annotations, errAnnotation)
+	delete(annotations, errNumAnnotation)
+	delete(annotations, alphaErrAnnotation)
+	delete(annotations, alphaErrNumAnnotation)
+	live.SetAnnotations(annotations)
+	return r.Update(ctx, live)
 }
 
 func (r *KubernautReconciler) deleteIfExists(ctx context.Context, obj client.Object) error {
