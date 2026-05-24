@@ -355,21 +355,15 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			}
 		})
 
-		It("should create default policy ConfigMaps", func() {
-			for _, pair := range []struct {
-				name string
-				key  string
-			}{
-				{"aianalysis-policies", "approval.rego"},
-				{"signalprocessing-policy", "policy.rego"},
+		It("should NOT create default policy ConfigMaps (user-provided prerequisite)", func() {
+			for _, name := range []string{
+				"aianalysis-policies",
+				"signalprocessing-policy",
 			} {
-				cmd := exec.Command("kubectl", "get", "configmap", pair.name,
-					"-n", crNS,
-					"-o", fmt.Sprintf("jsonpath={.data.%s}", pair.key))
-				output, err := utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "ConfigMap %q should exist", pair.name)
-				Expect(output).NotTo(BeEmpty(),
-					"ConfigMap %q should have key %q with content", pair.name, pair.key)
+				cmd := exec.Command("kubectl", "get", "configmap", name,
+					"-n", crNS)
+				_, err := utils.Run(cmd)
+				Expect(err).To(HaveOccurred(), "ConfigMap %q should not be created by the operator", name)
 			}
 		})
 

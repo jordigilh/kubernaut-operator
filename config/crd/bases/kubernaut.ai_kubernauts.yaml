@@ -930,6 +930,17 @@ spec:
                           AllowInsecureJWKS permits HTTP (non-TLS) JWKS URLs for dev/test.
                           Production deployments MUST leave this false.
                         type: boolean
+                      enabled:
+                        description: |-
+                          Whether MCP interactive mode endpoint and Lease-based session
+                          management are enabled. When true, KA exposes a Streamable HTTP
+                          MCP endpoint at POST /api/v1/mcp.
+                        type: boolean
+                      inactivityTimeout:
+                        description: |-
+                          Session timeout after last operator activity.
+                          Must be a valid Go duration string (e.g. "10m").
+                        type: string
                       jwtProviders:
                         description: JWT providers for OIDC-based identity delegation.
                         items:
@@ -960,6 +971,21 @@ spec:
                           type: object
                         maxItems: 8
                         type: array
+                      maxConcurrentSessions:
+                        description: Maximum concurrent interactive sessions per agent
+                          replica.
+                        minimum: 1
+                        type: integer
+                      rateLimitPerUser:
+                        description: Maximum MCP requests per second per authenticated
+                          user.
+                        minimum: 1
+                        type: integer
+                      sessionTTL:
+                        description: |-
+                          Maximum duration for an interactive session before auto-release.
+                          Must be a valid Go duration string (e.g. "30m").
+                        type: string
                     type: object
                   llm:
                     description: LLM provider and credentials configuration.

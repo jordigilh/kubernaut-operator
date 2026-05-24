@@ -21,6 +21,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	routev1 "github.com/openshift/api/route/v1"
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -31,7 +32,7 @@ const (
 )
 
 var _ = Describe("GatewayRoute", func() {
-	It("is enabled by default with expected route settings", func() {
+	It("is enabled by default with reencrypt TLS targeting https port", func() {
 		kn := testKubernaut()
 		route := GatewayRoute(kn)
 
@@ -39,8 +40,9 @@ var _ = Describe("GatewayRoute", func() {
 		Expect(route.Name).To(Equal("gateway-route"), "name = %q, want %q", route.Name, "gateway-route")
 		Expect(route.Namespace).To(Equal(testSystemNamespace), "namespace = %q, want %q", route.Namespace, testSystemNamespace)
 		Expect(route.Spec.To.Name).To(Equal(testGatewayServiceName), "route target = %q, want %q", route.Spec.To.Name, testGatewayServiceName)
+		Expect(route.Spec.Port.TargetPort.StrVal).To(Equal("https"), "target port = %q, want %q", route.Spec.Port.TargetPort.StrVal, "https")
 		Expect(route.Spec.TLS).NotTo(BeNil(), "route should have TLS config")
-		Expect(route.Spec.TLS.Termination).To(Equal(routev1.TLSTerminationEdge), "TLS termination = %q, want %q", route.Spec.TLS.Termination, routev1.TLSTerminationEdge)
+		Expect(route.Spec.TLS.Termination).To(Equal(routev1.TLSTerminationReencrypt), "TLS termination = %q, want %q", route.Spec.TLS.Termination, routev1.TLSTerminationReencrypt)
 		Expect(route.Spec.TLS.InsecureEdgeTerminationPolicy).To(Equal(routev1.InsecureEdgeTerminationPolicyRedirect), "insecure policy = %q, want Redirect", route.Spec.TLS.InsecureEdgeTerminationPolicy)
 	})
 
@@ -131,6 +133,72 @@ var _ = Describe("DataStorageDBSecret", func() {
 
 		_, err := DataStorageDBSecret(kn, pgSecret)
 		Expect(err).To(HaveOccurred(), "DataStorageDBSecret should return error when required keys are missing")
+	})
+})
+
+var _ = Describe("GatewayAlertManagerConfig", func() {
+	It("creates an AlertmanagerConfig when monitoring is enabled", func() {
+		kn := testKubernaut()
+		amcfg := GatewayAlertManagerConfig(kn)
+
+		Expect(amcfg).NotTo(BeNil(), "AlertmanagerConfig should not be nil when monitoring is enabled")
+		Expect(amcfg.Name).To(Equal("kubernaut-gateway-alerts"))
+		Expect(amcfg.Namespace).To(Equal(testSystemNamespace))
+
+		Expect(amcfg.Spec.Route).NotTo(BeNil())
+		Expect(amcfg.Spec.Route.Receiver).To(Equal("gateway-webhook"))
+		Expect(amcfg.Spec.Route.GroupBy).To(ContainElements("alertname", "namespace"))
+		Expect(amcfg.Spec.Route.GroupWait).To(Equal(nonEmptyDurationPtr(monitoringv1.NonEmptyDuration("5s"))))
+		Expect(amcfg.Spec.Route.GroupInterval).To(Equal(nonEmptyDurationPtr(monitoringv1.NonEmptyDuration("5s"))))
+
+		Expect(amcfg.Spec.Receivers).To(HaveLen(1))
+		recv := amcfg.Spec.Receivers[0]
+		Expect(recv.Name).To(Equal("gateway-webhook"))
+		Expect(recv.WebhookConfigs).To(HaveLen(1))
+
+		wh := recv.WebhookConfigs[0]
+		Expect(*wh.URL).To(ContainSubstring("gateway-service"))
+		Expect(*wh.URL).To(ContainSubstring("/api/v1/signals/prometheus"))
+		Expect(*wh.URL).To(HavePrefix("https://"))
+		Expect(*wh.SendResolved).To(BeFalse())
+
+		Expect(wh.HTTPConfig).NotTo(BeNil())
+		Expect(wh.HTTPConfig.Authorization).NotTo(BeNil())
+		Expect(wh.HTTPConfig.Authorization.Type).To(Equal("Bearer"))
+		Expect(wh.HTTPConfig.Authorization.Credentials.Name).To(Equal("alertmanager-gateway-token"))
+		Expect(wh.HTTPConfig.Authorization.Credentials.Key).To(Equal("token"))
+		Expect(wh.HTTPConfig.TLSConfig).NotTo(BeNil())
+		Expect(*wh.HTTPConfig.TLSConfig.InsecureSkipVerify).To(BeTrue())
+	})
+
+	It("returns nil when monitoring is disabled", func() {
+		kn := testKubernaut()
+		disabled := false
+		kn.Spec.Monitoring.Enabled = &disabled
+		amcfg := GatewayAlertManagerConfig(kn)
+
+		Expect(amcfg).To(BeNil(), "AlertmanagerConfig should be nil when monitoring is disabled")
+	})
+})
+
+var _ = Describe("GatewayAlertManagerTokenSecret", func() {
+	It("creates a token Secret when monitoring is enabled", func() {
+		kn := testKubernaut()
+		secret := GatewayAlertManagerTokenSecret(kn)
+
+		Expect(secret).NotTo(BeNil())
+		Expect(secret.Name).To(Equal("alertmanager-gateway-token"))
+		Expect(secret.Namespace).To(Equal(testSystemNamespace))
+		Expect(secret.Type).To(Equal(corev1.SecretTypeOpaque))
+	})
+
+	It("returns nil when monitoring is disabled", func() {
+		kn := testKubernaut()
+		disabled := false
+		kn.Spec.Monitoring.Enabled = &disabled
+		secret := GatewayAlertManagerTokenSecret(kn)
+
+		Expect(secret).To(BeNil())
 	})
 })
 

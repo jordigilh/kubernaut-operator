@@ -45,6 +45,15 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("maxConcurrentRequests"))
 		})
 
+		It("includes TLS certDir for inter-service encryption", func() {
+			kn := testKubernaut()
+			cm, err := GatewayConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("tls:"))
+			Expect(data).To(ContainSubstring("certDir: /etc/tls"))
+		})
+
 		It("respects custom K8s request timeout", func() {
 			kn := testKubernaut()
 			kn.Spec.Gateway.Config.K8sRequestTimeout = "30s"
@@ -844,48 +853,6 @@ var _ = Describe("ConfigMaps", func() {
 		)
 	})
 
-	Describe("Policy ConfigMaps", func() {
-		It("AIAnalysis policies default Rego Policy is generated when ConfigMapName is empty", func() {
-			kn := testKubernaut()
-			kn.Spec.AIAnalysis.Policy.ConfigMapName = ""
-
-			cm := AIAnalysisPoliciesConfigMap(kn)
-			Expect(cm).NotTo(BeNil(), "AIAnalysisPoliciesConfigMap should return non-nil when ConfigMapName is empty")
-			Expect(cm.Name).To(Equal("aianalysis-policies"), "Name = %q, want %q", cm.Name, "aianalysis-policies")
-			rego, ok := cm.Data["approval.rego"]
-			Expect(ok).To(BeTrue(), "ConfigMap should contain approval.rego key")
-			Expect(rego).To(ContainSubstring("package kubernaut.aianalysis"), "approval.rego should contain Rego package declaration, got:\n%s", rego)
-		})
-
-		It("AIAnalysis policies returns nil when user provides ConfigMapName", func() {
-			kn := testKubernaut()
-			kn.Spec.AIAnalysis.Policy.ConfigMapName = "user-custom-policies"
-
-			cm := AIAnalysisPoliciesConfigMap(kn)
-			Expect(cm).To(BeNil(), "AIAnalysisPoliciesConfigMap should return nil when user provides ConfigMapName")
-		})
-
-		It("SignalProcessing policy default Rego is generated when ConfigMapName is empty", func() {
-			kn := testKubernaut()
-			kn.Spec.SignalProcessing.Policy.ConfigMapName = ""
-
-			cm := SignalProcessingPolicyConfigMap(kn)
-			Expect(cm).NotTo(BeNil(), "SignalProcessingPolicyConfigMap should return non-nil when ConfigMapName is empty")
-			Expect(cm.Name).To(Equal("signalprocessing-policy"), "Name = %q, want %q", cm.Name, "signalprocessing-policy")
-			rego, ok := cm.Data["policy.rego"]
-			Expect(ok).To(BeTrue(), "ConfigMap should contain policy.rego key")
-			Expect(rego).To(ContainSubstring("package kubernaut.signalprocessing"), "policy.rego should contain Rego package declaration, got:\n%s", rego)
-		})
-
-		It("SignalProcessing policy returns nil when user provides ConfigMapName", func() {
-			kn := testKubernaut()
-			kn.Spec.SignalProcessing.Policy.ConfigMapName = "user-sp-policy"
-
-			cm := SignalProcessingPolicyConfigMap(kn)
-			Expect(cm).To(BeNil(), "SignalProcessingPolicyConfigMap should return nil when user provides ConfigMapName")
-		})
-	})
-
 	Describe("ProactiveSignalMappings", func() {
 		It("default mappings are generated when no user override", func() {
 			kn := testKubernaut()
@@ -1129,6 +1096,103 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).NotTo(ContainSubstring("replayCache:"))
+	})
+
+	It("renders nested agent.llm config section", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+
+		var root struct {
+			Agent struct {
+				LLM struct {
+					Provider   string `yaml:"provider"`
+					Model      string `yaml:"model"`
+					APIKeyFile string `yaml:"apiKeyFile"`
+				} `yaml:"llm"`
+			} `yaml:"agent"`
+		}
+		err = yaml.Unmarshal([]byte(data), &root)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(root.Agent.LLM.Provider).To(Equal("openai"), "agent.llm.provider = %q, want openai", root.Agent.LLM.Provider)
+		Expect(root.Agent.LLM.Model).To(Equal("gpt-4o"), "agent.llm.model = %q, want gpt-4o", root.Agent.LLM.Model)
+		Expect(root.Agent.LLM.APIKeyFile).To(Equal("/etc/apifrontend/llm-credentials/api_key"),
+			"agent.llm.apiKeyFile should point to mounted secret")
+	})
+
+	It("does not emit flat llmEndpoint or llmModel fields", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).NotTo(ContainSubstring("llmEndpoint:"), "flat llmEndpoint field should not be emitted")
+		Expect(data).NotTo(ContainSubstring("llmModel:"), "flat llmModel field should not be emitted")
+	})
+
+	It("renders Vertex AI fields in agent.llm config", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.KubernautAgent.LLM.Provider = "vertex_ai"
+		kn.Spec.KubernautAgent.LLM.Model = "gemini-2.5-pro"
+		kn.Spec.KubernautAgent.LLM.VertexProject = "my-project"
+		kn.Spec.KubernautAgent.LLM.VertexLocation = "us-central1"
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+
+		var root struct {
+			Agent struct {
+				LLM struct {
+					Provider       string `yaml:"provider"`
+					Model          string `yaml:"model"`
+					VertexProject  string `yaml:"vertexProject"`
+					VertexLocation string `yaml:"vertexLocation"`
+				} `yaml:"llm"`
+			} `yaml:"agent"`
+		}
+		err = yaml.Unmarshal([]byte(data), &root)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(root.Agent.LLM.Provider).To(Equal("vertex_ai"))
+		Expect(root.Agent.LLM.Model).To(Equal("gemini-2.5-pro"))
+		Expect(root.Agent.LLM.VertexProject).To(Equal("my-project"))
+		Expect(root.Agent.LLM.VertexLocation).To(Equal("us-central1"))
+	})
+
+	It("renders OAuth2 block in agent.llm when enabled", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.KubernautAgent.LLM.OAuth2.Enabled = true
+		kn.Spec.KubernautAgent.LLM.OAuth2.TokenURL = "https://idp.example/oauth/token"
+		kn.Spec.KubernautAgent.LLM.OAuth2.Scopes = []string{"openid", "llm.invoke"}
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+
+		var root struct {
+			Agent struct {
+				LLM struct {
+					OAuth2 *struct {
+						Enabled        bool     `yaml:"enabled"`
+						TokenURL       string   `yaml:"tokenURL"`
+						Scopes         []string `yaml:"scopes"`
+						CredentialsDir string   `yaml:"credentialsDir"`
+					} `yaml:"oauth2"`
+				} `yaml:"llm"`
+			} `yaml:"agent"`
+		}
+		err = yaml.Unmarshal([]byte(data), &root)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(root.Agent.LLM.OAuth2).NotTo(BeNil())
+		Expect(root.Agent.LLM.OAuth2.Enabled).To(BeTrue())
+		Expect(root.Agent.LLM.OAuth2.TokenURL).To(Equal("https://idp.example/oauth/token"))
+		Expect(root.Agent.LLM.OAuth2.CredentialsDir).To(Equal("/etc/apifrontend/oauth2"))
+	})
+
+	It("omits OAuth2 block when not enabled", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).NotTo(ContainSubstring("oauth2:"))
 	})
 })
 

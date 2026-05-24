@@ -54,14 +54,15 @@ type tlsConfigYAML struct {
 }
 
 type gatewayServerYAML struct {
-	ListenAddr            string `json:"listenAddr" yaml:"listenAddr"`
-	HealthAddr            string `json:"healthAddr" yaml:"healthAddr"`
-	MetricsAddr           string `json:"metricsAddr" yaml:"metricsAddr"`
-	MaxConcurrentRequests int    `json:"maxConcurrentRequests" yaml:"maxConcurrentRequests"`
-	ReadTimeout           string `json:"readTimeout" yaml:"readTimeout"`
-	WriteTimeout          string `json:"writeTimeout" yaml:"writeTimeout"`
-	IdleTimeout           string `json:"idleTimeout" yaml:"idleTimeout"`
-	K8sRequestTimeout     string `json:"k8sRequestTimeout" yaml:"k8sRequestTimeout"`
+	ListenAddr            string        `json:"listenAddr" yaml:"listenAddr"`
+	HealthAddr            string        `json:"healthAddr" yaml:"healthAddr"`
+	MetricsAddr           string        `json:"metricsAddr" yaml:"metricsAddr"`
+	MaxConcurrentRequests int           `json:"maxConcurrentRequests" yaml:"maxConcurrentRequests"`
+	ReadTimeout           string        `json:"readTimeout" yaml:"readTimeout"`
+	WriteTimeout          string        `json:"writeTimeout" yaml:"writeTimeout"`
+	IdleTimeout           string        `json:"idleTimeout" yaml:"idleTimeout"`
+	K8sRequestTimeout     string        `json:"k8sRequestTimeout" yaml:"k8sRequestTimeout"`
+	TLS                   tlsConfigYAML `json:"tls" yaml:"tls"`
 }
 
 type loggingYAML struct {
@@ -577,6 +578,15 @@ type kubernautAgentConfigYAML struct {
 	Runtime      kaRuntimeYAML      `json:"runtime" yaml:"runtime"`
 	AI           kaAIYAML           `json:"ai" yaml:"ai"`
 	Integrations kaIntegrationsYAML `json:"integrations" yaml:"integrations"`
+	Interactive  *kaInteractiveYAML `json:"interactive,omitempty" yaml:"interactive,omitempty"`
+}
+
+type kaInteractiveYAML struct {
+	Enabled               bool   `json:"enabled" yaml:"enabled"`
+	SessionTTL            string `json:"sessionTTL,omitempty" yaml:"sessionTTL,omitempty"`
+	InactivityTimeout     string `json:"inactivityTimeout,omitempty" yaml:"inactivityTimeout,omitempty"`
+	MaxConcurrentSessions *int   `json:"maxConcurrentSessions,omitempty" yaml:"maxConcurrentSessions,omitempty"`
+	RateLimitPerUser      *int   `json:"rateLimitPerUser,omitempty" yaml:"rateLimitPerUser,omitempty"`
 }
 
 type llmRuntimeYAML struct {
@@ -697,6 +707,7 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) 
 			WriteTimeout:          "30s",
 			IdleTimeout:           "120s",
 			K8sRequestTimeout:     withDefault(gwCfg.K8sRequestTimeout, "15s"),
+			TLS:                   tlsConfigYAML{CertDir: InterServiceTLSCertDir},
 		},
 		CORS: gatewayCORSYAML{
 			AllowedOrigins:   corsOrigins,
@@ -864,20 +875,6 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOptio
 	}, nil
 }
 
-// AIAnalysisPoliciesConfigMap builds the default aianalysis-policies ConfigMap
-// containing the approval Rego policy.
-func AIAnalysisPoliciesConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
-	if kn.Spec.AIAnalysis.Policy.ConfigMapName != "" {
-		return nil
-	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, AIAnalysisPolicyName(kn), ComponentAIAnalysis),
-		Data: map[string]string{
-			"approval.rego": "package kubernaut.aianalysis\ndefault allow = true\n",
-		},
-	}
-}
-
 // SignalProcessingConfigMap builds the signalprocessing-config ConfigMap.
 func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
@@ -915,20 +912,6 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMa
 		ObjectMeta: ObjectMeta(kn, "signalprocessing-config", ComponentSignalProcessing),
 		Data:       map[string]string{"config.yaml": data},
 	}, nil
-}
-
-// SignalProcessingPolicyConfigMap builds the default signalprocessing-policy ConfigMap
-// containing the classification Rego policy.
-func SignalProcessingPolicyConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
-	if kn.Spec.SignalProcessing.Policy.ConfigMapName != "" {
-		return nil
-	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, SignalProcessingPolicyName(kn), ComponentSignalProcessing),
-		Data: map[string]string{
-			"policy.rego": "package kubernaut.signalprocessing\ndefault allow = true\n",
-		},
-	}
 }
 
 // ProactiveSignalMappingsConfigMap builds the default signalprocessing-proactive-signal-mappings
@@ -1335,6 +1318,19 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 		}
 	}
 
+	if interactive := ka.Interactive; interactive != nil && interactive.InteractiveEnabled() {
+		ic := &kaInteractiveYAML{Enabled: true}
+		if interactive.SessionTTL != "" {
+			ic.SessionTTL = interactive.SessionTTL
+		}
+		if interactive.InactivityTimeout != "" {
+			ic.InactivityTimeout = interactive.InactivityTimeout
+		}
+		ic.MaxConcurrentSessions = interactive.MaxConcurrentSessions
+		ic.RateLimitPerUser = interactive.RateLimitPerUser
+		cfg.Interactive = ic
+	}
+
 	data, err := marshalYAML(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("kubernaut-agent config: %w", err)
@@ -1501,11 +1497,30 @@ type afTLSYAML struct {
 }
 
 type afAgentYAML struct {
-	KABaseURL     string `json:"kaBaseURL" yaml:"kaBaseURL"`
-	KAMCPEndpoint string `json:"kaMCPEndpoint" yaml:"kaMCPEndpoint"`
-	DSBaseURL     string `json:"dsBaseURL" yaml:"dsBaseURL"`
-	KATLSCAFile   string `json:"kaTlsCaFile" yaml:"kaTlsCaFile"`
-	DSTLSCAFile   string `json:"dsTlsCaFile" yaml:"dsTlsCaFile"`
+	KABaseURL     string         `json:"kaBaseURL" yaml:"kaBaseURL"`
+	KAMCPEndpoint string         `json:"kaMCPEndpoint" yaml:"kaMCPEndpoint"`
+	DSBaseURL     string         `json:"dsBaseURL" yaml:"dsBaseURL"`
+	KATLSCAFile   string         `json:"kaTlsCaFile" yaml:"kaTlsCaFile"`
+	DSTLSCAFile   string         `json:"dsTlsCaFile" yaml:"dsTlsCaFile"`
+	LLM           afAgentLLMYAML `json:"llm" yaml:"llm"`
+}
+
+type afAgentLLMYAML struct {
+	Provider       string                `json:"provider" yaml:"provider"`
+	Model          string                `json:"model" yaml:"model"`
+	Endpoint       string                `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	APIKeyFile     string                `json:"apiKeyFile,omitempty" yaml:"apiKeyFile,omitempty"`
+	VertexProject  string                `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
+	VertexLocation string                `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
+	TLSCaFile      string                `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
+	OAuth2         *afAgentLLMOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+}
+
+type afAgentLLMOAuth2YAML struct {
+	Enabled        bool     `json:"enabled" yaml:"enabled"`
+	TokenURL       string   `json:"tokenURL,omitempty" yaml:"tokenURL,omitempty"`
+	Scopes         []string `json:"scopes,omitempty" yaml:"scopes,omitempty"`
+	CredentialsDir string   `json:"credentialsDir,omitempty" yaml:"credentialsDir,omitempty"`
 }
 
 type afMCPYAML struct {
@@ -1598,6 +1613,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 			DSBaseURL:     dsBaseURL,
 			KATLSCAFile:   "/etc/apifrontend/tls-ca/ca.crt",
 			DSTLSCAFile:   "/etc/apifrontend/tls-ca/ca.crt",
+			LLM:           afAgentLLMConfig(kn),
 		},
 		MCP: afMCPYAML{
 			Enabled:            true,
@@ -1664,6 +1680,40 @@ func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut) afSeverityTriageYAM
 		MaxRulesEvaluated:         100,
 		LLMConfidence:             0.7,
 	}
+}
+
+// afAgentLLMConfig builds the nested agent.llm config section for the AF,
+// matching the schema introduced in kubernaut#1252 / PR#1255.
+func afAgentLLMConfig(kn *kubernautv1alpha1.Kubernaut) afAgentLLMYAML {
+	llm := kn.Spec.KubernautAgent.LLM
+	provider := llm.Provider
+	if provider == "" {
+		provider = "vertex_ai"
+	}
+
+	cfg := afAgentLLMYAML{
+		Provider:       provider,
+		Model:          llm.Model,
+		Endpoint:       llm.Endpoint,
+		VertexProject:  llm.VertexProject,
+		VertexLocation: llm.VertexLocation,
+		TLSCaFile:      llm.TLSCaFile,
+	}
+
+	if llm.CredentialsSecretName != "" {
+		cfg.APIKeyFile = "/etc/apifrontend/llm-credentials/api_key"
+	}
+
+	if llm.OAuth2.Enabled {
+		cfg.OAuth2 = &afAgentLLMOAuth2YAML{
+			Enabled:        true,
+			TokenURL:       llm.OAuth2.TokenURL,
+			Scopes:         llm.OAuth2.Scopes,
+			CredentialsDir: "/etc/apifrontend/oauth2",
+		}
+	}
+
+	return cfg
 }
 
 func afAuthConfig(kn *kubernautv1alpha1.Kubernaut) afAuthYAML {

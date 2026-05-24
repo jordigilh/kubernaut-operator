@@ -124,13 +124,21 @@ var _ = Describe("Deployments", func() {
 			}
 		})
 
-		It("does not have tls-certs volume", func() {
+		It("has tls-certs volume from gateway-tls Secret", func() {
 			kn := testKubernaut()
 			dep, err := GatewayDeployment(kn)
 			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, "tls-certs")
+			expectHasVolumeMount(dep, "tls-certs", InterServiceTLSCertDir)
+
+			found := false
 			for _, v := range dep.Spec.Template.Spec.Volumes {
-				Expect(v.Name).NotTo(Equal("tls-certs"), "Gateway should NOT have tls-certs volume")
+				if v.Name == "tls-certs" && v.Secret != nil {
+					Expect(v.Secret.SecretName).To(Equal(GatewayTLSSecretName))
+					found = true
+				}
 			}
+			Expect(found).To(BeTrue(), "tls-certs volume should reference gateway-tls Secret")
 		})
 	})
 

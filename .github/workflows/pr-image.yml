@@ -2,18 +2,20 @@ name: PR Image Build
 
 # Builds an amd64 operator image on PR to validate the Dockerfile and
 # provide a deployable preview image for testing on OCP clusters.
-# Image is tagged as: quay.io/kubernaut-ai/kubernaut-operator:pr-<number>
+# Image is tagged as: ghcr.io/jordigilh/kubernaut-operator:pr-<number>
 #
-# Prerequisites:
-#   - Quay.io robot account secrets: QUAY_ROBOT_USERNAME, QUAY_ROBOT_TOKEN
+# Uses GHCR for PR images; Quay.io is reserved for releases only.
 
 on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
 
+permissions:
+  packages: write
+
 env:
-  IMAGE_REGISTRY: quay.io/kubernaut-ai
+  IMAGE_REGISTRY: ghcr.io/jordigilh
   IMAGE_NAME: kubernaut-operator
 
 jobs:
@@ -26,11 +28,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Login to Quay.io
+      - name: Login to GHCR
         run: |
-          podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
-                       -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
-                       quay.io
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Build image
         env:

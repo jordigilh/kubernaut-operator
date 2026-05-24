@@ -31,8 +31,13 @@ const maxJWKSURLLength = 2048
 func ValidateKubernaut(kn *kubernautv1alpha1.Kubernaut) []error {
 	errs := make([]error, 0, 4)
 	errs = append(errs, validatePostgreSQLSSLMode(kn)...)
+	errs = append(errs, validatePolicyPrerequisites(kn)...)
+	errs = append(errs, validateLLMPrerequisites(kn)...)
 	errs = append(errs, validateJWKSProviders(kn)...)
 	errs = append(errs, validateAPIFrontend(kn)...)
+	errs = append(errs, validateAlignmentCheck(kn)...)
+	errs = append(errs, validateDryRun(kn)...)
+	errs = append(errs, validateInteractive(kn)...)
 	return errs
 }
 
@@ -43,6 +48,35 @@ func validatePostgreSQLSSLMode(kn *kubernautv1alpha1.Kubernaut) []error {
 			"spec.postgresql.sslMode: \"disable\" is rejected (FedRAMP SC-8); use \"verify-full\" or \"verify-ca\"")}
 	}
 	return nil
+}
+
+func validatePolicyPrerequisites(kn *kubernautv1alpha1.Kubernaut) []error {
+	var errs []error
+	if kn.Spec.AIAnalysis.Policy.ConfigMapName == "" {
+		errs = append(errs, fmt.Errorf(
+			"spec.aiAnalysis.policy.configMapName: required — provide a ConfigMap containing key \"approval.rego\" with your Rego policy"))
+	}
+	if kn.Spec.SignalProcessing.Policy.ConfigMapName == "" {
+		errs = append(errs, fmt.Errorf(
+			"spec.signalProcessing.policy.configMapName: required — provide a ConfigMap containing key \"policy.rego\" with your Rego policy"))
+	}
+	return errs
+}
+
+func validateLLMPrerequisites(kn *kubernautv1alpha1.Kubernaut) []error {
+	var errs []error
+	const base = "spec.kubernautAgent.llm"
+	llm := &kn.Spec.KubernautAgent.LLM
+	if llm.Provider == "" {
+		errs = append(errs, fmt.Errorf("%s.provider: required — specify the LLM provider (e.g. \"openai\", \"vertexai\")", base))
+	}
+	if llm.Model == "" {
+		errs = append(errs, fmt.Errorf("%s.model: required — specify the LLM model name (e.g. \"gpt-4o\", \"gemini-2.5-pro\")", base))
+	}
+	if llm.CredentialsSecretName == "" {
+		errs = append(errs, fmt.Errorf("%s.credentialsSecretName: required — provide a Secret with LLM API credentials", base))
+	}
+	return errs
 }
 
 func validateJWKSProviders(kn *kubernautv1alpha1.Kubernaut) []error {
@@ -130,6 +164,85 @@ func validateToolRoleBindings(kn *kubernautv1alpha1.Kubernaut) []error {
 
 		if !validToolPersonas[rb.Role] {
 			errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings: unknown persona %q", rb.Role))
+		}
+	}
+
+	return errs
+}
+
+const (
+	alignmentCheckTimeoutMin = time.Second
+	alignmentCheckTimeoutMax = 60 * time.Second
+)
+
+func validateAlignmentCheck(kn *kubernautv1alpha1.Kubernaut) []error {
+	ac := &kn.Spec.KubernautAgent.AlignmentCheck
+	if !ac.Enabled {
+		return nil
+	}
+
+	var errs []error
+	const base = "spec.kubernautAgent.alignmentCheck"
+
+	if ac.Timeout != "" {
+		d, err := time.ParseDuration(ac.Timeout)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s.timeout: invalid Go duration %q: %w", base, ac.Timeout, err))
+		} else if d < alignmentCheckTimeoutMin || d > alignmentCheckTimeoutMax {
+			errs = append(errs, fmt.Errorf("%s.timeout: must be between %s and %s, got %s", base, alignmentCheckTimeoutMin, alignmentCheckTimeoutMax, d))
+		}
+	}
+
+	if ac.MaxStepTokens < 0 {
+		errs = append(errs, fmt.Errorf("%s.maxStepTokens: must be positive, got %d", base, ac.MaxStepTokens))
+	}
+
+	if llm := ac.LLM; llm != nil {
+		if llm.Provider == "" {
+			errs = append(errs, fmt.Errorf("%s.llm.provider: must not be empty when llm is set", base))
+		}
+		if llm.Model == "" {
+			errs = append(errs, fmt.Errorf("%s.llm.model: must not be empty when llm is set", base))
+		}
+	}
+
+	return errs
+}
+
+func validateDryRun(kn *kubernautv1alpha1.Kubernaut) []error {
+	ro := &kn.Spec.RemediationOrchestrator
+	if !ro.DryRun {
+		return nil
+	}
+
+	if ro.DryRunHoldPeriod == "" {
+		return nil
+	}
+
+	if _, err := time.ParseDuration(ro.DryRunHoldPeriod); err != nil {
+		return []error{fmt.Errorf("spec.remediationOrchestrator.dryRunHoldPeriod: invalid Go duration %q: %w", ro.DryRunHoldPeriod, err)}
+	}
+	return nil
+}
+
+func validateInteractive(kn *kubernautv1alpha1.Kubernaut) []error {
+	interactive := kn.Spec.KubernautAgent.Interactive
+	if interactive == nil || !interactive.InteractiveEnabled() {
+		return nil
+	}
+
+	var errs []error
+	const base = "spec.kubernautAgent.interactive"
+
+	if interactive.SessionTTL != "" {
+		if _, err := time.ParseDuration(interactive.SessionTTL); err != nil {
+			errs = append(errs, fmt.Errorf("%s.sessionTTL: invalid Go duration %q: %w", base, interactive.SessionTTL, err))
+		}
+	}
+
+	if interactive.InactivityTimeout != "" {
+		if _, err := time.ParseDuration(interactive.InactivityTimeout); err != nil {
+			errs = append(errs, fmt.Errorf("%s.inactivityTimeout: invalid Go duration %q: %w", base, interactive.InactivityTimeout, err))
 		}
 	}
 

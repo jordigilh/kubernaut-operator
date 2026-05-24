@@ -26,6 +26,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
@@ -117,7 +118,7 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors;prometheusrules,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors;prometheusrules;alertmanagerconfigs,verbs=get;list;watch;create;update;patch;delete
 
 func (r *KubernautReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -803,12 +804,6 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 		cmHashes[b.name] = resources.ConfigMapDataHash(cm.Data)
 	}
 
-	if cm := resources.AIAnalysisPoliciesConfigMap(kn); cm != nil {
-		configMaps = append(configMaps, cm)
-	}
-	if cm := resources.SignalProcessingPolicyConfigMap(kn); cm != nil {
-		configMaps = append(configMaps, cm)
-	}
 	if cm := resources.ProactiveSignalMappingsConfigMap(kn); cm != nil {
 		configMaps = append(configMaps, cm)
 	}
@@ -947,6 +942,12 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		dsPR := resources.DataStoragePrometheusRule(kn)
 		if err := r.ensureNamespaced(ctx, kn, dsPR); err != nil {
 			return false, fmt.Errorf("ensuring DS PrometheusRule: %w", err)
+		}
+	}
+
+	if amCfg := resources.GatewayAlertManagerConfig(kn); amCfg != nil && r.hasCRD(ctx, "alertmanagerconfigs.monitoring.coreos.com") {
+		if err := r.ensureNamespaced(ctx, kn, amCfg); err != nil {
+			return false, fmt.Errorf("ensuring Gateway AlertManagerConfig: %w", err)
 		}
 	}
 
@@ -1615,7 +1616,8 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if _, err := mgr.GetRESTMapper().RESTMapping(
 		schema.GroupKind{Group: "monitoring.coreos.com", Kind: "ServiceMonitor"}); err == nil {
 		b = b.Owns(&monitoringv1.ServiceMonitor{}).
-			Owns(&monitoringv1.PrometheusRule{})
+			Owns(&monitoringv1.PrometheusRule{}).
+			Owns(&monitoringv1alpha1.AlertmanagerConfig{})
 	}
 
 	return b.Named("kubernaut").
