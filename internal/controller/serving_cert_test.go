@@ -61,7 +61,7 @@ func TestClearStaleServingCertErrors_ClearsWhenSecretMissing(t *testing.T) {
 			Name:      "stale-svc",
 			Namespace: "default",
 			Annotations: map[string]string{
-				resources.OCPServingCertAnnotation:                             "my-tls",
+				resources.OCPServingCertAnnotation:                            "my-tls",
 				"service.beta.openshift.io/serving-cert-generation-error":     "UID mismatch",
 				"service.beta.openshift.io/serving-cert-generation-error-num": "5",
 			},
@@ -96,7 +96,7 @@ func TestClearStaleServingCertErrors_PreservesWhenSecretExists(t *testing.T) {
 			Name:      "ok-svc",
 			Namespace: "default",
 			Annotations: map[string]string{
-				resources.OCPServingCertAnnotation:                             "existing-tls",
+				resources.OCPServingCertAnnotation:                            "existing-tls",
 				"service.beta.openshift.io/serving-cert-generation-error":     "some error",
 				"service.beta.openshift.io/serving-cert-generation-error-num": "1",
 			},

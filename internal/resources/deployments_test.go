@@ -28,6 +28,7 @@ import (
 
 const (
 	testEnvTLSCAFile     = "TLS_CA_FILE"
+	testVolumeTLSCA      = "tls-ca"
 	testVolumeAAPCA      = "aap-ca"
 	testVolumeCombinedCA = "combined-ca"
 )
@@ -622,7 +623,7 @@ var _ = Describe("Deployments", func() {
 			for _, vm := range init.VolumeMounts {
 				mountNames[vm.Name] = true
 			}
-			for _, required := range []string{"tls-ca", testVolumeAAPCA, testVolumeCombinedCA} {
+			for _, required := range []string{testVolumeTLSCA, testVolumeAAPCA, testVolumeCombinedCA} {
 				Expect(mountNames[required]).To(BeTrue(), "init container should mount volume %q", required)
 			}
 		})
@@ -830,19 +831,19 @@ var _ = Describe("Deployments", func() {
 
 				hasCAVolume := false
 				for _, v := range dep.Spec.Template.Spec.Volumes {
-					if v.Name == "tls-ca" && v.ConfigMap != nil && v.ConfigMap.Name == InterServiceCAConfigMapName {
+					if v.Name == testVolumeTLSCA && v.ConfigMap != nil && v.ConfigMap.Name == InterServiceCAConfigMapName {
 						hasCAVolume = true
 					}
 				}
-				Expect(hasCAVolume).To(BeTrue(), "Deployment %q missing tls-ca volume", dep.Name)
+				Expect(hasCAVolume).To(BeTrue(), "Deployment %q missing %s volume", dep.Name, testVolumeTLSCA)
 
 				hasCAMount := false
 				for _, vm := range container.VolumeMounts {
-					if vm.Name == "tls-ca" && vm.MountPath == "/etc/tls-ca" {
+					if vm.Name == testVolumeTLSCA && vm.MountPath == "/etc/tls-ca" {
 						hasCAMount = true
 					}
 				}
-				Expect(hasCAMount).To(BeTrue(), "Deployment %q missing tls-ca volume mount", dep.Name)
+				Expect(hasCAMount).To(BeTrue(), "Deployment %q missing %s volume mount", dep.Name, testVolumeTLSCA)
 
 				hasCAEnv := false
 				for _, env := range container.Env {
@@ -964,11 +965,11 @@ var _ = Describe("APIFrontendDeployment", func() {
 		Expect(err).NotTo(HaveOccurred())
 		expectHasVolume(dep, "config")
 		expectHasVolume(dep, "tls-server")
-		expectHasVolume(dep, "tls-ca")
+		expectHasVolume(dep, testVolumeTLSCA)
 		expectHasVolume(dep, "tmp")
 		expectHasVolumeMount(dep, "config", "/etc/apifrontend")
 		expectHasVolumeMount(dep, "tls-server", "/etc/apifrontend/tls")
-		expectHasVolumeMount(dep, "tls-ca", "/etc/apifrontend/tls-ca")
+		expectHasVolumeMount(dep, testVolumeTLSCA, "/etc/apifrontend/tls-ca")
 		expectHasVolumeMount(dep, "tmp", "/tmp")
 	})
 
