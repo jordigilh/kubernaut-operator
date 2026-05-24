@@ -1700,7 +1700,7 @@ func afAgentLLMConfig(kn *kubernautv1alpha1.Kubernaut) afAgentLLMYAML {
 		TLSCaFile:      llm.TLSCaFile,
 	}
 
-	if llm.CredentialsSecretName != "" {
+	if llm.CredentialsSecretName != "" && provider != "vertex_ai" {
 		cfg.APIKeyFile = "/etc/apifrontend/llm-credentials/api_key"
 	}
 

@@ -1130,7 +1130,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).NotTo(ContainSubstring("llmModel:"), "flat llmModel field should not be emitted")
 	})
 
-	It("renders Vertex AI fields in agent.llm config", func() {
+	It("renders Vertex AI fields in agent.llm config without apiKeyFile", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.KubernautAgent.LLM.Provider = "vertex_ai"
 		kn.Spec.KubernautAgent.LLM.Model = "gemini-2.5-pro"
@@ -1145,6 +1145,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 				LLM struct {
 					Provider       string `yaml:"provider"`
 					Model          string `yaml:"model"`
+					APIKeyFile     string `yaml:"apiKeyFile"`
 					VertexProject  string `yaml:"vertexProject"`
 					VertexLocation string `yaml:"vertexLocation"`
 				} `yaml:"llm"`
@@ -1156,6 +1157,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(root.Agent.LLM.Model).To(Equal("gemini-2.5-pro"))
 		Expect(root.Agent.LLM.VertexProject).To(Equal("my-project"))
 		Expect(root.Agent.LLM.VertexLocation).To(Equal("us-central1"))
+		Expect(root.Agent.LLM.APIKeyFile).To(BeEmpty(),
+			"vertex_ai should use GOOGLE_APPLICATION_CREDENTIALS (ADC), not apiKeyFile")
 	})
 
 	It("renders OAuth2 block in agent.llm when enabled", func() {
