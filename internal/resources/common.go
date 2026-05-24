@@ -102,6 +102,10 @@ const (
 // PDB constant.
 const PDBMaxUnavailable = 1
 
+// LLMProviderVertexAI identifies the Vertex AI LLM provider, which uses
+// Application Default Credentials (ADC) instead of a flat API key file.
+const LLMProviderVertexAI = "vertex_ai"
+
 // OCP service-CA injection annotation.
 const OCPServiceCAInjectAnnotation = "service.beta.openshift.io/inject-cabundle"
 

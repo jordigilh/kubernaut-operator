@@ -1132,7 +1132,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("renders Vertex AI fields in agent.llm config without apiKeyFile", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.KubernautAgent.LLM.Provider = "vertex_ai"
+		kn.Spec.KubernautAgent.LLM.Provider = LLMProviderVertexAI
 		kn.Spec.KubernautAgent.LLM.Model = "gemini-2.5-pro"
 		kn.Spec.KubernautAgent.LLM.VertexProject = "my-project"
 		kn.Spec.KubernautAgent.LLM.VertexLocation = "us-central1"
@@ -1153,7 +1153,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		}
 		err = yaml.Unmarshal([]byte(data), &root)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(root.Agent.LLM.Provider).To(Equal("vertex_ai"))
+		Expect(root.Agent.LLM.Provider).To(Equal(LLMProviderVertexAI))
 		Expect(root.Agent.LLM.Model).To(Equal("gemini-2.5-pro"))
 		Expect(root.Agent.LLM.VertexProject).To(Equal("my-project"))
 		Expect(root.Agent.LLM.VertexLocation).To(Equal("us-central1"))
