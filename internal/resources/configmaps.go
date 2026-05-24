@@ -1632,8 +1632,8 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 			Name: withDefault(af.AgentCardName, "Kubernaut Agent"),
 			URL:  agentCardURL,
 		},
-		Auth:      afAuthConfig(kn),
-		RBAC:      afRBACConfig(kn),
+		Auth: afAuthConfig(kn),
+		RBAC: afRBACConfig(kn),
 		Logging: afLoggingYAML{
 			Level: withDefault(af.Logging.Level, "info"),
 		},
