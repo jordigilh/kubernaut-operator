@@ -1603,7 +1603,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 	dsBaseURL := fmt.Sprintf("https://data-storage-service.%s.svc.cluster.local:%d", ns, PortHTTPS)
 	agentCardURL := af.AgentCardURL
 	if agentCardURL == "" {
-		agentCardURL = fmt.Sprintf("https://apifrontend.%s.svc.cluster.local:%d", ns, PortHTTPS)
+		agentCardURL = fmt.Sprintf("https://apifrontend.%s.svc.cluster.local:%d/a2a/invoke", ns, PortHTTPS)
 	}
 
 	// When SPIRE/authbridge is enabled, the kagenti webhook shifts the AF
