@@ -203,6 +203,12 @@ spec:
                 description: APIFrontend configures the API Frontend (MCP/A2A gateway)
                   service.
                 properties:
+                  agentCardName:
+                    description: |-
+                      Display name for the A2A agent card (/.well-known/agent-card.json).
+                      Defaults to "Kubernaut Agent" when empty.
+                    maxLength: 128
+                    type: string
                   agentCardURL:
                     description: |-
                       External URL for the A2A agent card discovery endpoint.

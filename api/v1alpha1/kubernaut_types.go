@@ -993,6 +993,12 @@ type APIFrontendSpec struct {
 	// +optional
 	Shutdown APIFrontendShutdownSpec `json:"shutdown,omitempty"`
 
+	// Display name for the A2A agent card (/.well-known/agent-card.json).
+	// Defaults to "Kubernaut Agent" when empty.
+	// +kubebuilder:validation:MaxLength=128
+	// +optional
+	AgentCardName string `json:"agentCardName,omitempty"`
+
 	// External URL for the A2A agent card discovery endpoint.
 	// When empty, auto-derived from the in-cluster service FQDN.
 	// Must be a valid HTTPS URL when set.

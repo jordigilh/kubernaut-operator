@@ -1628,7 +1628,10 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 			Enabled:            true,
 			SessionIdleTimeout: "30m",
 		},
-		AgentCard: afAgentCardYAML{Name: "Kubernaut Agent", URL: agentCardURL},
+		AgentCard: afAgentCardYAML{
+			Name: withDefault(af.AgentCardName, "Kubernaut Agent"),
+			URL:  agentCardURL,
+		},
 		Auth:      afAuthConfig(kn),
 		RBAC:      afRBACConfig(kn),
 		Logging: afLoggingYAML{

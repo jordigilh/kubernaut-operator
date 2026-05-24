@@ -1058,6 +1058,24 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).To(ContainSubstring("kubernaut-apifrontend"))
 	})
 
+	It("defaults agent card name to Kubernaut Agent", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("name: Kubernaut Agent"))
+	})
+
+	It("propagates custom agent card name from CR", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.AgentCardName = "My Custom Agent"
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("name: My Custom Agent"))
+		Expect(data).NotTo(ContainSubstring("name: Kubernaut Agent"))
+	})
+
 	It("renders rate limit defaults", func() {
 		kn := testKubernautWithAF()
 		cm, err := APIFrontendConfigMap(kn)
