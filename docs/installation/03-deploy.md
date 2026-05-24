@@ -129,6 +129,16 @@ spec:
       secretName: slack-webhook            # omit to disable Slack delivery
       channel: "#kubernaut-alerts"
 
+  # --- API Frontend (optional) ---
+  # The API Frontend provides external MCP/A2A access to Kubernaut Agent.
+  # It requires an OIDC issuer (e.g. RHBK/Keycloak) when TLS is enabled.
+  # Set enabled: false to skip AF deployment entirely.
+  apiFrontend:
+    # enabled: false                        # uncomment to disable AF
+    auth:
+      issuerURL: "https://keycloak.apps.example.com/realms/kubernaut"
+      audience: "kubernaut-apifrontend"     # must match the OIDC client
+
   # --- Gateway tuning (optional) ---
   gateway:
     route:
@@ -326,6 +336,16 @@ conflicts with other operators managing the same ClusterRole names.
 If using `additionalClusterRoleBindings`, check the `AdditionalRBACBound`
 condition for `PartiallyBound` — one or more referenced ClusterRoles may
 not exist.
+
+**API Frontend crash-looping with `auth.issuerURL is required`:**
+
+The AF requires OIDC authentication in production (TLS) mode. Set `spec.apiFrontend.auth.issuerURL` to your OIDC provider's issuer URL (e.g. RHBK/Keycloak realm). If you don't need external MCP/A2A access, disable the AF entirely:
+
+```yaml
+spec:
+  apiFrontend:
+    enabled: false
+```
 
 **CR in Degraded:**
 

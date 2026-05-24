@@ -102,6 +102,10 @@ const (
 // PDB constant.
 const PDBMaxUnavailable = 1
 
+// LLMProviderVertexAI identifies the Vertex AI LLM provider, which uses
+// Application Default Credentials (ADC) instead of a flat API key file.
+const LLMProviderVertexAI = "vertex_ai"
+
 // OCP service-CA injection annotation.
 const OCPServiceCAInjectAnnotation = "service.beta.openshift.io/inject-cabundle"
 
@@ -303,8 +307,8 @@ func ContainerSecurityContext() *corev1.SecurityContext {
 func DefaultResources() corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("50m"),
-			corev1.ResourceMemory: resource.MustParse("64Mi"),
+			corev1.ResourceCPU:    resource.MustParse("500m"),
+			corev1.ResourceMemory: resource.MustParse("256Mi"),
 		},
 		Limits: corev1.ResourceList{
 			corev1.ResourceCPU:    resource.MustParse("500m"),
