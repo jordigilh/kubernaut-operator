@@ -144,6 +144,7 @@ func DataStorageClientRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Ro
 		{"data-storage-client-kubernaut-agent", ServiceAccountName(ComponentKubernautAgent)},
 		{"data-storage-client-authwebhook", ServiceAccountName(ComponentAuthWebhook)},
 		{"data-storage-client-datastorage", ServiceAccountName(ComponentDataStorage)},
+		{"data-storage-client-apifrontend", ServiceAccountName(ComponentAPIFrontend)},
 	}
 
 	rbs := make([]*rbacv1.RoleBinding, 0, len(consumers))
@@ -673,6 +674,14 @@ func kubernautAgentInvestigatorClusterRole(kn *kubernautv1alpha1.Kubernaut, labe
 		{APIGroups: []string{"admissionregistration.k8s.io"}, Resources: []string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"apiextensions.k8s.io"}, Resources: []string{"customresourcedefinitions"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"scheduling.k8s.io"}, Resources: []string{"priorityclasses"}, Verbs: []string{"get", "list", "watch"}},
+		// Kubernaut CRDs: the agent needs read access to list remediations, investigations, etc.
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{
+			"remediationrequests", "remediationworkflows", "remediationapprovalrequests",
+			"investigationsessions", "aianalyses", "signalprocessings",
+			"effectivenessassessments", "workflowexecutions", "actiontypes",
+		}, Verbs: []string{"get", "list", "watch"}},
+		// Interactive session locking via Leases (v1.5+); list needed for ReconcileOrphanedLeases
+		{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "create", "update", "delete", "list"}},
 	}
 
 	return &rbacv1.ClusterRole{
@@ -857,13 +866,20 @@ func apifrontendClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]s
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/status"}, Verbs: []string{"update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests"}, Verbs: []string{"get", "list", "create", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests/status"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"get", "list", "create", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"pods", "replicationcontrollers"}, Verbs: []string{"get", "list"}},
-			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list"}},
-			{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get"}},
 			{APIGroups: []string{"authorization.k8s.io"}, Resources: []string{"subjectaccessreviews"}, Verbs: []string{"create"}},
+			// kubectl_list_events
+			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"get", "list", "create", "patch"}},
+			// kubectl_get / kubectl_list triage tools (AF SA reads cluster state)
+			{APIGroups: []string{""}, Resources: []string{"pods", "replicationcontrollers", "services", "configmaps", "secrets", "endpoints", "namespaces", "nodes", "persistentvolumeclaims"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses", "networkpolicies"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"cert-manager.io"}, Resources: []string{"certificates"}, Verbs: []string{"get", "list"}},
 		},
 	}
 }

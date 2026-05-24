@@ -185,6 +185,7 @@ var _ = Describe("ClusterRoles", func() {
 				"policy.linkerd.io",
 				"security.istio.io",
 				"networking.istio.io",
+				"kubernaut.ai",
 			}
 			foundGroups := make(map[string]bool)
 			for _, rule := range investigator.Rules {
@@ -438,10 +439,10 @@ var _ = Describe("ClusterRoleBindings", func() {
 })
 
 var _ = Describe("DataStorageClientRoleBindings", func() {
-	It("returns ten bindings", func() {
+	It("returns eleven bindings", func() {
 		kn := testKubernaut()
 		rbs := DataStorageClientRoleBindings(kn)
-		Expect(rbs).To(HaveLen(10), "DataStorageClientRoleBindings() should return 10, got %d", len(rbs))
+		Expect(rbs).To(HaveLen(11), "DataStorageClientRoleBindings() should return 11, got %d", len(rbs))
 	})
 
 	It("all reference the data-storage-client ClusterRole", func() {
