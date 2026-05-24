@@ -1199,6 +1199,57 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	})
 })
 
+var _ = Describe("APIFrontendConfigMap OIDC", func() {
+	It("IA-5: propagates jwksURL to AF config for explicit JWKS endpoint trust", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.JWKSURL = "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/certs"
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("jwksURL: https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/certs"),
+			"IA-5: jwksURL must be propagated for explicit JWKS endpoint configuration")
+	})
+
+	It("IA-5: propagates oidcCaFile to AF config for OIDC CA verification", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.OIDCCAFile = "/etc/pki/tls/certs/oidc-ca.crt"
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("oidcCaFile: /etc/pki/tls/certs/oidc-ca.crt"),
+			"IA-5: oidcCaFile must be propagated for OIDC provider CA trust")
+	})
+
+	It("IA-5: omits allowInsecureIssuers by default (secure-by-default)", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).NotTo(ContainSubstring("allowInsecureIssuers: true"),
+			"IA-5: allowInsecureIssuers must default to false (secure-by-default)")
+	})
+
+	It("SC-8: propagates allowInsecureIssuers when explicitly enabled", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.AllowInsecureIssuers = true
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("allowInsecureIssuers: true"),
+			"SC-8: allowInsecureIssuers must be propagated when explicitly set")
+	})
+
+	It("SC-23: propagates audience claim for token binding validation", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.Audience = "custom-audience"
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("audience: custom-audience"),
+			"SC-23: audience claim must be propagated for token binding")
+	})
+})
+
 var _ = Describe("APIFrontendConfigMap SAR", func() {
 	It("includes rbac.sarCacheTTL with default 30s", func() {
 		kn := testKubernautWithAF()

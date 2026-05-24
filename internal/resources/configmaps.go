@@ -1534,9 +1534,12 @@ type afAgentCardYAML struct {
 }
 
 type afAuthYAML struct {
-	IssuerURL   string             `json:"issuerURL" yaml:"issuerURL"`
-	Audience    string             `json:"audience" yaml:"audience"`
-	ReplayCache *afReplayCacheYAML `json:"replayCache,omitempty" yaml:"replayCache,omitempty"`
+	IssuerURL            string             `json:"issuerURL" yaml:"issuerURL"`
+	Audience             string             `json:"audience" yaml:"audience"`
+	JWKSURL              string             `json:"jwksURL,omitempty" yaml:"jwksURL,omitempty"`
+	OIDCCAFile           string             `json:"oidcCaFile,omitempty" yaml:"oidcCaFile,omitempty"`
+	AllowInsecureIssuers bool               `json:"allowInsecureIssuers,omitempty" yaml:"allowInsecureIssuers,omitempty"`
+	ReplayCache          *afReplayCacheYAML `json:"replayCache,omitempty" yaml:"replayCache,omitempty"`
 }
 
 type afReplayCacheYAML struct {
@@ -1720,8 +1723,11 @@ func afAgentLLMConfig(kn *kubernautv1alpha1.Kubernaut) afAgentLLMYAML {
 func afAuthConfig(kn *kubernautv1alpha1.Kubernaut) afAuthYAML {
 	af := kn.Spec.APIFrontend
 	auth := afAuthYAML{
-		IssuerURL: af.Auth.IssuerURL,
-		Audience:  withDefault(af.Auth.Audience, "kubernaut-apifrontend"),
+		IssuerURL:            af.Auth.IssuerURL,
+		Audience:             withDefault(af.Auth.Audience, "kubernaut-apifrontend"),
+		JWKSURL:              af.Auth.JWKSURL,
+		OIDCCAFile:           af.Auth.OIDCCAFile,
+		AllowInsecureIssuers: af.Auth.AllowInsecureIssuers,
 	}
 	if kn.Spec.Valkey.SecretName != "" {
 		auth.ReplayCache = &afReplayCacheYAML{
