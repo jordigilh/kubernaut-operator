@@ -1497,12 +1497,13 @@ type afTLSYAML struct {
 }
 
 type afAgentYAML struct {
-	KABaseURL     string         `json:"kaBaseURL" yaml:"kaBaseURL"`
-	KAMCPEndpoint string         `json:"kaMCPEndpoint" yaml:"kaMCPEndpoint"`
-	DSBaseURL     string         `json:"dsBaseURL" yaml:"dsBaseURL"`
-	KATLSCAFile   string         `json:"kaTlsCaFile" yaml:"kaTlsCaFile"`
-	DSTLSCAFile   string         `json:"dsTlsCaFile" yaml:"dsTlsCaFile"`
-	LLM           afAgentLLMYAML `json:"llm" yaml:"llm"`
+	KABaseURL          string         `json:"kaBaseURL" yaml:"kaBaseURL"`
+	KAMCPEndpoint      string         `json:"kaMCPEndpoint" yaml:"kaMCPEndpoint"`
+	DSBaseURL          string         `json:"dsBaseURL" yaml:"dsBaseURL"`
+	DSBearerTokenFile  string         `json:"dsBearerTokenFile,omitempty" yaml:"dsBearerTokenFile,omitempty"`
+	KATLSCAFile        string         `json:"kaTlsCaFile" yaml:"kaTlsCaFile"`
+	DSTLSCAFile        string         `json:"dsTlsCaFile" yaml:"dsTlsCaFile"`
+	LLM                afAgentLLMYAML `json:"llm" yaml:"llm"`
 }
 
 type afAgentLLMYAML struct {
@@ -1628,12 +1629,13 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 			TLS:  afTLS,
 		},
 		Agent: afAgentYAML{
-			KABaseURL:     kaBaseURL,
-			KAMCPEndpoint: kaBaseURL + "/api/v1/mcp/",
-			DSBaseURL:     dsBaseURL,
-			KATLSCAFile:   "/etc/apifrontend/tls-ca/ca.crt",
-			DSTLSCAFile:   "/etc/apifrontend/tls-ca/ca.crt",
-			LLM:           afAgentLLMConfig(kn),
+			KABaseURL:         kaBaseURL,
+			KAMCPEndpoint:     kaBaseURL + "/api/v1/mcp/",
+			DSBaseURL:         dsBaseURL,
+			DSBearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
+			KATLSCAFile:       "/etc/apifrontend/tls-ca/ca.crt",
+			DSTLSCAFile:       "/etc/apifrontend/tls-ca/ca.crt",
+			LLM:               afAgentLLMConfig(kn),
 		},
 		MCP: afMCPYAML{
 			Enabled:            true,
