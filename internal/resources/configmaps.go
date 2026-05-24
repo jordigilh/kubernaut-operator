@@ -1497,13 +1497,30 @@ type afTLSYAML struct {
 }
 
 type afAgentYAML struct {
-	KABaseURL     string `json:"kaBaseURL" yaml:"kaBaseURL"`
-	KAMCPEndpoint string `json:"kaMCPEndpoint" yaml:"kaMCPEndpoint"`
-	DSBaseURL     string `json:"dsBaseURL" yaml:"dsBaseURL"`
-	KATLSCAFile   string `json:"kaTlsCaFile" yaml:"kaTlsCaFile"`
-	DSTLSCAFile   string `json:"dsTlsCaFile" yaml:"dsTlsCaFile"`
-	LLMEndpoint   string `json:"llmEndpoint,omitempty" yaml:"llmEndpoint,omitempty"`
-	LLMModel      string `json:"llmModel,omitempty" yaml:"llmModel,omitempty"`
+	KABaseURL     string        `json:"kaBaseURL" yaml:"kaBaseURL"`
+	KAMCPEndpoint string        `json:"kaMCPEndpoint" yaml:"kaMCPEndpoint"`
+	DSBaseURL     string        `json:"dsBaseURL" yaml:"dsBaseURL"`
+	KATLSCAFile   string        `json:"kaTlsCaFile" yaml:"kaTlsCaFile"`
+	DSTLSCAFile   string        `json:"dsTlsCaFile" yaml:"dsTlsCaFile"`
+	LLM           afAgentLLMYAML `json:"llm" yaml:"llm"`
+}
+
+type afAgentLLMYAML struct {
+	Provider       string              `json:"provider" yaml:"provider"`
+	Model          string              `json:"model" yaml:"model"`
+	Endpoint       string              `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	APIKeyFile     string              `json:"apiKeyFile,omitempty" yaml:"apiKeyFile,omitempty"`
+	VertexProject  string              `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
+	VertexLocation string              `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
+	TLSCaFile      string              `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
+	OAuth2         *afAgentLLMOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+}
+
+type afAgentLLMOAuth2YAML struct {
+	Enabled        bool     `json:"enabled" yaml:"enabled"`
+	TokenURL       string   `json:"tokenURL,omitempty" yaml:"tokenURL,omitempty"`
+	Scopes         []string `json:"scopes,omitempty" yaml:"scopes,omitempty"`
+	CredentialsDir string   `json:"credentialsDir,omitempty" yaml:"credentialsDir,omitempty"`
 }
 
 type afMCPYAML struct {
@@ -1596,8 +1613,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 			DSBaseURL:     dsBaseURL,
 			KATLSCAFile:   "/etc/apifrontend/tls-ca/ca.crt",
 			DSTLSCAFile:   "/etc/apifrontend/tls-ca/ca.crt",
-			LLMEndpoint:   afLLMEndpoint(kn),
-			LLMModel:      kn.Spec.KubernautAgent.LLM.Model,
+			LLM:           afAgentLLMConfig(kn),
 		},
 		MCP: afMCPYAML{
 			Enabled:            true,
@@ -1666,18 +1682,38 @@ func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut) afSeverityTriageYAM
 	}
 }
 
-// afLLMEndpoint derives the Gemini API endpoint for the AF's A2A handler.
-// For Vertex AI, constructs the regional endpoint; for other providers,
-// uses the explicit endpoint or the Gemini API default.
-func afLLMEndpoint(kn *kubernautv1alpha1.Kubernaut) string {
+// afAgentLLMConfig builds the nested agent.llm config section for the AF,
+// matching the schema introduced in kubernaut#1252 / PR#1255.
+func afAgentLLMConfig(kn *kubernautv1alpha1.Kubernaut) afAgentLLMYAML {
 	llm := kn.Spec.KubernautAgent.LLM
-	if llm.Endpoint != "" {
-		return llm.Endpoint
+	provider := llm.Provider
+	if provider == "" {
+		provider = "vertex_ai"
 	}
-	if llm.Provider == "vertex_ai" && llm.VertexLocation != "" {
-		return fmt.Sprintf("https://%s-aiplatform.googleapis.com/", llm.VertexLocation) // pre-commit:allow-sensitive
+
+	cfg := afAgentLLMYAML{
+		Provider:       provider,
+		Model:          llm.Model,
+		Endpoint:       llm.Endpoint,
+		VertexProject:  llm.VertexProject,
+		VertexLocation: llm.VertexLocation,
+		TLSCaFile:      llm.TLSCaFile,
 	}
-	return ""
+
+	if llm.CredentialsSecretName != "" {
+		cfg.APIKeyFile = "/etc/apifrontend/llm-credentials/api_key"
+	}
+
+	if llm.OAuth2.Enabled {
+		cfg.OAuth2 = &afAgentLLMOAuth2YAML{
+			Enabled:        true,
+			TokenURL:       llm.OAuth2.TokenURL,
+			Scopes:         llm.OAuth2.Scopes,
+			CredentialsDir: "/etc/apifrontend/oauth2",
+		}
+	}
+
+	return cfg
 }
 
 func afAuthConfig(kn *kubernautv1alpha1.Kubernaut) afAuthYAML {

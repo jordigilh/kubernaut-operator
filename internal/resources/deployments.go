@@ -679,13 +679,6 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		})
 		env = append(env,
 			corev1.EnvVar{Name: "GOOGLE_APPLICATION_CREDENTIALS", Value: "/etc/apifrontend/llm-credentials/credentials.json"},
-			corev1.EnvVar{Name: "LLM_API_KEY", ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
-					Key:                  "api_key",
-					Optional:             ptr.To(true),
-				},
-			}},
 		)
 	}
 
