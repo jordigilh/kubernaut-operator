@@ -1071,27 +1071,18 @@ var _ = Describe("APIFrontendDeployment", func() {
 		}
 	})
 
-	It("SC-8: AF container port is PortHTTPS when SPIRE is disabled", func() {
-		kn := testKubernautWithAF()
-		dep, err := APIFrontendDeployment(kn)
-		Expect(err).NotTo(HaveOccurred())
-		portMap := map[string]int32{}
-		for _, p := range dep.Spec.Template.Spec.Containers[0].Ports {
-			portMap[p.Name] = p.ContainerPort
+	It("SC-8: AF container declares PortHTTPS regardless of SPIRE config", func() {
+		for _, spireEnabled := range []bool{false, true} {
+			kn := testKubernautWithAF()
+			kn.Spec.APIFrontend.SPIRE.Enabled = spireEnabled
+			dep, err := APIFrontendDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+			portMap := map[string]int32{}
+			for _, p := range dep.Spec.Template.Spec.Containers[0].Ports {
+				portMap[p.Name] = p.ContainerPort
+			}
+			Expect(portMap).To(HaveKeyWithValue("https", PortHTTPS))
 		}
-		Expect(portMap).To(HaveKeyWithValue("https", PortHTTPS))
-	})
-
-	It("SC-8: AF container port shifts to PortAFBehindProxy when SPIRE is enabled", func() {
-		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
-		dep, err := APIFrontendDeployment(kn)
-		Expect(err).NotTo(HaveOccurred())
-		portMap := map[string]int32{}
-		for _, p := range dep.Spec.Template.Spec.Containers[0].Ports {
-			portMap[p.Name] = p.ContainerPort
-		}
-		Expect(portMap).To(HaveKeyWithValue("https", PortAFBehindProxy))
 	})
 })
 

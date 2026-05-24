@@ -1606,9 +1606,13 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 		agentCardURL = fmt.Sprintf("https://apifrontend.%s.svc.cluster.local:%d", ns, PortHTTPS)
 	}
 
+	// When SPIRE/authbridge is enabled, the kagenti webhook shifts the AF
+	// container to port+1 and places authbridge on the original port. Since
+	// AF reads its listen port from config.yaml (not the PORT env var), we
+	// must set server.port to the shifted value here.
 	listenPort := PortHTTPS
 	if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
-		listenPort = PortAFBehindProxy
+		listenPort = PortHTTPS + 1
 	}
 
 	cfg := afConfigYAML{

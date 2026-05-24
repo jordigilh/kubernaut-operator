@@ -1066,6 +1066,16 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).To(ContainSubstring("name: Kubernaut Agent"))
 	})
 
+	It("shifts server.port to 8444 when SPIRE is enabled", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("port: 8444"),
+			"AF must listen on 8444 so kagenti authbridge can occupy 8443")
+	})
+
 	It("propagates custom agent card name from CR", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.AgentCardName = "My Custom Agent"

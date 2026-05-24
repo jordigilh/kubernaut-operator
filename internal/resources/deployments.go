@@ -697,18 +697,13 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 	}
 	gracePeriod := drainSec + 5
 
-	afPort := PortHTTPS
-	if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
-		afPort = PortAFBehindProxy
-	}
-
 	dep, err := buildDeployment(kn, DeploymentParams{
 		Component: ComponentAPIFrontend, ImageName: "apifrontend",
 		Resources: kn.Spec.APIFrontend.Resources, VolumeMounts: mounts, Volumes: volumes,
 		Env:  env,
 		Args: []string{"--config=/etc/apifrontend/config.yaml"},
 		Ports: []corev1.ContainerPort{
-			{Name: "https", ContainerPort: afPort, Protocol: corev1.ProtocolTCP},
+			{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		},

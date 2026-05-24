@@ -160,19 +160,19 @@ var _ = Describe("Services", func() {
 			Expect(found).To(BeTrue(), "apifrontend service not found")
 		})
 
-		It("SC-8: https port targets PortAFBehindProxy when SPIRE is enabled", func() {
+		It("SC-8: agent-tls always targets PortHTTPS where authbridge listens", func() {
 			kn := testKubernautWithAF()
 			kn.Spec.APIFrontend.SPIRE.Enabled = true
 			for _, svc := range Services(kn) {
 				if svc.Name == "apifrontend" {
 					for _, p := range svc.Spec.Ports {
-						if p.Name == "https" {
-							Expect(p.TargetPort.IntValue()).To(Equal(int(PortAFBehindProxy)),
-								"https must target AF behind-proxy port when SPIRE is enabled")
+						if p.Name == AgentTLSPortName {
+							Expect(p.TargetPort.IntValue()).To(Equal(int(PortHTTPS)),
+								"agent-tls must target PortHTTPS where authbridge listens")
 							return
 						}
 					}
-					Fail("apifrontend service should have an https port")
+					Fail("apifrontend service should have an agent-tls port")
 				}
 			}
 			Fail("apifrontend service not found")
