@@ -436,7 +436,7 @@ spec:
                           When empty, the className field is omitted from the ClusterSPIFFEID spec.
                         type: string
                       enabled:
-                        default: false
+                        default: true
                         description: Whether SPIRE mTLS sidecar injection is enabled.
                         type: boolean
                     type: object

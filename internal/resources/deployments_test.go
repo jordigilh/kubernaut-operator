@@ -1071,78 +1071,27 @@ var _ = Describe("APIFrontendDeployment", func() {
 		}
 	})
 
-	It("SC-8: does not include SPIRE sidecar when SPIRE is disabled", func() {
+	It("SC-8: AF container port is PortHTTPS when SPIRE is disabled", func() {
 		kn := testKubernautWithAF()
 		dep, err := APIFrontendDeployment(kn)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(dep.Spec.Template.Spec.Containers).To(HaveLen(1),
-			"AF should have only the main container when SPIRE is disabled")
-		for _, v := range dep.Spec.Template.Spec.Volumes {
-			Expect(v.Name).NotTo(Equal(SPIREVolumeName),
-				"should not have SPIFFE CSI volume when SPIRE is disabled")
-		}
-	})
-
-	It("SC-8: injects ghostunnel sidecar when SPIRE is enabled", func() {
-		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
-		dep, err := APIFrontendDeployment(kn)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(dep.Spec.Template.Spec.Containers).To(HaveLen(2),
-			"AF should have main + sidecar containers when SPIRE is enabled")
-
-		sidecar := dep.Spec.Template.Spec.Containers[1]
-		Expect(sidecar.Name).To(Equal("spire-proxy"))
-
 		portMap := map[string]int32{}
-		for _, p := range sidecar.Ports {
+		for _, p := range dep.Spec.Template.Spec.Containers[0].Ports {
 			portMap[p.Name] = p.ContainerPort
 		}
-		Expect(portMap).To(HaveKeyWithValue("spire-mtls", SPIRESidecarPort))
+		Expect(portMap).To(HaveKeyWithValue("https", PortHTTPS))
 	})
 
-	It("SC-8: sidecar mounts SPIFFE CSI volume", func() {
+	It("SC-8: AF container port shifts to PortAFBehindProxy when SPIRE is enabled", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.SPIRE.Enabled = true
 		dep, err := APIFrontendDeployment(kn)
 		Expect(err).NotTo(HaveOccurred())
-		expectHasVolume(dep, SPIREVolumeName)
-
-		sidecar := dep.Spec.Template.Spec.Containers[1]
-		hasSPIREMount := false
-		for _, m := range sidecar.VolumeMounts {
-			if m.Name == SPIREVolumeName && m.MountPath == SPIREMountPath {
-				hasSPIREMount = true
-			}
+		portMap := map[string]int32{}
+		for _, p := range dep.Spec.Template.Spec.Containers[0].Ports {
+			portMap[p.Name] = p.ContainerPort
 		}
-		Expect(hasSPIREMount).To(BeTrue(), "sidecar must mount SPIFFE CSI volume")
-	})
-
-	It("SC-8: SPIFFE CSI volume uses correct driver", func() {
-		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
-		dep, err := APIFrontendDeployment(kn)
-		Expect(err).NotTo(HaveOccurred())
-		for _, v := range dep.Spec.Template.Spec.Volumes {
-			if v.Name == SPIREVolumeName {
-				Expect(v.CSI).NotTo(BeNil(), "SPIFFE volume must use CSI driver")
-				Expect(v.CSI.Driver).To(Equal(SPIRECSIDriver))
-				Expect(*v.CSI.ReadOnly).To(BeTrue())
-				return
-			}
-		}
-		Fail("SPIFFE CSI volume not found")
-	})
-
-	It("SC-8: sidecar has restricted security context", func() {
-		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
-		dep, err := APIFrontendDeployment(kn)
-		Expect(err).NotTo(HaveOccurred())
-		sidecar := dep.Spec.Template.Spec.Containers[1]
-		Expect(sidecar.SecurityContext).NotTo(BeNil())
-		Expect(*sidecar.SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
-		Expect(*sidecar.SecurityContext.ReadOnlyRootFilesystem).To(BeTrue())
+		Expect(portMap).To(HaveKeyWithValue("https", PortAFBehindProxy))
 	})
 })
 

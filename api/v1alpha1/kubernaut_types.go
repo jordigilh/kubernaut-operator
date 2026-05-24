@@ -933,7 +933,7 @@ func (s *APIFrontendRouteSpec) AFRouteEnabled() bool {
 // SPIRE-aware mTLS sidecar into the AF deployment.
 type APIFrontendSPIRESpec struct {
 	// Whether SPIRE mTLS sidecar injection is enabled.
-	// +kubebuilder:default=false
+	// +kubebuilder:default=true
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 

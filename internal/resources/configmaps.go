@@ -1606,9 +1606,14 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 		agentCardURL = fmt.Sprintf("https://apifrontend.%s.svc.cluster.local:%d", ns, PortHTTPS)
 	}
 
+	listenPort := PortHTTPS
+	if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
+		listenPort = PortAFBehindProxy
+	}
+
 	cfg := afConfigYAML{
 		Server: afServerYAML{
-			Port: int(PortHTTPS),
+			Port: int(listenPort),
 			TLS:  afTLSYAML{CertDir: "/etc/apifrontend/tls", Required: true},
 		},
 		Agent: afAgentYAML{

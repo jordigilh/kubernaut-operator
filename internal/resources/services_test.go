@@ -160,25 +160,22 @@ var _ = Describe("Services", func() {
 			Expect(found).To(BeTrue(), "apifrontend service not found")
 		})
 
-		It("SC-8: agent-tls targets SPIRE sidecar port when SPIRE is enabled", func() {
+		It("SC-8: https port targets PortAFBehindProxy when SPIRE is enabled", func() {
 			kn := testKubernautWithAF()
 			kn.Spec.APIFrontend.SPIRE.Enabled = true
-			found := false
 			for _, svc := range Services(kn) {
 				if svc.Name == "apifrontend" {
-					found = true
 					for _, p := range svc.Spec.Ports {
-						if p.Name == AgentTLSPortName {
-							Expect(p.Port).To(Equal(int32(443)))
-							Expect(p.TargetPort.IntValue()).To(Equal(int(SPIRESidecarPort)),
-								"agent-tls must target SPIRE sidecar port %d when SPIRE is enabled", SPIRESidecarPort)
+						if p.Name == "https" {
+							Expect(p.TargetPort.IntValue()).To(Equal(int(PortAFBehindProxy)),
+								"https must target AF behind-proxy port when SPIRE is enabled")
 							return
 						}
 					}
-					Fail("apifrontend service should have an agent-tls port")
+					Fail("apifrontend service should have an https port")
 				}
 			}
-			Expect(found).To(BeTrue(), "apifrontend service not found")
+			Fail("apifrontend service not found")
 		})
 
 		It("annotates data-storage-service with serving cert secret name", func() {

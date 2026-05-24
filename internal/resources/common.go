@@ -81,6 +81,9 @@ const (
 	PortAuthWebhookService int32 = 443
 	PortWebhookServer      int32 = 9443
 	PortHealthProbe        int32 = 8081
+	// PortAFBehindProxy is the AF listen port when an mTLS sidecar (kagenti
+	// authbridge) occupies PortHTTPS. See kubernaut#1262.
+	PortAFBehindProxy int32 = 8444
 )
 
 // Default PostgreSQL port when not specified in the CR.
