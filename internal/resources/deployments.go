@@ -724,7 +724,61 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 	dep.Spec.Template.Labels[KagentiAgentTypeLabel] = "agent"
 	dep.Spec.Template.Labels[KagentiA2AProtocolLabel] = ""
 
+	if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
+		appendSPIRESidecar(kn, dep)
+	}
+
 	return dep, nil
+}
+
+func appendSPIRESidecar(kn *kubernautv1alpha1.Kubernaut, dep *appsv1.Deployment) {
+	readOnly := true
+	dep.Spec.Template.Spec.Volumes = append(dep.Spec.Template.Spec.Volumes, corev1.Volume{
+		Name: SPIREVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			CSI: &corev1.CSIVolumeSource{
+				Driver:   SPIRECSIDriver,
+				ReadOnly: &readOnly,
+			},
+		},
+	})
+
+	sidecarImage := "ghostunnel/ghostunnel:v1.7.3"
+	if img, ok := kn.Spec.Image.Overrides["spire-proxy"]; ok && img != "" {
+		sidecarImage = img
+	}
+
+	dep.Spec.Template.Spec.Containers = append(dep.Spec.Template.Spec.Containers, corev1.Container{
+		Name:  "spire-proxy",
+		Image: sidecarImage,
+		Args: []string{
+			"server",
+			"--listen", fmt.Sprintf(":%d", SPIRESidecarPort),
+			"--target", fmt.Sprintf("localhost:%d", PortHTTPS),
+			"--workload-api-addr", SPIREWorkloadAddr,
+		},
+		Ports: []corev1.ContainerPort{{
+			Name:          "spire-mtls",
+			ContainerPort: SPIRESidecarPort,
+			Protocol:      corev1.ProtocolTCP,
+		}},
+		VolumeMounts: []corev1.VolumeMount{{
+			Name:      SPIREVolumeName,
+			MountPath: SPIREMountPath,
+			ReadOnly:  true,
+		}},
+		SecurityContext: ContainerSecurityContext(),
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("50m"),
+				corev1.ResourceMemory: resource.MustParse("32Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("64Mi"),
+			},
+		},
+	})
 }
 
 // --- internal helpers ---
