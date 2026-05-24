@@ -1497,22 +1497,22 @@ type afTLSYAML struct {
 }
 
 type afAgentYAML struct {
-	KABaseURL     string        `json:"kaBaseURL" yaml:"kaBaseURL"`
-	KAMCPEndpoint string        `json:"kaMCPEndpoint" yaml:"kaMCPEndpoint"`
-	DSBaseURL     string        `json:"dsBaseURL" yaml:"dsBaseURL"`
-	KATLSCAFile   string        `json:"kaTlsCaFile" yaml:"kaTlsCaFile"`
-	DSTLSCAFile   string        `json:"dsTlsCaFile" yaml:"dsTlsCaFile"`
+	KABaseURL     string         `json:"kaBaseURL" yaml:"kaBaseURL"`
+	KAMCPEndpoint string         `json:"kaMCPEndpoint" yaml:"kaMCPEndpoint"`
+	DSBaseURL     string         `json:"dsBaseURL" yaml:"dsBaseURL"`
+	KATLSCAFile   string         `json:"kaTlsCaFile" yaml:"kaTlsCaFile"`
+	DSTLSCAFile   string         `json:"dsTlsCaFile" yaml:"dsTlsCaFile"`
 	LLM           afAgentLLMYAML `json:"llm" yaml:"llm"`
 }
 
 type afAgentLLMYAML struct {
-	Provider       string              `json:"provider" yaml:"provider"`
-	Model          string              `json:"model" yaml:"model"`
-	Endpoint       string              `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
-	APIKeyFile     string              `json:"apiKeyFile,omitempty" yaml:"apiKeyFile,omitempty"`
-	VertexProject  string              `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
-	VertexLocation string              `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
-	TLSCaFile      string              `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
+	Provider       string                `json:"provider" yaml:"provider"`
+	Model          string                `json:"model" yaml:"model"`
+	Endpoint       string                `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	APIKeyFile     string                `json:"apiKeyFile,omitempty" yaml:"apiKeyFile,omitempty"`
+	VertexProject  string                `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
+	VertexLocation string                `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
+	TLSCaFile      string                `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 	OAuth2         *afAgentLLMOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
 }
 
