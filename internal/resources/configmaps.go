@@ -1615,10 +1615,17 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 		listenPort = PortHTTPS + 1
 	}
 
+	// When authbridge handles external TLS/mTLS, the AF serves plain HTTP
+	// internally. The AF disables TLS when certDir is empty and required is false.
+	afTLS := afTLSYAML{CertDir: "/etc/apifrontend/tls", Required: true}
+	if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
+		afTLS = afTLSYAML{}
+	}
+
 	cfg := afConfigYAML{
 		Server: afServerYAML{
 			Port: int(listenPort),
-			TLS:  afTLSYAML{CertDir: "/etc/apifrontend/tls", Required: true},
+			TLS:  afTLS,
 		},
 		Agent: afAgentYAML{
 			KABaseURL:     kaBaseURL,

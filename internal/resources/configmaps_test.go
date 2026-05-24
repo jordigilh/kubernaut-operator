@@ -1076,6 +1076,25 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			"AF must listen on 8444 so kagenti authbridge can occupy 8443")
 	})
 
+	It("disables AF TLS when SPIRE is enabled (authbridge terminates TLS)", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("certDir: \"\""))
+		Expect(data).To(ContainSubstring("required: false"))
+	})
+
+	It("enables AF TLS when SPIRE is disabled", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("certDir: /etc/apifrontend/tls"))
+		Expect(data).To(ContainSubstring("required: true"))
+	})
+
 	It("renders rate limit defaults", func() {
 		kn := testKubernautWithAF()
 		cm, err := APIFrontendConfigMap(kn)
