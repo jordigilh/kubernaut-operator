@@ -65,8 +65,7 @@ var _ = Describe("ClusterSPIFFEID", func() {
 		csid := ClusterSPIFFEID(kn)
 
 		Expect(csid).NotTo(BeNil())
-		template, found, err := unstructuredNestedString(csid.Object, "spec", "spiffeIDTemplate")
-		Expect(err).NotTo(HaveOccurred())
+		template, found := unstructuredNestedString(csid.Object, "spec", "spiffeIDTemplate")
 		Expect(found).To(BeTrue())
 		Expect(template).To(Equal("spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"))
 	})
@@ -77,8 +76,7 @@ var _ = Describe("ClusterSPIFFEID", func() {
 		csid := ClusterSPIFFEID(kn)
 
 		Expect(csid).NotTo(BeNil())
-		podSelector, found, err := unstructuredNestedStringMap(csid.Object, "spec", "podSelector", "matchLabels")
-		Expect(err).NotTo(HaveOccurred())
+		podSelector, found := unstructuredNestedStringMap(csid.Object, "spec", "podSelector", "matchLabels")
 		Expect(found).To(BeTrue())
 		Expect(podSelector).To(HaveKeyWithValue("app", ComponentAPIFrontend))
 	})
@@ -89,8 +87,7 @@ var _ = Describe("ClusterSPIFFEID", func() {
 		csid := ClusterSPIFFEID(kn)
 
 		Expect(csid).NotTo(BeNil())
-		nsSelector, found, err := unstructuredNestedStringMap(csid.Object, "spec", "namespaceSelector", "matchLabels")
-		Expect(err).NotTo(HaveOccurred())
+		nsSelector, found := unstructuredNestedStringMap(csid.Object, "spec", "namespaceSelector", "matchLabels")
 		Expect(found).To(BeTrue())
 		Expect(nsSelector).To(HaveKeyWithValue("kubernetes.io/metadata.name", kn.Namespace))
 	})
@@ -102,8 +99,7 @@ var _ = Describe("ClusterSPIFFEID", func() {
 		csid := ClusterSPIFFEID(kn)
 
 		Expect(csid).NotTo(BeNil())
-		className, found, err := unstructuredNestedString(csid.Object, "spec", "className")
-		Expect(err).NotTo(HaveOccurred())
+		className, found := unstructuredNestedString(csid.Object, "spec", "className")
 		Expect(found).To(BeTrue())
 		Expect(className).To(Equal("zero-trust-workload-identity-manager-spire"))
 	})
@@ -114,7 +110,7 @@ var _ = Describe("ClusterSPIFFEID", func() {
 		csid := ClusterSPIFFEID(kn)
 
 		Expect(csid).NotTo(BeNil())
-		_, found, _ := unstructuredNestedString(csid.Object, "spec", "className")
+		_, found := unstructuredNestedString(csid.Object, "spec", "className")
 		Expect(found).To(BeFalse(), "className should be absent when not configured")
 	})
 
@@ -142,26 +138,26 @@ var _ = Describe("ClusterSPIFFEIDStub", func() {
 	})
 })
 
-func unstructuredNestedString(obj map[string]interface{}, fields ...string) (string, bool, error) {
+func unstructuredNestedString(obj map[string]interface{}, fields ...string) (string, bool) {
 	val, found := unstructuredNestedField(obj, fields...)
 	if !found {
-		return "", false, nil
+		return "", false
 	}
 	s, ok := val.(string)
 	if !ok {
-		return "", true, nil
+		return "", true
 	}
-	return s, true, nil
+	return s, true
 }
 
-func unstructuredNestedStringMap(obj map[string]interface{}, fields ...string) (map[string]string, bool, error) {
+func unstructuredNestedStringMap(obj map[string]interface{}, fields ...string) (map[string]string, bool) {
 	val, found := unstructuredNestedField(obj, fields...)
 	if !found {
-		return nil, false, nil
+		return nil, false
 	}
 	m, ok := val.(map[string]interface{})
 	if !ok {
-		return nil, true, nil
+		return nil, true
 	}
 	result := make(map[string]string, len(m))
 	for k, v := range m {
@@ -169,5 +165,5 @@ func unstructuredNestedStringMap(obj map[string]interface{}, fields ...string) (
 			result[k] = s
 		}
 	}
-	return result, true, nil
+	return result, true
 }
