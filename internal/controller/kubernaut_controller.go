@@ -119,6 +119,7 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors;prometheusrules;alertmanagerconfigs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=spire.spiffe.io,resources=clusterspiffeids,verbs=get;list;watch;create;update;patch;delete
 
 func (r *KubernautReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -960,6 +961,12 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		}
 	}
 
+	return r.reconcileRoutes(ctx, kn)
+}
+
+func (r *KubernautReconciler) reconcileRoutes(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (bool, error) {
+	hasRoute := false
+
 	if route := resources.GatewayRoute(kn); route != nil {
 		if err := r.ensureNamespaced(ctx, kn, route); err != nil {
 			return false, fmt.Errorf("ensuring Gateway Route: %w", err)
@@ -1016,6 +1023,20 @@ func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *k
 			}
 		}
 	}
+
+	if r.hasCRD(ctx, "clusterspiffeids.spire.spiffe.io") {
+		if csid := resources.ClusterSPIFFEID(kn); csid != nil {
+			if err := r.ensureUnowned(ctx, csid); err != nil {
+				return fmt.Errorf("ensuring ClusterSPIFFEID: %w", err)
+			}
+		} else {
+			stale := resources.ClusterSPIFFEIDStub(kn)
+			if err := r.deleteIfExists(ctx, stale); err != nil {
+				return fmt.Errorf("deleting stale ClusterSPIFFEID: %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -1121,10 +1142,11 @@ func (r *KubernautReconciler) reconcileDelete(ctx context.Context, kn *kubernaut
 // them would destroy all CRs of those types cluster-wide.
 func (r *KubernautReconciler) deleteClusterScopedResources(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
 	log := logf.FromContext(ctx)
-	errs := make([]error, 0, 3)
+	errs := make([]error, 0, 4)
 	errs = append(errs, r.deleteRBACResources(ctx, kn)...)
 	errs = append(errs, r.deleteWebhookResources(ctx, kn)...)
 	errs = append(errs, r.deleteWorkflowResources(ctx, kn)...)
+	errs = append(errs, r.deleteSPIREResources(ctx, kn)...)
 
 	if len(errs) > 0 {
 		return fmt.Errorf("cluster-scoped cleanup: %w", errors.Join(errs...))
@@ -1270,6 +1292,15 @@ func (r *KubernautReconciler) deleteWorkflowResources(ctx context.Context, kn *k
 		}
 	}
 
+	return errs
+}
+
+func (r *KubernautReconciler) deleteSPIREResources(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
+	var errs []error
+	stub := resources.ClusterSPIFFEIDStub(kn)
+	if err := r.deleteIfExists(ctx, stub); err != nil && !meta.IsNoMatchError(err) && !runtime.IsNotRegisteredError(err) {
+		errs = append(errs, fmt.Errorf("deleting ClusterSPIFFEID: %w", err))
+	}
 	return errs
 }
 
