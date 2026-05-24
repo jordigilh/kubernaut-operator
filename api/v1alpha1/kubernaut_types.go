@@ -909,6 +909,25 @@ type RouteSpec struct {
 	Hostname string `json:"hostname,omitempty"`
 }
 
+// APIFrontendRouteSpec configures the OCP Route for the API Frontend.
+// Unlike GatewayRouteSpec, defaults to disabled (opt-in external access).
+type APIFrontendRouteSpec struct {
+	// Whether to create an OCP Route for the API Frontend.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Hostname override. When empty, the OCP router auto-generates a hostname.
+	// +optional
+	Hostname string `json:"hostname,omitempty"`
+}
+
+// AFRouteEnabled returns true when the AF Route should be created.
+// Defaults to false when Enabled is nil (opt-in).
+func (s *APIFrontendRouteSpec) AFRouteEnabled() bool {
+	return s.Enabled != nil && *s.Enabled
+}
+
 // AuthWebhookSpec configures the AuthWebhook admission controller.
 type AuthWebhookSpec struct {
 	// +optional
@@ -928,6 +947,12 @@ type APIFrontendSpec struct {
 	// +kubebuilder:default=true
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
+
+	// Route configuration for OCP external access (FedRAMP SC-8).
+	// Disabled by default; set route.enabled=true to expose AF via an
+	// OpenShift Route with reencrypt TLS termination.
+	// +optional
+	Route APIFrontendRouteSpec `json:"route,omitempty"`
 
 	// OIDC authentication configuration.
 	// +optional
@@ -1000,10 +1025,26 @@ type APIFrontendAuthSpec struct {
 	// +optional
 	IssuerURL string `json:"issuerURL,omitempty"`
 
-	// Expected JWT audience claim.
+	// Expected JWT audience claim (FedRAMP SC-23: session authenticity).
 	// +kubebuilder:default="kubernaut-apifrontend"
 	// +optional
 	Audience string `json:"audience,omitempty"`
+
+	// Explicit JWKS endpoint URL for token signature verification
+	// (FedRAMP IA-5: authenticator management). When empty, derived from
+	// issuerURL + "/protocol/openid-connect/certs".
+	// +optional
+	JWKSURL string `json:"jwksURL,omitempty"`
+
+	// Path to CA bundle for OIDC/JWKS TLS trust (FedRAMP IA-5). When set,
+	// AF uses this CA to verify the OIDC provider's certificate chain.
+	// +optional
+	OIDCCAFile string `json:"oidcCaFile,omitempty"`
+
+	// Allow HTTP (non-TLS) JWKS URLs. Must remain false in production
+	// (FedRAMP SC-8: transmission confidentiality). Intended for dev/test only.
+	// +optional
+	AllowInsecureIssuers bool `json:"allowInsecureIssuers,omitempty"`
 }
 
 // APIFrontendRateLimitSpec configures request rate limiting for the API Frontend.

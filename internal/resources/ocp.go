@@ -73,6 +73,48 @@ func GatewayRouteStub(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 	}
 }
 
+// APIFrontendRoute builds the OCP Route for external access to the AF.
+// Returns nil if Route creation is disabled (default).
+func APIFrontendRoute(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
+	if !kn.Spec.APIFrontend.Route.AFRouteEnabled() {
+		return nil
+	}
+
+	route := &routev1.Route{
+		ObjectMeta: ObjectMeta(kn, "apifrontend-route", ComponentAPIFrontend),
+		Spec: routev1.RouteSpec{
+			To: routev1.RouteTargetReference{
+				Kind: "Service",
+				Name: "apifrontend",
+			},
+			Port: &routev1.RoutePort{
+				TargetPort: intstr.FromString("https"),
+			},
+			TLS: &routev1.TLSConfig{
+				Termination:                   routev1.TLSTerminationReencrypt,
+				InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
+			},
+		},
+	}
+
+	if kn.Spec.APIFrontend.Route.Hostname != "" {
+		route.Spec.Host = kn.Spec.APIFrontend.Route.Hostname
+	}
+
+	return route
+}
+
+// APIFrontendRouteStub returns a minimal Route object suitable for deletion
+// lookups when the AF Route is disabled.
+func APIFrontendRouteStub(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
+	return &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "apifrontend-route",
+			Namespace: kn.Namespace,
+		},
+	}
+}
+
 // GatewayAlertManagerConfig builds a namespace-scoped AlertmanagerConfig CR
 // that routes alerts matching the kubernaut-system namespace to the Gateway
 // webhook. This eliminates the need to manually edit the global AlertManager

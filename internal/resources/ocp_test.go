@@ -81,6 +81,72 @@ var _ = Describe("GatewayRouteStub", func() {
 	})
 })
 
+var _ = Describe("APIFrontendRoute", func() {
+	It("SC-8: is disabled by default (opt-in external access)", func() {
+		kn := testKubernaut()
+		route := APIFrontendRoute(kn)
+
+		Expect(route).To(BeNil(), "AF Route should be nil by default (opt-in)")
+	})
+
+	It("SC-8: uses reencrypt TLS termination for end-to-end encryption", func() {
+		kn := testKubernautWithAF()
+		enabled := true
+		kn.Spec.APIFrontend.Route.Enabled = &enabled
+		route := APIFrontendRoute(kn)
+
+		Expect(route).NotTo(BeNil())
+		Expect(route.Spec.TLS).NotTo(BeNil())
+		Expect(route.Spec.TLS.Termination).To(Equal(routev1.TLSTerminationReencrypt),
+			"AF Route must use reencrypt TLS termination (SC-8)")
+		Expect(route.Spec.TLS.InsecureEdgeTerminationPolicy).To(Equal(routev1.InsecureEdgeTerminationPolicyRedirect),
+			"insecure edge traffic must redirect to HTTPS (SC-8)")
+	})
+
+	It("SC-8: targets apifrontend service on HTTPS port", func() {
+		kn := testKubernautWithAF()
+		enabled := true
+		kn.Spec.APIFrontend.Route.Enabled = &enabled
+		route := APIFrontendRoute(kn)
+
+		Expect(route).NotTo(BeNil())
+		Expect(route.Spec.To.Kind).To(Equal("Service"))
+		Expect(route.Spec.To.Name).To(Equal("apifrontend"))
+		Expect(route.Spec.Port.TargetPort.StrVal).To(Equal("https"))
+	})
+
+	It("SC-8: sets custom hostname when configured", func() {
+		kn := testKubernautWithAF()
+		enabled := true
+		kn.Spec.APIFrontend.Route.Enabled = &enabled
+		kn.Spec.APIFrontend.Route.Hostname = "af.kubernaut.example.com"
+		route := APIFrontendRoute(kn)
+
+		Expect(route).NotTo(BeNil())
+		Expect(route.Spec.Host).To(Equal("af.kubernaut.example.com"))
+	})
+
+	It("SC-8: auto-generates hostname when not configured", func() {
+		kn := testKubernautWithAF()
+		enabled := true
+		kn.Spec.APIFrontend.Route.Enabled = &enabled
+		route := APIFrontendRoute(kn)
+
+		Expect(route).NotTo(BeNil())
+		Expect(route.Spec.Host).To(BeEmpty(), "hostname should be empty for OCP auto-generation")
+	})
+})
+
+var _ = Describe("APIFrontendRouteStub", func() {
+	It("has minimal metadata for deletion lookup", func() {
+		kn := testKubernaut()
+		stub := APIFrontendRouteStub(kn)
+
+		Expect(stub.Name).To(Equal("apifrontend-route"))
+		Expect(stub.Namespace).To(Equal(kn.Namespace))
+	})
+})
+
 var _ = Describe("DataStorageDBSecret", func() {
 	It("derives from the PostgreSQL secret", func() {
 		kn := testKubernaut()

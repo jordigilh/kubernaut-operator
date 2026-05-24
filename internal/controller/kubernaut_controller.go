@@ -964,16 +964,27 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		if err := r.ensureNamespaced(ctx, kn, route); err != nil {
 			return false, fmt.Errorf("ensuring Gateway Route: %w", err)
 		}
-		return true, nil
-	}
-	staleRoute := resources.GatewayRouteStub(kn)
-	if err := r.deleteIfExists(ctx, staleRoute); err != nil {
-		if runtime.IsNotRegisteredError(err) {
-			return false, nil
+		hasRoute = true
+	} else {
+		staleRoute := resources.GatewayRouteStub(kn)
+		if err := r.deleteIfExists(ctx, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
+			return false, fmt.Errorf("deleting stale Gateway Route: %w", err)
 		}
-		return false, fmt.Errorf("deleting stale Gateway Route: %w", err)
 	}
-	return false, nil
+
+	if route := resources.APIFrontendRoute(kn); route != nil {
+		if err := r.ensureNamespaced(ctx, kn, route); err != nil {
+			return false, fmt.Errorf("ensuring AF Route: %w", err)
+		}
+		hasRoute = true
+	} else {
+		staleRoute := resources.APIFrontendRouteStub(kn)
+		if err := r.deleteIfExists(ctx, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
+			return false, fmt.Errorf("deleting stale AF Route: %w", err)
+		}
+	}
+
+	return hasRoute, nil
 }
 
 func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {

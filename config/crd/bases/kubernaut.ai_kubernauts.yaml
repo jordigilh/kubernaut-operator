@@ -213,12 +213,29 @@ spec:
                   auth:
                     description: OIDC authentication configuration.
                     properties:
+                      allowInsecureIssuers:
+                        description: |-
+                          Allow HTTP (non-TLS) JWKS URLs. Must remain false in production
+                          (FedRAMP SC-8: transmission confidentiality). Intended for dev/test only.
+                        type: boolean
                       audience:
                         default: kubernaut-apifrontend
-                        description: Expected JWT audience claim.
+                        description: 'Expected JWT audience claim (FedRAMP SC-23:
+                          session authenticity).'
                         type: string
                       issuerURL:
                         description: OIDC issuer URL (e.g. "https://login.kubernaut.ai/realms/kubernaut").
+                        type: string
+                      jwksURL:
+                        description: |-
+                          Explicit JWKS endpoint URL for token signature verification
+                          (FedRAMP IA-5: authenticator management). When empty, derived from
+                          issuerURL + "/protocol/openid-connect/certs".
+                        type: string
+                      oidcCaFile:
+                        description: |-
+                          Path to CA bundle for OIDC/JWKS TLS trust (FedRAMP IA-5). When set,
+                          AF uses this CA to verify the OIDC provider's certificate chain.
                         type: string
                     type: object
                   enabled:
@@ -379,6 +396,21 @@ spec:
                           otherwise to an implementation-defined value. Requests cannot exceed Limits.
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
+                    type: object
+                  route:
+                    description: |-
+                      Route configuration for OCP external access (FedRAMP SC-8).
+                      Disabled by default; set route.enabled=true to expose AF via an
+                      OpenShift Route with reencrypt TLS termination.
+                    properties:
+                      enabled:
+                        default: false
+                        description: Whether to create an OCP Route for the API Frontend.
+                        type: boolean
+                      hostname:
+                        description: Hostname override. When empty, the OCP router
+                          auto-generates a hostname.
+                        type: string
                     type: object
                   shutdown:
                     description: Graceful shutdown configuration.
