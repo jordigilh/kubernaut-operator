@@ -104,6 +104,12 @@ func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
 				ServicePort("https", PortHTTPS),
 				ServicePort("health", PortHealthProbe),
 				ServicePort("metrics", PortMetrics),
+				{
+					Name:       AgentTLSPortName,
+					Port:       PortAuthWebhookService, // 443
+					TargetPort: intstr.FromInt32(PortHTTPS),
+					Protocol:   corev1.ProtocolTCP,
+				},
 			},
 			map[string]string{OCPServingCertAnnotation: APIFrontendTLSSecretName},
 		}))

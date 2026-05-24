@@ -112,6 +112,10 @@ const (
 	KagentiA2AProtocolLabel = "protocol.kagenti.io/a2a"
 )
 
+// AgentTLSPortName is the service port name that signals to the kagenti-operator
+// that the agent card endpoint requires TLS.
+const AgentTLSPortName = "agent-tls"
+
 // OCP service-CA injection annotation.
 const OCPServiceCAInjectAnnotation = "service.beta.openshift.io/inject-cabundle"
 

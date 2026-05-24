@@ -139,6 +139,27 @@ var _ = Describe("Services", func() {
 			Expect(found).To(BeTrue(), "gateway-service not found")
 		})
 
+		It("exposes agent-tls port on apifrontend service", func() {
+			kn := testKubernaut()
+			found := false
+			for _, svc := range Services(kn) {
+				if svc.Name == "apifrontend" {
+					found = true
+					var agentTLS *int32
+					for _, p := range svc.Spec.Ports {
+						if p.Name == AgentTLSPortName {
+							agentTLS = &p.Port
+							Expect(p.Port).To(Equal(int32(443)))
+							Expect(p.TargetPort.IntValue()).To(Equal(int(PortHTTPS)))
+						}
+					}
+					Expect(agentTLS).NotTo(BeNil(), "apifrontend service should have an %s port", AgentTLSPortName)
+					break
+				}
+			}
+			Expect(found).To(BeTrue(), "apifrontend service not found")
+		})
+
 		It("annotates data-storage-service with serving cert secret name", func() {
 			kn := testKubernaut()
 			found := false
