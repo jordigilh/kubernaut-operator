@@ -233,6 +233,15 @@ var _ = Describe("Deployments", func() {
 
 			expectHasVolume(dep, "credentials")
 			expectHasVolumeMount(dep, "credentials", "/etc/notification/credentials")
+
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == "credentials" {
+					Expect(v.Projected).NotTo(BeNil())
+					src := v.Projected.Sources[0].Secret
+					Expect(src.Optional).NotTo(BeNil())
+					Expect(*src.Optional).To(BeTrue(), "slack secret projection should be optional")
+				}
+			}
 		})
 
 		It("uses emptyDir credentials when Slack is not configured", func() {

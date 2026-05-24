@@ -408,6 +408,7 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 	}
 
 	if kn.Spec.Notification.Slack.SecretName != "" {
+		optional := true
 		volumes = append(volumes, corev1.Volume{
 			Name: "credentials",
 			VolumeSource: corev1.VolumeSource{
@@ -416,6 +417,7 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 						{Secret: &corev1.SecretProjection{
 							LocalObjectReference: corev1.LocalObjectReference{Name: kn.Spec.Notification.Slack.SecretName},
 							Items:                []corev1.KeyToPath{{Key: "webhook-url", Path: "slack-webhook"}},
+							Optional:             &optional,
 						}},
 					},
 				},
