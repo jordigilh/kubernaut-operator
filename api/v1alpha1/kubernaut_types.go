@@ -928,6 +928,26 @@ func (s *APIFrontendRouteSpec) AFRouteEnabled() bool {
 	return s.Enabled != nil && *s.Enabled
 }
 
+// APIFrontendSPIRESpec configures SPIRE mTLS identity for kagenti agent card
+// verified fetch. The operator creates a ClusterSPIFFEID and injects a
+// SPIRE-aware mTLS sidecar into the AF deployment.
+type APIFrontendSPIRESpec struct {
+	// Whether SPIRE mTLS sidecar injection is enabled.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// SPIRE class name for the ClusterSPIFFEID (e.g. "zero-trust-workload-identity-manager-spire").
+	// When empty, the className field is omitted from the ClusterSPIFFEID spec.
+	// +optional
+	ClassName string `json:"className,omitempty"`
+}
+
+// SPIREEnabled returns true when SPIRE mTLS sidecar injection is active.
+func (s *APIFrontendSPIRESpec) SPIREEnabled() bool {
+	return s.Enabled
+}
+
 // AuthWebhookSpec configures the AuthWebhook admission controller.
 type AuthWebhookSpec struct {
 	// +optional
@@ -953,6 +973,13 @@ type APIFrontendSpec struct {
 	// OpenShift Route with reencrypt TLS termination.
 	// +optional
 	Route APIFrontendRouteSpec `json:"route,omitempty"`
+
+	// SPIRE mTLS identity configuration for kagenti agent card discovery
+	// (FedRAMP SC-8, IA-5). When enabled, a ClusterSPIFFEID is created and
+	// a SPIRE-aware mTLS sidecar is injected into the AF deployment so the
+	// kagenti-operator can perform verified fetch with identity binding.
+	// +optional
+	SPIRE APIFrontendSPIRESpec `json:"spire,omitempty"`
 
 	// OIDC authentication configuration.
 	// +optional

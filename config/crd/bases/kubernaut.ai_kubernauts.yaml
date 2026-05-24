@@ -423,6 +423,23 @@ spec:
                         minimum: 0
                         type: integer
                     type: object
+                  spire:
+                    description: |-
+                      SPIRE mTLS identity configuration for kagenti agent card discovery
+                      (FedRAMP SC-8, IA-5). When enabled, a ClusterSPIFFEID is created and
+                      a SPIRE-aware mTLS sidecar is injected into the AF deployment so the
+                      kagenti-operator can perform verified fetch with identity binding.
+                    properties:
+                      className:
+                        description: |-
+                          SPIRE class name for the ClusterSPIFFEID (e.g. "zero-trust-workload-identity-manager-spire").
+                          When empty, the className field is omitted from the ClusterSPIFFEID spec.
+                        type: string
+                      enabled:
+                        default: false
+                        description: Whether SPIRE mTLS sidecar injection is enabled.
+                        type: boolean
+                    type: object
                 type: object
               authWebhook:
                 description: AuthWebhook admission controller settings.
