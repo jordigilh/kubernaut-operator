@@ -1529,7 +1529,8 @@ type afMCPYAML struct {
 }
 
 type afAgentCardYAML struct {
-	URL string `json:"url" yaml:"url"`
+	Name string `json:"name,omitempty" yaml:"name,omitempty"`
+	URL  string `json:"url" yaml:"url"`
 }
 
 type afAuthYAML struct {
@@ -1619,7 +1620,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 			Enabled:            true,
 			SessionIdleTimeout: "30m",
 		},
-		AgentCard: afAgentCardYAML{URL: agentCardURL},
+		AgentCard: afAgentCardYAML{Name: "Kubernaut Agent", URL: agentCardURL},
 		Auth:      afAuthConfig(kn),
 		RBAC:      afRBACConfig(kn),
 		Logging: afLoggingYAML{
