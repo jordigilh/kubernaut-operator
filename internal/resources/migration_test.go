@@ -150,4 +150,50 @@ var _ = Describe("MigrationJob", func() {
 		Expect(cmdStr).To(ContainSubstring("pg.example.com"), "goose command should reference PG host, got:\n%s", cmdStr)
 		Expect(cmdStr).To(ContainSubstring("5432"), "goose command should reference PG port, got:\n%s", cmdStr)
 	})
+
+	It("mounts service-CA and sets sslrootcert when sslmode is verify-full (default)", func() {
+		kn := testKubernaut()
+		job := mustMigrationJob(kn)
+
+		container := job.Spec.Template.Spec.Containers[0]
+		cmdStr := strings.Join(container.Command, " ")
+		Expect(cmdStr).To(ContainSubstring("sslmode=verify-full"), "default sslmode should be verify-full")
+		Expect(cmdStr).To(ContainSubstring("sslrootcert="+InterServiceTLSCAFile), "DSN should include sslrootcert path")
+
+		mountFound := false
+		for _, vm := range container.VolumeMounts {
+			if vm.Name == "tls-ca" && vm.MountPath == "/etc/tls-ca" {
+				mountFound = true
+			}
+		}
+		Expect(mountFound).To(BeTrue(), "verify-full should mount tls-ca volume")
+
+		volFound := false
+		for _, v := range job.Spec.Template.Spec.Volumes {
+			if v.Name == "tls-ca" && v.ConfigMap != nil && v.ConfigMap.Name == InterServiceCAConfigMapName {
+				volFound = true
+				Expect(v.ConfigMap.Optional).NotTo(BeNil())
+				Expect(*v.ConfigMap.Optional).To(BeTrue(), "tls-ca volume should be optional")
+			}
+		}
+		Expect(volFound).To(BeTrue(), "verify-full should have tls-ca volume from inter-service-ca ConfigMap")
+	})
+
+	It("does not mount service-CA when sslmode is require", func() {
+		kn := testKubernaut()
+		kn.Spec.PostgreSQL.SSLMode = "require"
+		job := mustMigrationJob(kn)
+
+		container := job.Spec.Template.Spec.Containers[0]
+		cmdStr := strings.Join(container.Command, " ")
+		Expect(cmdStr).To(ContainSubstring("sslmode=require"))
+		Expect(cmdStr).NotTo(ContainSubstring("sslrootcert"), "require mode should not set sslrootcert")
+
+		for _, vm := range container.VolumeMounts {
+			Expect(vm.Name).NotTo(Equal("tls-ca"), "require mode should not mount tls-ca")
+		}
+		for _, v := range job.Spec.Template.Spec.Volumes {
+			Expect(v.Name).NotTo(Equal("tls-ca"), "require mode should not have tls-ca volume")
+		}
+	})
 })
