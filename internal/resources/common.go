@@ -106,6 +106,12 @@ const PDBMaxUnavailable = 1
 // Application Default Credentials (ADC) instead of a flat API key file.
 const LLMProviderVertexAI = "vertex_ai"
 
+// Kagenti discovery labels for A2A agent auto-discovery.
+const (
+	KagentiAgentTypeLabel   = "kagenti.io/type"
+	KagentiA2AProtocolLabel = "protocol.kagenti.io/a2a"
+)
+
 // OCP service-CA injection annotation.
 const OCPServiceCAInjectAnnotation = "service.beta.openshift.io/inject-cabundle"
 

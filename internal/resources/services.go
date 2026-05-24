@@ -99,7 +99,7 @@ func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
 
 	if kn.Spec.APIFrontendEnabled() {
 		services = append(services, buildService(kn, serviceDefinition{
-			ComponentAPIFrontend, "apifrontend-service",
+			ComponentAPIFrontend, "apifrontend",
 			[]corev1.ServicePort{
 				ServicePort("https", PortHTTPS),
 				ServicePort("health", PortHealthProbe),

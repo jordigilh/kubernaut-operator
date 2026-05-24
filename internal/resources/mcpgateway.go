@@ -37,7 +37,7 @@ func MCPGatewayHTTPRoute(kn *kubernautv1alpha1.Kubernaut) *unstructured.Unstruct
 		return nil
 	}
 	ns := kn.Namespace
-	svcName := fmt.Sprintf("%s-service", ComponentAPIFrontend)
+	svcName := ComponentAPIFrontend
 	port := int64(PortHTTPS)
 
 	route := &unstructured.Unstructured{}

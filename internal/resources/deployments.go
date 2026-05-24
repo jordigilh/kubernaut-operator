@@ -695,7 +695,7 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 	}
 	gracePeriod := drainSec + 5
 
-	return buildDeployment(kn, DeploymentParams{
+	dep, err := buildDeployment(kn, DeploymentParams{
 		Component: ComponentAPIFrontend, ImageName: "apifrontend",
 		Resources: kn.Spec.APIFrontend.Resources, VolumeMounts: mounts, Volumes: volumes,
 		Env:  env,
@@ -713,6 +713,16 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		},
 		TerminationGracePeriodSeconds: &gracePeriod,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	dep.Labels[KagentiAgentTypeLabel] = "agent"
+	dep.Labels[KagentiA2AProtocolLabel] = ""
+	dep.Spec.Template.Labels[KagentiAgentTypeLabel] = "agent"
+	dep.Spec.Template.Labels[KagentiA2AProtocolLabel] = ""
+
+	return dep, nil
 }
 
 // --- internal helpers ---
