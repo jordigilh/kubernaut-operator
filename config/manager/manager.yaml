@@ -87,7 +87,7 @@ spec:
         - name: RELATED_IMAGE_AUTHWEBHOOK
           value: quay.io/kubernaut-ai/authwebhook@sha256:fe40ebfa8e93f0ab4297345e50ceabc01d88b8f2bb3122118479256f23293e1c
         - name: RELATED_IMAGE_API_FRONTEND
-          value: quay.io/jordigilh/apifrontend@sha256:4888f4b1423c92a19718627ad0824bdd8e327dab2d31ee09bb25ad6dec2b4411
+          value: quay.io/jordigilh/apifrontend@sha256:8b66f49f275744009692b7cfa0027c8cd6a3c550a78fac1c225e072e8d87f781
         - name: RELATED_IMAGE_DB_MIGRATE
           value: quay.io/kubernaut-ai/db-migrate@sha256:e4f176f2a69b29b511f1782d0ecd0509d64390536c3d1d006a3b51b2977e1f4c
         - name: RELATED_IMAGE_INIT_POSTGRES
