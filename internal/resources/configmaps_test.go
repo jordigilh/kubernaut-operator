@@ -1066,6 +1066,15 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).To(ContainSubstring("name: Kubernaut Agent"))
 	})
 
+	It("sets session.namespace to the CR namespace for prompt context", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("namespace: kubernaut-system"),
+			"session.namespace must be set so AF BuildInstruction injects deployment context into the prompt")
+	})
+
 	It("shifts server.port to 8444 when SPIRE is enabled", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.SPIRE.Enabled = true

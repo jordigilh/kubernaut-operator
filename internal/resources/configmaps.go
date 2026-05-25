@@ -1480,6 +1480,11 @@ type afConfigYAML struct {
 	Shutdown       afShutdownYAML       `json:"shutdown" yaml:"shutdown"`
 	SeverityTriage afSeverityTriageYAML `json:"severityTriage" yaml:"severityTriage"`
 	Resilience     afResilienceYAML     `json:"resilience" yaml:"resilience"`
+	Session        afSessionYAML        `json:"session" yaml:"session"`
+}
+
+type afSessionYAML struct {
+	Namespace string `json:"namespace" yaml:"namespace"`
 }
 
 type afRBACYAML struct {
@@ -1660,6 +1665,9 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 			DrainSeconds: intPtrDefault(af.Shutdown.DrainSeconds, 15),
 		},
 		SeverityTriage: afSeverityTriageConfig(kn),
+		Session: afSessionYAML{
+			Namespace: ns,
+		},
 		Resilience: afResilienceYAML{
 			KA: afCircuitBreakerYAML{
 				ConnectTimeout: "5s", RequestTimeout: "30s",
