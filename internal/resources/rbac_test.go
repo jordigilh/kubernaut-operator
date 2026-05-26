@@ -1043,4 +1043,28 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		}
 		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include remediationrequests with full CRUD+watch verbs")
 	})
+
+	It("includes services/kubernaut-agent create for KA SAR gate (#137)", func() {
+		kn := testKubernautWithAF()
+		roles := ClusterRoles(kn)
+		var afRole *rbacv1.ClusterRole
+		for _, r := range roles {
+			if r.Name == clusterRoleName(kn, "apifrontend-role") {
+				afRole = r
+				break
+			}
+		}
+		Expect(afRole).NotTo(BeNil())
+
+		found := false
+		for _, rule := range afRole.Rules {
+			if len(rule.APIGroups) > 0 && rule.APIGroups[0] == "" &&
+				len(rule.Resources) > 0 && rule.Resources[0] == "services" &&
+				len(rule.ResourceNames) > 0 && rule.ResourceNames[0] == "kubernaut-agent" {
+				Expect(rule.Verbs).To(ContainElement("create"))
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include services/kubernaut-agent create for KA SAR gate")
+	})
 })
