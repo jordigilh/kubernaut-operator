@@ -837,6 +837,7 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 		configMaps = append(configMaps,
 			resources.EffectivenessMonitorServiceCAConfigMap(kn),
 			resources.KubernautAgentServiceCAConfigMap(kn),
+			resources.APIFrontendServiceCAConfigMap(kn),
 		)
 	}
 	for _, cm := range configMaps {

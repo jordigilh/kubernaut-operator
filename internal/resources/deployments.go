@@ -674,6 +674,13 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		{Name: "tls-ca", MountPath: "/etc/apifrontend/tls-ca", ReadOnly: true},
 	}
 
+	if kn.Spec.Monitoring.MonitoringEnabled() {
+		volumes = append(volumes, configMapVolume("service-ca", "apifrontend-service-ca"))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: "service-ca", MountPath: "/etc/ssl/af", ReadOnly: true,
+		})
+	}
+
 	if secretName := kn.Spec.KubernautAgent.LLM.CredentialsSecretName; secretName != "" {
 		volumes = append(volumes, secretVolume("llm-credentials", secretName))
 		mounts = append(mounts, corev1.VolumeMount{

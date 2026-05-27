@@ -1433,6 +1433,12 @@ func KubernautAgentServiceCAConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.C
 	return serviceCAConfigMap(kn, "kubernaut-agent-service-ca", ComponentKubernautAgent)
 }
 
+// APIFrontendServiceCAConfigMap returns the ConfigMap for OCP service-ca injection
+// for API Frontend (used by severity triage to trust the Thanos Querier certificate).
+func APIFrontendServiceCAConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+	return serviceCAConfigMap(kn, "apifrontend-service-ca", ComponentAPIFrontend)
+}
+
 func serviceCAConfigMap(kn *kubernautv1alpha1.Kubernaut, name, component string) *corev1.ConfigMap {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, name, component),
@@ -1708,7 +1714,7 @@ func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut) afSeverityTriageYAM
 	return afSeverityTriageYAML{
 		Enabled:                   true,
 		PrometheusURL:             OCPPrometheusURL,
-		PrometheusTLSCAFile:       "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+		PrometheusTLSCAFile:       "/etc/ssl/af/service-ca.crt",
 		PrometheusBearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
 		CacheTTLSeconds:           30,
 		MaxQueriesPerCall:         10,

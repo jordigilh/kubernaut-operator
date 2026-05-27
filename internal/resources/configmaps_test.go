@@ -850,6 +850,7 @@ var _ = Describe("ConfigMaps", func() {
 			},
 			Entry("effectivenessmonitor-service-ca", EffectivenessMonitorServiceCAConfigMap),
 			Entry("kubernaut-agent-service-ca", KubernautAgentServiceCAConfigMap),
+			Entry("apifrontend-service-ca", APIFrontendServiceCAConfigMap),
 		)
 	})
 
@@ -1041,12 +1042,12 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			"disabled severityTriage should not reference Thanos Querier URL")
 	})
 
-	It("uses SA token CA for severity triage when monitoring is enabled", func() {
+	It("uses OCP service-ca for severity triage when monitoring is enabled", func() {
 		kn := testKubernautWithAF()
 		cm, err := APIFrontendConfigMap(kn)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
-		Expect(data).To(ContainSubstring("prometheusTlsCaFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt"))
+		Expect(data).To(ContainSubstring("prometheusTlsCaFile: /etc/ssl/af/service-ca.crt"))
 	})
 
 	It("renders auth issuerURL and audience from spec", func() {
