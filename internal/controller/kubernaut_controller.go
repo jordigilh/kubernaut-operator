@@ -522,6 +522,11 @@ func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv
 	if err := r.ensureNamespaced(ctx, kn, resources.KubernautAgentClientRoleBinding(kn)); err != nil {
 		return err
 	}
+	if kn.Spec.APIFrontendEnabled() {
+		if err := r.ensureNamespaced(ctx, kn, resources.KubernautAgentClientAPIfrontendRoleBinding(kn)); err != nil {
+			return err
+		}
+	}
 	return r.deployAdditionalAgentRBAC(ctx, kn)
 }
 

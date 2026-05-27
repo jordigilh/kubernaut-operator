@@ -237,6 +237,32 @@ var _ = Describe("ClusterRoles", func() {
 				Expect(foundGroups[g]).To(BeTrue(), "kubernaut-agent-investigator missing API group %q", g)
 			}
 		})
+
+		It("has events with create and patch verbs", func() {
+			kn := testKubernaut()
+			roles := ClusterRoles(kn)
+			var investigator *rbacv1.ClusterRole
+			for _, r := range roles {
+				if r.Name == kn.Namespace+"-kubernaut-agent-investigator" {
+					investigator = r
+					break
+				}
+			}
+			Expect(investigator).NotTo(BeNil())
+
+			found := false
+			for _, rule := range investigator.Rules {
+				if len(rule.APIGroups) > 0 && rule.APIGroups[0] == "" {
+					for _, res := range rule.Resources {
+						if res == "events" {
+							Expect(rule.Verbs).To(ContainElements("get", "list", "watch", "create", "patch"))
+							found = true
+						}
+					}
+				}
+			}
+			Expect(found).To(BeTrue(), "kubernaut-agent-investigator should have events with create/patch verbs")
+		})
 	})
 
 	Describe("Workflow runner", func() {
@@ -574,6 +600,23 @@ var _ = Describe("KubernautAgentClientRoleBinding", func() {
 			"Subject.Name = %q, want %q", subj.Name, ServiceAccountName(ComponentAIAnalysis))
 		Expect(subj.Namespace).To(Equal(kn.Namespace),
 			"Subject.Namespace = %q, want %q", subj.Namespace, kn.Namespace)
+	})
+})
+
+var _ = Describe("KubernautAgentClientAPIfrontendRoleBinding", func() {
+	It("grants apifrontend SA access to kubernaut-agent-client ClusterRole (#1287)", func() {
+		kn := testKubernautWithAF()
+		rb := KubernautAgentClientAPIfrontendRoleBinding(kn)
+
+		Expect(rb.Name).To(Equal("kubernaut-agent-client-apifrontend"))
+		Expect(rb.Namespace).To(Equal(kn.Namespace))
+		wantRoleRef := kn.Namespace + "-kubernaut-agent-client"
+		Expect(rb.RoleRef.Name).To(Equal(wantRoleRef))
+		Expect(rb.RoleRef.Kind).To(Equal(testClusterRoleKind))
+		Expect(rb.Subjects).NotTo(BeEmpty())
+		subj := rb.Subjects[0]
+		Expect(subj.Name).To(Equal(ServiceAccountName(ComponentAPIFrontend)))
+		Expect(subj.Namespace).To(Equal(kn.Namespace))
 	})
 })
 
@@ -1042,6 +1085,58 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 			}
 		}
 		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include remediationrequests with full CRUD+watch verbs")
+	})
+
+	It("includes aianalyses read-only access for kubernaut_await_session", func() {
+		kn := testKubernautWithAF()
+		roles := ClusterRoles(kn)
+		var afRole *rbacv1.ClusterRole
+		for _, r := range roles {
+			if r.Name == clusterRoleName(kn, "apifrontend-role") {
+				afRole = r
+				break
+			}
+		}
+		Expect(afRole).NotTo(BeNil())
+
+		found := false
+		for _, rule := range afRole.Rules {
+			if len(rule.APIGroups) > 0 && rule.APIGroups[0] == "kubernaut.ai" {
+				for _, res := range rule.Resources {
+					if res == "aianalyses" {
+						Expect(rule.Verbs).To(ContainElements("get", "list", "watch"))
+						found = true
+					}
+				}
+			}
+		}
+		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include aianalyses get/list/watch")
+	})
+
+	It("includes tokenreviews create for TokenReview auth", func() {
+		kn := testKubernautWithAF()
+		roles := ClusterRoles(kn)
+		var afRole *rbacv1.ClusterRole
+		for _, r := range roles {
+			if r.Name == clusterRoleName(kn, "apifrontend-role") {
+				afRole = r
+				break
+			}
+		}
+		Expect(afRole).NotTo(BeNil())
+
+		found := false
+		for _, rule := range afRole.Rules {
+			if len(rule.APIGroups) > 0 && rule.APIGroups[0] == "authentication.k8s.io" {
+				for _, res := range rule.Resources {
+					if res == "tokenreviews" {
+						Expect(rule.Verbs).To(ContainElement("create"))
+						found = true
+					}
+				}
+			}
+		}
+		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include tokenreviews/create")
 	})
 
 	It("includes services/kubernaut-agent create for KA SAR gate (#137)", func() {

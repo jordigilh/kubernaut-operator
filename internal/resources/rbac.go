@@ -194,6 +194,29 @@ func KubernautAgentClientRoleBinding(kn *kubernautv1alpha1.Kubernaut) *rbacv1.Ro
 	}
 }
 
+// KubernautAgentClientAPIfrontendRoleBinding creates a namespace-scoped
+// RoleBinding granting the apifrontend SA access to the kubernaut-agent-client
+// ClusterRole (trusted intermediary model, #1287).
+func KubernautAgentClientAPIfrontendRoleBinding(kn *kubernautv1alpha1.Kubernaut) *rbacv1.RoleBinding {
+	return &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kubernaut-agent-client-apifrontend",
+			Namespace: kn.Namespace,
+			Labels:    CommonLabels(kn),
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName,
+			Kind:     "ClusterRole",
+			Name:     clusterRoleName(kn, "kubernaut-agent-client"),
+		},
+		Subjects: []rbacv1.Subject{{
+			Kind:      rbacv1.ServiceAccountKind,
+			Name:      ServiceAccountName(ComponentAPIFrontend),
+			Namespace: kn.Namespace,
+		}},
+	}
+}
+
 // NamespaceRoles builds the namespace-scoped Roles for secrets/configmaps access
 // per the kubernaut.nsRoleForSecrets pattern. Access is granted to ALL
 // secrets/configmaps in the operator namespace rather than per-resource names
@@ -637,7 +660,8 @@ func kubernautAgentClientClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map
 
 func kubernautAgentInvestigatorClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	rules := []rbacv1.PolicyRule{
-		{APIGroups: []string{""}, Resources: []string{"pods", "pods/log", "events", "services", "endpoints", "configmaps", "secrets", "nodes", "namespaces", "replicationcontrollers", "persistentvolumeclaims", "persistentvolumes", "resourcequotas", "serviceaccounts"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{""}, Resources: []string{"pods", "pods/log", "services", "endpoints", "configmaps", "secrets", "nodes", "namespaces", "replicationcontrollers", "persistentvolumeclaims", "persistentvolumes", "resourcequotas", "serviceaccounts"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"get", "list", "watch", "create", "patch"}},
 		{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"storage.k8s.io"}, Resources: []string{"storageclasses", "csidrivers", "volumeattachments", "csinodes"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list", "watch"}},
@@ -869,7 +893,9 @@ func apifrontendClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]s
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/status"}, Verbs: []string{"update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests"}, Verbs: []string{"get", "list", "create", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests/status"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{"authorization.k8s.io"}, Resources: []string{"subjectaccessreviews"}, Verbs: []string{"create"}},
+			{APIGroups: []string{"authentication.k8s.io"}, Resources: []string{"tokenreviews"}, Verbs: []string{"create"}},
 			// KA DD-AUTH-014 SAR gate: AF SA must be able to "create" on services/kubernaut-agent
 			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"kubernaut-agent"}, Verbs: []string{"create"}},
 			// kubectl_list_events
