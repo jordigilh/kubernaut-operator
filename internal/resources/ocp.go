@@ -30,6 +30,10 @@ import (
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
+// SSE streams (live status, investigation progress) require long-lived
+// connections. OCP HAProxy defaults to 30s which kills them prematurely.
+const routeSSETimeout = "3600s"
+
 // GatewayRoute builds the OCP Route for external access to the Gateway.
 // Returns nil if Route creation is disabled.
 func GatewayRoute(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
@@ -52,6 +56,9 @@ func GatewayRoute(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 				InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
 			},
 		},
+	}
+	route.Annotations = map[string]string{
+		"haproxy.router.openshift.io/timeout": routeSSETimeout,
 	}
 
 	if kn.Spec.Gateway.Route.Hostname != "" {
@@ -95,6 +102,9 @@ func APIFrontendRoute(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 				InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
 			},
 		},
+	}
+	route.Annotations = map[string]string{
+		"haproxy.router.openshift.io/timeout": routeSSETimeout,
 	}
 
 	if kn.Spec.APIFrontend.Route.Hostname != "" {

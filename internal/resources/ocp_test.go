@@ -69,6 +69,14 @@ var _ = Describe("GatewayRoute", func() {
 
 		Expect(route.Spec.Host).To(BeEmpty(), "route host should be empty by default, got %q", route.Spec.Host)
 	})
+
+	It("sets HAProxy timeout annotation for SSE streaming", func() {
+		kn := testKubernaut()
+		route := GatewayRoute(kn)
+
+		Expect(route.Annotations).To(HaveKeyWithValue("haproxy.router.openshift.io/timeout", routeSSETimeout),
+			"gateway route should have HAProxy timeout annotation for SSE streams")
+	})
 })
 
 var _ = Describe("GatewayRouteStub", func() {
@@ -134,6 +142,17 @@ var _ = Describe("APIFrontendRoute", func() {
 
 		Expect(route).NotTo(BeNil())
 		Expect(route.Spec.Host).To(BeEmpty(), "hostname should be empty for OCP auto-generation")
+	})
+
+	It("sets HAProxy timeout annotation for SSE streaming", func() {
+		kn := testKubernautWithAF()
+		enabled := true
+		kn.Spec.APIFrontend.Route.Enabled = &enabled
+		route := APIFrontendRoute(kn)
+
+		Expect(route).NotTo(BeNil())
+		Expect(route.Annotations).To(HaveKeyWithValue("haproxy.router.openshift.io/timeout", routeSSETimeout),
+			"AF route should have HAProxy timeout annotation for SSE streams")
 	})
 })
 

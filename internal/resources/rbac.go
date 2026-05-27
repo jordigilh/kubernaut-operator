@@ -113,6 +113,12 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 			clusterRoleBinding(p("alertmanager-gateway-signal-source"), p("gateway-signal-source"),
 				OCPAlertManagerSAName, OCPMonitoringNamespace, labels),
 		)
+		if kn.Spec.APIFrontendEnabled() {
+			crbs = append(crbs,
+				clusterRoleBinding(p("apifrontend-monitoring-view"), "cluster-monitoring-view",
+					ServiceAccountName(ComponentAPIFrontend), ns, labels),
+			)
+		}
 	}
 
 	if kn.Spec.APIFrontendEnabled() {
@@ -341,6 +347,7 @@ func MonitoringCRBNames(kn *kubernautv1alpha1.Kubernaut) []string {
 		p("effectivenessmonitor-monitoring-view"),
 		p("kubernaut-agent-monitoring-view"),
 		p("alertmanager-gateway-signal-source"),
+		p("apifrontend-monitoring-view"),
 	}
 }
 

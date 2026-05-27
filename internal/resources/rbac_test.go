@@ -442,6 +442,13 @@ var _ = Describe("ClusterRoleBindings", func() {
 			Expect(subj.Namespace).To(Equal(OCPMonitoringNamespace),
 				"subject namespace = %q, want %q", subj.Namespace, OCPMonitoringNamespace)
 		})
+
+		It("binds cluster-monitoring-view for apifrontend", func() {
+			crb, ok := crbMap[ns+"-apifrontend-monitoring-view"]
+			Expect(ok).To(BeTrue(), "missing %s-apifrontend-monitoring-view CRB", ns)
+			Expect(crb.RoleRef.Name).To(Equal("cluster-monitoring-view"),
+				"roleRef = %q, want %q", crb.RoleRef.Name, "cluster-monitoring-view")
+		})
 	})
 
 	It("omits monitoring CRBs when monitoring is disabled", func() {
@@ -456,6 +463,7 @@ var _ = Describe("ClusterRoleBindings", func() {
 			ns + "-effectivenessmonitor-monitoring-view":           true,
 			ns + "-kubernaut-agent-monitoring-view":                true,
 			ns + "-alertmanager-gateway-signal-source":             true,
+			ns + "-apifrontend-monitoring-view":                    true,
 		}
 
 		for _, crb := range crbs {
@@ -621,10 +629,10 @@ var _ = Describe("KubernautAgentClientAPIfrontendRoleBinding", func() {
 })
 
 var _ = Describe("MonitoringCRBNames", func() {
-	It("returns all four namespace-prefixed names", func() {
+	It("returns all five namespace-prefixed names", func() {
 		kn := testKubernaut()
 		names := MonitoringCRBNames(kn)
-		Expect(names).To(HaveLen(4), "MonitoringCRBNames() count = %d, want 4", len(names))
+		Expect(names).To(HaveLen(5), "MonitoringCRBNames() count = %d, want 5", len(names))
 		ns := kn.Namespace
 		for _, name := range names {
 			Expect(name).To(HavePrefix(ns),
