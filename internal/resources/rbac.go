@@ -437,14 +437,13 @@ var toolPersonas = []toolPersona{
 		name: "tool-sre",
 		resourceNames: []string{
 			"kubernaut_list_remediations", "kubernaut_get_remediation",
-			"kubernaut_cancel_remediation", "kubernaut_watch",
-			"kubernaut_start_investigation", "kubernaut_poll_investigation",
+			"kubernaut_approve", "kubernaut_cancel_remediation", "kubernaut_watch",
+			"kubernaut_await_session", "kubernaut_investigate",
 			"kubernaut_discover_workflows", "kubernaut_select_workflow", "kubernaut_present_decision",
 			"kubernaut_list_workflows", "kubernaut_get_remediation_history",
 			"kubernaut_get_effectiveness", "kubernaut_get_audit_trail",
 			"kubernaut_takeover", "kubernaut_message", "kubernaut_complete",
 			"kubernaut_cancel", "kubernaut_status", "kubernaut_reconnect",
-			"kubernaut_stream_investigation",
 			"kubectl_get", "kubectl_list", "kubectl_list_events",
 			"af_check_existing_rr", "af_create_rr",
 		},
@@ -453,11 +452,10 @@ var toolPersonas = []toolPersona{
 		name: "tool-ai-orchestrator",
 		resourceNames: []string{
 			"kubernaut_list_remediations", "kubernaut_get_remediation", "kubernaut_watch",
-			"kubernaut_start_investigation", "kubernaut_poll_investigation",
+			"kubernaut_await_session", "kubernaut_investigate",
 			"kubernaut_discover_workflows", "kubernaut_select_workflow", "kubernaut_present_decision",
 			"kubernaut_takeover", "kubernaut_message", "kubernaut_complete",
 			"kubernaut_cancel", "kubernaut_status", "kubernaut_reconnect",
-			"kubernaut_stream_investigation",
 			"kubectl_get", "kubectl_list", "kubectl_list_events",
 			"af_check_existing_rr", "af_create_rr",
 		},
@@ -466,12 +464,14 @@ var toolPersonas = []toolPersona{
 		name: "tool-cicd",
 		resourceNames: []string{
 			"kubernaut_list_remediations", "kubernaut_get_remediation", "kubernaut_watch",
+			"kubernaut_await_session",
 		},
 	},
 	{
 		name: "tool-observability",
 		resourceNames: []string{
 			"kubernaut_list_remediations", "kubernaut_get_remediation", "kubernaut_watch",
+			"kubernaut_await_session",
 			"kubernaut_get_effectiveness", "kubernaut_list_workflows",
 		},
 	},
@@ -489,6 +489,7 @@ var toolPersonas = []toolPersona{
 			"kubernaut_approve", "kubernaut_list_approval_requests",
 			"kubernaut_get_approval_request",
 			"kubernaut_list_remediations", "kubernaut_get_remediation", "kubernaut_watch",
+			"kubernaut_await_session",
 		},
 	},
 }
@@ -897,10 +898,10 @@ func apifrontendClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]s
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "apifrontend-role"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch", "create", "update", "delete"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/status"}, Verbs: []string{"update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/status"}, Verbs: []string{"get", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests"}, Verbs: []string{"get", "list", "create", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests/status"}, Verbs: []string{"get", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"get", "list", "watch"}},

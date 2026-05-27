@@ -781,11 +781,11 @@ var _ = Describe("ToolClusterRoles", func() {
 				found.Name, expectedCount, len(found.Rules[0].ResourceNames))
 		},
 		Entry("SRE", "tool-sre", 25),
-		Entry("AI-orchestrator", "tool-ai-orchestrator", 20),
-		Entry("CICD", "tool-cicd", 3),
-		Entry("Observability", "tool-observability", 5),
+		Entry("AI-orchestrator", "tool-ai-orchestrator", 19),
+		Entry("CICD", "tool-cicd", 4),
+		Entry("Observability", "tool-observability", 6),
 		Entry("L3-audit", "tool-l3-audit", 6),
-		Entry("Remediation-approver", "tool-remediation-approver", 6),
+		Entry("Remediation-approver", "tool-remediation-approver", 7),
 	)
 
 	It("tool ClusterRole names are namespace-prefixed", func() {
@@ -928,7 +928,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		}
 
 		Expect(ruleMap).To(HaveKey("kubernaut.ai/investigationsessions"))
-		Expect(ruleMap["kubernaut.ai/investigationsessions"]).To(ContainElements("get", "list", "watch", "create", "update", "patch", "delete"))
+		Expect(ruleMap["kubernaut.ai/investigationsessions"]).To(ContainElements("get", "list", "watch", "create", "update", "delete"))
 
 		Expect(ruleMap).NotTo(HaveKey("apifrontend.kubernaut.ai/investigationsessions"),
 			"old apifrontend.kubernaut.ai API group must not be present")
@@ -1064,6 +1064,56 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 			}
 		}
 		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include subjectaccessreviews/create")
+	})
+
+	It("grants remediationrequests/status get+update+patch for cancel flow", func() {
+		kn := testKubernautWithAF()
+		roles := ClusterRoles(kn)
+		var afRole *rbacv1.ClusterRole
+		for _, r := range roles {
+			if r.Name == clusterRoleName(kn, "apifrontend-role") {
+				afRole = r
+				break
+			}
+		}
+		Expect(afRole).NotTo(BeNil())
+
+		found := false
+		for _, rule := range afRole.Rules {
+			if len(rule.APIGroups) > 0 && rule.APIGroups[0] == "kubernaut.ai" {
+				for _, res := range rule.Resources {
+					if res == "remediationrequests/status" {
+						Expect(rule.Verbs).To(ContainElements("get", "update", "patch"))
+						found = true
+					}
+				}
+			}
+		}
+		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include remediationrequests/status with get+update+patch")
+	})
+
+	It("does not grant patch on investigationsessions (AC-6 least privilege)", func() {
+		kn := testKubernautWithAF()
+		roles := ClusterRoles(kn)
+		var afRole *rbacv1.ClusterRole
+		for _, r := range roles {
+			if r.Name == clusterRoleName(kn, "apifrontend-role") {
+				afRole = r
+				break
+			}
+		}
+		Expect(afRole).NotTo(BeNil())
+
+		for _, rule := range afRole.Rules {
+			if len(rule.APIGroups) > 0 && rule.APIGroups[0] == "kubernaut.ai" {
+				for _, res := range rule.Resources {
+					if res == "investigationsessions" || res == "investigationsessions/status" {
+						Expect(rule.Verbs).NotTo(ContainElement("patch"),
+							"apifrontend ClusterRole should not grant patch on %s (AC-6)", res)
+					}
+				}
+			}
+		}
 	})
 
 	It("includes remediationrequests with full CRUD+watch verbs", func() {
