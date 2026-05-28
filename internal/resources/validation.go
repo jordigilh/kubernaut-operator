@@ -126,6 +126,11 @@ func validateAPIFrontend(kn *kubernautv1alpha1.Kubernaut) []error {
 		}
 	}
 
+	if af.Auth.IssuerURL == "" {
+		errs = append(errs, fmt.Errorf(
+			"spec.apiFrontend.auth.issuerURL: required — API Frontend requires OAuth/OIDC authentication (FedRAMP IA-2, CM-6)"))
+	}
+
 	if ref := af.RBACRolesConfigMapRef; ref != nil && ref.ConfigMapName == "" {
 		errs = append(errs, fmt.Errorf("spec.apiFrontend.rbacRolesConfigMapRef.configMapName: must not be empty when rbacRolesConfigMapRef is set"))
 	}

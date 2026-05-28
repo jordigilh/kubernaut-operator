@@ -165,6 +165,31 @@ var _ = Describe("APIFrontend Validation", func() {
 		Expect(errs[0].Error()).To(ContainSubstring("configMapName"))
 	})
 
+	It("rejects AF without OAuth/OIDC issuerURL (FedRAMP IA-2, CM-6)", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.IssuerURL = ""
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("issuerURL"))
+		Expect(errs[0].Error()).To(ContainSubstring("OAuth/OIDC"))
+		Expect(errs[0].Error()).To(ContainSubstring("IA-2"))
+	})
+
+	It("accepts valid issuerURL when AF is enabled", func() {
+		kn := testKubernautWithAF()
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("skips issuerURL check when AF is disabled", func() {
+		kn := testKubernautWithAF()
+		disabled := false
+		kn.Spec.APIFrontend.Enabled = &disabled
+		kn.Spec.APIFrontend.Auth.IssuerURL = ""
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+
 	It("skips validation when AF is disabled", func() {
 		kn := testKubernautWithAF()
 		disabled := false
