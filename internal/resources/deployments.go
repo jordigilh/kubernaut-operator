@@ -658,6 +658,7 @@ func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 // It mounts projected config (config.yaml + rbac_roles.yaml), TLS server cert,
 // and CA cert for inter-service trust.
 func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+	ns := kn.Namespace
 	env := []corev1.EnvVar{
 		{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
@@ -666,6 +667,15 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
 		{Name: "TLS_CA_FILE", Value: "/etc/apifrontend/tls-ca/ca.crt"},
+	}
+
+	// When SPIRE/authbridge is injected, the webhook sets HTTPS_PROXY
+	// pointing AF traffic through the authbridge sidecar. Internal
+	// service-to-service calls (KA, DS) must bypass the proxy so AF's
+	// own SA bearer token is preserved on the wire.
+	if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
+		noProxy := fmt.Sprintf("127.0.0.1,localhost,kubernaut-agent.%s.svc.cluster.local,data-storage-service.%s.svc.cluster.local", ns, ns)
+		env = append(env, corev1.EnvVar{Name: "NO_PROXY", Value: noProxy})
 	}
 
 	volumes := []corev1.Volume{

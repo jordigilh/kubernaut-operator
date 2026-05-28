@@ -1115,6 +1115,35 @@ var _ = Describe("APIFrontendDeployment", func() {
 			Expect(portMap).To(HaveKeyWithValue("https", PortHTTPS))
 		}
 	})
+
+	It("sets NO_PROXY for KA and DS when SPIRE is enabled", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		dep, err := APIFrontendDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		container := dep.Spec.Template.Spec.Containers[0]
+		var noProxy string
+		for _, e := range container.Env {
+			if e.Name == "NO_PROXY" {
+				noProxy = e.Value
+			}
+		}
+		Expect(noProxy).To(ContainSubstring("kubernaut-agent.%s.svc.cluster.local", kn.Namespace),
+			"NO_PROXY must include KA service to bypass authbridge for SA bearer token")
+		Expect(noProxy).To(ContainSubstring("data-storage-service.%s.svc.cluster.local", kn.Namespace))
+	})
+
+	It("omits NO_PROXY when SPIRE is disabled", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.SPIRE.Enabled = false
+		dep, err := APIFrontendDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		container := dep.Spec.Template.Spec.Containers[0]
+		for _, e := range container.Env {
+			Expect(e.Name).NotTo(Equal("NO_PROXY"),
+				"NO_PROXY should not be set when authbridge is not injected")
+		}
+	})
 })
 
 var _ = Describe("DataStorageDeployment with Valkey TLS", func() {
