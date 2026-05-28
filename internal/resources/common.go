@@ -72,7 +72,6 @@ func DeploymentName(component string) string {
 
 // Well-known ports used across services.
 const (
-	PortHTTP    int32 = 8080
 	PortHTTPS   int32 = 8443
 	PortMetrics int32 = 9090
 	// PortAuthWebhookService is the standard HTTPS port (443) exposed by the

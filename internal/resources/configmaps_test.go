@@ -649,6 +649,54 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(root.Integrations.Tools.Prometheus.TLSCaFile).To(Equal("/etc/ssl/ka/service-ca.crt"), "integrations.tools.prometheus.tlsCaFile = %q, want /etc/ssl/ka/service-ca.crt", root.Integrations.Tools.Prometheus.TLSCaFile)
 		})
 
+		It("renders logging format as JSON", func() {
+			kn := testKubernaut()
+			cm, err := KubernautAgentConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			var root struct {
+				Runtime struct {
+					Logging struct {
+						Level  string `yaml:"level"`
+						Format string `yaml:"format"`
+					} `yaml:"logging"`
+				} `yaml:"runtime"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Runtime.Logging.Format).To(Equal("json"))
+		})
+
+		It("renders shutdown.drainSeconds with default 30", func() {
+			kn := testKubernaut()
+			cm, err := KubernautAgentConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			var root struct {
+				Runtime struct {
+					Shutdown struct {
+						DrainSeconds int `yaml:"drainSeconds"`
+					} `yaml:"shutdown"`
+				} `yaml:"runtime"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Runtime.Shutdown.DrainSeconds).To(Equal(30))
+		})
+
+		It("renders custom shutdown.drainSeconds from CR", func() {
+			kn := testKubernaut()
+			drain := 120
+			kn.Spec.KubernautAgent.Shutdown.DrainSeconds = &drain
+			cm, err := KubernautAgentConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			var root struct {
+				Runtime struct {
+					Shutdown struct {
+						DrainSeconds int `yaml:"drainSeconds"`
+					} `yaml:"shutdown"`
+				} `yaml:"runtime"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Runtime.Shutdown.DrainSeconds).To(Equal(120))
+		})
+
 		It("renders alignment check settings when enabled", func() {
 			kn := testKubernaut()
 			kn.Spec.KubernautAgent.AlignmentCheck.Enabled = true

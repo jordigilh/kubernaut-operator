@@ -1242,6 +1242,17 @@ spec:
                         description: Session time-to-live.
                         type: string
                     type: object
+                  shutdown:
+                    description: Graceful shutdown configuration.
+                    properties:
+                      drainSeconds:
+                        default: 15
+                        description: Seconds to wait for in-flight requests to drain
+                          during shutdown.
+                        maximum: 300
+                        minimum: 0
+                        type: integer
+                    type: object
                   summarizer:
                     description: Summarizer configuration for tool output compression.
                     properties:

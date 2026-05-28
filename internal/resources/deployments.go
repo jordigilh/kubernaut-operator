@@ -456,7 +456,7 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 }
 
 // KubernautAgentDeployment builds the kubernaut-agent Deployment.
-// Issue #753: kubernaut-agent now serves TLS on port 8080 with certs from
+// kubernaut-agent serves TLS on port 8443 with certs from
 // kubernautagent-tls (provisioned by OCP service-ca). Health and metrics
 // are on dedicated plain HTTP ports 8081 and 9090.
 func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
@@ -464,12 +464,14 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 		return nil, fmt.Errorf("spec.kubernautAgent.llm.credentialsSecretName must not be empty")
 	}
 	volumes := []corev1.Volume{
+		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		configMapVolume("config", "kubernaut-agent-config"),
 		configMapVolume("llm-runtime", KubernautAgentLLMRuntimeConfigName(kn)),
 		secretVolume("llm-credentials", kn.Spec.KubernautAgent.LLM.CredentialsSecretName),
 		secretVolume("tls-certs", KubernautAgentTLSSecretName),
 	}
 	mounts := []corev1.VolumeMount{
+		{Name: "tmp", MountPath: "/tmp"},
 		{Name: "config", MountPath: "/etc/kubernaut-agent", ReadOnly: true},
 		{Name: "llm-runtime", MountPath: "/etc/kubernaut-agent/llm-runtime", ReadOnly: true},
 		{Name: "llm-credentials", MountPath: "/etc/kubernaut-agent/credentials", ReadOnly: true},
@@ -583,6 +585,12 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 		Name: "sa-token", MountPath: "/var/run/secrets/kubernetes.io/serviceaccount", ReadOnly: true,
 	})
 
+	drainSec := int64(30)
+	if kn.Spec.KubernautAgent.Shutdown.DrainSeconds != nil {
+		drainSec = int64(*kn.Spec.KubernautAgent.Shutdown.DrainSeconds)
+	}
+	gracePeriod := drainSec + 5
+
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentKubernautAgent, ImageName: "kubernautagent",
 		Resources: res, VolumeMounts: mounts, Volumes: volumes, Env: envVars,
@@ -597,6 +605,12 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		},
+		PodAnnotations: map[string]string{
+			"prometheus.io/scrape": "true",
+			"prometheus.io/port":   "9090",
+			"prometheus.io/path":   "/metrics",
+		},
+		TerminationGracePeriodSeconds: &gracePeriod,
 	})
 }
 

@@ -466,11 +466,21 @@ type kubernautAgentServerTLSYAML struct {
 	CertDir string `json:"certDir" yaml:"certDir"`
 }
 
+type kaLoggingYAML struct {
+	Level  string `json:"level" yaml:"level"`
+	Format string `json:"format" yaml:"format"`
+}
+
 type kaRuntimeYAML struct {
-	Logging loggingYAML         `json:"logging" yaml:"logging"`
-	Server  kaRuntimeServerYAML `json:"server" yaml:"server"`
-	Audit   *kaAuditYAML        `json:"audit,omitempty" yaml:"audit,omitempty"`
-	Session *kaSessionYAML      `json:"session,omitempty" yaml:"session,omitempty"`
+	Logging  kaLoggingYAML       `json:"logging" yaml:"logging"`
+	Server   kaRuntimeServerYAML `json:"server" yaml:"server"`
+	Audit    *kaAuditYAML        `json:"audit,omitempty" yaml:"audit,omitempty"`
+	Session  *kaSessionYAML      `json:"session,omitempty" yaml:"session,omitempty"`
+	Shutdown kaShutdownYAML      `json:"shutdown" yaml:"shutdown"`
+}
+
+type kaShutdownYAML struct {
+	DrainSeconds int `json:"drainSeconds" yaml:"drainSeconds"`
 }
 
 type kaRuntimeServerYAML struct {
@@ -1208,7 +1218,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 
 	cfg := kubernautAgentConfigYAML{
 		Runtime: kaRuntimeYAML{
-			Logging: loggingYAML{Level: withDefault(ka.Logging.Level, "info")},
+			Logging: kaLoggingYAML{Level: withDefault(ka.Logging.Level, "info"), Format: "json"},
 			Server: kaRuntimeServerYAML{
 				Address:     "0.0.0.0",
 				Port:        8443,
@@ -1216,6 +1226,9 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 				MetricsAddr: ":9090",
 				TLS:         kubernautAgentServerTLSYAML{CertDir: InterServiceTLSCertDir},
 				TLSProfile:  o.tlsProfile,
+			},
+			Shutdown: kaShutdownYAML{
+				DrainSeconds: intPtrDefault(ka.Shutdown.DrainSeconds, 30),
 			},
 		},
 		AI: kaAIYAML{

@@ -927,6 +927,10 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		}
 	}
 
+	if !kn.Spec.NetworkPolicies.NetworkPoliciesEnabled() {
+		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "NetworkPoliciesDisabled", "Reconcile",
+			"spec.networkPolicies.enabled is false — network segmentation is required for FedRAMP SC-7 compliance; set to true for production")
+	}
 	for _, np := range resources.NetworkPolicies(kn) {
 		if err := r.ensureNamespaced(ctx, kn, np); err != nil {
 			return false, fmt.Errorf("ensuring NetworkPolicy %s: %w", np.Name, err)
@@ -946,6 +950,14 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		dsPR := resources.DataStoragePrometheusRule(kn)
 		if err := r.ensureNamespaced(ctx, kn, dsPR); err != nil {
 			return false, fmt.Errorf("ensuring DS PrometheusRule: %w", err)
+		}
+		kaSM := resources.KubernautAgentServiceMonitor(kn)
+		if err := r.ensureNamespaced(ctx, kn, kaSM); err != nil {
+			return false, fmt.Errorf("ensuring KA ServiceMonitor: %w", err)
+		}
+		kaPR := resources.KubernautAgentPrometheusRule(kn)
+		if err := r.ensureNamespaced(ctx, kn, kaPR); err != nil {
+			return false, fmt.Errorf("ensuring KA PrometheusRule: %w", err)
 		}
 	}
 

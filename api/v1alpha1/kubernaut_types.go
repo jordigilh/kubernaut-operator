@@ -573,6 +573,10 @@ type KubernautAgentSpec struct {
 	// +listType=set
 	AdditionalClusterRoleBindings []string `json:"additionalClusterRoleBindings,omitempty"`
 
+	// Graceful shutdown configuration.
+	// +optional
+	Shutdown ShutdownSpec `json:"shutdown,omitempty"`
+
 	// +optional
 	Logging LoggingSpec `json:"logging,omitempty"`
 
@@ -1098,8 +1102,9 @@ type APIFrontendRateLimitSpec struct {
 	ToolCallsPerMinute *int `json:"toolCallsPerMinute,omitempty"`
 }
 
-// APIFrontendShutdownSpec configures graceful shutdown for the API Frontend.
-type APIFrontendShutdownSpec struct {
+// ShutdownSpec configures graceful shutdown for a service component.
+// Shared by API Frontend and Kubernaut Agent for consistent knob naming.
+type ShutdownSpec struct {
 	// Seconds to wait for in-flight requests to drain during shutdown.
 	// +kubebuilder:default=15
 	// +kubebuilder:validation:Minimum=0
@@ -1107,6 +1112,9 @@ type APIFrontendShutdownSpec struct {
 	// +optional
 	DrainSeconds *int `json:"drainSeconds,omitempty"`
 }
+
+// APIFrontendShutdownSpec is an alias retained for CRD backward compatibility.
+type APIFrontendShutdownSpec = ShutdownSpec
 
 // APIFrontendEnabled returns whether the API Frontend component should be deployed.
 // Defaults to true when Enabled is nil.

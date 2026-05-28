@@ -417,6 +417,37 @@ var _ = Describe("Deployments", func() {
 			expectHasVolume(dep, "tls-certs")
 			expectHasVolumeMount(dep, "tls-certs", InterServiceTLSCertDir)
 		})
+
+		It("mounts emptyDir /tmp for readOnlyRootFilesystem", func() {
+			kn := testKubernaut()
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, "tmp")
+			expectHasVolumeMount(dep, "tmp", "/tmp")
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == "tmp" {
+					Expect(v.EmptyDir).NotTo(BeNil())
+				}
+			}
+		})
+
+		It("sets terminationGracePeriodSeconds to drainSeconds + 5 (default 30)", func() {
+			kn := testKubernaut()
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dep.Spec.Template.Spec.TerminationGracePeriodSeconds).NotTo(BeNil())
+			Expect(*dep.Spec.Template.Spec.TerminationGracePeriodSeconds).To(Equal(int64(35)),
+				"default drainSeconds=30 + 5 buffer = 35")
+		})
+
+		It("adjusts terminationGracePeriodSeconds for custom drainSeconds", func() {
+			kn := testKubernaut()
+			drain := 120
+			kn.Spec.KubernautAgent.Shutdown.DrainSeconds = &drain
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(*dep.Spec.Template.Spec.TerminationGracePeriodSeconds).To(Equal(int64(125)))
+		})
 	})
 
 	Context("EffectivenessMonitor", func() {

@@ -249,5 +249,109 @@ func DataStoragePrometheusRule(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.Pr
 	}
 }
 
+// KubernautAgentServiceMonitor builds the ServiceMonitor for the kubernaut-agent service.
+func KubernautAgentServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+	return &monitoringv1.ServiceMonitor{
+		ObjectMeta: ObjectMeta(kn, "kubernautagent-monitor", ComponentKubernautAgent),
+		Spec: monitoringv1.ServiceMonitorSpec{
+			JobLabel: "app.kubernetes.io/name",
+			Selector: metav1.LabelSelector{
+				MatchLabels: SelectorLabels(ComponentKubernautAgent),
+			},
+			Endpoints: []monitoringv1.Endpoint{
+				{
+					Port:     "metrics",
+					Path:     "/metrics",
+					Interval: monitoringv1.Duration("15s"),
+					Scheme:   schemePtr(monitoringv1.SchemeHTTP),
+					RelabelConfigs: []monitoringv1.RelabelConfig{
+						{
+							SourceLabels: []monitoringv1.LabelName{"__address__"},
+							TargetLabel:  "job",
+							Replacement:  strPtr("kubernautagent"),
+						},
+					},
+				},
+			},
+			NamespaceSelector: monitoringv1.NamespaceSelector{
+				MatchNames: []string{kn.Namespace},
+			},
+		},
+	}
+}
+
+// KubernautAgentPrometheusRule builds the PrometheusRule with alert rules for KA.
+func KubernautAgentPrometheusRule(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.PrometheusRule {
+	return &monitoringv1.PrometheusRule{
+		ObjectMeta: ObjectMeta(kn, "kubernautagent-rules", ComponentKubernautAgent),
+		Spec: monitoringv1.PrometheusRuleSpec{
+			Groups: []monitoringv1.RuleGroup{
+				{
+					Name: "kubernautagent.availability",
+					Rules: []monitoringv1.Rule{
+						{
+							Alert:       "KubernautAgentDown",
+							Expr:        intstr.FromString(`up{job="kubernautagent"} == 0`),
+							For:         durationPtr("5m"),
+							Labels:      map[string]string{"severity": "critical"},
+							Annotations: map[string]string{"summary": "Kubernaut Agent is down", "description": "The Kubernaut Agent service has been unreachable for more than 5 minutes.", "runbook_url": "https://docs.kubernaut.ai/runbooks/kubernautagent-down"},
+						},
+					},
+				},
+				{
+					Name: "kubernautagent.sessions",
+					Rules: []monitoringv1.Rule{
+						{
+							Alert:       "KubernautAgentSessionDurationHigh",
+							Expr:        intstr.FromString(`histogram_quantile(0.95, sum(rate(ka_session_duration_seconds_bucket{job="kubernautagent"}[15m])) by (le)) > 600`),
+							For:         durationPtr("10m"),
+							Labels:      map[string]string{"severity": "warning"},
+							Annotations: map[string]string{"summary": "KA P95 session duration > 10 minutes", "runbook_url": "https://docs.kubernaut.ai/runbooks/kubernautagent-session-duration"},
+						},
+						{
+							Alert:       "KubernautAgentActiveSessionsSaturated",
+							Expr:        intstr.FromString(`ka_active_sessions{job="kubernautagent"} >= 10`),
+							For:         durationPtr("5m"),
+							Labels:      map[string]string{"severity": "warning"},
+							Annotations: map[string]string{"summary": "KA active sessions >= 10 for 5m", "runbook_url": "https://docs.kubernaut.ai/runbooks/kubernautagent-sessions-saturated"},
+						},
+					},
+				},
+				{
+					Name: "kubernautagent.tools",
+					Rules: []monitoringv1.Rule{
+						{
+							Alert:       "KubernautAgentToolErrorRate",
+							Expr:        intstr.FromString(`sum(rate(ka_tool_calls_total{job="kubernautagent",result=~"error|timeout|panic"}[5m])) / sum(rate(ka_tool_calls_total{job="kubernautagent"}[5m])) > 0.05`),
+							For:         durationPtr("5m"),
+							Labels:      map[string]string{"severity": "critical"},
+							Annotations: map[string]string{"summary": "KA tool error rate > 5%", "runbook_url": "https://docs.kubernaut.ai/runbooks/kubernautagent-tool-error-rate"},
+						},
+					},
+				},
+				{
+					Name: "kubernautagent.llm",
+					Rules: []monitoringv1.Rule{
+						{
+							Alert:       "KubernautAgentLLMErrorRate",
+							Expr:        intstr.FromString(`sum(rate(ka_llm_requests_total{job="kubernautagent",status="error"}[5m])) / sum(rate(ka_llm_requests_total{job="kubernautagent"}[5m])) > 0.05`),
+							For:         durationPtr("5m"),
+							Labels:      map[string]string{"severity": "critical"},
+							Annotations: map[string]string{"summary": "KA LLM error rate > 5%", "runbook_url": "https://docs.kubernaut.ai/runbooks/kubernautagent-llm-error-rate"},
+						},
+						{
+							Alert:       "KubernautAgentLLMHighLatency",
+							Expr:        intstr.FromString(`histogram_quantile(0.95, sum(rate(ka_llm_request_duration_seconds_bucket{job="kubernautagent"}[5m])) by (le)) > 30`),
+							For:         durationPtr("5m"),
+							Labels:      map[string]string{"severity": "warning"},
+							Annotations: map[string]string{"summary": "KA LLM P95 latency > 30s", "runbook_url": "https://docs.kubernaut.ai/runbooks/kubernautagent-llm-latency"},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 func durationPtr(d monitoringv1.Duration) *monitoringv1.Duration { return &d }
 func schemePtr(s monitoringv1.Scheme) *monitoringv1.Scheme       { return &s }
