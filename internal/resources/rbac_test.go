@@ -31,6 +31,7 @@ const (
 	testWorkflowRunnerSAName = "kubernaut-workflow-runner"
 	testCustomWorkflowNS     = "my-wf-ns"
 	testClusterRoleKind      = "ClusterRole"
+	kubernautAPIGroup        = "kubernaut.ai"
 )
 
 var _ = Describe("ClusterRoles", func() {
@@ -185,7 +186,7 @@ var _ = Describe("ClusterRoles", func() {
 				"policy.linkerd.io",
 				"security.istio.io",
 				"networking.istio.io",
-				"kubernaut.ai",
+				kubernautAPIGroup,
 			}
 			foundGroups := make(map[string]bool)
 			for _, rule := range investigator.Rules {
@@ -757,7 +758,7 @@ var _ = Describe("ToolClusterRoles", func() {
 		for _, cr := range ToolClusterRoles(kn) {
 			Expect(cr.Rules).To(HaveLen(1), "tool ClusterRole %q should have exactly 1 rule", cr.Name)
 			rule := cr.Rules[0]
-			Expect(rule.APIGroups).To(ConsistOf("kubernaut.ai"), "tool ClusterRole %q apiGroup", cr.Name)
+			Expect(rule.APIGroups).To(ConsistOf(kubernautAPIGroup), "tool ClusterRole %q apiGroup", cr.Name)
 			Expect(rule.Resources).To(ConsistOf("tools"), "tool ClusterRole %q resource", cr.Name)
 			Expect(rule.Verbs).To(ConsistOf("use"), "tool ClusterRole %q verb", cr.Name)
 			Expect(rule.ResourceNames).NotTo(BeEmpty(), "tool ClusterRole %q should have resourceNames", cr.Name)
@@ -1080,7 +1081,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 
 		found := false
 		for _, rule := range afRole.Rules {
-			if len(rule.APIGroups) > 0 && rule.APIGroups[0] == "kubernaut.ai" {
+			if len(rule.APIGroups) > 0 && rule.APIGroups[0] == kubernautAPIGroup {
 				for _, res := range rule.Resources {
 					if res == "remediationrequests/status" {
 						Expect(rule.Verbs).To(ContainElements("get", "update", "patch"))
@@ -1105,7 +1106,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		Expect(afRole).NotTo(BeNil())
 
 		for _, rule := range afRole.Rules {
-			if len(rule.APIGroups) > 0 && rule.APIGroups[0] == "kubernaut.ai" {
+			if len(rule.APIGroups) > 0 && rule.APIGroups[0] == kubernautAPIGroup {
 				for _, res := range rule.Resources {
 					if res == "investigationsessions" || res == "investigationsessions/status" {
 						Expect(rule.Verbs).NotTo(ContainElement("patch"),
@@ -1131,7 +1132,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		found := false
 		for _, rule := range afRole.Rules {
 			for _, g := range rule.APIGroups {
-				if g != "kubernaut.ai" {
+				if g != kubernautAPIGroup {
 					continue
 				}
 				for _, res := range rule.Resources {
@@ -1159,7 +1160,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 
 		found := false
 		for _, rule := range afRole.Rules {
-			if len(rule.APIGroups) > 0 && rule.APIGroups[0] == "kubernaut.ai" {
+			if len(rule.APIGroups) > 0 && rule.APIGroups[0] == kubernautAPIGroup {
 				for _, res := range rule.Resources {
 					if res == "aianalyses" {
 						Expect(rule.Verbs).To(ContainElements("get", "list", "watch"))

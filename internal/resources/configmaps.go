@@ -1564,13 +1564,13 @@ type afAgentCardYAML struct {
 }
 
 type afAuthYAML struct {
-	IssuerURL               string             `json:"issuerURL" yaml:"issuerURL"`
-	Audience                string             `json:"audience" yaml:"audience"`
-	JWKSURL                 string             `json:"jwksURL,omitempty" yaml:"jwksURL,omitempty"`
-	OIDCCAFile              string             `json:"oidcCaFile,omitempty" yaml:"oidcCaFile,omitempty"`
-	AllowInsecureIssuers    bool               `json:"allowInsecureIssuers,omitempty" yaml:"allowInsecureIssuers,omitempty"`
-	KubernetesAuthEnabled   bool               `json:"kubernetesAuthEnabled,omitempty" yaml:"kubernetesAuthEnabled,omitempty"`
-	ReplayCache             *afReplayCacheYAML `json:"replayCache,omitempty" yaml:"replayCache,omitempty"`
+	IssuerURL             string             `json:"issuerURL" yaml:"issuerURL"`
+	Audience              string             `json:"audience" yaml:"audience"`
+	JWKSURL               string             `json:"jwksURL,omitempty" yaml:"jwksURL,omitempty"`
+	OIDCCAFile            string             `json:"oidcCaFile,omitempty" yaml:"oidcCaFile,omitempty"`
+	AllowInsecureIssuers  bool               `json:"allowInsecureIssuers,omitempty" yaml:"allowInsecureIssuers,omitempty"`
+	KubernetesAuthEnabled bool               `json:"kubernetesAuthEnabled,omitempty" yaml:"kubernetesAuthEnabled,omitempty"`
+	ReplayCache           *afReplayCacheYAML `json:"replayCache,omitempty" yaml:"replayCache,omitempty"`
 }
 
 type afReplayCacheYAML struct {
@@ -1673,8 +1673,8 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 			SessionIdleTimeout: "30m",
 			ToolTimeout:        "30s",
 			ToolTimeouts: map[string]string{
-				"kubernaut_investigate":    "15m",
-				"kubernaut_await_session":  "3m",
+				"kubernaut_investigate":   "15m",
+				"kubernaut_await_session": "3m",
 			},
 		},
 		AgentCard: afAgentCardYAML{
