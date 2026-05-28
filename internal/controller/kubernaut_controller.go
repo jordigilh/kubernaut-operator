@@ -411,11 +411,6 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		return err
 	}
 
-	if kn.Spec.APIFrontendEnabled() && kn.Spec.APIFrontend.Auth.IssuerURL == "" {
-		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "APIFrontendAuthDisabled", "Reconcile",
-			"API Frontend is deployed without OIDC authentication (spec.apiFrontend.auth.issuerURL is empty); all requests will be unauthenticated")
-	}
-
 	r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, ReasonManifestsApplied, "Reconcile", "All service manifests applied")
 	return r.patchStatus(ctx, kn, func() {
 		r.setPhase(kn, kubernautv1alpha1.PhaseDeploying)
