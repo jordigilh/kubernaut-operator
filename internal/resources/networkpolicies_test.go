@@ -464,6 +464,7 @@ var _ = Describe("APIFrontend NetworkPolicy OIDC egress", func() {
 
 	It("omits HTTPS egress rule when issuerURL is empty", func() {
 		kn := testKubernaut()
+		kn.Spec.APIFrontend.Auth.IssuerURL = ""
 		enabled := true
 		kn.Spec.NetworkPolicies.Enabled = &enabled
 		kn.Spec.NetworkPolicies.APIServerCIDR = testAPIServerCIDR

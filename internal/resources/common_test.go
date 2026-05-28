@@ -53,6 +53,12 @@ func testKubernaut() *kubernautv1alpha1.Kubernaut {
 				Host:       "valkey.example.com",
 				Port:       6379,
 			},
+			APIFrontend: kubernautv1alpha1.APIFrontendSpec{
+				Auth: kubernautv1alpha1.APIFrontendAuthSpec{
+					IssuerURL: "https://login.kubernaut.ai/realms/kubernaut",
+					Audience:  "kubernaut-apifrontend",
+				},
+			},
 			KubernautAgent: kubernautv1alpha1.KubernautAgentSpec{
 				LLM: kubernautv1alpha1.LLMSpec{
 					Provider:              "openai",

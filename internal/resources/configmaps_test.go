@@ -1023,6 +1023,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("renders config with empty issuerURL when auth is not configured", func() {
 		kn := testKubernaut()
+		kn.Spec.APIFrontend.Auth.IssuerURL = ""
 		cm, err := APIFrontendConfigMap(kn)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
