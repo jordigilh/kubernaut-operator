@@ -101,8 +101,8 @@ github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0 h1:HWRh5R2+9EifMyIHV7ZV+MIZqgz
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0/go.mod h1:JfhWUomR1baixubs02l85lZYYOm7LV6om4ceouMv45c=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
-github.com/jordigilh/kubernaut v1.5.0-rc6.0.20260529150516-2cccd3d5b181 h1:i2ofBcTt9enP5iyxH9OWRx9fuzSshLQ+bi9q3nrq6Uw=
-github.com/jordigilh/kubernaut v1.5.0-rc6.0.20260529150516-2cccd3d5b181/go.mod h1:BVgjpuFlnYrhJLdYc976XASyo1MDqUNVj4THXmK/D1I=
+github.com/jordigilh/kubernaut v1.5.0-rc6.0.20260529201021-2da814d153d3 h1:W3NagcdQn0TuTDBTcCJxwt73I8eTvL+tgnSSY/InPmE=
+github.com/jordigilh/kubernaut v1.5.0-rc6.0.20260529201021-2da814d153d3/go.mod h1:BVgjpuFlnYrhJLdYc976XASyo1MDqUNVj4THXmK/D1I=
 github.com/joshdk/go-junit v1.0.0 h1:S86cUKIdwBHWwA6xCmFlf3RTLfVXYQfvanM5Uh+K6GE=
 github.com/joshdk/go-junit v1.0.0/go.mod h1:TiiV0PqkaNfFXjEiyjWM3XXrhVyCa1K4Zfga6W52ung=
 github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnrnM=
