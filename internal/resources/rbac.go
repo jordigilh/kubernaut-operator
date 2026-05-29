@@ -902,7 +902,7 @@ func apifrontendClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]s
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/status"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests"}, Verbs: []string{"get", "list", "create", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests/status"}, Verbs: []string{"get", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "list", "watch"}},

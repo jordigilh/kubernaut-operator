@@ -962,7 +962,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		Expect(ruleMap["kubernaut.ai/remediationrequests"]).To(ContainElements("get", "list", "watch", "create", "update", "patch"))
 
 		Expect(ruleMap).To(HaveKey("kubernaut.ai/remediationapprovalrequests"))
-		Expect(ruleMap["kubernaut.ai/remediationapprovalrequests"]).To(ContainElements("get", "list", "create", "update", "patch"))
+		Expect(ruleMap["kubernaut.ai/remediationapprovalrequests"]).To(ContainElements("get", "list", "watch", "create", "update", "patch"))
 
 		Expect(ruleMap).To(HaveKey("kubernaut.ai/remediationapprovalrequests/status"))
 		Expect(ruleMap["kubernaut.ai/remediationapprovalrequests/status"]).To(ContainElements("get", "update", "patch"))
