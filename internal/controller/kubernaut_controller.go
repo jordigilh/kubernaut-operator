@@ -734,6 +734,30 @@ func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernau
 		}
 	}
 
+	if !kn.Spec.GatewayEnabled() {
+		p := func(base string) string { return kn.Namespace + "-" + base }
+		for _, name := range []string{p("gateway-role")} {
+			staleCR := &rbacv1.ClusterRole{}
+			staleCR.Name = name
+			if err := r.deleteIfExists(ctx, staleCR); err != nil {
+				errs = append(errs, fmt.Errorf("removing stale gateway ClusterRole %s: %w", name, err))
+			}
+		}
+		for _, name := range []string{p("gateway-role-binding"), p("alertmanager-gateway-signal-source")} {
+			staleCRB := &rbacv1.ClusterRoleBinding{}
+			staleCRB.Name = name
+			if err := r.deleteIfExists(ctx, staleCRB); err != nil {
+				errs = append(errs, fmt.Errorf("removing stale gateway CRB %s: %w", name, err))
+			}
+		}
+		staleRB := &rbacv1.RoleBinding{}
+		staleRB.Name = "data-storage-client-gateway"
+		staleRB.Namespace = kn.Namespace
+		if err := r.deleteIfExists(ctx, staleRB); err != nil {
+			errs = append(errs, fmt.Errorf("removing stale gateway DS client RoleBinding: %w", err))
+		}
+	}
+
 	if !kn.Spec.Monitoring.MonitoringEnabled() {
 		for _, name := range resources.MonitoringCRBNames(kn) {
 			monCRB := &rbacv1.ClusterRoleBinding{}
@@ -761,6 +785,63 @@ func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernau
 
 	if len(errs) > 0 {
 		return fmt.Errorf("toggle cleanup: %w", errors.Join(errs...))
+	}
+	return nil
+}
+
+// cleanupDisabledGateway removes all namespaced gateway resources when the
+// gateway component is disabled via spec.gateway.enabled=false. Cluster-scoped
+// RBAC cleanup is handled separately in deployToggleRBAC.
+func (r *KubernautReconciler) cleanupDisabledGateway(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
+	ns := kn.Namespace
+	var errs []error
+
+	dep := &appsv1.Deployment{}
+	dep.Name = resources.DeploymentName(resources.ComponentGateway)
+	dep.Namespace = ns
+	if err := r.deleteIfExists(ctx, dep); err != nil {
+		errs = append(errs, fmt.Errorf("deleting gateway Deployment: %w", err))
+	}
+
+	svc := &corev1.Service{}
+	svc.Name = "gateway-service"
+	svc.Namespace = ns
+	if err := r.deleteIfExists(ctx, svc); err != nil {
+		errs = append(errs, fmt.Errorf("deleting gateway Service: %w", err))
+	}
+
+	sa := &corev1.ServiceAccount{}
+	sa.Name = resources.ServiceAccountName(resources.ComponentGateway)
+	sa.Namespace = ns
+	if err := r.deleteIfExists(ctx, sa); err != nil {
+		errs = append(errs, fmt.Errorf("deleting gateway ServiceAccount: %w", err))
+	}
+
+	cm := &corev1.ConfigMap{}
+	cm.Name = "gateway-config"
+	cm.Namespace = ns
+	if err := r.deleteIfExists(ctx, cm); err != nil {
+		errs = append(errs, fmt.Errorf("deleting gateway ConfigMap: %w", err))
+	}
+
+	np := &networkingv1.NetworkPolicy{}
+	np.Name = resources.ComponentGateway + "-netpol"
+	np.Namespace = ns
+	if err := r.deleteIfExists(ctx, np); err != nil {
+		errs = append(errs, fmt.Errorf("deleting gateway NetworkPolicy: %w", err))
+	}
+
+	if r.hasCRD(ctx, "alertmanagerconfigs.monitoring.coreos.com") {
+		amCfg := &monitoringv1alpha1.AlertmanagerConfig{}
+		amCfg.Name = "kubernaut-gateway-alerts"
+		amCfg.Namespace = ns
+		if err := r.deleteIfExists(ctx, amCfg); err != nil {
+			errs = append(errs, fmt.Errorf("deleting gateway AlertManagerConfig: %w", err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
 	return nil
 }
@@ -900,6 +981,10 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 	}
 	if kn.Spec.GatewayEnabled() {
 		depBuilders = append(depBuilders, resources.GatewayDeployment)
+	} else {
+		if err := r.cleanupDisabledGateway(ctx, kn); err != nil {
+			return false, fmt.Errorf("cleaning up disabled gateway: %w", err)
+		}
 	}
 	if kn.Spec.APIFrontendEnabled() {
 		depBuilders = append(depBuilders, resources.APIFrontendDeployment)
