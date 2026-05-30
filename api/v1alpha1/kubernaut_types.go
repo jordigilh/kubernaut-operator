@@ -839,6 +839,12 @@ type OAuth2Spec struct {
 
 // GatewaySpec configures the Gateway service.
 type GatewaySpec struct {
+	// Whether the Gateway component is deployed. Defaults to true.
+	// Set to false to skip all Gateway resources (Deployment, Service, RBAC, etc.).
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
 	// Route configuration for OCP external access.
 	// +optional
 	Route RouteSpec `json:"route,omitempty"`
@@ -1120,6 +1126,12 @@ type APIFrontendShutdownSpec = ShutdownSpec
 // Defaults to true when Enabled is nil.
 func (s *KubernautSpec) APIFrontendEnabled() bool {
 	return s.APIFrontend.Enabled == nil || *s.APIFrontend.Enabled
+}
+
+// GatewayEnabled returns whether the Gateway component should be deployed.
+// Defaults to true when Enabled is nil.
+func (s *KubernautSpec) GatewayEnabled() bool {
+	return s.Gateway.Enabled == nil || *s.Gateway.Enabled
 }
 
 // DataStorageSpec configures the DataStorage service.

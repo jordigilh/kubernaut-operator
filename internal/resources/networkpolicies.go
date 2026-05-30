@@ -34,7 +34,6 @@ func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut) []*networkingv1.NetworkPol
 		return nil
 	}
 	nps := []*networkingv1.NetworkPolicy{
-		gatewayNetworkPolicy(kn),
 		dataStorageNetworkPolicy(kn),
 		aiAnalysisNetworkPolicy(kn),
 		signalProcessingNetworkPolicy(kn),
@@ -44,6 +43,9 @@ func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut) []*networkingv1.NetworkPol
 		effectivenessMonitorNetworkPolicy(kn),
 		authWebhookNetworkPolicy(kn),
 		kubernautAgentNetworkPolicy(kn),
+	}
+	if kn.Spec.GatewayEnabled() {
+		nps = append(nps, gatewayNetworkPolicy(kn))
 	}
 	if kn.Spec.APIFrontendEnabled() {
 		nps = append(nps, apifrontendNetworkPolicy(kn))
@@ -107,7 +109,6 @@ func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 	p8443 := intstr.FromInt32(PortHTTPS)
 
 	dataIngressPeers := []networkingv1.NetworkPolicyPeer{
-		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentGateway)}},
 		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentAIAnalysis)}},
 		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentSignalProcessing)}},
 		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentRemediationOrchestrator)}},
@@ -116,6 +117,11 @@ func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentEffectivenessMonitor)}},
 		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentAuthWebhook)}},
 		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentKubernautAgent)}},
+	}
+	if kn.Spec.GatewayEnabled() {
+		dataIngressPeers = append(dataIngressPeers,
+			networkingv1.NetworkPolicyPeer{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentGateway)}},
+		)
 	}
 
 	ingress := []networkingv1.NetworkPolicyIngressRule{

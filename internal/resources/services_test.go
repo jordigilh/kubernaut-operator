@@ -139,6 +139,16 @@ var _ = Describe("Services", func() {
 			Expect(found).To(BeTrue(), "gateway-service not found")
 		})
 
+		It("excludes gateway-service when Gateway is disabled", func() {
+			kn := testKubernaut()
+			disabled := false
+			kn.Spec.Gateway.Enabled = &disabled
+			for _, svc := range Services(kn) {
+				Expect(svc.Name).NotTo(Equal("gateway-service"),
+					"gateway-service should not be present when Gateway is disabled")
+			}
+		})
+
 		It("exposes agent-tls port on apifrontend service", func() {
 			kn := testKubernaut()
 			found := false

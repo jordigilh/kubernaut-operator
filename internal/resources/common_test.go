@@ -197,6 +197,32 @@ var _ = Describe("URL helpers", func() {
 	})
 })
 
+var _ = Describe("ActiveComponents", func() {
+	It("includes gateway when enabled by default", func() {
+		kn := testKubernaut()
+		Expect(ActiveComponents(kn)).To(ContainElement(ComponentGateway))
+	})
+
+	It("excludes gateway when disabled", func() {
+		kn := testKubernaut()
+		disabled := false
+		kn.Spec.Gateway.Enabled = &disabled
+		Expect(ActiveComponents(kn)).NotTo(ContainElement(ComponentGateway))
+	})
+
+	It("includes apifrontend when enabled by default", func() {
+		kn := testKubernautWithAF()
+		Expect(ActiveComponents(kn)).To(ContainElement(ComponentAPIFrontend))
+	})
+
+	It("excludes apifrontend when disabled", func() {
+		kn := testKubernautWithAF()
+		disabled := false
+		kn.Spec.APIFrontend.Enabled = &disabled
+		Expect(ActiveComponents(kn)).NotTo(ContainElement(ComponentAPIFrontend))
+	})
+})
+
 var _ = Describe("InterServiceTLSCAFile", func() {
 	It("matches OCP service-ca path", func() {
 		Expect(InterServiceTLSCAFile).To(Equal("/etc/tls-ca/service-ca.crt"))

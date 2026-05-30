@@ -775,7 +775,6 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	}
 	tlsOpt := resources.WithTLSProfile(tlsProfile)
 	builders := []cmBuilder{
-		{"gateway", func() (*corev1.ConfigMap, error) { return resources.GatewayConfigMap(kn, tlsOpt) }},
 		{"datastorage", func() (*corev1.ConfigMap, error) { return resources.DataStorageConfigMap(kn, dbName, dbUser, tlsOpt) }},
 		{"aianalysis", func() (*corev1.ConfigMap, error) { return resources.AIAnalysisConfigMap(kn, tlsOpt) }},
 		{"signalprocessing", func() (*corev1.ConfigMap, error) { return resources.SignalProcessingConfigMap(kn, tlsOpt) }},
@@ -817,6 +816,14 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 			cmHashes["kubernaut-agent"] = agentHash + "+" + llmHash
 		}
 		configMaps = append(configMaps, llmRuntimeCM)
+	}
+	if kn.Spec.GatewayEnabled() {
+		gwCM, err := resources.GatewayConfigMap(kn, tlsOpt)
+		if err != nil {
+			return nil, fmt.Errorf("building gateway ConfigMap: %w", err)
+		}
+		configMaps = append(configMaps, gwCM)
+		cmHashes["gateway"] = resources.ConfigMapDataHash(gwCM.Data)
 	}
 	if kn.Spec.APIFrontendEnabled() {
 		afCM, err := resources.APIFrontendConfigMap(kn)
@@ -881,7 +888,6 @@ var componentCMHashKey = map[string]string{
 func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, cmHashes map[string]string) (hasRoute bool, _ error) {
 	type depBuilder func(*kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error)
 	depBuilders := []depBuilder{
-		resources.GatewayDeployment,
 		resources.DataStorageDeployment,
 		resources.AIAnalysisDeployment,
 		resources.SignalProcessingDeployment,
@@ -891,6 +897,9 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		resources.NotificationDeployment,
 		resources.KubernautAgentDeployment,
 		resources.AuthWebhookDeployment,
+	}
+	if kn.Spec.GatewayEnabled() {
+		depBuilders = append(depBuilders, resources.GatewayDeployment)
 	}
 	if kn.Spec.APIFrontendEnabled() {
 		depBuilders = append(depBuilders, resources.APIFrontendDeployment)
@@ -961,9 +970,11 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		}
 	}
 
-	if amCfg := resources.GatewayAlertManagerConfig(kn); amCfg != nil && r.hasCRD(ctx, "alertmanagerconfigs.monitoring.coreos.com") {
-		if err := r.ensureNamespaced(ctx, kn, amCfg); err != nil {
-			return false, fmt.Errorf("ensuring Gateway AlertManagerConfig: %w", err)
+	if kn.Spec.GatewayEnabled() {
+		if amCfg := resources.GatewayAlertManagerConfig(kn); amCfg != nil && r.hasCRD(ctx, "alertmanagerconfigs.monitoring.coreos.com") {
+			if err := r.ensureNamespaced(ctx, kn, amCfg); err != nil {
+				return false, fmt.Errorf("ensuring Gateway AlertManagerConfig: %w", err)
+			}
 		}
 	}
 
@@ -979,11 +990,18 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 func (r *KubernautReconciler) reconcileRoutes(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (bool, error) {
 	hasRoute := false
 
-	if route := resources.GatewayRoute(kn); route != nil {
-		if err := r.ensureNamespaced(ctx, kn, route); err != nil {
-			return false, fmt.Errorf("ensuring Gateway Route: %w", err)
+	if kn.Spec.GatewayEnabled() {
+		if route := resources.GatewayRoute(kn); route != nil {
+			if err := r.ensureNamespaced(ctx, kn, route); err != nil {
+				return false, fmt.Errorf("ensuring Gateway Route: %w", err)
+			}
+			hasRoute = true
+		} else {
+			staleRoute := resources.GatewayRouteStub(kn)
+			if err := r.deleteIfExists(ctx, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
+				return false, fmt.Errorf("deleting stale Gateway Route: %w", err)
+			}
 		}
-		hasRoute = true
 	} else {
 		staleRoute := resources.GatewayRouteStub(kn)
 		if err := r.deleteIfExists(ctx, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {

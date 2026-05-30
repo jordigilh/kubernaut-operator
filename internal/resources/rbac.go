@@ -49,7 +49,6 @@ func clusterRoleName(kn *kubernautv1alpha1.Kubernaut, base string) string {
 func ClusterRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRole {
 	labels := CommonLabels(kn)
 	roles := []*rbacv1.ClusterRole{
-		gatewayClusterRole(kn, labels),
 		aianalysisControllerClusterRole(kn, labels),
 		kubernautAgentClientClusterRole(kn, labels),
 		kubernautAgentInvestigatorClusterRole(kn, labels),
@@ -64,9 +63,15 @@ func ClusterRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRole {
 		authWebhookClusterRole(kn, labels),
 	}
 
+	if kn.Spec.GatewayEnabled() {
+		roles = append(roles, gatewayClusterRole(kn, labels))
+	}
+
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		roles = append(roles, alertmanagerViewClusterRole(kn, labels))
-		roles = append(roles, gatewaySignalSourceClusterRole(kn, labels))
+		if kn.Spec.GatewayEnabled() {
+			roles = append(roles, gatewaySignalSourceClusterRole(kn, labels))
+		}
 	}
 
 	if kn.Spec.APIFrontendEnabled() {
@@ -84,7 +89,6 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 	p := func(base string) string { return clusterRoleName(kn, base) }
 
 	crbs := []*rbacv1.ClusterRoleBinding{
-		clusterRoleBinding(p("gateway-role-binding"), p("gateway-role"), ServiceAccountName(ComponentGateway), ns, labels),
 		clusterRoleBinding(p("aianalysis-controller-binding"), p("aianalysis-controller"), ServiceAccountName(ComponentAIAnalysis), ns, labels),
 		clusterRoleBinding(p("kubernaut-agent-investigator-binding"), p("kubernaut-agent-investigator"), ServiceAccountName(ComponentKubernautAgent), ns, labels),
 		clusterRoleBinding(p("kubernaut-agent-auth-middleware-binding"), p("data-storage-auth-middleware"), ServiceAccountName(ComponentKubernautAgent), ns, labels),
@@ -102,17 +106,28 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 			"kubernaut-workflow-runner", ResolveWorkflowNamespace(kn), labels),
 	)
 
+	if kn.Spec.GatewayEnabled() {
+		crbs = append(crbs,
+			clusterRoleBinding(p("gateway-role-binding"), p("gateway-role"),
+				ServiceAccountName(ComponentGateway), ns, labels),
+		)
+	}
+
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		crbs = append(crbs,
 			clusterRoleBinding(p("effectivenessmonitor-alertmanager-view-binding"), p("alertmanager-view"),
 				ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
 			clusterRoleBinding(p("effectivenessmonitor-monitoring-view"), "cluster-monitoring-view",
 				ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
-			clusterRoleBinding(p("kubernaut-agent-monitoring-view"), "cluster-monitoring-view",
-				ServiceAccountName(ComponentKubernautAgent), ns, labels),
-			clusterRoleBinding(p("alertmanager-gateway-signal-source"), p("gateway-signal-source"),
-				OCPAlertManagerSAName, OCPMonitoringNamespace, labels),
+		clusterRoleBinding(p("kubernaut-agent-monitoring-view"), "cluster-monitoring-view",
+			ServiceAccountName(ComponentKubernautAgent), ns, labels),
 		)
+		if kn.Spec.GatewayEnabled() {
+			crbs = append(crbs,
+				clusterRoleBinding(p("alertmanager-gateway-signal-source"), p("gateway-signal-source"),
+					OCPAlertManagerSAName, OCPMonitoringNamespace, labels),
+			)
+		}
 		if kn.Spec.APIFrontendEnabled() {
 			crbs = append(crbs,
 				clusterRoleBinding(p("apifrontend-monitoring-view"), "cluster-monitoring-view",
@@ -140,7 +155,6 @@ func DataStorageClientRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Ro
 	consumers := []struct {
 		name, sa string
 	}{
-		{"data-storage-client-gateway", ServiceAccountName(ComponentGateway)},
 		{"data-storage-client-aianalysis", ServiceAccountName(ComponentAIAnalysis)},
 		{"data-storage-client-signalprocessing", ServiceAccountName(ComponentSignalProcessing)},
 		{"data-storage-client-remediationorchestrator", ServiceAccountName(ComponentRemediationOrchestrator)},
@@ -151,6 +165,12 @@ func DataStorageClientRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Ro
 		{"data-storage-client-authwebhook", ServiceAccountName(ComponentAuthWebhook)},
 		{"data-storage-client-datastorage", ServiceAccountName(ComponentDataStorage)},
 		{"data-storage-client-apifrontend", ServiceAccountName(ComponentAPIFrontend)},
+	}
+
+	if kn.Spec.GatewayEnabled() {
+		consumers = append(consumers, struct{ name, sa string }{
+			"data-storage-client-gateway", ServiceAccountName(ComponentGateway),
+		})
 	}
 
 	rbs := make([]*rbacv1.RoleBinding, 0, len(consumers))

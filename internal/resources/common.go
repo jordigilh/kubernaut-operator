@@ -187,6 +187,8 @@ func isComponentActive(kn *kubernautv1alpha1.Kubernaut, component string) bool {
 	switch component {
 	case ComponentAPIFrontend:
 		return kn.Spec.APIFrontendEnabled()
+	case ComponentGateway:
+		return kn.Spec.GatewayEnabled()
 	default:
 		return true
 	}

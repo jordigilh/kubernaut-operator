@@ -797,6 +797,12 @@ spec:
                           type: string
                         type: array
                     type: object
+                  enabled:
+                    default: true
+                    description: |-
+                      Whether the Gateway component is deployed. Defaults to true.
+                      Set to false to skip all Gateway resources (Deployment, Service, RBAC, etc.).
+                    type: boolean
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:

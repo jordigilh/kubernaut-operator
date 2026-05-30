@@ -76,6 +76,9 @@ const (
 func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
 	services := make([]*corev1.Service, 0, len(apiServices)+2)
 	for _, def := range apiServices {
+		if def.Component == ComponentGateway && !kn.Spec.GatewayEnabled() {
+			continue
+		}
 		services = append(services, buildService(kn, def))
 	}
 

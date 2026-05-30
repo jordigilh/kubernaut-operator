@@ -1038,6 +1038,50 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		}
 	})
 
+	It("is excluded when Gateway is disabled", func() {
+		kn := testKubernautWithAF()
+		disabled := false
+		kn.Spec.Gateway.Enabled = &disabled
+		roles := ClusterRoles(kn)
+		for _, r := range roles {
+			Expect(r.Name).NotTo(Equal(clusterRoleName(kn, "gateway-role")),
+				"gateway ClusterRole should not be present when Gateway is disabled")
+		}
+		bindings := ClusterRoleBindings(kn)
+		for _, crb := range bindings {
+			Expect(crb.RoleRef.Name).NotTo(Equal(clusterRoleName(kn, "gateway-role")),
+				"gateway CRB should not be present when Gateway is disabled")
+		}
+	})
+
+	It("includes gateway ClusterRole and CRB when Gateway is enabled by default", func() {
+		kn := testKubernautWithAF()
+		roles := ClusterRoles(kn)
+		roleNames := make([]string, 0, len(roles))
+		for _, r := range roles {
+			roleNames = append(roleNames, r.Name)
+		}
+		Expect(roleNames).To(ContainElement(clusterRoleName(kn, "gateway-role")))
+
+		bindings := ClusterRoleBindings(kn)
+		crbRoleRefs := make([]string, 0, len(bindings))
+		for _, crb := range bindings {
+			crbRoleRefs = append(crbRoleRefs, crb.RoleRef.Name)
+		}
+		Expect(crbRoleRefs).To(ContainElement(clusterRoleName(kn, "gateway-role")))
+	})
+
+	It("excludes gateway data-storage-client RoleBinding when Gateway is disabled", func() {
+		kn := testKubernautWithAF()
+		disabled := false
+		kn.Spec.Gateway.Enabled = &disabled
+		rbs := DataStorageClientRoleBindings(kn)
+		for _, rb := range rbs {
+			Expect(rb.Name).NotTo(Equal("data-storage-client-gateway"),
+				"data-storage-client-gateway RoleBinding should not be present when Gateway is disabled")
+		}
+	})
+
 	It("includes subjectaccessreviews/create permission", func() {
 		kn := testKubernautWithAF()
 		roles := ClusterRoles(kn)

@@ -77,6 +77,38 @@ var _ = Describe("NetworkPolicies", func() {
 			Expect(missing).To(BeEmpty(), "missing NetworkPolicy %v", missing)
 		})
 
+		It("excludes gateway NetworkPolicy when Gateway is disabled", func() {
+			disabled := false
+			kn.Spec.Gateway.Enabled = &disabled
+			nps := NetworkPolicies(kn)
+			for _, np := range nps {
+				Expect(np.Name).NotTo(Equal(ComponentGateway+"-netpol"),
+					"gateway NetworkPolicy should not be present when Gateway is disabled")
+			}
+			Expect(nps).To(HaveLen(10), "len(NetworkPolicies()) = %d, want 10 when Gateway is disabled", len(nps))
+		})
+
+		It("excludes gateway from data-storage ingress peers when Gateway is disabled", func() {
+			disabled := false
+			kn.Spec.Gateway.Enabled = &disabled
+			var dsNP *networkingv1.NetworkPolicy
+			for _, np := range NetworkPolicies(kn) {
+				if np.Name == ComponentDataStorage+"-netpol" {
+					dsNP = np
+					break
+				}
+			}
+			Expect(dsNP).NotTo(BeNil())
+			for _, rule := range dsNP.Spec.Ingress {
+				for _, peer := range rule.From {
+					if peer.PodSelector != nil {
+						Expect(peer.PodSelector.MatchLabels).NotTo(Equal(SelectorLabels(ComponentGateway)),
+							"data-storage ingress should not include gateway peer when Gateway is disabled")
+					}
+				}
+			}
+		})
+
 		It("adds gateway ingress from configured namespaces", func() {
 			kn.Spec.NetworkPolicies.GatewayIngressNamespaces = []string{"ns1", "ns2"}
 			var gatewayNP *networkingv1.NetworkPolicy
