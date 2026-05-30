@@ -119,8 +119,8 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 				ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
 			clusterRoleBinding(p("effectivenessmonitor-monitoring-view"), "cluster-monitoring-view",
 				ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
-		clusterRoleBinding(p("kubernaut-agent-monitoring-view"), "cluster-monitoring-view",
-			ServiceAccountName(ComponentKubernautAgent), ns, labels),
+			clusterRoleBinding(p("kubernaut-agent-monitoring-view"), "cluster-monitoring-view",
+				ServiceAccountName(ComponentKubernautAgent), ns, labels),
 		)
 		if kn.Spec.GatewayEnabled() {
 			crbs = append(crbs,
