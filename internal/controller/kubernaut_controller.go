@@ -406,6 +406,9 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 	if err := r.deployAdmissionWebhooks(ctx, kn); err != nil {
 		return err
 	}
+	if err := r.ensureKagentiNamespaceLabel(ctx, kn); err != nil {
+		return err
+	}
 	hasRoute, err := r.deployWorkloads(ctx, kn, cmHashes)
 	if err != nil {
 		return err
@@ -1107,6 +1110,38 @@ func (r *KubernautReconciler) reconcileRoutes(ctx context.Context, kn *kubernaut
 	}
 
 	return hasRoute, nil
+}
+
+// ensureKagentiNamespaceLabel adds or removes the "kagenti-enabled" label on
+// the kubernaut-system namespace. The kagenti mutating webhook requires this
+// label in its namespaceSelector to inject the authbridge sidecar into AF pods.
+func (r *KubernautReconciler) ensureKagentiNamespaceLabel(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
+	log := logf.FromContext(ctx)
+
+	ns := &corev1.Namespace{}
+	if err := r.Get(ctx, types.NamespacedName{Name: kn.Namespace}, ns); err != nil {
+		return fmt.Errorf("fetching namespace for kagenti label: %w", err)
+	}
+
+	want := kn.Spec.APIFrontendEnabled() && kn.Spec.APIFrontend.SPIRE.SPIREEnabled()
+	have := ns.Labels["kagenti-enabled"] == "true"
+
+	if want == have {
+		return nil
+	}
+
+	if ns.Labels == nil {
+		ns.Labels = make(map[string]string)
+	}
+	if want {
+		log.Info("labeling namespace for kagenti authbridge injection", "namespace", kn.Namespace)
+		ns.Labels["kagenti-enabled"] = "true"
+	} else {
+		log.Info("removing kagenti-enabled label from namespace", "namespace", kn.Namespace)
+		delete(ns.Labels, "kagenti-enabled")
+	}
+
+	return r.Update(ctx, ns)
 }
 
 func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
