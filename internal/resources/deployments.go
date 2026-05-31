@@ -728,13 +728,6 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 	}
 	gracePeriod := drainSec + 5
 
-	metricsPort := PortMetrics
-	healthPort := PortHealthProbe
-	if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
-		metricsPort = 9092
-		healthPort = 8082
-	}
-
 	dep, err := buildDeployment(kn, DeploymentParams{
 		Component: ComponentAPIFrontend, ImageName: "apifrontend",
 		Resources: kn.Spec.APIFrontend.Resources, VolumeMounts: mounts, Volumes: volumes,
@@ -742,13 +735,13 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		Args: []string{"--config=/etc/apifrontend/config.yaml"},
 		Ports: []corev1.ContainerPort{
 			{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
-			{Name: "health", ContainerPort: healthPort, Protocol: corev1.ProtocolTCP},
-			{Name: "metrics", ContainerPort: metricsPort, Protocol: corev1.ProtocolTCP},
+			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		},
-		ProbePort: healthPort,
+		ProbePort: PortHealthProbe,
 		PodAnnotations: map[string]string{
 			"prometheus.io/scrape": "true",
-			"prometheus.io/port":   fmt.Sprintf("%d", metricsPort),
+			"prometheus.io/port":   "9090",
 			"prometheus.io/path":   "/metrics",
 		},
 		TerminationGracePeriodSeconds: &gracePeriod,

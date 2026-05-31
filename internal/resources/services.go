@@ -101,18 +101,12 @@ func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
 	services = append(services, awSvc)
 
 	if kn.Spec.APIFrontendEnabled() {
-		afMetricsPort := PortMetrics
-		afHealthPort := PortHealthProbe
-		if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
-			afMetricsPort = 9092
-			afHealthPort = 8082
-		}
 		services = append(services, buildService(kn, serviceDefinition{
 			ComponentAPIFrontend, "apifrontend",
 			[]corev1.ServicePort{
 				ServicePort("https", PortHTTPS),
-				ServicePort("health", afHealthPort),
-				ServicePort("metrics", afMetricsPort),
+				ServicePort("health", PortHealthProbe),
+				ServicePort("metrics", PortMetrics),
 				{
 					Name:       AgentTLSPortName,
 					Port:       PortAuthWebhookService, // 443

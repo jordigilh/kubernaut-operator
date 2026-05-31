@@ -1513,10 +1513,8 @@ type afRBACYAML struct {
 }
 
 type afServerYAML struct {
-	Port        int       `json:"port" yaml:"port"`
-	TLS         afTLSYAML `json:"tls" yaml:"tls"`
-	MetricsAddr string    `json:"metricsAddr,omitempty" yaml:"metricsAddr,omitempty"`
-	HealthAddr  string    `json:"healthAddr,omitempty" yaml:"healthAddr,omitempty"`
+	Port int       `json:"port" yaml:"port"`
+	TLS  afTLSYAML `json:"tls" yaml:"tls"`
 }
 
 type afTLSYAML struct {
@@ -1655,19 +1653,11 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 		afTLS = afTLSYAML{}
 	}
 
-	afServer := afServerYAML{
-		Port: int(listenPort),
-		TLS:  afTLS,
-	}
-	// The authbridge ext_proc gRPC server binds :9090 which collides with
-	// the AF metrics default. Shift AF metrics/health to avoid the conflict.
-	if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
-		afServer.MetricsAddr = ":9092"
-		afServer.HealthAddr = ":8082"
-	}
-
 	cfg := afConfigYAML{
-		Server: afServer,
+		Server: afServerYAML{
+			Port: int(listenPort),
+			TLS:  afTLS,
+		},
 		Agent: afAgentYAML{
 			KABaseURL:         kaBaseURL,
 			KAMCPEndpoint:     kaBaseURL + "/api/v1/mcp/",
