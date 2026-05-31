@@ -514,8 +514,15 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 	spec := kn.Spec.NetworkPolicies
 	protoTCP := corev1.ProtocolTCP
 	p8443 := intstr.FromInt32(PortHTTPS)
-	p8081 := intstr.FromInt32(PortHealthProbe)
-	p9090 := intstr.FromInt32(PortMetrics)
+
+	healthPort := PortHealthProbe
+	metricsPort := PortMetrics
+	if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
+		healthPort = 8082
+		metricsPort = 9092
+	}
+	pHealth := intstr.FromInt32(healthPort)
+	pMetrics := intstr.FromInt32(metricsPort)
 
 	ingress := []networkingv1.NetworkPolicyIngressRule{
 		{
@@ -530,7 +537,7 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 		},
 		{
 			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protoTCP, Port: &p8081},
+				{Protocol: &protoTCP, Port: &pHealth},
 			},
 		},
 	}
@@ -542,7 +549,7 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 				}}},
 			},
 			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protoTCP, Port: &p9090},
+				{Protocol: &protoTCP, Port: &pMetrics},
 			},
 		})
 	}
@@ -571,7 +578,7 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 				}}},
 			},
 			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protoTCP, Port: &p9090},
+				{Protocol: &protoTCP, Port: &pMetrics},
 			},
 		})
 	}
