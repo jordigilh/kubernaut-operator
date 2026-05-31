@@ -38,7 +38,7 @@ func APIFrontendServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.Se
 					Port:     "metrics",
 					Path:     "/metrics",
 					Interval: monitoringv1.Duration("15s"),
-					Scheme:   schemePtr(monitoringv1.SchemeHTTP),
+					Scheme:   schemePtr("http"),
 					RelabelConfigs: []monitoringv1.RelabelConfig{
 						{
 							SourceLabels: []monitoringv1.LabelName{"__address__"},
@@ -166,7 +166,7 @@ func DataStorageServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.Se
 					Port:     "metrics",
 					Path:     "/metrics",
 					Interval: monitoringv1.Duration("15s"),
-					Scheme:   schemePtr(monitoringv1.SchemeHTTP),
+					Scheme:   schemePtr("http"),
 					RelabelConfigs: []monitoringv1.RelabelConfig{
 						{
 							SourceLabels: []monitoringv1.LabelName{"__address__"},
@@ -263,7 +263,7 @@ func KubernautAgentServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1
 					Port:     "metrics",
 					Path:     "/metrics",
 					Interval: monitoringv1.Duration("15s"),
-					Scheme:   schemePtr(monitoringv1.SchemeHTTP),
+					Scheme:   schemePtr("http"),
 					RelabelConfigs: []monitoringv1.RelabelConfig{
 						{
 							SourceLabels: []monitoringv1.LabelName{"__address__"},
