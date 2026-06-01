@@ -67,33 +67,33 @@ spec:
         name: manager
         env:
         - name: RELATED_IMAGE_GATEWAY
-          value: ghcr.io/jordigilh/kubernaut/gateway@sha256:d99838cffe4a3f21e1158cefef55a87059dfdd29939f7ddca917b74f65984044
+          value: quay.io/kubernaut-ai/gateway@sha256:cba060b3ea2a81d17836148b75007c8a2041a2495fac5a20a9cf070e7e5e5678
         - name: RELATED_IMAGE_DATA_STORAGE
-          value: ghcr.io/jordigilh/kubernaut/datastorage@sha256:b5f0cfce345735450803f04d8ffc2f122075728d9ea70961b96a70aa4d814353
+          value: quay.io/kubernaut-ai/datastorage@sha256:ab03e0f463806a25ef4a83708eb524a87006ad38173b2fed616438fc58454169
         - name: RELATED_IMAGE_AIANALYSIS
-          value: ghcr.io/jordigilh/kubernaut/aianalysis@sha256:c365b0f8a5b6d56a292dbfae049c265c23cbfa53b224c654bf49bc1b37b8e950
+          value: quay.io/kubernaut-ai/aianalysis@sha256:cc0b4d0ddf51d2dda9c8c1841b35c6af1e555feff13c7e3c2281c5ec03160548
         - name: RELATED_IMAGE_SIGNALPROCESSING
-          value: ghcr.io/jordigilh/kubernaut/signalprocessing@sha256:1d7d5b4c31248c144e5139d23fccecebd9b5798c0dfad9c323461ac3ccae8285
+          value: quay.io/kubernaut-ai/signalprocessing@sha256:112a64d9e5d5018958a2f67387eba716c2617036ba6e95a7b61c780925627367
         - name: RELATED_IMAGE_REMEDIATIONORCHESTRATOR
-          value: ghcr.io/jordigilh/kubernaut/remediationorchestrator@sha256:3671c31d52fb1d19f8012138d89afade2e792ed4479087892cb60da72e0f7fd6
+          value: quay.io/kubernaut-ai/remediationorchestrator@sha256:3ad9fec4c7ca3eb1e754790bdbbf303679ff104efb14e532c072f25699c8c823
         - name: RELATED_IMAGE_WORKFLOWEXECUTION
-          value: ghcr.io/jordigilh/kubernaut/workflowexecution@sha256:ccb0850575c2812803f6c9d042cbfe3682d00f23c5b83790cc050663299d1a58
+          value: quay.io/kubernaut-ai/workflowexecution@sha256:0eaf9267b423ef6f410e973b102546777f71f5b9d0456318b019b3765d8c0fbd
         - name: RELATED_IMAGE_EFFECTIVENESSMONITOR
-          value: ghcr.io/jordigilh/kubernaut/effectivenessmonitor@sha256:416a54b110fbff3378a89a62f994447dfbdcde0e3ac4e3ee5cbbca9104fb497b
+          value: quay.io/kubernaut-ai/effectivenessmonitor@sha256:b151c7fc9b5d6902aabe03dae2d794629048270880bd2b7ad7a9ff52d3e0e5c9
         - name: RELATED_IMAGE_NOTIFICATION
-          value: ghcr.io/jordigilh/kubernaut/notification@sha256:6060ff098cb62a9e6374c13f221459bbf66c0f7e6bfd710d3049ba983a42cad0
+          value: quay.io/kubernaut-ai/notification@sha256:aa7e1ebce325665b99e3a6cd90f77683341de86dd9cd19fb47288b0682a750f2
         - name: RELATED_IMAGE_KUBERNAUT_AGENT
-          value: ghcr.io/jordigilh/kubernaut/kubernautagent@sha256:a456cf172fe564489188b9a04b544a8a4338a76d78058d490cb8c34cfe303581
+          value: quay.io/kubernaut-ai/kubernautagent@sha256:a6a67968369f54ad3f76f2bf708b0885430a597e39f7bf1166f7e5eb9c7c634a
         - name: RELATED_IMAGE_AUTHWEBHOOK
-          value: ghcr.io/jordigilh/kubernaut/authwebhook@sha256:9967173419d19706ebbb445f882595a4272f6d6c5467558524d4801285aca905
+          value: quay.io/kubernaut-ai/authwebhook@sha256:8f90f32adbf2e79d91234589e242efe18be840ec5ab03a4263153812e3d7f67a
         - name: RELATED_IMAGE_API_FRONTEND
-          value: ghcr.io/jordigilh/kubernaut/apifrontend@sha256:097d0efc0d6e6adb4e14f6964c50f72d752d1549870c88a31456d4db37c20b52
+          value: quay.io/kubernaut-ai/apifrontend@sha256:dfa64cf8ec2aa67d16a9bfe64666c50dfe0e9e6d0d64da846cedba9a6458c250
         - name: RELATED_IMAGE_DB_MIGRATE
-          value: ghcr.io/jordigilh/kubernaut/db-migrate@sha256:0005f1d0f42e726133c23576213d9c7d2a93f50f16b0e7f0f856fca1ab2bfdf9
+          value: quay.io/kubernaut-ai/db-migrate@sha256:51a8c3fb155b7047df0751d7d7846676167d1e12baddb376d2654771bf819e7e
         - name: RELATED_IMAGE_INIT_POSTGRES
-          value: registry.redhat.io/rhel10/postgresql-16@sha256:6626034c7e8a171610212a220efd417eb5ab7792b5dbd912d38976ffe0627301
+          value: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
         - name: RELATED_IMAGE_INIT_UBI_MINIMAL
-          value: registry.access.redhat.com/ubi10/ubi-minimal@sha256:2a4785f399dc7ae2f3ca85f68bac0ccac47f3e73464a47c21e4f7ae46b55a053
+          value: registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c
         ports: []
         securityContext:
           allowPrivilegeEscalation: false
