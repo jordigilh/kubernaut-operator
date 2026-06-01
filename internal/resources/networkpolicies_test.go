@@ -37,12 +37,12 @@ var _ = Describe("NetworkPolicies", func() {
 			kn := testKubernaut()
 			disabled := false
 			kn.Spec.NetworkPolicies.Enabled = &disabled
-			Expect(NetworkPolicies(kn)).To(BeNil(), "NetworkPolicies() = %#v, want nil when enabled=false", NetworkPolicies(kn))
+			Expect(NetworkPolicies(kn, KagentiSidecarNone)).To(BeNil(), "NetworkPolicies() = %#v, want nil when enabled=false", NetworkPolicies(kn, KagentiSidecarNone))
 		})
 
 		It("returns nil when enabled is unset", func() {
 			kn := testKubernaut()
-			Expect(NetworkPolicies(kn)).To(BeNil(), "NetworkPolicies() = %#v, want nil when enabled is not set (default false)", NetworkPolicies(kn))
+			Expect(NetworkPolicies(kn, KagentiSidecarNone)).To(BeNil(), "NetworkPolicies() = %#v, want nil when enabled is not set (default false)", NetworkPolicies(kn, KagentiSidecarNone))
 		})
 	})
 
@@ -56,12 +56,12 @@ var _ = Describe("NetworkPolicies", func() {
 		})
 
 		It("returns eleven policies for all components", func() {
-			nps := NetworkPolicies(kn)
+			nps := NetworkPolicies(kn, KagentiSidecarNone)
 			Expect(nps).To(HaveLen(11), "len(NetworkPolicies()) = %d, want 11", len(nps))
 		})
 
 		It("names match component netpol names for always-on components", func() {
-			nps := NetworkPolicies(kn)
+			nps := NetworkPolicies(kn, KagentiSidecarNone)
 			wantNames := make(map[string]bool)
 			for _, c := range ActiveComponents(kn) {
 				wantNames[c+"-netpol"] = true
@@ -80,7 +80,7 @@ var _ = Describe("NetworkPolicies", func() {
 		It("excludes gateway NetworkPolicy when Gateway is disabled", func() {
 			disabled := false
 			kn.Spec.Gateway.Enabled = &disabled
-			nps := NetworkPolicies(kn)
+			nps := NetworkPolicies(kn, KagentiSidecarNone)
 			for _, np := range nps {
 				Expect(np.Name).NotTo(Equal(ComponentGateway+"-netpol"),
 					"gateway NetworkPolicy should not be present when Gateway is disabled")
@@ -92,7 +92,7 @@ var _ = Describe("NetworkPolicies", func() {
 			disabled := false
 			kn.Spec.Gateway.Enabled = &disabled
 			var dsNP *networkingv1.NetworkPolicy
-			for _, np := range NetworkPolicies(kn) {
+			for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 				if np.Name == ComponentDataStorage+"-netpol" {
 					dsNP = np
 					break
@@ -112,7 +112,7 @@ var _ = Describe("NetworkPolicies", func() {
 		It("adds gateway ingress from configured namespaces", func() {
 			kn.Spec.NetworkPolicies.GatewayIngressNamespaces = []string{"ns1", "ns2"}
 			var gatewayNP *networkingv1.NetworkPolicy
-			for _, np := range NetworkPolicies(kn) {
+			for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 				if np.Name == ComponentGateway+"-netpol" {
 					gatewayNP = np
 					break
@@ -127,7 +127,7 @@ var _ = Describe("NetworkPolicies", func() {
 
 		It("gives kubernaut-agent ingress and egress with default egress count", func() {
 			var agentNP *networkingv1.NetworkPolicy
-			for _, np := range NetworkPolicies(kn) {
+			for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 				if np.Name == ComponentKubernautAgent+"-netpol" {
 					agentNP = np
 					break
@@ -146,7 +146,7 @@ var _ = Describe("NetworkPolicies", func() {
 		It("adds monitoring egress when MonitoringNamespace is set", func() {
 			kn.Spec.NetworkPolicies.MonitoringNamespace = OCPMonitoringNamespace
 			var agentNP *networkingv1.NetworkPolicy
-			for _, np := range NetworkPolicies(kn) {
+			for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 				if np.Name == ComponentKubernautAgent+"-netpol" {
 					agentNP = np
 					break
@@ -166,7 +166,7 @@ var _ = Describe("NetworkPolicies", func() {
 
 		It("allows data-storage ingress from all client components", func() {
 			var dsNP *networkingv1.NetworkPolicy
-			for _, np := range NetworkPolicies(kn) {
+			for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 				if np.Name == ComponentDataStorage+"-netpol" {
 					dsNP = np
 					break
@@ -205,7 +205,7 @@ var _ = Describe("NetworkPolicies", func() {
 		It("allows metrics scrape ingress from openshift-monitoring", func() {
 			kn.Spec.NetworkPolicies.MonitoringNamespace = OCPMonitoringNamespace
 			var dsNP *networkingv1.NetworkPolicy
-			for _, np := range NetworkPolicies(kn) {
+			for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 				if np.Name == ComponentDataStorage+"-netpol" {
 					dsNP = np
 					break
@@ -246,7 +246,7 @@ var _ = Describe("NetworkPolicies", func() {
 		enabled := true
 		kn.Spec.NetworkPolicies.Enabled = &enabled
 		kn.Spec.NetworkPolicies.APIServerCIDR = testAPIServerCIDR
-		nps := NetworkPolicies(kn)
+		nps := NetworkPolicies(kn, KagentiSidecarNone)
 		p443 := intstr.FromInt32(443)
 		proto := corev1.ProtocolTCP
 		found := false
@@ -294,7 +294,7 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 	It("is included when AF is enabled", func() {
 		kn := testKubernautWithAF()
 		enableNP(kn)
-		nps := NetworkPolicies(kn)
+		nps := NetworkPolicies(kn, KagentiSidecarNone)
 		found := false
 		for _, np := range nps {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
@@ -309,7 +309,7 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 		kn := testKubernautWithAF()
 		enableNP(kn)
 		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn) {
+		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
 				afNP = np
 				break
@@ -335,7 +335,7 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 		kn := testKubernautWithAF()
 		enableNP(kn)
 		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn) {
+		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
 				afNP = np
 				break
@@ -350,7 +350,7 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 		enableNP(kn)
 		kn.Spec.NetworkPolicies.IngressNamespace = "openshift-ingress"
 		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn) {
+		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
 				afNP = np
 				break
@@ -375,7 +375,7 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 		kn := testKubernautWithAF()
 		enableNP(kn)
 		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn) {
+		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
 				afNP = np
 				break
@@ -396,7 +396,7 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 		enableNP(kn)
 		kn.Spec.NetworkPolicies.ExternalEgressCIDRs = []string{"10.128.0.0/14", "192.168.1.0/24"}
 		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn) {
+		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
 				afNP = np
 				break
@@ -423,7 +423,7 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 		kn := testKubernautWithAF()
 		enableNP(kn)
 		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn) {
+		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
 				afNP = np
 				break
@@ -444,7 +444,7 @@ var _ = Describe("KubernautAgent NetworkPolicy with AF", func() {
 		kn := testKubernautWithAF()
 		enabled := true
 		kn.Spec.NetworkPolicies.Enabled = &enabled
-		nps := NetworkPolicies(kn)
+		nps := NetworkPolicies(kn, KagentiSidecarNone)
 		var kaNP *networkingv1.NetworkPolicy
 		for _, np := range nps {
 			if np.Name == ComponentKubernautAgent+"-netpol" {
@@ -475,7 +475,7 @@ var _ = Describe("APIFrontend NetworkPolicy OIDC egress", func() {
 		enabled := true
 		kn.Spec.NetworkPolicies.Enabled = &enabled
 		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn) {
+		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
 				afNP = np
 				break
@@ -501,7 +501,7 @@ var _ = Describe("APIFrontend NetworkPolicy OIDC egress", func() {
 		kn.Spec.NetworkPolicies.Enabled = &enabled
 		kn.Spec.NetworkPolicies.APIServerCIDR = testAPIServerCIDR
 		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn) {
+		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
 				afNP = np
 				break

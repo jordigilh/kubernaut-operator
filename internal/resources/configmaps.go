@@ -1628,7 +1628,7 @@ type afResilienceYAML struct {
 }
 
 // APIFrontendConfigMap generates the apifrontend-config ConfigMap.
-func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) (*corev1.ConfigMap, error) {
 	af := kn.Spec.APIFrontend
 	ns := kn.Namespace
 
@@ -1639,19 +1639,10 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 		agentCardURL = fmt.Sprintf("https://apifrontend.%s.svc.cluster.local:%d/a2a/invoke", ns, PortHTTPS)
 	}
 
-	// When SPIRE/authbridge is enabled, the kagenti webhook shifts the AF
-	// container to port+1 and places authbridge on the original port. Since
-	// AF reads its listen port from config.yaml (not the PORT env var), we
-	// must set server.port to the shifted value here.
-	listenPort := PortHTTPS
-	if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
-		listenPort = PortHTTPS + 1
-	}
+	listenPort := sidecar.AFListenPort()
 
-	// When authbridge handles external TLS/mTLS, the AF serves plain HTTP
-	// internally. The AF disables TLS when certDir is empty and required is false.
 	afTLS := afTLSYAML{CertDir: "/etc/apifrontend/tls", Required: true}
-	if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
+	if sidecar != KagentiSidecarNone {
 		afTLS = afTLSYAML{}
 	}
 
@@ -1659,11 +1650,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 		Port: int(listenPort),
 		TLS:  afTLS,
 	}
-	// The kagenti 0.2.x envoy-based authbridge sidecar binds :9090 for its
-	// ext_proc gRPC server, colliding with AF metrics. Shift AF metrics and
-	// health ports when SPIRE is enabled to avoid the conflict.
-	// This can be removed once kagenti 0.2.x support is dropped.
-	if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
+	if sidecar.ShiftsPorts() {
 		afServer.MetricsPort = 9092
 		afServer.HealthPort = 8082
 	}

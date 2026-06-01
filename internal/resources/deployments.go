@@ -657,7 +657,7 @@ func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 // The AF service exposes HTTPS (8443), health (8081), and metrics (9090) ports.
 // It mounts projected config (config.yaml + rbac_roles.yaml), TLS server cert,
 // and CA cert for inter-service trust.
-func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) (*appsv1.Deployment, error) {
 	ns := kn.Namespace
 	env := []corev1.EnvVar{
 		{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{
@@ -669,11 +669,7 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		{Name: "TLS_CA_FILE", Value: "/etc/apifrontend/tls-ca/ca.crt"},
 	}
 
-	// When SPIRE/authbridge is injected, the webhook sets HTTPS_PROXY
-	// pointing AF traffic through the authbridge sidecar. Internal
-	// service-to-service calls (KA, DS) must bypass the proxy so AF's
-	// own SA bearer token is preserved on the wire.
-	if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
+	if sidecar != KagentiSidecarNone {
 		noProxy := fmt.Sprintf("127.0.0.1,localhost,kubernaut-agent.%s.svc.cluster.local,data-storage-service.%s.svc.cluster.local", ns, ns)
 		env = append(env, corev1.EnvVar{Name: "NO_PROXY", Value: noProxy})
 	}
@@ -728,9 +724,10 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 	}
 	gracePeriod := drainSec + 5
 
+	listenPort := sidecar.AFListenPort()
 	metricsPort := PortMetrics
 	healthPort := PortHealthProbe
-	if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
+	if sidecar.ShiftsPorts() {
 		metricsPort = 9092
 		healthPort = 8082
 	}
@@ -741,7 +738,7 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		Env:  env,
 		Args: []string{"--config=/etc/apifrontend/config.yaml"},
 		Ports: []corev1.ContainerPort{
-			{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
+			{Name: "https", ContainerPort: listenPort, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: healthPort, Protocol: corev1.ProtocolTCP},
 			{Name: "metrics", ContainerPort: metricsPort, Protocol: corev1.ProtocolTCP},
 		},

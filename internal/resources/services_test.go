@@ -27,13 +27,13 @@ var _ = Describe("Services", func() {
 	Context("Services()", func() {
 		It("returns 6 API services", func() {
 			kn := testKubernaut()
-			svcs := Services(kn)
+			svcs := Services(kn, KagentiSidecarNone)
 			Expect(svcs).To(HaveLen(6))
 		})
 
 		It("places all services in the system namespace", func() {
 			kn := testKubernaut()
-			for _, svc := range Services(kn) {
+			for _, svc := range Services(kn, KagentiSidecarNone) {
 				Expect(svc.Namespace).To(Equal(testSystemNamespace), "Service %q namespace = %q, want %q", svc.Name, svc.Namespace, testSystemNamespace)
 			}
 		})
@@ -41,7 +41,7 @@ var _ = Describe("Services", func() {
 		It("exposes authwebhook on 443 with serving cert annotation", func() {
 			kn := testKubernaut()
 			found := false
-			for _, svc := range Services(kn) {
+			for _, svc := range Services(kn, KagentiSidecarNone) {
 				if svc.Name == testAuthWebhookServiceName {
 					found = true
 					Expect(svc.Spec.Ports).NotTo(BeEmpty())
@@ -55,7 +55,7 @@ var _ = Describe("Services", func() {
 
 		It("gives non-authwebhook API services port 8443", func() {
 			kn := testKubernaut()
-			for _, svc := range Services(kn) {
+			for _, svc := range Services(kn, KagentiSidecarNone) {
 				if svc.Name == testAuthWebhookServiceName {
 					continue
 				}
@@ -72,7 +72,7 @@ var _ = Describe("Services", func() {
 
 		It("includes expected service names", func() {
 			kn := testKubernaut()
-			svcs := Services(kn)
+			svcs := Services(kn, KagentiSidecarNone)
 			names := make(map[string]bool, len(svcs))
 			for _, svc := range svcs {
 				names[svc.Name] = true
@@ -92,7 +92,7 @@ var _ = Describe("Services", func() {
 		It("maps gateway-service to multi-port spec", func() {
 			kn := testKubernaut()
 			found := false
-			for _, svc := range Services(kn) {
+			for _, svc := range Services(kn, KagentiSidecarNone) {
 				if svc.Name == "gateway-service" {
 					found = true
 					wantPorts := map[string]int32{"https": 8443, "health": 8081, "metrics": 9090}
@@ -112,7 +112,7 @@ var _ = Describe("Services", func() {
 		It("annotates kubernaut-agent with serving cert secret name", func() {
 			kn := testKubernaut()
 			found := false
-			for _, svc := range Services(kn) {
+			for _, svc := range Services(kn, KagentiSidecarNone) {
 				if svc.Name == "kubernaut-agent" {
 					found = true
 					v, ok := svc.Annotations[OCPServingCertAnnotation]
@@ -127,7 +127,7 @@ var _ = Describe("Services", func() {
 		It("annotates gateway-service with serving cert secret name", func() {
 			kn := testKubernaut()
 			found := false
-			for _, svc := range Services(kn) {
+			for _, svc := range Services(kn, KagentiSidecarNone) {
 				if svc.Name == "gateway-service" {
 					found = true
 					v, ok := svc.Annotations[OCPServingCertAnnotation]
@@ -143,7 +143,7 @@ var _ = Describe("Services", func() {
 			kn := testKubernaut()
 			disabled := false
 			kn.Spec.Gateway.Enabled = &disabled
-			for _, svc := range Services(kn) {
+			for _, svc := range Services(kn, KagentiSidecarNone) {
 				Expect(svc.Name).NotTo(Equal("gateway-service"),
 					"gateway-service should not be present when Gateway is disabled")
 			}
@@ -152,7 +152,7 @@ var _ = Describe("Services", func() {
 		It("exposes agent-tls port on apifrontend service", func() {
 			kn := testKubernaut()
 			found := false
-			for _, svc := range Services(kn) {
+			for _, svc := range Services(kn, KagentiSidecarNone) {
 				if svc.Name == "apifrontend" {
 					found = true
 					var agentTLS *int32
@@ -173,7 +173,7 @@ var _ = Describe("Services", func() {
 		It("SC-8: agent-tls always targets PortHTTPS where authbridge listens", func() {
 			kn := testKubernautWithAF()
 			kn.Spec.APIFrontend.SPIRE.Enabled = true
-			for _, svc := range Services(kn) {
+			for _, svc := range Services(kn, KagentiSidecarAuthbridge) {
 				if svc.Name == "apifrontend" {
 					for _, p := range svc.Spec.Ports {
 						if p.Name == AgentTLSPortName {
@@ -191,7 +191,7 @@ var _ = Describe("Services", func() {
 		It("annotates data-storage-service with serving cert secret name", func() {
 			kn := testKubernaut()
 			found := false
-			for _, svc := range Services(kn) {
+			for _, svc := range Services(kn, KagentiSidecarNone) {
 				if svc.Name == "data-storage-service" {
 					found = true
 					v, ok := svc.Annotations[OCPServingCertAnnotation]
@@ -249,7 +249,7 @@ var _ = Describe("Services", func() {
 	Context("selectors", func() {
 		It("use app labels that match known components", func() {
 			kn := testKubernaut()
-			all := append(Services(kn), MetricsServices(kn)...)
+			all := append(Services(kn, KagentiSidecarNone), MetricsServices(kn)...)
 
 			knownComponents := make(map[string]bool)
 			for _, c := range AllComponents() {

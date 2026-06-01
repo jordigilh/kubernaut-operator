@@ -98,6 +98,47 @@ const (
 	MigrationTTLSeconds   int32 = 300
 )
 
+// KagentiSidecarMode describes how the kagenti webhook injects its
+// authentication sidecar into AF pods. The operator detects the mode at
+// runtime and adjusts AF listen/health/metrics ports accordingly.
+type KagentiSidecarMode int
+
+const (
+	// KagentiSidecarNone means kagenti is not active (SPIRE disabled or
+	// kagenti not installed).
+	KagentiSidecarNone KagentiSidecarMode = iota
+
+	// KagentiSidecarEnvoy is kagenti 0.2.x: an envoy-proxy sidecar that
+	// intercepts traffic via iptables + ORIGINAL_DST routing. The
+	// application container keeps its original listen port because envoy
+	// transparently proxies to it.
+	KagentiSidecarEnvoy
+
+	// KagentiSidecarAuthbridge is kagenti 0.3.x+: an authbridge-proxy
+	// binary that takes the original listen port (e.g. 8443) and shifts
+	// the application container to port+1 (e.g. 8444).
+	KagentiSidecarAuthbridge
+)
+
+// AFListenPort returns the AF container listen port for the given sidecar
+// mode. Authbridge (0.3.x) shifts the app to PortHTTPS+1; Envoy (0.2.x)
+// keeps it on PortHTTPS.
+func (m KagentiSidecarMode) AFListenPort() int32 {
+	if m == KagentiSidecarAuthbridge {
+		return PortHTTPS + 1
+	}
+	return PortHTTPS
+}
+
+// ShiftsPorts reports whether AF metrics and health ports must be shifted
+// away from defaults to avoid conflicts with the kagenti sidecar.
+func (m KagentiSidecarMode) ShiftsPorts() bool {
+	return m != KagentiSidecarNone
+}
+
+// CRD used to distinguish kagenti 0.3.x+ from older versions.
+const kagentiAgentsCRD = "agents.agent.kagenti.dev"
+
 // PDB constant.
 const PDBMaxUnavailable = 1
 

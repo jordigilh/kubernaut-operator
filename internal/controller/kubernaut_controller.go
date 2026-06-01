@@ -399,7 +399,9 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 
 	tlsProfile := r.resolveClusterTLSProfile(ctx)
 
-	cmHashes, err := r.deployConfigMaps(ctx, kn, dbName, dbUser, tlsProfile)
+	sidecar := r.detectKagentiSidecarMode(ctx, kn)
+
+	cmHashes, err := r.deployConfigMaps(ctx, kn, dbName, dbUser, tlsProfile, sidecar)
 	if err != nil {
 		return err
 	}
@@ -409,7 +411,7 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 	if err := r.ensureKagentiNamespaceLabel(ctx, kn); err != nil {
 		return err
 	}
-	hasRoute, err := r.deployWorkloads(ctx, kn, cmHashes)
+	hasRoute, err := r.deployWorkloads(ctx, kn, cmHashes, sidecar)
 	if err != nil {
 		return err
 	}
@@ -852,7 +854,7 @@ func (r *KubernautReconciler) cleanupDisabledGateway(ctx context.Context, kn *ku
 // deployConfigMaps builds and ensures all service ConfigMaps. Returns a map
 // of component name to SHA-256 hash of the ConfigMap data, used to stamp pod
 // template annotations and force rolling restarts when config content changes.
-func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, dbName, dbUser, tlsProfile string) (map[string]string, error) {
+func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, dbName, dbUser, tlsProfile string, sidecar resources.KagentiSidecarMode) (map[string]string, error) {
 	type cmBuilder struct {
 		name string
 		fn   func() (*corev1.ConfigMap, error)
@@ -910,7 +912,7 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 		cmHashes["gateway"] = resources.ConfigMapDataHash(gwCM.Data)
 	}
 	if kn.Spec.APIFrontendEnabled() {
-		afCM, err := resources.APIFrontendConfigMap(kn)
+		afCM, err := resources.APIFrontendConfigMap(kn, sidecar)
 		if err != nil {
 			return nil, fmt.Errorf("building apifrontend ConfigMap: %w", err)
 		}
@@ -970,7 +972,7 @@ var componentCMHashKey = map[string]string{
 // route. cmHashes maps ConfigMap builder names to content hashes; these are
 // stamped as pod template annotations to force rolling restarts when config
 // content changes. Returns true if a route was created.
-func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, cmHashes map[string]string) (hasRoute bool, _ error) {
+func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, cmHashes map[string]string, sidecar resources.KagentiSidecarMode) (hasRoute bool, _ error) {
 	type depBuilder func(*kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error)
 	depBuilders := []depBuilder{
 		resources.DataStorageDeployment,
@@ -991,7 +993,9 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		}
 	}
 	if kn.Spec.APIFrontendEnabled() {
-		depBuilders = append(depBuilders, resources.APIFrontendDeployment)
+		depBuilders = append(depBuilders, func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+			return resources.APIFrontendDeployment(kn, sidecar)
+		})
 	}
 	for _, build := range depBuilders {
 		dep, err := build(kn)
@@ -1004,7 +1008,7 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		}
 	}
 
-	for _, svc := range resources.Services(kn) {
+	for _, svc := range resources.Services(kn, sidecar) {
 		if err := r.ensureNamespaced(ctx, kn, svc); err != nil {
 			return false, fmt.Errorf("ensuring Service %s: %w", svc.Name, err)
 		}
@@ -1029,7 +1033,7 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "NetworkPoliciesDisabled", "Reconcile",
 			"spec.networkPolicies.enabled is false — network segmentation is required for FedRAMP SC-7 compliance; set to true for production")
 	}
-	for _, np := range resources.NetworkPolicies(kn) {
+	for _, np := range resources.NetworkPolicies(kn, sidecar) {
 		if err := r.ensureNamespaced(ctx, kn, np); err != nil {
 			return false, fmt.Errorf("ensuring NetworkPolicy %s: %w", np.Name, err)
 		}
@@ -1111,6 +1115,22 @@ func (r *KubernautReconciler) reconcileRoutes(ctx context.Context, kn *kubernaut
 	}
 
 	return hasRoute, nil
+}
+
+// detectKagentiSidecarMode determines which sidecar injection strategy the
+// installed kagenti version uses. kagenti 0.3.x+ ships the agents.agent.kagenti.dev
+// CRD and uses authbridge-proxy (shifts app port to +1). Older 0.2.x versions
+// use an envoy sidecar with iptables interception (no port shift).
+func (r *KubernautReconciler) detectKagentiSidecarMode(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) resources.KagentiSidecarMode {
+	if !kn.Spec.APIFrontendEnabled() || !kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
+		return resources.KagentiSidecarNone
+	}
+	if r.hasCRD(ctx, "agents.agent.kagenti.dev") {
+		logf.FromContext(ctx).Info("detected kagenti 0.3.x+ (authbridge-proxy sidecar)")
+		return resources.KagentiSidecarAuthbridge
+	}
+	logf.FromContext(ctx).Info("detected kagenti 0.2.x (envoy sidecar)")
+	return resources.KagentiSidecarEnvoy
 }
 
 // ensureKagentiNamespaceLabel adds or removes the "kagenti-enabled" label on

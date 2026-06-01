@@ -73,7 +73,7 @@ const (
 
 // Services builds all API Services for the Kubernaut deployment.
 // Annotations for OCP service-ca TLS provisioning are set per-service.
-func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
+func Services(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) []*corev1.Service {
 	services := make([]*corev1.Service, 0, len(apiServices)+2)
 	for _, def := range apiServices {
 		if def.Component == ComponentGateway && !kn.Spec.GatewayEnabled() {
@@ -103,7 +103,7 @@ func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
 	if kn.Spec.APIFrontendEnabled() {
 		afMetricsPort := PortMetrics
 		afHealthPort := PortHealthProbe
-		if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
+		if sidecar.ShiftsPorts() {
 			afMetricsPort = 9092
 			afHealthPort = 8082
 		}

@@ -28,7 +28,7 @@ import (
 // NetworkPolicies returns NetworkPolicy resources matching the upstream
 // kubernaut v1.4.0 traffic matrix. Returns nil when NetworkPolicies are
 // disabled on the CR.
-func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut) []*networkingv1.NetworkPolicy {
+func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) []*networkingv1.NetworkPolicy {
 	spec := kn.Spec.NetworkPolicies
 	if !spec.NetworkPoliciesEnabled() {
 		return nil
@@ -48,7 +48,7 @@ func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut) []*networkingv1.NetworkPol
 		nps = append(nps, gatewayNetworkPolicy(kn))
 	}
 	if kn.Spec.APIFrontendEnabled() {
-		nps = append(nps, apifrontendNetworkPolicy(kn))
+		nps = append(nps, apifrontendNetworkPolicy(kn, sidecar))
 	}
 	return nps
 }
@@ -510,14 +510,14 @@ func monitoringStackEgressRule(monitoringNS string) networkingv1.NetworkPolicyEg
 	}
 }
 
-func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
+func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) *networkingv1.NetworkPolicy {
 	spec := kn.Spec.NetworkPolicies
 	protoTCP := corev1.ProtocolTCP
 	p8443 := intstr.FromInt32(PortHTTPS)
 
 	healthPort := PortHealthProbe
 	metricsPort := PortMetrics
-	if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
+	if sidecar.ShiftsPorts() {
 		healthPort = 8082
 		metricsPort = 9092
 	}
