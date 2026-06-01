@@ -1125,14 +1125,14 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			"session.namespace must be set so AF BuildInstruction injects deployment context into the prompt")
 	})
 
-	It("shifts server.port to 8444 for authbridge sidecar (kagenti 0.3.x)", func() {
+	It("keeps server.port at 8443 for authbridge sidecar (kagenti 0.3.x)", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.SPIRE.Enabled = true
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarAuthbridge)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
-		Expect(data).To(ContainSubstring("port: 8444"),
-			"AF must listen on 8444 so kagenti authbridge-proxy can occupy 8443")
+		Expect(data).To(ContainSubstring("port: 8443"),
+			"AF declares 8443; kagenti webhook shifts AF to 8444 and authbridge takes 8443")
 	})
 
 	It("keeps server.port at 8443 for envoy sidecar (kagenti 0.2.x)", func() {

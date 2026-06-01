@@ -115,18 +115,18 @@ const (
 	KagentiSidecarEnvoy
 
 	// KagentiSidecarAuthbridge is kagenti 0.3.x+: an authbridge-proxy
-	// binary that takes the original listen port (e.g. 8443) and shifts
-	// the application container to port+1 (e.g. 8444).
+	// binary that takes the declared containerPort and shifts the
+	// application container to port+1 via the PORT env var. The operator
+	// must NOT pre-shift; it keeps AF on PortHTTPS so that authbridge
+	// occupies 8443 and AF moves to 8444.
 	KagentiSidecarAuthbridge
 )
 
-// AFListenPort returns the AF container listen port for the given sidecar
-// mode. Authbridge (0.3.x) shifts the app to PortHTTPS+1; Envoy (0.2.x)
-// keeps it on PortHTTPS.
+// AFListenPort returns the port the operator writes into the AF container
+// spec and config.yaml. The kagenti webhook handles the actual port
+// shifting at admission time — authbridge takes this port and moves the
+// application to port+1.
 func (m KagentiSidecarMode) AFListenPort() int32 {
-	if m == KagentiSidecarAuthbridge {
-		return PortHTTPS + 1
-	}
 	return PortHTTPS
 }
 

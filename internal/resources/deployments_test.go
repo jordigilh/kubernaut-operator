@@ -1135,8 +1135,8 @@ var _ = Describe("APIFrontendDeployment", func() {
 		for _, p := range dep.Spec.Template.Spec.Containers[0].Ports {
 			portMap[p.Name] = p.ContainerPort
 		}
-		Expect(portMap).To(HaveKeyWithValue("https", PortHTTPS+1),
-			"authbridge-proxy takes 8443; AF shifts to 8444")
+		Expect(portMap).To(HaveKeyWithValue("https", PortHTTPS),
+			"AF declares 8443; kagenti webhook shifts AF to 8444 and authbridge takes 8443")
 	})
 
 	It("sets NO_PROXY for KA and DS with envoy sidecar", func() {
