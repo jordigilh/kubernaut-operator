@@ -1513,8 +1513,10 @@ type afRBACYAML struct {
 }
 
 type afServerYAML struct {
-	Port int       `json:"port" yaml:"port"`
-	TLS  afTLSYAML `json:"tls" yaml:"tls"`
+	Port        int       `json:"port" yaml:"port"`
+	MetricsPort int       `json:"metricsPort,omitempty" yaml:"metricsPort,omitempty"`
+	HealthPort  int       `json:"healthPort,omitempty" yaml:"healthPort,omitempty"`
+	TLS         afTLSYAML `json:"tls" yaml:"tls"`
 }
 
 type afTLSYAML struct {
@@ -1653,11 +1655,21 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 		afTLS = afTLSYAML{}
 	}
 
+	afServer := afServerYAML{
+		Port: int(listenPort),
+		TLS:  afTLS,
+	}
+	// The kagenti 0.2.x envoy-based authbridge sidecar binds :9090 for its
+	// ext_proc gRPC server, colliding with AF metrics. Shift AF metrics and
+	// health ports when SPIRE is enabled to avoid the conflict.
+	// This can be removed once kagenti 0.2.x support is dropped.
+	if kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
+		afServer.MetricsPort = 9092
+		afServer.HealthPort = 8082
+	}
+
 	cfg := afConfigYAML{
-		Server: afServerYAML{
-			Port: int(listenPort),
-			TLS:  afTLS,
-		},
+		Server: afServer,
 		Agent: afAgentYAML{
 			KABaseURL:         kaBaseURL,
 			KAMCPEndpoint:     kaBaseURL + "/api/v1/mcp/",

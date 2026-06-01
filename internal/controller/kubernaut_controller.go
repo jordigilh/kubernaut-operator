@@ -963,6 +963,7 @@ var componentCMHashKey = map[string]string{
 	resources.ComponentNotification:            "notification-controller",
 	resources.ComponentKubernautAgent:          "kubernaut-agent",
 	resources.ComponentAuthWebhook:             "authwebhook",
+	resources.ComponentAPIFrontend:             "apifrontend",
 }
 
 // deployWorkloads creates/updates deployments, services, PDBs, and the OCP
