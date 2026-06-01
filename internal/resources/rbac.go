@@ -465,7 +465,7 @@ var toolPersonas = []toolPersona{
 			"kubernaut_takeover", "kubernaut_message", "kubernaut_complete",
 			"kubernaut_cancel", "kubernaut_status", "kubernaut_reconnect",
 			"kubectl_get", "kubectl_list", "kubectl_list_events",
-			"af_check_existing_rr", "af_create_rr",
+			"kubernaut_check_existing_remediation", "kubernaut_remediate",
 		},
 	},
 	{
@@ -477,7 +477,7 @@ var toolPersonas = []toolPersona{
 			"kubernaut_takeover", "kubernaut_message", "kubernaut_complete",
 			"kubernaut_cancel", "kubernaut_status", "kubernaut_reconnect",
 			"kubectl_get", "kubectl_list", "kubectl_list_events",
-			"af_check_existing_rr", "af_create_rr",
+			"kubernaut_check_existing_remediation", "kubernaut_remediate",
 		},
 	},
 	{
