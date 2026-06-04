@@ -136,9 +136,6 @@ func (m KagentiSidecarMode) ShiftsPorts() bool {
 	return m != KagentiSidecarNone
 }
 
-// CRD used to distinguish kagenti 0.3.x+ from older versions.
-const kagentiAgentsCRD = "agents.agent.kagenti.dev"
-
 // PDB constant.
 const PDBMaxUnavailable = 1
 

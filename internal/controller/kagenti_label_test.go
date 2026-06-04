@@ -26,20 +26,20 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func newTestNamespace(name string, labels map[string]string) *corev1.Namespace {
+func newTestNamespace(labels map[string]string) *corev1.Namespace {
 	return &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   name,
+			Name:   "kubernaut-system",
 			Labels: labels,
 		},
 	}
 }
 
-func testKubernautCR(ns string, afEnabled bool, spireEnabled bool) *kubernautv1alpha1.Kubernaut {
+func testKubernautCR(afEnabled bool, spireEnabled bool) *kubernautv1alpha1.Kubernaut {
 	kn := &kubernautv1alpha1.Kubernaut{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "kubernaut",
-			Namespace: ns,
+			Namespace: "kubernaut-system",
 		},
 		Spec: kubernautv1alpha1.KubernautSpec{
 			APIFrontend: kubernautv1alpha1.APIFrontendSpec{
@@ -57,8 +57,8 @@ func testKubernautCR(ns string, afEnabled bool, spireEnabled bool) *kubernautv1a
 }
 
 func TestEnsureKagentiNamespaceLabel_AddsWhenSPIREEnabled(t *testing.T) {
-	ns := newTestNamespace("kubernaut-system", nil)
-	kn := testKubernautCR("kubernaut-system", true, true)
+	ns := newTestNamespace(nil)
+	kn := testKubernautCR(true, true)
 	r := newFakeReconciler(ns)
 
 	if err := r.ensureKagentiNamespaceLabel(context.Background(), kn); err != nil {
@@ -75,8 +75,8 @@ func TestEnsureKagentiNamespaceLabel_AddsWhenSPIREEnabled(t *testing.T) {
 }
 
 func TestEnsureKagentiNamespaceLabel_RemovesWhenSPIREDisabled(t *testing.T) {
-	ns := newTestNamespace("kubernaut-system", map[string]string{"kagenti-enabled": "true"})
-	kn := testKubernautCR("kubernaut-system", true, false)
+	ns := newTestNamespace(map[string]string{"kagenti-enabled": "true"})
+	kn := testKubernautCR(true, false)
 	r := newFakeReconciler(ns)
 
 	if err := r.ensureKagentiNamespaceLabel(context.Background(), kn); err != nil {
@@ -93,8 +93,8 @@ func TestEnsureKagentiNamespaceLabel_RemovesWhenSPIREDisabled(t *testing.T) {
 }
 
 func TestEnsureKagentiNamespaceLabel_RemovesWhenAFDisabled(t *testing.T) {
-	ns := newTestNamespace("kubernaut-system", map[string]string{"kagenti-enabled": "true"})
-	kn := testKubernautCR("kubernaut-system", false, true)
+	ns := newTestNamespace(map[string]string{"kagenti-enabled": "true"})
+	kn := testKubernautCR(false, true)
 	r := newFakeReconciler(ns)
 
 	if err := r.ensureKagentiNamespaceLabel(context.Background(), kn); err != nil {
@@ -111,8 +111,8 @@ func TestEnsureKagentiNamespaceLabel_RemovesWhenAFDisabled(t *testing.T) {
 }
 
 func TestEnsureKagentiNamespaceLabel_NoopWhenAlreadyCorrect(t *testing.T) {
-	ns := newTestNamespace("kubernaut-system", map[string]string{"kagenti-enabled": "true", "other": "label"})
-	kn := testKubernautCR("kubernaut-system", true, true)
+	ns := newTestNamespace(map[string]string{"kagenti-enabled": "true", "other": "label"})
+	kn := testKubernautCR(true, true)
 	r := newFakeReconciler(ns)
 
 	if err := r.ensureKagentiNamespaceLabel(context.Background(), kn); err != nil {
@@ -132,8 +132,8 @@ func TestEnsureKagentiNamespaceLabel_NoopWhenAlreadyCorrect(t *testing.T) {
 }
 
 func TestEnsureKagentiNamespaceLabel_NoopWhenAlreadyAbsent(t *testing.T) {
-	ns := newTestNamespace("kubernaut-system", map[string]string{"other": "label"})
-	kn := testKubernautCR("kubernaut-system", true, false)
+	ns := newTestNamespace(map[string]string{"other": "label"})
+	kn := testKubernautCR(true, false)
 	r := newFakeReconciler(ns)
 
 	if err := r.ensureKagentiNamespaceLabel(context.Background(), kn); err != nil {

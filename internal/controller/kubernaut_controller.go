@@ -1052,37 +1052,8 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 	}
 
 	if kn.Spec.Monitoring.MonitoringEnabled() && r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com") {
-		dsSM := resources.DataStorageServiceMonitor(kn)
-		if err := r.ensureNamespaced(ctx, kn, dsSM); err != nil {
-			return false, fmt.Errorf("ensuring DS ServiceMonitor: %w", err)
-		}
-		dsPR := resources.DataStoragePrometheusRule(kn)
-		if err := r.ensureNamespaced(ctx, kn, dsPR); err != nil {
-			return false, fmt.Errorf("ensuring DS PrometheusRule: %w", err)
-		}
-		kaSM := resources.KubernautAgentServiceMonitor(kn)
-		if err := r.ensureNamespaced(ctx, kn, kaSM); err != nil {
-			return false, fmt.Errorf("ensuring KA ServiceMonitor: %w", err)
-		}
-		kaPR := resources.KubernautAgentPrometheusRule(kn)
-		if err := r.ensureNamespaced(ctx, kn, kaPR); err != nil {
-			return false, fmt.Errorf("ensuring KA PrometheusRule: %w", err)
-		}
-
-		componentMonitors := []*monitoringv1.ServiceMonitor{
-			resources.GatewayServiceMonitor(kn),
-			resources.AIAnalysisServiceMonitor(kn),
-			resources.SignalProcessingServiceMonitor(kn),
-			resources.RemediationOrchestratorServiceMonitor(kn),
-			resources.WorkflowExecutionServiceMonitor(kn),
-			resources.EffectivenessMonitorServiceMonitor(kn),
-			resources.NotificationServiceMonitor(kn),
-			resources.AuthWebhookServiceMonitor(kn),
-		}
-		for _, sm := range componentMonitors {
-			if err := r.ensureNamespaced(ctx, kn, sm); err != nil {
-				return false, fmt.Errorf("ensuring %s ServiceMonitor: %w", sm.Name, err)
-			}
+		if err := r.deployMonitoring(ctx, kn); err != nil {
+			return false, err
 		}
 	}
 
@@ -1101,6 +1072,42 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 	}
 
 	return r.reconcileRoutes(ctx, kn)
+}
+
+func (r *KubernautReconciler) deployMonitoring(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
+	dsSM := resources.DataStorageServiceMonitor(kn)
+	if err := r.ensureNamespaced(ctx, kn, dsSM); err != nil {
+		return fmt.Errorf("ensuring DS ServiceMonitor: %w", err)
+	}
+	dsPR := resources.DataStoragePrometheusRule(kn)
+	if err := r.ensureNamespaced(ctx, kn, dsPR); err != nil {
+		return fmt.Errorf("ensuring DS PrometheusRule: %w", err)
+	}
+	kaSM := resources.KubernautAgentServiceMonitor(kn)
+	if err := r.ensureNamespaced(ctx, kn, kaSM); err != nil {
+		return fmt.Errorf("ensuring KA ServiceMonitor: %w", err)
+	}
+	kaPR := resources.KubernautAgentPrometheusRule(kn)
+	if err := r.ensureNamespaced(ctx, kn, kaPR); err != nil {
+		return fmt.Errorf("ensuring KA PrometheusRule: %w", err)
+	}
+
+	componentMonitors := []*monitoringv1.ServiceMonitor{
+		resources.GatewayServiceMonitor(kn),
+		resources.AIAnalysisServiceMonitor(kn),
+		resources.SignalProcessingServiceMonitor(kn),
+		resources.RemediationOrchestratorServiceMonitor(kn),
+		resources.WorkflowExecutionServiceMonitor(kn),
+		resources.EffectivenessMonitorServiceMonitor(kn),
+		resources.NotificationServiceMonitor(kn),
+		resources.AuthWebhookServiceMonitor(kn),
+	}
+	for _, sm := range componentMonitors {
+		if err := r.ensureNamespaced(ctx, kn, sm); err != nil {
+			return fmt.Errorf("ensuring %s ServiceMonitor: %w", sm.Name, err)
+		}
+	}
+	return nil
 }
 
 func (r *KubernautReconciler) reconcileRoutes(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (bool, error) {
@@ -1168,7 +1175,7 @@ func (r *KubernautReconciler) ensureKagentiNamespaceLabel(ctx context.Context, k
 	}
 
 	want := kn.Spec.APIFrontendEnabled() && kn.Spec.APIFrontend.SPIRE.SPIREEnabled()
-	have := ns.Labels["kagenti-enabled"] == "true"
+	have := ns.Labels["kagenti-enabled"] == resources.LabelValueTrue
 
 	if want == have {
 		return nil
@@ -1179,7 +1186,7 @@ func (r *KubernautReconciler) ensureKagentiNamespaceLabel(ctx context.Context, k
 	}
 	if want {
 		log.Info("labeling namespace for kagenti authbridge injection", "namespace", kn.Namespace)
-		ns.Labels["kagenti-enabled"] = "true"
+		ns.Labels["kagenti-enabled"] = resources.LabelValueTrue
 	} else {
 		log.Info("removing kagenti-enabled label from namespace", "namespace", kn.Namespace)
 		delete(ns.Labels, "kagenti-enabled")
@@ -1437,7 +1444,7 @@ func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kuber
 	extCRBList := &rbacv1.ClusterRoleBindingList{}
 	if err := r.List(ctx, extCRBList,
 		client.MatchingLabels{
-			resources.LabelAdditionalAgentRBAC: "true",
+			resources.LabelAdditionalAgentRBAC: resources.LabelValueTrue,
 			"app.kubernetes.io/instance":       kn.Name,
 		},
 	); err != nil {

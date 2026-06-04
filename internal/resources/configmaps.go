@@ -458,7 +458,7 @@ type notificationRoutingConsoleReceiver struct {
 }
 
 type notificationRoutingConsoleYAML struct {
-	Route     notificationRoutingSlackRoute       `json:"route" yaml:"route"`
+	Route     notificationRoutingSlackRoute        `json:"route" yaml:"route"`
 	Receivers []notificationRoutingConsoleReceiver `json:"receivers" yaml:"receivers"`
 }
 

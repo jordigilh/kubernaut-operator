@@ -531,10 +531,10 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSi
 		metricsPort = 9092
 	}
 	if kn.Spec.APIFrontend.HealthPort != nil {
-		healthPort = int32(*kn.Spec.APIFrontend.HealthPort)
+		healthPort = *kn.Spec.APIFrontend.HealthPort
 	}
 	if kn.Spec.APIFrontend.MetricsPort != nil {
-		metricsPort = int32(*kn.Spec.APIFrontend.MetricsPort)
+		metricsPort = *kn.Spec.APIFrontend.MetricsPort
 	}
 	pHealth := intstr.FromInt32(healthPort)
 	pMetrics := intstr.FromInt32(metricsPort)
