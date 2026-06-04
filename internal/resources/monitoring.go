@@ -353,5 +353,75 @@ func KubernautAgentPrometheusRule(kn *kubernautv1alpha1.Kubernaut) *monitoringv1
 	}
 }
 
+// GatewayServiceMonitor builds the ServiceMonitor for the gateway service.
+func GatewayServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+	return componentServiceMonitor(kn, ComponentGateway, "gateway")
+}
+
+// AIAnalysisServiceMonitor builds the ServiceMonitor for the aianalysis service.
+func AIAnalysisServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+	return componentServiceMonitor(kn, ComponentAIAnalysis, "aianalysis")
+}
+
+// SignalProcessingServiceMonitor builds the ServiceMonitor for the signalprocessing service.
+func SignalProcessingServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+	return componentServiceMonitor(kn, ComponentSignalProcessing, "signalprocessing")
+}
+
+// RemediationOrchestratorServiceMonitor builds the ServiceMonitor for the remediation orchestrator.
+func RemediationOrchestratorServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+	return componentServiceMonitor(kn, ComponentRemediationOrchestrator, "remediationorchestrator")
+}
+
+// WorkflowExecutionServiceMonitor builds the ServiceMonitor for the workflow execution engine.
+func WorkflowExecutionServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+	return componentServiceMonitor(kn, ComponentWorkflowExecution, "workflowexecution")
+}
+
+// EffectivenessMonitorServiceMonitor builds the ServiceMonitor for the effectiveness monitor.
+func EffectivenessMonitorServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+	return componentServiceMonitor(kn, ComponentEffectivenessMonitor, "effectivenessmonitor")
+}
+
+// NotificationServiceMonitor builds the ServiceMonitor for the notification service.
+func NotificationServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+	return componentServiceMonitor(kn, ComponentNotification, "notification")
+}
+
+// AuthWebhookServiceMonitor builds the ServiceMonitor for the authwebhook service.
+func AuthWebhookServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+	return componentServiceMonitor(kn, ComponentAuthWebhook, "authwebhook")
+}
+
+func componentServiceMonitor(kn *kubernautv1alpha1.Kubernaut, component, jobName string) *monitoringv1.ServiceMonitor {
+	return &monitoringv1.ServiceMonitor{
+		ObjectMeta: ObjectMeta(kn, component+"-monitor", component),
+		Spec: monitoringv1.ServiceMonitorSpec{
+			JobLabel: "app.kubernetes.io/name",
+			Selector: metav1.LabelSelector{
+				MatchLabels: SelectorLabels(component),
+			},
+			Endpoints: []monitoringv1.Endpoint{
+				{
+					Port:     "metrics",
+					Path:     "/metrics",
+					Interval: monitoringv1.Duration("15s"),
+					Scheme:   schemePtr("http"),
+					RelabelConfigs: []monitoringv1.RelabelConfig{
+						{
+							SourceLabels: []monitoringv1.LabelName{"__address__"},
+							TargetLabel:  "job",
+							Replacement:  strPtr(jobName),
+						},
+					},
+				},
+			},
+			NamespaceSelector: monitoringv1.NamespaceSelector{
+				MatchNames: []string{kn.Namespace},
+			},
+		},
+	}
+}
+
 func durationPtr(d monitoringv1.Duration) *monitoringv1.Duration { return &d }
 func schemePtr(s monitoringv1.Scheme) *monitoringv1.Scheme       { return &s }

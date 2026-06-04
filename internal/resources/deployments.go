@@ -509,6 +509,13 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 		})
 	}
 
+	if kn.Spec.KubernautAgent.LLM.TLSClientSecretRef != "" {
+		volumes = append(volumes, secretVolume("llm-tls-client", kn.Spec.KubernautAgent.LLM.TLSClientSecretRef))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: "llm-tls-client", MountPath: "/etc/kubernaut-agent/llm-tls-client", ReadOnly: true,
+		})
+	}
+
 	res := kn.Spec.KubernautAgent.Resources
 	if len(res.Requests) == 0 && len(res.Limits) == 0 {
 		res = corev1.ResourceRequirements{
@@ -718,6 +725,13 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidec
 		})
 	}
 
+	if kn.Spec.KubernautAgent.LLM.TLSClientSecretRef != "" {
+		volumes = append(volumes, secretVolume("llm-tls-client", kn.Spec.KubernautAgent.LLM.TLSClientSecretRef))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: "llm-tls-client", MountPath: "/etc/apifrontend/llm-tls-client", ReadOnly: true,
+		})
+	}
+
 	drainSec := int64(15)
 	if kn.Spec.APIFrontend.Shutdown.DrainSeconds != nil {
 		drainSec = int64(*kn.Spec.APIFrontend.Shutdown.DrainSeconds)
@@ -730,6 +744,12 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidec
 	if sidecar.ShiftsPorts() {
 		metricsPort = 9092
 		healthPort = 8082
+	}
+	if kn.Spec.APIFrontend.MetricsPort != nil {
+		metricsPort = *kn.Spec.APIFrontend.MetricsPort
+	}
+	if kn.Spec.APIFrontend.HealthPort != nil {
+		healthPort = *kn.Spec.APIFrontend.HealthPort
 	}
 
 	dep, err := buildDeployment(kn, DeploymentParams{

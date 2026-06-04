@@ -140,7 +140,7 @@ var _ = Describe("NetworkPolicies", func() {
 			}
 			Expect(slices.Equal(agentNP.Spec.PolicyTypes, wantTypes)).To(BeTrue(), "PolicyTypes = %v, want %v", agentNP.Spec.PolicyTypes, wantTypes)
 			Expect(agentNP.Spec.Ingress).ToNot(BeEmpty(), "kubernaut-agent ingress rule count = %d, want at least 1", len(agentNP.Spec.Ingress))
-			Expect(agentNP.Spec.Egress).To(HaveLen(2), "kubernaut-agent egress rule count = %d, want %d", len(agentNP.Spec.Egress), 2)
+			Expect(agentNP.Spec.Egress).To(HaveLen(3), "kubernaut-agent egress rule count = %d, want %d (dns + apiserver/ds + LLM HTTPS)", len(agentNP.Spec.Egress), 3)
 		})
 
 		It("adds monitoring egress when MonitoringNamespace is set", func() {
@@ -153,7 +153,7 @@ var _ = Describe("NetworkPolicies", func() {
 				}
 			}
 			Expect(agentNP).NotTo(BeNil(), "kubernaut-agent NetworkPolicy not found")
-			Expect(agentNP.Spec.Egress).To(HaveLen(3), "kubernaut-agent egress rule count = %d, want %d", len(agentNP.Spec.Egress), 3)
+			Expect(agentNP.Spec.Egress).To(HaveLen(4), "kubernaut-agent egress rule count = %d, want %d (dns + apiserver/ds + monitoring + LLM HTTPS)", len(agentNP.Spec.Egress), 4)
 			monRule := agentNP.Spec.Egress[2]
 			Expect(monRule.To).To(HaveLen(1), "monitoring egress peer count = %d, want 1", len(monRule.To))
 			ns := monRule.To[0].NamespaceSelector

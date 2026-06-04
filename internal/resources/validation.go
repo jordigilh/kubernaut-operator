@@ -76,6 +76,16 @@ func validateLLMPrerequisites(kn *kubernautv1alpha1.Kubernaut) []error {
 	if llm.CredentialsSecretName == "" {
 		errs = append(errs, fmt.Errorf("%s.credentialsSecretName: required — provide a Secret with LLM API credentials", base))
 	}
+	certSet := llm.TLSCertFile != "" || llm.TLSKeyFile != ""
+	if certSet && (llm.TLSCertFile == "" || llm.TLSKeyFile == "") {
+		errs = append(errs, fmt.Errorf("%s.tlsCertFile and %s.tlsKeyFile must both be set or both empty for mTLS", base, base))
+	}
+	if certSet && llm.TLSClientSecretRef == "" {
+		errs = append(errs, fmt.Errorf("%s.tlsClientSecretRef: required when mTLS cert/key paths are configured", base))
+	}
+	if !certSet && llm.TLSClientSecretRef != "" {
+		errs = append(errs, fmt.Errorf("%s.tlsClientSecretRef: set but tlsCertFile/tlsKeyFile are empty — both pairs are required for mTLS", base))
+	}
 	return errs
 }
 

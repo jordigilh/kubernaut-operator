@@ -253,7 +253,10 @@ var _ = Describe("GatewayAlertManagerConfig", func() {
 		Expect(wh.HTTPConfig.Authorization.Credentials.Name).To(Equal("alertmanager-gateway-token"))
 		Expect(wh.HTTPConfig.Authorization.Credentials.Key).To(Equal("token"))
 		Expect(wh.HTTPConfig.TLSConfig).NotTo(BeNil())
-		Expect(*wh.HTTPConfig.TLSConfig.InsecureSkipVerify).To(BeTrue())
+		Expect(wh.HTTPConfig.TLSConfig.CA.ConfigMap).NotTo(BeNil(),
+			"TLS CA should reference the inter-service CA ConfigMap")
+		Expect(wh.HTTPConfig.TLSConfig.CA.ConfigMap.Name).To(Equal(InterServiceCAConfigMapName))
+		Expect(wh.HTTPConfig.TLSConfig.CA.ConfigMap.Key).To(Equal("service-ca.crt"))
 	})
 
 	It("returns nil when monitoring is disabled", func() {

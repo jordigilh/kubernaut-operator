@@ -167,9 +167,14 @@ func GatewayAlertManagerConfig(kn *kubernautv1alpha1.Kubernaut) *monitoringv1alp
 										Key:                  "token",
 									},
 								},
-								TLSConfig: &monitoringv1.SafeTLSConfig{
-									InsecureSkipVerify: boolPtr(true),
+							TLSConfig: &monitoringv1.SafeTLSConfig{
+								CA: monitoringv1.SecretOrConfigMap{
+									ConfigMap: &corev1.ConfigMapKeySelector{
+										LocalObjectReference: corev1.LocalObjectReference{Name: InterServiceCAConfigMapName},
+										Key:                  "service-ca.crt",
+									},
 								},
+							},
 							},
 						},
 					},

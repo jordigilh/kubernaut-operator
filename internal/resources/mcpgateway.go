@@ -32,9 +32,9 @@ const (
 
 // MCPGatewayHTTPRoute builds an unstructured HTTPRoute that routes MCP traffic
 // to the apifrontend Service. Returns nil if AF is not enabled.
-func MCPGatewayHTTPRoute(kn *kubernautv1alpha1.Kubernaut) *unstructured.Unstructured {
+func MCPGatewayHTTPRoute(kn *kubernautv1alpha1.Kubernaut) (*unstructured.Unstructured, error) {
 	if !kn.Spec.APIFrontendEnabled() {
-		return nil
+		return nil, nil
 	}
 	ns := kn.Namespace
 	svcName := ComponentAPIFrontend
@@ -47,15 +47,17 @@ func MCPGatewayHTTPRoute(kn *kubernautv1alpha1.Kubernaut) *unstructured.Unstruct
 	route.SetNamespace(ns)
 	route.SetLabels(ComponentLabels(kn, ComponentAPIFrontend))
 
-	_ = unstructured.SetNestedSlice(route.Object, []interface{}{
+	if err := unstructured.SetNestedSlice(route.Object, []interface{}{
 		map[string]interface{}{
 			"group": gatewayAPIGroup,
 			"kind":  "Gateway",
 			"name":  "kagenti-gateway",
 		},
-	}, "spec", "parentRefs")
+	}, "spec", "parentRefs"); err != nil {
+		return nil, fmt.Errorf("setting HTTPRoute parentRefs: %w", err)
+	}
 
-	_ = unstructured.SetNestedSlice(route.Object, []interface{}{
+	if err := unstructured.SetNestedSlice(route.Object, []interface{}{
 		map[string]interface{}{
 			"matches": []interface{}{
 				map[string]interface{}{
@@ -72,20 +74,22 @@ func MCPGatewayHTTPRoute(kn *kubernautv1alpha1.Kubernaut) *unstructured.Unstruct
 				},
 			},
 		},
-	}, "spec", "rules")
+	}, "spec", "rules"); err != nil {
+		return nil, fmt.Errorf("setting HTTPRoute rules: %w", err)
+	}
 
-	return route
+	return route, nil
 }
 
 // MCPServerRegistration builds an unstructured MCPServerRegistration CR that
 // registers the apifrontend with the kagenti MCP Gateway. Returns nil if AF
 // is not enabled.
-func MCPServerRegistration(kn *kubernautv1alpha1.Kubernaut) *unstructured.Unstructured {
+func MCPServerRegistration(kn *kubernautv1alpha1.Kubernaut) (*unstructured.Unstructured, error) {
 	if !kn.Spec.APIFrontendEnabled() {
-		return nil
+		return nil, nil
 	}
 	ns := kn.Namespace
-	endpointURL := fmt.Sprintf("https://%s-service.%s.svc.cluster.local:%d/mcp",
+	endpointURL := fmt.Sprintf("https://%s.%s.svc.cluster.local:%d/mcp",
 		ComponentAPIFrontend, ns, PortHTTPS)
 
 	reg := &unstructured.Unstructured{}
@@ -110,6 +114,8 @@ func MCPServerRegistration(kn *kubernautv1alpha1.Kubernaut) *unstructured.Unstru
 		}
 	}
 
-	_ = unstructured.SetNestedMap(reg.Object, spec, "spec")
-	return reg
+	if err := unstructured.SetNestedMap(reg.Object, spec, "spec"); err != nil {
+		return nil, fmt.Errorf("setting MCPServerRegistration spec: %w", err)
+	}
+	return reg, nil
 }

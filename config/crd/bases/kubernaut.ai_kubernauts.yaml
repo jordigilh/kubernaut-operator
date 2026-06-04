@@ -238,6 +238,13 @@ spec:
                           Path to CA bundle for OIDC/JWKS TLS trust (FedRAMP IA-5). When set,
                           AF uses this CA to verify the OIDC provider's certificate chain.
                         type: string
+                      tokenReviewAudience:
+                        description: |-
+                          TokenReview audience for Kubernetes ServiceAccount token validation.
+                          When set, the API Frontend passes this audience to the TokenReview API
+                          so only tokens issued for this specific audience are accepted
+                          (FedRAMP IA-5: authenticator management).
+                        type: string
                     type: object
                   enabled:
                     default: true
@@ -245,6 +252,15 @@ spec:
                       Whether the API Frontend component is deployed. Defaults to true.
                       Set to false to skip all AF resources (Deployment, Service, RBAC, etc.).
                     type: boolean
+                  healthPort:
+                    description: |-
+                      Override for the AF health probe port. Defaults to 8081 (or 8082 when
+                      kagenti sidecar port shifting is active). Use when cluster policies
+                      restrict port ranges.
+                    format: int32
+                    maximum: 65535
+                    minimum: 1024
+                    type: integer
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -262,6 +278,15 @@ spec:
                         - error
                         type: string
                     type: object
+                  metricsPort:
+                    description: |-
+                      Override for the AF metrics port. Defaults to 9090 (or 9092 when
+                      kagenti sidecar port shifting is active). Use when cluster policies
+                      restrict port ranges.
+                    format: int32
+                    maximum: 65535
+                    minimum: 1024
+                    type: integer
                   rateLimit:
                     description: Request rate limiting configuration.
                     properties:
@@ -1112,6 +1137,22 @@ spec:
                       tlsCaFile:
                         description: Path to a CA certificate file for TLS to the
                           LLM endpoint.
+                        type: string
+                      tlsCertFile:
+                        description: |-
+                          Path to a client certificate file for mTLS to the LLM endpoint.
+                          Must be set together with TLSKeyFile.
+                        type: string
+                      tlsClientSecretRef:
+                        description: |-
+                          Name of the Secret containing the TLS client certificate and key
+                          for mTLS to the LLM endpoint. The Secret must contain tls.crt and
+                          tls.key entries. Required when TLSCertFile and TLSKeyFile are set.
+                        type: string
+                      tlsKeyFile:
+                        description: |-
+                          Path to a client key file for mTLS to the LLM endpoint.
+                          Must be set together with TLSCertFile.
                         type: string
                       vertexLocation:
                         description: GCP Vertex AI location (e.g. "us-central1").

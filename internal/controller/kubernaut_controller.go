@@ -120,6 +120,7 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors;prometheusrules;alertmanagerconfigs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=spire.spiffe.io,resources=clusterspiffeids,verbs=get;list;watch;create;update;patch;delete
 func (r *KubernautReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -211,6 +212,10 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 		}
 		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionBYOValidated,
 			"SpecValidationFailed", fmt.Sprintf("CR validation failed: %s", strings.Join(msgs, "; ")))
+	}
+
+	if kn.Spec.APIFrontendEnabled() && kn.Spec.APIFrontend.Auth.TokenReviewAudience == "" {
+		log.Info("WARNING: spec.apiFrontend.auth.tokenReviewAudience is empty — K8s TokenReview will accept tokens issued for any audience (FedRAMP IA-5)")
 	}
 
 	log.Info("BYO secrets validated")
@@ -378,13 +383,15 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		return err
 	}
 	if err := r.deployRBAC(ctx, kn); err != nil {
-		_ = r.patchStatus(ctx, kn, func() {
+		if statusErr := r.patchStatus(ctx, kn, func() {
 			meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 				Type: kubernautv1alpha1.ConditionRBACProvisioned, Status: metav1.ConditionFalse,
 				Reason: ReasonRBACApplyFailed, Message: err.Error(),
 				ObservedGeneration: kn.Generation,
 			})
-		})
+		}); statusErr != nil {
+			logf.FromContext(ctx).Error(statusErr, "failed to patch RBAC status condition")
+		}
 		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, ReasonRBACApplyFailed, "Reconcile",
 			"Failed to provision RBAC: %v", err)
 		return err
@@ -1061,6 +1068,22 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		if err := r.ensureNamespaced(ctx, kn, kaPR); err != nil {
 			return false, fmt.Errorf("ensuring KA PrometheusRule: %w", err)
 		}
+
+		componentMonitors := []*monitoringv1.ServiceMonitor{
+			resources.GatewayServiceMonitor(kn),
+			resources.AIAnalysisServiceMonitor(kn),
+			resources.SignalProcessingServiceMonitor(kn),
+			resources.RemediationOrchestratorServiceMonitor(kn),
+			resources.WorkflowExecutionServiceMonitor(kn),
+			resources.EffectivenessMonitorServiceMonitor(kn),
+			resources.NotificationServiceMonitor(kn),
+			resources.AuthWebhookServiceMonitor(kn),
+		}
+		for _, sm := range componentMonitors {
+			if err := r.ensureNamespaced(ctx, kn, sm); err != nil {
+				return false, fmt.Errorf("ensuring %s ServiceMonitor: %w", sm.Name, err)
+			}
+		}
 	}
 
 	if kn.Spec.GatewayEnabled() {
@@ -1183,14 +1206,34 @@ func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *k
 	}
 
 	if r.hasCRD(ctx, "mcpserverregistrations.kagenti.dev") {
-		if route := resources.MCPGatewayHTTPRoute(kn); route != nil {
+		route, err := resources.MCPGatewayHTTPRoute(kn)
+		if err != nil {
+			return fmt.Errorf("building MCP HTTPRoute: %w", err)
+		}
+		if route != nil {
 			if err := r.ensureNamespaced(ctx, kn, route); err != nil {
 				return fmt.Errorf("ensuring MCP HTTPRoute: %w", err)
 			}
 		}
-		if reg := resources.MCPServerRegistration(kn); reg != nil {
+		reg, err := resources.MCPServerRegistration(kn)
+		if err != nil {
+			return fmt.Errorf("building MCPServerRegistration: %w", err)
+		}
+		if reg != nil {
 			if err := r.ensureNamespaced(ctx, kn, reg); err != nil {
 				return fmt.Errorf("ensuring MCPServerRegistration: %w", err)
+			}
+		}
+	}
+
+	if r.hasCRD(ctx, "clusterspiffeids.spire.spiffe.io") {
+		spiffeID, err := resources.ClusterSPIFFEID(kn)
+		if err != nil {
+			return fmt.Errorf("building ClusterSPIFFEID: %w", err)
+		}
+		if spiffeID != nil {
+			if err := r.ensureUnowned(ctx, spiffeID); err != nil {
+				return fmt.Errorf("ensuring ClusterSPIFFEID: %w", err)
 			}
 		}
 	}
@@ -1304,12 +1347,27 @@ func (r *KubernautReconciler) deleteClusterScopedResources(ctx context.Context, 
 	errs = append(errs, r.deleteRBACResources(ctx, kn)...)
 	errs = append(errs, r.deleteWebhookResources(ctx, kn)...)
 	errs = append(errs, r.deleteWorkflowResources(ctx, kn)...)
+	errs = append(errs, r.deleteSPIREResources(ctx, kn)...)
 
 	if len(errs) > 0 {
 		return fmt.Errorf("cluster-scoped cleanup: %w", errors.Join(errs...))
 	}
 
 	log.Info("cluster-scoped resources cleaned up")
+	return nil
+}
+
+func (r *KubernautReconciler) deleteSPIREResources(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
+	if !r.hasCRD(ctx, "clusterspiffeids.spire.spiffe.io") {
+		return nil
+	}
+	spiffeID, err := resources.ClusterSPIFFEID(kn)
+	if err != nil || spiffeID == nil {
+		return nil
+	}
+	if err := r.deleteIfExists(ctx, spiffeID); err != nil {
+		return []error{fmt.Errorf("deleting ClusterSPIFFEID %s: %w", spiffeID.GetName(), err)}
+	}
 	return nil
 }
 

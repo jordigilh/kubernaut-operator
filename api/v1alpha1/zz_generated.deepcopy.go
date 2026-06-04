@@ -175,6 +175,16 @@ func (in *APIFrontendSpec) DeepCopyInto(out *APIFrontendSpec) {
 		(*in).DeepCopyInto(*out)
 	}
 	out.Logging = in.Logging
+	if in.MetricsPort != nil {
+		in, out := &in.MetricsPort, &out.MetricsPort
+		*out = new(int32)
+		**out = **in
+	}
+	if in.HealthPort != nil {
+		in, out := &in.HealthPort, &out.HealthPort
+		*out = new(int32)
+		**out = **in
+	}
 	in.Resources.DeepCopyInto(&out.Resources)
 }
 

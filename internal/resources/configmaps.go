@@ -436,7 +436,7 @@ type notificationControllerConfigYAML struct {
 
 type notificationRoutingSlackRoute struct {
 	Receiver string            `json:"receiver" yaml:"receiver"`
-	Match    map[string]string `json:"match" yaml:"match"`
+	MatchRE  map[string]string `json:"matchRe,omitempty" yaml:"matchRe,omitempty"`
 }
 
 type notificationRoutingSlackReceiver struct {
@@ -448,7 +448,7 @@ type notificationRoutingSlackReceiver struct {
 }
 
 type notificationRoutingSlackYAML struct {
-	Routes    []notificationRoutingSlackRoute    `json:"routes" yaml:"routes"`
+	Route     notificationRoutingSlackRoute      `json:"route" yaml:"route"`
 	Receivers []notificationRoutingSlackReceiver `json:"receivers" yaml:"receivers"`
 }
 
@@ -458,7 +458,7 @@ type notificationRoutingConsoleReceiver struct {
 }
 
 type notificationRoutingConsoleYAML struct {
-	Routes    []struct{}                           `json:"routes" yaml:"routes"`
+	Route     notificationRoutingSlackRoute       `json:"route" yaml:"route"`
 	Receivers []notificationRoutingConsoleReceiver `json:"receivers" yaml:"receivers"`
 }
 
@@ -517,6 +517,8 @@ type kaLLMYAML struct {
 	BedrockRegion   string        `json:"bedrockRegion,omitempty" yaml:"bedrockRegion,omitempty"`
 	AzureApiVersion string        `json:"azureApiVersion,omitempty" yaml:"azureApiVersion,omitempty"`
 	TLSCaFile       string        `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
+	TLSCertFile     string        `json:"tlsCertFile,omitempty" yaml:"tlsCertFile,omitempty"`
+	TLSKeyFile      string        `json:"tlsKeyFile,omitempty" yaml:"tlsKeyFile,omitempty"`
 	OAuth2          *kaOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
 }
 
@@ -1172,11 +1174,9 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Conf
 	var routing string
 	if slack.SecretName != "" {
 		cfg := notificationRoutingSlackYAML{
-			Routes: []notificationRoutingSlackRoute{
-				{
-					Receiver: "slack",
-					Match:    map[string]string{"severity": ".*"},
-				},
+			Route: notificationRoutingSlackRoute{
+				Receiver: "slack",
+				MatchRE:  map[string]string{"severity": ".*"},
 			},
 			Receivers: []notificationRoutingSlackReceiver{
 				{Name: "slack"},
@@ -1190,9 +1190,13 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Conf
 			return nil, fmt.Errorf("notification-routing slack config: %w", err)
 		}
 	} else {
-		var console notificationRoutingConsoleYAML
-		console.Receivers = []notificationRoutingConsoleReceiver{
-			{Name: "console"},
+		console := notificationRoutingConsoleYAML{
+			Route: notificationRoutingSlackRoute{
+				Receiver: "console",
+			},
+			Receivers: []notificationRoutingConsoleReceiver{
+				{Name: "console"},
+			},
 		}
 		var err error
 		routing, err = marshalYAML(console)
@@ -1268,6 +1272,12 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 	}
 	if ka.LLM.TLSCaFile != "" {
 		cfg.AI.LLM.TLSCaFile = ka.LLM.TLSCaFile
+	}
+	if ka.LLM.TLSCertFile != "" {
+		cfg.AI.LLM.TLSCertFile = ka.LLM.TLSCertFile
+	}
+	if ka.LLM.TLSKeyFile != "" {
+		cfg.AI.LLM.TLSKeyFile = ka.LLM.TLSKeyFile
 	}
 
 	if ka.LLM.OAuth2.Enabled {
@@ -1543,6 +1553,8 @@ type afAgentLLMYAML struct {
 	VertexProject  string                `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
 	VertexLocation string                `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
 	TLSCaFile      string                `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
+	TLSCertFile    string                `json:"tlsCertFile,omitempty" yaml:"tlsCertFile,omitempty"`
+	TLSKeyFile     string                `json:"tlsKeyFile,omitempty" yaml:"tlsKeyFile,omitempty"`
 	OAuth2         *afAgentLLMOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
 }
 
@@ -1568,6 +1580,7 @@ type afAgentCardYAML struct {
 type afAuthYAML struct {
 	IssuerURL             string             `json:"issuerURL" yaml:"issuerURL"`
 	Audience              string             `json:"audience" yaml:"audience"`
+	TokenReviewAudience   string             `json:"tokenReviewAudience,omitempty" yaml:"tokenReviewAudience,omitempty"`
 	JWKSURL               string             `json:"jwksURL,omitempty" yaml:"jwksURL,omitempty"`
 	OIDCCAFile            string             `json:"oidcCaFile,omitempty" yaml:"oidcCaFile,omitempty"`
 	AllowInsecureIssuers  bool               `json:"allowInsecureIssuers,omitempty" yaml:"allowInsecureIssuers,omitempty"`
@@ -1653,6 +1666,12 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSideca
 	if sidecar.ShiftsPorts() {
 		afServer.MetricsPort = 9092
 		afServer.HealthPort = 8082
+	}
+	if af.MetricsPort != nil {
+		afServer.MetricsPort = int(*af.MetricsPort)
+	}
+	if af.HealthPort != nil {
+		afServer.HealthPort = int(*af.HealthPort)
 	}
 
 	cfg := afConfigYAML{
@@ -1763,6 +1782,8 @@ func afAgentLLMConfig(kn *kubernautv1alpha1.Kubernaut) afAgentLLMYAML {
 		VertexProject:  llm.VertexProject,
 		VertexLocation: llm.VertexLocation,
 		TLSCaFile:      llm.TLSCaFile,
+		TLSCertFile:    llm.TLSCertFile,
+		TLSKeyFile:     llm.TLSKeyFile,
 	}
 
 	if llm.CredentialsSecretName != "" && provider != LLMProviderVertexAI {
@@ -1786,6 +1807,7 @@ func afAuthConfig(kn *kubernautv1alpha1.Kubernaut) afAuthYAML {
 	auth := afAuthYAML{
 		IssuerURL:             af.Auth.IssuerURL,
 		Audience:              withDefault(af.Auth.Audience, "kubernaut-apifrontend"),
+		TokenReviewAudience:   af.Auth.TokenReviewAudience,
 		JWKSURL:               af.Auth.JWKSURL,
 		OIDCCAFile:            af.Auth.OIDCCAFile,
 		AllowInsecureIssuers:  af.Auth.AllowInsecureIssuers,

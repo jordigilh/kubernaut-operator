@@ -107,6 +107,12 @@ func Services(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) []*co
 			afMetricsPort = 9092
 			afHealthPort = 8082
 		}
+		if kn.Spec.APIFrontend.MetricsPort != nil {
+			afMetricsPort = *kn.Spec.APIFrontend.MetricsPort
+		}
+		if kn.Spec.APIFrontend.HealthPort != nil {
+			afHealthPort = *kn.Spec.APIFrontend.HealthPort
+		}
 		services = append(services, buildService(kn, serviceDefinition{
 			ComponentAPIFrontend, "apifrontend",
 			[]corev1.ServicePort{

@@ -24,7 +24,8 @@ import (
 var _ = Describe("MCPGatewayHTTPRoute", func() {
 	It("returns an HTTPRoute when AF is enabled", func() {
 		kn := testKubernautWithAF()
-		route := MCPGatewayHTTPRoute(kn)
+		route, err := MCPGatewayHTTPRoute(kn)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(route).NotTo(BeNil())
 		Expect(route.GetKind()).To(Equal("HTTPRoute"))
 		Expect(route.GetName()).To(Equal("apifrontend-mcp"))
@@ -37,7 +38,8 @@ var _ = Describe("MCPGatewayHTTPRoute", func() {
 
 	It("includes parentRefs for kagenti-gateway", func() {
 		kn := testKubernautWithAF()
-		route := MCPGatewayHTTPRoute(kn)
+		route, err := MCPGatewayHTTPRoute(kn)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(route).NotTo(BeNil())
 		parentRefs, found := unstructuredNestedSlice(route.Object, "spec", "parentRefs")
 		Expect(found).To(BeTrue(), "parentRefs should be set")
@@ -50,7 +52,8 @@ var _ = Describe("MCPGatewayHTTPRoute", func() {
 var _ = Describe("MCPServerRegistration", func() {
 	It("returns an MCPServerRegistration when AF is enabled", func() {
 		kn := testKubernautWithAF()
-		reg := MCPServerRegistration(kn)
+		reg, err := MCPServerRegistration(kn)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(reg).NotTo(BeNil())
 		Expect(reg.GetKind()).To(Equal("MCPServerRegistration"))
 		Expect(reg.GetName()).To(Equal("kubernaut-apifrontend"))
@@ -61,12 +64,15 @@ var _ = Describe("MCPServerRegistration", func() {
 		Expect(spec["serverName"]).To(Equal("kubernaut-apifrontend"))
 		Expect(spec["transport"]).To(Equal("streamable-http"))
 		Expect(spec["endpointURL"]).To(ContainSubstring("/mcp"))
+		Expect(spec["endpointURL"]).To(ContainSubstring("apifrontend."+kn.Namespace+".svc.cluster.local"),
+			"endpointURL must use the Service name without a -service suffix")
 	})
 
 	It("includes authentication when auth issuerURL is set", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.IssuerURL = "https://login.kubernaut.ai/realms/kubernaut"
-		reg := MCPServerRegistration(kn)
+		reg, err := MCPServerRegistration(kn)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(reg).NotTo(BeNil())
 
 		spec, _ := unstructuredNestedMap(reg.Object, "spec")

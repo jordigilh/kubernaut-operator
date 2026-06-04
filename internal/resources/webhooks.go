@@ -187,6 +187,50 @@ func ValidatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut) *admissionr
 	}
 }
 
+// SingletonValidatingWebhookConfiguration builds the operator-level
+// ValidatingWebhookConfiguration that enforces the Kubernaut CR singleton
+// constraint at admission time. The webhook is served by the operator
+// itself (not the authwebhook component), so it references the operator's
+// webhook Service.
+func SingletonValidatingWebhookConfiguration(namespace string, labels map[string]string) *admissionregistrationv1.ValidatingWebhookConfiguration {
+	clusterScope := admissionregistrationv1.ClusterScope
+	port := PortWebhookServer
+	return &admissionregistrationv1.ValidatingWebhookConfiguration{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        namespace + "-kubernaut-singleton",
+			Labels:      labels,
+			Annotations: map[string]string{OCPServiceCAInjectAnnotation: "true"},
+		},
+		Webhooks: []admissionregistrationv1.ValidatingWebhook{
+			{
+				Name:                    "singleton.validate.kubernaut.ai",
+				AdmissionReviewVersions: []string{"v1"},
+				SideEffects:             sideEffectPtr(admissionregistrationv1.SideEffectClassNone),
+				FailurePolicy:           failurePolicyPtr(admissionregistrationv1.Ignore),
+				MatchPolicy:             matchPolicyPtr(admissionregistrationv1.Equivalent),
+				TimeoutSeconds:          int32Ptr(10),
+				ClientConfig: admissionregistrationv1.WebhookClientConfig{
+					Service: &admissionregistrationv1.ServiceReference{
+						Namespace: namespace,
+						Name:      "kubernaut-operator-webhook",
+						Path:      strPtr("/validate-kubernaut-singleton"),
+						Port:      &port,
+					},
+				},
+				Rules: []admissionregistrationv1.RuleWithOperations{{
+					Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
+					Rule: admissionregistrationv1.Rule{
+						APIGroups:   []string{"kubernaut.ai"},
+						APIVersions: []string{"v1alpha1"},
+						Resources:   []string{"kubernauts"},
+						Scope:       &clusterScope,
+					},
+				}},
+			},
+		},
+	}
+}
+
 func webhookClientConfig(kn *kubernautv1alpha1.Kubernaut, path string) admissionregistrationv1.WebhookClientConfig {
 	port := PortAuthWebhookService
 	return admissionregistrationv1.WebhookClientConfig{

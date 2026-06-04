@@ -5,6 +5,48 @@ All notable changes to the Kubernaut Operator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-06-01
+
+### Added
+- **CR**: `spec.kubernautAgent.llm.tlsCertFile`, `tlsKeyFile`, and
+  `tlsClientSecretRef` for mTLS client certificate authentication to LLM
+  endpoints (#154)
+- **CR**: `spec.apiFrontend.metricsPort` and `healthPort` for configurable
+  AF metrics and health probe ports (#153)
+- **CR**: `spec.apiFrontend.auth.tokenReviewAudience` for Kubernetes
+  TokenReview audience validation (FedRAMP IA-5) (#139)
+- **SPIRE**: Operator creates `ClusterSPIFFEID` for API Frontend when
+  `spec.apiFrontend.spire.enabled=true` and the SPIRE CRD is present (#136)
+- **Webhook**: Singleton `ValidatingWebhookConfiguration` enforces the
+  one-Kubernaut-CR-per-cluster constraint at admission time
+- **Monitoring**: ServiceMonitors for all 11 components (Gateway,
+  AIAnalysis, SignalProcessing, RemediationOrchestrator, WorkflowExecution,
+  EffectivenessMonitor, Notification, AuthWebhook, plus existing AF, DS, KA)
+- **NetworkPolicy**: Kubernaut Agent now has port-443 egress for external
+  LLM API calls when an LLM provider is configured
+
+### Fixed
+- **MCP**: Corrected MCPServerRegistration endpoint DNS from
+  `apifrontend-service` to `apifrontend` (matching the actual Service name)
+- **Init containers**: Aligned fallback image digests in `common.go` with
+  the digests in `manager.yaml` for PostgreSQL and UBI-minimal init
+  containers
+- **Error handling**: Fixed silent error swallowing in RBAC status patching
+  (`kubernaut_controller.go`) and MCP resource construction
+  (`mcpgateway.go`) — errors are now returned/logged instead of discarded
+
+### Security
+- **TLS**: Replaced `InsecureSkipVerify: true` on the AlertManager →
+  Gateway webhook with proper CA verification via the OCP service-CA
+  trust bundle
+- **Admission**: Singleton webhook prevents accidental creation of
+  duplicate Kubernaut CRs
+
+### Changed
+- **OLM**: Bundle regenerated for v1.5.0 with updated CRD schema
+- `MCPGatewayHTTPRoute` and `MCPServerRegistration` now return errors
+  instead of silently ignoring `unstructured.SetNested*` failures
+
 ## [1.4.0] - 2026-05-12
 
 ### Added

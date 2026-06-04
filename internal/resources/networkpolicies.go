@@ -321,6 +321,15 @@ func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.
 	if spec.MonitoringNamespace != "" {
 		egress = append(egress, monitoringStackEgressRule(spec.MonitoringNamespace))
 	}
+	if kn.Spec.KubernautAgent.LLM.Provider != "" {
+		p443 := intstr.FromInt32(443)
+		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
+			To: ipWorldPeers(),
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protoTCP, Port: &p443},
+			},
+		})
+	}
 
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: ObjectMeta(kn, ComponentKubernautAgent+"-netpol", ComponentKubernautAgent),
@@ -520,6 +529,12 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSi
 	if sidecar.ShiftsPorts() {
 		healthPort = 8082
 		metricsPort = 9092
+	}
+	if kn.Spec.APIFrontend.HealthPort != nil {
+		healthPort = int32(*kn.Spec.APIFrontend.HealthPort)
+	}
+	if kn.Spec.APIFrontend.MetricsPort != nil {
+		metricsPort = int32(*kn.Spec.APIFrontend.MetricsPort)
 	}
 	pHealth := intstr.FromInt32(healthPort)
 	pMetrics := intstr.FromInt32(metricsPort)

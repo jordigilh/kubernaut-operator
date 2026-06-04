@@ -808,6 +808,22 @@ type LLMSpec struct {
 	// +optional
 	TLSCaFile string `json:"tlsCaFile,omitempty"`
 
+	// Path to a client certificate file for mTLS to the LLM endpoint.
+	// Must be set together with TLSKeyFile.
+	// +optional
+	TLSCertFile string `json:"tlsCertFile,omitempty"`
+
+	// Path to a client key file for mTLS to the LLM endpoint.
+	// Must be set together with TLSCertFile.
+	// +optional
+	TLSKeyFile string `json:"tlsKeyFile,omitempty"`
+
+	// Name of the Secret containing the TLS client certificate and key
+	// for mTLS to the LLM endpoint. The Secret must contain tls.crt and
+	// tls.key entries. Required when TLSCertFile and TLSKeyFile are set.
+	// +optional
+	TLSClientSecretRef string `json:"tlsClientSecretRef,omitempty"`
+
 	// OAuth2 configuration for LLM authentication.
 	// +optional
 	OAuth2 OAuth2Spec `json:"oauth2,omitempty"`
@@ -1027,6 +1043,22 @@ type APIFrontendSpec struct {
 	// +optional
 	Logging LoggingSpec `json:"logging,omitempty"`
 
+	// Override for the AF metrics port. Defaults to 9090 (or 9092 when
+	// kagenti sidecar port shifting is active). Use when cluster policies
+	// restrict port ranges.
+	// +kubebuilder:validation:Minimum=1024
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	MetricsPort *int32 `json:"metricsPort,omitempty"`
+
+	// Override for the AF health probe port. Defaults to 8081 (or 8082 when
+	// kagenti sidecar port shifting is active). Use when cluster policies
+	// restrict port ranges.
+	// +kubebuilder:validation:Minimum=1024
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	HealthPort *int32 `json:"healthPort,omitempty"`
+
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
@@ -1067,6 +1099,13 @@ type APIFrontendAuthSpec struct {
 	// +kubebuilder:default="kubernaut-apifrontend"
 	// +optional
 	Audience string `json:"audience,omitempty"`
+
+	// TokenReview audience for Kubernetes ServiceAccount token validation.
+	// When set, the API Frontend passes this audience to the TokenReview API
+	// so only tokens issued for this specific audience are accepted
+	// (FedRAMP IA-5: authenticator management).
+	// +optional
+	TokenReviewAudience string `json:"tokenReviewAudience,omitempty"`
 
 	// Explicit JWKS endpoint URL for token signature verification
 	// (FedRAMP IA-5: authenticator management). When empty, derived from
