@@ -1342,7 +1342,15 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 	}
 
 	if interactive := ka.Interactive; interactive == nil || interactive.InteractiveEnabled() {
-		ic := &kaInteractiveYAML{Enabled: true}
+		defaultMaxSessions := 100
+		defaultRateLimit := 20
+		ic := &kaInteractiveYAML{
+			Enabled:               true,
+			SessionTTL:            "30m",
+			InactivityTimeout:     "10m",
+			MaxConcurrentSessions: &defaultMaxSessions,
+			RateLimitPerUser:      &defaultRateLimit,
+		}
 		if interactive != nil {
 			if interactive.SessionTTL != "" {
 				ic.SessionTTL = interactive.SessionTTL
@@ -1350,8 +1358,12 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 			if interactive.InactivityTimeout != "" {
 				ic.InactivityTimeout = interactive.InactivityTimeout
 			}
-			ic.MaxConcurrentSessions = interactive.MaxConcurrentSessions
-			ic.RateLimitPerUser = interactive.RateLimitPerUser
+			if interactive.MaxConcurrentSessions != nil {
+				ic.MaxConcurrentSessions = interactive.MaxConcurrentSessions
+			}
+			if interactive.RateLimitPerUser != nil {
+				ic.RateLimitPerUser = interactive.RateLimitPerUser
+			}
 		}
 		cfg.Interactive = ic
 	}
