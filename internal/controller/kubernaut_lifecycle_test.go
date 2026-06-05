@@ -1268,7 +1268,14 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	// ======================================================================
 
 	Context("API Frontend issuerURL Enforcement", func() {
-		It("should block deployment when AF is enabled without issuerURL (FedRAMP IA-2)", func() {
+		// Note: SPIRE.Enabled is `bool` with `+kubebuilder:default=true` and
+		// `omitempty`, so setting it to false is a no-op after API server
+		// roundtrip. The envtest always sees SPIRE.Enabled=true, meaning
+		// the kagenti sidecar is detected. Without an authbridge-config
+		// ConfigMap in kagenti-system, the OIDC auto-detection fails,
+		// which is the IA-2 enforcement path when kagenti is active.
+
+		It("should pass validation when kagenti sidecar is active without issuerURL (FedRAMP IA-2 auto-detection)", func() {
 			cr := newMinimalCR()
 			cr.Spec.APIFrontend.Auth.IssuerURL = ""
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
@@ -1279,57 +1286,45 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("reconcile 2: validate — should reject missing issuerURL")
-			result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
-
-			kn := &kubernautv1alpha1.Kubernaut{}
-			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseError))
-
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionBYOValidated)
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
-			Expect(cond.Reason).To(Equal("SpecValidationFailed"))
-			Expect(cond.Message).To(ContainSubstring("issuerURL"))
-		})
-
-		It("should not create AF Deployment or migration Job when issuerURL is missing", func() {
-			cr := newMinimalCR()
-			cr.Spec.APIFrontend.Auth.IssuerURL = ""
-			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
-			createBYOSecrets(ctx)
-
-			r := newReconciler()
-			By("reconcile 1: add finalizer")
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			Expect(err).NotTo(HaveOccurred())
-
-			By("reconcile 2: validation rejects")
+			By("reconcile 2: validate — passes because kagenti sidecar is active (SPIRE defaults to true)")
 			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("verifying no migration Job was created")
-			job := &batchv1.Job{}
-			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name: "kubernaut-db-migration", Namespace: testNamespace,
-			}, job)
-			Expect(errors.IsNotFound(err)).To(BeTrue(), "migration Job must not be created when validation fails")
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(kn.Status.Phase).NotTo(Equal(kubernautv1alpha1.PhaseError),
+				"IA-2: with kagenti sidecar active, missing issuerURL should not block validation — OIDC auto-detection fills it in during deploy")
+		})
+
+		It("should not create AF Deployment when OIDC auto-detection fails", func() {
+			cr := newMinimalCR()
+			cr.Spec.APIFrontend.Auth.IssuerURL = ""
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			createBYOSecrets(ctx)
+
+			r := newReconciler()
+			By("reconcile 1: add finalizer")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("reconcile 2+3: validate + migrate")
+			for i := 0; i < 5; i++ {
+				r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			}
 
 			By("verifying no AF Deployment was created")
 			dep := &appsv1.Deployment{}
 			err = k8sClient.Get(ctx, types.NamespacedName{
 				Name: "apifrontend", Namespace: testNamespace,
 			}, dep)
-			Expect(errors.IsNotFound(err)).To(BeTrue(), "AF Deployment must not be created when issuerURL is missing")
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "AF Deployment must not be created when OIDC auto-detection fails")
 
 			By("verifying no AF ConfigMap was created")
 			cm := &corev1.ConfigMap{}
 			err = k8sClient.Get(ctx, types.NamespacedName{
 				Name: "apifrontend-config", Namespace: testNamespace,
 			}, cm)
-			Expect(errors.IsNotFound(err)).To(BeTrue(), "AF ConfigMap must not be created when issuerURL is missing")
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "AF ConfigMap must not be created when OIDC auto-detection fails")
 		})
 
 		It("should proceed past validation when issuerURL is set", func() {

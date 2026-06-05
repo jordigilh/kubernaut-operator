@@ -1640,8 +1640,18 @@ type afResilienceYAML struct {
 	K8s afCircuitBreakerYAML `json:"k8s" yaml:"k8s"`
 }
 
+// KagentiOIDCDefaults holds OIDC values auto-detected from kagenti.
+// Exported so the controller can pass them to ConfigMap generation.
+type KagentiOIDCDefaults struct {
+	IssuerURL            string
+	JWKSURL              string
+	AllowInsecureIssuers bool
+}
+
 // APIFrontendConfigMap generates the apifrontend-config ConfigMap.
-func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) (*corev1.ConfigMap, error) {
+// oidc may be nil when kagenti is not active; when non-nil, its values
+// fill in any OIDC fields left empty in the CR (CR values always win).
+func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode, oidc *KagentiOIDCDefaults) (*corev1.ConfigMap, error) {
 	af := kn.Spec.APIFrontend
 	ns := kn.Namespace
 
@@ -1699,7 +1709,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSideca
 			Name: "Kubernaut Agent",
 			URL:  agentCardURL,
 		},
-		Auth: afAuthConfig(kn),
+		Auth: afAuthConfig(kn, oidc),
 		RBAC: afRBACConfig(kn),
 		Logging: afLoggingYAML{
 			Level: withDefault(af.Logging.Level, "info"),
@@ -1802,15 +1812,33 @@ func afAgentLLMConfig(kn *kubernautv1alpha1.Kubernaut) afAgentLLMYAML {
 	return cfg
 }
 
-func afAuthConfig(kn *kubernautv1alpha1.Kubernaut) afAuthYAML {
+func afAuthConfig(kn *kubernautv1alpha1.Kubernaut, oidc *KagentiOIDCDefaults) afAuthYAML {
 	af := kn.Spec.APIFrontend
+
+	issuer := af.Auth.IssuerURL
+	jwks := af.Auth.JWKSURL
+	insecure := af.Auth.AllowInsecureIssuers
+
+	// Merge kagenti-detected OIDC defaults; CR values always win.
+	if oidc != nil {
+		if issuer == "" {
+			issuer = oidc.IssuerURL
+		}
+		if jwks == "" {
+			jwks = oidc.JWKSURL
+		}
+		if !insecure {
+			insecure = oidc.AllowInsecureIssuers
+		}
+	}
+
 	auth := afAuthYAML{
-		IssuerURL:             af.Auth.IssuerURL,
+		IssuerURL:             issuer,
 		Audience:              withDefault(af.Auth.Audience, "kubernaut-apifrontend"),
 		TokenReviewAudience:   af.Auth.TokenReviewAudience,
-		JWKSURL:               af.Auth.JWKSURL,
+		JWKSURL:               jwks,
 		OIDCCAFile:            af.Auth.OIDCCAFile,
-		AllowInsecureIssuers:  af.Auth.AllowInsecureIssuers,
+		AllowInsecureIssuers:  insecure,
 		KubernetesAuthEnabled: true,
 	}
 	if kn.Spec.Valkey.SecretName != "" {

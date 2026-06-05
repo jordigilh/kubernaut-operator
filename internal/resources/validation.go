@@ -28,13 +28,15 @@ import (
 const maxJWKSURLLength = 2048
 
 // ValidateKubernaut runs all CR-level validations and returns accumulated errors.
-func ValidateKubernaut(kn *kubernautv1alpha1.Kubernaut) []error {
+// sidecar indicates whether kagenti is active; when it is, issuerURL is not
+// required because the operator auto-detects it from kagenti's authbridge-config.
+func ValidateKubernaut(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) []error {
 	errs := make([]error, 0, 4)
 	errs = append(errs, validatePostgreSQLSSLMode(kn)...)
 	errs = append(errs, validatePolicyPrerequisites(kn)...)
 	errs = append(errs, validateLLMPrerequisites(kn)...)
 	errs = append(errs, validateJWKSProviders(kn)...)
-	errs = append(errs, validateAPIFrontend(kn)...)
+	errs = append(errs, validateAPIFrontend(kn, sidecar)...)
 	errs = append(errs, validateAlignmentCheck(kn)...)
 	errs = append(errs, validateDryRun(kn)...)
 	errs = append(errs, validateInteractive(kn)...)
@@ -122,7 +124,7 @@ func validateJWKSProviders(kn *kubernautv1alpha1.Kubernaut) []error {
 	return errs
 }
 
-func validateAPIFrontend(kn *kubernautv1alpha1.Kubernaut) []error {
+func validateAPIFrontend(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) []error {
 	if !kn.Spec.APIFrontendEnabled() {
 		return nil
 	}
@@ -136,7 +138,10 @@ func validateAPIFrontend(kn *kubernautv1alpha1.Kubernaut) []error {
 		}
 	}
 
-	if af.Auth.IssuerURL == "" {
+	// When kagenti sidecar is active, issuerURL is auto-detected from the
+	// kagenti authbridge-config (FedRAMP IA-2). Only require it when
+	// kagenti is not present and the operator cannot derive it.
+	if af.Auth.IssuerURL == "" && sidecar == KagentiSidecarNone {
 		errs = append(errs, fmt.Errorf(
 			"spec.apiFrontend.auth.issuerURL: required — API Frontend requires OAuth/OIDC authentication (FedRAMP IA-2, CM-6)"))
 	}

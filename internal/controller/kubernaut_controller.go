@@ -88,7 +88,17 @@ const (
 	ReasonRBACApplyFailed            = "RBACApplyFailed"
 	ReasonAdditionalRBACFullyBound   = "FullyBound"
 	ReasonAdditionalRBACPartialBound = "PartiallyBound"
+
+	ReasonOIDCAutoDetected    = "OIDCAutoDetected"
+	ReasonOIDCDetectionFailed = "OIDCDetectionFailed"
 )
+
+// kagentiAuthbridgeConfigMapName is the well-known ConfigMap the kagenti
+// operator maintains in kagenti-system with Keycloak/OIDC settings.
+const kagentiAuthbridgeConfigMapName = "authbridge-config"
+
+// kagentiSystemNamespace is the namespace where the kagenti operator runs.
+const kagentiSystemNamespace = "kagenti-system"
 
 // maxFinalizerAttempts is the number of consecutive reconcile attempts during
 // deletion cleanup before the finalizer is force-removed.
@@ -205,7 +215,8 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 			"ValkeySecretInvalid", fmt.Sprintf("Valkey secret validation failed: %v", err))
 	}
 
-	if validationErrs := resources.ValidateKubernaut(kn); len(validationErrs) > 0 {
+	sidecar := r.detectKagentiSidecarMode(ctx, kn)
+	if validationErrs := resources.ValidateKubernaut(kn, sidecar); len(validationErrs) > 0 {
 		msgs := make([]string, len(validationErrs))
 		for i, e := range validationErrs {
 			msgs[i] = e.Error()
@@ -408,7 +419,21 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 
 	sidecar := r.detectKagentiSidecarMode(ctx, kn)
 
-	cmHashes, err := r.deployConfigMaps(ctx, kn, dbName, dbUser, tlsProfile, sidecar)
+	oidcDefaults, err := r.resolveKagentiOIDCDefaults(ctx, kn, sidecar)
+	if err != nil {
+		if statusErr := r.patchStatus(ctx, kn, func() {
+			meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+				Type: kubernautv1alpha1.ConditionBYOValidated, Status: metav1.ConditionFalse,
+				Reason: ReasonOIDCDetectionFailed, Message: err.Error(),
+				ObservedGeneration: kn.Generation,
+			})
+		}); statusErr != nil {
+			logf.FromContext(ctx).Error(statusErr, "failed to patch OIDC detection status")
+		}
+		return fmt.Errorf("resolving kagenti OIDC defaults: %w", err)
+	}
+
+	cmHashes, err := r.deployConfigMaps(ctx, kn, dbName, dbUser, tlsProfile, sidecar, oidcDefaults)
 	if err != nil {
 		return err
 	}
@@ -861,7 +886,7 @@ func (r *KubernautReconciler) cleanupDisabledGateway(ctx context.Context, kn *ku
 // deployConfigMaps builds and ensures all service ConfigMaps. Returns a map
 // of component name to SHA-256 hash of the ConfigMap data, used to stamp pod
 // template annotations and force rolling restarts when config content changes.
-func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, dbName, dbUser, tlsProfile string, sidecar resources.KagentiSidecarMode) (map[string]string, error) {
+func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, dbName, dbUser, tlsProfile string, sidecar resources.KagentiSidecarMode, oidc *resources.KagentiOIDCDefaults) (map[string]string, error) {
 	type cmBuilder struct {
 		name string
 		fn   func() (*corev1.ConfigMap, error)
@@ -919,7 +944,7 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 		cmHashes["gateway"] = resources.ConfigMapDataHash(gwCM.Data)
 	}
 	if kn.Spec.APIFrontendEnabled() {
-		afCM, err := resources.APIFrontendConfigMap(kn, sidecar)
+		afCM, err := resources.APIFrontendConfigMap(kn, sidecar, oidc)
 		if err != nil {
 			return nil, fmt.Errorf("building apifrontend ConfigMap: %w", err)
 		}
@@ -1161,6 +1186,71 @@ func (r *KubernautReconciler) detectKagentiSidecarMode(ctx context.Context, kn *
 	}
 	logf.FromContext(ctx).Info("detected kagenti 0.2.x (envoy sidecar)")
 	return resources.KagentiSidecarEnvoy
+}
+
+// resolveKagentiOIDCDefaults reads the kagenti authbridge-config ConfigMap
+// and extracts OIDC settings that the AF needs to validate tokens issued
+// by the same Keycloak realm kagenti uses. This eliminates the manual step
+// of copying realm URLs into the Kubernaut CR on every fresh deploy.
+//
+// FedRAMP IA-2: the operator ensures AF authenticates users against the
+// correct identity provider by deriving settings from the kagenti source of
+// truth rather than relying on error-prone manual configuration.
+func (r *KubernautReconciler) resolveKagentiOIDCDefaults(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode) (*resources.KagentiOIDCDefaults, error) {
+	if sidecar == resources.KagentiSidecarNone {
+		return nil, nil
+	}
+
+	log := logf.FromContext(ctx)
+
+	cm := &corev1.ConfigMap{}
+	key := client.ObjectKey{Namespace: kagentiSystemNamespace, Name: kagentiAuthbridgeConfigMapName}
+	if err := r.Get(ctx, key, cm); err != nil {
+		if apierrors.IsNotFound(err) {
+			// If the CR already provides issuerURL, the ConfigMap is not
+			// strictly needed — the operator can proceed without auto-detection.
+			if kn.Spec.APIFrontend.Auth.IssuerURL != "" {
+				log.Info("kagenti authbridge-config not found but CR has issuerURL set — skipping OIDC auto-detection")
+				return nil, nil
+			}
+			return nil, fmt.Errorf("kagenti sidecar is active but %s/%s ConfigMap not found — "+
+				"set spec.apiFrontend.auth.issuerURL manually or ensure kagenti-operator is installed",
+				kagentiSystemNamespace, kagentiAuthbridgeConfigMapName)
+		}
+		return nil, fmt.Errorf("reading kagenti authbridge-config: %w", err)
+	}
+
+	issuer := cm.Data["ISSUER"]
+	if issuer == "" {
+		if kn.Spec.APIFrontend.Auth.IssuerURL != "" {
+			log.Info("kagenti authbridge-config missing ISSUER key but CR has issuerURL — skipping OIDC auto-detection")
+			return nil, nil
+		}
+		return nil, fmt.Errorf("kagenti %s/%s ConfigMap is missing the ISSUER key — "+
+			"set spec.apiFrontend.auth.issuerURL manually", kagentiSystemNamespace, kagentiAuthbridgeConfigMapName)
+	}
+
+	keycloakURL := cm.Data["KEYCLOAK_URL"]
+	realm := cm.Data["KEYCLOAK_REALM"]
+
+	defaults := &resources.KagentiOIDCDefaults{
+		IssuerURL: issuer,
+	}
+
+	if keycloakURL != "" && realm != "" {
+		defaults.JWKSURL = strings.TrimRight(keycloakURL, "/") +
+			"/realms/" + realm + "/protocol/openid-connect/certs"
+		defaults.AllowInsecureIssuers = strings.HasPrefix(keycloakURL, "http://")
+	}
+
+	log.Info("auto-detected OIDC defaults from kagenti",
+		"issuerURL", defaults.IssuerURL,
+		"jwksURL", defaults.JWKSURL,
+		"allowInsecureIssuers", defaults.AllowInsecureIssuers)
+	r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, ReasonOIDCAutoDetected, "Reconcile",
+		"Auto-detected OIDC issuerURL from kagenti authbridge-config: %s", defaults.IssuerURL)
+
+	return defaults, nil
 }
 
 // ensureKagentiNamespaceLabel adds or removes the "kagenti-enabled" label on
