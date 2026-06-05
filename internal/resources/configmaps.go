@@ -1341,16 +1341,18 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 		}
 	}
 
-	if interactive := ka.Interactive; interactive != nil && interactive.InteractiveEnabled() {
+	if interactive := ka.Interactive; interactive == nil || interactive.InteractiveEnabled() {
 		ic := &kaInteractiveYAML{Enabled: true}
-		if interactive.SessionTTL != "" {
-			ic.SessionTTL = interactive.SessionTTL
+		if interactive != nil {
+			if interactive.SessionTTL != "" {
+				ic.SessionTTL = interactive.SessionTTL
+			}
+			if interactive.InactivityTimeout != "" {
+				ic.InactivityTimeout = interactive.InactivityTimeout
+			}
+			ic.MaxConcurrentSessions = interactive.MaxConcurrentSessions
+			ic.RateLimitPerUser = interactive.RateLimitPerUser
 		}
-		if interactive.InactivityTimeout != "" {
-			ic.InactivityTimeout = interactive.InactivityTimeout
-		}
-		ic.MaxConcurrentSessions = interactive.MaxConcurrentSessions
-		ic.RateLimitPerUser = interactive.RateLimitPerUser
 		cfg.Interactive = ic
 	}
 

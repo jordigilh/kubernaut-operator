@@ -624,9 +624,11 @@ type InteractiveSpec struct {
 	AllowInsecureJWKS bool `json:"allowInsecureJWKS,omitempty"`
 }
 
-// InteractiveEnabled returns true when interactive mode is explicitly enabled.
+// InteractiveEnabled returns true when interactive mode is active.
+// Defaults to true (nil Enabled) so investigations work out of the box
+// when the API Frontend is deployed.
 func (s *InteractiveSpec) InteractiveEnabled() bool {
-	return s.Enabled != nil && *s.Enabled
+	return s.Enabled == nil || *s.Enabled
 }
 
 // JWTProviderSpec configures a single OIDC JWT provider.
