@@ -1309,7 +1309,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			By("reconcile 2+3: validate + migrate")
 			for i := 0; i < 5; i++ {
-				r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+				_, _ = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			}
 
 			By("verifying no AF Deployment was created")

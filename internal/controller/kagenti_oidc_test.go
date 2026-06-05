@@ -37,8 +37,10 @@ func kagentiAuthbridgeConfigMap(data map[string]string) *corev1.ConfigMap {
 	}
 }
 
-func testKubernautCRWithAuth(issuerURL string, spireEnabled bool) *kubernautv1alpha1.Kubernaut {
-	kn := testKubernautCR(true, spireEnabled)
+const testKagentiIssuerURL = "https://keycloak.example.com/realms/kagenti"
+
+func testKubernautCRWithAuth(issuerURL string) *kubernautv1alpha1.Kubernaut {
+	kn := testKubernautCR(true, true)
 	kn.Spec.APIFrontend.Auth.IssuerURL = issuerURL
 	return kn
 }
@@ -47,7 +49,7 @@ func testKubernautCRWithAuth(issuerURL string, spireEnabled bool) *kubernautv1al
 // auto-detection — the CR is the only source of auth configuration.
 func TestResolveKagentiOIDCDefaults_NilWhenNoSidecar(t *testing.T) {
 	r := newFakeReconciler()
-	kn := testKubernautCRWithAuth("", true)
+	kn := testKubernautCRWithAuth("")
 
 	defaults, err := r.resolveKagentiOIDCDefaults(context.Background(), kn, resources.KagentiSidecarNone)
 	if err != nil {
@@ -62,12 +64,12 @@ func TestResolveKagentiOIDCDefaults_NilWhenNoSidecar(t *testing.T) {
 // ConfigMap so the AF validates tokens against the correct identity provider.
 func TestResolveKagentiOIDCDefaults_DetectsFromAuthbridgeConfig(t *testing.T) {
 	cm := kagentiAuthbridgeConfigMap(map[string]string{
-		"ISSUER":         "https://keycloak.example.com/realms/kagenti",
+		"ISSUER":         testKagentiIssuerURL,
 		"KEYCLOAK_URL":   "http://keycloak-service.keycloak.svc:8080",
 		"KEYCLOAK_REALM": "kagenti",
 	})
 	r := newFakeReconciler(cm)
-	kn := testKubernautCRWithAuth("", true)
+	kn := testKubernautCRWithAuth("")
 
 	defaults, err := r.resolveKagentiOIDCDefaults(context.Background(), kn, resources.KagentiSidecarAuthbridge)
 	if err != nil {
@@ -76,7 +78,7 @@ func TestResolveKagentiOIDCDefaults_DetectsFromAuthbridgeConfig(t *testing.T) {
 	if defaults == nil {
 		t.Fatal("expected non-nil defaults")
 	}
-	if defaults.IssuerURL != "https://keycloak.example.com/realms/kagenti" {
+	if defaults.IssuerURL != testKagentiIssuerURL {
 		t.Errorf("issuerURL = %q, want kagenti realm URL", defaults.IssuerURL)
 	}
 	if defaults.JWKSURL != "http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/certs" {
@@ -91,12 +93,12 @@ func TestResolveKagentiOIDCDefaults_DetectsFromAuthbridgeConfig(t *testing.T) {
 // enable insecure issuers — transmission confidentiality is preserved.
 func TestResolveKagentiOIDCDefaults_SecureWhenKeycloakIsHTTPS(t *testing.T) {
 	cm := kagentiAuthbridgeConfigMap(map[string]string{
-		"ISSUER":         "https://keycloak.example.com/realms/kagenti",
+		"ISSUER":         testKagentiIssuerURL,
 		"KEYCLOAK_URL":   "https://keycloak-service.keycloak.svc:8443",
 		"KEYCLOAK_REALM": "kagenti",
 	})
 	r := newFakeReconciler(cm)
-	kn := testKubernautCRWithAuth("", true)
+	kn := testKubernautCRWithAuth("")
 
 	defaults, err := r.resolveKagentiOIDCDefaults(context.Background(), kn, resources.KagentiSidecarAuthbridge)
 	if err != nil {
@@ -114,12 +116,12 @@ func TestResolveKagentiOIDCDefaults_SecureWhenKeycloakIsHTTPS(t *testing.T) {
 // since both versions maintain the same authbridge-config ConfigMap schema.
 func TestResolveKagentiOIDCDefaults_WorksWithEnvoySidecar(t *testing.T) {
 	cm := kagentiAuthbridgeConfigMap(map[string]string{
-		"ISSUER":         "https://keycloak.example.com/realms/kagenti",
+		"ISSUER":         testKagentiIssuerURL,
 		"KEYCLOAK_URL":   "http://keycloak-service.keycloak.svc:8080",
 		"KEYCLOAK_REALM": "kagenti",
 	})
 	r := newFakeReconciler(cm)
-	kn := testKubernautCRWithAuth("", true)
+	kn := testKubernautCRWithAuth("")
 
 	defaults, err := r.resolveKagentiOIDCDefaults(context.Background(), kn, resources.KagentiSidecarEnvoy)
 	if err != nil {
@@ -128,7 +130,7 @@ func TestResolveKagentiOIDCDefaults_WorksWithEnvoySidecar(t *testing.T) {
 	if defaults == nil {
 		t.Fatal("expected non-nil defaults for envoy sidecar mode")
 	}
-	if defaults.IssuerURL != "https://keycloak.example.com/realms/kagenti" {
+	if defaults.IssuerURL != testKagentiIssuerURL {
 		t.Errorf("issuerURL = %q, want kagenti realm URL", defaults.IssuerURL)
 	}
 }
@@ -137,7 +139,7 @@ func TestResolveKagentiOIDCDefaults_WorksWithEnvoySidecar(t *testing.T) {
 // must not override it — operator-defined configuration takes precedence.
 func TestResolveKagentiOIDCDefaults_SkipsWhenCRHasIssuerAndConfigMapMissing(t *testing.T) {
 	r := newFakeReconciler()
-	kn := testKubernautCRWithAuth("https://custom-idp.example.com/realms/custom", true)
+	kn := testKubernautCRWithAuth("https://custom-idp.example.com/realms/custom")
 
 	defaults, err := r.resolveKagentiOIDCDefaults(context.Background(), kn, resources.KagentiSidecarAuthbridge)
 	if err != nil {
@@ -153,7 +155,7 @@ func TestResolveKagentiOIDCDefaults_SkipsWhenCRHasIssuerAndConfigMapMissing(t *t
 // error rather than silently proceeding without authentication.
 func TestResolveKagentiOIDCDefaults_ErrorsWhenConfigMapMissingAndNoOverride(t *testing.T) {
 	r := newFakeReconciler()
-	kn := testKubernautCRWithAuth("", true)
+	kn := testKubernautCRWithAuth("")
 
 	_, err := r.resolveKagentiOIDCDefaults(context.Background(), kn, resources.KagentiSidecarAuthbridge)
 	if err == nil {
@@ -172,7 +174,7 @@ func TestResolveKagentiOIDCDefaults_SkipsWhenIssuerKeyMissingButCRHasOverride(t 
 		"KEYCLOAK_REALM": "kagenti",
 	})
 	r := newFakeReconciler(cm)
-	kn := testKubernautCRWithAuth("https://custom-idp.example.com/realms/custom", true)
+	kn := testKubernautCRWithAuth("https://custom-idp.example.com/realms/custom")
 
 	defaults, err := r.resolveKagentiOIDCDefaults(context.Background(), kn, resources.KagentiSidecarAuthbridge)
 	if err != nil {
@@ -191,7 +193,7 @@ func TestResolveKagentiOIDCDefaults_ErrorsWhenIssuerKeyMissingAndNoOverride(t *t
 		"KEYCLOAK_REALM": "kagenti",
 	})
 	r := newFakeReconciler(cm)
-	kn := testKubernautCRWithAuth("", true)
+	kn := testKubernautCRWithAuth("")
 
 	_, err := r.resolveKagentiOIDCDefaults(context.Background(), kn, resources.KagentiSidecarAuthbridge)
 	if err == nil {
@@ -209,13 +211,13 @@ func TestResolveKagentiOIDCDefaults_IssuerOnlyWhenKeycloakURLMissing(t *testing.
 		"ISSUER": "https://keycloak.example.com/realms/kagenti",
 	})
 	r := newFakeReconciler(cm)
-	kn := testKubernautCRWithAuth("", true)
+	kn := testKubernautCRWithAuth("")
 
 	defaults, err := r.resolveKagentiOIDCDefaults(context.Background(), kn, resources.KagentiSidecarAuthbridge)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if defaults.IssuerURL != "https://keycloak.example.com/realms/kagenti" {
+	if defaults.IssuerURL != testKagentiIssuerURL {
 		t.Errorf("issuerURL = %q, want kagenti realm URL", defaults.IssuerURL)
 	}
 	if defaults.JWKSURL != "" {
@@ -225,4 +227,3 @@ func TestResolveKagentiOIDCDefaults_IssuerOnlyWhenKeycloakURLMissing(t *testing.
 		t.Error("allowInsecureIssuers should be false when KEYCLOAK_URL is missing")
 	}
 }
-

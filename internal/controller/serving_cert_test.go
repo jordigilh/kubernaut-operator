@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
@@ -38,8 +39,9 @@ func newFakeReconciler(objs ...runtime.Object) *KubernautReconciler {
 		builder = builder.WithRuntimeObjects(o)
 	}
 	return &KubernautReconciler{
-		Client: builder.Build(),
-		Scheme: scheme,
+		Client:   builder.Build(),
+		Scheme:   scheme,
+		Recorder: events.NewFakeRecorder(100),
 	}
 }
 
