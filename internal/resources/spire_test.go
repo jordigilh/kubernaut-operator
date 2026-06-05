@@ -141,7 +141,7 @@ var _ = Describe("ClusterSPIFFEID", func() {
 	It("uses CR namespace in SPIFFE path, not a template variable", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.SPIRE.Enabled = true
-		kn.ObjectMeta.Namespace = "custom-namespace"
+		kn.Namespace = "custom-namespace"
 		obj, err := ClusterSPIFFEID(kn)
 		Expect(err).NotTo(HaveOccurred())
 
