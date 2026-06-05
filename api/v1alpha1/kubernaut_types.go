@@ -967,6 +967,14 @@ type APIFrontendSPIRESpec struct {
 	// When empty, the className field is omitted from the ClusterSPIFFEID spec.
 	// +optional
 	ClassName string `json:"className,omitempty"`
+
+	// TrustDomain overrides the SPIFFE ID trust domain. When empty (default),
+	// the operator uses SPIRE's {{ .TrustDomain }} template variable, which
+	// resolves to the cluster's configured trust domain at SVID registration
+	// time. Set this only if you need a fixed trust domain that differs from
+	// the SPIRE server's.
+	// +optional
+	TrustDomain string `json:"trustDomain,omitempty"`
 }
 
 // SPIREEnabled returns true when SPIRE mTLS sidecar injection is active.

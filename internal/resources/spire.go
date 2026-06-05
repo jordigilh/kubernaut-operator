@@ -31,6 +31,11 @@ const (
 // ClusterSPIFFEID builds an unstructured ClusterSPIFFEID resource that
 // registers a SPIFFE identity for the apifrontend ServiceAccount. Returns
 // nil when SPIRE is not enabled in the CR.
+//
+// The spiffeIDTemplate uses SPIRE's {{ .TrustDomain }} variable by default so
+// the identity matches whatever trust domain the cluster's SPIRE server is
+// configured with (FedRAMP SC-8, IA-5). The path follows the standard
+// /ns/{namespace}/sa/{serviceaccount} convention used by kagenti.
 func ClusterSPIFFEID(kn *kubernautv1alpha1.Kubernaut) (*unstructured.Unstructured, error) {
 	if !kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
 		return nil, nil
@@ -39,7 +44,11 @@ func ClusterSPIFFEID(kn *kubernautv1alpha1.Kubernaut) (*unstructured.Unstructure
 	ns := kn.Namespace
 	saName := ComponentAPIFrontend
 
-	spiffeID := fmt.Sprintf("spiffe://kubernaut/%s/%s", ns, saName)
+	td := "{{ .TrustDomain }}"
+	if kn.Spec.APIFrontend.SPIRE.TrustDomain != "" {
+		td = kn.Spec.APIFrontend.SPIRE.TrustDomain
+	}
+	spiffeID := fmt.Sprintf("spiffe://%s/ns/%s/sa/%s", td, ns, saName)
 
 	obj := &unstructured.Unstructured{}
 	obj.SetAPIVersion(spireAPIGroup + "/" + spireAPIVersion)
