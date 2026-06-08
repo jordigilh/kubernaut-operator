@@ -67,29 +67,29 @@ spec:
         name: manager
         env:
         - name: RELATED_IMAGE_GATEWAY
-          value: ghcr.io/jordigilh/kubernaut/gateway@sha256:be74930343f72e5e849fb941f27121a6bef2b587d039b68fd712da3921e793a7
+          value: quay.io/kubernaut-ai/gateway@sha256:2635c0a8322546d142b869194942511a1d93c39cfea542e452f3e39bb357a090
         - name: RELATED_IMAGE_DATA_STORAGE
-          value: ghcr.io/jordigilh/kubernaut/datastorage@sha256:1372672001392c650306a2f3b021f685f9f643818e612a8daefa3dfe18147918
+          value: quay.io/kubernaut-ai/datastorage@sha256:e4ff74cc2e6a41299daab9191fb7553714485cc0c414a4075540ee0bc6e1d539
         - name: RELATED_IMAGE_AIANALYSIS
-          value: ghcr.io/jordigilh/kubernaut/aianalysis@sha256:9218c270a12ed742996b095e8d3005c1eaf5310366e4b322a7ac1092ea9a1a84
+          value: quay.io/kubernaut-ai/aianalysis@sha256:68e59eca46935aa98530f36644365e31b70f5461fa6ef6d31e39274bdc422f91
         - name: RELATED_IMAGE_SIGNALPROCESSING
-          value: ghcr.io/jordigilh/kubernaut/signalprocessing@sha256:a2d61a57388f023128e0c7d5ca615d0863cabf84d0701fa6464f4bcabb3632f3
+          value: quay.io/kubernaut-ai/signalprocessing@sha256:cec0ee916ae496c09da8b260de3970a1c1adc49d65ca0748f9858357cfaecb3a
         - name: RELATED_IMAGE_REMEDIATIONORCHESTRATOR
-          value: ghcr.io/jordigilh/kubernaut/remediationorchestrator@sha256:2ac25526f3f908fd285440fff587f308c024516361035b14dc0ebc585a232866
+          value: quay.io/kubernaut-ai/remediationorchestrator@sha256:a5993e8eda591c9cbd30e2210160d49576bffa12b7706191d6a1b32e22023031
         - name: RELATED_IMAGE_WORKFLOWEXECUTION
-          value: ghcr.io/jordigilh/kubernaut/workflowexecution@sha256:9e687b2fee3e239c19e2f1b36781eb785bfbbedf1f88d0d7e77345b3020c73b2
+          value: quay.io/kubernaut-ai/workflowexecution@sha256:5db71118a4ee8e18e2e357a9713e48299df08bcaa9aa96d705d4dc83376a3483
         - name: RELATED_IMAGE_EFFECTIVENESSMONITOR
-          value: ghcr.io/jordigilh/kubernaut/effectivenessmonitor@sha256:f339c79ae1d212f4b88565d13166960bf0fdbd4ec3dce271b26955003ff13959
+          value: quay.io/kubernaut-ai/effectivenessmonitor@sha256:63827dde694c1991186abf73873fec7ce4ba0f0c61cd42eac694f250ebf11905
         - name: RELATED_IMAGE_NOTIFICATION
-          value: ghcr.io/jordigilh/kubernaut/notification@sha256:a2699cf5034c2de04dbcb4333c4a10f014cdd01e4a84974acce3954d259e1c32
+          value: quay.io/kubernaut-ai/notification@sha256:d4f5cdb1e2d62eca7d6cac82ce64203f5ed21351565237e31659723d29d301a7
         - name: RELATED_IMAGE_KUBERNAUT_AGENT
-          value: ghcr.io/jordigilh/kubernaut/kubernautagent@sha256:a58ab99da2d524d570ac8714652079bbfed7afb39854e2d83e6cad7edc7342fa
+          value: quay.io/kubernaut-ai/kubernautagent@sha256:fd38947bfcaca5eeb928a655865de3abf0d7202ef18be865329dea5f9d40b0ac
         - name: RELATED_IMAGE_AUTHWEBHOOK
-          value: ghcr.io/jordigilh/kubernaut/authwebhook@sha256:cc28d4abcbf5914189cf71f4b3c6e0d69d1ce6ece0a8b5e85ec8bcedc6fe316b
+          value: quay.io/kubernaut-ai/authwebhook@sha256:79f08b78723b0ff8614a0c339a92bdb0fda777e2cc2394307b5ccaaed9578993
         - name: RELATED_IMAGE_API_FRONTEND
-          value: ghcr.io/jordigilh/kubernaut/apifrontend@sha256:e801b1b4f2bd8170093461d6e462c0513a6cef14a235b305e99858956571f22b
+          value: quay.io/kubernaut-ai/apifrontend@sha256:b62d16b142a62f7e5112c03211143f51386133ee7faa633772a6795619d2dd25
         - name: RELATED_IMAGE_DB_MIGRATE
-          value: ghcr.io/jordigilh/kubernaut/db-migrate@sha256:72a38f37499bd2317256d45b72c027091e769660f030c9261f270f7e9508cfb3
+          value: quay.io/kubernaut-ai/db-migrate@sha256:a68be28a73e8433a001db1fd6cca9b22a69d5c3f8e3bf2059d6637297ae4a19f
         - name: RELATED_IMAGE_INIT_POSTGRES
           value: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
         - name: RELATED_IMAGE_INIT_UBI_MINIMAL
