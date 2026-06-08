@@ -30,6 +30,10 @@ import (
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
+// SSE streams (live status, investigation progress) require long-lived
+// connections. OCP HAProxy defaults to 30s which kills them prematurely.
+const routeSSETimeout = "3600s"
+
 // GatewayRoute builds the OCP Route for external access to the Gateway.
 // Returns nil if Route creation is disabled.
 func GatewayRoute(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
@@ -53,6 +57,9 @@ func GatewayRoute(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 			},
 		},
 	}
+	route.Annotations = map[string]string{
+		"haproxy.router.openshift.io/timeout": routeSSETimeout,
+	}
 
 	if kn.Spec.Gateway.Route.Hostname != "" {
 		route.Spec.Host = kn.Spec.Gateway.Route.Hostname
@@ -68,6 +75,51 @@ func GatewayRouteStub(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 	return &routev1.Route{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "gateway-route",
+			Namespace: kn.Namespace,
+		},
+	}
+}
+
+// APIFrontendRoute builds the OCP Route for external access to the AF.
+// Returns nil if Route creation is disabled (default).
+func APIFrontendRoute(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
+	if !kn.Spec.APIFrontend.Route.AFRouteEnabled() {
+		return nil
+	}
+
+	route := &routev1.Route{
+		ObjectMeta: ObjectMeta(kn, "apifrontend-route", ComponentAPIFrontend),
+		Spec: routev1.RouteSpec{
+			To: routev1.RouteTargetReference{
+				Kind: "Service",
+				Name: "apifrontend",
+			},
+			Port: &routev1.RoutePort{
+				TargetPort: intstr.FromString("https"),
+			},
+			TLS: &routev1.TLSConfig{
+				Termination:                   routev1.TLSTerminationReencrypt,
+				InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
+			},
+		},
+	}
+	route.Annotations = map[string]string{
+		"haproxy.router.openshift.io/timeout": routeSSETimeout,
+	}
+
+	if kn.Spec.APIFrontend.Route.Hostname != "" {
+		route.Spec.Host = kn.Spec.APIFrontend.Route.Hostname
+	}
+
+	return route
+}
+
+// APIFrontendRouteStub returns a minimal Route object suitable for deletion
+// lookups when the AF Route is disabled.
+func APIFrontendRouteStub(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
+	return &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "apifrontend-route",
 			Namespace: kn.Namespace,
 		},
 	}
@@ -116,7 +168,12 @@ func GatewayAlertManagerConfig(kn *kubernautv1alpha1.Kubernaut) *monitoringv1alp
 									},
 								},
 								TLSConfig: &monitoringv1.SafeTLSConfig{
-									InsecureSkipVerify: boolPtr(true),
+									CA: monitoringv1.SecretOrConfigMap{
+										ConfigMap: &corev1.ConfigMapKeySelector{
+											LocalObjectReference: corev1.LocalObjectReference{Name: InterServiceCAConfigMapName},
+											Key:                  "service-ca.crt",
+										},
+									},
 								},
 							},
 						},

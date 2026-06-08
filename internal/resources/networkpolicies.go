@@ -28,13 +28,12 @@ import (
 // NetworkPolicies returns NetworkPolicy resources matching the upstream
 // kubernaut v1.4.0 traffic matrix. Returns nil when NetworkPolicies are
 // disabled on the CR.
-func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut) []*networkingv1.NetworkPolicy {
+func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) []*networkingv1.NetworkPolicy {
 	spec := kn.Spec.NetworkPolicies
 	if !spec.NetworkPoliciesEnabled() {
 		return nil
 	}
 	nps := []*networkingv1.NetworkPolicy{
-		gatewayNetworkPolicy(kn),
 		dataStorageNetworkPolicy(kn),
 		aiAnalysisNetworkPolicy(kn),
 		signalProcessingNetworkPolicy(kn),
@@ -45,8 +44,11 @@ func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut) []*networkingv1.NetworkPol
 		authWebhookNetworkPolicy(kn),
 		kubernautAgentNetworkPolicy(kn),
 	}
+	if kn.Spec.GatewayEnabled() {
+		nps = append(nps, gatewayNetworkPolicy(kn))
+	}
 	if kn.Spec.APIFrontendEnabled() {
-		nps = append(nps, apifrontendNetworkPolicy(kn))
+		nps = append(nps, apifrontendNetworkPolicy(kn, sidecar))
 	}
 	return nps
 }
@@ -107,7 +109,6 @@ func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 	p8443 := intstr.FromInt32(PortHTTPS)
 
 	dataIngressPeers := []networkingv1.NetworkPolicyPeer{
-		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentGateway)}},
 		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentAIAnalysis)}},
 		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentSignalProcessing)}},
 		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentRemediationOrchestrator)}},
@@ -116,6 +117,11 @@ func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentEffectivenessMonitor)}},
 		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentAuthWebhook)}},
 		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentKubernautAgent)}},
+	}
+	if kn.Spec.GatewayEnabled() {
+		dataIngressPeers = append(dataIngressPeers,
+			networkingv1.NetworkPolicyPeer{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentGateway)}},
+		)
 	}
 
 	ingress := []networkingv1.NetworkPolicyIngressRule{
@@ -315,6 +321,15 @@ func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.
 	if spec.MonitoringNamespace != "" {
 		egress = append(egress, monitoringStackEgressRule(spec.MonitoringNamespace))
 	}
+	if kn.Spec.KubernautAgent.LLM.Provider != "" {
+		p443 := intstr.FromInt32(443)
+		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
+			To: ipWorldPeers(),
+			Ports: []networkingv1.NetworkPolicyPort{
+				{Protocol: &protoTCP, Port: &p443},
+			},
+		})
+	}
 
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: ObjectMeta(kn, ComponentKubernautAgent+"-netpol", ComponentKubernautAgent),
@@ -504,12 +519,25 @@ func monitoringStackEgressRule(monitoringNS string) networkingv1.NetworkPolicyEg
 	}
 }
 
-func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
+func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) *networkingv1.NetworkPolicy {
 	spec := kn.Spec.NetworkPolicies
 	protoTCP := corev1.ProtocolTCP
 	p8443 := intstr.FromInt32(PortHTTPS)
-	p8081 := intstr.FromInt32(PortHealthProbe)
-	p9090 := intstr.FromInt32(PortMetrics)
+
+	healthPort := PortHealthProbe
+	metricsPort := PortMetrics
+	if sidecar.ShiftsPorts() {
+		healthPort = 8082
+		metricsPort = 9092
+	}
+	if kn.Spec.APIFrontend.HealthPort != nil {
+		healthPort = *kn.Spec.APIFrontend.HealthPort
+	}
+	if kn.Spec.APIFrontend.MetricsPort != nil {
+		metricsPort = *kn.Spec.APIFrontend.MetricsPort
+	}
+	pHealth := intstr.FromInt32(healthPort)
+	pMetrics := intstr.FromInt32(metricsPort)
 
 	ingress := []networkingv1.NetworkPolicyIngressRule{
 		{
@@ -524,7 +552,7 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 		},
 		{
 			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protoTCP, Port: &p8081},
+				{Protocol: &protoTCP, Port: &pHealth},
 			},
 		},
 	}
@@ -536,7 +564,7 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 				}}},
 			},
 			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protoTCP, Port: &p9090},
+				{Protocol: &protoTCP, Port: &pMetrics},
 			},
 		})
 	}
@@ -565,7 +593,7 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 				}}},
 			},
 			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protoTCP, Port: &p9090},
+				{Protocol: &protoTCP, Port: &pMetrics},
 			},
 		})
 	}

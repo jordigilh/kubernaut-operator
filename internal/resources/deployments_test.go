@@ -28,6 +28,7 @@ import (
 
 const (
 	testEnvTLSCAFile     = "TLS_CA_FILE"
+	testVolumeTLSCA      = "tls-ca"
 	testVolumeAAPCA      = "aap-ca"
 	testVolumeCombinedCA = "combined-ca"
 )
@@ -233,6 +234,15 @@ var _ = Describe("Deployments", func() {
 
 			expectHasVolume(dep, "credentials")
 			expectHasVolumeMount(dep, "credentials", "/etc/notification/credentials")
+
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == "credentials" {
+					Expect(v.Projected).NotTo(BeNil())
+					src := v.Projected.Sources[0].Secret
+					Expect(src.Optional).NotTo(BeNil())
+					Expect(*src.Optional).To(BeTrue(), "slack secret projection should be optional")
+				}
+			}
 		})
 
 		It("uses emptyDir credentials when Slack is not configured", func() {
@@ -406,6 +416,37 @@ var _ = Describe("Deployments", func() {
 			Expect(err).NotTo(HaveOccurred())
 			expectHasVolume(dep, "tls-certs")
 			expectHasVolumeMount(dep, "tls-certs", InterServiceTLSCertDir)
+		})
+
+		It("mounts emptyDir /tmp for readOnlyRootFilesystem", func() {
+			kn := testKubernaut()
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, "tmp")
+			expectHasVolumeMount(dep, "tmp", "/tmp")
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == "tmp" {
+					Expect(v.EmptyDir).NotTo(BeNil())
+				}
+			}
+		})
+
+		It("sets terminationGracePeriodSeconds to drainSeconds + 5 (default 30)", func() {
+			kn := testKubernaut()
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dep.Spec.Template.Spec.TerminationGracePeriodSeconds).NotTo(BeNil())
+			Expect(*dep.Spec.Template.Spec.TerminationGracePeriodSeconds).To(Equal(int64(35)),
+				"default drainSeconds=30 + 5 buffer = 35")
+		})
+
+		It("adjusts terminationGracePeriodSeconds for custom drainSeconds", func() {
+			kn := testKubernaut()
+			drain := 120
+			kn.Spec.KubernautAgent.Shutdown.DrainSeconds = &drain
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(*dep.Spec.Template.Spec.TerminationGracePeriodSeconds).To(Equal(int64(125)))
 		})
 	})
 
@@ -613,7 +654,7 @@ var _ = Describe("Deployments", func() {
 			for _, vm := range init.VolumeMounts {
 				mountNames[vm.Name] = true
 			}
-			for _, required := range []string{"tls-ca", testVolumeAAPCA, testVolumeCombinedCA} {
+			for _, required := range []string{testVolumeTLSCA, testVolumeAAPCA, testVolumeCombinedCA} {
 				Expect(mountNames[required]).To(BeTrue(), "init container should mount volume %q", required)
 			}
 		})
@@ -821,19 +862,19 @@ var _ = Describe("Deployments", func() {
 
 				hasCAVolume := false
 				for _, v := range dep.Spec.Template.Spec.Volumes {
-					if v.Name == "tls-ca" && v.ConfigMap != nil && v.ConfigMap.Name == InterServiceCAConfigMapName {
+					if v.Name == testVolumeTLSCA && v.ConfigMap != nil && v.ConfigMap.Name == InterServiceCAConfigMapName {
 						hasCAVolume = true
 					}
 				}
-				Expect(hasCAVolume).To(BeTrue(), "Deployment %q missing tls-ca volume", dep.Name)
+				Expect(hasCAVolume).To(BeTrue(), "Deployment %q missing %s volume", dep.Name, testVolumeTLSCA)
 
 				hasCAMount := false
 				for _, vm := range container.VolumeMounts {
-					if vm.Name == "tls-ca" && vm.MountPath == "/etc/tls-ca" {
+					if vm.Name == testVolumeTLSCA && vm.MountPath == "/etc/tls-ca" {
 						hasCAMount = true
 					}
 				}
-				Expect(hasCAMount).To(BeTrue(), "Deployment %q missing tls-ca volume mount", dep.Name)
+				Expect(hasCAMount).To(BeTrue(), "Deployment %q missing %s volume mount", dep.Name, testVolumeTLSCA)
 
 				hasCAEnv := false
 				for _, env := range container.Env {
@@ -930,14 +971,14 @@ var _ = Describe("overrideTLSCAFile standalone", func() {
 var _ = Describe("APIFrontendDeployment", func() {
 	It("builds successfully with AF enabled", func() {
 		kn := testKubernautWithAF()
-		dep, err := APIFrontendDeployment(kn)
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
 		expectDeploymentBasics(dep, "apifrontend")
 	})
 
 	It("exposes HTTPS (8443), health (8081), and metrics (9090) ports", func() {
 		kn := testKubernautWithAF()
-		dep, err := APIFrontendDeployment(kn)
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
 		container := dep.Spec.Template.Spec.Containers[0]
 		portMap := map[string]int32{}
@@ -951,21 +992,21 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("mounts config, tls-server, tls-ca, and tmp volumes", func() {
 		kn := testKubernautWithAF()
-		dep, err := APIFrontendDeployment(kn)
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
 		expectHasVolume(dep, "config")
 		expectHasVolume(dep, "tls-server")
-		expectHasVolume(dep, "tls-ca")
+		expectHasVolume(dep, testVolumeTLSCA)
 		expectHasVolume(dep, "tmp")
 		expectHasVolumeMount(dep, "config", "/etc/apifrontend")
 		expectHasVolumeMount(dep, "tls-server", "/etc/apifrontend/tls")
-		expectHasVolumeMount(dep, "tls-ca", "/etc/apifrontend/tls-ca")
+		expectHasVolumeMount(dep, testVolumeTLSCA, "/etc/apifrontend/tls-ca")
 		expectHasVolumeMount(dep, "tmp", "/tmp")
 	})
 
 	It("sets liveness and readiness probes", func() {
 		kn := testKubernautWithAF()
-		dep, err := APIFrontendDeployment(kn)
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
 		container := dep.Spec.Template.Spec.Containers[0]
 		Expect(container.LivenessProbe).NotTo(BeNil())
@@ -976,7 +1017,7 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("includes Prometheus annotations", func() {
 		kn := testKubernautWithAF()
-		dep, err := APIFrontendDeployment(kn)
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
 		ann := dep.Spec.Template.Annotations
 		Expect(ann["prometheus.io/scrape"]).To(Equal("true"))
@@ -988,7 +1029,7 @@ var _ = Describe("APIFrontendDeployment", func() {
 		kn.Spec.APIFrontend.RBACRolesConfigMapRef = &kubernautv1alpha1.ConfigMapRef{
 			ConfigMapName: "my-custom-rbac",
 		}
-		dep, err := APIFrontendDeployment(kn)
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
 		for _, v := range dep.Spec.Template.Spec.Volumes {
 			if v.Name == "config" {
@@ -1004,7 +1045,7 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("sets terminationGracePeriodSeconds to drainSeconds + 5", func() {
 		kn := testKubernautWithAF()
-		dep, err := APIFrontendDeployment(kn)
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(dep.Spec.Template.Spec.TerminationGracePeriodSeconds).NotTo(BeNil())
 		Expect(*dep.Spec.Template.Spec.TerminationGracePeriodSeconds).To(Equal(int64(20)),
@@ -1015,14 +1056,14 @@ var _ = Describe("APIFrontendDeployment", func() {
 		kn := testKubernautWithAF()
 		drain := 60
 		kn.Spec.APIFrontend.Shutdown.DrainSeconds = &drain
-		dep, err := APIFrontendDeployment(kn)
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(*dep.Spec.Template.Spec.TerminationGracePeriodSeconds).To(Equal(int64(65)))
 	})
 
 	It("uses plain ConfigMap volume, not projected", func() {
 		kn := testKubernautWithAF()
-		dep, err := APIFrontendDeployment(kn)
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
 		for _, v := range dep.Spec.Template.Spec.Volumes {
 			if v.Name == "config" {
@@ -1039,7 +1080,7 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("does not reference rbac_roles.yaml", func() {
 		kn := testKubernautWithAF()
-		dep, err := APIFrontendDeployment(kn)
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
 		for _, v := range dep.Spec.Template.Spec.Volumes {
 			if v.Projected != nil {
@@ -1058,6 +1099,86 @@ var _ = Describe("APIFrontendDeployment", func() {
 						"AF deployment should not reference rbac_roles.yaml")
 				}
 			}
+		}
+	})
+
+	It("AF container uses PortHTTPS when no sidecar is active", func() {
+		kn := testKubernautWithAF()
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+		portMap := map[string]int32{}
+		for _, p := range dep.Spec.Template.Spec.Containers[0].Ports {
+			portMap[p.Name] = p.ContainerPort
+		}
+		Expect(portMap).To(HaveKeyWithValue("https", PortHTTPS))
+	})
+
+	It("AF container uses PortHTTPS for envoy sidecar (no port shift)", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarEnvoy)
+		Expect(err).NotTo(HaveOccurred())
+		portMap := map[string]int32{}
+		for _, p := range dep.Spec.Template.Spec.Containers[0].Ports {
+			portMap[p.Name] = p.ContainerPort
+		}
+		Expect(portMap).To(HaveKeyWithValue("https", PortHTTPS),
+			"envoy sidecar uses iptables; AF keeps original port")
+	})
+
+	It("AF container shifts to PortHTTPS+1 for authbridge sidecar", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarAuthbridge)
+		Expect(err).NotTo(HaveOccurred())
+		portMap := map[string]int32{}
+		for _, p := range dep.Spec.Template.Spec.Containers[0].Ports {
+			portMap[p.Name] = p.ContainerPort
+		}
+		Expect(portMap).To(HaveKeyWithValue("https", PortHTTPS),
+			"AF declares 8443; kagenti webhook shifts AF to 8444 and authbridge takes 8443")
+	})
+
+	It("sets NO_PROXY for KA and DS with envoy sidecar", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarEnvoy)
+		Expect(err).NotTo(HaveOccurred())
+		container := dep.Spec.Template.Spec.Containers[0]
+		var noProxy string
+		for _, e := range container.Env {
+			if e.Name == "NO_PROXY" {
+				noProxy = e.Value
+			}
+		}
+		Expect(noProxy).To(ContainSubstring("kubernaut-agent.%s.svc.cluster.local", kn.Namespace),
+			"NO_PROXY must include KA service to bypass sidecar for SA bearer token")
+		Expect(noProxy).To(ContainSubstring("data-storage-service.%s.svc.cluster.local", kn.Namespace))
+	})
+
+	It("sets NO_PROXY for KA and DS with authbridge sidecar", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarAuthbridge)
+		Expect(err).NotTo(HaveOccurred())
+		container := dep.Spec.Template.Spec.Containers[0]
+		var noProxy string
+		for _, e := range container.Env {
+			if e.Name == "NO_PROXY" {
+				noProxy = e.Value
+			}
+		}
+		Expect(noProxy).To(ContainSubstring("kubernaut-agent.%s.svc.cluster.local", kn.Namespace))
+	})
+
+	It("omits NO_PROXY when no sidecar is active", func() {
+		kn := testKubernautWithAF()
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+		container := dep.Spec.Template.Spec.Containers[0]
+		for _, e := range container.Env {
+			Expect(e.Name).NotTo(Equal("NO_PROXY"),
+				"NO_PROXY should not be set when no sidecar is injected")
 		}
 	})
 })

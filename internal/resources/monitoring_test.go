@@ -165,4 +165,97 @@ var _ = Describe("Monitoring Builders", func() {
 			}
 		})
 	})
+
+	Describe("KubernautAgentServiceMonitor", func() {
+		It("scrapes the metrics port at /metrics with 15s interval", func() {
+			sm := KubernautAgentServiceMonitor(kn())
+			Expect(sm.Spec.Endpoints).To(HaveLen(1))
+			ep := sm.Spec.Endpoints[0]
+			Expect(ep.Port).To(Equal("metrics"))
+			Expect(ep.Path).To(Equal("/metrics"))
+			Expect(string(ep.Interval)).To(Equal("15s"))
+		})
+
+		It("relabels job to kubernautagent", func() {
+			sm := KubernautAgentServiceMonitor(kn())
+			ep := sm.Spec.Endpoints[0]
+			Expect(ep.RelabelConfigs).To(HaveLen(1))
+			Expect(*ep.RelabelConfigs[0].Replacement).To(Equal("kubernautagent"))
+		})
+
+		It("selects kubernautagent pods via component labels", func() {
+			sm := KubernautAgentServiceMonitor(kn())
+			Expect(sm.Spec.Selector.MatchLabels).To(Equal(SelectorLabels(ComponentKubernautAgent)))
+		})
+
+		It("restricts to the kubernaut namespace", func() {
+			sm := KubernautAgentServiceMonitor(kn())
+			Expect(sm.Spec.NamespaceSelector.MatchNames).To(ConsistOf(testSystemNamespace))
+		})
+	})
+
+	Describe("KubernautAgentPrometheusRule", func() {
+		It("defines 4 rule groups", func() {
+			pr := KubernautAgentPrometheusRule(kn())
+			Expect(pr.Spec.Groups).To(HaveLen(4))
+		})
+
+		It("includes the KubernautAgentDown critical alert", func() {
+			pr := KubernautAgentPrometheusRule(kn())
+			found := false
+			for _, g := range pr.Spec.Groups {
+				for _, r := range g.Rules {
+					if r.Alert == "KubernautAgentDown" {
+						Expect(r.Labels["severity"]).To(Equal("critical"))
+						Expect(r.Expr.String()).To(ContainSubstring(`up{job="kubernautagent"}`))
+						found = true
+					}
+				}
+			}
+			Expect(found).To(BeTrue(), "KubernautAgentDown alert not found")
+		})
+
+		It("all alert expressions reference job=kubernautagent", func() {
+			pr := KubernautAgentPrometheusRule(kn())
+			for _, g := range pr.Spec.Groups {
+				for _, r := range g.Rules {
+					if r.Alert != "" {
+						Expect(r.Expr.String()).To(ContainSubstring(`job="kubernautagent"`),
+							"Alert %q expression should filter on job=kubernautagent", r.Alert)
+					}
+				}
+			}
+		})
+
+		It("group names are prefixed with kubernautagent.", func() {
+			pr := KubernautAgentPrometheusRule(kn())
+			for _, g := range pr.Spec.Groups {
+				Expect(g.Name).To(HavePrefix("kubernautagent."),
+					"Rule group %q should be prefixed with kubernautagent.", g.Name)
+			}
+		})
+
+		It("all alerts include runbook_url annotation", func() {
+			pr := KubernautAgentPrometheusRule(kn())
+			for _, g := range pr.Spec.Groups {
+				for _, r := range g.Rules {
+					if r.Alert != "" {
+						Expect(r.Annotations).To(HaveKey("runbook_url"),
+							"Alert %q should have a runbook_url annotation", r.Alert)
+					}
+				}
+			}
+		})
+
+		It("includes session, tool, and LLM alert groups", func() {
+			pr := KubernautAgentPrometheusRule(kn())
+			names := map[string]bool{}
+			for _, g := range pr.Spec.Groups {
+				names[g.Name] = true
+			}
+			Expect(names).To(HaveKey("kubernautagent.sessions"))
+			Expect(names).To(HaveKey("kubernautagent.tools"))
+			Expect(names).To(HaveKey("kubernautagent.llm"))
+		})
+	})
 })

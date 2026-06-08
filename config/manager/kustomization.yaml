@@ -5,4 +5,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: quay.io/kubernaut-ai/kubernaut-operator
-  newTag: pr-124
+  newTag: 1.5.0

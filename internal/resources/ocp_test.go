@@ -69,6 +69,14 @@ var _ = Describe("GatewayRoute", func() {
 
 		Expect(route.Spec.Host).To(BeEmpty(), "route host should be empty by default, got %q", route.Spec.Host)
 	})
+
+	It("sets HAProxy timeout annotation for SSE streaming", func() {
+		kn := testKubernaut()
+		route := GatewayRoute(kn)
+
+		Expect(route.Annotations).To(HaveKeyWithValue("haproxy.router.openshift.io/timeout", routeSSETimeout),
+			"gateway route should have HAProxy timeout annotation for SSE streams")
+	})
 })
 
 var _ = Describe("GatewayRouteStub", func() {
@@ -78,6 +86,83 @@ var _ = Describe("GatewayRouteStub", func() {
 
 		Expect(stub.Name).To(Equal("gateway-route"), "Name = %q, want %q", stub.Name, "gateway-route")
 		Expect(stub.Namespace).To(Equal(kn.Namespace), "Namespace = %q, want %q", stub.Namespace, kn.Namespace)
+	})
+})
+
+var _ = Describe("APIFrontendRoute", func() {
+	It("SC-8: is disabled by default (opt-in external access)", func() {
+		kn := testKubernaut()
+		route := APIFrontendRoute(kn)
+
+		Expect(route).To(BeNil(), "AF Route should be nil by default (opt-in)")
+	})
+
+	It("SC-8: uses reencrypt TLS termination for end-to-end encryption", func() {
+		kn := testKubernautWithAF()
+		enabled := true
+		kn.Spec.APIFrontend.Route.Enabled = &enabled
+		route := APIFrontendRoute(kn)
+
+		Expect(route).NotTo(BeNil())
+		Expect(route.Spec.TLS).NotTo(BeNil())
+		Expect(route.Spec.TLS.Termination).To(Equal(routev1.TLSTerminationReencrypt),
+			"AF Route must use reencrypt TLS termination (SC-8)")
+		Expect(route.Spec.TLS.InsecureEdgeTerminationPolicy).To(Equal(routev1.InsecureEdgeTerminationPolicyRedirect),
+			"insecure edge traffic must redirect to HTTPS (SC-8)")
+	})
+
+	It("SC-8: targets apifrontend service on HTTPS port", func() {
+		kn := testKubernautWithAF()
+		enabled := true
+		kn.Spec.APIFrontend.Route.Enabled = &enabled
+		route := APIFrontendRoute(kn)
+
+		Expect(route).NotTo(BeNil())
+		Expect(route.Spec.To.Kind).To(Equal("Service"))
+		Expect(route.Spec.To.Name).To(Equal("apifrontend"))
+		Expect(route.Spec.Port.TargetPort.StrVal).To(Equal("https"))
+	})
+
+	It("SC-8: sets custom hostname when configured", func() {
+		kn := testKubernautWithAF()
+		enabled := true
+		kn.Spec.APIFrontend.Route.Enabled = &enabled
+		kn.Spec.APIFrontend.Route.Hostname = "af.kubernaut.example.com"
+		route := APIFrontendRoute(kn)
+
+		Expect(route).NotTo(BeNil())
+		Expect(route.Spec.Host).To(Equal("af.kubernaut.example.com"))
+	})
+
+	It("SC-8: auto-generates hostname when not configured", func() {
+		kn := testKubernautWithAF()
+		enabled := true
+		kn.Spec.APIFrontend.Route.Enabled = &enabled
+		route := APIFrontendRoute(kn)
+
+		Expect(route).NotTo(BeNil())
+		Expect(route.Spec.Host).To(BeEmpty(), "hostname should be empty for OCP auto-generation")
+	})
+
+	It("sets HAProxy timeout annotation for SSE streaming", func() {
+		kn := testKubernautWithAF()
+		enabled := true
+		kn.Spec.APIFrontend.Route.Enabled = &enabled
+		route := APIFrontendRoute(kn)
+
+		Expect(route).NotTo(BeNil())
+		Expect(route.Annotations).To(HaveKeyWithValue("haproxy.router.openshift.io/timeout", routeSSETimeout),
+			"AF route should have HAProxy timeout annotation for SSE streams")
+	})
+})
+
+var _ = Describe("APIFrontendRouteStub", func() {
+	It("has minimal metadata for deletion lookup", func() {
+		kn := testKubernaut()
+		stub := APIFrontendRouteStub(kn)
+
+		Expect(stub.Name).To(Equal("apifrontend-route"))
+		Expect(stub.Namespace).To(Equal(kn.Namespace))
 	})
 })
 
@@ -168,7 +253,10 @@ var _ = Describe("GatewayAlertManagerConfig", func() {
 		Expect(wh.HTTPConfig.Authorization.Credentials.Name).To(Equal("alertmanager-gateway-token"))
 		Expect(wh.HTTPConfig.Authorization.Credentials.Key).To(Equal("token"))
 		Expect(wh.HTTPConfig.TLSConfig).NotTo(BeNil())
-		Expect(*wh.HTTPConfig.TLSConfig.InsecureSkipVerify).To(BeTrue())
+		Expect(wh.HTTPConfig.TLSConfig.CA.ConfigMap).NotTo(BeNil(),
+			"TLS CA should reference the inter-service CA ConfigMap")
+		Expect(wh.HTTPConfig.TLSConfig.CA.ConfigMap.Name).To(Equal(InterServiceCAConfigMapName))
+		Expect(wh.HTTPConfig.TLSConfig.CA.ConfigMap.Key).To(Equal("service-ca.crt"))
 	})
 
 	It("returns nil when monitoring is disabled", func() {

@@ -73,9 +73,12 @@ const (
 
 // Services builds all API Services for the Kubernaut deployment.
 // Annotations for OCP service-ca TLS provisioning are set per-service.
-func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
+func Services(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) []*corev1.Service {
 	services := make([]*corev1.Service, 0, len(apiServices)+2)
 	for _, def := range apiServices {
+		if def.Component == ComponentGateway && !kn.Spec.GatewayEnabled() {
+			continue
+		}
 		services = append(services, buildService(kn, def))
 	}
 
@@ -98,12 +101,30 @@ func Services(kn *kubernautv1alpha1.Kubernaut) []*corev1.Service {
 	services = append(services, awSvc)
 
 	if kn.Spec.APIFrontendEnabled() {
+		afMetricsPort := PortMetrics
+		afHealthPort := PortHealthProbe
+		if sidecar.ShiftsPorts() {
+			afMetricsPort = 9092
+			afHealthPort = 8082
+		}
+		if kn.Spec.APIFrontend.MetricsPort != nil {
+			afMetricsPort = *kn.Spec.APIFrontend.MetricsPort
+		}
+		if kn.Spec.APIFrontend.HealthPort != nil {
+			afHealthPort = *kn.Spec.APIFrontend.HealthPort
+		}
 		services = append(services, buildService(kn, serviceDefinition{
-			ComponentAPIFrontend, "apifrontend-service",
+			ComponentAPIFrontend, "apifrontend",
 			[]corev1.ServicePort{
 				ServicePort("https", PortHTTPS),
-				ServicePort("health", PortHealthProbe),
-				ServicePort("metrics", PortMetrics),
+				ServicePort("health", afHealthPort),
+				ServicePort("metrics", afMetricsPort),
+				{
+					Name:       AgentTLSPortName,
+					Port:       PortAuthWebhookService, // 443
+					TargetPort: intstr.FromInt32(PortHTTPS),
+					Protocol:   corev1.ProtocolTCP,
+				},
 			},
 			map[string]string{OCPServingCertAnnotation: APIFrontendTLSSecretName},
 		}))

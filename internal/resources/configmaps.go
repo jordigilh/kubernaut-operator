@@ -436,7 +436,7 @@ type notificationControllerConfigYAML struct {
 
 type notificationRoutingSlackRoute struct {
 	Receiver string            `json:"receiver" yaml:"receiver"`
-	Match    map[string]string `json:"match" yaml:"match"`
+	MatchRE  map[string]string `json:"matchRe,omitempty" yaml:"matchRe,omitempty"`
 }
 
 type notificationRoutingSlackReceiver struct {
@@ -448,7 +448,7 @@ type notificationRoutingSlackReceiver struct {
 }
 
 type notificationRoutingSlackYAML struct {
-	Routes    []notificationRoutingSlackRoute    `json:"routes" yaml:"routes"`
+	Route     notificationRoutingSlackRoute      `json:"route" yaml:"route"`
 	Receivers []notificationRoutingSlackReceiver `json:"receivers" yaml:"receivers"`
 }
 
@@ -458,7 +458,7 @@ type notificationRoutingConsoleReceiver struct {
 }
 
 type notificationRoutingConsoleYAML struct {
-	Routes    []struct{}                           `json:"routes" yaml:"routes"`
+	Route     notificationRoutingSlackRoute        `json:"route" yaml:"route"`
 	Receivers []notificationRoutingConsoleReceiver `json:"receivers" yaml:"receivers"`
 }
 
@@ -466,11 +466,21 @@ type kubernautAgentServerTLSYAML struct {
 	CertDir string `json:"certDir" yaml:"certDir"`
 }
 
+type kaLoggingYAML struct {
+	Level  string `json:"level" yaml:"level"`
+	Format string `json:"format" yaml:"format"`
+}
+
 type kaRuntimeYAML struct {
-	Logging loggingYAML         `json:"logging" yaml:"logging"`
-	Server  kaRuntimeServerYAML `json:"server" yaml:"server"`
-	Audit   *kaAuditYAML        `json:"audit,omitempty" yaml:"audit,omitempty"`
-	Session *kaSessionYAML      `json:"session,omitempty" yaml:"session,omitempty"`
+	Logging  kaLoggingYAML       `json:"logging" yaml:"logging"`
+	Server   kaRuntimeServerYAML `json:"server" yaml:"server"`
+	Audit    *kaAuditYAML        `json:"audit,omitempty" yaml:"audit,omitempty"`
+	Session  *kaSessionYAML      `json:"session,omitempty" yaml:"session,omitempty"`
+	Shutdown kaShutdownYAML      `json:"shutdown" yaml:"shutdown"`
+}
+
+type kaShutdownYAML struct {
+	DrainSeconds int `json:"drainSeconds" yaml:"drainSeconds"`
 }
 
 type kaRuntimeServerYAML struct {
@@ -507,6 +517,8 @@ type kaLLMYAML struct {
 	BedrockRegion   string        `json:"bedrockRegion,omitempty" yaml:"bedrockRegion,omitempty"`
 	AzureApiVersion string        `json:"azureApiVersion,omitempty" yaml:"azureApiVersion,omitempty"`
 	TLSCaFile       string        `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
+	TLSCertFile     string        `json:"tlsCertFile,omitempty" yaml:"tlsCertFile,omitempty"`
+	TLSKeyFile      string        `json:"tlsKeyFile,omitempty" yaml:"tlsKeyFile,omitempty"`
 	OAuth2          *kaOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
 }
 
@@ -703,8 +715,8 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) 
 			HealthAddr:            ":8081",
 			MetricsAddr:           ":9090",
 			MaxConcurrentRequests: 100,
-			ReadTimeout:           "30s",
-			WriteTimeout:          "30s",
+			ReadTimeout:           "3600s",
+			WriteTimeout:          "3600s",
 			IdleTimeout:           "120s",
 			K8sRequestTimeout:     withDefault(gwCfg.K8sRequestTimeout, "15s"),
 			TLS:                   tlsConfigYAML{CertDir: InterServiceTLSCertDir},
@@ -1162,11 +1174,9 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Conf
 	var routing string
 	if slack.SecretName != "" {
 		cfg := notificationRoutingSlackYAML{
-			Routes: []notificationRoutingSlackRoute{
-				{
-					Receiver: "slack",
-					Match:    map[string]string{"severity": ".*"},
-				},
+			Route: notificationRoutingSlackRoute{
+				Receiver: "slack",
+				MatchRE:  map[string]string{"severity": ".*"},
 			},
 			Receivers: []notificationRoutingSlackReceiver{
 				{Name: "slack"},
@@ -1180,9 +1190,13 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Conf
 			return nil, fmt.Errorf("notification-routing slack config: %w", err)
 		}
 	} else {
-		var console notificationRoutingConsoleYAML
-		console.Receivers = []notificationRoutingConsoleReceiver{
-			{Name: "console"},
+		console := notificationRoutingConsoleYAML{
+			Route: notificationRoutingSlackRoute{
+				Receiver: "console",
+			},
+			Receivers: []notificationRoutingConsoleReceiver{
+				{Name: "console"},
+			},
 		}
 		var err error
 		routing, err = marshalYAML(console)
@@ -1208,7 +1222,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 
 	cfg := kubernautAgentConfigYAML{
 		Runtime: kaRuntimeYAML{
-			Logging: loggingYAML{Level: withDefault(ka.Logging.Level, "info")},
+			Logging: kaLoggingYAML{Level: withDefault(ka.Logging.Level, "info"), Format: "json"},
 			Server: kaRuntimeServerYAML{
 				Address:     "0.0.0.0",
 				Port:        8443,
@@ -1216,6 +1230,9 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 				MetricsAddr: ":9090",
 				TLS:         kubernautAgentServerTLSYAML{CertDir: InterServiceTLSCertDir},
 				TLSProfile:  o.tlsProfile,
+			},
+			Shutdown: kaShutdownYAML{
+				DrainSeconds: intPtrDefault(ka.Shutdown.DrainSeconds, 30),
 			},
 		},
 		AI: kaAIYAML{
@@ -1255,6 +1272,12 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 	}
 	if ka.LLM.TLSCaFile != "" {
 		cfg.AI.LLM.TLSCaFile = ka.LLM.TLSCaFile
+	}
+	if ka.LLM.TLSCertFile != "" {
+		cfg.AI.LLM.TLSCertFile = ka.LLM.TLSCertFile
+	}
+	if ka.LLM.TLSKeyFile != "" {
+		cfg.AI.LLM.TLSKeyFile = ka.LLM.TLSKeyFile
 	}
 
 	if ka.LLM.OAuth2.Enabled {
@@ -1318,16 +1341,30 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 		}
 	}
 
-	if interactive := ka.Interactive; interactive != nil && interactive.InteractiveEnabled() {
-		ic := &kaInteractiveYAML{Enabled: true}
-		if interactive.SessionTTL != "" {
-			ic.SessionTTL = interactive.SessionTTL
+	if interactive := ka.Interactive; interactive == nil || interactive.InteractiveEnabled() {
+		defaultMaxSessions := 100
+		defaultRateLimit := 20
+		ic := &kaInteractiveYAML{
+			Enabled:               true,
+			SessionTTL:            "30m",
+			InactivityTimeout:     "10m",
+			MaxConcurrentSessions: &defaultMaxSessions,
+			RateLimitPerUser:      &defaultRateLimit,
 		}
-		if interactive.InactivityTimeout != "" {
-			ic.InactivityTimeout = interactive.InactivityTimeout
+		if interactive != nil {
+			if interactive.SessionTTL != "" {
+				ic.SessionTTL = interactive.SessionTTL
+			}
+			if interactive.InactivityTimeout != "" {
+				ic.InactivityTimeout = interactive.InactivityTimeout
+			}
+			if interactive.MaxConcurrentSessions != nil {
+				ic.MaxConcurrentSessions = interactive.MaxConcurrentSessions
+			}
+			if interactive.RateLimitPerUser != nil {
+				ic.RateLimitPerUser = interactive.RateLimitPerUser
+			}
 		}
-		ic.MaxConcurrentSessions = interactive.MaxConcurrentSessions
-		ic.RateLimitPerUser = interactive.RateLimitPerUser
 		cfg.Interactive = ic
 	}
 
@@ -1433,6 +1470,12 @@ func KubernautAgentServiceCAConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.C
 	return serviceCAConfigMap(kn, "kubernaut-agent-service-ca", ComponentKubernautAgent)
 }
 
+// APIFrontendServiceCAConfigMap returns the ConfigMap for OCP service-ca injection
+// for API Frontend (used by severity triage to trust the Thanos Querier certificate).
+func APIFrontendServiceCAConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+	return serviceCAConfigMap(kn, "apifrontend-service-ca", ComponentAPIFrontend)
+}
+
 func serviceCAConfigMap(kn *kubernautv1alpha1.Kubernaut, name, component string) *corev1.ConfigMap {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, name, component),
@@ -1480,6 +1523,13 @@ type afConfigYAML struct {
 	Shutdown       afShutdownYAML       `json:"shutdown" yaml:"shutdown"`
 	SeverityTriage afSeverityTriageYAML `json:"severityTriage" yaml:"severityTriage"`
 	Resilience     afResilienceYAML     `json:"resilience" yaml:"resilience"`
+	Session        afSessionYAML        `json:"session" yaml:"session"`
+}
+
+type afSessionYAML struct {
+	Namespace     string `json:"namespace" yaml:"namespace"`
+	DisconnectTTL string `json:"disconnectTTL,omitempty" yaml:"disconnectTTL,omitempty"`
+	RetentionTTL  string `json:"retentionTTL,omitempty" yaml:"retentionTTL,omitempty"`
 }
 
 type afRBACYAML struct {
@@ -1487,8 +1537,10 @@ type afRBACYAML struct {
 }
 
 type afServerYAML struct {
-	Port int       `json:"port" yaml:"port"`
-	TLS  afTLSYAML `json:"tls" yaml:"tls"`
+	Port        int       `json:"port" yaml:"port"`
+	MetricsPort int       `json:"metricsPort,omitempty" yaml:"metricsPort,omitempty"`
+	HealthPort  int       `json:"healthPort,omitempty" yaml:"healthPort,omitempty"`
+	TLS         afTLSYAML `json:"tls" yaml:"tls"`
 }
 
 type afTLSYAML struct {
@@ -1497,12 +1549,14 @@ type afTLSYAML struct {
 }
 
 type afAgentYAML struct {
-	KABaseURL     string         `json:"kaBaseURL" yaml:"kaBaseURL"`
-	KAMCPEndpoint string         `json:"kaMCPEndpoint" yaml:"kaMCPEndpoint"`
-	DSBaseURL     string         `json:"dsBaseURL" yaml:"dsBaseURL"`
-	KATLSCAFile   string         `json:"kaTlsCaFile" yaml:"kaTlsCaFile"`
-	DSTLSCAFile   string         `json:"dsTlsCaFile" yaml:"dsTlsCaFile"`
-	LLM           afAgentLLMYAML `json:"llm" yaml:"llm"`
+	KABaseURL         string         `json:"kaBaseURL" yaml:"kaBaseURL"`
+	KAMCPEndpoint     string         `json:"kaMCPEndpoint" yaml:"kaMCPEndpoint"`
+	DSBaseURL         string         `json:"dsBaseURL" yaml:"dsBaseURL"`
+	DSBearerTokenFile string         `json:"dsBearerTokenFile,omitempty" yaml:"dsBearerTokenFile,omitempty"`
+	KABearerTokenFile string         `json:"kaBearerTokenFile,omitempty" yaml:"kaBearerTokenFile,omitempty"`
+	KATLSCAFile       string         `json:"kaTlsCaFile" yaml:"kaTlsCaFile"`
+	DSTLSCAFile       string         `json:"dsTlsCaFile" yaml:"dsTlsCaFile"`
+	LLM               afAgentLLMYAML `json:"llm" yaml:"llm"`
 }
 
 type afAgentLLMYAML struct {
@@ -1513,6 +1567,8 @@ type afAgentLLMYAML struct {
 	VertexProject  string                `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
 	VertexLocation string                `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
 	TLSCaFile      string                `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
+	TLSCertFile    string                `json:"tlsCertFile,omitempty" yaml:"tlsCertFile,omitempty"`
+	TLSKeyFile     string                `json:"tlsKeyFile,omitempty" yaml:"tlsKeyFile,omitempty"`
 	OAuth2         *afAgentLLMOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
 }
 
@@ -1524,18 +1580,26 @@ type afAgentLLMOAuth2YAML struct {
 }
 
 type afMCPYAML struct {
-	Enabled            bool   `json:"enabled" yaml:"enabled"`
-	SessionIdleTimeout string `json:"sessionIdleTimeout" yaml:"sessionIdleTimeout"`
+	Enabled            bool              `json:"enabled" yaml:"enabled"`
+	SessionIdleTimeout string            `json:"sessionIdleTimeout" yaml:"sessionIdleTimeout"`
+	ToolTimeout        string            `json:"toolTimeout" yaml:"toolTimeout"`
+	ToolTimeouts       map[string]string `json:"toolTimeouts,omitempty" yaml:"toolTimeouts,omitempty"`
 }
 
 type afAgentCardYAML struct {
-	URL string `json:"url" yaml:"url"`
+	Name string `json:"name,omitempty" yaml:"name,omitempty"`
+	URL  string `json:"url" yaml:"url"`
 }
 
 type afAuthYAML struct {
-	IssuerURL   string             `json:"issuerURL" yaml:"issuerURL"`
-	Audience    string             `json:"audience" yaml:"audience"`
-	ReplayCache *afReplayCacheYAML `json:"replayCache,omitempty" yaml:"replayCache,omitempty"`
+	IssuerURL             string             `json:"issuerURL" yaml:"issuerURL"`
+	Audience              string             `json:"audience" yaml:"audience"`
+	TokenReviewAudience   string             `json:"tokenReviewAudience,omitempty" yaml:"tokenReviewAudience,omitempty"`
+	JWKSURL               string             `json:"jwksURL,omitempty" yaml:"jwksURL,omitempty"`
+	OIDCCAFile            string             `json:"oidcCaFile,omitempty" yaml:"oidcCaFile,omitempty"`
+	AllowInsecureIssuers  bool               `json:"allowInsecureIssuers,omitempty" yaml:"allowInsecureIssuers,omitempty"`
+	KubernetesAuthEnabled bool               `json:"kubernetesAuthEnabled,omitempty" yaml:"kubernetesAuthEnabled,omitempty"`
+	ReplayCache           *afReplayCacheYAML `json:"replayCache,omitempty" yaml:"replayCache,omitempty"`
 }
 
 type afReplayCacheYAML struct {
@@ -1590,8 +1654,18 @@ type afResilienceYAML struct {
 	K8s afCircuitBreakerYAML `json:"k8s" yaml:"k8s"`
 }
 
+// KagentiOIDCDefaults holds OIDC values auto-detected from kagenti.
+// Exported so the controller can pass them to ConfigMap generation.
+type KagentiOIDCDefaults struct {
+	IssuerURL            string
+	JWKSURL              string
+	AllowInsecureIssuers bool
+}
+
 // APIFrontendConfigMap generates the apifrontend-config ConfigMap.
-func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+// oidc may be nil when kagenti is not active; when non-nil, its values
+// fill in any OIDC fields left empty in the CR (CR values always win).
+func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode, oidc *KagentiOIDCDefaults) (*corev1.ConfigMap, error) {
 	af := kn.Spec.APIFrontend
 	ns := kn.Namespace
 
@@ -1599,29 +1673,58 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 	dsBaseURL := fmt.Sprintf("https://data-storage-service.%s.svc.cluster.local:%d", ns, PortHTTPS)
 	agentCardURL := af.AgentCardURL
 	if agentCardURL == "" {
-		agentCardURL = fmt.Sprintf("https://apifrontend-service.%s.svc.cluster.local:%d", ns, PortHTTPS)
+		agentCardURL = fmt.Sprintf("https://apifrontend.%s.svc.cluster.local:%d/a2a/invoke", ns, PortHTTPS)
+	}
+
+	listenPort := sidecar.AFListenPort()
+
+	afTLS := afTLSYAML{CertDir: "/etc/apifrontend/tls", Required: true}
+	if sidecar != KagentiSidecarNone {
+		afTLS = afTLSYAML{}
+	}
+
+	afServer := afServerYAML{
+		Port: int(listenPort),
+		TLS:  afTLS,
+	}
+	if sidecar.ShiftsPorts() {
+		afServer.MetricsPort = 9092
+		afServer.HealthPort = 8082
+	}
+	if af.MetricsPort != nil {
+		afServer.MetricsPort = int(*af.MetricsPort)
+	}
+	if af.HealthPort != nil {
+		afServer.HealthPort = int(*af.HealthPort)
 	}
 
 	cfg := afConfigYAML{
-		Server: afServerYAML{
-			Port: int(PortHTTPS),
-			TLS:  afTLSYAML{CertDir: "/etc/apifrontend/tls", Required: true},
-		},
+		Server: afServer,
 		Agent: afAgentYAML{
-			KABaseURL:     kaBaseURL,
-			KAMCPEndpoint: kaBaseURL + "/api/v1/mcp/",
-			DSBaseURL:     dsBaseURL,
-			KATLSCAFile:   "/etc/apifrontend/tls-ca/ca.crt",
-			DSTLSCAFile:   "/etc/apifrontend/tls-ca/ca.crt",
-			LLM:           afAgentLLMConfig(kn),
+			KABaseURL:         kaBaseURL,
+			KAMCPEndpoint:     kaBaseURL + "/api/v1/mcp/",
+			DSBaseURL:         dsBaseURL,
+			DSBearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
+			KABearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
+			KATLSCAFile:       "/etc/apifrontend/tls-ca/ca.crt",
+			DSTLSCAFile:       "/etc/apifrontend/tls-ca/ca.crt",
+			LLM:               afAgentLLMConfig(kn),
 		},
 		MCP: afMCPYAML{
 			Enabled:            true,
 			SessionIdleTimeout: "30m",
+			ToolTimeout:        "30s",
+			ToolTimeouts: map[string]string{
+				"kubernaut_investigate":   "15m",
+				"kubernaut_await_session": "3m",
+			},
 		},
-		AgentCard: afAgentCardYAML{URL: agentCardURL},
-		Auth:      afAuthConfig(kn),
-		RBAC:      afRBACConfig(kn),
+		AgentCard: afAgentCardYAML{
+			Name: "Kubernaut Agent",
+			URL:  agentCardURL,
+		},
+		Auth: afAuthConfig(kn, oidc),
+		RBAC: afRBACConfig(kn),
 		Logging: afLoggingYAML{
 			Level: withDefault(af.Logging.Level, "info"),
 		},
@@ -1635,6 +1738,11 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, e
 			DrainSeconds: intPtrDefault(af.Shutdown.DrainSeconds, 15),
 		},
 		SeverityTriage: afSeverityTriageConfig(kn),
+		Session: afSessionYAML{
+			Namespace:     ns,
+			DisconnectTTL: "10m",
+			RetentionTTL:  "720h",
+		},
 		Resilience: afResilienceYAML{
 			KA: afCircuitBreakerYAML{
 				ConnectTimeout: "5s", RequestTimeout: "30s",
@@ -1673,7 +1781,7 @@ func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut) afSeverityTriageYAM
 	return afSeverityTriageYAML{
 		Enabled:                   true,
 		PrometheusURL:             OCPPrometheusURL,
-		PrometheusTLSCAFile:       "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+		PrometheusTLSCAFile:       "/etc/ssl/af/service-ca.crt",
 		PrometheusBearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
 		CacheTTLSeconds:           30,
 		MaxQueriesPerCall:         10,
@@ -1698,6 +1806,8 @@ func afAgentLLMConfig(kn *kubernautv1alpha1.Kubernaut) afAgentLLMYAML {
 		VertexProject:  llm.VertexProject,
 		VertexLocation: llm.VertexLocation,
 		TLSCaFile:      llm.TLSCaFile,
+		TLSCertFile:    llm.TLSCertFile,
+		TLSKeyFile:     llm.TLSKeyFile,
 	}
 
 	if llm.CredentialsSecretName != "" && provider != LLMProviderVertexAI {
@@ -1716,11 +1826,34 @@ func afAgentLLMConfig(kn *kubernautv1alpha1.Kubernaut) afAgentLLMYAML {
 	return cfg
 }
 
-func afAuthConfig(kn *kubernautv1alpha1.Kubernaut) afAuthYAML {
+func afAuthConfig(kn *kubernautv1alpha1.Kubernaut, oidc *KagentiOIDCDefaults) afAuthYAML {
 	af := kn.Spec.APIFrontend
+
+	issuer := af.Auth.IssuerURL
+	jwks := af.Auth.JWKSURL
+	insecure := af.Auth.AllowInsecureIssuers
+
+	// Merge kagenti-detected OIDC defaults; CR values always win.
+	if oidc != nil {
+		if issuer == "" {
+			issuer = oidc.IssuerURL
+		}
+		if jwks == "" {
+			jwks = oidc.JWKSURL
+		}
+		if !insecure {
+			insecure = oidc.AllowInsecureIssuers
+		}
+	}
+
 	auth := afAuthYAML{
-		IssuerURL: af.Auth.IssuerURL,
-		Audience:  withDefault(af.Auth.Audience, "kubernaut-apifrontend"),
+		IssuerURL:             issuer,
+		Audience:              withDefault(af.Auth.Audience, "kubernaut-apifrontend"),
+		TokenReviewAudience:   af.Auth.TokenReviewAudience,
+		JWKSURL:               jwks,
+		OIDCCAFile:            af.Auth.OIDCCAFile,
+		AllowInsecureIssuers:  insecure,
+		KubernetesAuthEnabled: true,
 	}
 	if kn.Spec.Valkey.SecretName != "" {
 		auth.ReplayCache = &afReplayCacheYAML{

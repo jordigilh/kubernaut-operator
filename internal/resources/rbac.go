@@ -49,7 +49,6 @@ func clusterRoleName(kn *kubernautv1alpha1.Kubernaut, base string) string {
 func ClusterRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRole {
 	labels := CommonLabels(kn)
 	roles := []*rbacv1.ClusterRole{
-		gatewayClusterRole(kn, labels),
 		aianalysisControllerClusterRole(kn, labels),
 		kubernautAgentClientClusterRole(kn, labels),
 		kubernautAgentInvestigatorClusterRole(kn, labels),
@@ -64,9 +63,15 @@ func ClusterRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRole {
 		authWebhookClusterRole(kn, labels),
 	}
 
+	if kn.Spec.GatewayEnabled() {
+		roles = append(roles, gatewayClusterRole(kn, labels))
+	}
+
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		roles = append(roles, alertmanagerViewClusterRole(kn, labels))
-		roles = append(roles, gatewaySignalSourceClusterRole(kn, labels))
+		if kn.Spec.GatewayEnabled() {
+			roles = append(roles, gatewaySignalSourceClusterRole(kn, labels))
+		}
 	}
 
 	if kn.Spec.APIFrontendEnabled() {
@@ -84,7 +89,6 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 	p := func(base string) string { return clusterRoleName(kn, base) }
 
 	crbs := []*rbacv1.ClusterRoleBinding{
-		clusterRoleBinding(p("gateway-role-binding"), p("gateway-role"), ServiceAccountName(ComponentGateway), ns, labels),
 		clusterRoleBinding(p("aianalysis-controller-binding"), p("aianalysis-controller"), ServiceAccountName(ComponentAIAnalysis), ns, labels),
 		clusterRoleBinding(p("kubernaut-agent-investigator-binding"), p("kubernaut-agent-investigator"), ServiceAccountName(ComponentKubernautAgent), ns, labels),
 		clusterRoleBinding(p("kubernaut-agent-auth-middleware-binding"), p("data-storage-auth-middleware"), ServiceAccountName(ComponentKubernautAgent), ns, labels),
@@ -102,6 +106,13 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 			"kubernaut-workflow-runner", ResolveWorkflowNamespace(kn), labels),
 	)
 
+	if kn.Spec.GatewayEnabled() {
+		crbs = append(crbs,
+			clusterRoleBinding(p("gateway-role-binding"), p("gateway-role"),
+				ServiceAccountName(ComponentGateway), ns, labels),
+		)
+	}
+
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		crbs = append(crbs,
 			clusterRoleBinding(p("effectivenessmonitor-alertmanager-view-binding"), p("alertmanager-view"),
@@ -110,9 +121,19 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 				ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
 			clusterRoleBinding(p("kubernaut-agent-monitoring-view"), "cluster-monitoring-view",
 				ServiceAccountName(ComponentKubernautAgent), ns, labels),
-			clusterRoleBinding(p("alertmanager-gateway-signal-source"), p("gateway-signal-source"),
-				OCPAlertManagerSAName, OCPMonitoringNamespace, labels),
 		)
+		if kn.Spec.GatewayEnabled() {
+			crbs = append(crbs,
+				clusterRoleBinding(p("alertmanager-gateway-signal-source"), p("gateway-signal-source"),
+					OCPAlertManagerSAName, OCPMonitoringNamespace, labels),
+			)
+		}
+		if kn.Spec.APIFrontendEnabled() {
+			crbs = append(crbs,
+				clusterRoleBinding(p("apifrontend-monitoring-view"), "cluster-monitoring-view",
+					ServiceAccountName(ComponentAPIFrontend), ns, labels),
+			)
+		}
 	}
 
 	if kn.Spec.APIFrontendEnabled() {
@@ -134,7 +155,6 @@ func DataStorageClientRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Ro
 	consumers := []struct {
 		name, sa string
 	}{
-		{"data-storage-client-gateway", ServiceAccountName(ComponentGateway)},
 		{"data-storage-client-aianalysis", ServiceAccountName(ComponentAIAnalysis)},
 		{"data-storage-client-signalprocessing", ServiceAccountName(ComponentSignalProcessing)},
 		{"data-storage-client-remediationorchestrator", ServiceAccountName(ComponentRemediationOrchestrator)},
@@ -144,6 +164,13 @@ func DataStorageClientRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Ro
 		{"data-storage-client-kubernaut-agent", ServiceAccountName(ComponentKubernautAgent)},
 		{"data-storage-client-authwebhook", ServiceAccountName(ComponentAuthWebhook)},
 		{"data-storage-client-datastorage", ServiceAccountName(ComponentDataStorage)},
+		{"data-storage-client-apifrontend", ServiceAccountName(ComponentAPIFrontend)},
+	}
+
+	if kn.Spec.GatewayEnabled() {
+		consumers = append(consumers, struct{ name, sa string }{
+			"data-storage-client-gateway", ServiceAccountName(ComponentGateway),
+		})
 	}
 
 	rbs := make([]*rbacv1.RoleBinding, 0, len(consumers))
@@ -188,6 +215,29 @@ func KubernautAgentClientRoleBinding(kn *kubernautv1alpha1.Kubernaut) *rbacv1.Ro
 		Subjects: []rbacv1.Subject{{
 			Kind:      rbacv1.ServiceAccountKind,
 			Name:      ServiceAccountName(ComponentAIAnalysis),
+			Namespace: kn.Namespace,
+		}},
+	}
+}
+
+// KubernautAgentClientAPIfrontendRoleBinding creates a namespace-scoped
+// RoleBinding granting the apifrontend SA access to the kubernaut-agent-client
+// ClusterRole (trusted intermediary model, #1287).
+func KubernautAgentClientAPIfrontendRoleBinding(kn *kubernautv1alpha1.Kubernaut) *rbacv1.RoleBinding {
+	return &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kubernaut-agent-client-apifrontend",
+			Namespace: kn.Namespace,
+			Labels:    CommonLabels(kn),
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName,
+			Kind:     "ClusterRole",
+			Name:     clusterRoleName(kn, "kubernaut-agent-client"),
+		},
+		Subjects: []rbacv1.Subject{{
+			Kind:      rbacv1.ServiceAccountKind,
+			Name:      ServiceAccountName(ComponentAPIFrontend),
 			Namespace: kn.Namespace,
 		}},
 	}
@@ -317,6 +367,7 @@ func MonitoringCRBNames(kn *kubernautv1alpha1.Kubernaut) []string {
 		p("effectivenessmonitor-monitoring-view"),
 		p("kubernaut-agent-monitoring-view"),
 		p("alertmanager-gateway-signal-source"),
+		p("apifrontend-monitoring-view"),
 	}
 }
 
@@ -406,41 +457,41 @@ var toolPersonas = []toolPersona{
 		name: "tool-sre",
 		resourceNames: []string{
 			"kubernaut_list_remediations", "kubernaut_get_remediation",
-			"kubernaut_cancel_remediation", "kubernaut_watch",
-			"kubernaut_start_investigation", "kubernaut_poll_investigation",
+			"kubernaut_approve", "kubernaut_cancel_remediation", "kubernaut_watch",
+			"kubernaut_await_session", "kubernaut_investigate",
 			"kubernaut_discover_workflows", "kubernaut_select_workflow", "kubernaut_present_decision",
 			"kubernaut_list_workflows", "kubernaut_get_remediation_history",
 			"kubernaut_get_effectiveness", "kubernaut_get_audit_trail",
 			"kubernaut_takeover", "kubernaut_message", "kubernaut_complete",
 			"kubernaut_cancel", "kubernaut_status", "kubernaut_reconnect",
-			"kubernaut_stream_investigation",
 			"kubectl_get", "kubectl_list", "kubectl_list_events",
-			"af_check_existing_rr", "af_create_rr",
+			"kubernaut_check_existing_remediation", "kubernaut_remediate",
 		},
 	},
 	{
 		name: "tool-ai-orchestrator",
 		resourceNames: []string{
 			"kubernaut_list_remediations", "kubernaut_get_remediation", "kubernaut_watch",
-			"kubernaut_start_investigation", "kubernaut_poll_investigation",
+			"kubernaut_await_session", "kubernaut_investigate",
 			"kubernaut_discover_workflows", "kubernaut_select_workflow", "kubernaut_present_decision",
 			"kubernaut_takeover", "kubernaut_message", "kubernaut_complete",
 			"kubernaut_cancel", "kubernaut_status", "kubernaut_reconnect",
-			"kubernaut_stream_investigation",
 			"kubectl_get", "kubectl_list", "kubectl_list_events",
-			"af_check_existing_rr", "af_create_rr",
+			"kubernaut_check_existing_remediation", "kubernaut_remediate",
 		},
 	},
 	{
 		name: "tool-cicd",
 		resourceNames: []string{
 			"kubernaut_list_remediations", "kubernaut_get_remediation", "kubernaut_watch",
+			"kubernaut_await_session",
 		},
 	},
 	{
 		name: "tool-observability",
 		resourceNames: []string{
 			"kubernaut_list_remediations", "kubernaut_get_remediation", "kubernaut_watch",
+			"kubernaut_await_session",
 			"kubernaut_get_effectiveness", "kubernaut_list_workflows",
 		},
 	},
@@ -458,6 +509,7 @@ var toolPersonas = []toolPersona{
 			"kubernaut_approve", "kubernaut_list_approval_requests",
 			"kubernaut_get_approval_request",
 			"kubernaut_list_remediations", "kubernaut_get_remediation", "kubernaut_watch",
+			"kubernaut_await_session",
 		},
 	},
 }
@@ -620,6 +672,9 @@ func aianalysisControllerClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map
 		Rules: []rbacv1.PolicyRule{
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses/status"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
 		},
 	}
@@ -636,7 +691,8 @@ func kubernautAgentClientClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map
 
 func kubernautAgentInvestigatorClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	rules := []rbacv1.PolicyRule{
-		{APIGroups: []string{""}, Resources: []string{"pods", "pods/log", "events", "services", "endpoints", "configmaps", "secrets", "nodes", "namespaces", "replicationcontrollers", "persistentvolumeclaims", "persistentvolumes", "resourcequotas", "serviceaccounts"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{""}, Resources: []string{"pods", "pods/log", "services", "endpoints", "configmaps", "secrets", "nodes", "namespaces", "replicationcontrollers", "persistentvolumeclaims", "persistentvolumes", "resourcequotas", "serviceaccounts"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"get", "list", "watch", "create", "patch"}},
 		{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"storage.k8s.io"}, Resources: []string{"storageclasses", "csidrivers", "volumeattachments", "csinodes"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list", "watch"}},
@@ -673,6 +729,14 @@ func kubernautAgentInvestigatorClusterRole(kn *kubernautv1alpha1.Kubernaut, labe
 		{APIGroups: []string{"admissionregistration.k8s.io"}, Resources: []string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"apiextensions.k8s.io"}, Resources: []string{"customresourcedefinitions"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"scheduling.k8s.io"}, Resources: []string{"priorityclasses"}, Verbs: []string{"get", "list", "watch"}},
+		// Kubernaut CRDs: the agent needs read access to list remediations, investigations, etc.
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{
+			"remediationrequests", "remediationworkflows", "remediationapprovalrequests",
+			"investigationsessions", "aianalyses", "signalprocessings",
+			"effectivenessassessments", "workflowexecutions", "actiontypes",
+		}, Verbs: []string{"get", "list", "watch"}},
+		// Interactive session locking via Leases (v1.5+); list needed for ReconcileOrphanedLeases
+		{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "create", "update", "delete", "list"}},
 	}
 
 	return &rbacv1.ClusterRole{
@@ -854,16 +918,28 @@ func apifrontendClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]s
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "apifrontend-role"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch", "create", "update", "delete"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests"}, Verbs: []string{"get", "list", "create", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/status"}, Verbs: []string{"get", "update", "patch"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests/status"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"get", "list", "create", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"pods", "replicationcontrollers"}, Verbs: []string{"get", "list"}},
-			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list"}},
-			{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get"}},
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{"authorization.k8s.io"}, Resources: []string{"subjectaccessreviews"}, Verbs: []string{"create"}},
+			{APIGroups: []string{"authentication.k8s.io"}, Resources: []string{"tokenreviews"}, Verbs: []string{"create"}},
+			// KA DD-AUTH-014 SAR gate: AF SA must be able to "create" on services/kubernaut-agent
+			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"kubernaut-agent"}, Verbs: []string{"create"}},
+			// kubectl_list_events
+			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"get", "list", "create", "patch"}},
+			// kubectl_get / kubectl_list triage tools (AF SA reads cluster state)
+			{APIGroups: []string{""}, Resources: []string{"pods", "replicationcontrollers", "services", "configmaps", "secrets", "endpoints", "namespaces", "nodes", "persistentvolumeclaims"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses", "networkpolicies"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"cert-manager.io"}, Resources: []string{"certificates"}, Verbs: []string{"get", "list"}},
 		},
 	}
 }

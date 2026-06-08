@@ -573,6 +573,10 @@ type KubernautAgentSpec struct {
 	// +listType=set
 	AdditionalClusterRoleBindings []string `json:"additionalClusterRoleBindings,omitempty"`
 
+	// Graceful shutdown configuration.
+	// +optional
+	Shutdown ShutdownSpec `json:"shutdown,omitempty"`
+
 	// +optional
 	Logging LoggingSpec `json:"logging,omitempty"`
 
@@ -620,9 +624,11 @@ type InteractiveSpec struct {
 	AllowInsecureJWKS bool `json:"allowInsecureJWKS,omitempty"`
 }
 
-// InteractiveEnabled returns true when interactive mode is explicitly enabled.
+// InteractiveEnabled returns true when interactive mode is active.
+// Defaults to true (nil Enabled) so investigations work out of the box
+// when the API Frontend is deployed.
 func (s *InteractiveSpec) InteractiveEnabled() bool {
-	return s.Enabled != nil && *s.Enabled
+	return s.Enabled == nil || *s.Enabled
 }
 
 // JWTProviderSpec configures a single OIDC JWT provider.
@@ -804,6 +810,22 @@ type LLMSpec struct {
 	// +optional
 	TLSCaFile string `json:"tlsCaFile,omitempty"`
 
+	// Path to a client certificate file for mTLS to the LLM endpoint.
+	// Must be set together with TLSKeyFile.
+	// +optional
+	TLSCertFile string `json:"tlsCertFile,omitempty"`
+
+	// Path to a client key file for mTLS to the LLM endpoint.
+	// Must be set together with TLSCertFile.
+	// +optional
+	TLSKeyFile string `json:"tlsKeyFile,omitempty"`
+
+	// Name of the Secret containing the TLS client certificate and key
+	// for mTLS to the LLM endpoint. The Secret must contain tls.crt and
+	// tls.key entries. Required when TLSCertFile and TLSKeyFile are set.
+	// +optional
+	TLSClientSecretRef string `json:"tlsClientSecretRef,omitempty"`
+
 	// OAuth2 configuration for LLM authentication.
 	// +optional
 	OAuth2 OAuth2Spec `json:"oauth2,omitempty"`
@@ -835,6 +857,12 @@ type OAuth2Spec struct {
 
 // GatewaySpec configures the Gateway service.
 type GatewaySpec struct {
+	// Whether the Gateway component is deployed. Defaults to true.
+	// Set to false to skip all Gateway resources (Deployment, Service, RBAC, etc.).
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
 	// Route configuration for OCP external access.
 	// +optional
 	Route RouteSpec `json:"route,omitempty"`
@@ -909,6 +937,53 @@ type RouteSpec struct {
 	Hostname string `json:"hostname,omitempty"`
 }
 
+// APIFrontendRouteSpec configures the OCP Route for the API Frontend.
+// Unlike GatewayRouteSpec, defaults to disabled (opt-in external access).
+type APIFrontendRouteSpec struct {
+	// Whether to create an OCP Route for the API Frontend.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Hostname override. When empty, the OCP router auto-generates a hostname.
+	// +optional
+	Hostname string `json:"hostname,omitempty"`
+}
+
+// AFRouteEnabled returns true when the AF Route should be created.
+// Defaults to false when Enabled is nil (opt-in).
+func (s *APIFrontendRouteSpec) AFRouteEnabled() bool {
+	return s.Enabled != nil && *s.Enabled
+}
+
+// APIFrontendSPIRESpec configures SPIRE mTLS identity for kagenti agent card
+// verified fetch. The operator creates a ClusterSPIFFEID and injects a
+// SPIRE-aware mTLS sidecar into the AF deployment.
+type APIFrontendSPIRESpec struct {
+	// Whether SPIRE mTLS sidecar injection is enabled.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// SPIRE class name for the ClusterSPIFFEID (e.g. "zero-trust-workload-identity-manager-spire").
+	// When empty, the className field is omitted from the ClusterSPIFFEID spec.
+	// +optional
+	ClassName string `json:"className,omitempty"`
+
+	// TrustDomain overrides the SPIFFE ID trust domain. When empty (default),
+	// the operator uses SPIRE's {{ .TrustDomain }} template variable, which
+	// resolves to the cluster's configured trust domain at SVID registration
+	// time. Set this only if you need a fixed trust domain that differs from
+	// the SPIRE server's.
+	// +optional
+	TrustDomain string `json:"trustDomain,omitempty"`
+}
+
+// SPIREEnabled returns true when SPIRE mTLS sidecar injection is active.
+func (s *APIFrontendSPIRESpec) SPIREEnabled() bool {
+	return s.Enabled
+}
+
 // AuthWebhookSpec configures the AuthWebhook admission controller.
 type AuthWebhookSpec struct {
 	// +optional
@@ -929,6 +1004,19 @@ type APIFrontendSpec struct {
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
+	// Route configuration for OCP external access (FedRAMP SC-8).
+	// Disabled by default; set route.enabled=true to expose AF via an
+	// OpenShift Route with reencrypt TLS termination.
+	// +optional
+	Route APIFrontendRouteSpec `json:"route,omitempty"`
+
+	// SPIRE mTLS identity configuration for kagenti agent card discovery
+	// (FedRAMP SC-8, IA-5). When enabled, a ClusterSPIFFEID is created and
+	// a SPIRE-aware mTLS sidecar is injected into the AF deployment so the
+	// kagenti-operator can perform verified fetch with identity binding.
+	// +optional
+	SPIRE APIFrontendSPIRESpec `json:"spire,omitempty"`
+
 	// OIDC authentication configuration.
 	// +optional
 	Auth APIFrontendAuthSpec `json:"auth,omitempty"`
@@ -941,6 +1029,7 @@ type APIFrontendSpec struct {
 	// +optional
 	Shutdown APIFrontendShutdownSpec `json:"shutdown,omitempty"`
 
+	// Display name for the A2A agent card (/.well-known/agent-card.json).
 	// External URL for the A2A agent card discovery endpoint.
 	// When empty, auto-derived from the in-cluster service FQDN.
 	// Must be a valid HTTPS URL when set.
@@ -963,6 +1052,22 @@ type APIFrontendSpec struct {
 
 	// +optional
 	Logging LoggingSpec `json:"logging,omitempty"`
+
+	// Override for the AF metrics port. Defaults to 9090 (or 9092 when
+	// kagenti sidecar port shifting is active). Use when cluster policies
+	// restrict port ranges.
+	// +kubebuilder:validation:Minimum=1024
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	MetricsPort *int32 `json:"metricsPort,omitempty"`
+
+	// Override for the AF health probe port. Defaults to 8081 (or 8082 when
+	// kagenti sidecar port shifting is active). Use when cluster policies
+	// restrict port ranges.
+	// +kubebuilder:validation:Minimum=1024
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	HealthPort *int32 `json:"healthPort,omitempty"`
 
 	// Resource requirements.
 	// +optional
@@ -1000,10 +1105,33 @@ type APIFrontendAuthSpec struct {
 	// +optional
 	IssuerURL string `json:"issuerURL,omitempty"`
 
-	// Expected JWT audience claim.
+	// Expected JWT audience claim (FedRAMP SC-23: session authenticity).
 	// +kubebuilder:default="kubernaut-apifrontend"
 	// +optional
 	Audience string `json:"audience,omitempty"`
+
+	// TokenReview audience for Kubernetes ServiceAccount token validation.
+	// When set, the API Frontend passes this audience to the TokenReview API
+	// so only tokens issued for this specific audience are accepted
+	// (FedRAMP IA-5: authenticator management).
+	// +optional
+	TokenReviewAudience string `json:"tokenReviewAudience,omitempty"`
+
+	// Explicit JWKS endpoint URL for token signature verification
+	// (FedRAMP IA-5: authenticator management). When empty, derived from
+	// issuerURL + "/protocol/openid-connect/certs".
+	// +optional
+	JWKSURL string `json:"jwksURL,omitempty"`
+
+	// Path to CA bundle for OIDC/JWKS TLS trust (FedRAMP IA-5). When set,
+	// AF uses this CA to verify the OIDC provider's certificate chain.
+	// +optional
+	OIDCCAFile string `json:"oidcCaFile,omitempty"`
+
+	// Allow HTTP (non-TLS) JWKS URLs. Must remain false in production
+	// (FedRAMP SC-8: transmission confidentiality). Intended for dev/test only.
+	// +optional
+	AllowInsecureIssuers bool `json:"allowInsecureIssuers,omitempty"`
 }
 
 // APIFrontendRateLimitSpec configures request rate limiting for the API Frontend.
@@ -1029,8 +1157,9 @@ type APIFrontendRateLimitSpec struct {
 	ToolCallsPerMinute *int `json:"toolCallsPerMinute,omitempty"`
 }
 
-// APIFrontendShutdownSpec configures graceful shutdown for the API Frontend.
-type APIFrontendShutdownSpec struct {
+// ShutdownSpec configures graceful shutdown for a service component.
+// Shared by API Frontend and Kubernaut Agent for consistent knob naming.
+type ShutdownSpec struct {
 	// Seconds to wait for in-flight requests to drain during shutdown.
 	// +kubebuilder:default=15
 	// +kubebuilder:validation:Minimum=0
@@ -1039,10 +1168,19 @@ type APIFrontendShutdownSpec struct {
 	DrainSeconds *int `json:"drainSeconds,omitempty"`
 }
 
+// APIFrontendShutdownSpec is an alias retained for CRD backward compatibility.
+type APIFrontendShutdownSpec = ShutdownSpec
+
 // APIFrontendEnabled returns whether the API Frontend component should be deployed.
 // Defaults to true when Enabled is nil.
 func (s *KubernautSpec) APIFrontendEnabled() bool {
 	return s.APIFrontend.Enabled == nil || *s.APIFrontend.Enabled
+}
+
+// GatewayEnabled returns whether the Gateway component should be deployed.
+// Defaults to true when Enabled is nil.
+func (s *KubernautSpec) GatewayEnabled() bool {
+	return s.Gateway.Enabled == nil || *s.Gateway.Enabled
 }
 
 // DataStorageSpec configures the DataStorage service.

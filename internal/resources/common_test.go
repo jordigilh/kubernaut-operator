@@ -53,6 +53,12 @@ func testKubernaut() *kubernautv1alpha1.Kubernaut {
 				Host:       "valkey.example.com",
 				Port:       6379,
 			},
+			APIFrontend: kubernautv1alpha1.APIFrontendSpec{
+				Auth: kubernautv1alpha1.APIFrontendAuthSpec{
+					IssuerURL: "https://login.kubernaut.ai/realms/kubernaut",
+					Audience:  "kubernaut-apifrontend",
+				},
+			},
 			KubernautAgent: kubernautv1alpha1.KubernautAgentSpec{
 				LLM: kubernautv1alpha1.LLMSpec{
 					Provider:              "openai",
@@ -188,6 +194,32 @@ var _ = Describe("URL helpers", func() {
 	It("GatewayURL returns correct HTTPS URL", func() {
 		got := GatewayURL(testSystemNamespace)
 		Expect(got).To(Equal("https://gateway-service.kubernaut-system.svc.cluster.local:8443"))
+	})
+})
+
+var _ = Describe("ActiveComponents", func() {
+	It("includes gateway when enabled by default", func() {
+		kn := testKubernaut()
+		Expect(ActiveComponents(kn)).To(ContainElement(ComponentGateway))
+	})
+
+	It("excludes gateway when disabled", func() {
+		kn := testKubernaut()
+		disabled := false
+		kn.Spec.Gateway.Enabled = &disabled
+		Expect(ActiveComponents(kn)).NotTo(ContainElement(ComponentGateway))
+	})
+
+	It("includes apifrontend when enabled by default", func() {
+		kn := testKubernautWithAF()
+		Expect(ActiveComponents(kn)).To(ContainElement(ComponentAPIFrontend))
+	})
+
+	It("excludes apifrontend when disabled", func() {
+		kn := testKubernautWithAF()
+		disabled := false
+		kn.Spec.APIFrontend.Enabled = &disabled
+		Expect(ActiveComponents(kn)).NotTo(ContainElement(ComponentAPIFrontend))
 	})
 })
 

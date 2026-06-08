@@ -408,6 +408,7 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 	}
 
 	if kn.Spec.Notification.Slack.SecretName != "" {
+		optional := true
 		volumes = append(volumes, corev1.Volume{
 			Name: "credentials",
 			VolumeSource: corev1.VolumeSource{
@@ -416,6 +417,7 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 						{Secret: &corev1.SecretProjection{
 							LocalObjectReference: corev1.LocalObjectReference{Name: kn.Spec.Notification.Slack.SecretName},
 							Items:                []corev1.KeyToPath{{Key: "webhook-url", Path: "slack-webhook"}},
+							Optional:             &optional,
 						}},
 					},
 				},
@@ -454,7 +456,7 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 }
 
 // KubernautAgentDeployment builds the kubernaut-agent Deployment.
-// Issue #753: kubernaut-agent now serves TLS on port 8080 with certs from
+// kubernaut-agent serves TLS on port 8443 with certs from
 // kubernautagent-tls (provisioned by OCP service-ca). Health and metrics
 // are on dedicated plain HTTP ports 8081 and 9090.
 func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
@@ -462,12 +464,14 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 		return nil, fmt.Errorf("spec.kubernautAgent.llm.credentialsSecretName must not be empty")
 	}
 	volumes := []corev1.Volume{
+		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		configMapVolume("config", "kubernaut-agent-config"),
 		configMapVolume("llm-runtime", KubernautAgentLLMRuntimeConfigName(kn)),
 		secretVolume("llm-credentials", kn.Spec.KubernautAgent.LLM.CredentialsSecretName),
 		secretVolume("tls-certs", KubernautAgentTLSSecretName),
 	}
 	mounts := []corev1.VolumeMount{
+		{Name: "tmp", MountPath: "/tmp"},
 		{Name: "config", MountPath: "/etc/kubernaut-agent", ReadOnly: true},
 		{Name: "llm-runtime", MountPath: "/etc/kubernaut-agent/llm-runtime", ReadOnly: true},
 		{Name: "llm-credentials", MountPath: "/etc/kubernaut-agent/credentials", ReadOnly: true},
@@ -502,6 +506,13 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 		volumes = append(volumes, secretVolume("oauth2-credentials", kn.Spec.KubernautAgent.LLM.OAuth2.CredentialsSecretRef))
 		mounts = append(mounts, corev1.VolumeMount{
 			Name: "oauth2-credentials", MountPath: "/etc/kubernaut-agent/oauth2", ReadOnly: true,
+		})
+	}
+
+	if kn.Spec.KubernautAgent.LLM.TLSClientSecretRef != "" {
+		volumes = append(volumes, secretVolume("llm-tls-client", kn.Spec.KubernautAgent.LLM.TLSClientSecretRef))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: "llm-tls-client", MountPath: "/etc/kubernaut-agent/llm-tls-client", ReadOnly: true,
 		})
 	}
 
@@ -581,6 +592,12 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 		Name: "sa-token", MountPath: "/var/run/secrets/kubernetes.io/serviceaccount", ReadOnly: true,
 	})
 
+	drainSec := int64(30)
+	if kn.Spec.KubernautAgent.Shutdown.DrainSeconds != nil {
+		drainSec = int64(*kn.Spec.KubernautAgent.Shutdown.DrainSeconds)
+	}
+	gracePeriod := drainSec + 5
+
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentKubernautAgent, ImageName: "kubernautagent",
 		Resources: res, VolumeMounts: mounts, Volumes: volumes, Env: envVars,
@@ -595,6 +612,12 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		},
+		PodAnnotations: map[string]string{
+			"prometheus.io/scrape": "true",
+			"prometheus.io/port":   "9090",
+			"prometheus.io/path":   "/metrics",
+		},
+		TerminationGracePeriodSeconds: &gracePeriod,
 	})
 }
 
@@ -641,7 +664,8 @@ func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 // The AF service exposes HTTPS (8443), health (8081), and metrics (9090) ports.
 // It mounts projected config (config.yaml + rbac_roles.yaml), TLS server cert,
 // and CA cert for inter-service trust.
-func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) (*appsv1.Deployment, error) {
+	ns := kn.Namespace
 	env := []corev1.EnvVar{
 		{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
@@ -650,6 +674,11 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
 		{Name: "TLS_CA_FILE", Value: "/etc/apifrontend/tls-ca/ca.crt"},
+	}
+
+	if sidecar != KagentiSidecarNone {
+		noProxy := fmt.Sprintf("127.0.0.1,localhost,kubernaut-agent.%s.svc.cluster.local,data-storage-service.%s.svc.cluster.local", ns, ns)
+		env = append(env, corev1.EnvVar{Name: "NO_PROXY", Value: noProxy})
 	}
 
 	volumes := []corev1.Volume{
@@ -672,6 +701,13 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		{Name: "tls-ca", MountPath: "/etc/apifrontend/tls-ca", ReadOnly: true},
 	}
 
+	if kn.Spec.Monitoring.MonitoringEnabled() {
+		volumes = append(volumes, configMapVolume("service-ca", "apifrontend-service-ca"))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: "service-ca", MountPath: "/etc/ssl/af", ReadOnly: true,
+		})
+	}
+
 	if secretName := kn.Spec.KubernautAgent.LLM.CredentialsSecretName; secretName != "" {
 		volumes = append(volumes, secretVolume("llm-credentials", secretName))
 		mounts = append(mounts, corev1.VolumeMount{
@@ -689,30 +725,61 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		})
 	}
 
+	if kn.Spec.KubernautAgent.LLM.TLSClientSecretRef != "" {
+		volumes = append(volumes, secretVolume("llm-tls-client", kn.Spec.KubernautAgent.LLM.TLSClientSecretRef))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: "llm-tls-client", MountPath: "/etc/apifrontend/llm-tls-client", ReadOnly: true,
+		})
+	}
+
 	drainSec := int64(15)
 	if kn.Spec.APIFrontend.Shutdown.DrainSeconds != nil {
 		drainSec = int64(*kn.Spec.APIFrontend.Shutdown.DrainSeconds)
 	}
 	gracePeriod := drainSec + 5
 
-	return buildDeployment(kn, DeploymentParams{
+	listenPort := sidecar.AFListenPort()
+	metricsPort := PortMetrics
+	healthPort := PortHealthProbe
+	if sidecar.ShiftsPorts() {
+		metricsPort = 9092
+		healthPort = 8082
+	}
+	if kn.Spec.APIFrontend.MetricsPort != nil {
+		metricsPort = *kn.Spec.APIFrontend.MetricsPort
+	}
+	if kn.Spec.APIFrontend.HealthPort != nil {
+		healthPort = *kn.Spec.APIFrontend.HealthPort
+	}
+
+	dep, err := buildDeployment(kn, DeploymentParams{
 		Component: ComponentAPIFrontend, ImageName: "apifrontend",
 		Resources: kn.Spec.APIFrontend.Resources, VolumeMounts: mounts, Volumes: volumes,
 		Env:  env,
 		Args: []string{"--config=/etc/apifrontend/config.yaml"},
 		Ports: []corev1.ContainerPort{
-			{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
-			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
-			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
+			{Name: "https", ContainerPort: listenPort, Protocol: corev1.ProtocolTCP},
+			{Name: "health", ContainerPort: healthPort, Protocol: corev1.ProtocolTCP},
+			{Name: "metrics", ContainerPort: metricsPort, Protocol: corev1.ProtocolTCP},
 		},
-		ProbePort: PortHealthProbe,
+		ProbePort: healthPort,
 		PodAnnotations: map[string]string{
 			"prometheus.io/scrape": "true",
-			"prometheus.io/port":   "9090",
+			"prometheus.io/port":   fmt.Sprintf("%d", metricsPort),
 			"prometheus.io/path":   "/metrics",
 		},
 		TerminationGracePeriodSeconds: &gracePeriod,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	dep.Labels[KagentiAgentTypeLabel] = "agent"
+	dep.Labels[KagentiA2AProtocolLabel] = ""
+	dep.Spec.Template.Labels[KagentiAgentTypeLabel] = "agent"
+	dep.Spec.Template.Labels[KagentiA2AProtocolLabel] = ""
+
+	return dep, nil
 }
 
 // --- internal helpers ---

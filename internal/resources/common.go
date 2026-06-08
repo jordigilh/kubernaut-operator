@@ -72,7 +72,6 @@ func DeploymentName(component string) string {
 
 // Well-known ports used across services.
 const (
-	PortHTTP    int32 = 8080
 	PortHTTPS   int32 = 8443
 	PortMetrics int32 = 9090
 	// PortAuthWebhookService is the standard HTTPS port (443) exposed by the
@@ -99,12 +98,60 @@ const (
 	MigrationTTLSeconds   int32 = 300
 )
 
+// KagentiSidecarMode describes how the kagenti webhook injects its
+// authentication sidecar into AF pods. The operator detects the mode at
+// runtime and adjusts AF listen/health/metrics ports accordingly.
+type KagentiSidecarMode int
+
+const (
+	// KagentiSidecarNone means kagenti is not active (SPIRE disabled or
+	// kagenti not installed).
+	KagentiSidecarNone KagentiSidecarMode = iota
+
+	// KagentiSidecarEnvoy is kagenti 0.2.x: an envoy-proxy sidecar that
+	// intercepts traffic via iptables + ORIGINAL_DST routing. The
+	// application container keeps its original listen port because envoy
+	// transparently proxies to it.
+	KagentiSidecarEnvoy
+
+	// KagentiSidecarAuthbridge is kagenti 0.3.x+: an authbridge-proxy
+	// binary that takes the declared containerPort and shifts the
+	// application container to port+1 via the PORT env var. The operator
+	// must NOT pre-shift; it keeps AF on PortHTTPS so that authbridge
+	// occupies 8443 and AF moves to 8444.
+	KagentiSidecarAuthbridge
+)
+
+// AFListenPort returns the port the operator writes into the AF container
+// spec and config.yaml. The kagenti webhook handles the actual port
+// shifting at admission time — authbridge takes this port and moves the
+// application to port+1.
+func (m KagentiSidecarMode) AFListenPort() int32 {
+	return PortHTTPS
+}
+
+// ShiftsPorts reports whether AF metrics and health ports must be shifted
+// away from defaults to avoid conflicts with the kagenti sidecar.
+func (m KagentiSidecarMode) ShiftsPorts() bool {
+	return m != KagentiSidecarNone
+}
+
 // PDB constant.
 const PDBMaxUnavailable = 1
 
 // LLMProviderVertexAI identifies the Vertex AI LLM provider, which uses
 // Application Default Credentials (ADC) instead of a flat API key file.
 const LLMProviderVertexAI = "vertex_ai"
+
+// Kagenti discovery labels for A2A agent auto-discovery.
+const (
+	KagentiAgentTypeLabel   = "kagenti.io/type"
+	KagentiA2AProtocolLabel = "protocol.kagenti.io/a2a"
+)
+
+// AgentTLSPortName is the service port name that signals to the kagenti-operator
+// that the agent card endpoint requires TLS.
+const AgentTLSPortName = "agent-tls"
 
 // OCP service-CA injection annotation.
 const OCPServiceCAInjectAnnotation = "service.beta.openshift.io/inject-cabundle"
@@ -149,11 +196,11 @@ const (
 // DefaultPostgreSQLImage is the RHEL10 PostgreSQL 16 image used for the
 // data-storage init container on OCP (restricted-v2 SCC compatible).
 // Prefer ResolveImage(kn, "init-postgres") for mirror-friendly resolution.
-const DefaultPostgreSQLImage = "registry.redhat.io/rhel10/postgresql-16@sha256:6626034c7e8a171610212a220efd417eb5ab7792b5dbd912d38976ffe0627301"
+const DefaultPostgreSQLImage = "registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e"
 
 // DefaultUBIMinimalImage is used for CA-bundle init containers.
 // Prefer ResolveImage(kn, "init-ubi-minimal") for mirror-friendly resolution.
-const DefaultUBIMinimalImage = "registry.access.redhat.com/ubi10/ubi-minimal@sha256:2a4785f399dc7ae2f3ca85f68bac0ccac47f3e73464a47c21e4f7ae46b55a053"
+const DefaultUBIMinimalImage = "registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c"
 
 // AllComponents returns the ordered list of all managed components.
 func AllComponents() []string {
@@ -178,6 +225,8 @@ func isComponentActive(kn *kubernautv1alpha1.Kubernaut, component string) bool {
 	switch component {
 	case ComponentAPIFrontend:
 		return kn.Spec.APIFrontendEnabled()
+	case ComponentGateway:
+		return kn.Spec.GatewayEnabled()
 	default:
 		return true
 	}

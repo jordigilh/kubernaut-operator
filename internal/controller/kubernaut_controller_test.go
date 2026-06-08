@@ -64,6 +64,12 @@ func newMinimalCR() *kubernautv1alpha1.Kubernaut {
 				SecretName: vkSecretName,
 				Host:       "valkey",
 			},
+			APIFrontend: kubernautv1alpha1.APIFrontendSpec{
+				Auth: kubernautv1alpha1.APIFrontendAuthSpec{
+					IssuerURL: "https://login.kubernaut.ai/realms/kubernaut",
+					Audience:  "kubernaut-apifrontend",
+				},
+			},
 			KubernautAgent: kubernautv1alpha1.KubernautAgentSpec{
 				LLM: kubernautv1alpha1.LLMSpec{
 					Provider:              "openai",

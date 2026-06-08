@@ -42,6 +42,8 @@ import (
 
 	kubernautaiv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	"github.com/jordigilh/kubernaut-operator/internal/controller"
+	"github.com/jordigilh/kubernaut-operator/internal/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -154,6 +156,11 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "Kubernaut")
 		os.Exit(1)
 	}
+	mgr.GetWebhookServer().Register("/validate-kubernaut-singleton", &admission.Webhook{
+		Handler: &webhook.SingletonValidator{
+			Client: mgr.GetClient(),
+		},
+	})
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {
