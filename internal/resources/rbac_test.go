@@ -154,6 +154,8 @@ var _ = Describe("ClusterRoles", func() {
 				"cert-manager.io",
 				"argoproj.io",
 				"route.openshift.io",
+				"kubevirt.io",
+				"cdi.kubevirt.io",
 			}
 			foundGroups := make(map[string]bool)
 			for _, rule := range gw.Rules {
@@ -187,6 +189,8 @@ var _ = Describe("ClusterRoles", func() {
 				"security.istio.io",
 				"networking.istio.io",
 				kubernautAPIGroup,
+				"kubevirt.io",
+				"cdi.kubevirt.io",
 			}
 			foundGroups := make(map[string]bool)
 			for _, rule := range investigator.Rules {
@@ -319,6 +323,8 @@ var _ = Describe("ClusterRoles", func() {
 				"cert-manager.io",
 				"argoproj.io",
 				"route.openshift.io",
+				"kubevirt.io",
+				"cdi.kubevirt.io",
 			}
 			foundGroups := make(map[string]bool)
 			for _, rule := range em.Rules {
@@ -1240,6 +1246,28 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 			}
 		}
 		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include tokenreviews/create")
+	})
+
+	It("grants KubeVirt and CDI read access for VM triage", func() {
+		kn := testKubernautWithAF()
+		roles := ClusterRoles(kn)
+		var afRole *rbacv1.ClusterRole
+		for _, r := range roles {
+			if r.Name == clusterRoleName(kn, "apifrontend-role") {
+				afRole = r
+				break
+			}
+		}
+		Expect(afRole).NotTo(BeNil())
+
+		foundGroups := make(map[string]bool)
+		for _, rule := range afRole.Rules {
+			for _, g := range rule.APIGroups {
+				foundGroups[g] = true
+			}
+		}
+		Expect(foundGroups["kubevirt.io"]).To(BeTrue(), "apifrontend ClusterRole missing kubevirt.io API group")
+		Expect(foundGroups["cdi.kubevirt.io"]).To(BeTrue(), "apifrontend ClusterRole missing cdi.kubevirt.io API group")
 	})
 
 	It("includes services/kubernaut-agent create for KA SAR gate (#137)", func() {
