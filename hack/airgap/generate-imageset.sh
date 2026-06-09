@@ -32,14 +32,11 @@ cat > "$OUT" <<HEADER
 # Version: v${VERSION}
 kind: ImageSetConfiguration
 apiVersion: mirror.openshift.io/v2alpha1
-storageConfig:
-  local:
-    path: ./kubernaut-mirror
 mirror:
   additionalImages:
-    # Operator
-    - name: quay.io/kubernaut-ai/kubernaut-operator:v${VERSION}
-    # Operator bundle
+    # Operator (quay.io tag omits the v prefix)
+    - name: quay.io/kubernaut-ai/kubernaut-operator:${VERSION}
+    # Operator bundle (quay.io tag keeps the v prefix)
     - name: quay.io/kubernaut-ai/kubernaut-operator-bundle:v${VERSION}
     # Operand and infrastructure images
 HEADER
@@ -48,5 +45,18 @@ for img in "${images[@]}"; do
   echo "    - name: ${img}" >> "$OUT"
 done
 
+# Infrastructure images not managed by the operator but required for deployment.
+# Update digests when upgrading to newer RHEL/UBI releases.
+INFRA_IMAGES=(
+  "registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e"
+  "registry.redhat.io/rhel10/valkey-8@sha256:7b478930b2d186a61c3af408c3228f3da5104c759b8bd52d62c683e33bdb9ee2"
+)
+
+echo "    # Infrastructure dependencies (PostgreSQL, Valkey)" >> "$OUT"
+for img in "${INFRA_IMAGES[@]}"; do
+  echo "    - name: ${img}" >> "$OUT"
+done
+
+total=$(( ${#images[@]} + 2 + ${#INFRA_IMAGES[@]} ))
 echo ""
-echo "Generated ${OUT} with $((${#images[@]} + 2)) images for v${VERSION}"
+echo "Generated ${OUT} with ${total} images for v${VERSION}"

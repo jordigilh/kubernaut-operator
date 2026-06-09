@@ -11,14 +11,11 @@
 # Version: v1.5.0-rc11
 kind: ImageSetConfiguration
 apiVersion: mirror.openshift.io/v2alpha1
-storageConfig:
-  local:
-    path: ./kubernaut-mirror
 mirror:
   additionalImages:
-    # Operator
-    - name: quay.io/kubernaut-ai/kubernaut-operator:v1.5.0-rc11
-    # Operator bundle
+    # Operator (quay.io tag omits the v prefix)
+    - name: quay.io/kubernaut-ai/kubernaut-operator:1.5.0-rc11
+    # Operator bundle (quay.io tag keeps the v prefix)
     - name: quay.io/kubernaut-ai/kubernaut-operator-bundle:v1.5.0-rc11
     # Operand and infrastructure images
     - name: quay.io/kubernaut-ai/aianalysis@sha256:68e59eca46935aa98530f36644365e31b70f5461fa6ef6d31e39274bdc422f91
@@ -35,3 +32,4 @@ mirror:
     - name: quay.io/kubernaut-ai/workflowexecution@sha256:5db71118a4ee8e18e2e357a9713e48299df08bcaa9aa96d705d4dc83376a3483
     - name: registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c
     - name: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
+    - name: registry.redhat.io/rhel10/valkey-8@sha256:7b478930b2d186a61c3af408c3228f3da5104c759b8bd52d62c683e33bdb9ee2
