@@ -1,0 +1,20 @@
+webhookdefinitions:
+- type: ValidatingAdmissionWebhook
+  admissionReviewVersions:
+  - v1
+  containerPort: 443
+  deploymentName: kubernaut-operator-controller-manager
+  failurePolicy: Fail
+  generateName: validate-kubernaut-singleton
+  rules:
+  - apiGroups:
+    - kubernaut.ai
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    resources:
+    - kubernauts
+  sideEffects: None
+  targetPort: 9443
+  webhookPath: /validate-kubernaut-singleton
