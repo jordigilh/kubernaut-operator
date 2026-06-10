@@ -408,13 +408,61 @@ jobs:
           podman push "${BUNDLE_IMG}"
 
   # ========================================
+  # STAGE 3b: OLM CATALOG IMAGE
+  # Builds a file-based catalog (FBC) containing the bundle and pushes it.
+  # This catalog can be referenced by a CatalogSource on OCP clusters.
+  # ========================================
+
+  catalog:
+    name: Build & Push OLM Catalog
+    needs: [prepare, bundle]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Login to Quay.io
+        run: |
+          podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
+                       -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
+                       quay.io
+
+      - name: Install opm
+        run: |
+          curl -sSLo /usr/local/bin/opm \
+            https://github.com/operator-framework/operator-registry/releases/download/v1.55.0/linux-amd64-opm
+          chmod +x /usr/local/bin/opm
+
+      - name: Build catalog image
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          BUNDLE_IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}-bundle:v${VERSION}"
+          CATALOG_IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}-catalog:v${VERSION}"
+          echo "Building catalog ${CATALOG_IMG} from bundle ${BUNDLE_IMG}..."
+          opm index add \
+            --container-tool podman \
+            --mode semver \
+            --tag "${CATALOG_IMG}" \
+            --bundles "${BUNDLE_IMG}"
+
+      - name: Push catalog image
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          CATALOG_IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}-catalog:v${VERSION}"
+          echo "Pushing ${CATALOG_IMG}..."
+          podman push "${CATALOG_IMG}"
+
+  # ========================================
   # STAGE 4: GITHUB RELEASE
   # Creates a GitHub Release with auto-generated notes.
   # ========================================
 
   release:
     name: Create GitHub Release
-    needs: [prepare, create-manifests, bundle, sbom, sign, provenance]
+    needs: [prepare, create-manifests, bundle, catalog, sbom, sign, provenance]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
