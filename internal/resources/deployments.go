@@ -74,16 +74,16 @@ func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, err
 func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	pgPort := PostgreSQLPort(kn)
 
-	pgInitImage, err := ResolveImage(kn, "init-postgres")
+	ubiImage, err := ResolveImage(kn, "init-ubi-minimal")
 	if err != nil {
-		pgInitImage = DefaultPostgreSQLImage
+		ubiImage = DefaultUBIMinimalImage
 	}
 	initContainer := corev1.Container{
 		Name:            "wait-for-postgres",
-		Image:           pgInitImage,
+		Image:           ubiImage,
 		ImagePullPolicy: kn.Spec.Image.PullPolicy,
-		Command: []string{"sh", "-c",
-			"until pg_isready -h \"$PGHOST\" -p \"$PGPORT\"; do echo waiting for postgres; sleep 2; done",
+		Command: []string{"bash", "-c",
+			`until echo > /dev/tcp/"$PGHOST"/"$PGPORT" 2>/dev/null; do echo "waiting for postgres at $PGHOST:$PGPORT"; sleep 2; done`,
 		},
 		Env: []corev1.EnvVar{
 			{Name: "PGHOST", Value: kn.Spec.PostgreSQL.Host},

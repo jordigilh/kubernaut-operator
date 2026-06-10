@@ -193,12 +193,7 @@ const (
 	OCPAlertManagerSAName  = "alertmanager-main"
 )
 
-// DefaultPostgreSQLImage is the RHEL10 PostgreSQL 16 image used for the
-// data-storage init container on OCP (restricted-v2 SCC compatible).
-// Prefer ResolveImage(kn, "init-postgres") for mirror-friendly resolution.
-const DefaultPostgreSQLImage = "registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e"
-
-// DefaultUBIMinimalImage is used for CA-bundle init containers.
+// DefaultUBIMinimalImage is used for wait-for-postgres and CA-bundle init containers.
 // Prefer ResolveImage(kn, "init-ubi-minimal") for mirror-friendly resolution.
 const DefaultUBIMinimalImage = "registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c"
 
@@ -286,7 +281,6 @@ var componentEnvSuffix = map[string]string{
 	"authwebhook":             "AUTHWEBHOOK",
 	"apifrontend":             "API_FRONTEND",
 	"db-migrate":              "DB_MIGRATE",
-	"init-postgres":           "INIT_POSTGRES",
 	"init-ubi-minimal":        "INIT_UBI_MINIMAL",
 }
 
