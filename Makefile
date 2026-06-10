@@ -315,7 +315,7 @@ bundle: manifests kustomize operator-sdk ## Generate bundle manifests and metada
 OPERATOR_IMG_DIGEST ?=
 .PHONY: bundle-pin-digest
 bundle-pin-digest: ## Pin the operator image in the CSV deployment and relatedImages by digest.
-	$(eval DIGEST := $(if $(OPERATOR_IMG_DIGEST),$(OPERATOR_IMG_DIGEST),$(shell $(CONTAINER_TOOL) inspect --format='$(IMAGE_TAG_BASE)@{{.Digest}}' $(IMG) 2>/dev/null)))
+	$(eval DIGEST := $(if $(OPERATOR_IMG_DIGEST),$(OPERATOR_IMG_DIGEST),$(shell skopeo inspect --format='$(IMAGE_TAG_BASE)@{{.Digest}}' docker://$(IMG) 2>/dev/null)))
 	@if [ -z "$(DIGEST)" ]; then echo "ERROR: could not resolve digest for $(IMG)"; exit 1; fi
 	@echo "Pinning operator image in CSV to $(DIGEST)"
 	@cd bundle/manifests && \
