@@ -48,7 +48,6 @@ done
 # Infrastructure images not managed by the operator but required for deployment.
 # Update digests when upgrading to newer RHEL/UBI releases.
 INFRA_IMAGES=(
-  "registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e"
   "registry.redhat.io/rhel10/valkey-8@sha256:7b478930b2d186a61c3af408c3228f3da5104c759b8bd52d62c683e33bdb9ee2"
 )
 
