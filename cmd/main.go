@@ -156,11 +156,17 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "Kubernaut")
 		os.Exit(1)
 	}
-	mgr.GetWebhookServer().Register("/validate-kubernaut-singleton", &admission.Webhook{
-		Handler: &webhook.SingletonValidator{
-			Client: mgr.GetClient(),
-		},
-	})
+	webhookCertDir := filepath.Join(os.TempDir(), "k8s-webhook-server", "serving-certs")
+	if _, err := os.Stat(filepath.Join(webhookCertDir, "tls.crt")); err == nil {
+		setupLog.Info("webhook TLS certs found, registering singleton validating webhook")
+		mgr.GetWebhookServer().Register("/validate-kubernaut-singleton", &admission.Webhook{
+			Handler: &webhook.SingletonValidator{
+				Client: mgr.GetClient(),
+			},
+		})
+	} else {
+		setupLog.Info("webhook TLS certs not found, skipping singleton webhook registration — singleton constraint enforced at reconcile time")
+	}
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {
