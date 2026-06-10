@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Injects webhookdefinitions into the generated CSV.
+# Injects webhookdefinitions into the generated CSV at spec.webhookdefinitions.
 # operator-sdk does not generate webhookdefinitions when the webhook kustomize
-# overlay is disabled (we use OLM cert injection instead of cert-manager),
-# so this script splices the definition from config/manifests/patches/webhook.yaml
-# into spec.install.spec right before the "strategy: deployment" line.
+# overlay is disabled (we use OLM cert injection instead of cert-manager).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -27,16 +25,20 @@ if grep -q 'webhookdefinitions:' "$CSV"; then
   exit 0
 fi
 
-TMPFILE=$(mktemp)
-sed 's/^/    /' "$PATCH" > "$TMPFILE"
+python3 - "$CSV" "$PATCH" <<'PYEOF'
+import sys, yaml
 
-# Use sed to insert the indented patch before "    strategy: deployment"
-# macOS sed requires slightly different syntax
-if sed --version 2>/dev/null | grep -q GNU; then
-  sed -i "/^    strategy: deployment$/r ${TMPFILE}" "$CSV"
-else
-  sed -i '' "/^    strategy: deployment$/r ${TMPFILE}" "$CSV"
-fi
+csv_path, patch_path = sys.argv[1], sys.argv[2]
 
-rm -f "$TMPFILE"
+with open(csv_path) as f:
+    csv = yaml.safe_load(f)
+with open(patch_path) as f:
+    patch = yaml.safe_load(f)
+
+csv["spec"]["webhookdefinitions"] = patch["webhookdefinitions"]
+
+with open(csv_path, "w") as f:
+    yaml.dump(csv, f, default_flow_style=False, sort_keys=False, width=200)
+PYEOF
+
 echo "Injected webhookdefinitions into $(basename "$CSV")"
