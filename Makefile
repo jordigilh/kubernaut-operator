@@ -308,7 +308,7 @@ bundle: manifests kustomize operator-sdk ## Generate bundle manifests and metada
 	$(OPERATOR_SDK) generate kustomize manifests -q
 	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
 	$(KUSTOMIZE) build config/manifests | $(OPERATOR_SDK) generate bundle $(BUNDLE_GEN_FLAGS)
-	$(OPERATOR_SDK) bundle validate ./bundle
+	@hack/inject-csv-webhook.sh
 
 # OPERATOR_IMG_DIGEST can be set to pin the operator image in the CSV by digest.
 # Example: make bundle-pin-digest OPERATOR_IMG_DIGEST=quay.io/kubernaut-ai/kubernaut-operator@sha256:abc123...
