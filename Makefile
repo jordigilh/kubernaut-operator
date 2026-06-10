@@ -310,20 +310,21 @@ bundle: manifests kustomize operator-sdk ## Generate bundle manifests and metada
 	$(KUSTOMIZE) build config/manifests | $(OPERATOR_SDK) generate bundle $(BUNDLE_GEN_FLAGS)
 	@hack/inject-csv-webhook.sh
 
-# OPERATOR_IMG_DIGEST can be set to pin the operator image in the CSV by digest.
-# Example: make bundle-pin-digest OPERATOR_IMG_DIGEST=quay.io/kubernaut-ai/kubernaut-operator@sha256:abc123...
+# Pin the operator image in the CSV by digest. If OPERATOR_IMG_DIGEST is empty,
+# it is resolved automatically from the registry using $(CONTAINER_TOOL) inspect.
 OPERATOR_IMG_DIGEST ?=
 .PHONY: bundle-pin-digest
-bundle-pin-digest: ## Pin the operator image in the CSV relatedImages by digest (airgap).
-ifneq ($(OPERATOR_IMG_DIGEST),)
-	@echo "Pinning operator image in CSV relatedImages to $(OPERATOR_IMG_DIGEST)"
+bundle-pin-digest: ## Pin the operator image in the CSV deployment and relatedImages by digest.
+	$(eval DIGEST := $(if $(OPERATOR_IMG_DIGEST),$(OPERATOR_IMG_DIGEST),$(shell skopeo inspect --format='$(IMAGE_TAG_BASE)@{{.Digest}}' docker://$(IMG) 2>/dev/null)))
+	@if [ -z "$(DIGEST)" ]; then echo "ERROR: could not resolve digest for $(IMG)"; exit 1; fi
+	@echo "Pinning operator image in CSV to $(DIGEST)"
 	@cd bundle/manifests && \
 		CSV=$$(ls *clusterserviceversion.yaml) && \
-		sed -i'' -e "s|image: quay.io/kubernaut-ai/kubernaut-operator:[^ ]*|image: $(OPERATOR_IMG_DIGEST)|g" "$$CSV" && \
+		sed -i'' -e "s|image: $(IMAGE_TAG_BASE):[^ ]*|image: $(DIGEST)|g" "$$CSV" && \
 		echo "Operator image pinned in $$CSV"
-else
-	@echo "OPERATOR_IMG_DIGEST is not set; skipping digest pinning."
-endif
+
+.PHONY: catalog-release
+catalog-release: docker-push bundle bundle-pin-digest bundle-build bundle-push catalog-build catalog-push ## Build and push operator, bundle, and catalog images with digest pinning.
 
 .PHONY: bundle-build
 bundle-build: ## Build the bundle image.
@@ -350,24 +351,32 @@ OPM = $(shell which opm)
 endif
 endif
 
-# A comma-separated list of bundle images (e.g. make catalog-build BUNDLE_IMGS=example.com/operator-bundle:v0.1.0,example.com/operator-bundle:v0.2.0).
-# These images MUST exist in a registry and be pull-able.
+# The bundle image used as input to the catalog build.
 BUNDLE_IMGS ?= $(BUNDLE_IMG)
 
-# The image tag given to the resulting catalog image (e.g. make catalog-build CATALOG_IMG=example.com/operator-catalog:v0.2.0).
+# The image tag given to the resulting catalog image.
 CATALOG_IMG ?= $(IMAGE_TAG_BASE)-catalog:v$(VERSION)
 
-# Set CATALOG_BASE_IMG to an existing catalog image tag to add $BUNDLE_IMGS to that image.
-ifneq ($(origin CATALOG_BASE_IMG), undefined)
-FROM_INDEX_OPT := --from-index $(CATALOG_BASE_IMG)
-endif
-
-# Build a catalog image by adding bundle images to an empty catalog using the operator package manager tool, 'opm'.
-# This recipe invokes 'opm' in 'semver' bundle add mode. For more information on add modes, see:
-# https://github.com/operator-framework/community-operators/blob/7f1438c/docs/packaging-operator.md#updating-your-existing-operator
+# Build a file-based catalog (FBC) image from the bundle image.
+# Uses 'opm render' to extract bundle content and builds a serving catalog.
+CATALOG_DIR := $(shell mktemp -d)
 .PHONY: catalog-build
-catalog-build: opm ## Build a catalog image.
-	$(OPM) index add --container-tool $(CONTAINER_TOOL) --mode semver --tag $(CATALOG_IMG) --bundles $(BUNDLE_IMGS) $(FROM_INDEX_OPT)
+catalog-build: opm ## Build a file-based catalog image.
+	@mkdir -p $(CATALOG_DIR)/configs
+	@echo "---" > $(CATALOG_DIR)/configs/catalog.yaml
+	@echo "schema: olm.package" >> $(CATALOG_DIR)/configs/catalog.yaml
+	@echo "name: kubernaut-operator" >> $(CATALOG_DIR)/configs/catalog.yaml
+	@echo "defaultChannel: alpha" >> $(CATALOG_DIR)/configs/catalog.yaml
+	$(OPM) render $(BUNDLE_IMGS) --output=yaml >> $(CATALOG_DIR)/configs/catalog.yaml
+	@echo "---" >> $(CATALOG_DIR)/configs/catalog.yaml
+	@echo "schema: olm.channel" >> $(CATALOG_DIR)/configs/catalog.yaml
+	@echo "package: kubernaut-operator" >> $(CATALOG_DIR)/configs/catalog.yaml
+	@echo "name: alpha" >> $(CATALOG_DIR)/configs/catalog.yaml
+	@echo "entries:" >> $(CATALOG_DIR)/configs/catalog.yaml
+	@echo "- name: kubernaut-operator.v$(VERSION)" >> $(CATALOG_DIR)/configs/catalog.yaml
+	$(OPM) validate $(CATALOG_DIR)/configs
+	@printf 'FROM quay.io/operator-framework/opm:v1.55.0 AS builder\nCOPY configs /configs\nRUN ["/bin/opm", "serve", "/configs", "--cache-dir=/tmp/cache", "--cache-only"]\nFROM quay.io/operator-framework/opm:v1.55.0\nCOPY --from=builder /configs /configs\nCOPY --from=builder /tmp/cache /tmp/cache\nEXPOSE 50051\nENTRYPOINT ["/bin/opm", "serve", "/configs", "--cache-dir=/tmp/cache"]\n' > $(CATALOG_DIR)/Dockerfile
+	$(CONTAINER_TOOL) build -f $(CATALOG_DIR)/Dockerfile -t $(CATALOG_IMG) $(CATALOG_DIR)
 
 # Push the catalog image.
 .PHONY: catalog-push
