@@ -5,7 +5,7 @@ webhookdefinitions:
   containerPort: 443
   deploymentName: kubernaut-operator-controller-manager
   failurePolicy: Fail
-  generateName: validate.kubernaut.ai
+  generateName: validate-kubernaut-singleton
   rules:
   - apiGroups:
     - kubernaut.ai
