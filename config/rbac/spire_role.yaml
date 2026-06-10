@@ -1,0 +1,20 @@
+# SPIRE ClusterSPIFFEID management permissions for the operator.
+# Maintained separately from role.yaml because controller-gen cannot generate
+# rules for API groups not present in the Go module's dependency graph.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-spire-role
+rules:
+- apiGroups:
+  - spire.spiffe.io
+  resources:
+  - clusterspiffeids
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
