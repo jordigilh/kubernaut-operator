@@ -310,20 +310,21 @@ bundle: manifests kustomize operator-sdk ## Generate bundle manifests and metada
 	$(KUSTOMIZE) build config/manifests | $(OPERATOR_SDK) generate bundle $(BUNDLE_GEN_FLAGS)
 	@hack/inject-csv-webhook.sh
 
-# OPERATOR_IMG_DIGEST can be set to pin the operator image in the CSV by digest.
-# Example: make bundle-pin-digest OPERATOR_IMG_DIGEST=quay.io/kubernaut-ai/kubernaut-operator@sha256:abc123...
+# Pin the operator image in the CSV by digest. If OPERATOR_IMG_DIGEST is empty,
+# it is resolved automatically from the registry using $(CONTAINER_TOOL) inspect.
 OPERATOR_IMG_DIGEST ?=
 .PHONY: bundle-pin-digest
-bundle-pin-digest: ## Pin the operator image in the CSV relatedImages by digest (airgap).
-ifneq ($(OPERATOR_IMG_DIGEST),)
-	@echo "Pinning operator image in CSV relatedImages to $(OPERATOR_IMG_DIGEST)"
+bundle-pin-digest: ## Pin the operator image in the CSV deployment and relatedImages by digest.
+	$(eval DIGEST := $(if $(OPERATOR_IMG_DIGEST),$(OPERATOR_IMG_DIGEST),$(shell $(CONTAINER_TOOL) inspect --format='$(IMAGE_TAG_BASE)@{{.Digest}}' $(IMG) 2>/dev/null)))
+	@if [ -z "$(DIGEST)" ]; then echo "ERROR: could not resolve digest for $(IMG)"; exit 1; fi
+	@echo "Pinning operator image in CSV to $(DIGEST)"
 	@cd bundle/manifests && \
 		CSV=$$(ls *clusterserviceversion.yaml) && \
-		sed -i'' -e "s|image: quay.io/kubernaut-ai/kubernaut-operator:[^ ]*|image: $(OPERATOR_IMG_DIGEST)|g" "$$CSV" && \
+		sed -i'' -e "s|image: $(IMAGE_TAG_BASE):[^ ]*|image: $(DIGEST)|g" "$$CSV" && \
 		echo "Operator image pinned in $$CSV"
-else
-	@echo "OPERATOR_IMG_DIGEST is not set; skipping digest pinning."
-endif
+
+.PHONY: catalog-release
+catalog-release: docker-push bundle bundle-pin-digest bundle-build bundle-push catalog-build catalog-push ## Build and push operator, bundle, and catalog images with digest pinning.
 
 .PHONY: bundle-build
 bundle-build: ## Build the bundle image.
