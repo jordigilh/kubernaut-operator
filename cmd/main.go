@@ -165,7 +165,7 @@ func main() {
 			},
 		})
 	} else {
-		setupLog.Info("webhook TLS certs not found, skipping singleton webhook registration — singleton constraint enforced at reconcile time")
+		setupLog.Info("webhook TLS certs not found, skipping singleton webhook registration")
 	}
 	// +kubebuilder:scaffold:builder
 
