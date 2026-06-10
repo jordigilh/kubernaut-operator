@@ -13,7 +13,7 @@ metadata:
     categories: AI/Machine Learning,Monitoring
     com.redhat.openshift.versions: v4.18
     containerImage: quay.io/kubernaut-ai/kubernaut-operator:1.5.0
-    createdAt: '2026-06-10T16:13:10Z'
+    createdAt: '2026-06-10T16:22:41Z'
     description: "Automated Kubernetes remediation powered by AI \u2014 detects issues, analyzes root causes, and executes verified fixes."
     documentation: https://jordigilh.github.io/kubernaut-docs/latest/
     features.operators.openshift.io/cnf: 'false'
@@ -465,7 +465,7 @@ spec:
     containerPort: 443
     deploymentName: kubernaut-operator-controller-manager
     failurePolicy: Fail
-    generateName: validate-kubernaut-singleton
+    generateName: validate.kubernaut.ai
     rules:
     - apiGroups:
       - kubernaut.ai
