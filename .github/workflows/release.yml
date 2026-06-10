@@ -428,32 +428,14 @@ jobs:
                        -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
                        quay.io
 
-      - name: Install opm
-        run: |
-          curl -sSLo /usr/local/bin/opm \
-            https://github.com/operator-framework/operator-registry/releases/download/v1.55.0/linux-amd64-opm
-          chmod +x /usr/local/bin/opm
-
-      - name: Build catalog image
+      - name: Build and push catalog image
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          BUNDLE_IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}-bundle:v${VERSION}"
-          CATALOG_IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}-catalog:v${VERSION}"
-          echo "Building catalog ${CATALOG_IMG} from bundle ${BUNDLE_IMG}..."
-          opm index add \
-            --container-tool podman \
-            --mode semver \
-            --tag "${CATALOG_IMG}" \
-            --bundles "${BUNDLE_IMG}"
-
-      - name: Push catalog image
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          CATALOG_IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}-catalog:v${VERSION}"
-          echo "Pushing ${CATALOG_IMG}..."
-          podman push "${CATALOG_IMG}"
+          BUNDLE_IMGS="${IMAGE_REGISTRY}/${IMAGE_NAME}-bundle:v${VERSION}" \
+            CATALOG_IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}-catalog:v${VERSION}" \
+            CONTAINER_TOOL=podman \
+            make catalog-build catalog-push
 
   # ========================================
   # STAGE 4: GITHUB RELEASE
