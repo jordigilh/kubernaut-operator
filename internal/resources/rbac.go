@@ -621,6 +621,9 @@ func ownerChainResolutionRules() []rbacv1.PolicyRule {
 		{APIGroups: []string{"cert-manager.io"}, Resources: []string{"certificates", "clusterissuers", "certificaterequests"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"argoproj.io"}, Resources: []string{"applications"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"route.openshift.io"}, Resources: []string{"routes"}, Verbs: []string{"get", "list", "watch"}},
+		// KubeVirt / CDI: VM workload correlation and investigation
+		{APIGroups: []string{"kubevirt.io"}, Resources: []string{"virtualmachines", "virtualmachineinstances", "virtualmachineinstancemigrations"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"cdi.kubevirt.io"}, Resources: []string{"datavolumes"}, Verbs: []string{"get", "list", "watch"}},
 	}
 }
 
@@ -737,6 +740,9 @@ func kubernautAgentInvestigatorClusterRole(kn *kubernautv1alpha1.Kubernaut, labe
 		}, Verbs: []string{"get", "list", "watch"}},
 		// Interactive session locking via Leases (v1.5+); list needed for ReconcileOrphanedLeases
 		{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "create", "update", "delete", "list"}},
+		// KubeVirt / CDI: VM investigation and enrichment
+		{APIGroups: []string{"kubevirt.io"}, Resources: []string{"virtualmachines", "virtualmachineinstances", "virtualmachineinstancemigrations"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"cdi.kubevirt.io"}, Resources: []string{"datavolumes"}, Verbs: []string{"get", "list", "watch"}},
 	}
 
 	return &rbacv1.ClusterRole{
@@ -940,6 +946,9 @@ func apifrontendClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]s
 			{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: []string{"get", "list"}},
 			{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: []string{"get", "list"}},
 			{APIGroups: []string{"cert-manager.io"}, Resources: []string{"certificates"}, Verbs: []string{"get", "list"}},
+			// KubeVirt / CDI: VM triage and investigation
+			{APIGroups: []string{"kubevirt.io"}, Resources: []string{"virtualmachines", "virtualmachineinstances", "virtualmachineinstancemigrations"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"cdi.kubevirt.io"}, Resources: []string{"datavolumes"}, Verbs: []string{"get", "list"}},
 		},
 	}
 }
