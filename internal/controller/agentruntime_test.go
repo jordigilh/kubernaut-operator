@@ -86,10 +86,10 @@ func newReconcilerWithCRD(objs ...runtime.Object) *KubernautReconciler {
 	}
 }
 
-func getAgentRuntime(ctx context.Context, c client.Client, ns, name string) (*unstructured.Unstructured, error) {
+func getAgentRuntime(ctx context.Context, c client.Client, ns string) (*unstructured.Unstructured, error) {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(agentRuntimeGVK())
-	return obj, c.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, obj)
+	return obj, c.Get(ctx, types.NamespacedName{Namespace: ns, Name: string(resources.ComponentAPIFrontend)}, obj)
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ func TestEnsureAgentRuntimeCR_CreatesWhenSidecarActive(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	ar, err := getAgentRuntime(context.Background(), r.Client, kn.Namespace, string(resources.ComponentAPIFrontend))
+	ar, err := getAgentRuntime(context.Background(), r.Client, kn.Namespace)
 	if err != nil {
 		t.Fatalf("AgentRuntime should exist: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestEnsureAgentRuntimeCR_NoopWhenAlreadyExists(t *testing.T) {
 		t.Fatalf("second call: %v", err)
 	}
 
-	if _, err := getAgentRuntime(context.Background(), r.Client, kn.Namespace, string(resources.ComponentAPIFrontend)); err != nil {
+	if _, err := getAgentRuntime(context.Background(), r.Client, kn.Namespace); err != nil {
 		t.Fatalf("AgentRuntime should still exist: %v", err)
 	}
 }
@@ -171,7 +171,7 @@ func TestEnsureAgentRuntimeCR_DeletesWhenSidecarDisabled(t *testing.T) {
 		t.Fatalf("delete: %v", err)
 	}
 
-	_, err := getAgentRuntime(context.Background(), r.Client, kn.Namespace, string(resources.ComponentAPIFrontend))
+	_, err := getAgentRuntime(context.Background(), r.Client, kn.Namespace)
 	if err == nil {
 		t.Fatal("AgentRuntime should be deleted when sidecar is disabled")
 	}
@@ -208,7 +208,7 @@ func TestEnsureAgentRuntimeCR_WorksWithEnvoySidecarMode(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if _, err := getAgentRuntime(context.Background(), r.Client, kn.Namespace, string(resources.ComponentAPIFrontend)); err != nil {
+	if _, err := getAgentRuntime(context.Background(), r.Client, kn.Namespace); err != nil {
 		t.Fatalf("AgentRuntime should exist for envoy mode: %v", err)
 	}
 }
@@ -233,7 +233,7 @@ func TestDeleteAgentRuntimeCR_DeletesExisting(t *testing.T) {
 		t.Fatalf("delete errors: %v", errs)
 	}
 
-	_, err := getAgentRuntime(context.Background(), r.Client, kn.Namespace, string(resources.ComponentAPIFrontend))
+	_, err := getAgentRuntime(context.Background(), r.Client, kn.Namespace)
 	if err == nil {
 		t.Fatal("AgentRuntime should be deleted")
 	}
