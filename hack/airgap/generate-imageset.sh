@@ -13,6 +13,27 @@ VERSION="${1:-$(grep '^VERSION' Makefile | head -1 | awk '{print $NF}')}"
 MANAGER="config/manager/manager.yaml"
 OUT="hack/airgap/imageset-config.yaml"
 
+resolve_digest() {
+  local ref="$1"
+  skopeo inspect "docker://${ref}" 2>/dev/null \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["Digest"])' 2>/dev/null
+}
+
+OP_TAG="quay.io/kubernaut-ai/kubernaut-operator:${VERSION}"
+BUNDLE_TAG="quay.io/kubernaut-ai/kubernaut-operator-bundle:v${VERSION}"
+
+echo "Resolving operator digest for ${OP_TAG}..."
+OP_DIGEST=$(resolve_digest "$OP_TAG")
+if [[ -z "$OP_DIGEST" ]]; then
+  echo "ERROR: could not resolve digest for ${OP_TAG}" >&2; exit 1
+fi
+
+echo "Resolving bundle digest for ${BUNDLE_TAG}..."
+BUNDLE_DIGEST=$(resolve_digest "$BUNDLE_TAG")
+if [[ -z "$BUNDLE_DIGEST" ]]; then
+  echo "ERROR: could not resolve digest for ${BUNDLE_TAG}" >&2; exit 1
+fi
+
 images=()
 while IFS= read -r img; do
   images+=("$img")
@@ -34,10 +55,10 @@ kind: ImageSetConfiguration
 apiVersion: mirror.openshift.io/v2alpha1
 mirror:
   additionalImages:
-    # Operator (quay.io tag omits the v prefix)
-    - name: quay.io/kubernaut-ai/kubernaut-operator:${VERSION}
-    # Operator bundle (quay.io tag keeps the v prefix)
-    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle:v${VERSION}
+    # Operator
+    - name: quay.io/kubernaut-ai/kubernaut-operator@${OP_DIGEST}
+    # Operator bundle
+    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle@${BUNDLE_DIGEST}
     # Operand and infrastructure images
 HEADER
 
