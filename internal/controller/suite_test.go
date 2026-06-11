@@ -73,6 +73,7 @@ var _ = BeforeSuite(func() {
 		"RELATED_IMAGE_AUTHWEBHOOK":             "quay.io/kubernaut-ai/authwebhook:test",
 		"RELATED_IMAGE_API_FRONTEND":            "quay.io/kubernaut-ai/apifrontend:test",
 		"RELATED_IMAGE_DB_MIGRATE":              "quay.io/kubernaut-ai/db-migrate:test",
+		"RELATED_IMAGE_INIT_UBI_MINIMAL":        "registry.access.redhat.com/ubi10/ubi-minimal:latest",
 	} {
 		Expect(os.Setenv(k, v)).To(Succeed())
 	}
