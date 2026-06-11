@@ -8,15 +8,15 @@
 #   oc-mirror --config hack/airgap/imageset-config.yaml \
 #     docker://<mirror-registry>
 #
-# Version: v1.5.0
+# Version: v1.5.1
 kind: ImageSetConfiguration
 apiVersion: mirror.openshift.io/v2alpha1
 mirror:
   additionalImages:
-    # Operator (quay.io tag omits the v prefix)
-    - name: quay.io/kubernaut-ai/kubernaut-operator:1.5.0
-    # Operator bundle (quay.io tag keeps the v prefix)
-    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle:v1.5.0
+    # Operator
+    - name: quay.io/kubernaut-ai/kubernaut-operator@sha256:586e5344ec3897fa2e80bab5207f1eca1611fdc4c6db80113247a1539c7941b7
+    # Operator bundle
+    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle@sha256:7e26ed41d96b94483bb0d4d971e2f93a541c586ebc56c3902a077f3849943119
     # Operand and infrastructure images
     - name: quay.io/kubernaut-ai/aianalysis@sha256:b31b8aaba5f4f3d5df1639213bca23c63438e257704ee0ac6d5f1d9ec82314b0
     - name: quay.io/kubernaut-ai/apifrontend@sha256:54b57237ddbaa9d39cd6d7abf4fdabbc55406f1ef824fc020154ec5d20789946
