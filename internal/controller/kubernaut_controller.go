@@ -294,7 +294,21 @@ func (r *KubernautReconciler) ensureMigrationPrereqs(ctx context.Context, kn *ku
 	if err != nil {
 		return fmt.Errorf("building migration configmap: %w", err)
 	}
-	return r.ensureNamespaced(ctx, kn, migrationCM)
+	if err := r.ensureNamespaced(ctx, kn, migrationCM); err != nil {
+		return fmt.Errorf("ensuring migration configmap: %w", err)
+	}
+
+	sslMode := kn.Spec.PostgreSQL.SSLMode
+	if sslMode == "" {
+		sslMode = "verify-full"
+	}
+	if sslMode == "verify-full" {
+		caCM := resources.InterServiceCAConfigMap(kn)
+		if err := r.ensureNamespaced(ctx, kn, caCM); err != nil {
+			return fmt.Errorf("ensuring inter-service-ca configmap: %w", err)
+		}
+	}
+	return nil
 }
 
 // ensureMigrationJob creates the migration Job if absent, then checks its
