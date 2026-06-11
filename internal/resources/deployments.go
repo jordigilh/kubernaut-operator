@@ -156,12 +156,16 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		mounts = append(mounts, corev1.VolumeMount{Name: "signing-cert", MountPath: "/etc/certs", ReadOnly: true})
 	}
 
+	sslMode := withDefault(kn.Spec.PostgreSQL.SSLMode, DefaultSSLMode)
 	env := []corev1.EnvVar{
 		{Name: "CONFIG_PATH", Value: "/etc/datastorage/config.yaml"},
 		{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
 		{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile},
+	}
+	if sslMode == DefaultSSLMode {
+		env = append(env, corev1.EnvVar{Name: "PGSSLROOTCERT", Value: InterServiceTLSCAFile})
 	}
 
 	var gracePeriod int64 = 60
