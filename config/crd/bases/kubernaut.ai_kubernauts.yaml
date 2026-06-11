@@ -1289,6 +1289,21 @@ spec:
                             type: boolean
                         type: object
                     type: object
+                  serverRateLimit:
+                    description: Server-level rate limiting for the KA HTTP endpoint.
+                    properties:
+                      burst:
+                        default: 100
+                        description: Burst size (max concurrent requests above the
+                          steady-state rate).
+                        minimum: 1
+                        type: integer
+                      requestsPerSecond:
+                        default: 50
+                        description: Requests per second allowed.
+                        minimum: 1
+                        type: integer
+                    type: object
                   session:
                     description: Session configuration.
                     properties:

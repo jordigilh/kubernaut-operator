@@ -573,6 +573,10 @@ type KubernautAgentSpec struct {
 	// +listType=set
 	AdditionalClusterRoleBindings []string `json:"additionalClusterRoleBindings,omitempty"`
 
+	// Server-level rate limiting for the KA HTTP endpoint.
+	// +optional
+	ServerRateLimit *KARateLimitSpec `json:"serverRateLimit,omitempty"`
+
 	// Graceful shutdown configuration.
 	// +optional
 	Shutdown ShutdownSpec `json:"shutdown,omitempty"`
@@ -583,6 +587,21 @@ type KubernautAgentSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// KARateLimitSpec configures request rate limiting for the Kubernaut Agent server.
+type KARateLimitSpec struct {
+	// Requests per second allowed.
+	// +kubebuilder:default=50
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	RequestsPerSecond *int `json:"requestsPerSecond,omitempty"`
+
+	// Burst size (max concurrent requests above the steady-state rate).
+	// +kubebuilder:default=100
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	Burst *int `json:"burst,omitempty"`
 }
 
 // InteractiveSpec configures KA interactive mode with JWT-based identity delegation.

@@ -491,6 +491,12 @@ type kaRuntimeServerYAML struct {
 	MetricsAddr string                      `json:"metricsAddr" yaml:"metricsAddr"`
 	TLS         kubernautAgentServerTLSYAML `json:"tls" yaml:"tls"`
 	TLSProfile  string                      `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
+	RateLimit   kaRateLimitYAML             `json:"rateLimit" yaml:"rateLimit"`
+}
+
+type kaRateLimitYAML struct {
+	RequestsPerSecond int `json:"requestsPerSecond" yaml:"requestsPerSecond"`
+	Burst             int `json:"burst" yaml:"burst"`
 }
 
 type kaAuditYAML struct {
@@ -1238,6 +1244,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 				MetricsAddr: ":9090",
 				TLS:         kubernautAgentServerTLSYAML{CertDir: InterServiceTLSCertDir},
 				TLSProfile:  o.tlsProfile,
+				RateLimit:   kaRateLimitFromSpec(ka.ServerRateLimit),
 			},
 			Shutdown: kaShutdownYAML{
 				DrainSeconds: intPtrDefault(ka.Shutdown.DrainSeconds, 30),
@@ -1506,6 +1513,19 @@ func intDefault(val, def int) int {
 		return val
 	}
 	return def
+}
+
+func kaRateLimitFromSpec(spec *kubernautv1alpha1.KARateLimitSpec) kaRateLimitYAML {
+	rl := kaRateLimitYAML{RequestsPerSecond: 50, Burst: 100}
+	if spec != nil {
+		if spec.RequestsPerSecond != nil {
+			rl.RequestsPerSecond = *spec.RequestsPerSecond
+		}
+		if spec.Burst != nil {
+			rl.Burst = *spec.Burst
+		}
+	}
+	return rl
 }
 
 // intPtrDefault dereferences val if non-nil, otherwise returns def.
