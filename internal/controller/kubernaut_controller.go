@@ -300,9 +300,9 @@ func (r *KubernautReconciler) ensureMigrationPrereqs(ctx context.Context, kn *ku
 
 	sslMode := kn.Spec.PostgreSQL.SSLMode
 	if sslMode == "" {
-		sslMode = "verify-full"
+		sslMode = resources.DefaultSSLMode
 	}
-	if sslMode == "verify-full" {
+	if sslMode == resources.DefaultSSLMode {
 		caCM := resources.InterServiceCAConfigMap(kn)
 		if err := r.ensureNamespaced(ctx, kn, caCM); err != nil {
 			return fmt.Errorf("ensuring inter-service-ca configmap: %w", err)
