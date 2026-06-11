@@ -446,6 +446,9 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 	if err := r.ensureKagentiNamespaceLabel(ctx, kn); err != nil {
 		return err
 	}
+	if err := r.ensureAgentRuntimeCR(ctx, kn, sidecar); err != nil {
+		return err
+	}
 	hasRoute, err := r.deployWorkloads(ctx, kn, cmHashes, sidecar)
 	if err != nil {
 		return err
@@ -1288,6 +1291,77 @@ func (r *KubernautReconciler) ensureKagentiNamespaceLabel(ctx context.Context, k
 	return r.Update(ctx, ns)
 }
 
+// agentRuntimeGVR is the GroupVersionResource for kagenti AgentRuntime CRs.
+var agentRuntimeGVR = schema.GroupVersionResource{
+	Group:    "agent.kagenti.dev",
+	Version:  "v1alpha1",
+	Resource: "agentruntimes",
+}
+
+// ensureAgentRuntimeCR creates or deletes the kagenti AgentRuntime CR for
+// apifrontend. When kagenti sidecar injection is active, the CR tells the
+// kagenti operator to provision authbridge ConfigMaps, SCC RoleBindings,
+// and discovery labels in the kubernaut-system namespace. When sidecar
+// injection is disabled, any existing CR is cleaned up.
+func (r *KubernautReconciler) ensureAgentRuntimeCR(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode) error {
+	log := logf.FromContext(ctx)
+
+	if !r.hasCRD(ctx, "agentruntimes.agent.kagenti.dev") {
+		return nil
+	}
+
+	name := string(resources.ComponentAPIFrontend)
+	want := sidecar != resources.KagentiSidecarNone
+
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: agentRuntimeGVR.Group, Version: agentRuntimeGVR.Version, Kind: "AgentRuntime",
+	})
+	err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: name}, existing)
+
+	if !want {
+		if err == nil {
+			log.Info("deleting AgentRuntime CR (kagenti sidecar disabled)", "name", name)
+			return client.IgnoreNotFound(r.Delete(ctx, existing))
+		}
+		return nil
+	}
+
+	desired := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": agentRuntimeGVR.Group + "/" + agentRuntimeGVR.Version,
+			"kind":       "AgentRuntime",
+			"metadata": map[string]interface{}{
+				"name":      name,
+				"namespace": kn.Namespace,
+				"labels": map[string]interface{}{
+					"app.kubernetes.io/managed-by": "kubernaut-operator",
+					"app.kubernetes.io/part-of":    "kubernaut",
+					"app.kubernetes.io/instance":   kn.Name,
+				},
+			},
+			"spec": map[string]interface{}{
+				"type": "agent",
+				"targetRef": map[string]interface{}{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+					"name":       name,
+				},
+			},
+		},
+	}
+
+	if apierrors.IsNotFound(err) {
+		log.Info("creating AgentRuntime CR for apifrontend", "name", name)
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return fmt.Errorf("checking AgentRuntime CR: %w", err)
+	}
+
+	return nil
+}
+
 func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
 	afHPA := resources.APIFrontendHPA(kn)
 	if err := r.ensureNamespaced(ctx, kn, afHPA); err != nil {
@@ -1448,6 +1522,7 @@ func (r *KubernautReconciler) deleteClusterScopedResources(ctx context.Context, 
 	errs = append(errs, r.deleteWebhookResources(ctx, kn)...)
 	errs = append(errs, r.deleteWorkflowResources(ctx, kn)...)
 	errs = append(errs, r.deleteSPIREResources(ctx, kn)...)
+	errs = append(errs, r.deleteAgentRuntimeCR(ctx, kn)...)
 
 	if len(errs) > 0 {
 		return fmt.Errorf("cluster-scoped cleanup: %w", errors.Join(errs...))
@@ -1467,6 +1542,22 @@ func (r *KubernautReconciler) deleteSPIREResources(ctx context.Context, kn *kube
 	}
 	if err := r.deleteIfExists(ctx, spiffeID); err != nil {
 		return []error{fmt.Errorf("deleting ClusterSPIFFEID %s: %w", spiffeID.GetName(), err)}
+	}
+	return nil
+}
+
+func (r *KubernautReconciler) deleteAgentRuntimeCR(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
+	if !r.hasCRD(ctx, "agentruntimes.agent.kagenti.dev") {
+		return nil
+	}
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: agentRuntimeGVR.Group, Version: agentRuntimeGVR.Version, Kind: "AgentRuntime",
+	})
+	obj.SetName(string(resources.ComponentAPIFrontend))
+	obj.SetNamespace(kn.Namespace)
+	if err := r.deleteIfExists(ctx, obj); err != nil {
+		return []error{fmt.Errorf("deleting AgentRuntime %s: %w", obj.GetName(), err)}
 	}
 	return nil
 }
