@@ -66,7 +66,7 @@ func MigrationJob(kn *kubernautv1alpha1.Kubernaut) (*batchv1.Job, error) {
 		return nil, err
 	}
 
-	sslMode := withDefault(kn.Spec.PostgreSQL.SSLMode, "verify-full")
+	sslMode := withDefault(kn.Spec.PostgreSQL.SSLMode, DefaultSSLMode)
 	dsn := fmt.Sprintf("host=%s port=%d dbname=$(POSTGRES_DB) user=$(POSTGRES_USER) password=$(POSTGRES_PASSWORD) sslmode=%s",
 		kn.Spec.PostgreSQL.Host, pgPort, sslMode)
 
@@ -79,7 +79,7 @@ func MigrationJob(kn *kubernautv1alpha1.Kubernaut) (*batchv1.Job, error) {
 		ReadOnly:  true,
 	}}
 
-	if sslMode == "verify-full" {
+	if sslMode == DefaultSSLMode {
 		dsn += " sslrootcert=" + InterServiceTLSCAFile
 		volumes = append(volumes, optionalConfigMapVolume("tls-ca", InterServiceCAConfigMapName))
 		mounts = append(mounts, corev1.VolumeMount{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true})

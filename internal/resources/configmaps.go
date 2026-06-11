@@ -128,6 +128,7 @@ type dataStorageDatabaseYAML struct {
 	Name            string `json:"name" yaml:"name"`
 	User            string `json:"user" yaml:"user"`
 	SSLMode         string `json:"sslMode" yaml:"sslMode"`
+	SSLRootCert     string `json:"sslRootCert,omitempty" yaml:"sslRootCert,omitempty"`
 	MaxOpenConns    int    `json:"maxOpenConns" yaml:"maxOpenConns"`
 	MaxIdleConns    int    `json:"maxIdleConns" yaml:"maxIdleConns"`
 	ConnMaxLifetime string `json:"connMaxLifetime" yaml:"connMaxLifetime"`
@@ -755,20 +756,27 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string
 	cfg := dataStorageConfigYAML{
 		TLSProfile: o.tlsProfile,
 		Server:     dataStorageServerConfig(kn),
-		Database: dataStorageDatabaseYAML{
-			Host:            kn.Spec.PostgreSQL.Host,
-			Port:            pgPort,
-			Name:            dbName,
-			User:            dbUser,
-			SSLMode:         withDefault(kn.Spec.PostgreSQL.SSLMode, "verify-full"),
-			MaxOpenConns:    100,
-			MaxIdleConns:    20,
-			ConnMaxLifetime: "1h",
-			ConnMaxIdleTime: "10m",
-			SecretsFile:     "/etc/datastorage/secrets/db-secrets.yaml",
-			UsernameKey:     "username",
-			PasswordKey:     "password",
-		},
+		Database: func() dataStorageDatabaseYAML {
+			sslMode := withDefault(kn.Spec.PostgreSQL.SSLMode, DefaultSSLMode)
+			db := dataStorageDatabaseYAML{
+				Host:            kn.Spec.PostgreSQL.Host,
+				Port:            pgPort,
+				Name:            dbName,
+				User:            dbUser,
+				SSLMode:         sslMode,
+				MaxOpenConns:    100,
+				MaxIdleConns:    20,
+				ConnMaxLifetime: "1h",
+				ConnMaxIdleTime: "10m",
+				SecretsFile:     "/etc/datastorage/secrets/db-secrets.yaml",
+				UsernameKey:     "username",
+				PasswordKey:     "password",
+			}
+			if sslMode == DefaultSSLMode {
+				db.SSLRootCert = InterServiceTLSCAFile
+			}
+			return db
+		}(),
 		Redis: dataStorageRedisConfig(kn),
 		Logging: dataStorageLoggingYAML{
 			Level:  withDefault(kn.Spec.DataStorage.Logging.Level, "info"),

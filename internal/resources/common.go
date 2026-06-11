@@ -177,6 +177,10 @@ const InterServiceTLSCertDir = "/etc/tls"
 // the bundle under the key "service-ca.crt".
 const InterServiceTLSCAFile = "/etc/tls-ca/service-ca.crt"
 
+// DefaultSSLMode is the PostgreSQL connection SSL mode used when not
+// explicitly configured in the CR.
+const DefaultSSLMode = "verify-full"
+
 // OCP monitoring stack endpoints. These are always available on OCP clusters
 // and are hardcoded rather than discovered (OCP-only operator).
 // Thanos Querier federates both cluster Prometheus and User Workload

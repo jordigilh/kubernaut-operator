@@ -114,7 +114,7 @@ var _ = Describe("PostgreSQL SSLMode Validation", func() {
 
 	It("accepts sslMode=verify-full", func() {
 		kn := testKubernaut()
-		kn.Spec.PostgreSQL.SSLMode = "verify-full"
+		kn.Spec.PostgreSQL.SSLMode = DefaultSSLMode
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())
 	})
