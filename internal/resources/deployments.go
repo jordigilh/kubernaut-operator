@@ -76,7 +76,7 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 
 	ubiImage, err := ResolveImage(kn, "init-ubi-minimal")
 	if err != nil {
-		ubiImage = DefaultUBIMinimalImage
+		return nil, err
 	}
 	initContainer := corev1.Container{
 		Name:            "wait-for-postgres",
@@ -296,7 +296,7 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deplo
 		})
 		ubiImage, ubiErr := ResolveImage(kn, "init-ubi-minimal")
 		if ubiErr != nil {
-			ubiImage = DefaultUBIMinimalImage
+			return nil, ubiErr
 		}
 		initContainers = append(initContainers, corev1.Container{
 			Name:            "build-ca-bundle",
@@ -348,7 +348,7 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.De
 		})
 		emUbiImage, emErr := ResolveImage(kn, "init-ubi-minimal")
 		if emErr != nil {
-			emUbiImage = DefaultUBIMinimalImage
+			return nil, emErr
 		}
 		initContainers = append(initContainers, corev1.Container{
 			Name:            "wait-for-service-ca",
@@ -534,7 +534,7 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		kaUbiImage, kaErr := ResolveImage(kn, "init-ubi-minimal")
 		if kaErr != nil {
-			kaUbiImage = DefaultUBIMinimalImage
+			return nil, kaErr
 		}
 		initContainers = append(initContainers, corev1.Container{
 			Name:            "build-ca-bundle",

@@ -193,10 +193,6 @@ const (
 	OCPAlertManagerSAName  = "alertmanager-main"
 )
 
-// DefaultUBIMinimalImage is used for wait-for-postgres and CA-bundle init containers.
-// Prefer ResolveImage(kn, "init-ubi-minimal") for mirror-friendly resolution.
-const DefaultUBIMinimalImage = "registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c"
-
 // AllComponents returns the ordered list of all managed components.
 func AllComponents() []string {
 	return []string{
