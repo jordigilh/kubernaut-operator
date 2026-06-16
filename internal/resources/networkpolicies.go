@@ -415,17 +415,19 @@ func baseEgress(extraCap int) []networkingv1.NetworkPolicyEgressRule {
 	return rules
 }
 
-// dnsEgressRule allows DNS resolution via openshift-dns and kube-system
-// (UDP/TCP 53). OCP runs CoreDNS in openshift-dns; vanilla K8s uses
-// kube-system — both are included for portability.
+// dnsEgressRule allows DNS resolution (UDP/TCP 53) to any namespace.
+// An empty namespaceSelector ({}) is the standard Kubernetes pattern
+// for DNS egress — it avoids DNAT-vs-namespaceSelector issues on
+// OVN-Kubernetes where ClusterIP traffic is translated before NP
+// evaluation. Port 53 is safe to open broadly since only DNS servers
+// bind to it.
 func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
 	protoUDP := corev1.ProtocolUDP
 	protoTCP := corev1.ProtocolTCP
 	p53 := intstr.FromInt32(53)
 	return networkingv1.NetworkPolicyEgressRule{
 		To: []networkingv1.NetworkPolicyPeer{
-			{NamespaceSelector: namespaceNameSelector(OCPDNSNamespace)},
-			{NamespaceSelector: namespaceNameSelector("kube-system")},
+			{NamespaceSelector: &metav1.LabelSelector{}},
 		},
 		Ports: []networkingv1.NetworkPolicyPort{
 			{Protocol: &protoUDP, Port: &p53},
