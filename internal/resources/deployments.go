@@ -18,6 +18,7 @@ package resources
 
 import (
 	"fmt"
+	"net"
 	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -74,6 +75,14 @@ func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, err
 func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	pgPort := PostgreSQLPort(kn)
 
+	// Resolve PostgreSQL hostname to a ClusterIP so the ubi-minimal init
+	// container can connect without DNS (its glibc resolver is broken).
+	// Go's built-in resolver works because it queries DNS natively over UDP.
+	pgHost := kn.Spec.PostgreSQL.Host
+	if addrs, err := net.LookupHost(pgHost); err == nil && len(addrs) > 0 {
+		pgHost = addrs[0]
+	}
+
 	ubiImage, err := ResolveImage(kn, "init-ubi-minimal")
 	if err != nil {
 		return nil, err
@@ -83,10 +92,10 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		Image:           ubiImage,
 		ImagePullPolicy: kn.Spec.Image.PullPolicy,
 		Command: []string{"sh", "-c",
-			`while true; do curl -so /dev/null --connect-timeout 2 "http://$PGHOST:$PGPORT/" 2>/dev/null; rc=$?; [ "$rc" -eq 7 ] || [ "$rc" -eq 28 ] || [ "$rc" -eq 6 ] || break; echo "waiting for postgres at $PGHOST:$PGPORT"; sleep 2; done`,
+			`while true; do curl -so /dev/null --connect-timeout 2 "http://$PGHOST:$PGPORT/" 2>/dev/null; rc=$?; [ "$rc" -eq 7 ] || [ "$rc" -eq 28 ] || break; echo "waiting for postgres at $PGHOST:$PGPORT"; sleep 2; done`,
 		},
 		Env: []corev1.EnvVar{
-			{Name: "PGHOST", Value: kn.Spec.PostgreSQL.Host},
+			{Name: "PGHOST", Value: pgHost},
 			{Name: "PGPORT", Value: strconv.FormatInt(int64(pgPort), 10)},
 		},
 		SecurityContext: ContainerSecurityContext(),
