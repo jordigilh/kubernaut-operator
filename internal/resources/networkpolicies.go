@@ -138,7 +138,7 @@ func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 
 	egress := baseEgress(1)
 	egress = append(egress, networkingv1.NetworkPolicyEgressRule{
-		To: ipWorldPeers(),
+		To: sameNamespacePeers(),
 		Ports: []networkingv1.NetworkPolicyPort{
 			{Protocol: &protoTCP, Port: &pPG},
 			{Protocol: &protoTCP, Port: &pValkey},
@@ -403,6 +403,15 @@ func ipWorldPeers() []networkingv1.NetworkPolicyPeer {
 	return []networkingv1.NetworkPolicyPeer{
 		{IPBlock: &networkingv1.IPBlock{CIDR: "0.0.0.0/0"}},
 		{IPBlock: &networkingv1.IPBlock{CIDR: "::/0"}},
+	}
+}
+
+// sameNamespacePeers allows traffic to any pod in the same namespace.
+// This avoids the OVN-Kubernetes limitation where IPBlock rules do not
+// match ClusterIP traffic (DNAT happens before NP evaluation).
+func sameNamespacePeers() []networkingv1.NetworkPolicyPeer {
+	return []networkingv1.NetworkPolicyPeer{
+		{PodSelector: &metav1.LabelSelector{}},
 	}
 }
 
