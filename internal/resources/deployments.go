@@ -83,7 +83,7 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 		Image:           ubiImage,
 		ImagePullPolicy: kn.Spec.Image.PullPolicy,
 		Command: []string{"sh", "-c",
-			`while true; do curl -so /dev/null --connect-timeout 2 "http://$PGHOST:$PGPORT/" 2>/dev/null; rc=$?; [ "$rc" -eq 7 ] || [ "$rc" -eq 28 ] || break; echo "waiting for postgres at $PGHOST:$PGPORT"; sleep 2; done`,
+			`while true; do curl -so /dev/null --connect-timeout 2 "http://$PGHOST:$PGPORT/" 2>/dev/null; rc=$?; [ "$rc" -eq 7 ] || [ "$rc" -eq 28 ] || [ "$rc" -eq 6 ] || break; echo "waiting for postgres at $PGHOST:$PGPORT"; sleep 2; done`,
 		},
 		Env: []corev1.EnvVar{
 			{Name: "PGHOST", Value: kn.Spec.PostgreSQL.Host},

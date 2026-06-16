@@ -191,8 +191,9 @@ const (
 	OCPAlertManagerURL = "https://alertmanager-main.openshift-monitoring.svc:9094"
 )
 
-// OCP monitoring namespace and service account used for signal source RBAC.
+// OCP well-known namespaces.
 const (
+	OCPDNSNamespace        = "openshift-dns"
 	OCPMonitoringNamespace = "openshift-monitoring"
 	OCPAlertManagerSAName  = "alertmanager-main"
 	OCPIngressNamespace    = "openshift-ingress"
