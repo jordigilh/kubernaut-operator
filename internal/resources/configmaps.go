@@ -1620,14 +1620,28 @@ type afAgentCardYAML struct {
 }
 
 type afAuthYAML struct {
-	IssuerURL             string             `json:"issuerURL" yaml:"issuerURL"`
-	Audience              string             `json:"audience" yaml:"audience"`
-	TokenReviewAudience   string             `json:"tokenReviewAudience,omitempty" yaml:"tokenReviewAudience,omitempty"`
-	JWKSURL               string             `json:"jwksURL,omitempty" yaml:"jwksURL,omitempty"`
-	OIDCCAFile            string             `json:"oidcCaFile,omitempty" yaml:"oidcCaFile,omitempty"`
-	AllowInsecureIssuers  bool               `json:"allowInsecureIssuers,omitempty" yaml:"allowInsecureIssuers,omitempty"`
-	KubernetesAuthEnabled bool               `json:"kubernetesAuthEnabled,omitempty" yaml:"kubernetesAuthEnabled,omitempty"`
-	ReplayCache           *afReplayCacheYAML `json:"replayCache,omitempty" yaml:"replayCache,omitempty"`
+	IssuerURL             string              `json:"issuerURL" yaml:"issuerURL"`
+	Audience              string              `json:"audience" yaml:"audience"`
+	TokenReviewAudience   string              `json:"tokenReviewAudience,omitempty" yaml:"tokenReviewAudience,omitempty"`
+	JWKSURL               string              `json:"jwksURL,omitempty" yaml:"jwksURL,omitempty"`
+	OIDCCAFile            string              `json:"oidcCaFile,omitempty" yaml:"oidcCaFile,omitempty"`
+	AllowInsecureIssuers  bool                `json:"allowInsecureIssuers,omitempty" yaml:"allowInsecureIssuers,omitempty"`
+	KubernetesAuthEnabled bool                `json:"kubernetesAuthEnabled,omitempty" yaml:"kubernetesAuthEnabled,omitempty"`
+	ReplayCache           *afReplayCacheYAML  `json:"replayCache,omitempty" yaml:"replayCache,omitempty"`
+	JWTProviders          []afJWTProviderYAML `json:"jwtProviders,omitempty" yaml:"jwtProviders,omitempty"`
+}
+
+type afJWTProviderYAML struct {
+	Name          string               `json:"name" yaml:"name"`
+	IssuerURL     string               `json:"issuerURL" yaml:"issuerURL"`
+	JWKSURL       string               `json:"jwksURL,omitempty" yaml:"jwksURL,omitempty"`
+	Audiences     []string             `json:"audiences" yaml:"audiences"`
+	ClaimMappings *afClaimMappingsYAML `json:"claimMappings,omitempty" yaml:"claimMappings,omitempty"`
+}
+
+type afClaimMappingsYAML struct {
+	Username string `json:"username,omitempty" yaml:"username,omitempty"`
+	Groups   string `json:"groups,omitempty" yaml:"groups,omitempty"`
 }
 
 type afReplayCacheYAML struct {
@@ -1883,6 +1897,27 @@ func afAuthConfig(kn *kubernautv1alpha1.Kubernaut, oidc *KagentiOIDCDefaults) af
 		AllowInsecureIssuers:  insecure,
 		KubernetesAuthEnabled: true,
 	}
+
+	if len(af.Auth.JWTProviders) > 0 {
+		providers := make([]afJWTProviderYAML, 0, len(af.Auth.JWTProviders))
+		for _, p := range af.Auth.JWTProviders {
+			yp := afJWTProviderYAML{
+				Name:      p.Name,
+				IssuerURL: p.IssuerURL,
+				JWKSURL:   p.JWKSURL,
+				Audiences: p.Audiences,
+			}
+			if p.ClaimMappings != nil {
+				yp.ClaimMappings = &afClaimMappingsYAML{
+					Username: p.ClaimMappings.Username,
+					Groups:   p.ClaimMappings.Groups,
+				}
+			}
+			providers = append(providers, yp)
+		}
+		auth.JWTProviders = providers
+	}
+
 	if kn.Spec.Valkey.SecretName != "" {
 		auth.ReplayCache = &afReplayCacheYAML{
 			Backend:         "redis",

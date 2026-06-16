@@ -25,7 +25,9 @@ import (
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
-var _ = Describe("JWKS URL Validation", func() {
+const malformedURL = "not-a-url"
+
+var _ = Describe("KA JWKS URL Validation", func() {
 	withInteractive := func(providers []kubernautv1alpha1.JWTProviderSpec, allowInsecure bool) *kubernautv1alpha1.Kubernaut {
 		kn := testKubernaut()
 		kn.Spec.KubernautAgent.Interactive = &kubernautv1alpha1.InteractiveSpec{
@@ -35,18 +37,27 @@ var _ = Describe("JWKS URL Validation", func() {
 		return kn
 	}
 
+	validProvider := func(name string) kubernautv1alpha1.JWTProviderSpec {
+		return kubernautv1alpha1.JWTProviderSpec{
+			Name:      name,
+			IssuerURL: "https://login.kubernaut.ai/realms/kubernaut",
+			JWKSURL:   "https://login.kubernaut.ai/realms/kubernaut/protocol/openid-connect/certs",
+			Audiences: []string{"kubernaut-apifrontend"},
+		}
+	}
+
 	It("accepts HTTPS JWKS URL", func() {
 		kn := withInteractive([]kubernautv1alpha1.JWTProviderSpec{
-			{Name: "rhbk", JWKSURL: "https://login.kubernaut.ai/realms/kubernaut/protocol/openid-connect/certs"},
+			validProvider("rhbk"),
 		}, false)
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())
 	})
 
 	It("rejects HTTP JWKS URL without override", func() {
-		kn := withInteractive([]kubernautv1alpha1.JWTProviderSpec{
-			{Name: "dev", JWKSURL: "http://mock-jwks:8080/.well-known/jwks.json"},
-		}, false)
+		p := validProvider("dev")
+		p.JWKSURL = "http://mock-jwks:8080/.well-known/jwks.json"
+		kn := withInteractive([]kubernautv1alpha1.JWTProviderSpec{p}, false)
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("scheme must be https"))
@@ -54,37 +65,37 @@ var _ = Describe("JWKS URL Validation", func() {
 	})
 
 	It("accepts HTTP JWKS URL with allowInsecureJWKS=true", func() {
-		kn := withInteractive([]kubernautv1alpha1.JWTProviderSpec{
-			{Name: "dev", JWKSURL: "http://mock-jwks:8080/.well-known/jwks.json"},
-		}, true)
+		p := validProvider("dev")
+		p.JWKSURL = "http://mock-jwks:8080/.well-known/jwks.json"
+		kn := withInteractive([]kubernautv1alpha1.JWTProviderSpec{p}, true)
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())
 	})
 
 	It("rejects JWKS URL longer than 2048 characters", func() {
-		longURL := "https://example.com/" + strings.Repeat("a", 2040)
-		kn := withInteractive([]kubernautv1alpha1.JWTProviderSpec{
-			{Name: "long", JWKSURL: longURL},
-		}, false)
+		p := validProvider("long")
+		p.JWKSURL = "https://example.com/" + strings.Repeat("a", 2040)
+		kn := withInteractive([]kubernautv1alpha1.JWTProviderSpec{p}, false)
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("must be <= 2048 characters"))
 	})
 
 	It("rejects malformed JWKS URL", func() {
-		kn := withInteractive([]kubernautv1alpha1.JWTProviderSpec{
-			{Name: "bad", JWKSURL: "not-a-url"},
-		}, false)
+		p := validProvider("bad")
+		p.JWKSURL = malformedURL
+		kn := withInteractive([]kubernautv1alpha1.JWTProviderSpec{p}, false)
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("must be an absolute URL"))
 	})
 
 	It("reports multiple errors for multiple bad providers", func() {
-		kn := withInteractive([]kubernautv1alpha1.JWTProviderSpec{
-			{Name: "http1", JWKSURL: "http://foo.com/jwks"},
-			{Name: "http2", JWKSURL: "http://bar.com/jwks"},
-		}, false)
+		p1 := validProvider("http1")
+		p1.JWKSURL = "http://foo.com/jwks"
+		p2 := validProvider("http2")
+		p2.JWKSURL = "http://bar.com/jwks"
+		kn := withInteractive([]kubernautv1alpha1.JWTProviderSpec{p1, p2}, false)
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(HaveLen(2))
 	})
@@ -99,6 +110,159 @@ var _ = Describe("JWKS URL Validation", func() {
 		kn := withInteractive(nil, false)
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())
+	})
+})
+
+var _ = Describe("IA-2: AF multi-provider JWT authentication", func() {
+	withAFProviders := func(providers []kubernautv1alpha1.JWTProviderSpec) *kubernautv1alpha1.Kubernaut {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.JWTProviders = providers
+		return kn
+	}
+
+	keycloakProvider := kubernautv1alpha1.JWTProviderSpec{
+		Name:      "keycloak",
+		IssuerURL: "https://keycloak.example.com/realms/kubernaut",
+		JWKSURL:   "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/certs",
+		Audiences: []string{"kubernaut-console"},
+	}
+
+	spireProvider := kubernautv1alpha1.JWTProviderSpec{
+		Name:      "spire",
+		IssuerURL: "https://spire.example.com",
+		Audiences: []string{"kubernaut-workload"},
+	}
+
+	It("IA-2: accepts AF with multiple concurrent OIDC providers for multi-source authentication", func() {
+		kn := withAFProviders([]kubernautv1alpha1.JWTProviderSpec{keycloakProvider, spireProvider})
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty(),
+			"IA-2: platform must support concurrent JWT validation from multiple OIDC issuers")
+	})
+
+	It("IA-2: satisfies authentication requirement when jwtProviders replaces top-level issuerURL", func() {
+		kn := withAFProviders([]kubernautv1alpha1.JWTProviderSpec{keycloakProvider})
+		kn.Spec.APIFrontend.Auth.IssuerURL = ""
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty(),
+			"IA-2: multi-provider config is sufficient — top-level issuerURL not required")
+	})
+
+	It("IA-2: rejects AF deployment without any authentication source", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.IssuerURL = ""
+		kn.Spec.APIFrontend.Auth.JWTProviders = nil
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("IA-2"),
+			"IA-2: error must reference FedRAMP control when no auth source is configured")
+	})
+})
+
+var _ = Describe("SC-23: per-provider audience binding", func() {
+	It("SC-23: rejects provider without audience binding — tokens would lack session authenticity", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
+			{
+				Name:      "no-audience",
+				IssuerURL: "https://idp.example.com",
+				Audiences: []string{},
+			},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).NotTo(BeEmpty())
+		Expect(errs[0].Error()).To(ContainSubstring("audiences"),
+			"SC-23: validation must require at least one audience for session authenticity")
+	})
+
+	It("SC-23: accepts provider with multiple audiences for federated token validation", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
+			{
+				Name:      "multi-aud",
+				IssuerURL: "https://idp.example.com",
+				Audiences: []string{"kubernaut-console", "kubernaut-api"},
+			},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty(),
+			"SC-23: multi-audience binding is valid for federated token validation")
+	})
+})
+
+var _ = Describe("SC-8: JWKS endpoint transmission confidentiality", func() {
+	It("SC-8: rejects non-TLS JWKS endpoint for AF provider", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
+			{
+				Name:      "insecure",
+				IssuerURL: "https://idp.example.com",
+				JWKSURL:   "http://idp.example.com/jwks",
+				Audiences: []string{"kubernaut"},
+			},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("scheme must be https"),
+			"SC-8: token signature verification must use encrypted channel")
+		Expect(errs[0].Error()).To(ContainSubstring("allowInsecureIssuers"),
+			"SC-8: error must reference AF-specific insecure flag")
+	})
+
+	It("SC-8: accepts non-TLS JWKS endpoint when insecure issuers explicitly allowed", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.AllowInsecureIssuers = true
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
+			{
+				Name:      "dev",
+				IssuerURL: "https://idp.example.com",
+				JWKSURL:   "http://idp.example.com/jwks",
+				Audiences: []string{"kubernaut"},
+			},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty(),
+			"SC-8: dev/test environments may use HTTP JWKS when explicitly opted in")
+	})
+
+	It("SC-8: accepts HTTPS JWKS endpoint for AF provider", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
+			{
+				Name:      "secure",
+				IssuerURL: "https://idp.example.com",
+				JWKSURL:   "https://idp.example.com/jwks",
+				Audiences: []string{"kubernaut"},
+			},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty(),
+			"SC-8: HTTPS JWKS endpoints satisfy transmission confidentiality")
+	})
+})
+
+var _ = Describe("CM-6: provider identity uniqueness", func() {
+	It("CM-6: rejects duplicate provider names — configuration must be unambiguous", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
+			{Name: "keycloak", IssuerURL: "https://kc1.example.com", Audiences: []string{"aud1"}},
+			{Name: "keycloak", IssuerURL: "https://kc2.example.com", Audiences: []string{"aud2"}},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).NotTo(BeEmpty())
+		Expect(errs[0].Error()).To(ContainSubstring("duplicate"),
+			"CM-6: duplicate provider names create ambiguous configuration")
+	})
+
+	It("CM-6: rejects provider without issuer identity — configuration incomplete", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
+			{Name: "no-issuer", IssuerURL: "", Audiences: []string{"kubernaut"}},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).NotTo(BeEmpty())
+		Expect(errs[0].Error()).To(ContainSubstring("issuerURL"),
+			"CM-6: each provider must have a non-empty issuerURL for deterministic config")
 	})
 })
 
@@ -137,7 +301,7 @@ var _ = Describe("PostgreSQL SSLMode Validation", func() {
 var _ = Describe("APIFrontend Validation", func() {
 	It("rejects invalid agentCardURL", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.AgentCardURL = "not-a-url"
+		kn.Spec.APIFrontend.AgentCardURL = malformedURL
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("agentCardURL"))
@@ -210,7 +374,7 @@ var _ = Describe("APIFrontend Validation", func() {
 		kn := testKubernautWithAF()
 		disabled := false
 		kn.Spec.APIFrontend.Enabled = &disabled
-		kn.Spec.APIFrontend.AgentCardURL = "not-a-url"
+		kn.Spec.APIFrontend.AgentCardURL = malformedURL
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())
 	})
@@ -511,30 +675,12 @@ var _ = Describe("Interactive Mode Validation", func() {
 })
 
 var _ = Describe("Policy Prerequisite Validation", func() {
-	It("rejects empty aiAnalysis policy configMapName", func() {
-		kn := testKubernaut()
-		kn.Spec.AIAnalysis.Policy.ConfigMapName = ""
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("spec.aiAnalysis.policy.configMapName"))
-		Expect(errs[0].Error()).To(ContainSubstring("approval.rego"))
-	})
-
-	It("rejects empty signalProcessing policy configMapName", func() {
-		kn := testKubernaut()
-		kn.Spec.SignalProcessing.Policy.ConfigMapName = ""
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("spec.signalProcessing.policy.configMapName"))
-		Expect(errs[0].Error()).To(ContainSubstring("policy.rego"))
-	})
-
-	It("rejects both empty policy configMapNames", func() {
+	It("accepts empty policy configMapNames (defaults used)", func() {
 		kn := testKubernaut()
 		kn.Spec.AIAnalysis.Policy.ConfigMapName = ""
 		kn.Spec.SignalProcessing.Policy.ConfigMapName = ""
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
-		Expect(errs).To(HaveLen(2))
+		Expect(errs).To(BeEmpty())
 	})
 
 	It("accepts user-provided policy configMapNames", func() {

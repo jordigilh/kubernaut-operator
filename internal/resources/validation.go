@@ -52,17 +52,8 @@ func validatePostgreSQLSSLMode(kn *kubernautv1alpha1.Kubernaut) []error {
 	return nil
 }
 
-func validatePolicyPrerequisites(kn *kubernautv1alpha1.Kubernaut) []error {
-	var errs []error
-	if kn.Spec.AIAnalysis.Policy.ConfigMapName == "" {
-		errs = append(errs, fmt.Errorf(
-			"spec.aiAnalysis.policy.configMapName: required — provide a ConfigMap containing key \"approval.rego\" with your Rego policy"))
-	}
-	if kn.Spec.SignalProcessing.Policy.ConfigMapName == "" {
-		errs = append(errs, fmt.Errorf(
-			"spec.signalProcessing.policy.configMapName: required — provide a ConfigMap containing key \"policy.rego\" with your Rego policy"))
-	}
-	return errs
+func validatePolicyPrerequisites(_ *kubernautv1alpha1.Kubernaut) []error {
+	return nil
 }
 
 func validateLLMPrerequisites(kn *kubernautv1alpha1.Kubernaut) []error {
@@ -91,14 +82,33 @@ func validateLLMPrerequisites(kn *kubernautv1alpha1.Kubernaut) []error {
 	return errs
 }
 
-func validateJWKSProviders(kn *kubernautv1alpha1.Kubernaut) []error {
-	interactive := kn.Spec.KubernautAgent.Interactive
-	if interactive == nil || len(interactive.JWTProviders) == 0 {
-		return nil
-	}
+// validateJWTProviderList validates a slice of JWT providers, checking issuerURL,
+// audiences, name uniqueness, and JWKS URL validity. The insecureFlagPath
+// parameter is used in error messages to reference the correct parent flag
+// (e.g. "spec.kubernautAgent.interactive.allowInsecureJWKS").
+func validateJWTProviderList(providers []kubernautv1alpha1.JWTProviderSpec, basePath string, allowInsecure bool, insecureFlagPath string) []error {
 	var errs []error
-	for i, p := range interactive.JWTProviders {
-		path := fmt.Sprintf("spec.kubernautAgent.interactive.jwtProviders[%d]", i)
+	seen := make(map[string]bool, len(providers))
+
+	for i, p := range providers {
+		path := fmt.Sprintf("%s.jwtProviders[%d]", basePath, i)
+
+		if seen[p.Name] {
+			errs = append(errs, fmt.Errorf("%s.name: duplicate provider name %q", path, p.Name))
+		}
+		seen[p.Name] = true
+
+		if p.IssuerURL == "" {
+			errs = append(errs, fmt.Errorf("%s.issuerURL: required", path))
+		}
+
+		if len(p.Audiences) == 0 {
+			errs = append(errs, fmt.Errorf("%s.audiences: at least one audience required", path))
+		}
+
+		if p.JWKSURL == "" {
+			continue
+		}
 
 		if len(p.JWKSURL) > maxJWKSURLLength {
 			errs = append(errs, fmt.Errorf("%s.jwksURL: must be <= %d characters (got %d)", path, maxJWKSURLLength, len(p.JWKSURL)))
@@ -115,13 +125,26 @@ func validateJWKSProviders(kn *kubernautv1alpha1.Kubernaut) []error {
 			continue
 		}
 
-		if !interactive.AllowInsecureJWKS && strings.ToLower(u.Scheme) != "https" {
+		if !allowInsecure && strings.ToLower(u.Scheme) != "https" {
 			errs = append(errs, fmt.Errorf(
-				"%s.jwksURL: scheme must be https (got %q); set spec.kubernautAgent.interactive.allowInsecureJWKS=true to permit HTTP for dev/test",
-				path, u.Scheme))
+				"%s.jwksURL: scheme must be https (got %q); set %s=true to permit HTTP for dev/test",
+				path, u.Scheme, insecureFlagPath))
 		}
 	}
 	return errs
+}
+
+func validateJWKSProviders(kn *kubernautv1alpha1.Kubernaut) []error {
+	interactive := kn.Spec.KubernautAgent.Interactive
+	if interactive == nil || len(interactive.JWTProviders) == 0 {
+		return nil
+	}
+	return validateJWTProviderList(
+		interactive.JWTProviders,
+		"spec.kubernautAgent.interactive",
+		interactive.AllowInsecureJWKS,
+		"spec.kubernautAgent.interactive.allowInsecureJWKS",
+	)
 }
 
 func validateAPIFrontend(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) []error {
@@ -138,10 +161,12 @@ func validateAPIFrontend(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecar
 		}
 	}
 
-	// When kagenti sidecar is active, issuerURL is auto-detected from the
-	// kagenti authbridge-config (FedRAMP IA-2). Only require it when
-	// kagenti is not present and the operator cannot derive it.
-	if af.Auth.IssuerURL == "" && sidecar == KagentiSidecarNone {
+	// IA-2: When jwtProviders is configured, multi-provider JWT auth
+	// satisfies the authentication requirement — top-level issuerURL is
+	// not needed. When kagenti sidecar is active, issuerURL is
+	// auto-detected. Only require issuerURL when neither source is available.
+	hasMultiProvider := len(af.Auth.JWTProviders) > 0
+	if af.Auth.IssuerURL == "" && sidecar == KagentiSidecarNone && !hasMultiProvider {
 		errs = append(errs, fmt.Errorf(
 			"spec.apiFrontend.auth.issuerURL: required — API Frontend requires OAuth/OIDC authentication (FedRAMP IA-2, CM-6)"))
 	}
@@ -151,6 +176,16 @@ func validateAPIFrontend(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecar
 	}
 
 	errs = append(errs, validateToolRoleBindings(kn)...)
+
+	if hasMultiProvider {
+		errs = append(errs, validateJWTProviderList(
+			af.Auth.JWTProviders,
+			"spec.apiFrontend.auth",
+			af.Auth.AllowInsecureIssuers,
+			"spec.apiFrontend.auth.allowInsecureIssuers",
+		)...)
+	}
+
 	return errs
 }
 

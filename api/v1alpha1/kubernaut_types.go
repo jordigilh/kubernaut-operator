@@ -650,25 +650,44 @@ func (s *InteractiveSpec) InteractiveEnabled() bool {
 	return s.Enabled == nil || *s.Enabled
 }
 
-// JWTProviderSpec configures a single OIDC JWT provider.
+// JWTProviderSpec configures a single OIDC JWT provider for multi-issuer
+// authentication. Shared by KA interactive and API Frontend auth.
 type JWTProviderSpec struct {
-	// Human-readable name for this provider (e.g. "rhbk", "auth0").
+	// Human-readable name for this provider (e.g. "rhbk", "spire").
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
 
-	// JWKS endpoint URL. Must use HTTPS unless allowInsecureJWKS is true.
+	// OIDC issuer URL for token validation.
 	// +kubebuilder:validation:MinLength=1
+	IssuerURL string `json:"issuerURL"`
+
+	// JWKS endpoint URL for token signature verification. When empty,
+	// derived from IssuerURL. Must use HTTPS unless the parent's
+	// allowInsecureJWKS/allowInsecureIssuers flag is true.
 	// +kubebuilder:validation:MaxLength=2048
-	JWKSURL string `json:"jwksURL"`
-
-	// Expected audience claim value.
 	// +optional
-	Audience string `json:"audience,omitempty"`
+	JWKSURL string `json:"jwksURL,omitempty"`
 
-	// Expected issuer claim value.
+	// Expected audience claim values for session authenticity (FedRAMP SC-23).
+	// +kubebuilder:validation:MinItems=1
+	Audiences []string `json:"audiences"`
+
+	// Claim mappings for username and group extraction (FedRAMP AC-6).
 	// +optional
-	Issuer string `json:"issuer,omitempty"`
+	ClaimMappings *ClaimMappingsSpec `json:"claimMappings,omitempty"`
+}
+
+// ClaimMappingsSpec configures JWT claim extraction for identity and group
+// membership, enabling RBAC-scoped tool authorization.
+type ClaimMappingsSpec struct {
+	// JWT claim name for username extraction.
+	// +optional
+	Username string `json:"username,omitempty"`
+
+	// JWT claim name for group membership extraction.
+	// +optional
+	Groups string `json:"groups,omitempty"`
 }
 
 // SessionSpec configures KA session behaviour.
@@ -1121,6 +1140,8 @@ type ToolRoleBinding struct {
 // APIFrontendAuthSpec configures OIDC authentication for the API Frontend.
 type APIFrontendAuthSpec struct {
 	// OIDC issuer URL (e.g. "https://login.kubernaut.ai/realms/kubernaut").
+	// Used for single-provider auth or kagenti auto-detection fallback.
+	// When jwtProviders is non-empty, multi-provider config takes precedence.
 	// +optional
 	IssuerURL string `json:"issuerURL,omitempty"`
 
@@ -1151,6 +1172,14 @@ type APIFrontendAuthSpec struct {
 	// (FedRAMP SC-8: transmission confidentiality). Intended for dev/test only.
 	// +optional
 	AllowInsecureIssuers bool `json:"allowInsecureIssuers,omitempty"`
+
+	// Multi-provider JWT configuration (FedRAMP IA-2: multi-source auth).
+	// When non-empty, the AF validates tokens against all configured
+	// providers concurrently. Takes precedence over the single-provider
+	// issuerURL/audience/jwksURL fields above.
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	JWTProviders []JWTProviderSpec `json:"jwtProviders,omitempty"`
 }
 
 // APIFrontendRateLimitSpec configures request rate limiting for the API Frontend.
@@ -1279,36 +1308,11 @@ type LoggingSpec struct {
 type NetworkPoliciesSpec struct {
 	// Whether the operator creates NetworkPolicy resources.
 	// When true, a default-deny posture is applied with explicit allow rules
-	// matching the upstream Helm chart traffic matrix.
+	// matching the upstream Helm chart traffic matrix. Monitoring namespace,
+	// ingress namespaces, and API server egress are auto-detected.
 	// +kubebuilder:default=false
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
-
-	// API server CIDR for egress rules (e.g. "10.0.0.0/16").
-	// When empty, API server egress rules are omitted.
-	// +optional
-	APIServerCIDR string `json:"apiServerCIDR,omitempty"`
-
-	// Monitoring namespace for Prometheus scrape ingress (e.g. "openshift-monitoring").
-	// +optional
-	MonitoringNamespace string `json:"monitoringNamespace,omitempty"`
-
-	// Gateway ingress namespaces. Namespaces allowed to send traffic to the Gateway.
-	// +optional
-	GatewayIngressNamespaces []string `json:"gatewayIngressNamespaces,omitempty"`
-
-	// IngressNamespace is the namespace where the OpenShift Router (or ingress
-	// controller) runs. AF needs ingress from this namespace for Route-based traffic.
-	// Typically "openshift-ingress" on OCP.
-	// +optional
-	IngressNamespace string `json:"ingressNamespace,omitempty"`
-
-	// ExternalEgressCIDRs lists CIDRs that AF is allowed to reach for external
-	// services (OIDC/Keycloak JWKS endpoints, etc.) on port 443.
-	// Example: ["10.128.0.0/14"] for cluster-internal Keycloak, or
-	// ["0.0.0.0/0"] to allow any external HTTPS destination.
-	// +optional
-	ExternalEgressCIDRs []string `json:"externalEgressCIDRs,omitempty"`
 }
 
 // NetworkPoliciesEnabled returns true when NP creation is active (default: false).

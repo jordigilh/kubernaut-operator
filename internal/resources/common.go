@@ -195,6 +195,7 @@ const (
 const (
 	OCPMonitoringNamespace = "openshift-monitoring"
 	OCPAlertManagerSAName  = "alertmanager-main"
+	OCPIngressNamespace    = "openshift-ingress"
 )
 
 // AllComponents returns the ordered list of all managed components.
