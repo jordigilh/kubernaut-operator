@@ -75,24 +75,25 @@ func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, err
 func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	pgPort := PostgreSQLPort(kn)
 
-	// Resolve PostgreSQL hostname to a ClusterIP so the ubi-minimal init
-	// container can connect without DNS (its glibc resolver is broken).
-	// Go's built-in resolver works because it queries DNS natively over UDP.
+	// Resolve PostgreSQL hostname to a ClusterIP so the init container can
+	// connect without DNS — glibc's resolver is broken under OVN-Kubernetes
+	// NetworkPolicies. Go's built-in resolver works because it queries DNS
+	// natively over UDP.
 	pgHost := kn.Spec.PostgreSQL.Host
 	if addrs, err := net.LookupHost(pgHost); err == nil && len(addrs) > 0 {
 		pgHost = addrs[0]
 	}
 
-	ubiImage, err := ResolveImage(kn, "init-ubi-minimal")
+	migrateImage, err := ResolveImage(kn, "db-migrate")
 	if err != nil {
 		return nil, err
 	}
 	initContainer := corev1.Container{
 		Name:            "wait-for-postgres",
-		Image:           ubiImage,
+		Image:           migrateImage,
 		ImagePullPolicy: kn.Spec.Image.PullPolicy,
-		Command: []string{"sh", "-c",
-			`while true; do curl -so /dev/null --connect-timeout 2 "http://$PGHOST:$PGPORT/" 2>/dev/null; rc=$?; [ "$rc" -eq 7 ] || [ "$rc" -eq 28 ] || break; echo "waiting for postgres at $PGHOST:$PGPORT"; sleep 2; done`,
+		Command: []string{"bash", "-c",
+			`until bash -c "echo >/dev/tcp/$PGHOST/$PGPORT" 2>/dev/null; do echo "waiting for postgres at $PGHOST:$PGPORT"; sleep 2; done`,
 		},
 		Env: []corev1.EnvVar{
 			{Name: "PGHOST", Value: pgHost},
@@ -887,7 +888,7 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 						Image:           img,
 						ImagePullPolicy: kn.Spec.Image.PullPolicy,
 						Ports:           ports,
-						Env:             p.Env,
+						Env:             append(p.Env, corev1.EnvVar{Name: "GODEBUG", Value: "netdns=go"}),
 						Args:            p.Args,
 						Resources:       MergeResources(p.Resources),
 						SecurityContext: ContainerSecurityContext(),

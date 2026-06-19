@@ -759,13 +759,14 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) 
 func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	pgPort := PostgreSQLPort(kn)
+	pgHost := resolveHostToIP(kn.Spec.PostgreSQL.Host)
 	cfg := dataStorageConfigYAML{
 		TLSProfile: o.tlsProfile,
 		Server:     dataStorageServerConfig(kn),
 		Database: func() dataStorageDatabaseYAML {
 			sslMode := withDefault(kn.Spec.PostgreSQL.SSLMode, DefaultSSLMode)
 			db := dataStorageDatabaseYAML{
-				Host:            kn.Spec.PostgreSQL.Host,
+				Host:            pgHost,
 				Port:            pgPort,
 				Name:            dbName,
 				User:            dbUser,
@@ -837,8 +838,13 @@ func dataStorageServerConfig(kn *kubernautv1alpha1.Kubernaut) dataStorageServerY
 }
 
 func dataStorageRedisConfig(kn *kubernautv1alpha1.Kubernaut) dataStorageRedisYAML {
+	valkeyHost := resolveHostToIP(kn.Spec.Valkey.Host)
+	valkeyPort := kn.Spec.Valkey.Port
+	if valkeyPort == 0 {
+		valkeyPort = DefaultValkeyPort
+	}
 	r := dataStorageRedisYAML{
-		Addr:             ValkeyAddr(&kn.Spec.Valkey),
+		Addr:             fmt.Sprintf("%s:%d", valkeyHost, valkeyPort),
 		DB:               0,
 		DLQStreamName:    "dlq-stream",
 		DLQMaxLen:        1000,

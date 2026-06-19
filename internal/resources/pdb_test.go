@@ -28,17 +28,12 @@ var _ = Describe("PodDisruptionBudgets", func() {
 		Expect(pdbs).To(HaveLen(len(ActiveComponents(kn))))
 	})
 
-	It("sets MaxUnavailable=1 on default components and MinAvailable=1 on DS/AF", func() {
+	It("sets MaxUnavailable=1 on all components", func() {
 		kn := testKubernaut()
 		for _, pdb := range PodDisruptionBudgets(kn) {
-			switch pdb.Name {
-			case ComponentDataStorage, ComponentAPIFrontend:
-				Expect(pdb.Spec.MinAvailable).NotTo(BeNil(), "PDB %q should have MinAvailable set", pdb.Name)
-				Expect(pdb.Spec.MinAvailable.IntValue()).To(Equal(1), "PDB %q MinAvailable = %d, want 1", pdb.Name, pdb.Spec.MinAvailable.IntValue())
-			default:
-				Expect(pdb.Spec.MaxUnavailable).NotTo(BeNil(), "PDB %q should have MaxUnavailable set", pdb.Name)
-				Expect(pdb.Spec.MaxUnavailable.IntValue()).To(Equal(1), "PDB %q MaxUnavailable = %d, want 1", pdb.Name, pdb.Spec.MaxUnavailable.IntValue())
-			}
+			Expect(pdb.Spec.MaxUnavailable).NotTo(BeNil(), "PDB %q should have MaxUnavailable set", pdb.Name)
+			Expect(pdb.Spec.MaxUnavailable.IntValue()).To(Equal(1), "PDB %q MaxUnavailable = %d, want 1", pdb.Name, pdb.Spec.MaxUnavailable.IntValue())
+			Expect(pdb.Spec.MinAvailable).To(BeNil(), "PDB %q should not have MinAvailable set (causes PodDisruptionBudgetAtLimit with 1 replica)", pdb.Name)
 		}
 	})
 

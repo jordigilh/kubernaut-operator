@@ -1222,6 +1222,32 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include aianalyses get/list/watch")
 	})
 
+	It("includes effectivenessassessments read-only access for status/subscribe EA streaming (#176)", func() {
+		kn := testKubernautWithAF()
+		roles := ClusterRoles(kn)
+		var afRole *rbacv1.ClusterRole
+		for _, r := range roles {
+			if r.Name == clusterRoleName(kn, "apifrontend-role") {
+				afRole = r
+				break
+			}
+		}
+		Expect(afRole).NotTo(BeNil())
+
+		found := false
+		for _, rule := range afRole.Rules {
+			if len(rule.APIGroups) > 0 && rule.APIGroups[0] == kubernautAPIGroup {
+				for _, res := range rule.Resources {
+					if res == "effectivenessassessments" {
+						Expect(rule.Verbs).To(ContainElements("get", "list", "watch"))
+						found = true
+					}
+				}
+			}
+		}
+		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include effectivenessassessments get/list/watch")
+	})
+
 	It("includes tokenreviews create for TokenReview auth", func() {
 		kn := testKubernautWithAF()
 		roles := ClusterRoles(kn)

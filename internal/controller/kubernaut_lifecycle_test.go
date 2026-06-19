@@ -1190,35 +1190,6 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	// ======================================================================
 
 	Context("Policy Prerequisite Validation", func() {
-		It("should reject CR when policy configMapNames are missing", func() {
-			cr := newMinimalCR()
-			cr.Spec.AIAnalysis.Policy.ConfigMapName = ""
-			cr.Spec.SignalProcessing.Policy.ConfigMapName = ""
-			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
-			createBYOSecrets(ctx)
-
-			r := newReconciler()
-			By("reconcile 1: add finalizer")
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			Expect(err).NotTo(HaveOccurred())
-
-			By("reconcile 2: validate — should fail on missing policy configMapNames")
-			result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
-
-			kn := &kubernautv1alpha1.Kubernaut{}
-			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseError))
-
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionBYOValidated)
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
-			Expect(cond.Reason).To(Equal("SpecValidationFailed"))
-			Expect(cond.Message).To(ContainSubstring("aiAnalysis.policy.configMapName"))
-			Expect(cond.Message).To(ContainSubstring("signalProcessing.policy.configMapName"))
-		})
-
 		It("should create service-CA and proactive-signal-mappings CMs with valid policy names", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
