@@ -26,6 +26,9 @@ spec:
       provider: vertex_ai
       model: claude-sonnet-4-6
       credentialsSecretName: llm-credentials
+      phaseModels:
+        workflow_discovery:
+          model: claude-haiku-4-6
       # runtimeConfigMapName: custom-llm-runtime  # uncomment for BYO LLM config
 
   # AIAnalysis controller — requires a Rego policy ConfigMap.
@@ -44,5 +47,6 @@ spec:
 
   # Gateway settings — Route creates an OCP edge-TLS Route.
   gateway:
+    enabled: false
     route:
-      enabled: true
+      enabled: false
