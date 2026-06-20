@@ -609,14 +609,22 @@ type kaInteractiveYAML struct {
 }
 
 type llmRuntimeYAML struct {
-	Provider       string  `json:"provider,omitempty" yaml:"provider,omitempty"`
-	Model          string  `json:"model" yaml:"model"`
-	Endpoint       string  `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
-	Temperature    float64 `json:"temperature" yaml:"temperature"` //nolint:musttag
-	MaxRetries     int     `json:"maxRetries" yaml:"maxRetries"`
-	TimeoutSeconds int     `json:"timeoutSeconds" yaml:"timeoutSeconds"`
-	VertexProject  string  `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
-	VertexLocation string  `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
+	Provider       string                          `json:"provider,omitempty" yaml:"provider,omitempty"`
+	Model          string                          `json:"model" yaml:"model"`
+	Endpoint       string                          `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	Temperature    float64                         `json:"temperature" yaml:"temperature"` //nolint:musttag
+	MaxRetries     int                             `json:"maxRetries" yaml:"maxRetries"`
+	TimeoutSeconds int                             `json:"timeoutSeconds" yaml:"timeoutSeconds"`
+	VertexProject  string                          `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
+	VertexLocation string                          `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
+	PhaseModels    map[string]llmPhaseOverrideYAML `json:"phaseModels,omitempty" yaml:"phaseModels,omitempty"`
+}
+
+type llmPhaseOverrideYAML struct {
+	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
+	Model    string `json:"model,omitempty" yaml:"model,omitempty"`
+	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	APIKey   string `json:"apiKey,omitempty" yaml:"apiKey,omitempty"`
 }
 
 type authWebhookWebhookYAML struct {
@@ -1420,6 +1428,17 @@ func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1
 		TimeoutSeconds: intPtrDefault(kn.Spec.KubernautAgent.LLM.TimeoutSeconds, 120),
 		VertexProject:  kn.Spec.KubernautAgent.LLM.VertexProject,
 		VertexLocation: kn.Spec.KubernautAgent.LLM.VertexLocation,
+	}
+	if len(kn.Spec.KubernautAgent.LLM.PhaseModels) > 0 {
+		cfg.PhaseModels = make(map[string]llmPhaseOverrideYAML, len(kn.Spec.KubernautAgent.LLM.PhaseModels))
+		for phase, override := range kn.Spec.KubernautAgent.LLM.PhaseModels {
+			cfg.PhaseModels[phase] = llmPhaseOverrideYAML{
+				Provider: override.Provider,
+				Model:    override.Model,
+				Endpoint: override.Endpoint,
+				APIKey:   override.APIKey,
+			}
+		}
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {

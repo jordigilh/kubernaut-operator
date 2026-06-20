@@ -1199,6 +1199,28 @@ spec:
                             description: Token endpoint URL.
                             type: string
                         type: object
+                      phaseModels:
+                        additionalProperties:
+                          description: |-
+                            LLMPhaseOverrideSpec allows a specific agent phase to use a different LLM.
+                            All fields are optional; non-zero fields override the corresponding base values.
+                          properties:
+                            apiKey:
+                              type: string
+                            endpoint:
+                              type: string
+                            model:
+                              type: string
+                            provider:
+                              type: string
+                          type: object
+                        description: |-
+                          Per-phase LLM model overrides. Keys are agent phase names
+                          (rca, workflow_discovery, validation). Each override can specify
+                          a different model (and optionally provider/endpoint) for that phase,
+                          allowing faster/cheaper models for structured tasks like workflow discovery.
+                          When absent, all phases use the default model above.
+                        type: object
                       provider:
                         description: LLM provider name (e.g. "openai", "vertexai",
                           "bedrock", "azure").

@@ -873,6 +873,27 @@ type LLMSpec struct {
 	// and mounts this ConfigMap instead. Must contain key "llm-runtime.yaml".
 	// +optional
 	RuntimeConfigMapName string `json:"runtimeConfigMapName,omitempty"`
+
+	// Per-phase LLM model overrides. Keys are agent phase names
+	// (rca, workflow_discovery, validation). Each override can specify
+	// a different model (and optionally provider/endpoint) for that phase,
+	// allowing faster/cheaper models for structured tasks like workflow discovery.
+	// When absent, all phases use the default model above.
+	// +optional
+	PhaseModels map[string]LLMPhaseOverrideSpec `json:"phaseModels,omitempty"`
+}
+
+// LLMPhaseOverrideSpec allows a specific agent phase to use a different LLM.
+// All fields are optional; non-zero fields override the corresponding base values.
+type LLMPhaseOverrideSpec struct {
+	// +optional
+	Provider string `json:"provider,omitempty"`
+	// +optional
+	Model string `json:"model,omitempty"`
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+	// +optional
+	APIKey string `json:"apiKey,omitempty"`
 }
 
 // OAuth2Spec configures OAuth2 token-based authentication for LLM endpoints.

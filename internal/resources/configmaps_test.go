@@ -868,6 +868,50 @@ var _ = Describe("ConfigMaps", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(cm).To(BeNil(), "KubernautAgentLLMRuntimeConfigMap should return nil when runtimeConfigMapName is set (BYO)")
 			})
+
+			It("includes phaseModels when configured", func() {
+				kn := testKubernaut()
+				kn.Spec.KubernautAgent.LLM.PhaseModels = map[string]kubernautv1alpha1.LLMPhaseOverrideSpec{
+					"workflow_discovery": {
+						Model: "claude-haiku-4-6",
+					},
+				}
+				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				data := cm.Data["llm-runtime.yaml"]
+				Expect(data).To(ContainSubstring("phaseModels:"), "should contain phaseModels key, got:\n%s", data)
+				Expect(data).To(ContainSubstring("workflow_discovery:"), "should contain workflow_discovery phase, got:\n%s", data)
+				Expect(data).To(ContainSubstring("model: claude-haiku-4-6"), "should contain haiku model, got:\n%s", data)
+			})
+
+			It("omits phaseModels when not configured", func() {
+				kn := testKubernaut()
+				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				data := cm.Data["llm-runtime.yaml"]
+				Expect(data).NotTo(ContainSubstring("phaseModels"), "should not contain phaseModels when empty, got:\n%s", data)
+			})
+
+			It("propagates all override fields for a phase", func() {
+				kn := testKubernaut()
+				kn.Spec.KubernautAgent.LLM.PhaseModels = map[string]kubernautv1alpha1.LLMPhaseOverrideSpec{
+					"rca": {
+						Provider: "anthropic",
+						Model:    "claude-sonnet-4-6",
+						Endpoint: "https://api.anthropic.com",
+					},
+				}
+				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				data := cm.Data["llm-runtime.yaml"]
+				for _, want := range []string{
+					"provider: anthropic",
+					"model: claude-sonnet-4-6",
+					"endpoint: https://api.anthropic.com",
+				} {
+					Expect(data).To(ContainSubstring(want), "phase override should contain %q, got:\n%s", want, data)
+				}
+			})
 		})
 	})
 
