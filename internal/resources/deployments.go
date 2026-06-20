@@ -792,6 +792,7 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidec
 	dep.Labels[KagentiA2AProtocolLabel] = ""
 	dep.Spec.Template.Labels[KagentiAgentTypeLabel] = "agent"
 	dep.Spec.Template.Labels[KagentiA2AProtocolLabel] = ""
+	dep.Spec.Template.Labels[KagentiClientRegistrationInjectLabel] = LabelValueTrue
 
 	return dep, nil
 }

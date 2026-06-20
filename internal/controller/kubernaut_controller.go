@@ -21,7 +21,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -1393,19 +1392,11 @@ func (r *KubernautReconciler) ensureAgentRuntimeCR(ctx context.Context, kn *kube
 	return nil
 }
 
-// authbridgeBypassConfig is the subset of the authbridge runtime ConfigMap
-// YAML that we parse/patch to ensure /metrics is in the bypass list.
-type authbridgeBypassConfig struct {
-	Bypass struct {
-		InboundPaths []string `json:"inbound_paths" yaml:"inbound_paths"`
-	} `json:"bypass" yaml:"bypass"`
-}
-
-// ensureAuthbridgeMetricsBypass patches the kagenti-generated per-workload
-// authbridge ConfigMap to add /metrics to bypass.inbound_paths. Without this,
-// the envoy sidecar returns 401 on the metrics endpoint, breaking Prometheus
-// scraping. Upstream fix tracked in kagenti/kagenti-extensions#524.
-func (r *KubernautReconciler) ensureAuthbridgeMetricsBypass(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode) error {
+// patchAuthbridgeConfig reads the kagenti-generated authbridge ConfigMap,
+// unmarshals config.yaml as a generic map, calls patchFn to apply modifications,
+// and writes back only if patchFn signals a change. Returns nil without error
+// when the sidecar is inactive, AF is disabled, or the ConfigMap doesn't exist yet.
+func (r *KubernautReconciler) patchAuthbridgeConfig(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode, desc string, patchFn func(map[string]interface{}) (changed bool)) error {
 	if sidecar == resources.KagentiSidecarNone || !kn.Spec.APIFrontendEnabled() {
 		return nil
 	}
@@ -1424,29 +1415,14 @@ func (r *KubernautReconciler) ensureAuthbridgeMetricsBypass(ctx context.Context,
 		return nil
 	}
 
-	var cfg authbridgeBypassConfig
-	if err := sigsyaml.Unmarshal([]byte(raw), &cfg); err != nil {
-		return nil
-	}
-
-	if slices.Contains(cfg.Bypass.InboundPaths, "/metrics") {
-		return nil
-	}
-
-	cfg.Bypass.InboundPaths = append(cfg.Bypass.InboundPaths, "/metrics")
-
-	// Re-parse the full config as generic map to preserve all fields,
-	// then overlay the patched bypass block.
 	var full map[string]interface{}
 	if err := sigsyaml.Unmarshal([]byte(raw), &full); err != nil {
 		return nil
 	}
-	bypassMap, _ := full["bypass"].(map[string]interface{})
-	if bypassMap == nil {
-		bypassMap = make(map[string]interface{})
-		full["bypass"] = bypassMap
+
+	if !patchFn(full) {
+		return nil
 	}
-	bypassMap["inbound_paths"] = cfg.Bypass.InboundPaths
 
 	patched, err := sigsyaml.Marshal(full)
 	if err != nil {
@@ -1455,12 +1431,37 @@ func (r *KubernautReconciler) ensureAuthbridgeMetricsBypass(ctx context.Context,
 
 	cm.Data["config.yaml"] = string(patched)
 	if err := r.Update(ctx, cm); err != nil {
-		return fmt.Errorf("patching authbridge config %s with /metrics bypass: %w", cmName, err)
+		return fmt.Errorf("patching authbridge config %s with %s: %w", cmName, desc, err)
 	}
 
-	logf.FromContext(ctx).Info("patched authbridge config with /metrics bypass", "configmap", cmName)
+	logf.FromContext(ctx).Info("patched authbridge config", "configmap", cmName, "patch", desc)
 	return nil
 }
+
+// ensureAuthbridgeMetricsBypass patches the kagenti-generated per-workload
+// authbridge ConfigMap to add /metrics to bypass.inbound_paths. Without this,
+// the envoy sidecar returns 401 on the metrics endpoint, breaking Prometheus
+// scraping. Upstream fix tracked in kagenti/kagenti-extensions#524.
+func (r *KubernautReconciler) ensureAuthbridgeMetricsBypass(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode) error {
+	return r.patchAuthbridgeConfig(ctx, kn, sidecar, "/metrics bypass", func(full map[string]interface{}) bool {
+		bypassMap, _ := full["bypass"].(map[string]interface{})
+		if bypassMap == nil {
+			bypassMap = make(map[string]interface{})
+			full["bypass"] = bypassMap
+		}
+
+		pathsRaw, _ := bypassMap["inbound_paths"].([]interface{})
+		for _, p := range pathsRaw {
+			if s, ok := p.(string); ok && s == "/metrics" {
+				return false
+			}
+		}
+
+		bypassMap["inbound_paths"] = append(pathsRaw, "/metrics")
+		return true
+	})
+}
+
 
 func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
 	afHPA := resources.APIFrontendHPA(kn)

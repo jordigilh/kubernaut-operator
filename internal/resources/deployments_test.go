@@ -1181,6 +1181,14 @@ var _ = Describe("APIFrontendDeployment", func() {
 				"NO_PROXY should not be set when no sidecar is injected")
 		}
 	})
+
+	It("sets kagenti client-registration-inject label on pod template", func() {
+		kn := testKubernautWithAF()
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(dep.Spec.Template.Labels).To(HaveKeyWithValue(
+			KagentiClientRegistrationInjectLabel, LabelValueTrue))
+	})
 })
 
 var _ = Describe("DataStorageDeployment with Valkey TLS", func() {

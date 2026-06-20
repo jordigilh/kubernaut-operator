@@ -146,8 +146,9 @@ const LLMProviderVertexAI = "vertex_ai"
 
 // Kagenti discovery labels for A2A agent auto-discovery.
 const (
-	KagentiAgentTypeLabel   = "kagenti.io/type"
-	KagentiA2AProtocolLabel = "protocol.kagenti.io/a2a"
+	KagentiAgentTypeLabel                  = "kagenti.io/type"
+	KagentiA2AProtocolLabel                = "protocol.kagenti.io/a2a"
+	KagentiClientRegistrationInjectLabel   = "kagenti.io/client-registration-inject"
 )
 
 // AgentTLSPortName is the service port name that signals to the kagenti-operator
