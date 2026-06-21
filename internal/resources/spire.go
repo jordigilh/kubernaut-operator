@@ -28,6 +28,18 @@ const (
 	spireAPIVersion = "v1alpha1"
 )
 
+// AFSpiffeID returns the resolved SPIFFE ID for the apifrontend ServiceAccount.
+// Used by the controller to patch the authbridge ConfigMap with a concrete
+// identity value (as opposed to the {{ .TrustDomain }} template used in
+// ClusterSPIFFEID which is resolved server-side by SPIRE).
+func AFSpiffeID(kn *kubernautv1alpha1.Kubernaut) string {
+	td := "localtest.me"
+	if kn.Spec.APIFrontend.SPIRE.TrustDomain != "" {
+		td = kn.Spec.APIFrontend.SPIRE.TrustDomain
+	}
+	return fmt.Sprintf("spiffe://%s/ns/%s/sa/%s", td, kn.Namespace, ComponentAPIFrontend)
+}
+
 // ClusterSPIFFEID builds an unstructured ClusterSPIFFEID resource that
 // registers a SPIFFE identity for the apifrontend ServiceAccount. Returns
 // nil when SPIRE is not enabled in the CR.

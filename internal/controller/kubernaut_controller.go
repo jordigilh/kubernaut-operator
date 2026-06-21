@@ -468,6 +468,9 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 	if err := r.ensureAuthbridgeMetricsBypass(ctx, kn, sidecar); err != nil {
 		return err
 	}
+	if err := r.ensureAuthbridgeClientID(ctx, kn, sidecar); err != nil {
+		return err
+	}
 	hasRoute, err := r.deployWorkloads(ctx, kn, cmHashes, sidecar)
 	if err != nil {
 		return err
@@ -1495,6 +1498,27 @@ func (r *KubernautReconciler) ensureAuthbridgeMetricsBypass(ctx context.Context,
 	})
 }
 
+// ensureAuthbridgeClientID patches the kagenti-generated authbridge ConfigMap
+// to include an inline identity.client_id (the AF's SPIFFE ID). Without this,
+// the authbridge cannot validate the aud claim of inbound JWTs and rejects all
+// tokens. This replaces the kagenti-client-registration sidecar which required
+// keycloak-admin-secret in the app namespace (issue #171).
+func (r *KubernautReconciler) ensureAuthbridgeClientID(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode) error {
+	return r.patchAuthbridgeConfig(ctx, kn, sidecar, "identity.client_id", func(full map[string]interface{}) bool {
+		identityMap, _ := full["identity"].(map[string]interface{})
+		if identityMap == nil {
+			identityMap = make(map[string]interface{})
+			full["identity"] = identityMap
+		}
+
+		wantID := resources.AFSpiffeID(kn)
+		if current, _ := identityMap["client_id"].(string); current == wantID {
+			return false
+		}
+		identityMap["client_id"] = wantID
+		return true
+	})
+}
 
 func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
 	afHPA := resources.APIFrontendHPA(kn)

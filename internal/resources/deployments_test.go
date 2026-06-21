@@ -1182,12 +1182,11 @@ var _ = Describe("APIFrontendDeployment", func() {
 		}
 	})
 
-	It("sets kagenti client-registration-inject label on pod template", func() {
+	It("does not set kagenti client-registration-inject label on pod template", func() {
 		kn := testKubernautWithAF()
 		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(dep.Spec.Template.Labels).To(HaveKeyWithValue(
-			KagentiClientRegistrationInjectLabel, LabelValueTrue))
+		Expect(dep.Spec.Template.Labels).NotTo(HaveKey(KagentiClientRegistrationInjectLabel))
 	})
 })
 
