@@ -1930,7 +1930,7 @@ func afAuthConfig(kn *kubernautv1alpha1.Kubernaut, oidc *KagentiOIDCDefaults) af
 				Name:      p.Name,
 				IssuerURL: p.IssuerURL,
 				JWKSURL:   p.JWKSURL,
-				Audiences: p.Audiences,
+				Audiences: append([]string(nil), p.Audiences...),
 			}
 			if p.ClaimMappings != nil {
 				yp.ClaimMappings = &afClaimMappingsYAML{
@@ -1940,7 +1940,17 @@ func afAuthConfig(kn *kubernautv1alpha1.Kubernaut, oidc *KagentiOIDCDefaults) af
 			}
 			providers = append(providers, yp)
 		}
+		if kn.Spec.ConsoleEnabled() {
+			injectConsoleAudience(providers)
+		}
 		auth.JWTProviders = providers
+	} else if kn.Spec.ConsoleEnabled() && issuer != "" {
+		auth.JWTProviders = []afJWTProviderYAML{{
+			Name:      "default",
+			IssuerURL: issuer,
+			JWKSURL:   jwks,
+			Audiences: []string{auth.Audience, ComponentConsole},
+		}}
 	}
 
 	if kn.Spec.Valkey.SecretName != "" {
@@ -1952,6 +1962,22 @@ func afAuthConfig(kn *kubernautv1alpha1.Kubernaut, oidc *KagentiOIDCDefaults) af
 		}
 	}
 	return auth
+}
+
+// injectConsoleAudience ensures each JWT provider accepts tokens issued for the
+// console OIDC client. Called only when the console is enabled; when disabled the
+// audience is simply absent from the regenerated configmap, effectively revoking
+// console access on the next AF restart.
+func injectConsoleAudience(providers []afJWTProviderYAML) {
+	for i := range providers {
+		for _, a := range providers[i].Audiences {
+			if a == ComponentConsole {
+				goto next
+			}
+		}
+		providers[i].Audiences = append(providers[i].Audiences, ComponentConsole)
+	next:
+	}
 }
 
 func afRBACConfig(kn *kubernautv1alpha1.Kubernaut) afRBACYAML {
