@@ -107,9 +107,6 @@ spec:
   # --- NetworkPolicies (default: disabled) ---
   # networkPolicies:
   #   enabled: true
-  #   apiServerCIDR: "10.0.0.0/16"
-  #   monitoringNamespace: "openshift-monitoring"
-  #   gatewayIngressNamespaces:
   #     - "openshift-ingress"
 
   # --- Policies (from Step 2: Configure Services) ---

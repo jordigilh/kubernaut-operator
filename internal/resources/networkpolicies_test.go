@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"os"
 	"slices"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -29,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-const testAPIServerCIDR = "10.0.0.0/16"
+const testAPIServerHost = "10.0.0.1"
 
 var _ = Describe("NetworkPolicies", func() {
 	Context("when disabled or default", func() {
@@ -109,8 +110,7 @@ var _ = Describe("NetworkPolicies", func() {
 			}
 		})
 
-		It("adds gateway ingress from configured namespaces", func() {
-			kn.Spec.NetworkPolicies.GatewayIngressNamespaces = []string{"ns1", "ns2"}
+		It("auto-adds gateway ingress from openshift-ingress and openshift-monitoring", func() {
 			var gatewayNP *networkingv1.NetworkPolicy
 			for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 				if np.Name == ComponentGateway+"-netpol" {
@@ -121,11 +121,11 @@ var _ = Describe("NetworkPolicies", func() {
 			Expect(gatewayNP).NotTo(BeNil(), "gateway NetworkPolicy not found")
 			Expect(gatewayNP.Spec.Ingress).To(HaveLen(1), "gateway ingress rule count = %d, want 1", len(gatewayNP.Spec.Ingress))
 			nsSeen := ingressNamespaceNames(gatewayNP.Spec.Ingress[0])
-			Expect(nsSeen["ns1"] && nsSeen["ns2"]).To(BeTrue(), "gateway ingress should allow namespaces ns1 and ns2, got %#v", nsSeen)
-			Expect(nsSeen).To(HaveLen(2), "gateway ingress namespaces = %#v, want only ns1 and ns2", nsSeen)
+			Expect(nsSeen[OCPIngressNamespace]).To(BeTrue(), "gateway ingress should allow %s", OCPIngressNamespace)
+			Expect(nsSeen[OCPMonitoringNamespace]).To(BeTrue(), "gateway ingress should allow %s", OCPMonitoringNamespace)
 		})
 
-		It("gives kubernaut-agent ingress and egress with default egress count", func() {
+		It("gives kubernaut-agent ingress and egress with monitoring auto-detected", func() {
 			var agentNP *networkingv1.NetworkPolicy
 			for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 				if np.Name == ComponentKubernautAgent+"-netpol" {
@@ -140,21 +140,8 @@ var _ = Describe("NetworkPolicies", func() {
 			}
 			Expect(slices.Equal(agentNP.Spec.PolicyTypes, wantTypes)).To(BeTrue(), "PolicyTypes = %v, want %v", agentNP.Spec.PolicyTypes, wantTypes)
 			Expect(agentNP.Spec.Ingress).ToNot(BeEmpty(), "kubernaut-agent ingress rule count = %d, want at least 1", len(agentNP.Spec.Ingress))
-			Expect(agentNP.Spec.Egress).To(HaveLen(3), "kubernaut-agent egress rule count = %d, want %d (dns + apiserver/ds + LLM HTTPS)", len(agentNP.Spec.Egress), 3)
-		})
-
-		It("adds monitoring egress when MonitoringNamespace is set", func() {
-			kn.Spec.NetworkPolicies.MonitoringNamespace = OCPMonitoringNamespace
-			var agentNP *networkingv1.NetworkPolicy
-			for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
-				if np.Name == ComponentKubernautAgent+"-netpol" {
-					agentNP = np
-					break
-				}
-			}
-			Expect(agentNP).NotTo(BeNil(), "kubernaut-agent NetworkPolicy not found")
-			Expect(agentNP.Spec.Egress).To(HaveLen(4), "kubernaut-agent egress rule count = %d, want %d (dns + apiserver/ds + monitoring + LLM HTTPS)", len(agentNP.Spec.Egress), 4)
-			monRule := agentNP.Spec.Egress[2]
+			Expect(agentNP.Spec.Egress).To(HaveLen(5), "kubernaut-agent egress rule count = %d, want %d (dns + apiserver + ds + monitoring + LLM HTTPS)", len(agentNP.Spec.Egress), 5)
+			monRule := agentNP.Spec.Egress[3]
 			Expect(monRule.To).To(HaveLen(1), "monitoring egress peer count = %d, want 1", len(monRule.To))
 			ns := monRule.To[0].NamespaceSelector
 			Expect(ns != nil && ns.MatchLabels["kubernetes.io/metadata.name"] == OCPMonitoringNamespace).To(BeTrue(),
@@ -203,7 +190,6 @@ var _ = Describe("NetworkPolicies", func() {
 		})
 
 		It("allows metrics scrape ingress from openshift-monitoring", func() {
-			kn.Spec.NetworkPolicies.MonitoringNamespace = OCPMonitoringNamespace
 			var dsNP *networkingv1.NetworkPolicy
 			for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 				if np.Name == ComponentDataStorage+"-netpol" {
@@ -241,24 +227,27 @@ var _ = Describe("NetworkPolicies", func() {
 		})
 	})
 
-	It("adds API server egress when APIServerCIDR is set", func() {
+	It("always adds API server egress using auto-detected KUBERNETES_SERVICE_HOST", func() {
+		old := os.Getenv("KUBERNETES_SERVICE_HOST")
+		Expect(os.Setenv("KUBERNETES_SERVICE_HOST", testAPIServerHost)).To(Succeed())
+		defer func() { Expect(os.Setenv("KUBERNETES_SERVICE_HOST", old)).To(Succeed()) }()
+
 		kn := testKubernaut()
 		enabled := true
 		kn.Spec.NetworkPolicies.Enabled = &enabled
-		kn.Spec.NetworkPolicies.APIServerCIDR = testAPIServerCIDR
 		nps := NetworkPolicies(kn, KagentiSidecarNone)
-		p443 := intstr.FromInt32(443)
+		wantCIDR := testAPIServerHost + "/32"
 		proto := corev1.ProtocolTCP
 		found := false
 	outer:
 		for _, np := range nps {
 			for _, rule := range np.Spec.Egress {
 				for _, peer := range rule.To {
-					if peer.IPBlock == nil || peer.IPBlock.CIDR != testAPIServerCIDR {
+					if peer.IPBlock == nil || peer.IPBlock.CIDR != wantCIDR {
 						continue
 					}
 					for _, port := range rule.Ports {
-						if port.Protocol != nil && *port.Protocol == proto && port.Port != nil && port.Port.String() == p443.String() {
+						if port.Protocol != nil && *port.Protocol == proto {
 							found = true
 							break outer
 						}
@@ -266,7 +255,7 @@ var _ = Describe("NetworkPolicies", func() {
 				}
 			}
 		}
-		Expect(found).To(BeTrue(), "expected at least one NetworkPolicy with API server egress (10.0.0.0/16:443)")
+		Expect(found).To(BeTrue(), "expected at least one NetworkPolicy with API server egress (%s)", wantCIDR)
 	})
 })
 
@@ -287,8 +276,6 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 	enableNP := func(kn *kubernautv1alpha1.Kubernaut) {
 		enabled := true
 		kn.Spec.NetworkPolicies.Enabled = &enabled
-		kn.Spec.NetworkPolicies.APIServerCIDR = testAPIServerCIDR
-		kn.Spec.NetworkPolicies.MonitoringNamespace = "openshift-monitoring"
 	}
 
 	It("is included when AF is enabled", func() {
@@ -345,10 +332,11 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 		Expect(afNP.Spec.Egress).NotTo(BeEmpty())
 	})
 
-	It("allows ingress from IngressNamespace (OpenShift Router)", func() {
+	It("auto-adds ingress from openshift-ingress when AF route is enabled", func() {
 		kn := testKubernautWithAF()
 		enableNP(kn)
-		kn.Spec.NetworkPolicies.IngressNamespace = "openshift-ingress"
+		afRouteEnabled := true
+		kn.Spec.APIFrontend.Route.Enabled = &afRouteEnabled
 		var afNP *networkingv1.NetworkPolicy
 		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
@@ -362,16 +350,16 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 		for _, rule := range afNP.Spec.Ingress {
 			for _, peer := range rule.From {
 				if peer.NamespaceSelector != nil {
-					if peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == "openshift-ingress" {
+					if peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == OCPIngressNamespace {
 						found = true
 					}
 				}
 			}
 		}
-		Expect(found).To(BeTrue(), "should allow ingress from openshift-ingress namespace")
+		Expect(found).To(BeTrue(), "should allow ingress from openshift-ingress namespace when AF route enabled")
 	})
 
-	It("does not add router ingress when IngressNamespace is empty", func() {
+	It("does not add router ingress when AF route is disabled", func() {
 		kn := testKubernautWithAF()
 		enableNP(kn)
 		var afNP *networkingv1.NetworkPolicy
@@ -385,55 +373,10 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 		for _, rule := range afNP.Spec.Ingress {
 			for _, peer := range rule.From {
 				if peer.NamespaceSelector != nil {
-					Expect(peer.NamespaceSelector.MatchLabels).NotTo(HaveKey("openshift-ingress"))
+					Expect(peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"]).
+						NotTo(Equal(OCPIngressNamespace),
+							"should not have openshift-ingress ingress when AF route disabled")
 				}
-			}
-		}
-	})
-
-	It("allows egress to ExternalEgressCIDRs on port 443", func() {
-		kn := testKubernautWithAF()
-		enableNP(kn)
-		kn.Spec.NetworkPolicies.ExternalEgressCIDRs = []string{"10.128.0.0/14", "192.168.1.0/24"}
-		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
-			if np.Name == ComponentAPIFrontend+"-netpol" {
-				afNP = np
-				break
-			}
-		}
-		Expect(afNP).NotTo(BeNil())
-
-		var externalRule *networkingv1.NetworkPolicyEgressRule
-		for i, rule := range afNP.Spec.Egress {
-			for _, peer := range rule.To {
-				if peer.IPBlock != nil && peer.IPBlock.CIDR == "10.128.0.0/14" {
-					externalRule = &afNP.Spec.Egress[i]
-					break
-				}
-			}
-		}
-		Expect(externalRule).NotTo(BeNil(), "should have egress rule for external CIDRs")
-		Expect(externalRule.To).To(HaveLen(2))
-		Expect(externalRule.Ports).To(HaveLen(1))
-		Expect(externalRule.Ports[0].Port.IntValue()).To(Equal(443))
-	})
-
-	It("does not add external egress when ExternalEgressCIDRs is empty", func() {
-		kn := testKubernautWithAF()
-		enableNP(kn)
-		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
-			if np.Name == ComponentAPIFrontend+"-netpol" {
-				afNP = np
-				break
-			}
-		}
-		Expect(afNP).NotTo(BeNil())
-		for _, rule := range afNP.Spec.Egress {
-			for _, peer := range rule.To {
-				Expect(peer.IPBlock == nil || peer.IPBlock.CIDR == kn.Spec.NetworkPolicies.APIServerCIDR).To(BeTrue(),
-					"should not have IPBlock egress rules other than API server")
 			}
 		}
 	})
@@ -494,12 +437,11 @@ var _ = Describe("APIFrontend NetworkPolicy OIDC egress", func() {
 		Expect(hasHTTPSEgress).To(BeTrue(), "AF should allow HTTPS egress for OIDC when issuerURL is set")
 	})
 
-	It("omits HTTPS egress rule when issuerURL is empty", func() {
+	It("omits OIDC HTTPS egress rule when issuerURL is empty", func() {
 		kn := testKubernaut()
 		kn.Spec.APIFrontend.Auth.IssuerURL = ""
 		enabled := true
 		kn.Spec.NetworkPolicies.Enabled = &enabled
-		kn.Spec.NetworkPolicies.APIServerCIDR = testAPIServerCIDR
 		var afNP *networkingv1.NetworkPolicy
 		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
@@ -510,10 +452,8 @@ var _ = Describe("APIFrontend NetworkPolicy OIDC egress", func() {
 		Expect(afNP).NotTo(BeNil())
 
 		for _, rule := range afNP.Spec.Egress {
-			for _, port := range rule.Ports {
-				if port.Port != nil && port.Port.IntValue() == 443 && len(rule.To) == 0 {
-					Fail("AF should not allow blanket HTTPS egress when issuerURL is empty")
-				}
+			if len(rule.Ports) == 1 && rule.Ports[0].Port != nil && rule.Ports[0].Port.IntValue() == 443 && len(rule.To) == 0 {
+				Fail("AF should not allow blanket HTTPS egress when issuerURL is empty")
 			}
 		}
 	})

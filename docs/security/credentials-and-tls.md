@@ -70,6 +70,6 @@ The following table summarizes primary east-west trust patterns for the managed 
 
 Optional `NetworkPolicy` resources tighten pod-to-pod and egress traffic. They are disabled by default (`spec.networkPolicies.enabled: false`). When enabled, the operator creates a default-deny posture plus component-specific allow rules.
 
-Enabling NetworkPolicies requires `spec.networkPolicies.apiServerCIDR` so workloads can reach the Kubernetes API server. Policies constrain Gateway ingress, inter-component gRPC and HTTPS paths, and monitoring egress toward Thanos and AlertManager as defined in the operator implementation.
+When enabled, the operator auto-detects the Kubernetes API server IP, monitoring namespace (`openshift-monitoring`), and ingress namespace (`openshift-ingress`). Policies constrain Gateway ingress, inter-component gRPC and HTTPS paths, and monitoring egress toward Thanos and AlertManager as defined in the operator implementation.
 
 For questions about this document or security practices, contact **jgil@redhat.com** on behalf of **Kubernaut AI**.

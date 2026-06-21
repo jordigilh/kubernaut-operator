@@ -225,7 +225,10 @@ spec:
                           session authenticity).'
                         type: string
                       issuerURL:
-                        description: OIDC issuer URL (e.g. "https://login.kubernaut.ai/realms/kubernaut").
+                        description: |-
+                          OIDC issuer URL (e.g. "https://login.kubernaut.ai/realms/kubernaut").
+                          Used for single-provider auth or kagenti auto-detection fallback.
+                          When jwtProviders is non-empty, multi-provider config takes precedence.
                         type: string
                       jwksURL:
                         description: |-
@@ -233,6 +236,60 @@ spec:
                           (FedRAMP IA-5: authenticator management). When empty, derived from
                           issuerURL + "/protocol/openid-connect/certs".
                         type: string
+                      jwtProviders:
+                        description: |-
+                          Multi-provider JWT configuration (FedRAMP IA-2: multi-source auth).
+                          When non-empty, the AF validates tokens against all configured
+                          providers concurrently. Takes precedence over the single-provider
+                          issuerURL/audience/jwksURL fields above.
+                        items:
+                          description: |-
+                            JWTProviderSpec configures a single OIDC JWT provider for multi-issuer
+                            authentication. Shared by KA interactive and API Frontend auth.
+                          properties:
+                            audiences:
+                              description: Expected audience claim values for session
+                                authenticity (FedRAMP SC-23).
+                              items:
+                                type: string
+                              minItems: 1
+                              type: array
+                            claimMappings:
+                              description: Claim mappings for username and group extraction
+                                (FedRAMP AC-6).
+                              properties:
+                                groups:
+                                  description: JWT claim name for group membership
+                                    extraction.
+                                  type: string
+                                username:
+                                  description: JWT claim name for username extraction.
+                                  type: string
+                              type: object
+                            issuerURL:
+                              description: OIDC issuer URL for token validation.
+                              minLength: 1
+                              type: string
+                            jwksURL:
+                              description: |-
+                                JWKS endpoint URL for token signature verification. When empty,
+                                derived from IssuerURL. Must use HTTPS unless the parent's
+                                allowInsecureJWKS/allowInsecureIssuers flag is true.
+                              maxLength: 2048
+                              type: string
+                            name:
+                              description: Human-readable name for this provider (e.g.
+                                "rhbk", "spire").
+                              maxLength: 63
+                              minLength: 1
+                              type: string
+                          required:
+                          - audiences
+                          - issuerURL
+                          - name
+                          type: object
+                        maxItems: 8
+                        type: array
                       oidcCaFile:
                         description: |-
                           Path to CA bundle for OIDC/JWKS TLS trust (FedRAMP IA-5). When set,
@@ -1033,29 +1090,49 @@ spec:
                       jwtProviders:
                         description: JWT providers for OIDC-based identity delegation.
                         items:
-                          description: JWTProviderSpec configures a single OIDC JWT
-                            provider.
+                          description: |-
+                            JWTProviderSpec configures a single OIDC JWT provider for multi-issuer
+                            authentication. Shared by KA interactive and API Frontend auth.
                           properties:
-                            audience:
-                              description: Expected audience claim value.
-                              type: string
-                            issuer:
-                              description: Expected issuer claim value.
+                            audiences:
+                              description: Expected audience claim values for session
+                                authenticity (FedRAMP SC-23).
+                              items:
+                                type: string
+                              minItems: 1
+                              type: array
+                            claimMappings:
+                              description: Claim mappings for username and group extraction
+                                (FedRAMP AC-6).
+                              properties:
+                                groups:
+                                  description: JWT claim name for group membership
+                                    extraction.
+                                  type: string
+                                username:
+                                  description: JWT claim name for username extraction.
+                                  type: string
+                              type: object
+                            issuerURL:
+                              description: OIDC issuer URL for token validation.
+                              minLength: 1
                               type: string
                             jwksURL:
-                              description: JWKS endpoint URL. Must use HTTPS unless
-                                allowInsecureJWKS is true.
+                              description: |-
+                                JWKS endpoint URL for token signature verification. When empty,
+                                derived from IssuerURL. Must use HTTPS unless the parent's
+                                allowInsecureJWKS/allowInsecureIssuers flag is true.
                               maxLength: 2048
-                              minLength: 1
                               type: string
                             name:
                               description: Human-readable name for this provider (e.g.
-                                "rhbk", "auth0").
+                                "rhbk", "spire").
                               maxLength: 63
                               minLength: 1
                               type: string
                           required:
-                          - jwksURL
+                          - audiences
+                          - issuerURL
                           - name
                           type: object
                         maxItems: 8
@@ -1354,43 +1431,14 @@ spec:
                   NetworkPolicies controls the creation of Kubernetes NetworkPolicy
                   resources that enforce a default-deny posture with explicit allow rules.
                 properties:
-                  apiServerCIDR:
-                    description: |-
-                      API server CIDR for egress rules (e.g. "10.0.0.0/16").
-                      When empty, API server egress rules are omitted.
-                    type: string
                   enabled:
                     default: false
                     description: |-
                       Whether the operator creates NetworkPolicy resources.
                       When true, a default-deny posture is applied with explicit allow rules
-                      matching the upstream Helm chart traffic matrix.
+                      matching the upstream Helm chart traffic matrix. Monitoring namespace,
+                      ingress namespaces, and API server egress are auto-detected.
                     type: boolean
-                  externalEgressCIDRs:
-                    description: |-
-                      ExternalEgressCIDRs lists CIDRs that AF is allowed to reach for external
-                      services (OIDC/Keycloak JWKS endpoints, etc.) on port 443.
-                      Example: ["10.128.0.0/14"] for cluster-internal Keycloak, or
-                      ["0.0.0.0/0"] to allow any external HTTPS destination.
-                    items:
-                      type: string
-                    type: array
-                  gatewayIngressNamespaces:
-                    description: Gateway ingress namespaces. Namespaces allowed to
-                      send traffic to the Gateway.
-                    items:
-                      type: string
-                    type: array
-                  ingressNamespace:
-                    description: |-
-                      IngressNamespace is the namespace where the OpenShift Router (or ingress
-                      controller) runs. AF needs ingress from this namespace for Route-based traffic.
-                      Typically "openshift-ingress" on OCP.
-                    type: string
-                  monitoringNamespace:
-                    description: Monitoring namespace for Prometheus scrape ingress
-                      (e.g. "openshift-monitoring").
-                    type: string
                 type: object
               notification:
                 description: Notification controller settings.

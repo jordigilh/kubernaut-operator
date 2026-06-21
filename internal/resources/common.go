@@ -18,6 +18,7 @@ package resources
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"regexp"
 	"strings"
@@ -191,10 +192,12 @@ const (
 	OCPAlertManagerURL = "https://alertmanager-main.openshift-monitoring.svc:9094"
 )
 
-// OCP monitoring namespace and service account used for signal source RBAC.
+// OCP well-known namespaces.
 const (
+	OCPDNSNamespace        = "openshift-dns"
 	OCPMonitoringNamespace = "openshift-monitoring"
 	OCPAlertManagerSAName  = "alertmanager-main"
+	OCPIngressNamespace    = "openshift-ingress"
 )
 
 // AllComponents returns the ordered list of all managed components.
@@ -438,6 +441,18 @@ func ValkeyAddr(spec *kubernautv1alpha1.ValkeySpec) string {
 		port = DefaultValkeyPort
 	}
 	return fmt.Sprintf("%s:%d", spec.Host, port)
+}
+
+// resolveHostToIP resolves a hostname to its first IP address using Go's
+// pure-Go DNS resolver. If the host is already an IP or resolution fails,
+// the original value is returned unchanged. This is used to inject ClusterIPs
+// into configs so that application containers bypass glibc DNS resolution,
+// which is broken under OVN-Kubernetes NetworkPolicies.
+func resolveHostToIP(host string) string {
+	if addrs, err := net.LookupHost(host); err == nil && len(addrs) > 0 {
+		return addrs[0]
+	}
+	return host
 }
 
 // validHostname matches DNS names and IPv4/IPv6 addresses. Rejects strings

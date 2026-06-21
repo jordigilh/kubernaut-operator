@@ -17,10 +17,15 @@ limitations under the License.
 package resources
 
 import (
+	"context"
+	"os"
+
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
@@ -54,39 +59,28 @@ func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode
 }
 
 func gatewayNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
-	spec := kn.Spec.NetworkPolicies
 	protoTCP := corev1.ProtocolTCP
 	p8443 := intstr.FromInt32(PortHTTPS)
 
-	var ingressFrom []networkingv1.NetworkPolicyPeer
-	for _, ns := range spec.GatewayIngressNamespaces {
-		if ns == "" {
-			continue
-		}
-		ingressFrom = append(ingressFrom, networkingv1.NetworkPolicyPeer{
-			NamespaceSelector: namespaceNameSelector(ns),
-		})
+	ingressFrom := []networkingv1.NetworkPolicyPeer{
+		{NamespaceSelector: namespaceNameSelector(OCPIngressNamespace)},
 	}
-	if spec.MonitoringNamespace != "" {
+	if kn.Spec.Monitoring.MonitoringEnabled() {
 		ingressFrom = append(ingressFrom, networkingv1.NetworkPolicyPeer{
-			NamespaceSelector: namespaceNameSelector(spec.MonitoringNamespace),
+			NamespaceSelector: namespaceNameSelector(OCPMonitoringNamespace),
 		})
 	}
 
-	ingress := []networkingv1.NetworkPolicyIngressRule{}
-	if len(ingressFrom) > 0 {
-		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+	ingress := []networkingv1.NetworkPolicyIngressRule{
+		{
 			From: ingressFrom,
 			Ports: []networkingv1.NetworkPolicyPort{
 				{Protocol: &protoTCP, Port: &p8443},
 			},
-		})
+		},
 	}
 
-	egress := []networkingv1.NetworkPolicyEgressRule{dnsEgressRule()}
-	if r := apiServerEgressRule(spec.APIServerCIDR); r != nil {
-		egress = append(egress, *r)
-	}
+	egress := baseEgress(1)
 	egress = append(egress, datastorageEgressRule())
 
 	return &networkingv1.NetworkPolicy{
@@ -104,7 +98,6 @@ func gatewayNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Network
 }
 
 func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
-	spec := kn.Spec.NetworkPolicies
 	protoTCP := corev1.ProtocolTCP
 	p8443 := intstr.FromInt32(PortHTTPS)
 
@@ -132,8 +125,8 @@ func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 			},
 		},
 	}
-	if m := metricsIngressRule(spec.MonitoringNamespace); m != nil {
-		ingress = append(ingress, *m)
+	if kn.Spec.Monitoring.MonitoringEnabled() {
+		ingress = append(ingress, *metricsIngressRule(OCPMonitoringNamespace))
 	}
 
 	valkeyPort := kn.Spec.Valkey.Port
@@ -143,12 +136,9 @@ func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 	pPG := intstr.FromInt32(PostgreSQLPort(kn))
 	pValkey := intstr.FromInt32(valkeyPort)
 
-	egress := []networkingv1.NetworkPolicyEgressRule{dnsEgressRule()}
-	if r := apiServerEgressRule(spec.APIServerCIDR); r != nil {
-		egress = append(egress, *r)
-	}
+	egress := baseEgress(1)
 	egress = append(egress, networkingv1.NetworkPolicyEgressRule{
-		To: ipWorldPeers(),
+		To: sameNamespacePeers(),
 		Ports: []networkingv1.NetworkPolicyPort{
 			{Protocol: &protoTCP, Port: &pPG},
 			{Protocol: &protoTCP, Port: &pValkey},
@@ -189,15 +179,11 @@ func workflowExecutionNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networking
 }
 
 func notificationNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
-	spec := kn.Spec.NetworkPolicies
 	protoTCP := corev1.ProtocolTCP
 	p443 := intstr.FromInt32(443)
 
 	ingress := metricsOnlyIngress(kn)
-	egress := []networkingv1.NetworkPolicyEgressRule{dnsEgressRule()}
-	if r := apiServerEgressRule(spec.APIServerCIDR); r != nil {
-		egress = append(egress, *r)
-	}
+	egress := baseEgress(2)
 	egress = append(egress, datastorageEgressRule(), networkingv1.NetworkPolicyEgressRule{
 		To: ipWorldPeers(),
 		Ports: []networkingv1.NetworkPolicyPort{
@@ -220,16 +206,12 @@ func notificationNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Ne
 }
 
 func effectivenessMonitorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
-	spec := kn.Spec.NetworkPolicies
 	protoTCP := corev1.ProtocolTCP
 	p9090 := intstr.FromInt32(PortMetrics)
 	p9093 := intstr.FromInt32(9093)
 
 	ingress := metricsOnlyIngress(kn)
-	egress := []networkingv1.NetworkPolicyEgressRule{dnsEgressRule()}
-	if r := apiServerEgressRule(spec.APIServerCIDR); r != nil {
-		egress = append(egress, *r)
-	}
+	egress := baseEgress(2)
 	egress = append(egress, datastorageEgressRule(), networkingv1.NetworkPolicyEgressRule{
 		To: ipWorldPeers(),
 		Ports: []networkingv1.NetworkPolicyPort{
@@ -253,26 +235,18 @@ func effectivenessMonitorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *network
 }
 
 func authWebhookNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
-	spec := kn.Spec.NetworkPolicies
 	protoTCP := corev1.ProtocolTCP
 	p9443 := intstr.FromInt32(PortWebhookServer)
 
-	var ingress []networkingv1.NetworkPolicyIngressRule
-	if spec.APIServerCIDR != "" {
-		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
-			From: []networkingv1.NetworkPolicyPeer{
-				{IPBlock: &networkingv1.IPBlock{CIDR: spec.APIServerCIDR}},
-			},
+	ingress := []networkingv1.NetworkPolicyIngressRule{
+		{
 			Ports: []networkingv1.NetworkPolicyPort{
 				{Protocol: &protoTCP, Port: &p9443},
 			},
-		})
+		},
 	}
 
-	egress := []networkingv1.NetworkPolicyEgressRule{dnsEgressRule()}
-	if r := apiServerEgressRule(spec.APIServerCIDR); r != nil {
-		egress = append(egress, *r)
-	}
+	egress := baseEgress(1)
 	egress = append(egress, datastorageEgressRule())
 
 	return &networkingv1.NetworkPolicy{
@@ -290,7 +264,6 @@ func authWebhookNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 }
 
 func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
-	spec := kn.Spec.NetworkPolicies
 	protoTCP := corev1.ProtocolTCP
 	p8443 := intstr.FromInt32(PortHTTPS)
 
@@ -309,17 +282,14 @@ func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.
 			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protoTCP, Port: &p8443}},
 		},
 	}
-	if m := metricsIngressRule(spec.MonitoringNamespace); m != nil {
-		ingress = append(ingress, *m)
+	if kn.Spec.Monitoring.MonitoringEnabled() {
+		ingress = append(ingress, *metricsIngressRule(OCPMonitoringNamespace))
 	}
 
-	egress := []networkingv1.NetworkPolicyEgressRule{dnsEgressRule()}
-	if r := apiServerEgressRule(spec.APIServerCIDR); r != nil {
-		egress = append(egress, *r)
-	}
+	egress := baseEgress(3)
 	egress = append(egress, datastorageEgressRule())
-	if spec.MonitoringNamespace != "" {
-		egress = append(egress, monitoringStackEgressRule(spec.MonitoringNamespace))
+	if kn.Spec.Monitoring.MonitoringEnabled() {
+		egress = append(egress, monitoringStackEgressRule(OCPMonitoringNamespace))
 	}
 	if kn.Spec.KubernautAgent.LLM.Provider != "" {
 		p443 := intstr.FromInt32(443)
@@ -346,19 +316,14 @@ func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.
 }
 
 func metricsOnlyIngress(kn *kubernautv1alpha1.Kubernaut) []networkingv1.NetworkPolicyIngressRule {
-	spec := kn.Spec.NetworkPolicies
-	if m := metricsIngressRule(spec.MonitoringNamespace); m != nil {
-		return []networkingv1.NetworkPolicyIngressRule{*m}
+	if kn.Spec.Monitoring.MonitoringEnabled() {
+		return []networkingv1.NetworkPolicyIngressRule{*metricsIngressRule(OCPMonitoringNamespace)}
 	}
 	return nil
 }
 
 func controllerWithDataStorageEgressOnly(kn *kubernautv1alpha1.Kubernaut, component string, ingress []networkingv1.NetworkPolicyIngressRule) *networkingv1.NetworkPolicy {
-	spec := kn.Spec.NetworkPolicies
-	egress := []networkingv1.NetworkPolicyEgressRule{dnsEgressRule()}
-	if r := apiServerEgressRule(spec.APIServerCIDR); r != nil {
-		egress = append(egress, *r)
-	}
+	egress := baseEgress(1)
 	egress = append(egress, datastorageEgressRule())
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: ObjectMeta(kn, component+"-netpol", component),
@@ -375,14 +340,10 @@ func controllerWithDataStorageEgressOnly(kn *kubernautv1alpha1.Kubernaut, compon
 }
 
 func controllerWithDataStorageAndHTTPSEgress(kn *kubernautv1alpha1.Kubernaut, component string, ingress []networkingv1.NetworkPolicyIngressRule) *networkingv1.NetworkPolicy {
-	spec := kn.Spec.NetworkPolicies
 	protoTCP := corev1.ProtocolTCP
 	p443 := intstr.FromInt32(443)
 
-	egress := []networkingv1.NetworkPolicyEgressRule{dnsEgressRule()}
-	if r := apiServerEgressRule(spec.APIServerCIDR); r != nil {
-		egress = append(egress, *r)
-	}
+	egress := baseEgress(2)
 	egress = append(egress, datastorageEgressRule(), networkingv1.NetworkPolicyEgressRule{
 		To: ipWorldPeers(),
 		Ports: []networkingv1.NetworkPolicyPort{
@@ -404,14 +365,10 @@ func controllerWithDataStorageAndHTTPSEgress(kn *kubernautv1alpha1.Kubernaut, co
 }
 
 func controllerWithDataStorageAndAgentEgress(kn *kubernautv1alpha1.Kubernaut, component string, ingress []networkingv1.NetworkPolicyIngressRule) *networkingv1.NetworkPolicy {
-	spec := kn.Spec.NetworkPolicies
 	protoTCP := corev1.ProtocolTCP
 	p8443 := intstr.FromInt32(PortHTTPS)
 
-	egress := []networkingv1.NetworkPolicyEgressRule{dnsEgressRule()}
-	if r := apiServerEgressRule(spec.APIServerCIDR); r != nil {
-		egress = append(egress, *r)
-	}
+	egress := baseEgress(2)
 	egress = append(egress, datastorageEgressRule(), networkingv1.NetworkPolicyEgressRule{
 		To: []networkingv1.NetworkPolicyPeer{
 			{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentKubernautAgent)}},
@@ -449,14 +406,37 @@ func ipWorldPeers() []networkingv1.NetworkPolicyPeer {
 	}
 }
 
-// dnsEgressRule allows DNS resolution via kube-system (UDP/TCP 53).
+// sameNamespacePeers allows traffic to any pod in the same namespace.
+// This avoids the OVN-Kubernetes limitation where IPBlock rules do not
+// match ClusterIP traffic (DNAT happens before NP evaluation).
+func sameNamespacePeers() []networkingv1.NetworkPolicyPeer {
+	return []networkingv1.NetworkPolicyPeer{
+		{PodSelector: &metav1.LabelSelector{}},
+	}
+}
+
+// baseEgress returns the standard DNS + API server egress rules with
+// pre-allocated capacity for additional rules.
+func baseEgress(extraCap int) []networkingv1.NetworkPolicyEgressRule {
+	rules := make([]networkingv1.NetworkPolicyEgressRule, 2, 2+extraCap)
+	rules[0] = dnsEgressRule()
+	rules[1] = apiServerEgressRule()
+	return rules
+}
+
+// dnsEgressRule allows DNS resolution (UDP/TCP 53) to any namespace.
+// An empty namespaceSelector ({}) is the standard Kubernetes pattern
+// for DNS egress — it avoids DNAT-vs-namespaceSelector issues on
+// OVN-Kubernetes where ClusterIP traffic is translated before NP
+// evaluation. Port 53 is safe to open broadly since only DNS servers
+// bind to it.
 func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
 	protoUDP := corev1.ProtocolUDP
 	protoTCP := corev1.ProtocolTCP
 	p53 := intstr.FromInt32(53)
 	return networkingv1.NetworkPolicyEgressRule{
 		To: []networkingv1.NetworkPolicyPeer{
-			{NamespaceSelector: namespaceNameSelector("kube-system")},
+			{NamespaceSelector: &metav1.LabelSelector{}},
 		},
 		Ports: []networkingv1.NetworkPolicyPort{
 			{Protocol: &protoUDP, Port: &p53},
@@ -465,22 +445,70 @@ func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
 	}
 }
 
-// apiServerEgressRule allows HTTPS to the Kubernetes API by CIDR. Returns
-// nil when cidr is empty.
-func apiServerEgressRule(cidr string) *networkingv1.NetworkPolicyEgressRule {
-	if cidr == "" {
+// resolveAPIServerIPs returns the real endpoint IPs of the kubernetes API
+// server by querying the "kubernetes" endpoints in the default namespace.
+// Falls back to KUBERNETES_SERVICE_HOST if endpoint lookup fails.
+func resolveAPIServerIPs() []string {
+	cfg, err := rest.InClusterConfig()
+	if err != nil {
+		if host := os.Getenv("KUBERNETES_SERVICE_HOST"); host != "" {
+			return []string{host}
+		}
 		return nil
 	}
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		if host := os.Getenv("KUBERNETES_SERVICE_HOST"); host != "" {
+			return []string{host}
+		}
+		return nil
+	}
+	ep, err := cs.CoreV1().Endpoints("default").Get(context.Background(), "kubernetes", metav1.GetOptions{})
+	if err != nil {
+		if host := os.Getenv("KUBERNETES_SERVICE_HOST"); host != "" {
+			return []string{host}
+		}
+		return nil
+	}
+	var ips []string
+	for _, subset := range ep.Subsets {
+		for _, addr := range subset.Addresses {
+			ips = append(ips, addr.IP)
+		}
+	}
+	if len(ips) == 0 {
+		if host := os.Getenv("KUBERNETES_SERVICE_HOST"); host != "" {
+			return []string{host}
+		}
+	}
+	return ips
+}
+
+// apiServerEgressRule allows HTTPS to the Kubernetes API server. The
+// endpoint IPs are resolved from the "kubernetes" endpoints in the
+// default namespace (the real IPs, not the ClusterIP which is DNAT'd
+// before NetworkPolicy evaluation on OVN-Kubernetes).
+func apiServerEgressRule() networkingv1.NetworkPolicyEgressRule {
 	protoTCP := corev1.ProtocolTCP
+	p6443 := intstr.FromInt32(6443)
 	p443 := intstr.FromInt32(443)
-	return &networkingv1.NetworkPolicyEgressRule{
-		To: []networkingv1.NetworkPolicyPeer{
-			{IPBlock: &networkingv1.IPBlock{CIDR: cidr}},
-		},
+	rule := networkingv1.NetworkPolicyEgressRule{
 		Ports: []networkingv1.NetworkPolicyPort{
+			{Protocol: &protoTCP, Port: &p6443},
 			{Protocol: &protoTCP, Port: &p443},
 		},
 	}
+	ips := resolveAPIServerIPs()
+	if len(ips) > 0 {
+		peers := make([]networkingv1.NetworkPolicyPeer, 0, len(ips))
+		for _, ip := range ips {
+			peers = append(peers, networkingv1.NetworkPolicyPeer{
+				IPBlock: &networkingv1.IPBlock{CIDR: ip + "/32"},
+			})
+		}
+		rule.To = peers
+	}
+	return rule
 }
 
 // metricsIngressRule allows TCP 9090 scrape traffic from pods in the
@@ -520,7 +548,6 @@ func monitoringStackEgressRule(monitoringNS string) networkingv1.NetworkPolicyEg
 }
 
 func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) *networkingv1.NetworkPolicy {
-	spec := kn.Spec.NetworkPolicies
 	protoTCP := corev1.ProtocolTCP
 	p8443 := intstr.FromInt32(PortHTTPS)
 
@@ -556,12 +583,10 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSi
 			},
 		},
 	}
-	if spec.MonitoringNamespace != "" {
+	if kn.Spec.Monitoring.MonitoringEnabled() {
 		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
 			From: []networkingv1.NetworkPolicyPeer{
-				{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
-					"kubernetes.io/metadata.name": spec.MonitoringNamespace,
-				}}},
+				{NamespaceSelector: namespaceNameSelector(OCPMonitoringNamespace)},
 			},
 			Ports: []networkingv1.NetworkPolicyPort{
 				{Protocol: &protoTCP, Port: &pMetrics},
@@ -569,28 +594,32 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSi
 		})
 	}
 
-	egress := []networkingv1.NetworkPolicyEgressRule{
-		dnsEgressRule(),
-		{
-			To: []networkingv1.NetworkPolicyPeer{
-				{PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
-					"app.kubernetes.io/part-of": "kubernaut",
-				}}},
+	if kn.Spec.APIFrontend.Route.AFRouteEnabled() {
+		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+			From: []networkingv1.NetworkPolicyPeer{
+				{NamespaceSelector: namespaceNameSelector(OCPIngressNamespace)},
 			},
 			Ports: []networkingv1.NetworkPolicyPort{
 				{Protocol: &protoTCP, Port: &p8443},
 			},
+		})
+	}
+
+	egress := baseEgress(5)
+	egress = append(egress, networkingv1.NetworkPolicyEgressRule{
+		To: []networkingv1.NetworkPolicyPeer{
+			{PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+				"app.kubernetes.io/part-of": "kubernaut",
+			}}},
 		},
-	}
-	if r := apiServerEgressRule(spec.APIServerCIDR); r != nil {
-		egress = append(egress, *r)
-	}
-	if spec.MonitoringNamespace != "" {
+		Ports: []networkingv1.NetworkPolicyPort{
+			{Protocol: &protoTCP, Port: &p8443},
+		},
+	})
+	if kn.Spec.Monitoring.MonitoringEnabled() {
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
 			To: []networkingv1.NetworkPolicyPeer{
-				{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
-					"kubernetes.io/metadata.name": spec.MonitoringNamespace,
-				}}},
+				{NamespaceSelector: namespaceNameSelector(OCPMonitoringNamespace)},
 			},
 			Ports: []networkingv1.NetworkPolicyPort{
 				{Protocol: &protoTCP, Port: &pMetrics},
@@ -611,39 +640,12 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSi
 		})
 	}
 
-	if kn.Spec.APIFrontend.Auth.IssuerURL != "" {
+	if hasOIDCEgress(kn) {
 		p443 := intstr.FromInt32(443)
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
 			Ports: []networkingv1.NetworkPolicyPort{
 				{Protocol: &protoTCP, Port: &p443},
 			},
-		})
-	}
-
-	if spec.IngressNamespace != "" {
-		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
-			From: []networkingv1.NetworkPolicyPeer{
-				{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
-					"kubernetes.io/metadata.name": spec.IngressNamespace,
-				}}},
-			},
-			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protoTCP, Port: &p8443},
-			},
-		})
-	}
-
-	if len(spec.ExternalEgressCIDRs) > 0 {
-		p443 := intstr.FromInt32(443)
-		peers := make([]networkingv1.NetworkPolicyPeer, 0, len(spec.ExternalEgressCIDRs))
-		for _, cidr := range spec.ExternalEgressCIDRs {
-			peers = append(peers, networkingv1.NetworkPolicyPeer{
-				IPBlock: &networkingv1.IPBlock{CIDR: cidr},
-			})
-		}
-		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
-			To:    peers,
-			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protoTCP, Port: &p443}},
 		})
 	}
 
@@ -659,6 +661,20 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSi
 			Egress:  egress,
 		},
 	}
+}
+
+// hasOIDCEgress returns true when AF needs outbound HTTPS for OIDC/JWKS
+// discovery, checking both top-level issuerURL and per-provider jwtProviders.
+func hasOIDCEgress(kn *kubernautv1alpha1.Kubernaut) bool {
+	if kn.Spec.APIFrontend.Auth.IssuerURL != "" {
+		return true
+	}
+	for _, p := range kn.Spec.APIFrontend.Auth.JWTProviders {
+		if p.IssuerURL != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // datastorageEgressRule allows TCP 8443 to DataStorage pods in the same

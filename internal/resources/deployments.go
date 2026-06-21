@@ -18,6 +18,7 @@ package resources
 
 import (
 	"fmt"
+	"net"
 	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -74,19 +75,28 @@ func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, err
 func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	pgPort := PostgreSQLPort(kn)
 
-	ubiImage, err := ResolveImage(kn, "init-ubi-minimal")
+	// Resolve PostgreSQL hostname to a ClusterIP so the init container can
+	// connect without DNS — glibc's resolver is broken under OVN-Kubernetes
+	// NetworkPolicies. Go's built-in resolver works because it queries DNS
+	// natively over UDP.
+	pgHost := kn.Spec.PostgreSQL.Host
+	if addrs, err := net.LookupHost(pgHost); err == nil && len(addrs) > 0 {
+		pgHost = addrs[0]
+	}
+
+	migrateImage, err := ResolveImage(kn, "db-migrate")
 	if err != nil {
 		return nil, err
 	}
 	initContainer := corev1.Container{
 		Name:            "wait-for-postgres",
-		Image:           ubiImage,
+		Image:           migrateImage,
 		ImagePullPolicy: kn.Spec.Image.PullPolicy,
 		Command: []string{"bash", "-c",
-			`until echo > /dev/tcp/"$PGHOST"/"$PGPORT" 2>/dev/null; do echo "waiting for postgres at $PGHOST:$PGPORT"; sleep 2; done`,
+			`until bash -c "echo >/dev/tcp/$PGHOST/$PGPORT" 2>/dev/null; do echo "waiting for postgres at $PGHOST:$PGPORT"; sleep 2; done`,
 		},
 		Env: []corev1.EnvVar{
-			{Name: "PGHOST", Value: kn.Spec.PostgreSQL.Host},
+			{Name: "PGHOST", Value: pgHost},
 			{Name: "PGPORT", Value: strconv.FormatInt(int64(pgPort), 10)},
 		},
 		SecurityContext: ContainerSecurityContext(),
@@ -878,7 +888,7 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 						Image:           img,
 						ImagePullPolicy: kn.Spec.Image.PullPolicy,
 						Ports:           ports,
-						Env:             p.Env,
+						Env:             append(p.Env, corev1.EnvVar{Name: "GODEBUG", Value: "netdns=go"}),
 						Args:            p.Args,
 						Resources:       MergeResources(p.Resources),
 						SecurityContext: ContainerSecurityContext(),

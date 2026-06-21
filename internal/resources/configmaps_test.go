@@ -1455,6 +1455,112 @@ var _ = Describe("APIFrontendConfigMap kagenti OIDC auto-detection", func() {
 	})
 })
 
+var _ = Describe("IA-2: AF multi-provider JWT config emission", func() {
+	It("IA-2: emits jwtProviders array enabling concurrent multi-issuer token validation", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
+			{
+				Name:      "keycloak",
+				IssuerURL: "https://keycloak.example.com/realms/kubernaut",
+				JWKSURL:   "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/certs",
+				Audiences: []string{"kubernaut-console"},
+			},
+			{
+				Name:      "spire",
+				IssuerURL: "https://spire.example.com",
+				Audiences: []string{"kubernaut-workload"},
+			},
+		}
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+
+		Expect(data).To(ContainSubstring("jwtProviders:"),
+			"IA-2: config must contain jwtProviders array for multi-issuer validation")
+
+		Expect(data).To(ContainSubstring("name: keycloak"),
+			"IA-2: first provider name must be keycloak")
+		Expect(data).To(ContainSubstring("issuerURL: https://keycloak.example.com/realms/kubernaut"),
+			"IA-2: keycloak issuerURL must be propagated")
+		Expect(data).To(ContainSubstring("jwksURL: https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/certs"),
+			"IA-2: keycloak jwksURL must be propagated")
+
+		Expect(data).To(ContainSubstring("name: spire"),
+			"IA-2: second provider name must be spire")
+		Expect(data).To(ContainSubstring("issuerURL: https://spire.example.com"),
+			"IA-2: spire issuerURL must be propagated")
+	})
+
+	It("IA-2: omits jwtProviders when single-provider legacy path is used", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).NotTo(ContainSubstring("jwtProviders:"),
+			"IA-2: jwtProviders must not appear when no multi-provider config is set")
+	})
+})
+
+var _ = Describe("AC-6: claim-based authorization config", func() {
+	It("AC-6: propagates claim mappings enabling group-based tool authorization", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
+			{
+				Name:      "keycloak",
+				IssuerURL: "https://keycloak.example.com/realms/kubernaut",
+				Audiences: []string{"kubernaut-console"},
+				ClaimMappings: &kubernautv1alpha1.ClaimMappingsSpec{
+					Username: "preferred_username",
+					Groups:   "realm_roles",
+				},
+			},
+		}
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("username: preferred_username"),
+			"AC-6: username claim mapping must be propagated for identity extraction")
+		Expect(data).To(ContainSubstring("groups: realm_roles"),
+			"AC-6: groups claim mapping must be propagated for tool authorization")
+	})
+
+	It("AC-6: omits claim mappings when not configured — AF falls back to default claim extraction", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
+			{
+				Name:      "spire",
+				IssuerURL: "https://spire.example.com",
+				Audiences: []string{"kubernaut-workload"},
+			},
+		}
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).NotTo(ContainSubstring("claimMappings:"),
+			"AC-6: claimMappings must be omitted when not configured to avoid overriding AF defaults")
+	})
+})
+
+var _ = Describe("SC-23: per-provider audience config", func() {
+	It("SC-23: emits audiences array per provider for audience-scoped token validation", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
+			{
+				Name:      "keycloak",
+				IssuerURL: "https://keycloak.example.com/realms/kubernaut",
+				Audiences: []string{"kubernaut-console", "kubernaut-api"},
+			},
+		}
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("kubernaut-console"),
+			"SC-23: first audience must be propagated")
+		Expect(data).To(ContainSubstring("kubernaut-api"),
+			"SC-23: second audience must be propagated")
+	})
+})
+
 var _ = Describe("APIFrontendConfigMap SAR", func() {
 	It("includes rbac.sarCacheTTL with default 30s", func() {
 		kn := testKubernautWithAF()

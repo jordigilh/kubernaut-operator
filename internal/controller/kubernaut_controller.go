@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -53,6 +54,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	sigsyaml "sigs.k8s.io/yaml"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
@@ -120,7 +122,7 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=kubernaut.ai,resources=kubernauts/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kubernaut.ai,resources=kubernauts/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=services;configmaps;secrets;serviceaccounts;namespaces,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=endpoints;services;configmaps;secrets;serviceaccounts;namespaces,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings;roles;rolebindings,verbs=get;list;watch;create;update;patch;delete;escalate;bind
@@ -462,6 +464,9 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		return err
 	}
 	if err := r.ensureAgentRuntimeCR(ctx, kn, sidecar); err != nil {
+		return err
+	}
+	if err := r.ensureAuthbridgeMetricsBypass(ctx, kn, sidecar); err != nil {
 		return err
 	}
 	hasRoute, err := r.deployWorkloads(ctx, kn, cmHashes, sidecar)
@@ -1082,13 +1087,24 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		}
 	}
 
-	if !kn.Spec.NetworkPolicies.NetworkPoliciesEnabled() {
+	if kn.Spec.NetworkPolicies.NetworkPoliciesEnabled() {
+		for _, np := range resources.NetworkPolicies(kn, sidecar) {
+			if err := r.ensureNamespaced(ctx, kn, np); err != nil {
+				return false, fmt.Errorf("ensuring NetworkPolicy %s: %w", np.Name, err)
+			}
+		}
+	} else {
 		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "NetworkPoliciesDisabled", "Reconcile",
 			"spec.networkPolicies.enabled is false — network segmentation is required for FedRAMP SC-7 compliance; set to true for production")
-	}
-	for _, np := range resources.NetworkPolicies(kn, sidecar) {
-		if err := r.ensureNamespaced(ctx, kn, np); err != nil {
-			return false, fmt.Errorf("ensuring NetworkPolicy %s: %w", np.Name, err)
+		var npList networkingv1.NetworkPolicyList
+		if err := r.List(ctx, &npList, client.InNamespace(kn.Namespace), client.MatchingLabels{
+			"app.kubernetes.io/managed-by": "kubernaut-operator",
+		}); err == nil {
+			for i := range npList.Items {
+				if err := r.deleteIfExists(ctx, &npList.Items[i]); err != nil {
+					return false, fmt.Errorf("deleting NetworkPolicy %s: %w", npList.Items[i].Name, err)
+				}
+			}
 		}
 	}
 
@@ -1374,6 +1390,75 @@ func (r *KubernautReconciler) ensureAgentRuntimeCR(ctx context.Context, kn *kube
 		return fmt.Errorf("checking AgentRuntime CR: %w", err)
 	}
 
+	return nil
+}
+
+// authbridgeBypassConfig is the subset of the authbridge runtime ConfigMap
+// YAML that we parse/patch to ensure /metrics is in the bypass list.
+type authbridgeBypassConfig struct {
+	Bypass struct {
+		InboundPaths []string `json:"inbound_paths" yaml:"inbound_paths"`
+	} `json:"bypass" yaml:"bypass"`
+}
+
+// ensureAuthbridgeMetricsBypass patches the kagenti-generated per-workload
+// authbridge ConfigMap to add /metrics to bypass.inbound_paths. Without this,
+// the envoy sidecar returns 401 on the metrics endpoint, breaking Prometheus
+// scraping. Upstream fix tracked in kagenti/kagenti-extensions#524.
+func (r *KubernautReconciler) ensureAuthbridgeMetricsBypass(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode) error {
+	if sidecar == resources.KagentiSidecarNone || !kn.Spec.APIFrontendEnabled() {
+		return nil
+	}
+
+	cmName := "authbridge-config-" + string(resources.ComponentAPIFrontend)
+	cm := &corev1.ConfigMap{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: cmName}, cm); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("reading authbridge config %s: %w", cmName, err)
+	}
+
+	raw, ok := cm.Data["config.yaml"]
+	if !ok {
+		return nil
+	}
+
+	var cfg authbridgeBypassConfig
+	if err := sigsyaml.Unmarshal([]byte(raw), &cfg); err != nil {
+		return nil
+	}
+
+	if slices.Contains(cfg.Bypass.InboundPaths, "/metrics") {
+		return nil
+	}
+
+	cfg.Bypass.InboundPaths = append(cfg.Bypass.InboundPaths, "/metrics")
+
+	// Re-parse the full config as generic map to preserve all fields,
+	// then overlay the patched bypass block.
+	var full map[string]interface{}
+	if err := sigsyaml.Unmarshal([]byte(raw), &full); err != nil {
+		return nil
+	}
+	bypassMap, _ := full["bypass"].(map[string]interface{})
+	if bypassMap == nil {
+		bypassMap = make(map[string]interface{})
+		full["bypass"] = bypassMap
+	}
+	bypassMap["inbound_paths"] = cfg.Bypass.InboundPaths
+
+	patched, err := sigsyaml.Marshal(full)
+	if err != nil {
+		return fmt.Errorf("marshaling patched authbridge config: %w", err)
+	}
+
+	cm.Data["config.yaml"] = string(patched)
+	if err := r.Update(ctx, cm); err != nil {
+		return fmt.Errorf("patching authbridge config %s with /metrics bypass: %w", cmName, err)
+	}
+
+	logf.FromContext(ctx).Info("patched authbridge config with /metrics bypass", "configmap", cmName)
 	return nil
 }
 
