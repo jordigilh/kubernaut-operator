@@ -131,7 +131,7 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingwebhookconfigurations;validatingwebhookconfigurations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get;list;watch
+// +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers;ingresses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors;prometheusrules;alertmanagerconfigs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=spire.spiffe.io,resources=clusterspiffeids,verbs=get;list;watch;create;update;patch;delete
@@ -1058,7 +1058,10 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		})
 	}
 	if kn.Spec.ConsoleEnabled() {
-		depBuilders = append(depBuilders, resources.ConsoleDeployment)
+		ingressDomain := r.clusterIngressDomain(ctx)
+		depBuilders = append(depBuilders, func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+			return resources.ConsoleDeployment(kn, ingressDomain)
+		})
 	}
 	for _, build := range depBuilders {
 		dep, err := build(kn)
@@ -2029,6 +2032,27 @@ func (r *KubernautReconciler) resolveClusterTLSProfile(ctx context.Context) stri
 		log.V(1).Info("resolved cluster TLS profile", "profile", profile)
 	}
 	return profile
+}
+
+// clusterIngressDomain returns the cluster's ingress domain from
+// ingresses.config.openshift.io/cluster (e.g. "apps.dev.example.com").
+// Returns empty on non-OpenShift clusters or if the resource is unavailable.
+func (r *KubernautReconciler) clusterIngressDomain(ctx context.Context) string {
+	log := logf.FromContext(ctx)
+	ingress := &configv1.Ingress{}
+	if err := r.Get(ctx, client.ObjectKey{Name: "cluster"}, ingress); err != nil {
+		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			log.V(1).Info("Ingress config not found (non-OCP cluster), console redirect URL will use fallback domain")
+			return ""
+		}
+		log.V(1).Info("failed to read Ingress config, console redirect URL will use fallback domain", "error", err)
+		return ""
+	}
+	domain := ingress.Spec.Domain
+	if domain != "" {
+		log.V(1).Info("resolved cluster ingress domain", "domain", domain)
+	}
+	return domain
 }
 
 // hasCRD checks if a CRD with the given name exists in the cluster.

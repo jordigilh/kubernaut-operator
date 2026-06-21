@@ -37,7 +37,9 @@ const (
 )
 
 // ConsoleDeployment builds the Deployment for the standalone web console.
-func ConsoleDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+// ingressDomain is the cluster's ingress domain (e.g. "apps.dev.example.com")
+// used to derive the oauth2-proxy redirect URL when console.route.host is empty.
+func ConsoleDeployment(kn *kubernautv1alpha1.Kubernaut, ingressDomain string) (*appsv1.Deployment, error) {
 	consoleImage, err := ResolveImage(kn, "console")
 	if err != nil {
 		return nil, err
@@ -53,7 +55,7 @@ func ConsoleDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, err
 		return nil, fmt.Errorf("console.auth.secretName is required")
 	}
 
-	redirectURL := consoleRedirectURL(kn)
+	redirectURL := consoleRedirectURL(kn, ingressDomain)
 
 	oauthArgs := []string{
 		"--provider=oidc",
@@ -327,12 +329,15 @@ func ConsoleRouteStub(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 	}
 }
 
-func consoleRedirectURL(kn *kubernautv1alpha1.Kubernaut) string {
+func consoleRedirectURL(kn *kubernautv1alpha1.Kubernaut, ingressDomain string) string {
 	if kn.Spec.Console.Route.Host != "" {
 		return fmt.Sprintf("https://%s/oauth2/callback", kn.Spec.Console.Route.Host)
 	}
-	return fmt.Sprintf("https://%s-%s.apps.%s/oauth2/callback",
-		ComponentConsole, kn.Namespace, "cluster.local")
+	if ingressDomain == "" {
+		ingressDomain = "apps.cluster.local"
+	}
+	return fmt.Sprintf("https://%s-%s.%s/oauth2/callback",
+		ComponentConsole, kn.Namespace, ingressDomain)
 }
 
 func consoleContainerResources(kn *kubernautv1alpha1.Kubernaut) corev1.ResourceRequirements {
