@@ -787,8 +787,8 @@ var _ = Describe("ToolClusterRoles", func() {
 				"tool ClusterRole %q should have %d resourceNames, got %d",
 				found.Name, expectedCount, len(found.Rules[0].ResourceNames))
 		},
-		Entry("SRE", "tool-sre", 25),
-		Entry("AI-orchestrator", "tool-ai-orchestrator", 19),
+		Entry("SRE", "tool-sre", 27),
+		Entry("AI-orchestrator", "tool-ai-orchestrator", 21),
 		Entry("CICD", "tool-cicd", 4),
 		Entry("Observability", "tool-observability", 6),
 		Entry("L3-audit", "tool-l3-audit", 6),
