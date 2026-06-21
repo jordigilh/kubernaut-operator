@@ -31,9 +31,8 @@ import (
 )
 
 const (
-	consoleOAuth2ProxyImage = "quay.io/oauth2-proxy/oauth2-proxy:v7.9.0"
-	consoleProxyPort        = int32(4180)
-	consoleStaticPort       = int32(8080)
+	consoleProxyPort  = int32(4180)
+	consoleStaticPort = int32(8080)
 )
 
 // ConsoleDeployment builds the Deployment for the standalone web console.
@@ -41,6 +40,10 @@ const (
 // used to derive the oauth2-proxy redirect URL when console.route.host is empty.
 func ConsoleDeployment(kn *kubernautv1alpha1.Kubernaut, ingressDomain string) (*appsv1.Deployment, error) {
 	consoleImage, err := ResolveImage(kn, "console")
+	if err != nil {
+		return nil, err
+	}
+	oauth2ProxyImage, err := ResolveImage(kn, "oauth2-proxy")
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +100,7 @@ func ConsoleDeployment(kn *kubernautv1alpha1.Kubernaut, ingressDomain string) (*
 					Containers: []corev1.Container{
 						{
 							Name:  "oauth2-proxy",
-							Image: consoleOAuth2ProxyImage,
+							Image: oauth2ProxyImage,
 							Args:  oauthArgs,
 							Env: []corev1.EnvVar{
 								{Name: "OAUTH2_PROXY_CLIENT_ID", ValueFrom: &corev1.EnvVarSource{

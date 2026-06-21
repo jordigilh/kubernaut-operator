@@ -290,6 +290,7 @@ var componentEnvSuffix = map[string]string{
 	"db-migrate":              "DB_MIGRATE",
 	"init-ubi-minimal":        "INIT_UBI_MINIMAL",
 	"console":                 "CONSOLE",
+	"oauth2-proxy":            "OAUTH2_PROXY",
 }
 
 // ResolveImage returns the fully-qualified container image for a component.
