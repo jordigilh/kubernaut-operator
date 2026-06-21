@@ -1314,6 +1314,10 @@ spec:
                           allowing faster/cheaper models for structured tasks like workflow discovery.
                           When absent, all phases use the default model above.
                         type: object
+                        x-kubernetes-validations:
+                        - message: 'phaseModels keys must be one of: rca, workflow_discovery,
+                            validation'
+                          rule: self.all(k, k in ['rca','workflow_discovery','validation'])
                       provider:
                         description: LLM provider name (e.g. "openai", "vertexai",
                           "bedrock", "azure").

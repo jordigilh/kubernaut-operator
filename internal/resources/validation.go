@@ -79,6 +79,24 @@ func validateLLMPrerequisites(kn *kubernautv1alpha1.Kubernaut) []error {
 	if !certSet && llm.TLSClientSecretRef != "" {
 		errs = append(errs, fmt.Errorf("%s.tlsClientSecretRef: set but tlsCertFile/tlsKeyFile are empty — both pairs are required for mTLS", base))
 	}
+	errs = append(errs, validatePhaseModels(llm.PhaseModels, base+".phaseModels")...)
+	return errs
+}
+
+// validPhaseModelKeys enumerates the agent phases that support per-phase LLM overrides.
+var validPhaseModelKeys = map[string]bool{
+	"rca":                true,
+	"workflow_discovery": true,
+	"validation":         true,
+}
+
+func validatePhaseModels(pm map[string]kubernautv1alpha1.LLMPhaseOverrideSpec, base string) []error {
+	var errs []error
+	for key := range pm {
+		if !validPhaseModelKeys[key] {
+			errs = append(errs, fmt.Errorf("%s: invalid phase key %q — must be one of: rca, workflow_discovery, validation", base, key))
+		}
+	}
 	return errs
 }
 

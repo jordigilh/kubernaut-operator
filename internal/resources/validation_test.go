@@ -729,4 +729,43 @@ var _ = Describe("LLM Prerequisite Validation", func() {
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())
 	})
+
+	It("rejects invalid phaseModels key", func() {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.LLM.PhaseModels = map[string]kubernautv1alpha1.LLMPhaseOverrideSpec{
+			"banana": {Model: "claude-haiku-4-6"},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring(`invalid phase key "banana"`))
+	})
+
+	It("accepts valid phaseModels keys", func() {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.LLM.PhaseModels = map[string]kubernautv1alpha1.LLMPhaseOverrideSpec{
+			"rca":                {Model: "claude-sonnet-4-6"},
+			"workflow_discovery": {Model: "claude-haiku-4-6"},
+			"validation":        {Model: "claude-haiku-4-6"},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("reports multiple invalid phaseModels keys", func() {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.LLM.PhaseModels = map[string]kubernautv1alpha1.LLMPhaseOverrideSpec{
+			"rca":     {Model: "claude-sonnet-4-6"},
+			"banana":  {Model: "claude-haiku-4-6"},
+			"unknown": {Model: "claude-haiku-4-6"},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(2))
+	})
+
+	It("accepts empty phaseModels", func() {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.LLM.PhaseModels = nil
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
 })

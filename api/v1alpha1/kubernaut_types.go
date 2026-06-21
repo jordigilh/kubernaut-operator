@@ -884,6 +884,7 @@ type LLMSpec struct {
 	// allowing faster/cheaper models for structured tasks like workflow discovery.
 	// When absent, all phases use the default model above.
 	// +optional
+	// +kubebuilder:validation:XValidation:rule="self.all(k, k in ['rca','workflow_discovery','validation'])",message="phaseModels keys must be one of: rca, workflow_discovery, validation"
 	PhaseModels map[string]LLMPhaseOverrideSpec `json:"phaseModels,omitempty"`
 }
 
