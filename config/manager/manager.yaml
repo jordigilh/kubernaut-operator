@@ -67,29 +67,31 @@ spec:
         name: manager
         env:
         - name: RELATED_IMAGE_GATEWAY
-          value: ghcr.io/jordigilh/kubernaut/gateway@sha256:cca1e5c9a2528fddcc3f2996c9c5d414addf6ec227a2f068f7aad7ef6cc18b1b
+          value: ghcr.io/jordigilh/kubernaut/gateway@sha256:e8d8a12bd830bf5edf0edf816d46c385e90041108779f04f3a175838b864cf5f
         - name: RELATED_IMAGE_DATA_STORAGE
-          value: ghcr.io/jordigilh/kubernaut/datastorage@sha256:0fd90afeb65178f6c69acd90f7431927ebe9ef8bc60c97f173f8cbc2963f845f
+          value: ghcr.io/jordigilh/kubernaut/datastorage@sha256:89e021bd8ee8bdc4572d008e44667c4a115d81b4494dc7324f40f7188108f76c
         - name: RELATED_IMAGE_AIANALYSIS
-          value: ghcr.io/jordigilh/kubernaut/aianalysis@sha256:cf8909c20ab521ef012d8677e56c0971c9ec76f87de974ae777619bea1dedbda
+          value: ghcr.io/jordigilh/kubernaut/aianalysis@sha256:ce96ef1b51710c334ca050edf6c769fea966abe5956bd7e9bf5d78035c32f092
         - name: RELATED_IMAGE_SIGNALPROCESSING
-          value: ghcr.io/jordigilh/kubernaut/signalprocessing@sha256:51e2fbc005bbc5a279d42e07808427e575d948badd3a984281a6d9552367f7ad
+          value: ghcr.io/jordigilh/kubernaut/signalprocessing@sha256:ac55be6bed09816f086dc0ef10f9437bd10bde61d3864b7000d38eed0f8e58f8
         - name: RELATED_IMAGE_REMEDIATIONORCHESTRATOR
-          value: ghcr.io/jordigilh/kubernaut/remediationorchestrator@sha256:aefd9222bd6f97583bcfe680bc06c1ba95b383a1a086f541a42430f35dd0860f
+          value: ghcr.io/jordigilh/kubernaut/remediationorchestrator@sha256:ede16524ff492f4f6ba56f6f453d0d5ca9293e25aed2b52b7eb6762b1b538972
         - name: RELATED_IMAGE_WORKFLOWEXECUTION
-          value: ghcr.io/jordigilh/kubernaut/workflowexecution@sha256:754d1e1c28704818bc596c08513e74b8cdd215e91263b1fbe15fc2a272232f48
+          value: ghcr.io/jordigilh/kubernaut/workflowexecution@sha256:5efe581af2119db0a54f8e17afb00aeb48fe953a05ce3149eef9c9469f0f7106
         - name: RELATED_IMAGE_EFFECTIVENESSMONITOR
-          value: ghcr.io/jordigilh/kubernaut/effectivenessmonitor@sha256:e11523c5a007aaf998f416def71c5ee4ad3bde96fc987d68cd45f92d27d2fc33
+          value: ghcr.io/jordigilh/kubernaut/effectivenessmonitor@sha256:c26b70dc069b9cbdeb062bd02cff23c61a96717bb28d8c308fba53ef576457fa
         - name: RELATED_IMAGE_NOTIFICATION
-          value: ghcr.io/jordigilh/kubernaut/notification@sha256:5bc836eda151294580e93b909786dc4f6874cd06890aa9851993c1b7b00bc811
+          value: ghcr.io/jordigilh/kubernaut/notification@sha256:697d7b02a2bdfa9f601a29899fa0138324e57b8c518532eb4c1e515e8783fd5b
         - name: RELATED_IMAGE_KUBERNAUT_AGENT
-          value: ghcr.io/jordigilh/kubernaut/kubernautagent@sha256:2d994cff1b15a865a832d6a01a1e7506ac85a4a4a71c1b842fd5c39b1f66cb89
+          value: ghcr.io/jordigilh/kubernaut/kubernautagent@sha256:e9aa02d8e710feb139031ac02fccfa22c903d1235312c900634a738a9bfdd907
         - name: RELATED_IMAGE_AUTHWEBHOOK
-          value: ghcr.io/jordigilh/kubernaut/authwebhook@sha256:7a47d473941738108ccce3087f059ce675a4a3cf243ad63945122c833414a252
+          value: ghcr.io/jordigilh/kubernaut/authwebhook@sha256:ee465e54614b45738cb5074d448e209ccc69d2d8f95c013a1718035f87c88582
         - name: RELATED_IMAGE_API_FRONTEND
-          value: ghcr.io/jordigilh/kubernaut/apifrontend@sha256:d251c5cb5d98975bb103ec0e086ed7851504ca266e28a5db5420205e9afd3c78
+          value: ghcr.io/jordigilh/kubernaut/apifrontend@sha256:ee53550cd41cfe77d2b17c390f221529cf2e4e031750c48051bad6650db97463
         - name: RELATED_IMAGE_DB_MIGRATE
-          value: ghcr.io/jordigilh/kubernaut/db-migrate@sha256:6857d30078f9b6b5e780051e98a43a992344d796f2f444e2bfebfdd601254e92
+          value: ghcr.io/jordigilh/kubernaut/db-migrate@sha256:4ed88bd1a417b86f47caef9d353e5f09a427450971a289865a82be5e13a6db8c
+        - name: RELATED_IMAGE_CONSOLE
+          value: ghcr.io/jordigilh/kubernaut-console:latest
         - name: RELATED_IMAGE_INIT_POSTGRES
           value: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
         - name: RELATED_IMAGE_INIT_UBI_MINIMAL
