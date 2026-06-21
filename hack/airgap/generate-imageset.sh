@@ -15,8 +15,8 @@ OUT="hack/airgap/imageset-config.yaml"
 
 resolve_digest() {
   local ref="$1"
-  skopeo inspect "docker://${ref}" 2>/dev/null \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin)["Digest"])' 2>/dev/null
+  skopeo inspect --raw "docker://${ref}" 2>/dev/null \
+    | python3 -c 'import sys,hashlib; data=sys.stdin.buffer.read(); print("sha256:" + hashlib.sha256(data).hexdigest())' 2>/dev/null
 }
 
 OP_TAG="quay.io/kubernaut-ai/kubernaut-operator:${VERSION}"
