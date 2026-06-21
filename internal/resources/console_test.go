@@ -98,7 +98,7 @@ var _ = Describe("Console Resources", func() {
 
 			oauth2 := spec.Containers[0]
 			Expect(oauth2.Name).To(Equal("oauth2-proxy"))
-			Expect(oauth2.Image).To(Equal(consoleOAuth2ProxyImage))
+			Expect(oauth2.Image).To(Equal("quay.io/oauth2-proxy/oauth2-proxy:v7.9.0"))
 			Expect(*oauth2.SecurityContext.ReadOnlyRootFilesystem).To(BeTrue())
 			Expect(*oauth2.SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
 			Expect(oauth2.Ports).To(HaveLen(1))
