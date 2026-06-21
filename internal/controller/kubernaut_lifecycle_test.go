@@ -770,6 +770,52 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(cm.Data).To(HaveKey("server.conf"))
 		})
 
+		It("IT-CL-03 [SC-7, CC6.1]: console redirect URL uses cluster ingress domain", func() {
+			ingress := &configv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+				Spec:       configv1.IngressSpec{Domain: "apps.test.example.com"},
+			}
+			Expect(k8sClient.Create(ctx, ingress)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, ingress) }()
+
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			t := true
+			cr.Spec.Console.Enabled = &t
+			f := false
+			cr.Spec.Console.Route.Enabled = &f
+			cr.Spec.Console.Auth.SecretName = "console-oidc"
+			oidcSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "console-oidc", Namespace: testNamespace},
+				Data: map[string][]byte{
+					"client-id":     []byte("cid"),
+					"client-secret": []byte("csec"),
+					"cookie-secret": []byte("cook"),
+				},
+			}
+			if err := k8sClient.Create(ctx, oidcSecret); err != nil {
+				Expect(errors.IsAlreadyExists(err)).To(BeTrue(), "unexpected error creating console-oidc secret: %v", err)
+			}
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			reconcileToRunning(ctx)
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: string(resources.ComponentConsole), Namespace: testNamespace,
+			}, dep)).To(Succeed())
+
+			oauth2Args := dep.Spec.Template.Spec.Containers[0].Args
+			var redirectURL string
+			for _, arg := range oauth2Args {
+				if strings.HasPrefix(arg, "--redirect-url=") {
+					redirectURL = strings.TrimPrefix(arg, "--redirect-url=")
+				}
+			}
+			Expect(redirectURL).To(Equal(
+				"https://kubernaut-console-default.apps.test.example.com/oauth2/callback"),
+				"redirect URL must use the cluster ingress domain, not cluster.local")
+		})
+
 		It("IT-CL-02 [SC-7, CC6.6]: console disabled produces no Console resources", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()

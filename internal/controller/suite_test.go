@@ -18,7 +18,9 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -95,9 +97,17 @@ var _ = BeforeSuite(func() {
 	// +kubebuilder:scaffold:scheme
 
 	By("bootstrapping test environment")
+	openshiftModDir := modDir("github.com/openshift/api")
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
 		ErrorIfCRDPathMissing: true,
+		CRDInstallOptions: envtest.CRDInstallOptions{
+			Paths: []string{
+				filepath.Join(openshiftModDir, "config", "v1",
+					"zz_generated.crd-manifests",
+					"0000_10_config-operator_01_ingresses.crd.yaml"),
+			},
+		},
 	}
 
 	// Retrieve the first found binary directory to allow running tests from IDEs
@@ -121,6 +131,15 @@ var _ = AfterSuite(func() {
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
+
+// modDir returns the on-disk cache directory for a Go module dependency.
+func modDir(mod string) string {
+	out, err := exec.Command("go", "mod", "download", "-json", mod).CombinedOutput()
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "go mod download %s: %s", mod, out)
+	var info struct{ Dir string }
+	ExpectWithOffset(1, json.Unmarshal(out, &info)).To(Succeed(), "parse go mod download output")
+	return info.Dir
+}
 
 // getFirstFoundEnvTestBinaryDir locates the first binary in the specified path.
 // ENVTEST-based tests depend on specific binaries, usually located in paths set by

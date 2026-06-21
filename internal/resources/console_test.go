@@ -50,7 +50,7 @@ var _ = Describe("Console Resources", func() {
 			Expect(os.Unsetenv("RELATED_IMAGE_CONSOLE")).To(Succeed())
 			defer func() { Expect(os.Setenv("RELATED_IMAGE_CONSOLE", saved)).To(Succeed()) }()
 
-			dep, err := ConsoleDeployment(kn)
+			dep, err := ConsoleDeployment(kn, testIngressDomain)
 			Expect(err).To(HaveOccurred())
 			Expect(dep).To(BeNil())
 			Expect(err.Error()).To(ContainSubstring("console"))
@@ -61,7 +61,7 @@ var _ = Describe("Console Resources", func() {
 			kn.Spec.APIFrontend.Auth.IssuerURL = ""
 			kn.Spec.APIFrontend.Auth.JWTProviders = nil
 
-			dep, err := ConsoleDeployment(kn)
+			dep, err := ConsoleDeployment(kn, testIngressDomain)
 			Expect(err).To(HaveOccurred())
 			Expect(dep).To(BeNil())
 			Expect(err.Error()).To(ContainSubstring("issuerURL"))
@@ -71,7 +71,7 @@ var _ = Describe("Console Resources", func() {
 			kn := testKubernautWithConsole()
 			kn.Spec.Console.Auth.SecretName = ""
 
-			dep, err := ConsoleDeployment(kn)
+			dep, err := ConsoleDeployment(kn, testIngressDomain)
 			Expect(err).To(HaveOccurred())
 			Expect(dep).To(BeNil())
 			Expect(err.Error()).To(ContainSubstring("secretName"))
@@ -80,7 +80,7 @@ var _ = Describe("Console Resources", func() {
 		It("UT-CD-04 [SC-7, CC6.6]: produces hardened pod spec with oauth2-proxy sidecar", func() {
 			kn := testKubernautWithConsole()
 
-			dep, err := ConsoleDeployment(kn)
+			dep, err := ConsoleDeployment(kn, testIngressDomain)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dep).NotTo(BeNil())
 
@@ -223,18 +223,24 @@ var _ = Describe("Console Resources", func() {
 			kn := testKubernautWithConsole()
 			kn.Spec.Console.Route.Host = "console.example.com"
 
-			url := consoleRedirectURL(kn)
+			url := consoleRedirectURL(kn, testIngressDomain)
 			Expect(url).To(Equal("https://console.example.com/oauth2/callback"))
 		})
 
-		It("UT-CRU-02 [IA-5, CC6.1]: falls back to cluster-local convention", func() {
+		It("UT-CRU-02 [IA-5, CC6.1]: uses cluster ingress domain when route host is empty", func() {
 			kn := testKubernautWithConsole()
 			kn.Spec.Console.Route.Host = ""
 
-			url := consoleRedirectURL(kn)
-			Expect(url).To(ContainSubstring(ComponentConsole))
-			Expect(url).To(ContainSubstring(testSystemNamespace))
-			Expect(url).To(HaveSuffix("/oauth2/callback"))
+			url := consoleRedirectURL(kn, testIngressDomain)
+			Expect(url).To(Equal("https://kubernaut-console-kubernaut-system.apps.test.example.com/oauth2/callback"))
+		})
+
+		It("UT-CRU-03 [IA-5, CC6.1]: falls back to apps.cluster.local when ingress domain is empty", func() {
+			kn := testKubernautWithConsole()
+			kn.Spec.Console.Route.Host = ""
+
+			url := consoleRedirectURL(kn, "")
+			Expect(url).To(Equal("https://kubernaut-console-kubernaut-system.apps.cluster.local/oauth2/callback"))
 		})
 	})
 
