@@ -29,6 +29,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -725,10 +726,214 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cm).To(BeNil(), "should not generate LLM runtime ConfigMap when user provides one")
 		})
+
+		It("[SC-7] should create NetworkPolicies when networkPolicies.enabled is true", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			t := true
+			cr.Spec.NetworkPolicies.Enabled = &t
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			reconcileToRunning(ctx)
+
+			npList := &networkingv1.NetworkPolicyList{}
+			Expect(k8sClient.List(ctx, npList, client.InNamespace(testNamespace), client.MatchingLabels{
+				"app.kubernetes.io/managed-by": "kubernaut-operator",
+			})).To(Succeed())
+			Expect(npList.Items).NotTo(BeEmpty(),
+				"NetworkPolicies should be created when networkPolicies.enabled is true")
+		})
+
+		It("[SC-7] should delete NetworkPolicies when networkPolicies.enabled is toggled off", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			t := true
+			cr.Spec.NetworkPolicies.Enabled = &t
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			By("verifying NPs exist after deploy")
+			npList := &networkingv1.NetworkPolicyList{}
+			Expect(k8sClient.List(ctx, npList, client.InNamespace(testNamespace), client.MatchingLabels{
+				"app.kubernetes.io/managed-by": "kubernaut-operator",
+			})).To(Succeed())
+			Expect(npList.Items).NotTo(BeEmpty(), "NPs should exist before toggle")
+
+			By("disabling networkPolicies")
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			f := false
+			kn.Spec.NetworkPolicies.Enabled = &f
+			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
+
+			By("reconciling after toggle")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.List(ctx, npList, client.InNamespace(testNamespace), client.MatchingLabels{
+				"app.kubernetes.io/managed-by": "kubernaut-operator",
+			})).To(Succeed())
+			Expect(npList.Items).To(BeEmpty(),
+				"NetworkPolicies should be deleted when networkPolicies.enabled is false")
+		})
 	})
 
 	// ======================================================================
-	// 5. Spec Update Propagation
+	// 5. Authbridge Metrics Bypass (Unit Tests)
+	// ======================================================================
+
+	Context("Authbridge Metrics Bypass", func() {
+		const authbridgeCMName = "authbridge-config-apifrontend"
+
+		authbridgeCM := func(ns string, configYAML string) *corev1.ConfigMap {
+			return &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      authbridgeCMName,
+					Namespace: ns,
+				},
+				Data: map[string]string{
+					"config.yaml": configYAML,
+				},
+			}
+		}
+
+		It("[SI-4] patches /metrics into bypass.inbound_paths when missing", func() {
+			kn := testKubernautCR(true, true)
+			cm := authbridgeCM(kn.Namespace, "bypass:\n  inbound_paths:\n  - /healthz\n  - /readyz\nmode: envoy-sidecar\n")
+			r := newReconcilerWithCRD(newAgentRuntimeCRD(), newTestNamespace(nil), cm)
+
+			Expect(r.ensureAuthbridgeMetricsBypass(context.Background(), kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
+
+			updated := &corev1.ConfigMap{}
+			Expect(r.Get(context.Background(), client.ObjectKeyFromObject(cm), updated)).To(Succeed())
+			Expect(updated.Data["config.yaml"]).To(ContainSubstring("/metrics"))
+		})
+
+		It("[SI-4] does not duplicate /metrics when already present", func() {
+			kn := testKubernautCR(true, true)
+			cm := authbridgeCM(kn.Namespace, "bypass:\n  inbound_paths:\n  - /healthz\n  - /metrics\nmode: envoy-sidecar\n")
+			r := newReconcilerWithCRD(newAgentRuntimeCRD(), newTestNamespace(nil), cm)
+
+			Expect(r.ensureAuthbridgeMetricsBypass(context.Background(), kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
+
+			updated := &corev1.ConfigMap{}
+			Expect(r.Get(context.Background(), client.ObjectKeyFromObject(cm), updated)).To(Succeed())
+			Expect(strings.Count(updated.Data["config.yaml"], "/metrics")).To(Equal(1))
+		})
+
+		It("[CM-6] skips patching when sidecar mode is None", func() {
+			kn := testKubernautCR(true, true)
+			cm := authbridgeCM(kn.Namespace, "bypass:\n  inbound_paths:\n  - /healthz\nmode: envoy-sidecar\n")
+			r := newReconcilerWithCRD(newAgentRuntimeCRD(), newTestNamespace(nil), cm)
+
+			Expect(r.ensureAuthbridgeMetricsBypass(context.Background(), kn, resources.KagentiSidecarNone)).To(Succeed())
+
+			updated := &corev1.ConfigMap{}
+			Expect(r.Get(context.Background(), client.ObjectKeyFromObject(cm), updated)).To(Succeed())
+			Expect(updated.Data["config.yaml"]).NotTo(ContainSubstring("/metrics"))
+		})
+
+		It("[CM-6] skips patching when ConfigMap does not exist", func() {
+			kn := testKubernautCR(true, true)
+			r := newReconcilerWithCRD(newAgentRuntimeCRD(), newTestNamespace(nil))
+
+			Expect(r.ensureAuthbridgeMetricsBypass(context.Background(), kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
+		})
+
+		It("[CM-6] skips patching when config.yaml key is absent", func() {
+			kn := testKubernautCR(true, true)
+			cm := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      authbridgeCMName,
+					Namespace: kn.Namespace,
+				},
+				Data: map[string]string{
+					"other-key.yaml": "foo: bar",
+				},
+			}
+			r := newReconcilerWithCRD(newAgentRuntimeCRD(), newTestNamespace(nil), cm)
+
+			Expect(r.ensureAuthbridgeMetricsBypass(context.Background(), kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
+		})
+
+		It("[CM-6] preserves existing fields when patching bypass", func() {
+			kn := testKubernautCR(true, true)
+			cm := authbridgeCM(kn.Namespace, "bypass:\n  inbound_paths:\n  - /healthz\nidentity:\n  client_id: spiffe://example.com/ns/test/sa/apifrontend\n  type: client-secret\nmode: envoy-sidecar\n")
+			r := newReconcilerWithCRD(newAgentRuntimeCRD(), newTestNamespace(nil), cm)
+
+			Expect(r.ensureAuthbridgeMetricsBypass(context.Background(), kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
+
+			updated := &corev1.ConfigMap{}
+			Expect(r.Get(context.Background(), client.ObjectKeyFromObject(cm), updated)).To(Succeed())
+			data := updated.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("/metrics"))
+			Expect(data).To(ContainSubstring("client-secret"))
+			Expect(data).To(ContainSubstring("envoy-sidecar"))
+		})
+
+		It("[CM-6] creates bypass block when absent in config", func() {
+			kn := testKubernautCR(true, true)
+			cm := authbridgeCM(kn.Namespace, "mode: envoy-sidecar\n")
+			r := newReconcilerWithCRD(newAgentRuntimeCRD(), newTestNamespace(nil), cm)
+
+			Expect(r.ensureAuthbridgeMetricsBypass(context.Background(), kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
+
+			updated := &corev1.ConfigMap{}
+			Expect(r.Get(context.Background(), client.ObjectKeyFromObject(cm), updated)).To(Succeed())
+			data := updated.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("/metrics"))
+			Expect(data).To(ContainSubstring("envoy-sidecar"))
+		})
+
+		It("[CM-6] skips patching when AF is disabled", func() {
+			kn := testKubernautCR(false, true)
+			cm := authbridgeCM(kn.Namespace, "bypass:\n  inbound_paths:\n  - /healthz\nmode: envoy-sidecar\n")
+			r := newReconcilerWithCRD(newAgentRuntimeCRD(), newTestNamespace(nil), cm)
+
+			Expect(r.ensureAuthbridgeMetricsBypass(context.Background(), kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
+
+			updated := &corev1.ConfigMap{}
+			Expect(r.Get(context.Background(), client.ObjectKeyFromObject(cm), updated)).To(Succeed())
+			Expect(updated.Data["config.yaml"]).NotTo(ContainSubstring("/metrics"))
+		})
+	})
+
+	// ======================================================================
+	// 6. Authbridge Wiring (Integration Test)
+	// ======================================================================
+
+	Context("Authbridge Wiring", func() {
+		It("[SI-4] reconcile patches authbridge /metrics bypass when sidecar is active", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			cr.Spec.APIFrontend.SPIRE.Enabled = true
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			By("pre-creating the authbridge ConfigMap that kagenti would create")
+			abCM := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "authbridge-config-apifrontend",
+					Namespace: testNamespace,
+				},
+				Data: map[string]string{
+					"config.yaml": "bypass:\n  inbound_paths:\n  - /healthz\n  - /readyz\nmode: envoy-sidecar\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, abCM)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			By("verifying /metrics was patched into the authbridge ConfigMap")
+			updated := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "authbridge-config-apifrontend", Namespace: testNamespace,
+			}, updated)).To(Succeed())
+			Expect(updated.Data["config.yaml"]).To(ContainSubstring("/metrics"),
+				"ensureAuthbridgeMetricsBypass should be wired through phaseDeploy")
+		})
+	})
+
+	// ======================================================================
+	// 7. Spec Update Propagation
 	// ======================================================================
 
 	Context("Spec Update Propagation", func() {
