@@ -1071,30 +1071,8 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		}
 	}
 
-	for _, svc := range resources.Services(kn, sidecar) {
-		if err := r.ensureNamespaced(ctx, kn, svc); err != nil {
-			return false, fmt.Errorf("ensuring Service %s: %w", svc.Name, err)
-		}
-		if err := r.clearStaleServingCertErrors(ctx, svc); err != nil {
-			return false, fmt.Errorf("clearing stale serving-cert annotations on %s: %w", svc.Name, err)
-		}
-	}
-
-	for _, svc := range resources.MetricsServices(kn) {
-		if err := r.ensureNamespaced(ctx, kn, svc); err != nil {
-			return false, fmt.Errorf("ensuring metrics Service %s: %w", svc.Name, err)
-		}
-	}
-
-	if kn.Spec.ConsoleEnabled() {
-		consoleSvc := resources.ConsoleService(kn)
-		if err := r.ensureNamespaced(ctx, kn, consoleSvc); err != nil {
-			return false, fmt.Errorf("ensuring Console Service: %w", err)
-		}
-		consoleCM := resources.ConsoleNginxConfigMap(kn)
-		if err := r.ensureNamespaced(ctx, kn, consoleCM); err != nil {
-			return false, fmt.Errorf("ensuring Console nginx ConfigMap: %w", err)
-		}
+	if err := r.ensureServices(ctx, kn, sidecar); err != nil {
+		return false, err
 	}
 
 	for _, pdb := range resources.PodDisruptionBudgets(kn) {
@@ -1103,25 +1081,8 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		}
 	}
 
-	if kn.Spec.NetworkPolicies.NetworkPoliciesEnabled() {
-		for _, np := range resources.NetworkPolicies(kn, sidecar) {
-			if err := r.ensureNamespaced(ctx, kn, np); err != nil {
-				return false, fmt.Errorf("ensuring NetworkPolicy %s: %w", np.Name, err)
-			}
-		}
-	} else {
-		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "NetworkPoliciesDisabled", "Reconcile",
-			"spec.networkPolicies.enabled is false — network segmentation is required for FedRAMP SC-7 compliance; set to true for production")
-		var npList networkingv1.NetworkPolicyList
-		if err := r.List(ctx, &npList, client.InNamespace(kn.Namespace), client.MatchingLabels{
-			"app.kubernetes.io/managed-by": "kubernaut-operator",
-		}); err == nil {
-			for i := range npList.Items {
-				if err := r.deleteIfExists(ctx, &npList.Items[i]); err != nil {
-					return false, fmt.Errorf("deleting NetworkPolicy %s: %w", npList.Items[i].Name, err)
-				}
-			}
-		}
+	if err := r.reconcileNetworkPolicies(ctx, kn, sidecar); err != nil {
+		return false, err
 	}
 
 	dsHPA := resources.DataStorageHPA(kn)
@@ -1129,18 +1090,8 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		return false, fmt.Errorf("ensuring DS HPA: %w", err)
 	}
 
-	if kn.Spec.Monitoring.MonitoringEnabled() && r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com") {
-		if err := r.deployMonitoring(ctx, kn); err != nil {
-			return false, err
-		}
-	}
-
-	if kn.Spec.GatewayEnabled() {
-		if amCfg := resources.GatewayAlertManagerConfig(kn); amCfg != nil && r.hasCRD(ctx, "alertmanagerconfigs.monitoring.coreos.com") {
-			if err := r.ensureNamespaced(ctx, kn, amCfg); err != nil {
-				return false, fmt.Errorf("ensuring Gateway AlertManagerConfig: %w", err)
-			}
-		}
+	if err := r.reconcileMonitoringAndAlerts(ctx, kn); err != nil {
+		return false, err
 	}
 
 	if kn.Spec.APIFrontendEnabled() {
@@ -1150,6 +1101,71 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 	}
 
 	return r.reconcileRoutes(ctx, kn)
+}
+
+func (r *KubernautReconciler) ensureServices(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode) error {
+	for _, svc := range resources.Services(kn, sidecar) {
+		if err := r.ensureNamespaced(ctx, kn, svc); err != nil {
+			return fmt.Errorf("ensuring Service %s: %w", svc.Name, err)
+		}
+		if err := r.clearStaleServingCertErrors(ctx, svc); err != nil {
+			return fmt.Errorf("clearing stale serving-cert annotations on %s: %w", svc.Name, err)
+		}
+	}
+	for _, svc := range resources.MetricsServices(kn) {
+		if err := r.ensureNamespaced(ctx, kn, svc); err != nil {
+			return fmt.Errorf("ensuring metrics Service %s: %w", svc.Name, err)
+		}
+	}
+	if kn.Spec.ConsoleEnabled() {
+		if err := r.ensureNamespaced(ctx, kn, resources.ConsoleService(kn)); err != nil {
+			return fmt.Errorf("ensuring Console Service: %w", err)
+		}
+		if err := r.ensureNamespaced(ctx, kn, resources.ConsoleNginxConfigMap(kn)); err != nil {
+			return fmt.Errorf("ensuring Console nginx ConfigMap: %w", err)
+		}
+	}
+	return nil
+}
+
+func (r *KubernautReconciler) reconcileNetworkPolicies(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode) error {
+	if kn.Spec.NetworkPolicies.NetworkPoliciesEnabled() {
+		for _, np := range resources.NetworkPolicies(kn, sidecar) {
+			if err := r.ensureNamespaced(ctx, kn, np); err != nil {
+				return fmt.Errorf("ensuring NetworkPolicy %s: %w", np.Name, err)
+			}
+		}
+		return nil
+	}
+	r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "NetworkPoliciesDisabled", "Reconcile",
+		"spec.networkPolicies.enabled is false — network segmentation is required for FedRAMP SC-7 compliance; set to true for production")
+	var npList networkingv1.NetworkPolicyList
+	if err := r.List(ctx, &npList, client.InNamespace(kn.Namespace), client.MatchingLabels{
+		"app.kubernetes.io/managed-by": "kubernaut-operator",
+	}); err == nil {
+		for i := range npList.Items {
+			if err := r.deleteIfExists(ctx, &npList.Items[i]); err != nil {
+				return fmt.Errorf("deleting NetworkPolicy %s: %w", npList.Items[i].Name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func (r *KubernautReconciler) reconcileMonitoringAndAlerts(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
+	if kn.Spec.Monitoring.MonitoringEnabled() && r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com") {
+		if err := r.deployMonitoring(ctx, kn); err != nil {
+			return err
+		}
+	}
+	if kn.Spec.GatewayEnabled() {
+		if amCfg := resources.GatewayAlertManagerConfig(kn); amCfg != nil && r.hasCRD(ctx, "alertmanagerconfigs.monitoring.coreos.com") {
+			if err := r.ensureNamespaced(ctx, kn, amCfg); err != nil {
+				return fmt.Errorf("ensuring Gateway AlertManagerConfig: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 func (r *KubernautReconciler) deployMonitoring(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
