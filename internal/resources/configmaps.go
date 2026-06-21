@@ -18,6 +18,7 @@ package resources
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
@@ -1970,13 +1971,9 @@ func afAuthConfig(kn *kubernautv1alpha1.Kubernaut, oidc *KagentiOIDCDefaults) af
 // console access on the next AF restart.
 func injectConsoleAudience(providers []afJWTProviderYAML) {
 	for i := range providers {
-		for _, a := range providers[i].Audiences {
-			if a == ComponentConsole {
-				goto next
-			}
+		if !slices.Contains(providers[i].Audiences, ComponentConsole) {
+			providers[i].Audiences = append(providers[i].Audiences, ComponentConsole)
 		}
-		providers[i].Audiences = append(providers[i].Audiences, ComponentConsole)
-	next:
 	}
 }
 

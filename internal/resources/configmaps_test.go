@@ -1742,3 +1742,82 @@ var _ = Describe("DataStorage Retention Config", func() {
 		Expect(data).To(ContainSubstring("defaultDays: 365"))
 	})
 })
+
+var _ = Describe("injectConsoleAudience", func() {
+	It("UT-CA-01 [AC-4, CC6.1]: appends console audience to providers that lack it", func() {
+		providers := []afJWTProviderYAML{
+			{Name: "keycloak", Audiences: []string{"apifrontend"}},
+		}
+		injectConsoleAudience(providers)
+		Expect(providers[0].Audiences).To(ContainElement(ComponentConsole))
+		Expect(providers[0].Audiences).To(HaveLen(2))
+	})
+
+	It("UT-CA-02 [AC-4, CC6.1]: idempotent when console audience already present", func() {
+		providers := []afJWTProviderYAML{
+			{Name: "keycloak", Audiences: []string{"apifrontend", ComponentConsole}},
+		}
+		injectConsoleAudience(providers)
+		count := 0
+		for _, a := range providers[0].Audiences {
+			if a == ComponentConsole {
+				count++
+			}
+		}
+		Expect(count).To(Equal(1))
+	})
+
+	It("UT-CA-03 [AC-4, CC6.1]: mixed multi-provider injects only where missing", func() {
+		providers := []afJWTProviderYAML{
+			{Name: "provider-a", Audiences: []string{"apifrontend"}},
+			{Name: "provider-b", Audiences: []string{"apifrontend", ComponentConsole}},
+			{Name: "provider-c", Audiences: []string{"other"}},
+		}
+		injectConsoleAudience(providers)
+		Expect(providers[0].Audiences).To(ContainElement(ComponentConsole))
+		Expect(providers[1].Audiences).To(HaveLen(2))
+		Expect(providers[2].Audiences).To(ContainElement(ComponentConsole))
+	})
+
+	It("UT-CA-04 [SI-10]: empty provider list causes no mutation or panic", func() {
+		var providers []afJWTProviderYAML
+		Expect(func() { injectConsoleAudience(providers) }).NotTo(Panic())
+	})
+})
+
+var _ = Describe("kaRateLimitFromSpec", func() {
+	It("UT-RL-01 [SC-5, CC6.6]: nil spec produces safe defaults", func() {
+		rl := kaRateLimitFromSpec(nil)
+		Expect(rl.RequestsPerSecond).To(Equal(50))
+		Expect(rl.Burst).To(Equal(100))
+	})
+
+	It("UT-RL-02 [SC-5, CC6.6]: partial override applies RPS only", func() {
+		rps := 10
+		rl := kaRateLimitFromSpec(&kubernautv1alpha1.KARateLimitSpec{
+			RequestsPerSecond: &rps,
+		})
+		Expect(rl.RequestsPerSecond).To(Equal(10))
+		Expect(rl.Burst).To(Equal(100))
+	})
+
+	It("UT-RL-03 [SC-5, CC6.6]: partial override applies burst only", func() {
+		burst := 200
+		rl := kaRateLimitFromSpec(&kubernautv1alpha1.KARateLimitSpec{
+			Burst: &burst,
+		})
+		Expect(rl.RequestsPerSecond).To(Equal(50))
+		Expect(rl.Burst).To(Equal(200))
+	})
+
+	It("UT-RL-04 [CM-6, CC8.1]: both fields set overrides all defaults", func() {
+		rps := 25
+		burst := 50
+		rl := kaRateLimitFromSpec(&kubernautv1alpha1.KARateLimitSpec{
+			RequestsPerSecond: &rps,
+			Burst:             &burst,
+		})
+		Expect(rl.RequestsPerSecond).To(Equal(25))
+		Expect(rl.Burst).To(Equal(50))
+	})
+})
