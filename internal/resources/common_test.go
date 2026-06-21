@@ -31,7 +31,10 @@ import (
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 )
 
-const testSystemNamespace = "kubernaut-system"
+const (
+	testSystemNamespace = "kubernaut-system"
+	testIngressDomain   = "apps.test.example.com"
+)
 
 func testKubernaut() *kubernautv1alpha1.Kubernaut {
 	return &kubernautv1alpha1.Kubernaut{

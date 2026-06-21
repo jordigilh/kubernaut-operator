@@ -47,6 +47,7 @@ const (
 	ComponentKubernautAgent          = "kubernaut-agent"
 	ComponentAuthWebhook             = "authwebhook"
 	ComponentAPIFrontend             = "apifrontend"
+	ComponentConsole                 = "kubernaut-console"
 )
 
 // controllerSuffix lists components that are actual Kubernetes controllers
@@ -146,8 +147,9 @@ const LLMProviderVertexAI = "vertex_ai"
 
 // Kagenti discovery labels for A2A agent auto-discovery.
 const (
-	KagentiAgentTypeLabel   = "kagenti.io/type"
-	KagentiA2AProtocolLabel = "protocol.kagenti.io/a2a"
+	KagentiAgentTypeLabel                = "kagenti.io/type"
+	KagentiA2AProtocolLabel              = "protocol.kagenti.io/a2a"
+	KagentiClientRegistrationInjectLabel = "kagenti.io/client-registration-inject"
 )
 
 // AgentTLSPortName is the service port name that signals to the kagenti-operator
@@ -225,6 +227,8 @@ func isComponentActive(kn *kubernautv1alpha1.Kubernaut, component string) bool {
 		return kn.Spec.APIFrontendEnabled()
 	case ComponentGateway:
 		return kn.Spec.GatewayEnabled()
+	case ComponentConsole:
+		return kn.Spec.ConsoleEnabled()
 	default:
 		return true
 	}
@@ -285,6 +289,7 @@ var componentEnvSuffix = map[string]string{
 	"apifrontend":             "API_FRONTEND",
 	"db-migrate":              "DB_MIGRATE",
 	"init-ubi-minimal":        "INIT_UBI_MINIMAL",
+	"console":                 "CONSOLE",
 }
 
 // ResolveImage returns the fully-qualified container image for a component.

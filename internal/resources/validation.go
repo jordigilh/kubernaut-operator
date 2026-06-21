@@ -79,6 +79,24 @@ func validateLLMPrerequisites(kn *kubernautv1alpha1.Kubernaut) []error {
 	if !certSet && llm.TLSClientSecretRef != "" {
 		errs = append(errs, fmt.Errorf("%s.tlsClientSecretRef: set but tlsCertFile/tlsKeyFile are empty — both pairs are required for mTLS", base))
 	}
+	errs = append(errs, validatePhaseModels(llm.PhaseModels, base+".phaseModels")...)
+	return errs
+}
+
+// validPhaseModelKeys enumerates the agent phases that support per-phase LLM overrides.
+var validPhaseModelKeys = map[string]bool{
+	"rca":                true,
+	"workflow_discovery": true,
+	"validation":         true,
+}
+
+func validatePhaseModels(pm map[string]kubernautv1alpha1.LLMPhaseOverrideSpec, base string) []error {
+	var errs []error
+	for key := range pm {
+		if !validPhaseModelKeys[key] {
+			errs = append(errs, fmt.Errorf("%s: invalid phase key %q — must be one of: rca, workflow_discovery, validation", base, key))
+		}
+	}
 	return errs
 }
 
@@ -210,15 +228,32 @@ func validateToolRoleBindings(kn *kubernautv1alpha1.Kubernaut) []error {
 	}
 
 	seen := make(map[string]bool, len(rbac.RoleBindings))
-	for _, rb := range rbac.RoleBindings {
-		if seen[rb.Role] {
-			errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings: duplicate role %q", rb.Role))
+	for i, rb := range rbac.RoleBindings {
+		if rb.Role != "" && rb.ClusterRoleName != "" {
+			errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings[%d]: role and clusterRoleName are mutually exclusive", i))
 			continue
 		}
-		seen[rb.Role] = true
+		if rb.Role == "" && rb.ClusterRoleName == "" {
+			errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings[%d]: one of role or clusterRoleName must be set", i))
+			continue
+		}
 
-		if !validToolPersonas[rb.Role] {
-			errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings: unknown persona %q", rb.Role))
+		if rb.Role != "" {
+			if seen[rb.Role] {
+				errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings: duplicate role %q", rb.Role))
+				continue
+			}
+			seen[rb.Role] = true
+
+			if !validToolPersonas[rb.Role] {
+				errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings: unknown persona %q", rb.Role))
+			}
+		} else {
+			if seen[rb.ClusterRoleName] {
+				errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings: duplicate clusterRoleName %q", rb.ClusterRoleName))
+				continue
+			}
+			seen[rb.ClusterRoleName] = true
 		}
 	}
 

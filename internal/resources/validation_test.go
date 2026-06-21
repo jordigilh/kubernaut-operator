@@ -434,6 +434,55 @@ var _ = Describe("ToolRoleBinding Validation", func() {
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("sarCacheTTL"))
 	})
+
+	// --- Issue #181: Custom ClusterRole references ---
+
+	It("[AC-3] rejects roleBinding with both role and clusterRoleName set", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Role: "sre", ClusterRoleName: "my-custom-role", Groups: []string{"team-a"}},
+			},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("mutually exclusive"))
+	})
+
+	It("[AC-3] rejects roleBinding with neither role nor clusterRoleName set", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Groups: []string{"team-a"}},
+			},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("one of role or clusterRoleName"))
+	})
+
+	It("[AC-3] accepts roleBinding with only clusterRoleName set", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{ClusterRoleName: "my-custom-role", Groups: []string{"team-a"}},
+			},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("[AC-6] accepts mixed persona and custom clusterRoleName bindings", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Role: "sre", Groups: []string{"sre-team"}},
+				{ClusterRoleName: "my-custom-role", Groups: []string{"custom-team"}},
+			},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
 })
 
 var _ = Describe("AlignmentCheck Validation", func() {
@@ -726,6 +775,45 @@ var _ = Describe("LLM Prerequisite Validation", func() {
 
 	It("accepts valid llm configuration", func() {
 		kn := testKubernaut()
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("rejects invalid phaseModels key", func() {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.LLM.PhaseModels = map[string]kubernautv1alpha1.LLMPhaseOverrideSpec{
+			"banana": {Model: "claude-haiku-4-6"},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring(`invalid phase key "banana"`))
+	})
+
+	It("accepts valid phaseModels keys", func() {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.LLM.PhaseModels = map[string]kubernautv1alpha1.LLMPhaseOverrideSpec{
+			"rca":                {Model: "claude-sonnet-4-6"},
+			"workflow_discovery": {Model: "claude-haiku-4-6"},
+			"validation":         {Model: "claude-haiku-4-6"},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("reports multiple invalid phaseModels keys", func() {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.LLM.PhaseModels = map[string]kubernautv1alpha1.LLMPhaseOverrideSpec{
+			"rca":     {Model: "claude-sonnet-4-6"},
+			"banana":  {Model: "claude-haiku-4-6"},
+			"unknown": {Model: "claude-haiku-4-6"},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(2))
+	})
+
+	It("accepts empty phaseModels", func() {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.LLM.PhaseModels = nil
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())
 	})

@@ -462,10 +462,11 @@ var toolPersonas = []toolPersona{
 			"kubernaut_discover_workflows", "kubernaut_select_workflow", "kubernaut_present_decision",
 			"kubernaut_list_workflows", "kubernaut_get_remediation_history",
 			"kubernaut_get_effectiveness", "kubernaut_get_audit_trail",
-			"kubernaut_takeover", "kubernaut_message", "kubernaut_complete",
+			"kubernaut_message", "kubernaut_complete",
 			"kubernaut_cancel", "kubernaut_status", "kubernaut_reconnect",
 			"kubectl_get", "kubectl_list", "kubectl_list_events",
 			"kubernaut_check_existing_remediation", "kubernaut_remediate",
+			"list_alerts", "get_alert_details", "kubernaut_investigate_alert",
 		},
 	},
 	{
@@ -474,10 +475,11 @@ var toolPersonas = []toolPersona{
 			"kubernaut_list_remediations", "kubernaut_get_remediation", "kubernaut_watch",
 			"kubernaut_await_session", "kubernaut_investigate",
 			"kubernaut_discover_workflows", "kubernaut_select_workflow", "kubernaut_present_decision",
-			"kubernaut_takeover", "kubernaut_message", "kubernaut_complete",
+			"kubernaut_message", "kubernaut_complete",
 			"kubernaut_cancel", "kubernaut_status", "kubernaut_reconnect",
 			"kubectl_get", "kubectl_list", "kubectl_list_events",
 			"kubernaut_check_existing_remediation", "kubernaut_remediate",
+			"list_alerts", "get_alert_details", "kubernaut_investigate_alert",
 		},
 	},
 	{
@@ -552,6 +554,10 @@ func ToolClusterRoleNames(kn *kubernautv1alpha1.Kubernaut) []string {
 
 // ToolClusterRoleBindings builds CRBs that bind tool ClusterRoles to OIDC groups
 // as specified in spec.apiFrontend.rbac.roleBindings.
+// For built-in persona roles (Role field), the CRB references the operator-managed
+// ClusterRole with a namespace-prefixed name.
+// For custom ClusterRole references (ClusterRoleName field), the CRB references the
+// user-managed ClusterRole directly without namespace-prefixing.
 // Duplicate roles are merged: subjects from all entries with the same role are
 // combined into a single CRB.
 // Returns empty when no roleBindings are specified.
@@ -560,19 +566,34 @@ func ToolClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterR
 		return nil
 	}
 
-	merged := make(map[string][]string) // role -> groups (deduped)
-	order := make([]string, 0)
-	for _, rb := range kn.Spec.APIFrontend.RBAC.RoleBindings {
-		if _, exists := merged[rb.Role]; !exists {
-			order = append(order, rb.Role)
+	type bindingKey struct {
+		roleRefName string
+		isCustom    bool
+	}
+
+	bindings := kn.Spec.APIFrontend.RBAC.RoleBindings
+	merged := make(map[string][]string, len(bindings))
+	order := make([]bindingKey, 0, len(bindings))
+	for _, rb := range bindings {
+		var key string
+		var isCustom bool
+		if rb.ClusterRoleName != "" {
+			key = "custom:" + rb.ClusterRoleName
+			isCustom = true
+		} else {
+			key = "persona:" + rb.Role
+			isCustom = false
 		}
-		merged[rb.Role] = append(merged[rb.Role], rb.Groups...)
+		if _, exists := merged[key]; !exists {
+			order = append(order, bindingKey{roleRefName: key, isCustom: isCustom})
+		}
+		merged[key] = append(merged[key], rb.Groups...)
 	}
 
 	labels := CommonLabels(kn)
 	crbs := make([]*rbacv1.ClusterRoleBinding, 0, len(merged))
-	for _, role := range order {
-		groups := merged[role]
+	for _, bk := range order {
+		groups := merged[bk.roleRefName]
 		subjects := make([]rbacv1.Subject, 0, len(groups))
 		for _, g := range groups {
 			subjects = append(subjects, rbacv1.Subject{
@@ -580,15 +601,27 @@ func ToolClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterR
 				Name: g,
 			})
 		}
+
+		var crbName, roleRefName string
+		if bk.isCustom {
+			name := bk.roleRefName[len("custom:"):]
+			crbName = clusterRoleName(kn, "tool-custom-"+name+"-binding")
+			roleRefName = name
+		} else {
+			name := bk.roleRefName[len("persona:"):]
+			crbName = clusterRoleName(kn, "tool-"+name+"-binding")
+			roleRefName = clusterRoleName(kn, "tool-"+name)
+		}
+
 		crbs = append(crbs, &rbacv1.ClusterRoleBinding{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:   clusterRoleName(kn, "tool-"+role+"-binding"),
+				Name:   crbName,
 				Labels: labels,
 			},
 			RoleRef: rbacv1.RoleRef{
 				APIGroup: rbacv1.GroupName,
 				Kind:     "ClusterRole",
-				Name:     clusterRoleName(kn, "tool-"+role),
+				Name:     roleRefName,
 			},
 			Subjects: subjects,
 		})
@@ -898,6 +931,7 @@ func authWebhookClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]s
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationworkflows"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationworkflows/finalizers"}, Verbs: []string{"update"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions/status", "remediationapprovalrequests/status", "remediationrequests/status", "remediationworkflows/status", "actiontypes/status"}, Verbs: []string{"update", "patch"}},
+			{APIGroups: []string{"", "events.k8s.io"}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
 		},
 	}
 }

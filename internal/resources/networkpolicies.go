@@ -111,6 +111,11 @@ func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentAuthWebhook)}},
 		{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentKubernautAgent)}},
 	}
+	if kn.Spec.APIFrontendEnabled() {
+		dataIngressPeers = append(dataIngressPeers,
+			networkingv1.NetworkPolicyPeer{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentAPIFrontend)}},
+		)
+	}
 	if kn.Spec.GatewayEnabled() {
 		dataIngressPeers = append(dataIngressPeers,
 			networkingv1.NetworkPolicyPeer{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentGateway)}},
@@ -424,23 +429,24 @@ func baseEgress(extraCap int) []networkingv1.NetworkPolicyEgressRule {
 	return rules
 }
 
-// dnsEgressRule allows DNS resolution (UDP/TCP 53) to any namespace.
-// An empty namespaceSelector ({}) is the standard Kubernetes pattern
-// for DNS egress — it avoids DNAT-vs-namespaceSelector issues on
-// OVN-Kubernetes where ClusterIP traffic is translated before NP
-// evaluation. Port 53 is safe to open broadly since only DNS servers
-// bind to it.
+// dnsEgressRule allows DNS resolution to any destination.
+// Both the service port (53) and the backend target port (5353) must be
+// allowed because OVN-Kubernetes applies egress NetworkPolicy ACLs with
+// "apply-after-lb=true" — the match is evaluated AFTER load-balancer
+// DNAT. On OpenShift, the dns-default service remaps 53 → 5353
+// (coredns listens on 5353 to avoid running as root), so after DNAT the
+// destination port is 5353, not 53.
 func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
 	protoUDP := corev1.ProtocolUDP
 	protoTCP := corev1.ProtocolTCP
 	p53 := intstr.FromInt32(53)
+	p5353 := intstr.FromInt32(5353)
 	return networkingv1.NetworkPolicyEgressRule{
-		To: []networkingv1.NetworkPolicyPeer{
-			{NamespaceSelector: &metav1.LabelSelector{}},
-		},
 		Ports: []networkingv1.NetworkPolicyPort{
 			{Protocol: &protoUDP, Port: &p53},
 			{Protocol: &protoTCP, Port: &p53},
+			{Protocol: &protoUDP, Port: &p5353},
+			{Protocol: &protoTCP, Port: &p5353},
 		},
 	}
 }

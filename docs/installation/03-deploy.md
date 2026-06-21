@@ -344,6 +344,70 @@ spec:
     enabled: false
 ```
 
+**API Frontend `proxy-init` crash-looping with `can't initialize iptables table 'mangle': Permission denied`:**
+
+When Kagenti is installed, the `proxy-init` init container sets up iptables rules
+for traffic interception. On some OpenShift versions (observed on OCP 4.21), the
+`iptable_mangle` kernel module is not loaded by default even though `iptable_nat`
+is. This causes `proxy-init` to select the `iptables-legacy` backend (because
+`iptable_nat` is present) and then fail when it tries to manipulate the `mangle`
+table.
+
+Diagnose by checking the init container logs:
+
+```bash
+oc logs <apifrontend-pod> -n kubernaut-system -c proxy-init
+```
+
+If you see:
+
+```
+Using iptables command: iptables-legacy (iptables v1.8.11 (legacy))
+iptables v1.8.11 (legacy): can't initialize iptables table `mangle': Permission denied
+```
+
+Load the missing kernel module on **every worker node** where Kubernaut pods may
+be scheduled:
+
+```bash
+# From a debug shell or SSH session on each node:
+sudo modprobe iptable_mangle
+```
+
+Then delete the crashing pod so it restarts:
+
+```bash
+oc delete pod <apifrontend-pod> -n kubernaut-system
+```
+
+To persist the module across node reboots, create a `MachineConfig`:
+
+```bash
+oc apply -f - <<EOF
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  name: 99-worker-iptable-mangle
+  labels:
+    machineconfiguration.openshift.io/role: worker
+spec:
+  config:
+    ignition:
+      version: 3.2.0
+    storage:
+      files:
+        - path: /etc/modules-load.d/iptable_mangle.conf
+          mode: 0644
+          contents:
+            source: data:,iptable_mangle
+EOF
+```
+
+> **Note:** This issue is tracked upstream as
+> [kagenti/kagenti-extensions#502](https://github.com/kagenti/kagenti-extensions/issues/502).
+> On OCP 4.18 and earlier, `iptable_mangle` is typically loaded by default and
+> this workaround is not needed.
+
 **CR in Degraded:**
 
 One or more services are not ready. Check which:

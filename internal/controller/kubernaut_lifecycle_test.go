@@ -31,12 +31,18 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
@@ -727,6 +733,103 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(cm).To(BeNil(), "should not generate LLM runtime ConfigMap when user provides one")
 		})
 
+		It("IT-CL-01 [SC-7, CC6.6]: console enabled creates Deployment, Service, and nginx ConfigMap", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			t := true
+			cr.Spec.Console.Enabled = &t
+			f := false
+			cr.Spec.Console.Route.Enabled = &f
+			cr.Spec.Console.Auth.SecretName = "console-oidc"
+			Expect(k8sClient.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "console-oidc", Namespace: testNamespace},
+				Data: map[string][]byte{
+					"client-id":     []byte("cid"),
+					"client-secret": []byte("csec"),
+					"cookie-secret": []byte("cook"),
+				},
+			})).To(Succeed())
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			reconcileToRunning(ctx)
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: string(resources.ComponentConsole), Namespace: testNamespace,
+			}, dep)).To(Succeed())
+			Expect(dep.Spec.Template.Spec.Containers).To(HaveLen(2))
+
+			svc := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: string(resources.ComponentConsole), Namespace: testNamespace,
+			}, svc)).To(Succeed())
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: string(resources.ComponentConsole) + "-nginx", Namespace: testNamespace,
+			}, cm)).To(Succeed())
+			Expect(cm.Data).To(HaveKey("server.conf"))
+		})
+
+		It("IT-CL-03 [SC-7, CC6.1]: console redirect URL uses cluster ingress domain", func() {
+			ingress := &configv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+				Spec:       configv1.IngressSpec{Domain: "apps.test.example.com"},
+			}
+			Expect(k8sClient.Create(ctx, ingress)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, ingress) }()
+
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			t := true
+			cr.Spec.Console.Enabled = &t
+			f := false
+			cr.Spec.Console.Route.Enabled = &f
+			cr.Spec.Console.Auth.SecretName = "console-oidc"
+			oidcSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "console-oidc", Namespace: testNamespace},
+				Data: map[string][]byte{
+					"client-id":     []byte("cid"),
+					"client-secret": []byte("csec"),
+					"cookie-secret": []byte("cook"),
+				},
+			}
+			if err := k8sClient.Create(ctx, oidcSecret); err != nil {
+				Expect(errors.IsAlreadyExists(err)).To(BeTrue(), "unexpected error creating console-oidc secret: %v", err)
+			}
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			reconcileToRunning(ctx)
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: string(resources.ComponentConsole), Namespace: testNamespace,
+			}, dep)).To(Succeed())
+
+			oauth2Args := dep.Spec.Template.Spec.Containers[0].Args
+			var redirectURL string
+			for _, arg := range oauth2Args {
+				if strings.HasPrefix(arg, "--redirect-url=") {
+					redirectURL = strings.TrimPrefix(arg, "--redirect-url=")
+				}
+			}
+			Expect(redirectURL).To(Equal(
+				"https://kubernaut-console-default.apps.test.example.com/oauth2/callback"),
+				"redirect URL must use the cluster ingress domain, not cluster.local")
+		})
+
+		It("IT-CL-02 [SC-7, CC6.6]: console disabled produces no Console resources", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			reconcileToRunning(ctx)
+
+			dep := &appsv1.Deployment{}
+			err := k8sClient.Get(ctx, types.NamespacedName{
+				Name: string(resources.ComponentConsole), Namespace: testNamespace,
+			}, dep)
+			Expect(errors.IsNotFound(err)).To(BeTrue(),
+				"Console Deployment should not exist when console is disabled")
+		})
+
 		It("[SC-7] should create NetworkPolicies when networkPolicies.enabled is true", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
@@ -797,9 +900,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		}
 
 		It("[SI-4] patches /metrics into bypass.inbound_paths when missing", func() {
-			kn := testKubernautCR(true, true)
+			kn := unitTestKubernautCR(true, true)
 			cm := authbridgeCM(kn.Namespace, "bypass:\n  inbound_paths:\n  - /healthz\n  - /readyz\nmode: envoy-sidecar\n")
-			r := newReconcilerWithCRD(newAgentRuntimeCRD(), newTestNamespace(nil), cm)
+			r := newReconcilerWithCRDScheme(newUnitAgentRuntimeCRD(), unitTestNamespace(nil), cm)
 
 			Expect(r.ensureAuthbridgeMetricsBypass(context.Background(), kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
 
@@ -809,9 +912,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		})
 
 		It("[SI-4] does not duplicate /metrics when already present", func() {
-			kn := testKubernautCR(true, true)
+			kn := unitTestKubernautCR(true, true)
 			cm := authbridgeCM(kn.Namespace, "bypass:\n  inbound_paths:\n  - /healthz\n  - /metrics\nmode: envoy-sidecar\n")
-			r := newReconcilerWithCRD(newAgentRuntimeCRD(), newTestNamespace(nil), cm)
+			r := newReconcilerWithCRDScheme(newUnitAgentRuntimeCRD(), unitTestNamespace(nil), cm)
 
 			Expect(r.ensureAuthbridgeMetricsBypass(context.Background(), kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
 
@@ -821,9 +924,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		})
 
 		It("[CM-6] skips patching when sidecar mode is None", func() {
-			kn := testKubernautCR(true, true)
+			kn := unitTestKubernautCR(true, true)
 			cm := authbridgeCM(kn.Namespace, "bypass:\n  inbound_paths:\n  - /healthz\nmode: envoy-sidecar\n")
-			r := newReconcilerWithCRD(newAgentRuntimeCRD(), newTestNamespace(nil), cm)
+			r := newReconcilerWithCRDScheme(newUnitAgentRuntimeCRD(), unitTestNamespace(nil), cm)
 
 			Expect(r.ensureAuthbridgeMetricsBypass(context.Background(), kn, resources.KagentiSidecarNone)).To(Succeed())
 
@@ -833,14 +936,14 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		})
 
 		It("[CM-6] skips patching when ConfigMap does not exist", func() {
-			kn := testKubernautCR(true, true)
-			r := newReconcilerWithCRD(newAgentRuntimeCRD(), newTestNamespace(nil))
+			kn := unitTestKubernautCR(true, true)
+			r := newReconcilerWithCRDScheme(newUnitAgentRuntimeCRD(), unitTestNamespace(nil))
 
 			Expect(r.ensureAuthbridgeMetricsBypass(context.Background(), kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
 		})
 
 		It("[CM-6] skips patching when config.yaml key is absent", func() {
-			kn := testKubernautCR(true, true)
+			kn := unitTestKubernautCR(true, true)
 			cm := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      authbridgeCMName,
@@ -850,15 +953,15 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 					"other-key.yaml": "foo: bar",
 				},
 			}
-			r := newReconcilerWithCRD(newAgentRuntimeCRD(), newTestNamespace(nil), cm)
+			r := newReconcilerWithCRDScheme(newUnitAgentRuntimeCRD(), unitTestNamespace(nil), cm)
 
 			Expect(r.ensureAuthbridgeMetricsBypass(context.Background(), kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
 		})
 
 		It("[CM-6] preserves existing fields when patching bypass", func() {
-			kn := testKubernautCR(true, true)
+			kn := unitTestKubernautCR(true, true)
 			cm := authbridgeCM(kn.Namespace, "bypass:\n  inbound_paths:\n  - /healthz\nidentity:\n  client_id: spiffe://example.com/ns/test/sa/apifrontend\n  type: client-secret\nmode: envoy-sidecar\n")
-			r := newReconcilerWithCRD(newAgentRuntimeCRD(), newTestNamespace(nil), cm)
+			r := newReconcilerWithCRDScheme(newUnitAgentRuntimeCRD(), unitTestNamespace(nil), cm)
 
 			Expect(r.ensureAuthbridgeMetricsBypass(context.Background(), kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
 
@@ -871,9 +974,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		})
 
 		It("[CM-6] creates bypass block when absent in config", func() {
-			kn := testKubernautCR(true, true)
+			kn := unitTestKubernautCR(true, true)
 			cm := authbridgeCM(kn.Namespace, "mode: envoy-sidecar\n")
-			r := newReconcilerWithCRD(newAgentRuntimeCRD(), newTestNamespace(nil), cm)
+			r := newReconcilerWithCRDScheme(newUnitAgentRuntimeCRD(), unitTestNamespace(nil), cm)
 
 			Expect(r.ensureAuthbridgeMetricsBypass(context.Background(), kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
 
@@ -885,9 +988,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		})
 
 		It("[CM-6] skips patching when AF is disabled", func() {
-			kn := testKubernautCR(false, true)
+			kn := unitTestKubernautCR(false, true)
 			cm := authbridgeCM(kn.Namespace, "bypass:\n  inbound_paths:\n  - /healthz\nmode: envoy-sidecar\n")
-			r := newReconcilerWithCRD(newAgentRuntimeCRD(), newTestNamespace(nil), cm)
+			r := newReconcilerWithCRDScheme(newUnitAgentRuntimeCRD(), unitTestNamespace(nil), cm)
 
 			Expect(r.ensureAuthbridgeMetricsBypass(context.Background(), kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
 
@@ -2757,4 +2860,433 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}
 		})
 	})
+
+	// ======================================================================
+	// Serving Cert Error Cleanup (migrated from serving_cert_test.go)
+	// ======================================================================
+
+	Context("Serving Cert Error Cleanup", func() {
+		It("UT-SC-01 [CM-6, CC8.1]: services without serving-cert annotations are left untouched", func() {
+			svc := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: "plain-svc", Namespace: "default"},
+				Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}},
+			}
+			r := newFakeUnitReconciler(svc)
+			Expect(r.clearStaleServingCertErrors(ctx, svc)).To(Succeed())
+		})
+
+		It("UT-SC-02 [SI-4, CC7.2]: clears stale error annotations when backing TLS secret is absent", func() {
+			svc := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "stale-svc",
+					Namespace: "default",
+					Annotations: map[string]string{
+						resources.OCPServingCertAnnotation:                            "my-tls",
+						"service.beta.openshift.io/serving-cert-generation-error":     "UID mismatch",
+						"service.beta.openshift.io/serving-cert-generation-error-num": "5",
+					},
+				},
+				Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 443, Protocol: corev1.ProtocolTCP}}},
+			}
+			r := newFakeUnitReconciler(svc)
+			Expect(r.clearStaleServingCertErrors(ctx, svc)).To(Succeed())
+
+			updated := &corev1.Service{}
+			Expect(r.Get(ctx, types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace}, updated)).To(Succeed())
+			Expect(updated.Annotations).NotTo(HaveKey("service.beta.openshift.io/serving-cert-generation-error"))
+			Expect(updated.Annotations).NotTo(HaveKey("service.beta.openshift.io/serving-cert-generation-error-num"))
+		})
+
+		It("UT-SC-03 [SI-4, CC7.2]: preserves error annotations when TLS secret exists", func() {
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "existing-tls", Namespace: "default"},
+				Data:       map[string][]byte{"tls.crt": []byte("cert"), "tls.key": []byte("key")},
+			}
+			svc := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "ok-svc",
+					Namespace: "default",
+					Annotations: map[string]string{
+						resources.OCPServingCertAnnotation:                            "existing-tls",
+						"service.beta.openshift.io/serving-cert-generation-error":     "some error",
+						"service.beta.openshift.io/serving-cert-generation-error-num": "1",
+					},
+				},
+				Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 443, Protocol: corev1.ProtocolTCP}}},
+			}
+			r := newFakeUnitReconciler(svc, secret)
+			Expect(r.clearStaleServingCertErrors(ctx, svc)).To(Succeed())
+
+			updated := &corev1.Service{}
+			Expect(r.Get(ctx, types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace}, updated)).To(Succeed())
+			Expect(updated.Annotations).To(HaveKey("service.beta.openshift.io/serving-cert-generation-error"))
+		})
+	})
+
+	// ======================================================================
+	// Kagenti Namespace Label (migrated from kagenti_label_test.go)
+	// ======================================================================
+
+	Context("Kagenti Namespace Label", func() {
+		It("UT-KL-01 [AC-4, CC6.1]: adds label when SPIRE and AF are both enabled", func() {
+			ns := unitTestNamespace(nil)
+			kn := unitTestKubernautCR(true, true)
+			r := newFakeUnitReconciler(ns)
+			Expect(r.ensureKagentiNamespaceLabel(ctx, kn)).To(Succeed())
+
+			updated := &corev1.Namespace{}
+			Expect(r.Get(ctx, types.NamespacedName{Name: testNamespace}, updated)).To(Succeed())
+			Expect(updated.Labels).To(HaveKeyWithValue("kagenti-enabled", "true"))
+		})
+
+		It("UT-KL-02 [AC-4, CC6.1]: removes label when SPIRE is disabled", func() {
+			ns := unitTestNamespace(map[string]string{"kagenti-enabled": "true"})
+			kn := unitTestKubernautCR(true, false)
+			r := newFakeUnitReconciler(ns)
+			Expect(r.ensureKagentiNamespaceLabel(ctx, kn)).To(Succeed())
+
+			updated := &corev1.Namespace{}
+			Expect(r.Get(ctx, types.NamespacedName{Name: testNamespace}, updated)).To(Succeed())
+			Expect(updated.Labels).NotTo(HaveKey("kagenti-enabled"))
+		})
+
+		It("UT-KL-03 [AC-4, CC6.1]: removes label when AF is disabled", func() {
+			ns := unitTestNamespace(map[string]string{"kagenti-enabled": "true"})
+			kn := unitTestKubernautCR(false, true)
+			r := newFakeUnitReconciler(ns)
+			Expect(r.ensureKagentiNamespaceLabel(ctx, kn)).To(Succeed())
+
+			updated := &corev1.Namespace{}
+			Expect(r.Get(ctx, types.NamespacedName{Name: testNamespace}, updated)).To(Succeed())
+			Expect(updated.Labels).NotTo(HaveKey("kagenti-enabled"))
+		})
+
+		It("UT-KL-04 [CM-6, CC8.1]: no mutation when label already matches desired state", func() {
+			ns := unitTestNamespace(map[string]string{"kagenti-enabled": "true", "other": "label"})
+			kn := unitTestKubernautCR(true, true)
+			r := newFakeUnitReconciler(ns)
+			Expect(r.ensureKagentiNamespaceLabel(ctx, kn)).To(Succeed())
+
+			updated := &corev1.Namespace{}
+			Expect(r.Get(ctx, types.NamespacedName{Name: testNamespace}, updated)).To(Succeed())
+			Expect(updated.Labels).To(HaveKeyWithValue("kagenti-enabled", "true"))
+			Expect(updated.Labels).To(HaveKeyWithValue("other", "label"))
+		})
+
+		It("UT-KL-05 [CM-6, CC8.1]: no mutation when label is already absent", func() {
+			ns := unitTestNamespace(map[string]string{"other": "label"})
+			kn := unitTestKubernautCR(true, false)
+			r := newFakeUnitReconciler(ns)
+			Expect(r.ensureKagentiNamespaceLabel(ctx, kn)).To(Succeed())
+
+			updated := &corev1.Namespace{}
+			Expect(r.Get(ctx, types.NamespacedName{Name: testNamespace}, updated)).To(Succeed())
+			Expect(updated.Labels).NotTo(HaveKey("kagenti-enabled"))
+			Expect(updated.Labels).To(HaveKeyWithValue("other", "label"))
+		})
+	})
+
+	// ======================================================================
+	// Kagenti OIDC Auto-Detection (migrated from kagenti_oidc_test.go)
+	// ======================================================================
+
+	Context("Kagenti OIDC Auto-Detection", func() {
+		const testKagentiIssuerURL = "https://keycloak.example.com/realms/kagenti"
+
+		kagentiAuthbridgeCM := func(data map[string]string) *corev1.ConfigMap {
+			return &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: "authbridge-config", Namespace: "kagenti-system"},
+				Data:       data,
+			}
+		}
+		oidcCR := func(issuerURL string) *kubernautv1alpha1.Kubernaut {
+			kn := unitTestKubernautCR(true, true)
+			kn.Spec.APIFrontend.Auth.IssuerURL = issuerURL
+			return kn
+		}
+
+		It("UT-OD-01 [AC-4, CC6.1]: returns nil when no sidecar is active", func() {
+			r := newFakeUnitReconciler()
+			defaults, err := r.resolveKagentiOIDCDefaults(ctx, oidcCR(""), resources.KagentiSidecarNone)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(defaults).To(BeNil())
+		})
+
+		It("UT-OD-02 [IA-5, CC6.1]: auto-detects issuer and JWKS from authbridge ConfigMap", func() {
+			cm := kagentiAuthbridgeCM(map[string]string{
+				"ISSUER": testKagentiIssuerURL, "KEYCLOAK_URL": "http://keycloak-service.keycloak.svc:8080", "KEYCLOAK_REALM": "kagenti",
+			})
+			r := newFakeUnitReconciler(cm)
+			defaults, err := r.resolveKagentiOIDCDefaults(ctx, oidcCR(""), resources.KagentiSidecarAuthbridge)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(defaults).NotTo(BeNil())
+			Expect(defaults.IssuerURL).To(Equal(testKagentiIssuerURL))
+			Expect(defaults.JWKSURL).To(Equal("http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/certs"))
+			Expect(defaults.AllowInsecureIssuers).To(BeTrue())
+		})
+
+		It("UT-OD-03 [SC-8, CC6.7]: marks issuer as secure when Keycloak uses HTTPS", func() {
+			cm := kagentiAuthbridgeCM(map[string]string{
+				"ISSUER": testKagentiIssuerURL, "KEYCLOAK_URL": "https://keycloak-service.keycloak.svc:8443", "KEYCLOAK_REALM": "kagenti",
+			})
+			r := newFakeUnitReconciler(cm)
+			defaults, err := r.resolveKagentiOIDCDefaults(ctx, oidcCR(""), resources.KagentiSidecarAuthbridge)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(defaults.AllowInsecureIssuers).To(BeFalse())
+			Expect(defaults.JWKSURL).To(HavePrefix("https://"))
+		})
+
+		It("UT-OD-04 [AC-4, CC6.1]: works with envoy sidecar mode", func() {
+			cm := kagentiAuthbridgeCM(map[string]string{
+				"ISSUER": testKagentiIssuerURL, "KEYCLOAK_URL": "http://keycloak-service.keycloak.svc:8080", "KEYCLOAK_REALM": "kagenti",
+			})
+			r := newFakeUnitReconciler(cm)
+			defaults, err := r.resolveKagentiOIDCDefaults(ctx, oidcCR(""), resources.KagentiSidecarEnvoy)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(defaults).NotTo(BeNil())
+			Expect(defaults.IssuerURL).To(Equal(testKagentiIssuerURL))
+		})
+
+		It("UT-OD-05 [CM-6, CC8.1]: skips when CR has explicit issuer override", func() {
+			r := newFakeUnitReconciler()
+			defaults, err := r.resolveKagentiOIDCDefaults(ctx, oidcCR("https://custom-idp.example.com/realms/custom"), resources.KagentiSidecarAuthbridge)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(defaults).To(BeNil())
+		})
+
+		It("UT-OD-06 [IA-5, CC6.1]: errors when ConfigMap missing and no CR override", func() {
+			r := newFakeUnitReconciler()
+			_, err := r.resolveKagentiOIDCDefaults(ctx, oidcCR(""), resources.KagentiSidecarAuthbridge)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(And(ContainSubstring("authbridge-config"), ContainSubstring("not found")))
+		})
+
+		It("UT-OD-07 [CM-6, CC8.1]: skips when ISSUER key missing but CR has override", func() {
+			cm := kagentiAuthbridgeCM(map[string]string{"KEYCLOAK_URL": "http://keycloak-service.keycloak.svc:8080", "KEYCLOAK_REALM": "kagenti"})
+			r := newFakeUnitReconciler(cm)
+			defaults, err := r.resolveKagentiOIDCDefaults(ctx, oidcCR("https://custom-idp.example.com/realms/custom"), resources.KagentiSidecarAuthbridge)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(defaults).To(BeNil())
+		})
+
+		It("UT-OD-08 [IA-5, CC6.1]: errors when ISSUER key missing and no override", func() {
+			cm := kagentiAuthbridgeCM(map[string]string{"KEYCLOAK_URL": "http://keycloak-service.keycloak.svc:8080"})
+			r := newFakeUnitReconciler(cm)
+			_, err := r.resolveKagentiOIDCDefaults(ctx, oidcCR(""), resources.KagentiSidecarAuthbridge)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("ISSUER"))
+		})
+
+		It("UT-OD-09 [IA-5]: returns issuer only when KEYCLOAK_URL is absent", func() {
+			cm := kagentiAuthbridgeCM(map[string]string{"ISSUER": testKagentiIssuerURL})
+			r := newFakeUnitReconciler(cm)
+			defaults, err := r.resolveKagentiOIDCDefaults(ctx, oidcCR(""), resources.KagentiSidecarAuthbridge)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(defaults.IssuerURL).To(Equal(testKagentiIssuerURL))
+			Expect(defaults.JWKSURL).To(BeEmpty())
+			Expect(defaults.AllowInsecureIssuers).To(BeFalse())
+		})
+	})
+
+	// ======================================================================
+	// AgentRuntime CR Lifecycle (migrated from agentruntime_test.go)
+	// ======================================================================
+
+	Context("AgentRuntime CR Lifecycle", func() {
+		It("UT-AR-01 [CM-6, CC8.1]: creates AgentRuntime CR when sidecar is active", func() {
+			crd := newUnitAgentRuntimeCRD()
+			ns := unitTestNamespace(nil)
+			kn := unitTestKubernautCR(true, true)
+			r := newReconcilerWithCRDScheme(crd, ns)
+			Expect(r.ensureAgentRuntimeCR(ctx, kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
+
+			ar, err := getUnitAgentRuntime(ctx, r.Client, kn.Namespace)
+			Expect(err).NotTo(HaveOccurred())
+
+			spec, ok := ar.Object["spec"].(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(spec["type"]).To(Equal("agent"))
+			targetRef, ok := spec["targetRef"].(map[string]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(targetRef["kind"]).To(Equal("Deployment"))
+			Expect(targetRef["name"]).To(Equal(string(resources.ComponentAPIFrontend)))
+			Expect(ar.GetLabels()).To(HaveKeyWithValue("app.kubernetes.io/managed-by", "kubernaut-operator"))
+		})
+
+		It("UT-AR-02 [CM-6, CC8.1]: idempotent when CR already exists", func() {
+			crd := newUnitAgentRuntimeCRD()
+			ns := unitTestNamespace(nil)
+			kn := unitTestKubernautCR(true, true)
+			r := newReconcilerWithCRDScheme(crd, ns)
+			Expect(r.ensureAgentRuntimeCR(ctx, kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
+			Expect(r.ensureAgentRuntimeCR(ctx, kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
+
+			_, err := getUnitAgentRuntime(ctx, r.Client, kn.Namespace)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("UT-AR-03 [CM-6, CC8.1]: deletes CR when sidecar is disabled", func() {
+			crd := newUnitAgentRuntimeCRD()
+			ns := unitTestNamespace(nil)
+			kn := unitTestKubernautCR(true, true)
+			r := newReconcilerWithCRDScheme(crd, ns)
+			Expect(r.ensureAgentRuntimeCR(ctx, kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
+			Expect(r.ensureAgentRuntimeCR(ctx, kn, resources.KagentiSidecarNone)).To(Succeed())
+
+			_, err := getUnitAgentRuntime(ctx, r.Client, kn.Namespace)
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("UT-AR-04 [CM-6]: no-op when sidecar is disabled and no CR exists", func() {
+			crd := newUnitAgentRuntimeCRD()
+			ns := unitTestNamespace(nil)
+			kn := unitTestKubernautCR(true, false)
+			r := newReconcilerWithCRDScheme(crd, ns)
+			Expect(r.ensureAgentRuntimeCR(ctx, kn, resources.KagentiSidecarNone)).To(Succeed())
+		})
+
+		It("UT-AR-05 [CM-6, CC8.1]: skips gracefully when CRD is not installed", func() {
+			ns := unitTestNamespace(nil)
+			kn := unitTestKubernautCR(true, true)
+			r := newFakeUnitReconciler(ns)
+			Expect(r.ensureAgentRuntimeCR(ctx, kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
+		})
+
+		It("UT-AR-06 [AC-4, CC6.1]: creates CR with envoy sidecar mode", func() {
+			crd := newUnitAgentRuntimeCRD()
+			ns := unitTestNamespace(nil)
+			kn := unitTestKubernautCR(true, true)
+			r := newReconcilerWithCRDScheme(crd, ns)
+			Expect(r.ensureAgentRuntimeCR(ctx, kn, resources.KagentiSidecarEnvoy)).To(Succeed())
+
+			_, err := getUnitAgentRuntime(ctx, r.Client, kn.Namespace)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("UT-AR-07 [CM-6, CC8.1]: deleteAgentRuntimeCR removes an existing CR", func() {
+			crd := newUnitAgentRuntimeCRD()
+			ns := unitTestNamespace(nil)
+			kn := unitTestKubernautCR(true, true)
+			r := newReconcilerWithCRDScheme(crd, ns)
+			Expect(r.ensureAgentRuntimeCR(ctx, kn, resources.KagentiSidecarAuthbridge)).To(Succeed())
+
+			errs := r.deleteAgentRuntimeCR(ctx, kn)
+			Expect(errs).To(BeEmpty())
+
+			_, err := getUnitAgentRuntime(ctx, r.Client, kn.Namespace)
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("UT-AR-08 [CM-6]: deleteAgentRuntimeCR is a no-op when CR does not exist", func() {
+			crd := newUnitAgentRuntimeCRD()
+			ns := unitTestNamespace(nil)
+			kn := unitTestKubernautCR(true, true)
+			r := newReconcilerWithCRDScheme(crd, ns)
+
+			errs := r.deleteAgentRuntimeCR(ctx, kn)
+			Expect(errs).To(BeEmpty())
+		})
+
+		It("UT-AR-09 [CM-6, CC8.1]: deleteAgentRuntimeCR skips when CRD not installed", func() {
+			ns := unitTestNamespace(nil)
+			kn := unitTestKubernautCR(true, true)
+			r := newFakeUnitReconciler(ns)
+
+			errs := r.deleteAgentRuntimeCR(ctx, kn)
+			Expect(errs).To(BeEmpty())
+		})
+	})
 })
+
+// ---------------------------------------------------------------------------
+// Shared helpers for unit tests migrated from testing.T files
+// ---------------------------------------------------------------------------
+
+func newFakeUnitReconciler(objs ...runtime.Object) *KubernautReconciler {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	builder := fake.NewClientBuilder().WithScheme(scheme)
+	for _, o := range objs {
+		builder = builder.WithRuntimeObjects(o)
+	}
+	return &KubernautReconciler{
+		Client:   builder.Build(),
+		Scheme:   scheme,
+		Recorder: events.NewFakeRecorder(100),
+	}
+}
+
+func unitTestNamespace(labels map[string]string) *corev1.Namespace {
+	return &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   testNamespace,
+			Labels: labels,
+		},
+	}
+}
+
+func unitTestKubernautCR(afEnabled bool, spireEnabled bool) *kubernautv1alpha1.Kubernaut {
+	kn := &kubernautv1alpha1.Kubernaut{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kubernaut",
+			Namespace: testNamespace,
+		},
+		Spec: kubernautv1alpha1.KubernautSpec{
+			APIFrontend: kubernautv1alpha1.APIFrontendSpec{
+				SPIRE: kubernautv1alpha1.APIFrontendSPIRESpec{
+					Enabled: spireEnabled,
+				},
+			},
+		},
+	}
+	if !afEnabled {
+		disabled := false
+		kn.Spec.APIFrontend.Enabled = &disabled
+	}
+	return kn
+}
+
+func newUnitAgentRuntimeCRD() *apiextensionsv1.CustomResourceDefinition {
+	preserveUnknown := true
+	return &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: "agentruntimes.agent.kagenti.dev"},
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group: "agent.kagenti.dev",
+			Names: apiextensionsv1.CustomResourceDefinitionNames{
+				Kind: "AgentRuntime", Plural: "agentruntimes", Singular: "agentruntime",
+			},
+			Scope: apiextensionsv1.NamespaceScoped,
+			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
+				{Name: "v1alpha1", Served: true, Storage: true,
+					Schema: &apiextensionsv1.CustomResourceValidation{
+						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
+							Type:                   "object",
+							XPreserveUnknownFields: &preserveUnknown,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func newReconcilerWithCRDScheme(objs ...runtime.Object) *KubernautReconciler {
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = apiextensionsv1.AddToScheme(s)
+	builder := fake.NewClientBuilder().WithScheme(s)
+	for _, o := range objs {
+		builder = builder.WithRuntimeObjects(o)
+	}
+	return &KubernautReconciler{
+		Client:   builder.Build(),
+		Scheme:   s,
+		Recorder: events.NewFakeRecorder(100),
+	}
+}
+
+func getUnitAgentRuntime(ctx context.Context, c client.Client, ns string) (*unstructured.Unstructured, error) {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(schema.GroupVersionKind{Group: "agent.kagenti.dev", Version: "v1alpha1", Kind: "AgentRuntime"})
+	return obj, c.Get(ctx, types.NamespacedName{Namespace: ns, Name: string(resources.ComponentAPIFrontend)}, obj)
+}

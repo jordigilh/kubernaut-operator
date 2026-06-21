@@ -18,6 +18,7 @@ package resources
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
@@ -609,14 +610,22 @@ type kaInteractiveYAML struct {
 }
 
 type llmRuntimeYAML struct {
-	Provider       string  `json:"provider,omitempty" yaml:"provider,omitempty"`
-	Model          string  `json:"model" yaml:"model"`
-	Endpoint       string  `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
-	Temperature    float64 `json:"temperature" yaml:"temperature"` //nolint:musttag
-	MaxRetries     int     `json:"maxRetries" yaml:"maxRetries"`
-	TimeoutSeconds int     `json:"timeoutSeconds" yaml:"timeoutSeconds"`
-	VertexProject  string  `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
-	VertexLocation string  `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
+	Provider       string                          `json:"provider,omitempty" yaml:"provider,omitempty"`
+	Model          string                          `json:"model" yaml:"model"`
+	Endpoint       string                          `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	Temperature    float64                         `json:"temperature" yaml:"temperature"` //nolint:musttag
+	MaxRetries     int                             `json:"maxRetries" yaml:"maxRetries"`
+	TimeoutSeconds int                             `json:"timeoutSeconds" yaml:"timeoutSeconds"`
+	VertexProject  string                          `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
+	VertexLocation string                          `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
+	PhaseModels    map[string]llmPhaseOverrideYAML `json:"phaseModels,omitempty" yaml:"phaseModels,omitempty"`
+}
+
+type llmPhaseOverrideYAML struct {
+	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
+	Model    string `json:"model,omitempty" yaml:"model,omitempty"`
+	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	APIKey   string `json:"apiKey,omitempty" yaml:"apiKey,omitempty"`
 }
 
 type authWebhookWebhookYAML struct {
@@ -1421,6 +1430,17 @@ func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1
 		VertexProject:  kn.Spec.KubernautAgent.LLM.VertexProject,
 		VertexLocation: kn.Spec.KubernautAgent.LLM.VertexLocation,
 	}
+	if len(kn.Spec.KubernautAgent.LLM.PhaseModels) > 0 {
+		cfg.PhaseModels = make(map[string]llmPhaseOverrideYAML, len(kn.Spec.KubernautAgent.LLM.PhaseModels))
+		for phase, override := range kn.Spec.KubernautAgent.LLM.PhaseModels {
+			cfg.PhaseModels[phase] = llmPhaseOverrideYAML{
+				Provider: override.Provider,
+				Model:    override.Model,
+				Endpoint: override.Endpoint,
+				APIKey:   override.APIKey,
+			}
+		}
+	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("kubernaut-agent-llm-runtime config: %w", err)
@@ -1911,7 +1931,7 @@ func afAuthConfig(kn *kubernautv1alpha1.Kubernaut, oidc *KagentiOIDCDefaults) af
 				Name:      p.Name,
 				IssuerURL: p.IssuerURL,
 				JWKSURL:   p.JWKSURL,
-				Audiences: p.Audiences,
+				Audiences: append([]string(nil), p.Audiences...),
 			}
 			if p.ClaimMappings != nil {
 				yp.ClaimMappings = &afClaimMappingsYAML{
@@ -1921,7 +1941,17 @@ func afAuthConfig(kn *kubernautv1alpha1.Kubernaut, oidc *KagentiOIDCDefaults) af
 			}
 			providers = append(providers, yp)
 		}
+		if kn.Spec.ConsoleEnabled() {
+			injectConsoleAudience(providers)
+		}
 		auth.JWTProviders = providers
+	} else if kn.Spec.ConsoleEnabled() && issuer != "" {
+		auth.JWTProviders = []afJWTProviderYAML{{
+			Name:      "default",
+			IssuerURL: issuer,
+			JWKSURL:   jwks,
+			Audiences: []string{auth.Audience, ComponentConsole},
+		}}
 	}
 
 	if kn.Spec.Valkey.SecretName != "" {
@@ -1933,6 +1963,18 @@ func afAuthConfig(kn *kubernautv1alpha1.Kubernaut, oidc *KagentiOIDCDefaults) af
 		}
 	}
 	return auth
+}
+
+// injectConsoleAudience ensures each JWT provider accepts tokens issued for the
+// console OIDC client. Called only when the console is enabled; when disabled the
+// audience is simply absent from the regenerated configmap, effectively revoking
+// console access on the next AF restart.
+func injectConsoleAudience(providers []afJWTProviderYAML) {
+	for i := range providers {
+		if !slices.Contains(providers[i].Audiences, ComponentConsole) {
+			providers[i].Audiences = append(providers[i].Audiences, ComponentConsole)
+		}
+	}
 }
 
 func afRBACConfig(kn *kubernautv1alpha1.Kubernaut) afRBACYAML {

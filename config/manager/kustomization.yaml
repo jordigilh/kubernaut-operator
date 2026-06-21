@@ -3,6 +3,6 @@ resources:
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 images:
-- name: controller
-  newName: quay.io/kubernaut-ai/kubernaut-operator
-  newTag: 1.1.0
+- digest: sha256:97adc8fdf066bb862e0abd70129dd9bbed36b17e2e0d33da5b1e648a889587b2
+  name: controller
+  newName: ghcr.io/jordigilh/kubernaut-operator

@@ -1,12 +1,3 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  labels:
-    control-plane: controller-manager
-    app.kubernetes.io/name: kubernaut-operator
-    app.kubernetes.io/managed-by: kustomize
-  name: system
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -67,29 +58,31 @@ spec:
         name: manager
         env:
         - name: RELATED_IMAGE_GATEWAY
-          value: ghcr.io/jordigilh/kubernaut/gateway@sha256:545b2c9cd3c6f6ee9805cc3474cf642006682204d8174020d99da1f1ec129ddf
+          value: ghcr.io/jordigilh/kubernaut/gateway@sha256:e8d8a12bd830bf5edf0edf816d46c385e90041108779f04f3a175838b864cf5f
         - name: RELATED_IMAGE_DATA_STORAGE
-          value: ghcr.io/jordigilh/kubernaut/datastorage@sha256:7b977caface5b1143244c6c1555c0a95cff3dd6023851a9c8dd3f0e8e32d5742
+          value: ghcr.io/jordigilh/kubernaut/datastorage@sha256:89e021bd8ee8bdc4572d008e44667c4a115d81b4494dc7324f40f7188108f76c
         - name: RELATED_IMAGE_AIANALYSIS
-          value: ghcr.io/jordigilh/kubernaut/aianalysis@sha256:47fe8d59c96174c97e5d816db6f3870baa4dcdc2e0f6d0b629171c12b783cd04
+          value: ghcr.io/jordigilh/kubernaut/aianalysis@sha256:ce96ef1b51710c334ca050edf6c769fea966abe5956bd7e9bf5d78035c32f092
         - name: RELATED_IMAGE_SIGNALPROCESSING
-          value: ghcr.io/jordigilh/kubernaut/signalprocessing@sha256:aa545d51e674942c3c7b85f9ddf0dc1991f81122e6824d671438fcc0424645b4
+          value: ghcr.io/jordigilh/kubernaut/signalprocessing@sha256:ac55be6bed09816f086dc0ef10f9437bd10bde61d3864b7000d38eed0f8e58f8
         - name: RELATED_IMAGE_REMEDIATIONORCHESTRATOR
-          value: ghcr.io/jordigilh/kubernaut/remediationorchestrator@sha256:ebcead22363d69d12157fd2cf6de5480a4d96ea0014cad49f7a02ca95743d585
+          value: ghcr.io/jordigilh/kubernaut/remediationorchestrator@sha256:ede16524ff492f4f6ba56f6f453d0d5ca9293e25aed2b52b7eb6762b1b538972
         - name: RELATED_IMAGE_WORKFLOWEXECUTION
-          value: ghcr.io/jordigilh/kubernaut/workflowexecution@sha256:f26df48beb7e415fba9e868d88210d9b37312de7b1f4049de647ddb29c8cdbb5
+          value: ghcr.io/jordigilh/kubernaut/workflowexecution@sha256:5efe581af2119db0a54f8e17afb00aeb48fe953a05ce3149eef9c9469f0f7106
         - name: RELATED_IMAGE_EFFECTIVENESSMONITOR
-          value: ghcr.io/jordigilh/kubernaut/effectivenessmonitor@sha256:79ac1896141c507c7a3ea8439b7ee57b5378e285d9f275b6bb7fec68608c4377
+          value: ghcr.io/jordigilh/kubernaut/effectivenessmonitor@sha256:c26b70dc069b9cbdeb062bd02cff23c61a96717bb28d8c308fba53ef576457fa
         - name: RELATED_IMAGE_NOTIFICATION
-          value: ghcr.io/jordigilh/kubernaut/notification@sha256:44e6b96fa2a81a59eada36c0336557b39f96465ad3dc9df31045eaa7b3041157
+          value: ghcr.io/jordigilh/kubernaut/notification@sha256:697d7b02a2bdfa9f601a29899fa0138324e57b8c518532eb4c1e515e8783fd5b
         - name: RELATED_IMAGE_KUBERNAUT_AGENT
-          value: ghcr.io/jordigilh/kubernaut/kubernautagent@sha256:fe8ebb09ecc3274f2e5a0acf4ee784081d2d3fb8a772d3c90b1b5dca51435b79
+          value: ghcr.io/jordigilh/kubernaut/kubernautagent@sha256:e9aa02d8e710feb139031ac02fccfa22c903d1235312c900634a738a9bfdd907
         - name: RELATED_IMAGE_AUTHWEBHOOK
-          value: ghcr.io/jordigilh/kubernaut/authwebhook@sha256:0960bf3947ae9ec831e19d35ef1c1785215bf2c01ae645ab1fb2515a6fa38eb1
+          value: ghcr.io/jordigilh/kubernaut/authwebhook@sha256:ee465e54614b45738cb5074d448e209ccc69d2d8f95c013a1718035f87c88582
         - name: RELATED_IMAGE_API_FRONTEND
-          value: ghcr.io/jordigilh/kubernaut/apifrontend@sha256:f89618e080bff451137c259c9a3c61c9220689dc872d827e66bf24c7589f8db6
+          value: ghcr.io/jordigilh/kubernaut/apifrontend@sha256:ee53550cd41cfe77d2b17c390f221529cf2e4e031750c48051bad6650db97463
         - name: RELATED_IMAGE_DB_MIGRATE
-          value: ghcr.io/jordigilh/kubernaut/db-migrate@sha256:7c496a8634e2f792aa13cc61907bdfad5e15b4c2439e73ec9694eba4b5d60699
+          value: ghcr.io/jordigilh/kubernaut/db-migrate@sha256:4ed88bd1a417b86f47caef9d353e5f09a427450971a289865a82be5e13a6db8c
+        - name: RELATED_IMAGE_CONSOLE
+          value: ghcr.io/jordigilh/kubernaut-console:latest
         - name: RELATED_IMAGE_INIT_POSTGRES
           value: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
         - name: RELATED_IMAGE_INIT_UBI_MINIMAL

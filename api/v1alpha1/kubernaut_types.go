@@ -90,6 +90,10 @@ type KubernautSpec struct {
 
 	// APIFrontend configures the API Frontend (MCP/A2A gateway) service.
 	APIFrontend APIFrontendSpec `json:"apiFrontend,omitempty"`
+
+	// Console configures the standalone web console (A2A chat UI).
+	// +optional
+	Console ConsoleSpec `json:"console,omitempty"`
 }
 
 // ImageSpec configures container image policy for all services.
@@ -873,6 +877,28 @@ type LLMSpec struct {
 	// and mounts this ConfigMap instead. Must contain key "llm-runtime.yaml".
 	// +optional
 	RuntimeConfigMapName string `json:"runtimeConfigMapName,omitempty"`
+
+	// Per-phase LLM model overrides. Keys are agent phase names
+	// (rca, workflow_discovery, validation). Each override can specify
+	// a different model (and optionally provider/endpoint) for that phase,
+	// allowing faster/cheaper models for structured tasks like workflow discovery.
+	// When absent, all phases use the default model above.
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="self.all(k, k in ['rca','workflow_discovery','validation'])",message="phaseModels keys must be one of: rca, workflow_discovery, validation"
+	PhaseModels map[string]LLMPhaseOverrideSpec `json:"phaseModels,omitempty"`
+}
+
+// LLMPhaseOverrideSpec allows a specific agent phase to use a different LLM.
+// All fields are optional; non-zero fields override the corresponding base values.
+type LLMPhaseOverrideSpec struct {
+	// +optional
+	Provider string `json:"provider,omitempty"`
+	// +optional
+	Model string `json:"model,omitempty"`
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+	// +optional
+	APIKey string `json:"apiKey,omitempty"`
 }
 
 // OAuth2Spec configures OAuth2 token-based authentication for LLM endpoints.
@@ -915,6 +941,48 @@ type GatewaySpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// ConsoleSpec configures the standalone web console (A2A chat UI).
+// The console is a static SPA fronted by an oauth2-proxy sidecar that
+// authenticates users via the same OIDC provider as the API Frontend.
+type ConsoleSpec struct {
+	// Whether the Console component is deployed. Defaults to false (opt-in).
+	// +kubebuilder:default=false
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// OIDC authentication configuration for the console oauth2-proxy.
+	// +optional
+	Auth ConsoleAuthSpec `json:"auth,omitempty"`
+
+	// OCP Route configuration for external access.
+	// +optional
+	Route ConsoleRouteSpec `json:"route,omitempty"`
+
+	// Resource requirements for the console container.
+	// +optional
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// ConsoleAuthSpec configures authentication for the console oauth2-proxy.
+type ConsoleAuthSpec struct {
+	// Name of the pre-existing Secret containing OIDC credentials.
+	// Required keys: client-id, client-secret, cookie-secret.
+	// +kubebuilder:validation:MinLength=1
+	SecretName string `json:"secretName,omitempty"`
+}
+
+// ConsoleRouteSpec configures the OCP Route for the console.
+type ConsoleRouteSpec struct {
+	// Whether to create an OCP Route. Defaults to true on OpenShift.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Explicit hostname. Empty = auto-derived from namespace.
+	// +optional
+	Host string `json:"host,omitempty"`
 }
 
 // GatewayConfigSpec configures Gateway server behaviour, middleware, and CORS.
@@ -1125,12 +1193,23 @@ type APIFrontendRBACSpec struct {
 	RoleBindings []ToolRoleBinding `json:"roleBindings,omitempty"`
 }
 
-// ToolRoleBinding binds a persona-based tool role to one or more OIDC groups.
+// ToolRoleBinding binds a tool role to one or more OIDC groups.
+// Exactly one of Role or ClusterRoleName must be set.
 type ToolRoleBinding struct {
-	// Role is the persona name. Must be one of: sre, ai-orchestrator, cicd,
+	// Role is a built-in persona name. Must be one of: sre, ai-orchestrator, cicd,
 	// observability, l3-audit, remediation-approver.
+	// Mutually exclusive with ClusterRoleName.
 	// +kubebuilder:validation:Enum=sre;ai-orchestrator;cicd;observability;l3-audit;remediation-approver
-	Role string `json:"role"`
+	// +optional
+	Role string `json:"role,omitempty"`
+
+	// ClusterRoleName references a user-managed ClusterRole for custom tool authorization.
+	// The operator creates only the ClusterRoleBinding; the ClusterRole itself must be
+	// pre-created by the user with rules granting verb "use" on resource "tools" in
+	// apiGroup "kubernaut.ai".
+	// Mutually exclusive with Role.
+	// +optional
+	ClusterRoleName string `json:"clusterRoleName,omitempty"`
 
 	// Groups are the OIDC group names to bind to this role.
 	// +kubebuilder:validation:MinItems=1
@@ -1229,6 +1308,21 @@ func (s *KubernautSpec) APIFrontendEnabled() bool {
 // Defaults to true when Enabled is nil.
 func (s *KubernautSpec) GatewayEnabled() bool {
 	return s.Gateway.Enabled == nil || *s.Gateway.Enabled
+}
+
+// ConsoleEnabled returns whether the Console component should be deployed.
+// Defaults to false when Enabled is nil (opt-in).
+func (s *KubernautSpec) ConsoleEnabled() bool {
+	return s.Console.Enabled != nil && *s.Console.Enabled
+}
+
+// ConsoleIssuerURL derives the OIDC issuer URL for the console oauth2-proxy
+// from the API Frontend auth configuration.
+func (s *KubernautSpec) ConsoleIssuerURL() string {
+	if len(s.APIFrontend.Auth.JWTProviders) > 0 {
+		return s.APIFrontend.Auth.JWTProviders[0].IssuerURL
+	}
+	return s.APIFrontend.Auth.IssuerURL
 }
 
 // DataStorageSpec configures the DataStorage service.

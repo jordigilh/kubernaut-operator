@@ -21,7 +21,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -132,7 +131,7 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingwebhookconfigurations;validatingwebhookconfigurations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get;list;watch
+// +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers;ingresses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors;prometheusrules;alertmanagerconfigs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=spire.spiffe.io,resources=clusterspiffeids,verbs=get;list;watch;create;update;patch;delete
@@ -467,6 +466,9 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		return err
 	}
 	if err := r.ensureAuthbridgeMetricsBypass(ctx, kn, sidecar); err != nil {
+		return err
+	}
+	if err := r.ensureAuthbridgeClientID(ctx, kn, sidecar); err != nil {
 		return err
 	}
 	hasRoute, err := r.deployWorkloads(ctx, kn, cmHashes, sidecar)
@@ -1055,6 +1057,12 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 			return resources.APIFrontendDeployment(kn, sidecar)
 		})
 	}
+	if kn.Spec.ConsoleEnabled() {
+		ingressDomain := r.clusterIngressDomain(ctx)
+		depBuilders = append(depBuilders, func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+			return resources.ConsoleDeployment(kn, ingressDomain)
+		})
+	}
 	for _, build := range depBuilders {
 		dep, err := build(kn)
 		if err != nil {
@@ -1066,19 +1074,8 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		}
 	}
 
-	for _, svc := range resources.Services(kn, sidecar) {
-		if err := r.ensureNamespaced(ctx, kn, svc); err != nil {
-			return false, fmt.Errorf("ensuring Service %s: %w", svc.Name, err)
-		}
-		if err := r.clearStaleServingCertErrors(ctx, svc); err != nil {
-			return false, fmt.Errorf("clearing stale serving-cert annotations on %s: %w", svc.Name, err)
-		}
-	}
-
-	for _, svc := range resources.MetricsServices(kn) {
-		if err := r.ensureNamespaced(ctx, kn, svc); err != nil {
-			return false, fmt.Errorf("ensuring metrics Service %s: %w", svc.Name, err)
-		}
+	if err := r.ensureServices(ctx, kn, sidecar); err != nil {
+		return false, err
 	}
 
 	for _, pdb := range resources.PodDisruptionBudgets(kn) {
@@ -1087,25 +1084,8 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		}
 	}
 
-	if kn.Spec.NetworkPolicies.NetworkPoliciesEnabled() {
-		for _, np := range resources.NetworkPolicies(kn, sidecar) {
-			if err := r.ensureNamespaced(ctx, kn, np); err != nil {
-				return false, fmt.Errorf("ensuring NetworkPolicy %s: %w", np.Name, err)
-			}
-		}
-	} else {
-		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "NetworkPoliciesDisabled", "Reconcile",
-			"spec.networkPolicies.enabled is false — network segmentation is required for FedRAMP SC-7 compliance; set to true for production")
-		var npList networkingv1.NetworkPolicyList
-		if err := r.List(ctx, &npList, client.InNamespace(kn.Namespace), client.MatchingLabels{
-			"app.kubernetes.io/managed-by": "kubernaut-operator",
-		}); err == nil {
-			for i := range npList.Items {
-				if err := r.deleteIfExists(ctx, &npList.Items[i]); err != nil {
-					return false, fmt.Errorf("deleting NetworkPolicy %s: %w", npList.Items[i].Name, err)
-				}
-			}
-		}
+	if err := r.reconcileNetworkPolicies(ctx, kn, sidecar); err != nil {
+		return false, err
 	}
 
 	dsHPA := resources.DataStorageHPA(kn)
@@ -1113,18 +1093,8 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		return false, fmt.Errorf("ensuring DS HPA: %w", err)
 	}
 
-	if kn.Spec.Monitoring.MonitoringEnabled() && r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com") {
-		if err := r.deployMonitoring(ctx, kn); err != nil {
-			return false, err
-		}
-	}
-
-	if kn.Spec.GatewayEnabled() {
-		if amCfg := resources.GatewayAlertManagerConfig(kn); amCfg != nil && r.hasCRD(ctx, "alertmanagerconfigs.monitoring.coreos.com") {
-			if err := r.ensureNamespaced(ctx, kn, amCfg); err != nil {
-				return false, fmt.Errorf("ensuring Gateway AlertManagerConfig: %w", err)
-			}
-		}
+	if err := r.reconcileMonitoringAndAlerts(ctx, kn); err != nil {
+		return false, err
 	}
 
 	if kn.Spec.APIFrontendEnabled() {
@@ -1134,6 +1104,71 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 	}
 
 	return r.reconcileRoutes(ctx, kn)
+}
+
+func (r *KubernautReconciler) ensureServices(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode) error {
+	for _, svc := range resources.Services(kn, sidecar) {
+		if err := r.ensureNamespaced(ctx, kn, svc); err != nil {
+			return fmt.Errorf("ensuring Service %s: %w", svc.Name, err)
+		}
+		if err := r.clearStaleServingCertErrors(ctx, svc); err != nil {
+			return fmt.Errorf("clearing stale serving-cert annotations on %s: %w", svc.Name, err)
+		}
+	}
+	for _, svc := range resources.MetricsServices(kn) {
+		if err := r.ensureNamespaced(ctx, kn, svc); err != nil {
+			return fmt.Errorf("ensuring metrics Service %s: %w", svc.Name, err)
+		}
+	}
+	if kn.Spec.ConsoleEnabled() {
+		if err := r.ensureNamespaced(ctx, kn, resources.ConsoleService(kn)); err != nil {
+			return fmt.Errorf("ensuring Console Service: %w", err)
+		}
+		if err := r.ensureNamespaced(ctx, kn, resources.ConsoleNginxConfigMap(kn)); err != nil {
+			return fmt.Errorf("ensuring Console nginx ConfigMap: %w", err)
+		}
+	}
+	return nil
+}
+
+func (r *KubernautReconciler) reconcileNetworkPolicies(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode) error {
+	if kn.Spec.NetworkPolicies.NetworkPoliciesEnabled() {
+		for _, np := range resources.NetworkPolicies(kn, sidecar) {
+			if err := r.ensureNamespaced(ctx, kn, np); err != nil {
+				return fmt.Errorf("ensuring NetworkPolicy %s: %w", np.Name, err)
+			}
+		}
+		return nil
+	}
+	r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "NetworkPoliciesDisabled", "Reconcile",
+		"spec.networkPolicies.enabled is false — network segmentation is required for FedRAMP SC-7 compliance; set to true for production")
+	var npList networkingv1.NetworkPolicyList
+	if err := r.List(ctx, &npList, client.InNamespace(kn.Namespace), client.MatchingLabels{
+		"app.kubernetes.io/managed-by": "kubernaut-operator",
+	}); err == nil {
+		for i := range npList.Items {
+			if err := r.deleteIfExists(ctx, &npList.Items[i]); err != nil {
+				return fmt.Errorf("deleting NetworkPolicy %s: %w", npList.Items[i].Name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func (r *KubernautReconciler) reconcileMonitoringAndAlerts(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
+	if kn.Spec.Monitoring.MonitoringEnabled() && r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com") {
+		if err := r.deployMonitoring(ctx, kn); err != nil {
+			return err
+		}
+	}
+	if kn.Spec.GatewayEnabled() {
+		if amCfg := resources.GatewayAlertManagerConfig(kn); amCfg != nil && r.hasCRD(ctx, "alertmanagerconfigs.monitoring.coreos.com") {
+			if err := r.ensureNamespaced(ctx, kn, amCfg); err != nil {
+				return fmt.Errorf("ensuring Gateway AlertManagerConfig: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 func (r *KubernautReconciler) deployMonitoring(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
@@ -1203,6 +1238,25 @@ func (r *KubernautReconciler) reconcileRoutes(ctx context.Context, kn *kubernaut
 		staleRoute := resources.APIFrontendRouteStub(kn)
 		if err := r.deleteIfExists(ctx, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
 			return false, fmt.Errorf("deleting stale AF Route: %w", err)
+		}
+	}
+
+	if kn.Spec.ConsoleEnabled() {
+		if route := resources.ConsoleRoute(kn); route != nil {
+			if err := r.ensureNamespaced(ctx, kn, route); err != nil {
+				return false, fmt.Errorf("ensuring Console Route: %w", err)
+			}
+			hasRoute = true
+		} else {
+			staleRoute := resources.ConsoleRouteStub(kn)
+			if err := r.deleteIfExists(ctx, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
+				return false, fmt.Errorf("deleting stale Console Route: %w", err)
+			}
+		}
+	} else {
+		staleRoute := resources.ConsoleRouteStub(kn)
+		if err := r.deleteIfExists(ctx, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
+			return false, fmt.Errorf("deleting stale Console Route: %w", err)
 		}
 	}
 
@@ -1393,19 +1447,11 @@ func (r *KubernautReconciler) ensureAgentRuntimeCR(ctx context.Context, kn *kube
 	return nil
 }
 
-// authbridgeBypassConfig is the subset of the authbridge runtime ConfigMap
-// YAML that we parse/patch to ensure /metrics is in the bypass list.
-type authbridgeBypassConfig struct {
-	Bypass struct {
-		InboundPaths []string `json:"inbound_paths" yaml:"inbound_paths"`
-	} `json:"bypass" yaml:"bypass"`
-}
-
-// ensureAuthbridgeMetricsBypass patches the kagenti-generated per-workload
-// authbridge ConfigMap to add /metrics to bypass.inbound_paths. Without this,
-// the envoy sidecar returns 401 on the metrics endpoint, breaking Prometheus
-// scraping. Upstream fix tracked in kagenti/kagenti-extensions#524.
-func (r *KubernautReconciler) ensureAuthbridgeMetricsBypass(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode) error {
+// patchAuthbridgeConfig reads the kagenti-generated authbridge ConfigMap,
+// unmarshals config.yaml as a generic map, calls patchFn to apply modifications,
+// and writes back only if patchFn signals a change. Returns nil without error
+// when the sidecar is inactive, AF is disabled, or the ConfigMap doesn't exist yet.
+func (r *KubernautReconciler) patchAuthbridgeConfig(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode, desc string, patchFn func(map[string]interface{}) (changed bool)) error {
 	if sidecar == resources.KagentiSidecarNone || !kn.Spec.APIFrontendEnabled() {
 		return nil
 	}
@@ -1424,29 +1470,14 @@ func (r *KubernautReconciler) ensureAuthbridgeMetricsBypass(ctx context.Context,
 		return nil
 	}
 
-	var cfg authbridgeBypassConfig
-	if err := sigsyaml.Unmarshal([]byte(raw), &cfg); err != nil {
-		return nil
-	}
-
-	if slices.Contains(cfg.Bypass.InboundPaths, "/metrics") {
-		return nil
-	}
-
-	cfg.Bypass.InboundPaths = append(cfg.Bypass.InboundPaths, "/metrics")
-
-	// Re-parse the full config as generic map to preserve all fields,
-	// then overlay the patched bypass block.
 	var full map[string]interface{}
 	if err := sigsyaml.Unmarshal([]byte(raw), &full); err != nil {
 		return nil
 	}
-	bypassMap, _ := full["bypass"].(map[string]interface{})
-	if bypassMap == nil {
-		bypassMap = make(map[string]interface{})
-		full["bypass"] = bypassMap
+
+	if !patchFn(full) {
+		return nil
 	}
-	bypassMap["inbound_paths"] = cfg.Bypass.InboundPaths
 
 	patched, err := sigsyaml.Marshal(full)
 	if err != nil {
@@ -1455,11 +1486,57 @@ func (r *KubernautReconciler) ensureAuthbridgeMetricsBypass(ctx context.Context,
 
 	cm.Data["config.yaml"] = string(patched)
 	if err := r.Update(ctx, cm); err != nil {
-		return fmt.Errorf("patching authbridge config %s with /metrics bypass: %w", cmName, err)
+		return fmt.Errorf("patching authbridge config %s with %s: %w", cmName, desc, err)
 	}
 
-	logf.FromContext(ctx).Info("patched authbridge config with /metrics bypass", "configmap", cmName)
+	logf.FromContext(ctx).Info("patched authbridge config", "configmap", cmName, "patch", desc)
 	return nil
+}
+
+// ensureAuthbridgeMetricsBypass patches the kagenti-generated per-workload
+// authbridge ConfigMap to add /metrics to bypass.inbound_paths. Without this,
+// the envoy sidecar returns 401 on the metrics endpoint, breaking Prometheus
+// scraping. Upstream fix tracked in kagenti/kagenti-extensions#524.
+func (r *KubernautReconciler) ensureAuthbridgeMetricsBypass(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode) error {
+	return r.patchAuthbridgeConfig(ctx, kn, sidecar, "/metrics bypass", func(full map[string]interface{}) bool {
+		bypassMap, _ := full["bypass"].(map[string]interface{})
+		if bypassMap == nil {
+			bypassMap = make(map[string]interface{})
+			full["bypass"] = bypassMap
+		}
+
+		pathsRaw, _ := bypassMap["inbound_paths"].([]interface{})
+		for _, p := range pathsRaw {
+			if s, ok := p.(string); ok && s == "/metrics" {
+				return false
+			}
+		}
+
+		bypassMap["inbound_paths"] = append(pathsRaw, "/metrics")
+		return true
+	})
+}
+
+// ensureAuthbridgeClientID patches the kagenti-generated authbridge ConfigMap
+// to include an inline identity.client_id (the AF's SPIFFE ID). Without this,
+// the authbridge cannot validate the aud claim of inbound JWTs and rejects all
+// tokens. This replaces the kagenti-client-registration sidecar which required
+// keycloak-admin-secret in the app namespace (issue #171).
+func (r *KubernautReconciler) ensureAuthbridgeClientID(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode) error {
+	return r.patchAuthbridgeConfig(ctx, kn, sidecar, "identity.client_id", func(full map[string]interface{}) bool {
+		identityMap, _ := full["identity"].(map[string]interface{})
+		if identityMap == nil {
+			identityMap = make(map[string]interface{})
+			full["identity"] = identityMap
+		}
+
+		wantID := resources.AFSpiffeID(kn)
+		if current, _ := identityMap["client_id"].(string); current == wantID {
+			return false
+		}
+		identityMap["client_id"] = wantID
+		return true
+	})
 }
 
 func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
@@ -1955,6 +2032,27 @@ func (r *KubernautReconciler) resolveClusterTLSProfile(ctx context.Context) stri
 		log.V(1).Info("resolved cluster TLS profile", "profile", profile)
 	}
 	return profile
+}
+
+// clusterIngressDomain returns the cluster's ingress domain from
+// ingresses.config.openshift.io/cluster (e.g. "apps.dev.example.com").
+// Returns empty on non-OpenShift clusters or if the resource is unavailable.
+func (r *KubernautReconciler) clusterIngressDomain(ctx context.Context) string {
+	log := logf.FromContext(ctx)
+	ingress := &configv1.Ingress{}
+	if err := r.Get(ctx, client.ObjectKey{Name: "cluster"}, ingress); err != nil {
+		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			log.V(1).Info("Ingress config not found (non-OCP cluster), console redirect URL will use fallback domain")
+			return ""
+		}
+		log.V(1).Info("failed to read Ingress config, console redirect URL will use fallback domain", "error", err)
+		return ""
+	}
+	domain := ingress.Spec.Domain
+	if domain != "" {
+		log.V(1).Info("resolved cluster ingress domain", "domain", domain)
+	}
+	return domain
 }
 
 // hasCRD checks if a CRD with the given name exists in the cluster.

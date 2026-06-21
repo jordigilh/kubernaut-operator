@@ -18,7 +18,9 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -72,6 +74,7 @@ var _ = BeforeSuite(func() {
 		"RELATED_IMAGE_KUBERNAUT_AGENT":         "quay.io/kubernaut-ai/kubernautagent:test",
 		"RELATED_IMAGE_AUTHWEBHOOK":             "quay.io/kubernaut-ai/authwebhook:test",
 		"RELATED_IMAGE_API_FRONTEND":            "quay.io/kubernaut-ai/apifrontend:test",
+		"RELATED_IMAGE_CONSOLE":                 "quay.io/kubernaut-ai/console:test",
 		"RELATED_IMAGE_DB_MIGRATE":              "quay.io/kubernaut-ai/db-migrate:test",
 		"RELATED_IMAGE_INIT_UBI_MINIMAL":        "registry.access.redhat.com/ubi10/ubi-minimal:latest",
 	} {
@@ -94,9 +97,17 @@ var _ = BeforeSuite(func() {
 	// +kubebuilder:scaffold:scheme
 
 	By("bootstrapping test environment")
+	openshiftModDir := modDir("github.com/openshift/api")
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
 		ErrorIfCRDPathMissing: true,
+		CRDInstallOptions: envtest.CRDInstallOptions{
+			Paths: []string{
+				filepath.Join(openshiftModDir, "config", "v1",
+					"zz_generated.crd-manifests",
+					"0000_10_config-operator_01_ingresses.crd.yaml"),
+			},
+		},
 	}
 
 	// Retrieve the first found binary directory to allow running tests from IDEs
@@ -120,6 +131,15 @@ var _ = AfterSuite(func() {
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
+
+// modDir returns the on-disk cache directory for a Go module dependency.
+func modDir(mod string) string {
+	out, err := exec.Command("go", "mod", "download", "-json", mod).CombinedOutput()
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "go mod download %s: %s", mod, out)
+	var info struct{ Dir string }
+	ExpectWithOffset(1, json.Unmarshal(out, &info)).To(Succeed(), "parse go mod download output")
+	return info.Dir
+}
 
 // getFirstFoundEnvTestBinaryDir locates the first binary in the specified path.
 // ENVTEST-based tests depend on specific binaries, usually located in paths set by

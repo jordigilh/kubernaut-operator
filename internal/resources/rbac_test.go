@@ -787,8 +787,8 @@ var _ = Describe("ToolClusterRoles", func() {
 				"tool ClusterRole %q should have %d resourceNames, got %d",
 				found.Name, expectedCount, len(found.Rules[0].ResourceNames))
 		},
-		Entry("SRE", "tool-sre", 25),
-		Entry("AI-orchestrator", "tool-ai-orchestrator", 19),
+		Entry("SRE", "tool-sre", 27),
+		Entry("AI-orchestrator", "tool-ai-orchestrator", 21),
 		Entry("CICD", "tool-cicd", 4),
 		Entry("Observability", "tool-observability", 6),
 		Entry("L3-audit", "tool-l3-audit", 6),
@@ -897,6 +897,57 @@ var _ = Describe("ToolClusterRoleBindings", func() {
 			Expect(n).To(HavePrefix(kn.Namespace+"-"),
 				"ToolCRBNames entry %q should be namespace-prefixed", n)
 		}
+	})
+
+	// --- Issue #181: Custom ClusterRole references ---
+
+	It("[AC-3] creates CRB referencing user-managed ClusterRole for clusterRoleName binding", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{ClusterRoleName: "my-custom-investigator", Groups: []string{"junior-sres"}},
+			},
+		}
+		crbs := ToolClusterRoleBindings(kn)
+		Expect(crbs).To(HaveLen(1))
+		Expect(crbs[0].RoleRef.Name).To(Equal("my-custom-investigator"),
+			"custom clusterRoleName CRB should reference the user-managed ClusterRole directly")
+		Expect(crbs[0].RoleRef.Kind).To(Equal("ClusterRole"))
+		Expect(crbs[0].RoleRef.APIGroup).To(Equal(rbacv1.GroupName))
+		Expect(crbs[0].Subjects).To(HaveLen(1))
+		Expect(crbs[0].Subjects[0].Name).To(Equal("junior-sres"))
+	})
+
+	It("[AC-3] mixed persona + custom bindings coexist in same CR", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Role: "sre", Groups: []string{"senior-sres"}},
+				{ClusterRoleName: "my-custom-investigator", Groups: []string{"junior-sres"}},
+			},
+		}
+		crbs := ToolClusterRoleBindings(kn)
+		Expect(crbs).To(HaveLen(2), "should return CRBs for both persona and custom bindings")
+
+		personaCRB := crbs[0]
+		Expect(personaCRB.RoleRef.Name).To(Equal(kn.Namespace+"-tool-sre"),
+			"persona CRB should use namespace-prefixed ClusterRole name")
+
+		customCRB := crbs[1]
+		Expect(customCRB.RoleRef.Name).To(Equal("my-custom-investigator"),
+			"custom CRB should reference the user-managed ClusterRole directly")
+	})
+
+	It("[AC-6] ToolCRBNames includes names for custom clusterRoleName bindings", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Role: "sre", Groups: []string{"sre-team"}},
+				{ClusterRoleName: "my-custom-role", Groups: []string{"custom-team"}},
+			},
+		}
+		names := ToolCRBNames(kn)
+		Expect(names).To(HaveLen(2), "ToolCRBNames should include both persona and custom CRB names")
 	})
 })
 
