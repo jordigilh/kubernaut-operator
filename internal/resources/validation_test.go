@@ -745,7 +745,7 @@ var _ = Describe("LLM Prerequisite Validation", func() {
 		kn.Spec.KubernautAgent.LLM.PhaseModels = map[string]kubernautv1alpha1.LLMPhaseOverrideSpec{
 			"rca":                {Model: "claude-sonnet-4-6"},
 			"workflow_discovery": {Model: "claude-haiku-4-6"},
-			"validation":        {Model: "claude-haiku-4-6"},
+			"validation":         {Model: "claude-haiku-4-6"},
 		}
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())

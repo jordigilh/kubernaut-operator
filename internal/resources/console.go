@@ -152,7 +152,7 @@ func ConsoleDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, err
 						{
 							Name:            "console",
 							Image:           consoleImage,
-							ImagePullPolicy: corev1.PullPolicy(kn.Spec.Image.PullPolicy),
+							ImagePullPolicy: kn.Spec.Image.PullPolicy,
 							Ports: []corev1.ContainerPort{
 								{Name: "static", ContainerPort: consoleStaticPort, Protocol: corev1.ProtocolTCP},
 							},
