@@ -162,8 +162,9 @@ var _ = Describe("NetworkPolicies", func() {
 			Expect(dsNP).NotTo(BeNil(), "data-storage NetworkPolicy not found")
 			Expect(dsNP.Spec.Ingress).ToNot(BeEmpty(), "data-storage should have at least one ingress rule")
 			rule := dsNP.Spec.Ingress[0]
-			Expect(rule.From).To(HaveLen(9), "data-storage client ingress peers = %d, want 9", len(rule.From))
+			Expect(rule.From).To(HaveLen(10), "data-storage client ingress peers = %d, want 10", len(rule.From))
 			wantApps := map[string]struct{}{
+				ComponentAPIFrontend:             {},
 				ComponentGateway:                 {},
 				ComponentAIAnalysis:              {},
 				ComponentSignalProcessing:        {},
@@ -186,7 +187,7 @@ var _ = Describe("NetworkPolicies", func() {
 				_, ok := gotApps[a]
 				Expect(ok).To(BeTrue(), "missing ingress from client %q", a)
 			}
-			Expect(gotApps).To(HaveLen(9), "unexpected peer count or duplicate apps: %#v", gotApps)
+			Expect(gotApps).To(HaveLen(10), "unexpected peer count or duplicate apps: %#v", gotApps)
 		})
 
 		It("allows metrics scrape ingress from openshift-monitoring", func() {
