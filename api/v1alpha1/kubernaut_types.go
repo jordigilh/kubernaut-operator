@@ -90,6 +90,10 @@ type KubernautSpec struct {
 
 	// APIFrontend configures the API Frontend (MCP/A2A gateway) service.
 	APIFrontend APIFrontendSpec `json:"apiFrontend,omitempty"`
+
+	// Console configures the standalone web console (A2A chat UI).
+	// +optional
+	Console ConsoleSpec `json:"console,omitempty"`
 }
 
 // ImageSpec configures container image policy for all services.
@@ -938,6 +942,48 @@ type GatewaySpec struct {
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
+// ConsoleSpec configures the standalone web console (A2A chat UI).
+// The console is a static SPA fronted by an oauth2-proxy sidecar that
+// authenticates users via the same OIDC provider as the API Frontend.
+type ConsoleSpec struct {
+	// Whether the Console component is deployed. Defaults to false (opt-in).
+	// +kubebuilder:default=false
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// OIDC authentication configuration for the console oauth2-proxy.
+	// +optional
+	Auth ConsoleAuthSpec `json:"auth,omitempty"`
+
+	// OCP Route configuration for external access.
+	// +optional
+	Route ConsoleRouteSpec `json:"route,omitempty"`
+
+	// Resource requirements for the console container.
+	// +optional
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// ConsoleAuthSpec configures authentication for the console oauth2-proxy.
+type ConsoleAuthSpec struct {
+	// Name of the pre-existing Secret containing OIDC credentials.
+	// Required keys: client-id, client-secret, cookie-secret.
+	// +kubebuilder:validation:MinLength=1
+	SecretName string `json:"secretName,omitempty"`
+}
+
+// ConsoleRouteSpec configures the OCP Route for the console.
+type ConsoleRouteSpec struct {
+	// Whether to create an OCP Route. Defaults to true on OpenShift.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Explicit hostname. Empty = auto-derived from namespace.
+	// +optional
+	Host string `json:"host,omitempty"`
+}
+
 // GatewayConfigSpec configures Gateway server behaviour, middleware, and CORS.
 type GatewayConfigSpec struct {
 	// Timeout for outbound K8s API requests. Default: "15s".
@@ -1250,6 +1296,21 @@ func (s *KubernautSpec) APIFrontendEnabled() bool {
 // Defaults to true when Enabled is nil.
 func (s *KubernautSpec) GatewayEnabled() bool {
 	return s.Gateway.Enabled == nil || *s.Gateway.Enabled
+}
+
+// ConsoleEnabled returns whether the Console component should be deployed.
+// Defaults to false when Enabled is nil (opt-in).
+func (s *KubernautSpec) ConsoleEnabled() bool {
+	return s.Console.Enabled != nil && *s.Console.Enabled
+}
+
+// ConsoleIssuerURL derives the OIDC issuer URL for the console oauth2-proxy
+// from the API Frontend auth configuration.
+func (s *KubernautSpec) ConsoleIssuerURL() string {
+	if len(s.APIFrontend.Auth.JWTProviders) > 0 {
+		return s.APIFrontend.Auth.JWTProviders[0].IssuerURL
+	}
+	return s.APIFrontend.Auth.IssuerURL
 }
 
 // DataStorageSpec configures the DataStorage service.

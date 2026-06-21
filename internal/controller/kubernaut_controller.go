@@ -1054,6 +1054,9 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 			return resources.APIFrontendDeployment(kn, sidecar)
 		})
 	}
+	if kn.Spec.ConsoleEnabled() {
+		depBuilders = append(depBuilders, resources.ConsoleDeployment)
+	}
 	for _, build := range depBuilders {
 		dep, err := build(kn)
 		if err != nil {
@@ -1077,6 +1080,17 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 	for _, svc := range resources.MetricsServices(kn) {
 		if err := r.ensureNamespaced(ctx, kn, svc); err != nil {
 			return false, fmt.Errorf("ensuring metrics Service %s: %w", svc.Name, err)
+		}
+	}
+
+	if kn.Spec.ConsoleEnabled() {
+		consoleSvc := resources.ConsoleService(kn)
+		if err := r.ensureNamespaced(ctx, kn, consoleSvc); err != nil {
+			return false, fmt.Errorf("ensuring Console Service: %w", err)
+		}
+		consoleCM := resources.ConsoleNginxConfigMap(kn)
+		if err := r.ensureNamespaced(ctx, kn, consoleCM); err != nil {
+			return false, fmt.Errorf("ensuring Console nginx ConfigMap: %w", err)
 		}
 	}
 
@@ -1202,6 +1216,25 @@ func (r *KubernautReconciler) reconcileRoutes(ctx context.Context, kn *kubernaut
 		staleRoute := resources.APIFrontendRouteStub(kn)
 		if err := r.deleteIfExists(ctx, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
 			return false, fmt.Errorf("deleting stale AF Route: %w", err)
+		}
+	}
+
+	if kn.Spec.ConsoleEnabled() {
+		if route := resources.ConsoleRoute(kn); route != nil {
+			if err := r.ensureNamespaced(ctx, kn, route); err != nil {
+				return false, fmt.Errorf("ensuring Console Route: %w", err)
+			}
+			hasRoute = true
+		} else {
+			staleRoute := resources.ConsoleRouteStub(kn)
+			if err := r.deleteIfExists(ctx, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
+				return false, fmt.Errorf("deleting stale Console Route: %w", err)
+			}
+		}
+	} else {
+		staleRoute := resources.ConsoleRouteStub(kn)
+		if err := r.deleteIfExists(ctx, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
+			return false, fmt.Errorf("deleting stale Console Route: %w", err)
 		}
 	}
 

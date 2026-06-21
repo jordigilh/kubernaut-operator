@@ -7,46 +7,205 @@ metadata:
   name: kubernaut
   namespace: kubernaut-system
 spec:
-  # BYO PostgreSQL — operator validates keys and derives the
-  # DataStorage db-secrets.yaml Secret automatically.
+  image:
+    pullPolicy: IfNotPresent
+
   postgresql:
-    secretName: postgresql-secret
     host: postgresql.kubernaut-system.svc.cluster.local
     port: 5432
+    secretName: postgresql-secret
+    sslMode: require
 
-  # BYO Valkey/Redis.
   valkey:
-    secretName: valkey-secret
     host: valkey.kubernaut-system.svc.cluster.local
     port: 6379
+    secretName: valkey-secret
 
-  # Kubernaut Agent (KA) -- LLM-powered investigation and analysis service.
   kubernautAgent:
     llm:
       provider: vertex_ai
       model: claude-sonnet-4-6
       credentialsSecretName: llm-credentials
+      vertexProject: "<gcp-project-id>"
+      vertexLocation: "<vertex-region>"
+      maxRetries: 3
+      timeoutSeconds: 120
       phaseModels:
         workflow_discovery:
-          model: claude-haiku-4-6
-      # runtimeConfigMapName: custom-llm-runtime  # uncomment for BYO LLM config
+          model: claude-haiku-4-5
+    logging:
+      level: debug
+    maxTurns: 40
+    audit:
+      enabled: true
+    interactive:
+      enabled: true
+      inactivityTimeout: 10m
+      maxConcurrentSessions: 10
+      rateLimitPerUser: 10
+      sessionTTL: 30m
+    safety:
+      anomaly:
+        maxRepeatedFailures: 3
+        maxToolCallsPerTool: 10
+        maxTotalToolCalls: 40
+      sanitization:
+        credentialScrubEnabled: true
+        injectionPatternsEnabled: true
+    summarizer:
+      maxToolOutputSize: 100000
+      threshold: 8000
+    alignmentCheck:
+      enabled: false
+      maxStepTokens: 500
+      timeout: 10s
+    session:
+      ttl: 30m
+    serverRateLimit:
+      requestsPerSecond: 50
+      burst: 100
+    shutdown:
+      drainSeconds: 15
 
-  # AIAnalysis controller — requires a Rego policy ConfigMap.
+  apiFrontend:
+    enabled: true
+    auth:
+      issuerURL: "https://keycloak-keycloak.apps.rosa.redhat-internal.com/realms/kagenti"
+      audience: "https://keycloak-keycloak.apps.rosa.redhat-internal.com/realms/kagenti"
+      jwksURL: "http://keycloak-service.keycloak:8080/realms/kagenti/protocol/openid-connect/certs"
+      allowInsecureIssuers: true
+    logging:
+      level: debug
+    rateLimit:
+      ipRequestsPerSec: 50
+      userRequestsPerSec: 20
+      toolCallsPerMinute: 60
+      maxConcurrentSessions: 100
+    route:
+      enabled: false
+    shutdown:
+      drainSeconds: 15
+    spire:
+      enabled: true
+      className: zero-trust-workload-identity-manager-spire
+    rbac:
+      sarCacheTTL: "30s"
+      roleBindings:
+        - role: sre
+          groups: ["platform-engineering"]
+        - role: ai-orchestrator
+          groups: ["platform-engineering"]
+        - role: cicd
+          groups: ["platform-engineering"]
+        - role: observability
+          groups: ["platform-engineering"]
+        - role: l3-audit
+          groups: ["platform-engineering"]
+        - role: remediation-approver
+          groups: ["platform-engineering"]
+
+  gateway:
+    enabled: false
+    logging:
+      level: info
+    route:
+      enabled: false
+    config:
+      deduplicationCooldown: 5m
+      k8sRequestTimeout: 15s
+      cors:
+        allowCredentials: false
+        maxAge: 300
+
+  dataStorage:
+    endpointPropagationDelay: 10s
+    logging:
+      level: info
+
   aiAnalysis:
+    logging:
+      level: info
     policy:
       configMapName: aianalysis-policies
 
-  # SignalProcessing controller — requires a Rego policy ConfigMap.
   signalProcessing:
+    logging:
+      level: info
     policy:
       configMapName: signalprocessing-policy
 
-  # OCP monitoring integration (enabled by default).
+  remediationOrchestrator:
+    dryRun: false
+    dryRunHoldPeriod: 1h
+    logging:
+      level: info
+    retention:
+      period: 24h
+    effectivenessAssessment:
+      stabilizationWindow: 2m20s
+    notifications:
+      notifySelfResolved: false
+    timeouts:
+      global: 1h
+      processing: 5m
+      analyzing: 10m
+      awaitingApproval: 15m
+      executing: 30m
+      verifying: 30m
+    routing:
+      recentlyRemediatedCooldown: 5m
+      consecutiveFailureThreshold: 3
+      consecutiveFailureCooldown: 1h
+      exponentialBackoffBase: 1m
+      exponentialBackoffMax: 10m
+      exponentialBackoffMaxExponent: 4
+      recurrenceCountThreshold: 5
+      noActionRequiredDelayHours: 24
+      ineffectiveChainThreshold: 3
+      ineffectiveTimeWindow: 4h
+      scopeBackoffBase: 5s
+      scopeBackoffMax: 5m
+    asyncPropagation:
+      gitOpsSyncDelay: 10s
+      operatorReconcileDelay: 1m
+      proactiveAlertDelay: 5m
+
+  workflowExecution:
+    cooldownPeriod: 1m
+    logging:
+      level: info
+    workflowNamespace: kubernaut-workflows
+
+  effectivenessMonitor:
+    logging:
+      level: info
+    assessment:
+      stabilizationWindow: 30s
+      validityWindow: 300s
+
+  notification:
+    logging:
+      level: info
+    slack:
+      channel: "#kubernaut-alerts"
+      secretName: slack-webhook
+
+  authWebhook:
+    logging:
+      level: info
+
   monitoring:
     enabled: true
 
-  # Gateway settings — Route creates an OCP edge-TLS Route.
-  gateway:
+  networkPolicies:
     enabled: false
+
+  console:
+    enabled: true
+    auth:
+      secretName: kubernaut-console-oidc
     route:
-      enabled: false
+      enabled: true
+
+  ansible:
+    enabled: false
