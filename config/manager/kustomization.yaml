@@ -3,6 +3,6 @@ resources:
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 images:
-- digest: sha256:b6dae506db37d752f188f8522e8c2cf963bfb679f0f3280dd2b64b0e4a83432c
+- digest: sha256:97adc8fdf066bb862e0abd70129dd9bbed36b17e2e0d33da5b1e648a889587b2
   name: controller
   newName: ghcr.io/jordigilh/kubernaut-operator
