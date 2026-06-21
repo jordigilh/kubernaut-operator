@@ -434,6 +434,55 @@ var _ = Describe("ToolRoleBinding Validation", func() {
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("sarCacheTTL"))
 	})
+
+	// --- Issue #181: Custom ClusterRole references ---
+
+	It("[AC-3] rejects roleBinding with both role and clusterRoleName set", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Role: "sre", ClusterRoleName: "my-custom-role", Groups: []string{"team-a"}},
+			},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("mutually exclusive"))
+	})
+
+	It("[AC-3] rejects roleBinding with neither role nor clusterRoleName set", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Groups: []string{"team-a"}},
+			},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("one of role or clusterRoleName"))
+	})
+
+	It("[AC-3] accepts roleBinding with only clusterRoleName set", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{ClusterRoleName: "my-custom-role", Groups: []string{"team-a"}},
+			},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("[AC-6] accepts mixed persona and custom clusterRoleName bindings", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Role: "sre", Groups: []string{"sre-team"}},
+				{ClusterRoleName: "my-custom-role", Groups: []string{"custom-team"}},
+			},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
 })
 
 var _ = Describe("AlignmentCheck Validation", func() {

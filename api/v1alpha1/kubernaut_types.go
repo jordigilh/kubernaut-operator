@@ -1193,12 +1193,23 @@ type APIFrontendRBACSpec struct {
 	RoleBindings []ToolRoleBinding `json:"roleBindings,omitempty"`
 }
 
-// ToolRoleBinding binds a persona-based tool role to one or more OIDC groups.
+// ToolRoleBinding binds a tool role to one or more OIDC groups.
+// Exactly one of Role or ClusterRoleName must be set.
 type ToolRoleBinding struct {
-	// Role is the persona name. Must be one of: sre, ai-orchestrator, cicd,
+	// Role is a built-in persona name. Must be one of: sre, ai-orchestrator, cicd,
 	// observability, l3-audit, remediation-approver.
+	// Mutually exclusive with ClusterRoleName.
 	// +kubebuilder:validation:Enum=sre;ai-orchestrator;cicd;observability;l3-audit;remediation-approver
-	Role string `json:"role"`
+	// +optional
+	Role string `json:"role,omitempty"`
+
+	// ClusterRoleName references a user-managed ClusterRole for custom tool authorization.
+	// The operator creates only the ClusterRoleBinding; the ClusterRole itself must be
+	// pre-created by the user with rules granting verb "use" on resource "tools" in
+	// apiGroup "kubernaut.ai".
+	// Mutually exclusive with Role.
+	// +optional
+	ClusterRoleName string `json:"clusterRoleName,omitempty"`
 
 	// Groups are the OIDC group names to bind to this role.
 	// +kubebuilder:validation:MinItems=1

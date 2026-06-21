@@ -552,6 +552,10 @@ func ToolClusterRoleNames(kn *kubernautv1alpha1.Kubernaut) []string {
 
 // ToolClusterRoleBindings builds CRBs that bind tool ClusterRoles to OIDC groups
 // as specified in spec.apiFrontend.rbac.roleBindings.
+// For built-in persona roles (Role field), the CRB references the operator-managed
+// ClusterRole with a namespace-prefixed name.
+// For custom ClusterRole references (ClusterRoleName field), the CRB references the
+// user-managed ClusterRole directly without namespace-prefixing.
 // Duplicate roles are merged: subjects from all entries with the same role are
 // combined into a single CRB.
 // Returns empty when no roleBindings are specified.
@@ -560,19 +564,34 @@ func ToolClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterR
 		return nil
 	}
 
-	merged := make(map[string][]string) // role -> groups (deduped)
-	order := make([]string, 0)
-	for _, rb := range kn.Spec.APIFrontend.RBAC.RoleBindings {
-		if _, exists := merged[rb.Role]; !exists {
-			order = append(order, rb.Role)
+	type bindingKey struct {
+		roleRefName string
+		isCustom    bool
+	}
+
+	bindings := kn.Spec.APIFrontend.RBAC.RoleBindings
+	merged := make(map[string][]string, len(bindings))
+	order := make([]bindingKey, 0, len(bindings))
+	for _, rb := range bindings {
+		var key string
+		var isCustom bool
+		if rb.ClusterRoleName != "" {
+			key = "custom:" + rb.ClusterRoleName
+			isCustom = true
+		} else {
+			key = "persona:" + rb.Role
+			isCustom = false
 		}
-		merged[rb.Role] = append(merged[rb.Role], rb.Groups...)
+		if _, exists := merged[key]; !exists {
+			order = append(order, bindingKey{roleRefName: key, isCustom: isCustom})
+		}
+		merged[key] = append(merged[key], rb.Groups...)
 	}
 
 	labels := CommonLabels(kn)
 	crbs := make([]*rbacv1.ClusterRoleBinding, 0, len(merged))
-	for _, role := range order {
-		groups := merged[role]
+	for _, bk := range order {
+		groups := merged[bk.roleRefName]
 		subjects := make([]rbacv1.Subject, 0, len(groups))
 		for _, g := range groups {
 			subjects = append(subjects, rbacv1.Subject{
@@ -580,15 +599,27 @@ func ToolClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterR
 				Name: g,
 			})
 		}
+
+		var crbName, roleRefName string
+		if bk.isCustom {
+			name := bk.roleRefName[len("custom:"):]
+			crbName = clusterRoleName(kn, "tool-custom-"+name+"-binding")
+			roleRefName = name
+		} else {
+			name := bk.roleRefName[len("persona:"):]
+			crbName = clusterRoleName(kn, "tool-"+name+"-binding")
+			roleRefName = clusterRoleName(kn, "tool-"+name)
+		}
+
 		crbs = append(crbs, &rbacv1.ClusterRoleBinding{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:   clusterRoleName(kn, "tool-"+role+"-binding"),
+				Name:   crbName,
 				Labels: labels,
 			},
 			RoleRef: rbacv1.RoleRef{
 				APIGroup: rbacv1.GroupName,
 				Kind:     "ClusterRole",
-				Name:     clusterRoleName(kn, "tool-"+role),
+				Name:     roleRefName,
 			},
 			Subjects: subjects,
 		})

@@ -228,15 +228,32 @@ func validateToolRoleBindings(kn *kubernautv1alpha1.Kubernaut) []error {
 	}
 
 	seen := make(map[string]bool, len(rbac.RoleBindings))
-	for _, rb := range rbac.RoleBindings {
-		if seen[rb.Role] {
-			errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings: duplicate role %q", rb.Role))
+	for i, rb := range rbac.RoleBindings {
+		if rb.Role != "" && rb.ClusterRoleName != "" {
+			errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings[%d]: role and clusterRoleName are mutually exclusive", i))
 			continue
 		}
-		seen[rb.Role] = true
+		if rb.Role == "" && rb.ClusterRoleName == "" {
+			errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings[%d]: one of role or clusterRoleName must be set", i))
+			continue
+		}
 
-		if !validToolPersonas[rb.Role] {
-			errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings: unknown persona %q", rb.Role))
+		if rb.Role != "" {
+			if seen[rb.Role] {
+				errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings: duplicate role %q", rb.Role))
+				continue
+			}
+			seen[rb.Role] = true
+
+			if !validToolPersonas[rb.Role] {
+				errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings: unknown persona %q", rb.Role))
+			}
+		} else {
+			if seen[rb.ClusterRoleName] {
+				errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings: duplicate clusterRoleName %q", rb.ClusterRoleName))
+				continue
+			}
+			seen[rb.ClusterRoleName] = true
 		}
 	}
 
