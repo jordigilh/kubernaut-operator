@@ -225,7 +225,10 @@ spec:
                           session authenticity).'
                         type: string
                       issuerURL:
-                        description: OIDC issuer URL (e.g. "https://login.kubernaut.ai/realms/kubernaut").
+                        description: |-
+                          OIDC issuer URL (e.g. "https://login.kubernaut.ai/realms/kubernaut").
+                          Used for single-provider auth or kagenti auto-detection fallback.
+                          When jwtProviders is non-empty, multi-provider config takes precedence.
                         type: string
                       jwksURL:
                         description: |-
@@ -233,6 +236,60 @@ spec:
                           (FedRAMP IA-5: authenticator management). When empty, derived from
                           issuerURL + "/protocol/openid-connect/certs".
                         type: string
+                      jwtProviders:
+                        description: |-
+                          Multi-provider JWT configuration (FedRAMP IA-2: multi-source auth).
+                          When non-empty, the AF validates tokens against all configured
+                          providers concurrently. Takes precedence over the single-provider
+                          issuerURL/audience/jwksURL fields above.
+                        items:
+                          description: |-
+                            JWTProviderSpec configures a single OIDC JWT provider for multi-issuer
+                            authentication. Shared by KA interactive and API Frontend auth.
+                          properties:
+                            audiences:
+                              description: Expected audience claim values for session
+                                authenticity (FedRAMP SC-23).
+                              items:
+                                type: string
+                              minItems: 1
+                              type: array
+                            claimMappings:
+                              description: Claim mappings for username and group extraction
+                                (FedRAMP AC-6).
+                              properties:
+                                groups:
+                                  description: JWT claim name for group membership
+                                    extraction.
+                                  type: string
+                                username:
+                                  description: JWT claim name for username extraction.
+                                  type: string
+                              type: object
+                            issuerURL:
+                              description: OIDC issuer URL for token validation.
+                              minLength: 1
+                              type: string
+                            jwksURL:
+                              description: |-
+                                JWKS endpoint URL for token signature verification. When empty,
+                                derived from IssuerURL. Must use HTTPS unless the parent's
+                                allowInsecureJWKS/allowInsecureIssuers flag is true.
+                              maxLength: 2048
+                              type: string
+                            name:
+                              description: Human-readable name for this provider (e.g.
+                                "rhbk", "spire").
+                              maxLength: 63
+                              minLength: 1
+                              type: string
+                          required:
+                          - audiences
+                          - issuerURL
+                          - name
+                          type: object
+                        maxItems: 8
+                        type: array
                       oidcCaFile:
                         description: |-
                           Path to CA bundle for OIDC/JWKS TLS trust (FedRAMP IA-5). When set,
@@ -317,9 +374,18 @@ spec:
                         description: RoleBindings maps persona-based tool roles to
                           OIDC groups.
                         items:
-                          description: ToolRoleBinding binds a persona-based tool
-                            role to one or more OIDC groups.
+                          description: |-
+                            ToolRoleBinding binds a tool role to one or more OIDC groups.
+                            Exactly one of Role or ClusterRoleName must be set.
                           properties:
+                            clusterRoleName:
+                              description: |-
+                                ClusterRoleName references a user-managed ClusterRole for custom tool authorization.
+                                The operator creates only the ClusterRoleBinding; the ClusterRole itself must be
+                                pre-created by the user with rules granting verb "use" on resource "tools" in
+                                apiGroup "kubernaut.ai".
+                                Mutually exclusive with Role.
+                              type: string
                             groups:
                               description: Groups are the OIDC group names to bind
                                 to this role.
@@ -329,8 +395,9 @@ spec:
                               type: array
                             role:
                               description: |-
-                                Role is the persona name. Must be one of: sre, ai-orchestrator, cicd,
+                                Role is a built-in persona name. Must be one of: sre, ai-orchestrator, cicd,
                                 observability, l3-audit, remediation-approver.
+                                Mutually exclusive with ClusterRoleName.
                               enum:
                               - sre
                               - ai-orchestrator
@@ -341,7 +408,6 @@ spec:
                               type: string
                           required:
                           - groups
-                          - role
                           type: object
                         type: array
                       sarCacheTTL:
@@ -553,6 +619,99 @@ spec:
                           otherwise to an implementation-defined value. Requests cannot exceed Limits.
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
+                    type: object
+                type: object
+              console:
+                description: Console configures the standalone web console (A2A chat
+                  UI).
+                properties:
+                  auth:
+                    description: OIDC authentication configuration for the console
+                      oauth2-proxy.
+                    properties:
+                      secretName:
+                        description: |-
+                          Name of the pre-existing Secret containing OIDC credentials.
+                          Required keys: client-id, client-secret, cookie-secret.
+                        minLength: 1
+                        type: string
+                    type: object
+                  enabled:
+                    default: false
+                    description: Whether the Console component is deployed. Defaults
+                      to false (opt-in).
+                    type: boolean
+                  resources:
+                    description: Resource requirements for the console container.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  route:
+                    description: OCP Route configuration for external access.
+                    properties:
+                      enabled:
+                        default: true
+                        description: Whether to create an OCP Route. Defaults to true
+                          on OpenShift.
+                        type: boolean
+                      host:
+                        description: Explicit hostname. Empty = auto-derived from
+                          namespace.
+                        type: string
                     type: object
                 type: object
               dataStorage:
@@ -1033,29 +1192,49 @@ spec:
                       jwtProviders:
                         description: JWT providers for OIDC-based identity delegation.
                         items:
-                          description: JWTProviderSpec configures a single OIDC JWT
-                            provider.
+                          description: |-
+                            JWTProviderSpec configures a single OIDC JWT provider for multi-issuer
+                            authentication. Shared by KA interactive and API Frontend auth.
                           properties:
-                            audience:
-                              description: Expected audience claim value.
-                              type: string
-                            issuer:
-                              description: Expected issuer claim value.
+                            audiences:
+                              description: Expected audience claim values for session
+                                authenticity (FedRAMP SC-23).
+                              items:
+                                type: string
+                              minItems: 1
+                              type: array
+                            claimMappings:
+                              description: Claim mappings for username and group extraction
+                                (FedRAMP AC-6).
+                              properties:
+                                groups:
+                                  description: JWT claim name for group membership
+                                    extraction.
+                                  type: string
+                                username:
+                                  description: JWT claim name for username extraction.
+                                  type: string
+                              type: object
+                            issuerURL:
+                              description: OIDC issuer URL for token validation.
+                              minLength: 1
                               type: string
                             jwksURL:
-                              description: JWKS endpoint URL. Must use HTTPS unless
-                                allowInsecureJWKS is true.
+                              description: |-
+                                JWKS endpoint URL for token signature verification. When empty,
+                                derived from IssuerURL. Must use HTTPS unless the parent's
+                                allowInsecureJWKS/allowInsecureIssuers flag is true.
                               maxLength: 2048
-                              minLength: 1
                               type: string
                             name:
                               description: Human-readable name for this provider (e.g.
-                                "rhbk", "auth0").
+                                "rhbk", "spire").
                               maxLength: 63
                               minLength: 1
                               type: string
                           required:
-                          - jwksURL
+                          - audiences
+                          - issuerURL
                           - name
                           type: object
                         maxItems: 8
@@ -1122,6 +1301,32 @@ spec:
                             description: Token endpoint URL.
                             type: string
                         type: object
+                      phaseModels:
+                        additionalProperties:
+                          description: |-
+                            LLMPhaseOverrideSpec allows a specific agent phase to use a different LLM.
+                            All fields are optional; non-zero fields override the corresponding base values.
+                          properties:
+                            apiKey:
+                              type: string
+                            endpoint:
+                              type: string
+                            model:
+                              type: string
+                            provider:
+                              type: string
+                          type: object
+                        description: |-
+                          Per-phase LLM model overrides. Keys are agent phase names
+                          (rca, workflow_discovery, validation). Each override can specify
+                          a different model (and optionally provider/endpoint) for that phase,
+                          allowing faster/cheaper models for structured tasks like workflow discovery.
+                          When absent, all phases use the default model above.
+                        type: object
+                        x-kubernetes-validations:
+                        - message: 'phaseModels keys must be one of: rca, workflow_discovery,
+                            validation'
+                          rule: self.all(k, k in ['rca','workflow_discovery','validation'])
                       provider:
                         description: LLM provider name (e.g. "openai", "vertexai",
                           "bedrock", "azure").
@@ -1289,6 +1494,21 @@ spec:
                             type: boolean
                         type: object
                     type: object
+                  serverRateLimit:
+                    description: Server-level rate limiting for the KA HTTP endpoint.
+                    properties:
+                      burst:
+                        default: 100
+                        description: Burst size (max concurrent requests above the
+                          steady-state rate).
+                        minimum: 1
+                        type: integer
+                      requestsPerSecond:
+                        default: 50
+                        description: Requests per second allowed.
+                        minimum: 1
+                        type: integer
+                    type: object
                   session:
                     description: Session configuration.
                     properties:
@@ -1339,43 +1559,14 @@ spec:
                   NetworkPolicies controls the creation of Kubernetes NetworkPolicy
                   resources that enforce a default-deny posture with explicit allow rules.
                 properties:
-                  apiServerCIDR:
-                    description: |-
-                      API server CIDR for egress rules (e.g. "10.0.0.0/16").
-                      When empty, API server egress rules are omitted.
-                    type: string
                   enabled:
                     default: false
                     description: |-
                       Whether the operator creates NetworkPolicy resources.
                       When true, a default-deny posture is applied with explicit allow rules
-                      matching the upstream Helm chart traffic matrix.
+                      matching the upstream Helm chart traffic matrix. Monitoring namespace,
+                      ingress namespaces, and API server egress are auto-detected.
                     type: boolean
-                  externalEgressCIDRs:
-                    description: |-
-                      ExternalEgressCIDRs lists CIDRs that AF is allowed to reach for external
-                      services (OIDC/Keycloak JWKS endpoints, etc.) on port 443.
-                      Example: ["10.128.0.0/14"] for cluster-internal Keycloak, or
-                      ["0.0.0.0/0"] to allow any external HTTPS destination.
-                    items:
-                      type: string
-                    type: array
-                  gatewayIngressNamespaces:
-                    description: Gateway ingress namespaces. Namespaces allowed to
-                      send traffic to the Gateway.
-                    items:
-                      type: string
-                    type: array
-                  ingressNamespace:
-                    description: |-
-                      IngressNamespace is the namespace where the OpenShift Router (or ingress
-                      controller) runs. AF needs ingress from this namespace for Route-based traffic.
-                      Typically "openshift-ingress" on OCP.
-                    type: string
-                  monitoringNamespace:
-                    description: Monitoring namespace for Prometheus scrape ingress
-                      (e.g. "openshift-monitoring").
-                    type: string
                 type: object
               notification:
                 description: Notification controller settings.
