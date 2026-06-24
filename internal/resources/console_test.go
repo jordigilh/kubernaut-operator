@@ -101,6 +101,7 @@ var _ = Describe("Console Resources", func() {
 			Expect(oauth2.Image).To(Equal("quay.io/oauth2-proxy/oauth2-proxy:v7.9.0"))
 			Expect(*oauth2.SecurityContext.ReadOnlyRootFilesystem).To(BeTrue())
 			Expect(*oauth2.SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
+			Expect(oauth2.SecurityContext.RunAsUser).To(BeNil(), "hardcoded RunAsUser breaks OCP restricted SCC")
 			Expect(oauth2.Ports).To(HaveLen(1))
 			Expect(oauth2.Ports[0].ContainerPort).To(Equal(consoleProxyPort))
 			Expect(oauth2.Env).To(HaveLen(3))
@@ -115,6 +116,7 @@ var _ = Describe("Console Resources", func() {
 			Expect(console.Image).To(Equal("quay.io/kubernaut-ai/console:v1.3.0"))
 			Expect(console.ImagePullPolicy).To(Equal(corev1.PullIfNotPresent))
 			Expect(*console.SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
+			Expect(console.SecurityContext.RunAsUser).To(BeNil(), "hardcoded RunAsUser breaks OCP restricted SCC")
 			Expect(console.VolumeMounts).To(HaveLen(3))
 
 			Expect(spec.Volumes).To(HaveLen(2))
