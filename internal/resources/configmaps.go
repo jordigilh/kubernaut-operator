@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
@@ -1860,6 +1861,12 @@ func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut) afSeverityTriageYAM
 
 // afAgentLLMConfig builds the nested agent.llm config section for the AF,
 // matching the schema introduced in kubernaut#1252 / PR#1255.
+//
+// AF and KA have divergent OpenAI config formats (kubernaut#1487/#1488):
+//   - CR "openai" -> AF receives "openai_compatible" (superset that works with/without API key)
+//   - AF expects the endpoint to include "/v1"; KA appends it internally
+//
+// This translation will be removed when upstream normalizes (kubernaut#1488).
 func afAgentLLMConfig(kn *kubernautv1alpha1.Kubernaut) afAgentLLMYAML {
 	llm := kn.Spec.KubernautAgent.LLM
 	provider := llm.Provider
@@ -1867,10 +1874,21 @@ func afAgentLLMConfig(kn *kubernautv1alpha1.Kubernaut) afAgentLLMYAML {
 		provider = LLMProviderVertexAI
 	}
 
+	afProvider := provider
+	if provider == LLMProviderOpenAI {
+		afProvider = LLMProviderOpenAICompatible
+	}
+
+	endpoint := llm.Endpoint
+	if afProvider == LLMProviderOpenAICompatible &&
+		endpoint != "" && !strings.HasSuffix(endpoint, "/v1") {
+		endpoint = strings.TrimRight(endpoint, "/") + "/v1"
+	}
+
 	cfg := afAgentLLMYAML{
-		Provider:       provider,
+		Provider:       afProvider,
 		Model:          llm.Model,
-		Endpoint:       llm.Endpoint,
+		Endpoint:       endpoint,
 		VertexProject:  llm.VertexProject,
 		VertexLocation: llm.VertexLocation,
 		TLSCaFile:      llm.TLSCaFile,
@@ -1878,7 +1896,7 @@ func afAgentLLMConfig(kn *kubernautv1alpha1.Kubernaut) afAgentLLMYAML {
 		TLSKeyFile:     llm.TLSKeyFile,
 	}
 
-	if llm.CredentialsSecretName != "" && provider != LLMProviderVertexAI {
+	if llm.CredentialsSecretName != "" && afProvider != LLMProviderVertexAI {
 		cfg.APIKeyFile = "/etc/apifrontend/llm-credentials/api_key"
 	}
 

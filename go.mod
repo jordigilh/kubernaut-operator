@@ -3,8 +3,8 @@ module github.com/jordigilh/kubernaut-operator
 go 1.26
 
 require (
-	github.com/jordigilh/kubernaut v1.5.1-0.20260619031653-592335431baa
-	github.com/onsi/ginkgo/v2 v2.31.0
+	github.com/jordigilh/kubernaut v1.5.2
+	github.com/onsi/ginkgo/v2 v2.32.0
 	github.com/onsi/gomega v1.42.0
 	github.com/openshift/api v0.0.0-20260327162646-993e604705e3
 	github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring v0.91.0

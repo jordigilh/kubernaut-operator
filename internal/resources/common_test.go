@@ -66,6 +66,7 @@ func testKubernaut() *kubernautv1alpha1.Kubernaut {
 				LLM: kubernautv1alpha1.LLMSpec{
 					Provider:              "openai",
 					Model:                 "gpt-4o",
+					Endpoint:              "http://llm-gateway:8080",
 					CredentialsSecretName: "llm-creds",
 				},
 			},

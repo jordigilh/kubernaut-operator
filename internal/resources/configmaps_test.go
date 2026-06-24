@@ -30,6 +30,8 @@ import (
 
 const injectCABundleAnnotationValue = "true"
 
+const testOpenAIEndpoint = "http://llm-gateway:8080"
+
 var _ = Describe("ConfigMaps", func() {
 	Describe("Gateway ConfigMap", func() {
 		It("contains DataStorage URL and expected keys", func() {
@@ -640,7 +642,7 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(root.Runtime.Logging.Level).To(Equal("info"), "runtime.logging.level = %q, want info", root.Runtime.Logging.Level)
 			Expect(root.Runtime.Server.Port == 8443 && root.Runtime.Server.Address == "0.0.0.0").To(BeTrue(), "runtime.server = %#v, want address 0.0.0.0 port 8443", root.Runtime.Server)
 			Expect(root.Runtime.Audit.BufferSize).To(Equal(10000), "runtime.audit.bufferSize = %d, want 10000", root.Runtime.Audit.BufferSize)
-			Expect(root.AI.LLM.Provider).To(Equal("openai"), "ai.llm.provider = %q, want openai", root.AI.LLM.Provider)
+			Expect(root.AI.LLM.Provider).To(Equal(LLMProviderOpenAI), "ai.llm.provider = %q, want openai", root.AI.LLM.Provider)
 			Expect(root.AI.Investigation.MaxTurns).To(Equal(40), "ai.investigation.maxTurns = %d, want 40", root.AI.Investigation.MaxTurns)
 			wantDS := DataStorageURL(kn.Namespace)
 			Expect(root.Integrations.DataStorage.URL).To(Equal(wantDS), "integrations.dataStorage.url = %q, want %q", root.Integrations.DataStorage.URL, wantDS)
@@ -703,7 +705,7 @@ var _ = Describe("ConfigMaps", func() {
 			kn.Spec.KubernautAgent.AlignmentCheck.Timeout = "20s"
 			kn.Spec.KubernautAgent.AlignmentCheck.MaxStepTokens = 1024
 			kn.Spec.KubernautAgent.AlignmentCheck.LLM = &kubernautv1alpha1.AlignmentCheckLLMSpec{
-				Provider: "openai",
+				Provider: LLMProviderOpenAI,
 				Model:    "gpt-4o-mini",
 				Endpoint: "https://align.example/v1",
 			}
@@ -1275,7 +1277,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		}
 		err = yaml.Unmarshal([]byte(data), &root)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(root.Agent.LLM.Provider).To(Equal("openai"), "agent.llm.provider = %q, want openai", root.Agent.LLM.Provider)
+		Expect(root.Agent.LLM.Provider).To(Equal("openai_compatible"), "agent.llm.provider = %q, want openai_compatible (kubernaut#1487)", root.Agent.LLM.Provider)
 		Expect(root.Agent.LLM.Model).To(Equal("gpt-4o"), "agent.llm.model = %q, want gpt-4o", root.Agent.LLM.Model)
 		Expect(root.Agent.LLM.APIKeyFile).To(Equal("/etc/apifrontend/llm-credentials/api_key"),
 			"agent.llm.apiKeyFile should point to mounted secret")
@@ -1319,6 +1321,132 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(root.Agent.LLM.VertexLocation).To(Equal("us-central1"))
 		Expect(root.Agent.LLM.APIKeyFile).To(BeEmpty(),
 			"vertex_ai should use GOOGLE_APPLICATION_CREDENTIALS (ADC), not apiKeyFile")
+	})
+
+	It("UT-CM-196-001 [SI-10]: AF receives openai_compatible when CR specifies openai", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.KubernautAgent.LLM.Provider = LLMProviderOpenAI
+		kn.Spec.KubernautAgent.LLM.Endpoint = testOpenAIEndpoint
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		var root struct {
+			Agent struct {
+				LLM struct {
+					Provider string `yaml:"provider"`
+				} `yaml:"llm"`
+			} `yaml:"agent"`
+		}
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.Agent.LLM.Provider).To(Equal("openai_compatible"),
+			"AF must receive openai_compatible for openai provider (kubernaut#1487)")
+	})
+
+	It("UT-CM-196-002 [CM-6]: AF endpoint gets /v1 suffix appended", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.KubernautAgent.LLM.Provider = LLMProviderOpenAI
+		kn.Spec.KubernautAgent.LLM.Endpoint = testOpenAIEndpoint
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		var root struct {
+			Agent struct {
+				LLM struct {
+					Endpoint string `yaml:"endpoint"`
+				} `yaml:"llm"`
+			} `yaml:"agent"`
+		}
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.Agent.LLM.Endpoint).To(Equal(testOpenAIEndpoint+"/v1"),
+			"AF OpenAI adapter requires /v1 suffix on endpoint")
+	})
+
+	It("UT-CM-196-003 [CM-6]: AF endpoint not doubled when /v1 already present", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.KubernautAgent.LLM.Provider = LLMProviderOpenAI
+		kn.Spec.KubernautAgent.LLM.Endpoint = testOpenAIEndpoint + "/v1"
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		var root struct {
+			Agent struct {
+				LLM struct {
+					Endpoint string `yaml:"endpoint"`
+				} `yaml:"llm"`
+			} `yaml:"agent"`
+		}
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.Agent.LLM.Endpoint).To(Equal(testOpenAIEndpoint+"/v1"),
+			"/v1 suffix must not be doubled")
+	})
+
+	It("UT-CM-196-004 [CM-6]: AF endpoint trailing slash handled before /v1 append", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.KubernautAgent.LLM.Provider = LLMProviderOpenAI
+		kn.Spec.KubernautAgent.LLM.Endpoint = testOpenAIEndpoint + "/"
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		var root struct {
+			Agent struct {
+				LLM struct {
+					Endpoint string `yaml:"endpoint"`
+				} `yaml:"llm"`
+			} `yaml:"agent"`
+		}
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.Agent.LLM.Endpoint).To(Equal(testOpenAIEndpoint+"/v1"),
+			"trailing slash must be normalized before appending /v1")
+	})
+
+	It("UT-CM-196-005 [CM-6]: KA gets raw openai provider, no endpoint mutation", func() {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.LLM.Provider = LLMProviderOpenAI
+		kn.Spec.KubernautAgent.LLM.Endpoint = testOpenAIEndpoint
+		cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+		Expect(err).NotTo(HaveOccurred())
+		var root struct {
+			Provider string `yaml:"provider"`
+			Endpoint string `yaml:"endpoint"`
+		}
+		Expect(yaml.Unmarshal([]byte(cm.Data["llm-runtime.yaml"]), &root)).To(Succeed())
+		Expect(root.Provider).To(Equal(LLMProviderOpenAI),
+			"KA must receive raw openai provider (KA handles translation internally)")
+		Expect(root.Endpoint).To(Equal(testOpenAIEndpoint),
+			"KA endpoint must not be mutated (KA appends /v1 internally)")
+	})
+
+	It("UT-CM-196-006 [CM-6]: non-OpenAI providers are not translated", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.KubernautAgent.LLM.Provider = LLMProviderVertexAI
+		kn.Spec.KubernautAgent.LLM.VertexProject = "my-project"
+		kn.Spec.KubernautAgent.LLM.VertexLocation = "us-central1"
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		var root struct {
+			Agent struct {
+				LLM struct {
+					Provider string `yaml:"provider"`
+				} `yaml:"llm"`
+			} `yaml:"agent"`
+		}
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.Agent.LLM.Provider).To(Equal(LLMProviderVertexAI),
+			"non-OpenAI providers must pass through untranslated")
+	})
+
+	It("UT-CM-196-007 [SC-7]: AF apiKeyFile set for OpenAI provider", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.KubernautAgent.LLM.Provider = LLMProviderOpenAI
+		kn.Spec.KubernautAgent.LLM.Endpoint = testOpenAIEndpoint
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		var root struct {
+			Agent struct {
+				LLM struct {
+					APIKeyFile string `yaml:"apiKeyFile"`
+				} `yaml:"llm"`
+			} `yaml:"agent"`
+		}
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.Agent.LLM.APIKeyFile).To(Equal("/etc/apifrontend/llm-credentials/api_key"),
+			"apiKeyFile must be set for OpenAI provider (secret always mounted)")
 	})
 
 	It("renders OAuth2 block in agent.llm when enabled", func() {
