@@ -129,7 +129,6 @@ func ConsoleDeployment(kn *kubernautv1alpha1.Kubernaut, ingressDomain string) (*
 								AllowPrivilegeEscalation: ptr.To(false),
 								Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 								ReadOnlyRootFilesystem:   ptr.To(true),
-								RunAsUser:                ptr.To(int64(65534)),
 							},
 							ReadinessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
@@ -164,7 +163,6 @@ func ConsoleDeployment(kn *kubernautv1alpha1.Kubernaut, ingressDomain string) (*
 							SecurityContext: &corev1.SecurityContext{
 								AllowPrivilegeEscalation: ptr.To(false),
 								Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-								RunAsUser:                ptr.To(int64(1001)),
 							},
 							ReadinessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
