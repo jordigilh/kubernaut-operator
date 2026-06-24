@@ -108,9 +108,22 @@ fmt: ## Run go fmt against code.
 vet: ## Run go vet against code.
 	go vet ./...
 
+# Unit-test packages that do NOT need envtest (fast, no API server).
+UT_PKGS := ./internal/resources/... ./internal/webhook/...
+
+.PHONY: test-unit
+test-unit: fmt vet ## Run unit tests (no envtest, no API server).
+	go test $(UT_PKGS) -coverprofile cover-unit.out
+
+# Integration-test packages that DO need envtest (controller reconciler).
+IT_PKGS := ./internal/controller/...
+
+.PHONY: test-integration
+test-integration: manifests generate fmt vet setup-envtest ## Run integration tests (envtest API server).
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $(IT_PKGS) -coverprofile cover-integration.out
+
 .PHONY: test
-test: manifests generate fmt vet setup-envtest ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+test: test-unit test-integration ## Run all tests (unit + integration).
 
 # E2E tests run against a live OCP cluster. Ensure you are logged in (oc login)
 # and IMG points to a registry reachable from the cluster.
