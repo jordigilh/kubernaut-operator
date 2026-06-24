@@ -178,21 +178,21 @@ func ConsoleDeployment(kn *kubernautv1alpha1.Kubernaut, ingressDomain string) (*
 								InitialDelaySeconds: 5, PeriodSeconds: 10,
 							},
 							Resources: consoleContainerResources(kn),
-						VolumeMounts: []corev1.VolumeMount{
-							{Name: "nginx-tmp", MountPath: "/tmp"},
-							{Name: "nginx-config", MountPath: "/opt/app-root/etc/nginx.d/kubernaut-http.conf", SubPath: "http.conf", ReadOnly: true},
-							{Name: "nginx-config", MountPath: "/opt/app-root/etc/nginx.default.d/kubernaut-server.conf", SubPath: "server.conf", ReadOnly: true},
-							{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
-						},
+							VolumeMounts: []corev1.VolumeMount{
+								{Name: "nginx-tmp", MountPath: "/tmp"},
+								{Name: "nginx-config", MountPath: "/opt/app-root/etc/nginx.d/kubernaut-http.conf", SubPath: "http.conf", ReadOnly: true},
+								{Name: "nginx-config", MountPath: "/opt/app-root/etc/nginx.default.d/kubernaut-server.conf", SubPath: "server.conf", ReadOnly: true},
+								{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
+							},
 						},
 					},
-				Volumes: []corev1.Volume{
-					{Name: "nginx-tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-					{Name: "nginx-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-						LocalObjectReference: corev1.LocalObjectReference{Name: ComponentConsole + "-nginx"},
-					}}},
-					configMapVolume("tls-ca", InterServiceCAConfigMapName),
-				},
+					Volumes: []corev1.Volume{
+						{Name: "nginx-tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+						{Name: "nginx-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+							LocalObjectReference: corev1.LocalObjectReference{Name: ComponentConsole + "-nginx"},
+						}}},
+						configMapVolume("tls-ca", InterServiceCAConfigMapName),
+					},
 				},
 			},
 		},

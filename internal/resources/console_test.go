@@ -211,6 +211,8 @@ var _ = Describe("Console Resources", func() {
 	})
 
 	Context("ConsoleDeployment TLS (#198)", func() {
+		const tlsCAMountPath = "/etc/tls-ca"
+
 		It("UT-CD-198-001 [SC-8]: console container mounts tls-ca volume at /etc/tls-ca", func() {
 			kn := testKubernautWithConsole()
 			dep, err := ConsoleDeployment(kn, testIngressDomain)
@@ -221,12 +223,12 @@ var _ = Describe("Console Resources", func() {
 
 			found := false
 			for _, m := range console.VolumeMounts {
-				if m.Name == "tls-ca" && m.MountPath == "/etc/tls-ca" && m.ReadOnly {
+				if m.Name == testVolumeTLSCA && m.MountPath == tlsCAMountPath && m.ReadOnly {
 					found = true
 				}
 			}
 			Expect(found).To(BeTrue(),
-				"console container must mount tls-ca at /etc/tls-ca for nginx proxy_ssl_trusted_certificate")
+				"console container must mount tls-ca at %s for nginx proxy_ssl_trusted_certificate", tlsCAMountPath)
 		})
 
 		It("UT-CD-198-002 [CM-6]: tls-ca volume sources from inter-service-ca ConfigMap", func() {
@@ -236,7 +238,7 @@ var _ = Describe("Console Resources", func() {
 
 			found := false
 			for _, v := range dep.Spec.Template.Spec.Volumes {
-				if v.Name == "tls-ca" && v.ConfigMap != nil && v.ConfigMap.Name == InterServiceCAConfigMapName {
+				if v.Name == testVolumeTLSCA && v.ConfigMap != nil && v.ConfigMap.Name == InterServiceCAConfigMapName {
 					found = true
 				}
 			}
