@@ -76,6 +76,7 @@ func ConsoleDeployment(kn *kubernautv1alpha1.Kubernaut, ingressDomain string) (*
 		"--skip-jwt-bearer-tokens=true",
 		"--cookie-refresh=25m",
 		"--ssl-insecure-skip-verify=true",
+		"--ping-path=/oauth2/ping",
 	}
 
 	replicas := int32(1)
