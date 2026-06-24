@@ -1275,7 +1275,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		}
 		err = yaml.Unmarshal([]byte(data), &root)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(root.Agent.LLM.Provider).To(Equal("openai"), "agent.llm.provider = %q, want openai", root.Agent.LLM.Provider)
+		Expect(root.Agent.LLM.Provider).To(Equal("openai_compatible"), "agent.llm.provider = %q, want openai_compatible (kubernaut#1487)", root.Agent.LLM.Provider)
 		Expect(root.Agent.LLM.Model).To(Equal("gpt-4o"), "agent.llm.model = %q, want gpt-4o", root.Agent.LLM.Model)
 		Expect(root.Agent.LLM.APIKeyFile).To(Equal("/etc/apifrontend/llm-credentials/api_key"),
 			"agent.llm.apiKeyFile should point to mounted secret")

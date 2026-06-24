@@ -145,6 +145,16 @@ const PDBMaxUnavailable = 1
 // Application Default Credentials (ADC) instead of a flat API key file.
 const LLMProviderVertexAI = "vertex_ai"
 
+// LLMProviderOpenAI is the canonical provider name users set in the CR.
+// KA consumes this as-is; the operator translates it for AF.
+const LLMProviderOpenAI = "openai"
+
+// LLMProviderOpenAICompatible is what AF expects for OpenAI-compatible
+// endpoints (kubernaut#1487). The operator emits this to AF when the CR
+// specifies "openai". This translation will be removed when upstream
+// normalizes the config (kubernaut#1488).
+const LLMProviderOpenAICompatible = "openai_compatible"
+
 // Kagenti discovery labels for A2A agent auto-discovery.
 const (
 	KagentiAgentTypeLabel                = "kagenti.io/type"
