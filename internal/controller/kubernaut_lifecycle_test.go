@@ -41,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -1008,7 +1009,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("[SI-4] reconcile patches authbridge /metrics bypass when sidecar is active", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			cr.Spec.APIFrontend.SPIRE.Enabled = true
+			cr.Spec.APIFrontend.SPIRE.Enabled = ptr.To(true)
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
 			By("pre-creating the authbridge ConfigMap that kagenti would create")
@@ -1547,12 +1548,11 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	// ======================================================================
 
 	Context("API Frontend issuerURL Enforcement", func() {
-		// Note: SPIRE.Enabled is `bool` with `+kubebuilder:default=true` and
-		// `omitempty`, so setting it to false is a no-op after API server
-		// roundtrip. The envtest always sees SPIRE.Enabled=true, meaning
-		// the kagenti sidecar is detected. Without an authbridge-config
-		// ConfigMap in kagenti-system, the OIDC auto-detection fails,
-		// which is the IA-2 enforcement path when kagenti is active.
+		// SPIRE.Enabled defaults to true when nil (not specified). When the
+		// kagenti sidecar is active, the OIDC auto-detection path fires.
+		// Without an authbridge-config ConfigMap in kagenti-system, the OIDC
+		// auto-detection fails, which is the IA-2 enforcement path when
+		// kagenti is active.
 
 		It("should pass validation when kagenti sidecar is active without issuerURL (FedRAMP IA-2 auto-detection)", func() {
 			cr := newMinimalCR()
@@ -3279,7 +3279,7 @@ func unitTestKubernautCR(afEnabled bool, spireEnabled bool) *kubernautv1alpha1.K
 		Spec: kubernautv1alpha1.KubernautSpec{
 			APIFrontend: kubernautv1alpha1.APIFrontendSpec{
 				SPIRE: kubernautv1alpha1.APIFrontendSPIRESpec{
-					Enabled: spireEnabled,
+					Enabled: ptr.To(spireEnabled),
 				},
 			},
 		},

@@ -1,3 +1,12 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: kubernaut-operator
+    control-plane: controller-manager
+  name: kubernaut-operator-system
+---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -527,8 +536,10 @@ spec:
                           When empty, the className field is omitted from the ClusterSPIFFEID spec.
                         type: string
                       enabled:
-                        default: true
-                        description: Whether SPIRE mTLS sidecar injection is enabled.
+                        description: |-
+                          Whether SPIRE mTLS sidecar injection is enabled.
+                          Defaults to true when omitted. Set explicitly to false for OCP 4.18
+                          environments without SPIRE or when running without kagenti authbridge.
                         type: boolean
                       trustDomain:
                         description: |-
@@ -2606,6 +2617,13 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - route.openshift.io
+  resources:
+  - routes/custom-host
+  verbs:
+  - create
+  - update
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -2794,7 +2812,7 @@ spec:
           value: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
         - name: RELATED_IMAGE_INIT_UBI_MINIMAL
           value: registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c
-        image: quay.io/kubernaut-ai/kubernaut-operator@sha256:6e3f88fd84b2dbc14d7e8e9cf2ab7bbe20286f94268255c0094bd41356e20ce9
+        image: quay.io/kubernaut-ai/kubernaut-operator:1.5.2
         livenessProbe:
           httpGet:
             path: /healthz

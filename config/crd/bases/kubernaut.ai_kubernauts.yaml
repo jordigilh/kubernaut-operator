@@ -528,8 +528,10 @@ spec:
                           When empty, the className field is omitted from the ClusterSPIFFEID spec.
                         type: string
                       enabled:
-                        default: true
-                        description: Whether SPIRE mTLS sidecar injection is enabled.
+                        description: |-
+                          Whether SPIRE mTLS sidecar injection is enabled.
+                          Defaults to true when omitted. Set explicitly to false for OCP 4.18
+                          environments without SPIRE or when running without kagenti authbridge.
                         type: boolean
                       trustDomain:
                         description: |-

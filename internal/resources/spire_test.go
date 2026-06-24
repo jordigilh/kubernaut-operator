@@ -35,7 +35,7 @@ func nestedStrMap(obj *unstructured.Unstructured, fields ...string) (map[string]
 var _ = Describe("ClusterSPIFFEID", func() {
 	It("returns nil when SPIRE is disabled", func() {
 		kn := testKubernaut()
-		kn.Spec.APIFrontend.SPIRE.Enabled = false
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(false)
 		obj, err := ClusterSPIFFEID(kn)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(obj).To(BeNil())
@@ -43,7 +43,7 @@ var _ = Describe("ClusterSPIFFEID", func() {
 
 	It("SC-8: uses SPIRE TrustDomain template variable by default", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 		obj, err := ClusterSPIFFEID(kn)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(obj).NotTo(BeNil())
@@ -57,7 +57,7 @@ var _ = Describe("ClusterSPIFFEID", func() {
 
 	It("SC-8: uses standard /ns/{ns}/sa/{sa} SPIFFE path format", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 		obj, err := ClusterSPIFFEID(kn)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -68,7 +68,7 @@ var _ = Describe("ClusterSPIFFEID", func() {
 
 	It("uses literal trust domain when spec.apiFrontend.spire.trustDomain is set", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 		kn.Spec.APIFrontend.SPIRE.TrustDomain = "custom.example.com"
 		obj, err := ClusterSPIFFEID(kn)
 		Expect(err).NotTo(HaveOccurred())
@@ -80,7 +80,7 @@ var _ = Describe("ClusterSPIFFEID", func() {
 
 	It("sets podSelector for apifrontend component", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 		obj, err := ClusterSPIFFEID(kn)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -92,7 +92,7 @@ var _ = Describe("ClusterSPIFFEID", func() {
 
 	It("sets namespaceSelector to CR namespace", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 		obj, err := ClusterSPIFFEID(kn)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -104,7 +104,7 @@ var _ = Describe("ClusterSPIFFEID", func() {
 
 	It("includes className when set in CR", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 		kn.Spec.APIFrontend.SPIRE.ClassName = "zero-trust-workload-identity-manager-spire"
 		obj, err := ClusterSPIFFEID(kn)
 		Expect(err).NotTo(HaveOccurred())
@@ -117,7 +117,7 @@ var _ = Describe("ClusterSPIFFEID", func() {
 
 	It("omits className when not set in CR", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 		kn.Spec.APIFrontend.SPIRE.ClassName = ""
 		obj, err := ClusterSPIFFEID(kn)
 		Expect(err).NotTo(HaveOccurred())
@@ -128,7 +128,7 @@ var _ = Describe("ClusterSPIFFEID", func() {
 
 	It("sets correct metadata", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 		obj, err := ClusterSPIFFEID(kn)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -140,7 +140,7 @@ var _ = Describe("ClusterSPIFFEID", func() {
 
 	It("uses CR namespace in SPIFFE path, not a template variable", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 		kn.Namespace = "custom-namespace"
 		obj, err := ClusterSPIFFEID(kn)
 		Expect(err).NotTo(HaveOccurred())
@@ -154,7 +154,7 @@ var _ = Describe("ClusterSPIFFEID", func() {
 
 	It("IA-5: returns nil when SPIRE spec is explicitly disabled", func() {
 		kn := testKubernaut()
-		kn.Spec.APIFrontend.SPIRE = kubernautv1alpha1.APIFrontendSPIRESpec{Enabled: false}
+		kn.Spec.APIFrontend.SPIRE = kubernautv1alpha1.APIFrontendSPIRESpec{Enabled: boolPtr(false)}
 		obj, err := ClusterSPIFFEID(kn)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(obj).To(BeNil())

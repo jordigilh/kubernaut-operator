@@ -1,8 +1,9 @@
 resources:
+- namespace.yaml
 - manager.yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 images:
-- digest: sha256:6e3f88fd84b2dbc14d7e8e9cf2ab7bbe20286f94268255c0094bd41356e20ce9
-  name: controller
+- name: controller
   newName: quay.io/kubernaut-ai/kubernaut-operator
+  newTag: 1.1.0
