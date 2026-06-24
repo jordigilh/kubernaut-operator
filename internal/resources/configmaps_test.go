@@ -30,6 +30,8 @@ import (
 
 const injectCABundleAnnotationValue = "true"
 
+const testOpenAIEndpoint = "http://llm-gateway:8080"
+
 var _ = Describe("ConfigMaps", func() {
 	Describe("Gateway ConfigMap", func() {
 		It("contains DataStorage URL and expected keys", func() {
@@ -640,7 +642,7 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(root.Runtime.Logging.Level).To(Equal("info"), "runtime.logging.level = %q, want info", root.Runtime.Logging.Level)
 			Expect(root.Runtime.Server.Port == 8443 && root.Runtime.Server.Address == "0.0.0.0").To(BeTrue(), "runtime.server = %#v, want address 0.0.0.0 port 8443", root.Runtime.Server)
 			Expect(root.Runtime.Audit.BufferSize).To(Equal(10000), "runtime.audit.bufferSize = %d, want 10000", root.Runtime.Audit.BufferSize)
-			Expect(root.AI.LLM.Provider).To(Equal("openai"), "ai.llm.provider = %q, want openai", root.AI.LLM.Provider)
+			Expect(root.AI.LLM.Provider).To(Equal(LLMProviderOpenAI), "ai.llm.provider = %q, want openai", root.AI.LLM.Provider)
 			Expect(root.AI.Investigation.MaxTurns).To(Equal(40), "ai.investigation.maxTurns = %d, want 40", root.AI.Investigation.MaxTurns)
 			wantDS := DataStorageURL(kn.Namespace)
 			Expect(root.Integrations.DataStorage.URL).To(Equal(wantDS), "integrations.dataStorage.url = %q, want %q", root.Integrations.DataStorage.URL, wantDS)
@@ -703,7 +705,7 @@ var _ = Describe("ConfigMaps", func() {
 			kn.Spec.KubernautAgent.AlignmentCheck.Timeout = "20s"
 			kn.Spec.KubernautAgent.AlignmentCheck.MaxStepTokens = 1024
 			kn.Spec.KubernautAgent.AlignmentCheck.LLM = &kubernautv1alpha1.AlignmentCheckLLMSpec{
-				Provider: "openai",
+				Provider: LLMProviderOpenAI,
 				Model:    "gpt-4o-mini",
 				Endpoint: "https://align.example/v1",
 			}
@@ -1323,8 +1325,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("UT-CM-196-001 [SI-10]: AF receives openai_compatible when CR specifies openai", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.KubernautAgent.LLM.Provider = "openai"
-		kn.Spec.KubernautAgent.LLM.Endpoint = "http://llm-gateway:8080"
+		kn.Spec.KubernautAgent.LLM.Provider = LLMProviderOpenAI
+		kn.Spec.KubernautAgent.LLM.Endpoint = testOpenAIEndpoint
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -1341,8 +1343,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("UT-CM-196-002 [CM-6]: AF endpoint gets /v1 suffix appended", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.KubernautAgent.LLM.Provider = "openai"
-		kn.Spec.KubernautAgent.LLM.Endpoint = "http://llm-gateway:8080"
+		kn.Spec.KubernautAgent.LLM.Provider = LLMProviderOpenAI
+		kn.Spec.KubernautAgent.LLM.Endpoint = testOpenAIEndpoint
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -1353,14 +1355,14 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			} `yaml:"agent"`
 		}
 		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
-		Expect(root.Agent.LLM.Endpoint).To(Equal("http://llm-gateway:8080/v1"),
+		Expect(root.Agent.LLM.Endpoint).To(Equal(testOpenAIEndpoint+"/v1"),
 			"AF OpenAI adapter requires /v1 suffix on endpoint")
 	})
 
 	It("UT-CM-196-003 [CM-6]: AF endpoint not doubled when /v1 already present", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.KubernautAgent.LLM.Provider = "openai"
-		kn.Spec.KubernautAgent.LLM.Endpoint = "http://llm-gateway:8080/v1"
+		kn.Spec.KubernautAgent.LLM.Provider = LLMProviderOpenAI
+		kn.Spec.KubernautAgent.LLM.Endpoint = testOpenAIEndpoint + "/v1"
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -1371,14 +1373,14 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			} `yaml:"agent"`
 		}
 		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
-		Expect(root.Agent.LLM.Endpoint).To(Equal("http://llm-gateway:8080/v1"),
+		Expect(root.Agent.LLM.Endpoint).To(Equal(testOpenAIEndpoint+"/v1"),
 			"/v1 suffix must not be doubled")
 	})
 
 	It("UT-CM-196-004 [CM-6]: AF endpoint trailing slash handled before /v1 append", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.KubernautAgent.LLM.Provider = "openai"
-		kn.Spec.KubernautAgent.LLM.Endpoint = "http://llm-gateway:8080/"
+		kn.Spec.KubernautAgent.LLM.Provider = LLMProviderOpenAI
+		kn.Spec.KubernautAgent.LLM.Endpoint = testOpenAIEndpoint + "/"
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -1389,14 +1391,14 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			} `yaml:"agent"`
 		}
 		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
-		Expect(root.Agent.LLM.Endpoint).To(Equal("http://llm-gateway:8080/v1"),
+		Expect(root.Agent.LLM.Endpoint).To(Equal(testOpenAIEndpoint+"/v1"),
 			"trailing slash must be normalized before appending /v1")
 	})
 
 	It("UT-CM-196-005 [CM-6]: KA gets raw openai provider, no endpoint mutation", func() {
 		kn := testKubernaut()
-		kn.Spec.KubernautAgent.LLM.Provider = "openai"
-		kn.Spec.KubernautAgent.LLM.Endpoint = "http://llm-gateway:8080"
+		kn.Spec.KubernautAgent.LLM.Provider = LLMProviderOpenAI
+		kn.Spec.KubernautAgent.LLM.Endpoint = testOpenAIEndpoint
 		cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -1404,9 +1406,9 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			Endpoint string `yaml:"endpoint"`
 		}
 		Expect(yaml.Unmarshal([]byte(cm.Data["llm-runtime.yaml"]), &root)).To(Succeed())
-		Expect(root.Provider).To(Equal("openai"),
+		Expect(root.Provider).To(Equal(LLMProviderOpenAI),
 			"KA must receive raw openai provider (KA handles translation internally)")
-		Expect(root.Endpoint).To(Equal("http://llm-gateway:8080"),
+		Expect(root.Endpoint).To(Equal(testOpenAIEndpoint),
 			"KA endpoint must not be mutated (KA appends /v1 internally)")
 	})
 
@@ -1431,8 +1433,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("UT-CM-196-007 [SC-7]: AF apiKeyFile set for OpenAI provider", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.KubernautAgent.LLM.Provider = "openai"
-		kn.Spec.KubernautAgent.LLM.Endpoint = "http://llm-gateway:8080"
+		kn.Spec.KubernautAgent.LLM.Provider = LLMProviderOpenAI
+		kn.Spec.KubernautAgent.LLM.Endpoint = testOpenAIEndpoint
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
