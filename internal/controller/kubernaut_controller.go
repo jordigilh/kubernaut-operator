@@ -1347,6 +1347,8 @@ func (r *KubernautReconciler) resolveKagentiOIDCDefaults(ctx context.Context, kn
 // ensureKagentiNamespaceLabel adds or removes the "kagenti-enabled" label on
 // the kubernaut-system namespace. The kagenti mutating webhook requires this
 // label in its namespaceSelector to inject the authbridge sidecar into AF pods.
+// Additionally, when SPIRE is enabled the authbridge sidecar uses a SPIFFE CSI
+// inline volume that requires pod-security.kubernetes.io/enforce=privileged.
 func (r *KubernautReconciler) ensureKagentiNamespaceLabel(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
 	log := logf.FromContext(ctx)
 
@@ -1358,22 +1360,53 @@ func (r *KubernautReconciler) ensureKagentiNamespaceLabel(ctx context.Context, k
 	want := kn.Spec.APIFrontendEnabled() && kn.Spec.APIFrontend.SPIRE.SPIREEnabled()
 	have := ns.Labels["kagenti-enabled"] == resources.LabelValueTrue
 
-	if want == have {
-		return nil
-	}
+	needsUpdate := want != have
 
 	if ns.Labels == nil {
 		ns.Labels = make(map[string]string)
 	}
+
 	if want {
-		log.Info("labeling namespace for kagenti authbridge injection", "namespace", kn.Namespace)
-		ns.Labels["kagenti-enabled"] = resources.LabelValueTrue
+		if !have {
+			log.Info("labeling namespace for kagenti authbridge injection", "namespace", kn.Namespace)
+			ns.Labels["kagenti-enabled"] = resources.LabelValueTrue
+		}
+		if ensurePSALabels(ns.Labels) {
+			log.Info("setting pod security labels for SPIFFE CSI volume", "namespace", kn.Namespace)
+			needsUpdate = true
+		}
 	} else {
-		log.Info("removing kagenti-enabled label from namespace", "namespace", kn.Namespace)
-		delete(ns.Labels, "kagenti-enabled")
+		if have {
+			log.Info("removing kagenti-enabled label from namespace", "namespace", kn.Namespace)
+			delete(ns.Labels, "kagenti-enabled")
+		}
 	}
 
+	if !needsUpdate {
+		return nil
+	}
 	return r.Update(ctx, ns)
+}
+
+// ensurePSALabels sets the Pod Security Admission labels required for the
+// SPIFFE CSI inline volume. Returns true if any label was added or changed.
+func ensurePSALabels(labels map[string]string) bool {
+	changed := false
+	psaLabels := map[string]string{
+		"pod-security.kubernetes.io/enforce":         "privileged",
+		"pod-security.kubernetes.io/enforce-version": "latest",
+		"pod-security.kubernetes.io/audit":           "privileged",
+		"pod-security.kubernetes.io/audit-version":   "latest",
+		"pod-security.kubernetes.io/warn":            "privileged",
+		"pod-security.kubernetes.io/warn-version":    "latest",
+	}
+	for k, v := range psaLabels {
+		if labels[k] != v {
+			labels[k] = v
+			changed = true
+		}
+	}
+	return changed
 }
 
 // agentRuntimeGVR is the GroupVersionResource for kagenti AgentRuntime CRs.
