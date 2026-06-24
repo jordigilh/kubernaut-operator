@@ -817,4 +817,28 @@ var _ = Describe("LLM Prerequisite Validation", func() {
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())
 	})
+
+	It("UT-VL-196-001 [SI-10]: provider openai without endpoint fails validation", func() {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.LLM.Provider = "openai"
+		kn.Spec.KubernautAgent.LLM.Endpoint = ""
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		endpointErr := false
+		for _, e := range errs {
+			if strings.Contains(e.Error(), "endpoint") {
+				endpointErr = true
+			}
+		}
+		Expect(endpointErr).To(BeTrue(),
+			"provider openai must require endpoint (both KA and AF need it)")
+	})
+
+	It("UT-VL-196-002 [SI-10]: provider openai with endpoint passes validation", func() {
+		kn := testKubernaut()
+		kn.Spec.KubernautAgent.LLM.Provider = "openai"
+		kn.Spec.KubernautAgent.LLM.Endpoint = "http://llm-gateway:8080"
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty(),
+			"provider openai with endpoint and credentials should pass validation")
+	})
 })
