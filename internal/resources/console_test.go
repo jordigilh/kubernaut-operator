@@ -117,12 +117,13 @@ var _ = Describe("Console Resources", func() {
 			Expect(console.ImagePullPolicy).To(Equal(corev1.PullIfNotPresent))
 			Expect(*console.SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
 			Expect(console.SecurityContext.RunAsUser).To(BeNil(), "hardcoded RunAsUser breaks OCP restricted SCC")
-			Expect(console.VolumeMounts).To(HaveLen(3))
+			Expect(console.VolumeMounts).To(HaveLen(4))
 
-			Expect(spec.Volumes).To(HaveLen(2))
+			Expect(spec.Volumes).To(HaveLen(3))
 			Expect(spec.Volumes[0].Name).To(Equal("nginx-tmp"))
 			Expect(spec.Volumes[1].Name).To(Equal("nginx-config"))
 			Expect(spec.Volumes[1].ConfigMap.Name).To(Equal(ComponentConsole + "-nginx"))
+			Expect(spec.Volumes[2].Name).To(Equal("tls-ca"))
 		})
 	})
 
@@ -172,6 +173,75 @@ var _ = Describe("Console Resources", func() {
 			httpConf := cm.Data["http.conf"]
 			Expect(httpConf).To(ContainSubstring("limit_req_zone"))
 			Expect(httpConf).To(ContainSubstring("gzip on"))
+		})
+	})
+
+	Context("ConsoleNginxConfigMap TLS (#198)", func() {
+		It("UT-CN-198-001 [SC-8]: proxy_pass uses https:// scheme for AF upstream", func() {
+			kn := testKubernautWithConsole()
+			cm := ConsoleNginxConfigMap(kn)
+			serverConf := cm.Data["server.conf"]
+			Expect(serverConf).To(ContainSubstring("proxy_pass https://"),
+				"proxy_pass must use https:// to connect to AF over TLS")
+		})
+
+		It("UT-CN-198-002 [SC-8]: includes proxy_ssl_trusted_certificate directive", func() {
+			kn := testKubernautWithConsole()
+			cm := ConsoleNginxConfigMap(kn)
+			serverConf := cm.Data["server.conf"]
+			Expect(serverConf).To(ContainSubstring("proxy_ssl_trusted_certificate"),
+				"nginx must trust the service-ca bundle for upstream TLS verification")
+		})
+
+		It("UT-CN-198-003 [SC-8]: includes proxy_ssl_verify on", func() {
+			kn := testKubernautWithConsole()
+			cm := ConsoleNginxConfigMap(kn)
+			serverConf := cm.Data["server.conf"]
+			Expect(serverConf).To(ContainSubstring("proxy_ssl_verify on"),
+				"nginx must verify the AF upstream certificate")
+		})
+
+		It("UT-CN-198-004 [SC-8]: proxy_pass does NOT use http:// (negative)", func() {
+			kn := testKubernautWithConsole()
+			cm := ConsoleNginxConfigMap(kn)
+			serverConf := cm.Data["server.conf"]
+			Expect(serverConf).NotTo(ContainSubstring("proxy_pass http://"),
+				"plaintext HTTP proxy_pass to AF must not appear")
+		})
+	})
+
+	Context("ConsoleDeployment TLS (#198)", func() {
+		It("UT-CD-198-001 [SC-8]: console container mounts tls-ca volume at /etc/tls-ca", func() {
+			kn := testKubernautWithConsole()
+			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			Expect(err).NotTo(HaveOccurred())
+
+			console := dep.Spec.Template.Spec.Containers[1]
+			Expect(console.Name).To(Equal("console"))
+
+			found := false
+			for _, m := range console.VolumeMounts {
+				if m.Name == "tls-ca" && m.MountPath == "/etc/tls-ca" && m.ReadOnly {
+					found = true
+				}
+			}
+			Expect(found).To(BeTrue(),
+				"console container must mount tls-ca at /etc/tls-ca for nginx proxy_ssl_trusted_certificate")
+		})
+
+		It("UT-CD-198-002 [CM-6]: tls-ca volume sources from inter-service-ca ConfigMap", func() {
+			kn := testKubernautWithConsole()
+			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			Expect(err).NotTo(HaveOccurred())
+
+			found := false
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == "tls-ca" && v.ConfigMap != nil && v.ConfigMap.Name == InterServiceCAConfigMapName {
+					found = true
+				}
+			}
+			Expect(found).To(BeTrue(),
+				"tls-ca volume must source from the inter-service-ca ConfigMap")
 		})
 	})
 
