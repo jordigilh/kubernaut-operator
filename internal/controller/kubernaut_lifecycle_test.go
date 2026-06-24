@@ -2937,6 +2937,12 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			updated := &corev1.Namespace{}
 			Expect(r.Get(ctx, types.NamespacedName{Name: testNamespace}, updated)).To(Succeed())
 			Expect(updated.Labels).To(HaveKeyWithValue("kagenti-enabled", "true"))
+			Expect(updated.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/enforce", "privileged"))
+			Expect(updated.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/enforce-version", "latest"))
+			Expect(updated.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/audit", "privileged"))
+			Expect(updated.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/audit-version", "latest"))
+			Expect(updated.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/warn", "privileged"))
+			Expect(updated.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/warn-version", "latest"))
 		})
 
 		It("UT-KL-02 [AC-4, CC6.1]: removes label when SPIRE is disabled", func() {
@@ -2962,7 +2968,16 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		})
 
 		It("UT-KL-04 [CM-6, CC8.1]: no mutation when label already matches desired state", func() {
-			ns := unitTestNamespace(map[string]string{"kagenti-enabled": "true", "other": "label"})
+			ns := unitTestNamespace(map[string]string{
+				"kagenti-enabled":                    "true",
+				"other":                              "label",
+				"pod-security.kubernetes.io/enforce": "privileged",
+				"pod-security.kubernetes.io/enforce-version": "latest",
+				"pod-security.kubernetes.io/audit":           "privileged",
+				"pod-security.kubernetes.io/audit-version":   "latest",
+				"pod-security.kubernetes.io/warn":            "privileged",
+				"pod-security.kubernetes.io/warn-version":    "latest",
+			})
 			kn := unitTestKubernautCR(true, true)
 			r := newFakeUnitReconciler(ns)
 			Expect(r.ensureKagentiNamespaceLabel(ctx, kn)).To(Succeed())
@@ -2983,6 +2998,36 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(r.Get(ctx, types.NamespacedName{Name: testNamespace}, updated)).To(Succeed())
 			Expect(updated.Labels).NotTo(HaveKey("kagenti-enabled"))
 			Expect(updated.Labels).To(HaveKeyWithValue("other", "label"))
+		})
+
+		It("UT-KL-06 [AC-4]: adds PSA labels when kagenti-enabled already present but PSA missing", func() {
+			ns := unitTestNamespace(map[string]string{"kagenti-enabled": "true"})
+			kn := unitTestKubernautCR(true, true)
+			r := newFakeUnitReconciler(ns)
+			Expect(r.ensureKagentiNamespaceLabel(ctx, kn)).To(Succeed())
+
+			updated := &corev1.Namespace{}
+			Expect(r.Get(ctx, types.NamespacedName{Name: testNamespace}, updated)).To(Succeed())
+			Expect(updated.Labels).To(HaveKeyWithValue("kagenti-enabled", "true"))
+			Expect(updated.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/enforce", "privileged"))
+			Expect(updated.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/enforce-version", "latest"))
+			Expect(updated.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/audit", "privileged"))
+			Expect(updated.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/warn", "privileged"))
+		})
+
+		It("UT-KL-07 [CM-6]: does not remove PSA labels when SPIRE is disabled", func() {
+			ns := unitTestNamespace(map[string]string{
+				"kagenti-enabled":                    "true",
+				"pod-security.kubernetes.io/enforce": "privileged",
+			})
+			kn := unitTestKubernautCR(true, false)
+			r := newFakeUnitReconciler(ns)
+			Expect(r.ensureKagentiNamespaceLabel(ctx, kn)).To(Succeed())
+
+			updated := &corev1.Namespace{}
+			Expect(r.Get(ctx, types.NamespacedName{Name: testNamespace}, updated)).To(Succeed())
+			Expect(updated.Labels).NotTo(HaveKey("kagenti-enabled"))
+			Expect(updated.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/enforce", "privileged"))
 		})
 	})
 
