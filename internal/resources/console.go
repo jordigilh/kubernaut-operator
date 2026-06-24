@@ -182,6 +182,7 @@ func ConsoleDeployment(kn *kubernautv1alpha1.Kubernaut, ingressDomain string) (*
 								{Name: "nginx-tmp", MountPath: "/tmp"},
 								{Name: "nginx-config", MountPath: "/opt/app-root/etc/nginx.d/kubernaut-http.conf", SubPath: "http.conf", ReadOnly: true},
 								{Name: "nginx-config", MountPath: "/opt/app-root/etc/nginx.default.d/kubernaut-server.conf", SubPath: "server.conf", ReadOnly: true},
+								{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
 							},
 						},
 					},
@@ -190,6 +191,7 @@ func ConsoleDeployment(kn *kubernautv1alpha1.Kubernaut, ingressDomain string) (*
 						{Name: "nginx-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 							LocalObjectReference: corev1.LocalObjectReference{Name: ComponentConsole + "-nginx"},
 						}}},
+						configMapVolume("tls-ca", InterServiceCAConfigMapName),
 					},
 				},
 			},
@@ -214,7 +216,7 @@ func ConsoleService(kn *kubernautv1alpha1.Kubernaut) *corev1.Service {
 
 // ConsoleNginxConfigMap builds the nginx configuration ConfigMap for the console.
 func ConsoleNginxConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
-	afURL := fmt.Sprintf("http://%s.%s.svc:%d", ComponentAPIFrontend, kn.Namespace, PortHTTPS)
+	afURL := fmt.Sprintf("https://%s.%s.svc:%d", ComponentAPIFrontend, kn.Namespace, PortHTTPS)
 
 	httpConf := `limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
 limit_req_zone $binary_remote_addr zone=mcp:10m rate=10r/s;
@@ -231,6 +233,10 @@ add_header X-Frame-Options "DENY" always;
 add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
 add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+proxy_ssl_trusted_certificate /etc/tls-ca/service-ca.crt;
+proxy_ssl_verify on;
+proxy_ssl_server_name on;
 
 location /a2a/ {
   limit_req zone=api burst=50 nodelay;
