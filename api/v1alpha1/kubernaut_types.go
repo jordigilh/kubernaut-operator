@@ -1067,9 +1067,10 @@ func (s *APIFrontendRouteSpec) AFRouteEnabled() bool {
 // SPIRE-aware mTLS sidecar into the AF deployment.
 type APIFrontendSPIRESpec struct {
 	// Whether SPIRE mTLS sidecar injection is enabled.
-	// +kubebuilder:default=true
+	// Defaults to true when omitted. Set explicitly to false for OCP 4.18
+	// environments without SPIRE or when running without kagenti authbridge.
 	// +optional
-	Enabled bool `json:"enabled,omitempty"`
+	Enabled *bool `json:"enabled,omitempty"`
 
 	// SPIRE class name for the ClusterSPIFFEID (e.g. "zero-trust-workload-identity-manager-spire").
 	// When empty, the className field is omitted from the ClusterSPIFFEID spec.
@@ -1086,8 +1087,12 @@ type APIFrontendSPIRESpec struct {
 }
 
 // SPIREEnabled returns true when SPIRE mTLS sidecar injection is active.
+// Defaults to true when the field is nil (not specified in the CR).
 func (s *APIFrontendSPIRESpec) SPIREEnabled() bool {
-	return s.Enabled
+	if s.Enabled == nil {
+		return true
+	}
+	return *s.Enabled
 }
 
 // AuthWebhookSpec configures the AuthWebhook admission controller.

@@ -1171,7 +1171,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("keeps server.port at 8443 for authbridge sidecar (kagenti 0.3.x)", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarAuthbridge, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
@@ -1181,7 +1181,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("keeps server.port at 8443 for envoy sidecar (kagenti 0.2.x)", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarEnvoy, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
@@ -1191,7 +1191,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("disables AF TLS for authbridge sidecar", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarAuthbridge, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
@@ -1201,7 +1201,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("disables AF TLS for envoy sidecar", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarEnvoy, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]

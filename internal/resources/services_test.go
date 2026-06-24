@@ -172,7 +172,7 @@ var _ = Describe("Services", func() {
 
 		It("SC-8: agent-tls always targets PortHTTPS where authbridge listens", func() {
 			kn := testKubernautWithAF()
-			kn.Spec.APIFrontend.SPIRE.Enabled = true
+			kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 			for _, svc := range Services(kn, KagentiSidecarAuthbridge) {
 				if svc.Name == "apifrontend" {
 					for _, p := range svc.Spec.Ports {

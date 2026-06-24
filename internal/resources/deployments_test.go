@@ -1115,7 +1115,7 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("AF container uses PortHTTPS for envoy sidecar (no port shift)", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 		dep, err := APIFrontendDeployment(kn, KagentiSidecarEnvoy)
 		Expect(err).NotTo(HaveOccurred())
 		portMap := map[string]int32{}
@@ -1128,7 +1128,7 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("AF container shifts to PortHTTPS+1 for authbridge sidecar", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 		dep, err := APIFrontendDeployment(kn, KagentiSidecarAuthbridge)
 		Expect(err).NotTo(HaveOccurred())
 		portMap := map[string]int32{}
@@ -1141,7 +1141,7 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("sets NO_PROXY for KA and DS with envoy sidecar", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 		dep, err := APIFrontendDeployment(kn, KagentiSidecarEnvoy)
 		Expect(err).NotTo(HaveOccurred())
 		container := dep.Spec.Template.Spec.Containers[0]
@@ -1158,7 +1158,7 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("sets NO_PROXY for KA and DS with authbridge sidecar", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.SPIRE.Enabled = true
+		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
 		dep, err := APIFrontendDeployment(kn, KagentiSidecarAuthbridge)
 		Expect(err).NotTo(HaveOccurred())
 		container := dep.Spec.Template.Spec.Containers[0]
