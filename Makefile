@@ -124,6 +124,9 @@ test-integration: manifests generate fmt vet setup-envtest ## Run integration te
 
 .PHONY: test
 test: test-unit test-integration ## Run all tests (unit + integration).
+	@echo "mode: set" > cover.out
+	@tail -n +2 cover-unit.out >> cover.out 2>/dev/null || true
+	@tail -n +2 cover-integration.out >> cover.out 2>/dev/null || true
 
 # E2E tests run against a live OCP cluster. Ensure you are logged in (oc login)
 # and IMG points to a registry reachable from the cluster.
