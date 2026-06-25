@@ -1,0 +1,125 @@
+---
+description: Recall relevant patterns from Hindsight memory before responding
+alwaysApply: true
+---
+
+## When to recall (MUST)
+
+You MUST call `recall` on your **first turn** when the task involves:
+- Go code, kubernaut, or any operator/controller work
+- Architecture, API design, or CRD changes
+- Debugging, troubleshooting, or root-cause analysis
+- Anything the user has corrected you on before
+
+Use the appropriate bank(s):
+- **hindsight** — corrections, coding conventions, user preferences
+- **hindsight-docs** — kubernaut architecture, API/CRD contracts, operations
+- **hindsight-issues** — requirements, known bugs, design decisions, priorities
+
+Call one or more banks depending on what the task touches. A single recall to
+**hindsight** with a query summarizing the task intent is sufficient for most work.
+
+## Before planning or implementing (MANDATORY GATE)
+
+Before proposing any plan, writing any implementation, or switching to agent
+mode to begin coding:
+
+1. Recall `hindsight` with query: **"project methodology, workflow, conventions"**
+2. Apply the recalled methodology to your plan — TDD sequence, preflight checks,
+   confidence gates, APDC workflow, pyramid invariant
+3. If your plan does not follow the recalled methodology, **revise it before
+   presenting**
+
+This is a blocking gate. Do not skip it even if you believe you know the
+methodology. Context summarization in long sessions can silently drop recalled
+conventions — re-recall ensures they are current.
+
+## Mid-session re-recall (long sessions)
+
+In sessions longer than ~20 agent turns, or whenever a conversation summary
+has been applied, **re-recall `hindsight`** with:
+- "project methodology, workflow, conventions" — may have been lost to summarization
+- Any topic-specific query relevant to the current phase
+
+Rationale: empirical data shows 61% of corrections occur in the second half of
+sessions. Re-recalling counteracts context loss from summarization and prevents
+late-session mistakes.
+
+## Code search: use `cocoindex_search` tool
+
+The MCP server **user-cocoindex-code** provides a tool named **`cocoindex_search`**.
+Call it with `{"query": "your search terms", "limit": 10}`.
+
+Use `cocoindex_search` when:
+- You need to find code by concept: `cocoindex_search(query="how does rate limiting work")`
+- You need to locate an identifier: `cocoindex_search(query="ParseConfig")`
+- You want to understand a subsystem before modifying it
+- You need to find callers or dependents of a function/type
+
+Prefer `cocoindex_search` over Grep/SemanticSearch when searching by meaning.
+Use Grep only when you need exact regex matching.
+
+## When to recall again (mid-session)
+
+Call `recall` again if:
+- The task shifts to a different subsystem, file area, or domain
+- The user corrects you — check if this correction already exists in memory
+- You've made 2+ failed attempts at the same problem
+- A new entity (CRD, service, package) enters the conversation that wasn't part of the original recall
+- A code search returned results from an unfamiliar file — recall `hindsight` for conventions about that area
+
+### Phase-based triggers (MUST recall when entering these phases)
+
+| Phase | Bank or tool | Query focus |
+|-------|------|-------------|
+| Implementation planning | hindsight | project methodology, TDD, pyramid invariant, preflight checks |
+| Writing/designing tests | hindsight | test conventions, table-driven tests, assertion patterns |
+| Designing APIs or CRDs | hindsight-docs | API contracts, CRD conventions, architecture decisions |
+| PR/commit workflow | hindsight | commit conventions, PR structure, review expectations |
+| Debugging/troubleshooting | hindsight-issues | known bugs, past failures, related issues |
+| Pipeline monitoring | hindsight | pipeline monitoring protocol, must-gather RCA, confidence gates |
+| Implementation complete (final gate) | hindsight | GA readiness audit, multi-dimensional review, authoritative validation |
+| Exploring unfamiliar code | `cocoindex_search` | semantic search for the feature/subsystem being investigated |
+| Understanding blast radius | `cocoindex_search` | what depends on the function/type being changed |
+| Refactoring / renaming | `cocoindex_search` | all references and callers of the target symbol |
+
+These are NOT optional. When you transition into one of these phases, recall
+the indicated bank or call the indicated tool BEFORE writing code or proposing a plan.
+
+## When to skip (OK)
+
+- Trivial follow-ups ("yes", "do it", "commit")
+- Pure file reads or terminal commands with no design decisions
+- You already recalled this exact topic earlier in the session and nothing has changed
+
+## How to use results
+
+- **Mental models** (long synthesized documents): use directly as authoritative context
+- **Individual facts**: reason over them to identify relevant patterns
+
+## Data freshness
+
+The `hindsight-docs` and `hindsight-issues` banks are continuously updated
+via CocoIndex incremental sync. Recalled doc/issue content is live — trust it
+without re-reading source files unless the task requires verifying current state.
+
+## Go code: three-tier code guidance
+
+Use the right tool for the right question:
+
+- **gopls** — precise type info, symbol references, diagnostics. Use for
+  "what is the type of X?", "who implements interface Y?", "what errors exist?"
+- **`cocoindex_search`** — semantic code search by meaning. The tool is on the
+  `user-cocoindex-code` MCP server. Call it with `{"query": "...", "limit": 10}`.
+  Use for "where do we handle rate limiting?", "how does the remediation
+  pipeline work?", "what functions touch this data?"
+- **hindsight** — past mistakes, conventions, behavioral patterns about code.
+  Use for "how should I structure this test?", "what was corrected before?"
+
+Prefer gopls for precise lookups, `cocoindex_search` for semantic exploration,
+and hindsight for behavioral context. Do not redundantly call all three for the
+same question.
+
+## Do NOT retain
+
+Never call `retain` during sessions. Memory extraction runs nightly.
