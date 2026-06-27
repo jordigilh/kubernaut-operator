@@ -2781,31 +2781,31 @@ spec:
         - /manager
         env:
         - name: RELATED_IMAGE_GATEWAY
-          value: quay.io/kubernaut-ai/gateway@sha256:0d341f1f63483db87ef5ec1d89e06563d9e36d24c252e7e0d971ce83d5ab639e
+          value: ghcr.io/jordigilh/kubernaut/gateway@sha256:99a772299bd81ada825551bc39b116386aa49017b4554e93068b5c2c03e941ab
         - name: RELATED_IMAGE_DATA_STORAGE
-          value: quay.io/kubernaut-ai/datastorage@sha256:42bb2d59c08bf052a39ce425038c25ea219fc711a2b4fb53f5cf267ef9ae151c
+          value: ghcr.io/jordigilh/kubernaut/datastorage@sha256:e892cdfea25f505c6acc7c8ea75aa135a9c1dd4a9c82468fc4c217e209d7c0f4
         - name: RELATED_IMAGE_AIANALYSIS
-          value: quay.io/kubernaut-ai/aianalysis@sha256:8e73a2287838034301c04705766bbe9a5610e2f349c49f7e2ab1cbbd9494e8e9
+          value: ghcr.io/jordigilh/kubernaut/aianalysis@sha256:057bcaab0b8e972e31422886e468573697a77c43552f422f18b233336a1ca530
         - name: RELATED_IMAGE_SIGNALPROCESSING
-          value: quay.io/kubernaut-ai/signalprocessing@sha256:8ac56fd7233221664b7310df972489626ff3079cf5ee6947a2ccbfb36229f823
+          value: ghcr.io/jordigilh/kubernaut/signalprocessing@sha256:d47d96857ddf1d4a1f86e694e7244c4e50a26e0b2e176813be20681f44252e52
         - name: RELATED_IMAGE_REMEDIATIONORCHESTRATOR
-          value: quay.io/kubernaut-ai/remediationorchestrator@sha256:536579c1ad43475b9cc0414aa867a2f3f194286db4d81bc10f2a4a8c2a4be9bf
+          value: ghcr.io/jordigilh/kubernaut/remediationorchestrator@sha256:4ea778fbd4c996a484c72301a00c94a4f89e11c61dde84f0615cc4ebc817cf1b
         - name: RELATED_IMAGE_WORKFLOWEXECUTION
-          value: quay.io/kubernaut-ai/workflowexecution@sha256:d7a56c9012a9ce638cbf181a24c62cc701b36f9c4286355cca1515f693fc5d2a
+          value: ghcr.io/jordigilh/kubernaut/workflowexecution@sha256:00df372e18f7773da00f6e9f5461aee4ce5af64e20964254e679116cfac270ac
         - name: RELATED_IMAGE_EFFECTIVENESSMONITOR
-          value: quay.io/kubernaut-ai/effectivenessmonitor@sha256:dd117c24570596eaabd36916c89e8a9386285c6402a16485d9b692b18ea00f79
+          value: ghcr.io/jordigilh/kubernaut/effectivenessmonitor@sha256:3632f234b059f0eae0b105bcd255257692c3b3c1ba8f8955bb093a9a847bb0f2
         - name: RELATED_IMAGE_NOTIFICATION
-          value: quay.io/kubernaut-ai/notification@sha256:575a53e48090a6b2b285cbfbc0fcc220502ec1acb272a34067889afe33e7ed0a
+          value: ghcr.io/jordigilh/kubernaut/notification@sha256:ef67d0e42b2347497c20e47d85e358c6190c931c20f6118eebee24d7cd708c1d
         - name: RELATED_IMAGE_KUBERNAUT_AGENT
-          value: quay.io/kubernaut-ai/kubernautagent@sha256:ca5104891143c4b1ba681b5f007a3b70f83e58cdead922a8b5ec67c6126b0040
+          value: ghcr.io/jordigilh/kubernaut/kubernautagent@sha256:fdd41d72872b98221b2eb435be144d86d05e0d030274c8f5724749a8a9718c6c
         - name: RELATED_IMAGE_AUTHWEBHOOK
-          value: quay.io/kubernaut-ai/authwebhook@sha256:de70733e73713deab87638a31f55ce5ff9638648e134c699cac784129d424c50
+          value: ghcr.io/jordigilh/kubernaut/authwebhook@sha256:d8e09bac3c6516211f9158b8a2d9d9681c169337b44681418b418f0fd3a27faf
         - name: RELATED_IMAGE_API_FRONTEND
-          value: quay.io/kubernaut-ai/apifrontend@sha256:0b929c154fa9c43c2fb9adfeb2197e1c9007dfc22d75fe4f194822c830efdf31
+          value: ghcr.io/jordigilh/kubernaut/apifrontend@sha256:fb8d1751b19392e4d8970bec7082247a8503168b5358bd4e6c86f3729e9ee1f0
         - name: RELATED_IMAGE_DB_MIGRATE
-          value: quay.io/kubernaut-ai/db-migrate@sha256:7bd94ae3eb1f614608104fa71b1c390c44f0a63207371381f1b5001e0778bf58
+          value: ghcr.io/jordigilh/kubernaut/db-migrate@sha256:0be348b17e417ff5757a17bb65c4558c3827478e7e8b04a39fc329d0757e577e
         - name: RELATED_IMAGE_CONSOLE
-          value: quay.io/kubernaut-ai/kubernaut-console@sha256:01300d335dece46e8dab7a5722e6c52a85a564886f2934dcf4719d3fc363317c
+          value: ghcr.io/jordigilh/kubernaut-console@sha256:fa0e6401deadb0423eb255f507a6231ff7c4681f23e16266ac162201a7cb1f88
         - name: RELATED_IMAGE_OAUTH2_PROXY
           value: quay.io/oauth2-proxy/oauth2-proxy@sha256:37c1570c0427e02fc7c947ef2c04e8995b8347b7abc9fcf1dbb4e376a4b221a7
         - name: RELATED_IMAGE_INIT_POSTGRES
