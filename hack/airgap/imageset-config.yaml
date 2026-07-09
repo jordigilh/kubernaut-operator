@@ -14,9 +14,9 @@ apiVersion: mirror.openshift.io/v2alpha1
 mirror:
   additionalImages:
     # Operator
-    - name: quay.io/kubernaut-ai/kubernaut-operator:1.5.5
+    - name: quay.io/kubernaut-ai/kubernaut-operator@sha256:46735c9f7320edf6ca5705cc846cc93d75e301e2f026e7764901c7d9e57f3d9c
     # Operator bundle
-    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle:v1.5.5
+    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle@sha256:d1c5275d11844799b13b98589076df5a4db8c43d4720d3140f4054a5283afb35
     # Operand and infrastructure images
     - name: quay.io/kubernaut-ai/aianalysis@sha256:ca6ccf69586f38915da7e340e714e2657171db93a9149cafeeebf4ca27e6a657
     - name: quay.io/kubernaut-ai/apifrontend@sha256:4e60d1e5e88717f991c20739fee408cfc985e5ba072c3273d91dc9f805600e1b
@@ -31,9 +31,8 @@ mirror:
     - name: quay.io/kubernaut-ai/remediationorchestrator@sha256:179b0d6829bc9d843df22b51386ed0528aff4194cfe13db2f0ff5ed62e2e31c7
     - name: quay.io/kubernaut-ai/signalprocessing@sha256:4e770e3010529974a95653eabdf3a77c6e9c08ff7559e852ff3838d1279f4035
     - name: quay.io/kubernaut-ai/workflowexecution@sha256:e9d8292719139cf845b26bfa5d8d4911af197aba853b7e69538061175063c3e0
-    # Console oauth2-proxy sidecar
     - name: quay.io/oauth2-proxy/oauth2-proxy@sha256:37c1570c0427e02fc7c947ef2c04e8995b8347b7abc9fcf1dbb4e376a4b221a7
-    # Infrastructure dependencies (PostgreSQL, Valkey)
     - name: registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c
     - name: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
+    # Infrastructure dependencies (PostgreSQL, Valkey)
     - name: registry.redhat.io/rhel10/valkey-8@sha256:7b478930b2d186a61c3af408c3228f3da5104c759b8bd52d62c683e33bdb9ee2
