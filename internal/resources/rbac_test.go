@@ -268,6 +268,32 @@ var _ = Describe("ClusterRoles", func() {
 			}
 			Expect(found).To(BeTrue(), "kubernaut-agent-investigator should have events with create/patch verbs")
 		})
+
+		It("has get permission on nodes/proxy for kubelet proxy API access", func() {
+			kn := testKubernaut()
+			roles := ClusterRoles(kn)
+			var investigator *rbacv1.ClusterRole
+			for _, r := range roles {
+				if r.Name == kn.Namespace+"-kubernaut-agent-investigator" {
+					investigator = r
+					break
+				}
+			}
+			Expect(investigator).NotTo(BeNil())
+
+			found := false
+			for _, rule := range investigator.Rules {
+				if len(rule.APIGroups) > 0 && rule.APIGroups[0] == "" {
+					for _, res := range rule.Resources {
+						if res == "nodes/proxy" {
+							Expect(rule.Verbs).To(ContainElement("get"))
+							found = true
+						}
+					}
+				}
+			}
+			Expect(found).To(BeTrue(), "kubernaut-agent-investigator should have get permission on nodes/proxy for nodes_log and nodes_stats_summary tools (#205)")
+		})
 	})
 
 	Describe("Workflow runner", func() {

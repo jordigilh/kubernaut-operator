@@ -587,9 +587,11 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("dataStorage:"), "KA config should contain dataStorage section, got:\n%s", data)
 			Expect(data).To(ContainSubstring("url: https://data-storage-service.kubernaut-system.svc.cluster.local:8443"), "KA config should contain HTTPS dataStorage.url, got:\n%s", data)
 			Expect(strings.Contains(data, "tools:") && strings.Contains(data, "prometheus:")).To(BeTrue(), "KA config should contain upstream tools.prometheus section when monitoring enabled, got:\n%s", data)
+			Expect(data).To(ContainSubstring("alertmanager:"), "KA config should contain upstream tools.alertmanager section when monitoring enabled (#205), got:\n%s", data)
+			Expect(data).To(ContainSubstring(OCPAlertManagerURL), "KA config should contain AlertManager URL when monitoring enabled (#205), got:\n%s", data)
 		})
 
-		It("omits Prometheus tools when monitoring is disabled", func() {
+		It("omits Prometheus and Alertmanager tools when monitoring is disabled", func() {
 			kn := testKubernaut()
 			disabled := false
 			kn.Spec.Monitoring.Enabled = &disabled
@@ -598,6 +600,7 @@ var _ = Describe("ConfigMaps", func() {
 			data := cm.Data["config.yaml"]
 
 			Expect(strings.Contains(data, "prometheusUrl") || strings.Contains(data, "tools:")).To(BeFalse(), "KA config should not contain Prometheus tools section when monitoring is disabled, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("alertmanager:"), "KA config should not contain alertmanager section when monitoring is disabled (#205), got:\n%s", data)
 		})
 
 		It("matches expected v1.4 structure and defaults", func() {
@@ -634,6 +637,10 @@ var _ = Describe("ConfigMaps", func() {
 							URL       string `yaml:"url"`
 							TLSCaFile string `yaml:"tlsCaFile"`
 						} `yaml:"prometheus"`
+						Alertmanager *struct {
+							URL       string `yaml:"url"`
+							TLSCaFile string `yaml:"tlsCaFile"`
+						} `yaml:"alertmanager,omitempty"`
 					} `yaml:"tools,omitempty"`
 				} `yaml:"integrations"`
 			}
@@ -649,6 +656,9 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(root.Integrations.Tools).NotTo(BeNil(), "integrations.tools should be present when monitoring is enabled by default")
 			Expect(root.Integrations.Tools.Prometheus.URL).To(Equal(OCPPrometheusURL), "integrations.tools.prometheus.url = %q, want %q", root.Integrations.Tools.Prometheus.URL, OCPPrometheusURL)
 			Expect(root.Integrations.Tools.Prometheus.TLSCaFile).To(Equal("/etc/ssl/ka/service-ca.crt"), "integrations.tools.prometheus.tlsCaFile = %q, want /etc/ssl/ka/service-ca.crt", root.Integrations.Tools.Prometheus.TLSCaFile)
+			Expect(root.Integrations.Tools.Alertmanager).NotTo(BeNil(), "integrations.tools.alertmanager should be present when monitoring is enabled by default (#205)")
+			Expect(root.Integrations.Tools.Alertmanager.URL).To(Equal(OCPAlertManagerURL), "integrations.tools.alertmanager.url = %q, want %q", root.Integrations.Tools.Alertmanager.URL, OCPAlertManagerURL)
+			Expect(root.Integrations.Tools.Alertmanager.TLSCaFile).To(Equal("/etc/ssl/ka/service-ca.crt"), "integrations.tools.alertmanager.tlsCaFile = %q, want /etc/ssl/ka/service-ca.crt", root.Integrations.Tools.Alertmanager.TLSCaFile)
 		})
 
 		It("renders logging format as JSON", func() {
