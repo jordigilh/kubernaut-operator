@@ -587,10 +587,16 @@ type kaIntegrationsDataStorageYAML struct {
 }
 
 type kaIntegrationsToolsYAML struct {
-	Prometheus kaIntegrationsPrometheusYAML `json:"prometheus" yaml:"prometheus"`
+	Prometheus   kaIntegrationsPrometheusYAML    `json:"prometheus" yaml:"prometheus"`
+	Alertmanager *kaIntegrationsAlertmanagerYAML `json:"alertmanager,omitempty" yaml:"alertmanager,omitempty"`
 }
 
 type kaIntegrationsPrometheusYAML struct {
+	URL       string `json:"url" yaml:"url"`
+	TLSCaFile string `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
+}
+
+type kaIntegrationsAlertmanagerYAML struct {
 	URL       string `json:"url" yaml:"url"`
 	TLSCaFile string `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 }
@@ -1367,6 +1373,13 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 		cfg.Integrations.Tools = &kaIntegrationsToolsYAML{
 			Prometheus: kaIntegrationsPrometheusYAML{
 				URL:       OCPPrometheusURL,
+				TLSCaFile: "/etc/ssl/ka/service-ca.crt",
+			},
+			// Alertmanager tools (get_alerts, get_silences) added upstream in
+			// kubernaut#1508 (#205). Follows the same SA-bearer-auth-via-service-CA
+			// pattern as Prometheus.
+			Alertmanager: &kaIntegrationsAlertmanagerYAML{
+				URL:       OCPAlertManagerURL,
 				TLSCaFile: "/etc/ssl/ka/service-ca.crt",
 			},
 		}
