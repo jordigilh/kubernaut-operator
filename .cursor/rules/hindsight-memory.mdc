@@ -6,18 +6,39 @@ alwaysApply: true
 ## When to recall (MUST)
 
 You MUST call `recall` on your **first turn** when the task involves:
-- Go code, kubernaut, or any operator/controller work
+- Go code, kubernaut-operator, or any operator/controller/reconciliation work
 - Architecture, API design, or CRD changes
 - Debugging, troubleshooting, or root-cause analysis
 - Anything the user has corrected you on before
 
 Use the appropriate bank(s):
 - **hindsight** — corrections, coding conventions, user preferences
-- **hindsight-docs** — kubernaut architecture, API/CRD contracts, operations
+- **hindsight-docs** — kubernaut architecture, API/CRD contracts, operations (tag-scoped to kubernaut-operator by default -- see tag-scoping section below)
 - **hindsight-issues** — requirements, known bugs, design decisions, priorities
 
 Call one or more banks depending on what the task touches. A single recall to
 **hindsight** with a query summarizing the task intent is sufficient for most work.
+
+## Scope recall and code search to kubernaut-operator by default
+
+`hindsight-docs` and the code index are **shared** across the whole kubernaut
+platform (operator, console, core, demo scenarios) — there is no separate
+"operator-only" bank. Instead, ingestion already tags every document/chunk
+with its originating repo, so scope your queries explicitly:
+
+- **Own-repo work** (this is most tasks): pass `tags: ["kubernaut-operator"]`
+  on `recall`/`create_mental_model` calls to `hindsight-docs`, and pass
+  `repo: "kubernaut-operator"` to `cocoindex_search`. This narrows results to
+  this repo's own CRDs, controllers, and reconciliation code instead of
+  blending in console/core/scenario noise.
+- **Upstream/cross-repo triage** (e.g. "did core change something that broke
+  my reconciler?", "what does console expect from this CRD field?"): drop the
+  `tags`/`repo` filter explicitly so results span the whole platform. Do this
+  deliberately, not by default — you want the broader view specifically
+  because you're triaging a cross-repo interaction.
+- A dedicated `operator-architecture` mental model (tag-scoped to
+  `kubernaut-operator`) exists on `hindsight-docs` for a synthesized,
+  pre-filtered view of this repo's own architecture.
 
 ## Before planning or implementing (MANDATORY GATE)
 
@@ -51,7 +72,7 @@ The MCP server **user-cocoindex-code** provides a tool named **`cocoindex_search
 Call it with `{"query": "your search terms", "limit": 10}`.
 
 Use `cocoindex_search` when:
-- You need to find code by concept: `cocoindex_search(query="how does rate limiting work")`
+- You need to find code by concept: `cocoindex_search(query="how does the operator reconciliation loop work")`
 - You need to locate an identifier: `cocoindex_search(query="ParseConfig")`
 - You want to understand a subsystem before modifying it
 - You need to find callers or dependents of a function/type
@@ -103,6 +124,27 @@ The `hindsight-docs` and `hindsight-issues` banks are continuously updated
 via CocoIndex incremental sync. Recalled doc/issue content is live — trust it
 without re-reading source files unless the task requires verifying current state.
 
+## Right-size the payload for narrow queries (`max_tokens`)
+
+`recall` defaults to `max_tokens: 4096`, which in practice returns 60+ results
+(tens of KB) — appropriate for the mandatory broad methodology gate and other
+first-turn/broad recalls, where you want maximum coverage. For a narrow
+follow-up (one specific fact, file, or decision), pass a lower `max_tokens`
+instead of the default:
+
+- Broad/first-turn recall (methodology gate, unfamiliar subsystem): omit
+  `max_tokens` (use the default).
+- Narrow follow-up (a specific fact, prior decision, or single file/function):
+  pass `max_tokens: 800` to `1500`.
+
+Verified 2026-07-14 by direct measurement: `max_tokens: 500` returned 8
+results (~3KB), `max_tokens: 1000` returned 14 results (~6.4KB), and the
+`max_tokens: 4096` default returned 66-68 results (~57-60KB) — a real,
+substantial lever. Do **not** use the `budget` parameter for this: the same
+test showed `budget: "low"` vs. `budget: "high"` made no measurable
+difference in payload size (two queries, both within ~2% of each other) —
+it does not control response size the way `max_tokens` does.
+
 ## Go code: three-tier code guidance
 
 Use the right tool for the right question:
@@ -111,8 +153,9 @@ Use the right tool for the right question:
   "what is the type of X?", "who implements interface Y?", "what errors exist?"
 - **`cocoindex_search`** — semantic code search by meaning. The tool is on the
   `user-cocoindex-code` MCP server. Call it with `{"query": "...", "limit": 10}`.
-  Use for "where do we handle rate limiting?", "how does the remediation
-  pipeline work?", "what functions touch this data?"
+  Use for "where do we handle CRD reconciliation?", "how does the operator controller work?",
+  "what functions touch this data?"
+
 - **hindsight** — past mistakes, conventions, behavioral patterns about code.
   Use for "how should I structure this test?", "what was corrected before?"
 

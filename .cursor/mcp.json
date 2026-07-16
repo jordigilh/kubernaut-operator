@@ -15,6 +15,11 @@
       "env": {
         "COCOINDEX_PG_URL": "postgresql://hindsight:hindsight@localhost:5432/hindsight"
       }
+    },
+    "gopls": {
+      "command": "/Users/jgil/go/bin/gopls",
+      "args": ["mcp"],
+      "type": "stdio"
     }
   }
 }
