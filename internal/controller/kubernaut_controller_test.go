@@ -70,13 +70,16 @@ func newMinimalCR() *kubernautv1alpha1.Kubernaut {
 					Audience:  "kubernaut-apifrontend",
 				},
 			},
-			KubernautAgent: kubernautv1alpha1.KubernautAgentSpec{
-				LLM: kubernautv1alpha1.LLMSpec{
+			LLMProfiles: map[string]kubernautv1alpha1.LLMProfileSpec{
+				"primary": {
 					Provider:              "openai",
 					Model:                 "gpt-4o",
 					Endpoint:              "http://llm-gateway:8080",
 					CredentialsSecretName: llmSecretName,
 				},
+			},
+			KubernautAgent: kubernautv1alpha1.KubernautAgentSpec{
+				LLMProfileRef: "primary",
 			},
 			AIAnalysis: kubernautv1alpha1.AIAnalysisSpec{
 				Policy: kubernautv1alpha1.PolicyConfigMapRef{ConfigMapName: "aianalysis-policies"},

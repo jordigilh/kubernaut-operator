@@ -2,14 +2,21 @@
 
 This section covers the ConfigMaps and Secrets required by each Kubernaut service before deploying the CR.
 
-## Kubernaut Agent (KA) -- LLM Configuration
+## LLM Profiles
 
-The operator auto-generates the KA LLM runtime config from the `provider`, `model`, and related fields in the CR. For advanced LLM setups (Vertex AI, Bedrock, Azure OpenAI, custom endpoints), set the relevant CR fields:
+LLM configuration lives in a top-level, named-profile map at `spec.llmProfiles`, not nested under any one component. Each component then *references* a profile by name:
+
+- `spec.kubernautAgent.llmProfileRef` (required) -- KA's investigation LLM.
+- `spec.apiFrontend.llmProfileRef` (optional) -- AF's own LLM connection. When empty, AF defaults to KA's profile (`kubernautAgent.llmProfileRef`).
+- `spec.apiFrontend.severityTriage.llmProfileRef` (optional) -- an independent LLM for severity-triage's fallback tiers, distinct from AF's main connection. When empty, triage inherits AF's resolved profile.
+- `spec.kubernautAgent.phaseModels` (optional) -- per-phase overrides (`rca`, `workflow_discovery`, `validation`), each naming a profile.
+
+This lets you, for example, use a stronger model for the primary agent and a cheaper/faster one for a specific investigation phase, all from one place:
 
 ```yaml
 spec:
-  kubernautAgent:
-    llm:
+  llmProfiles:
+    primary:
       provider: openai
       model: gpt-4o
       credentialsSecretName: llm-credentials
@@ -26,23 +33,53 @@ spec:
       # azureApiVersion: "2024-02-01"
       # Custom CA for LLM TLS:
       # tlsCaFile: /path/to/ca.pem
+    lightweight:
+      provider: openai
+      model: gpt-4o-mini
+      credentialsSecretName: llm-credentials   # see constraint below
+
+  kubernautAgent:
+    llmProfileRef: primary
+    phaseModels:
+      workflow_discovery: lightweight
+```
+
+> **Constraint**: a profile referenced from `phaseModels` or `severityTriage.llmProfileRef` must share the *same* `credentialsSecretName` as the profile it overrides (KA's for `phaseModels`, AF's resolved profile for `severityTriage`). Cross-credential overrides aren't supported yet -- the operator rejects the CR with a validation error naming the offending field if they don't match. You can still point them at a different provider/model/endpoint, as long as the credentials Secret is the same one.
+
+The operator auto-generates each component's LLM runtime config from its resolved profile. If your environment includes custom CRDs or advanced routing needs beyond `provider`/`model`, see the BYO runtime ConfigMap section below.
+
+### Independent LLM for AI Frontend severity-triage
+
+By default, severity-triage's LLM-based fallback tiers inherit whichever profile API Frontend itself resolves to. To give triage its own profile (e.g. a cheaper model, since triage calls are higher-volume) or to disable LLM-based triage entirely (falling back to upstream's rule-based-only triager):
+
+```yaml
+spec:
+  llmProfiles:
+    triage:
+      provider: openai
+      model: gpt-4o-mini
+      credentialsSecretName: llm-credentials   # must match AF's resolved profile
+
+  apiFrontend:
+    severityTriage:
+      llmProfileRef: triage   # omit to inherit AF's resolved profile (default)
+      llmEnabled: true        # set to false to force the rule-based-only fallback
 ```
 
 ### OAuth2 authentication for LLM endpoints
 
-If your LLM endpoint requires OAuth2 token exchange (e.g. corporate proxy, IAP), configure it in the CR:
+If your LLM endpoint requires OAuth2 token exchange (e.g. corporate proxy, IAP), configure it on the profile:
 
 ```yaml
 spec:
-  kubernautAgent:
-    llm:
+  llmProfiles:
+    primary:
       oauth2:
         enabled: true
         tokenURL: "https://auth.example.com/token"
         scopes:
           - "openai:chat"
-        credentialsSecretRef:
-          name: oauth2-credentials
+        credentialsSecretRef: oauth2-credentials
 ```
 
 Create the credentials secret containing client ID and secret:
@@ -59,6 +96,8 @@ stringData:
   client_secret: "<YOUR_CLIENT_SECRET>"
 EOF
 ```
+
+Any component resolving to this profile (KA, and AF if it shares the profile) mounts the same Secret and authenticates the same way.
 
 ### Alignment check (shadow agent verification)
 
@@ -127,8 +166,7 @@ EOF
 ```yaml
 spec:
   kubernautAgent:
-    llm:
-      runtimeConfigMapName: custom-llm-runtime
+    runtimeConfigMapName: custom-llm-runtime
 ```
 
 When `runtimeConfigMapName` is set, the operator skips generating the LLM runtime ConfigMap and mounts the user-provided one instead.

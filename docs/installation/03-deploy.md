@@ -69,20 +69,22 @@ spec:
     host: valkey.kubernaut-system.svc.cluster.local
     port: 6379
 
-  # --- LLM (from Step 2: Configure Services) ---
-  kubernautAgent:
-    llm:
+  # --- LLM profiles (from Step 2: Configure Services) ---
+  llmProfiles:
+    primary:
       provider: openai                     # or: anthropic, vertex_ai
       model: gpt-4o                        # or: claude-sonnet-4-6, etc.
       credentialsSecretName: llm-credentials
-      # runtimeConfigMapName: custom-llm-runtime  # uncomment for BYO LLM config
       # tlsCaFile: /path/to/ca.pem         # custom CA for LLM endpoint TLS
       # oauth2:                            # OAuth2-based LLM authentication
       #   enabled: false
       #   tokenURL: ""
       #   scopes: []
-      #   credentialsSecretRef:
-      #     name: oauth2-credentials
+      #   credentialsSecretRef: oauth2-credentials
+
+  kubernautAgent:
+    llmProfileRef: primary
+    # runtimeConfigMapName: custom-llm-runtime  # uncomment for BYO LLM config
     # logging:
     #   level: info                        # debug, info, warn, error
     # alignmentCheck:                      # shadow agent alignment verification

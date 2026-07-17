@@ -728,7 +728,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(cm).NotTo(BeNil(), "should generate default LLM runtime ConfigMap")
 
 			crWithExternal := newMinimalCR()
-			crWithExternal.Spec.KubernautAgent.LLM.RuntimeConfigMapName = "user-managed-llm-runtime"
+			crWithExternal.Spec.KubernautAgent.RuntimeConfigMapName = "user-managed-llm-runtime"
 			cm, err = resources.KubernautAgentLLMRuntimeConfigMap(crWithExternal)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cm).To(BeNil(), "should not generate LLM runtime ConfigMap when user provides one")
