@@ -296,7 +296,8 @@ func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		egress = append(egress, monitoringStackEgressRule(OCPMonitoringNamespace))
 	}
-	if kn.Spec.KubernautAgent.LLM.Provider != "" {
+	kaProfile, _ := ResolveLLMProfile(kn, kn.Spec.KubernautAgent.LLMProfileRef)
+	if kaProfile.Provider != "" {
 		p443 := intstr.FromInt32(443)
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
 			To: ipWorldPeers(),

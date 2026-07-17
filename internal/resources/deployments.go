@@ -474,14 +474,15 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 // kubernautagent-tls (provisioned by OCP service-ca). Health and metrics
 // are on dedicated plain HTTP ports 8081 and 9090.
 func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
-	if kn.Spec.KubernautAgent.LLM.CredentialsSecretName == "" {
-		return nil, fmt.Errorf("spec.kubernautAgent.llm.credentialsSecretName must not be empty")
+	kaProfile, _ := ResolveLLMProfile(kn, kn.Spec.KubernautAgent.LLMProfileRef)
+	if kaProfile.CredentialsSecretName == "" {
+		return nil, fmt.Errorf("spec.kubernautAgent.llmProfileRef's profile must have a non-empty credentialsSecretName")
 	}
 	volumes := []corev1.Volume{
 		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		configMapVolume("config", "kubernaut-agent-config"),
 		configMapVolume("llm-runtime", KubernautAgentLLMRuntimeConfigName(kn)),
-		secretVolume("llm-credentials", kn.Spec.KubernautAgent.LLM.CredentialsSecretName),
+		secretVolume("llm-credentials", kaProfile.CredentialsSecretName),
 		secretVolume("tls-certs", KubernautAgentTLSSecretName),
 	}
 	mounts := []corev1.VolumeMount{
@@ -516,15 +517,15 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 
 	volumes, mounts, envVars = appendInterServiceTLSCA(volumes, mounts, envVars)
 
-	if kn.Spec.KubernautAgent.LLM.OAuth2.Enabled {
-		volumes = append(volumes, secretVolume("oauth2-credentials", kn.Spec.KubernautAgent.LLM.OAuth2.CredentialsSecretRef))
+	if kaProfile.OAuth2.Enabled {
+		volumes = append(volumes, secretVolume("oauth2-credentials", kaProfile.OAuth2.CredentialsSecretRef))
 		mounts = append(mounts, corev1.VolumeMount{
 			Name: "oauth2-credentials", MountPath: "/etc/kubernaut-agent/oauth2", ReadOnly: true,
 		})
 	}
 
-	if kn.Spec.KubernautAgent.LLM.TLSClientSecretRef != "" {
-		volumes = append(volumes, secretVolume("llm-tls-client", kn.Spec.KubernautAgent.LLM.TLSClientSecretRef))
+	if kaProfile.TLSClientSecretRef != "" {
+		volumes = append(volumes, secretVolume("llm-tls-client", kaProfile.TLSClientSecretRef))
 		mounts = append(mounts, corev1.VolumeMount{
 			Name: "llm-tls-client", MountPath: "/etc/kubernaut-agent/llm-tls-client", ReadOnly: true,
 		})
@@ -722,7 +723,14 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidec
 		})
 	}
 
-	if secretName := kn.Spec.KubernautAgent.LLM.CredentialsSecretName; secretName != "" {
+	// AF resolves its own LLM profile (AFLLMProfileRef defaults to KA's ref
+	// when AF doesn't set its own), rather than reaching into KA's profile
+	// unconditionally -- fixes the pre-refactor bug where AF always mounted
+	// KA's llm-credentials/llm-tls-client Secrets regardless of which
+	// profile AF's ConfigMap was actually configured to use.
+	afProfile, _ := ResolveLLMProfile(kn, AFLLMProfileRef(kn))
+
+	if secretName := afProfile.CredentialsSecretName; secretName != "" {
 		volumes = append(volumes, secretVolume("llm-credentials", secretName))
 		mounts = append(mounts, corev1.VolumeMount{
 			Name: "llm-credentials", MountPath: "/etc/apifrontend/llm-credentials", ReadOnly: true,
@@ -739,10 +747,23 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidec
 		})
 	}
 
-	if kn.Spec.KubernautAgent.LLM.TLSClientSecretRef != "" {
-		volumes = append(volumes, secretVolume("llm-tls-client", kn.Spec.KubernautAgent.LLM.TLSClientSecretRef))
+	if afProfile.TLSClientSecretRef != "" {
+		volumes = append(volumes, secretVolume("llm-tls-client", afProfile.TLSClientSecretRef))
 		mounts = append(mounts, corev1.VolumeMount{
 			Name: "llm-tls-client", MountPath: "/etc/apifrontend/llm-tls-client", ReadOnly: true,
+		})
+	}
+
+	// Fixes a pre-existing crash-loop bug: afAgentLLMConfig() has always
+	// rendered agent.llm.oauth2.credentialsDir into AF's ConfigMap whenever
+	// OAuth2 is enabled, and upstream AF hard-fails at startup if that
+	// directory's client-id/client-secret files are missing, but no volume
+	// was ever mounted there. Mirrors KA's existing oauth2-credentials
+	// volume pattern.
+	if afProfile.OAuth2.Enabled {
+		volumes = append(volumes, secretVolume("oauth2-credentials", afProfile.OAuth2.CredentialsSecretRef))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: "oauth2-credentials", MountPath: "/etc/apifrontend/oauth2", ReadOnly: true,
 		})
 	}
 
