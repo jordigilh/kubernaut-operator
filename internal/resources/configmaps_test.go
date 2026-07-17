@@ -738,7 +738,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("propagates custom LLM TLS CA file", func() {
 			kn := testKubernaut()
-			mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.TLSCaFile = "/etc/custom-ca/llm.pem" })
+			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.TLSCaFile = "/etc/custom-ca/llm.pem" })
 			cm, err := KubernautAgentConfigMap(kn)
 			Expect(err).NotTo(HaveOccurred())
 			var root struct {
@@ -796,9 +796,9 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("renders LLM OAuth2 block when enabled", func() {
 			kn := testKubernaut()
-			mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Enabled = true })
-			mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.TokenURL = "https://idp.example/oauth/token" })
-			mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Scopes = []string{"openid", "api.read"} })
+			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Enabled = true })
+			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.TokenURL = "https://idp.example/oauth/token" })
+			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Scopes = []string{"openid", "api.read"} })
 			cm, err := KubernautAgentConfigMap(kn)
 			Expect(err).NotTo(HaveOccurred())
 			var root struct {
@@ -857,10 +857,10 @@ var _ = Describe("ConfigMaps", func() {
 
 			It("applies custom LLM runtime values", func() {
 				kn := testKubernaut()
-				mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Temperature = "0.5" })
-				mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = "https://llm-custom.example/v1" })
+				mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Temperature = "0.5" })
+				mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = "https://llm-custom.example/v1" })
 				maxR := 7
-				mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.MaxRetries = &maxR })
+				mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.MaxRetries = &maxR })
 				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["llm-runtime.yaml"]
@@ -1306,10 +1306,10 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("renders Vertex AI fields in agent.llm config without apiKeyFile", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderVertexAI })
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Model = "gemini-2.5-pro" })
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexProject = "my-project" })
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexLocation = "us-central1" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderVertexAI })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Model = "gemini-2.5-pro" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexProject = "my-project" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexLocation = "us-central1" })
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
@@ -1337,8 +1337,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("UT-CM-196-001 [SI-10]: AF receives openai_compatible when CR specifies openai", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -1355,8 +1355,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("UT-CM-196-002 [CM-6]: AF endpoint gets /v1 suffix appended", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -1373,8 +1373,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("UT-CM-196-003 [CM-6]: AF endpoint not doubled when /v1 already present", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint + "/v1" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint + "/v1" })
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -1391,8 +1391,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("UT-CM-196-004 [CM-6]: AF endpoint trailing slash handled before /v1 append", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint + "/" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint + "/" })
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -1409,8 +1409,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("UT-CM-196-005 [CM-6]: KA gets raw openai provider, no endpoint mutation", func() {
 		kn := testKubernaut()
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
 		cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -1426,9 +1426,9 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("UT-CM-196-006 [CM-6]: non-OpenAI providers are not translated", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderVertexAI })
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexProject = "my-project" })
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexLocation = "us-central1" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderVertexAI })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexProject = "my-project" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexLocation = "us-central1" })
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -1445,8 +1445,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("UT-CM-196-007 [SC-7]: AF apiKeyFile set for OpenAI provider", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -1463,9 +1463,9 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("renders OAuth2 block in agent.llm when enabled", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Enabled = true })
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.TokenURL = "https://idp.example/oauth/token" })
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Scopes = []string{"openid", "llm.invoke"} })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Enabled = true })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.TokenURL = "https://idp.example/oauth/token" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Scopes = []string{"openid", "llm.invoke"} })
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
@@ -1500,14 +1500,14 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("renders AF's own resolved profile when apiFrontend.llmProfileRef differs from KA's", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.LLMProfiles["af-only"] = kubernautv1alpha1.LLMProfileSpec{
+		kn.Spec.LLMProfiles[testAFOnlyProfile] = kubernautv1alpha1.LLMProfileSpec{
 			Provider:              LLMProviderVertexAI,
 			Model:                 "gemini-2.5-flash",
 			VertexProject:         "af-project",
 			VertexLocation:        "europe-west1",
 			CredentialsSecretName: "af-llm-creds",
 		}
-		kn.Spec.APIFrontend.LLMProfileRef = "af-only"
+		kn.Spec.APIFrontend.LLMProfileRef = testAFOnlyProfile
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -1528,7 +1528,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	It("defaults AF's LLM profile to KA's when apiFrontend.llmProfileRef is empty", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.LLMProfileRef = ""
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.Model = "gpt-4o-mini" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Model = "gpt-4o-mini" })
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {

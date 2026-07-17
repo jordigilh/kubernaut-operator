@@ -60,7 +60,7 @@ func validatePolicyPrerequisites(_ *kubernautv1alpha1.Kubernaut) []error {
 // referential integrity and same-credentialsSecretName constraints for every
 // component that references a profile by name.
 func validateLLMProfiles(kn *kubernautv1alpha1.Kubernaut) []error {
-	var errs []error
+	errs := make([]error, 0, len(kn.Spec.LLMProfiles))
 	for name, profile := range kn.Spec.LLMProfiles {
 		errs = append(errs, validateLLMProfileContent(name, &profile)...)
 	}

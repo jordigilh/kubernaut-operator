@@ -27,10 +27,13 @@ import (
 )
 
 const (
-	testEnvTLSCAFile     = "TLS_CA_FILE"
-	testVolumeTLSCA      = "tls-ca"
-	testVolumeAAPCA      = "aap-ca"
-	testVolumeCombinedCA = "combined-ca"
+	testEnvTLSCAFile       = "TLS_CA_FILE"
+	testVolumeTLSCA        = "tls-ca"
+	testVolumeAAPCA        = "aap-ca"
+	testVolumeCombinedCA   = "combined-ca"
+	testVolumeLLMTLSClient = "llm-tls-client"
+	testMTLSCertFile       = "/etc/tls/tls.crt"
+	testMTLSKeyFile        = "/etc/tls/tls.key"
 )
 
 func getAllDeployments(kn *kubernautv1alpha1.Kubernaut) []*appsv1.Deployment {
@@ -343,8 +346,8 @@ var _ = Describe("Deployments", func() {
 
 		It("mounts OAuth2 credentials when enabled", func() {
 			kn := testKubernaut()
-			mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Enabled = true })
-			mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.CredentialsSecretRef = "oauth2-credentials-secret" })
+			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Enabled = true })
+			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.CredentialsSecretRef = "oauth2-credentials-secret" })
 			dep, err := KubernautAgentDeployment(kn)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1006,12 +1009,12 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("mounts llm-credentials volume from AF's own resolved profile", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.LLMProfiles["af-only"] = kubernautv1alpha1.LLMProfileSpec{
+		kn.Spec.LLMProfiles[testAFOnlyProfile] = kubernautv1alpha1.LLMProfileSpec{
 			Provider:              LLMProviderVertexAI,
 			Model:                 "gemini-2.5-flash",
 			CredentialsSecretName: "af-llm-creds",
 		}
-		kn.Spec.APIFrontend.LLMProfileRef = "af-only"
+		kn.Spec.APIFrontend.LLMProfileRef = testAFOnlyProfile
 		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -1030,24 +1033,24 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("mounts llm-tls-client volume from AF's own resolved profile's tlsClientSecretRef", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.LLMProfiles["af-only"] = kubernautv1alpha1.LLMProfileSpec{
+		kn.Spec.LLMProfiles[testAFOnlyProfile] = kubernautv1alpha1.LLMProfileSpec{
 			Provider:              LLMProviderOpenAI,
 			Model:                 "gpt-4o",
 			Endpoint:              testOpenAIEndpoint,
 			CredentialsSecretName: "af-llm-creds",
-			TLSCertFile:           "/etc/tls/tls.crt",
-			TLSKeyFile:            "/etc/tls/tls.key",
+			TLSCertFile:           testMTLSCertFile,
+			TLSKeyFile:            testMTLSKeyFile,
 			TLSClientSecretRef:    "af-llm-tls-client",
 		}
-		kn.Spec.APIFrontend.LLMProfileRef = "af-only"
+		kn.Spec.APIFrontend.LLMProfileRef = testAFOnlyProfile
 		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
 
-		expectHasVolume(dep, "llm-tls-client")
-		expectHasVolumeMount(dep, "llm-tls-client", "/etc/apifrontend/llm-tls-client")
+		expectHasVolume(dep, testVolumeLLMTLSClient)
+		expectHasVolumeMount(dep, testVolumeLLMTLSClient, "/etc/apifrontend/llm-tls-client")
 		found := false
 		for _, v := range dep.Spec.Template.Spec.Volumes {
-			if v.Name == "llm-tls-client" {
+			if v.Name == testVolumeLLMTLSClient {
 				found = true
 				Expect(v.Secret).NotTo(BeNil())
 				Expect(v.Secret.SecretName).To(Equal("af-llm-tls-client"))
@@ -1058,8 +1061,8 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("mounts OAuth2 credentials when enabled on AF's resolved profile (regression: pre-existing crash-loop)", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Enabled = true })
-		mutateLLMProfile(kn, "primary", func(p *kubernautv1alpha1.LLMProfileSpec) {
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Enabled = true })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
 			p.OAuth2.CredentialsSecretRef = "af-oauth2-credentials-secret"
 		})
 		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)

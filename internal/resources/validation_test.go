@@ -814,7 +814,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 	It("rejects tlsCertFile set without tlsKeyFile", func() {
 		kn := testKubernaut()
 		profile := kn.Spec.LLMProfiles["primary"]
-		profile.TLSCertFile = "/etc/tls/tls.crt"
+		profile.TLSCertFile = testMTLSCertFile
 		kn.Spec.LLMProfiles["primary"] = profile
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		found := false
@@ -829,8 +829,8 @@ var _ = Describe("LLM Profile Content Validation", func() {
 	It("rejects mTLS cert/key pair set without tlsClientSecretRef", func() {
 		kn := testKubernaut()
 		profile := kn.Spec.LLMProfiles["primary"]
-		profile.TLSCertFile = "/etc/tls/tls.crt"
-		profile.TLSKeyFile = "/etc/tls/tls.key"
+		profile.TLSCertFile = testMTLSCertFile
+		profile.TLSKeyFile = testMTLSKeyFile
 		kn.Spec.LLMProfiles["primary"] = profile
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		found := false
@@ -845,7 +845,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 	It("rejects tlsClientSecretRef set without an mTLS cert/key pair", func() {
 		kn := testKubernaut()
 		profile := kn.Spec.LLMProfiles["primary"]
-		profile.TLSClientSecretRef = "llm-tls-client"
+		profile.TLSClientSecretRef = testVolumeLLMTLSClient
 		kn.Spec.LLMProfiles["primary"] = profile
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		found := false
@@ -860,9 +860,9 @@ var _ = Describe("LLM Profile Content Validation", func() {
 	It("accepts a complete mTLS configuration", func() {
 		kn := testKubernaut()
 		profile := kn.Spec.LLMProfiles["primary"]
-		profile.TLSCertFile = "/etc/tls/tls.crt"
-		profile.TLSKeyFile = "/etc/tls/tls.key"
-		profile.TLSClientSecretRef = "llm-tls-client"
+		profile.TLSCertFile = testMTLSCertFile
+		profile.TLSKeyFile = testMTLSKeyFile
+		profile.TLSClientSecretRef = testVolumeLLMTLSClient
 		kn.Spec.LLMProfiles["primary"] = profile
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())

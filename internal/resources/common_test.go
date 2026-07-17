@@ -94,13 +94,25 @@ func testKubernautWithAF() *kubernautv1alpha1.Kubernaut {
 	return kn
 }
 
-// mutateLLMProfile mutates the named profile in kn.Spec.LLMProfiles by
+// testPrimaryProfile is the profile name testKubernaut()/testKubernautWithAF()
+// wire kubernautAgent.llmProfileRef to. mutateLLMProfile always targets it --
+// tests needing a second, distinctly-named profile add one to
+// kn.Spec.LLMProfiles directly instead of calling this helper.
+const testPrimaryProfile = "primary"
+
+// testAFOnlyProfile names a second profile distinct from testPrimaryProfile,
+// used by tests asserting that AF resolves its own llmProfileRef instead of
+// defaulting to KA's.
+const testAFOnlyProfile = "af-only"
+
+// mutateLLMProfile mutates the "primary" profile in kn.Spec.LLMProfiles by
 // applying fn to a copy and writing it back -- map values aren't
-// addressable, so tests can't write kn.Spec.LLMProfiles["x"].Field = v directly.
-func mutateLLMProfile(kn *kubernautv1alpha1.Kubernaut, name string, fn func(*kubernautv1alpha1.LLMProfileSpec)) {
-	p := kn.Spec.LLMProfiles[name]
+// addressable, so tests can't write kn.Spec.LLMProfiles["primary"].Field = v
+// directly.
+func mutateLLMProfile(kn *kubernautv1alpha1.Kubernaut, fn func(*kubernautv1alpha1.LLMProfileSpec)) {
+	p := kn.Spec.LLMProfiles[testPrimaryProfile]
 	fn(&p)
-	kn.Spec.LLMProfiles[name] = p
+	kn.Spec.LLMProfiles[testPrimaryProfile] = p
 }
 
 func testKubernautWithValkeyTLS() *kubernautv1alpha1.Kubernaut {
