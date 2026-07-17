@@ -444,10 +444,34 @@ func SignalProcessingPolicyName(kn *kubernautv1alpha1.Kubernaut) string {
 // KubernautAgentLLMRuntimeConfigName returns the Kubernaut Agent LLM runtime
 // ConfigMap name, defaulting to "kubernaut-agent-llm-runtime" when not overridden.
 func KubernautAgentLLMRuntimeConfigName(kn *kubernautv1alpha1.Kubernaut) string {
-	if kn.Spec.KubernautAgent.LLM.RuntimeConfigMapName != "" {
-		return kn.Spec.KubernautAgent.LLM.RuntimeConfigMapName
+	if kn.Spec.KubernautAgent.RuntimeConfigMapName != "" {
+		return kn.Spec.KubernautAgent.RuntimeConfigMapName
 	}
 	return "kubernaut-agent-llm-runtime"
+}
+
+// ResolveLLMProfile looks up a named LLM profile in spec.llmProfiles.
+// Returns the zero-value profile and false when ref is empty or does not
+// match any key. Callers that already validated the CR (ValidateKubernaut)
+// can treat a false ok as unreachable; renderers still guard defensively.
+func ResolveLLMProfile(kn *kubernautv1alpha1.Kubernaut, ref string) (kubernautv1alpha1.LLMProfileSpec, bool) {
+	if ref == "" {
+		return kubernautv1alpha1.LLMProfileSpec{}, false
+	}
+	p, ok := kn.Spec.LLMProfiles[ref]
+	return p, ok
+}
+
+// AFLLMProfileRef returns the name of the profile API Frontend's own LLM
+// connection resolves to: its own spec.apiFrontend.llmProfileRef when set,
+// defaulting to spec.kubernautAgent.llmProfileRef otherwise. This gives AF
+// an independent LLM identity while preserving today's default behavior of
+// implicitly sharing KA's profile when AF doesn't specify its own.
+func AFLLMProfileRef(kn *kubernautv1alpha1.Kubernaut) string {
+	if kn.Spec.APIFrontend.LLMProfileRef != "" {
+		return kn.Spec.APIFrontend.LLMProfileRef
+	}
+	return kn.Spec.KubernautAgent.LLMProfileRef
 }
 
 // ValkeyAddr returns the Valkey address in host:port format.

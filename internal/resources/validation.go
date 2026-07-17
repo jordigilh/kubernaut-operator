@@ -34,7 +34,7 @@ func ValidateKubernaut(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMo
 	errs := make([]error, 0, 4)
 	errs = append(errs, validatePostgreSQLSSLMode(kn)...)
 	errs = append(errs, validatePolicyPrerequisites(kn)...)
-	errs = append(errs, validateLLMPrerequisites(kn)...)
+	errs = append(errs, validateLLMProfiles(kn)...)
 	errs = append(errs, validateJWKSProviders(kn)...)
 	errs = append(errs, validateAPIFrontend(kn, sidecar)...)
 	errs = append(errs, validateAlignmentCheck(kn)...)
@@ -56,10 +56,24 @@ func validatePolicyPrerequisites(_ *kubernautv1alpha1.Kubernaut) []error {
 	return nil
 }
 
-func validateLLMPrerequisites(kn *kubernautv1alpha1.Kubernaut) []error {
+// validateLLMProfiles validates every named profile's own content, then the
+// referential integrity and same-credentialsSecretName constraints for every
+// component that references a profile by name.
+func validateLLMProfiles(kn *kubernautv1alpha1.Kubernaut) []error {
 	var errs []error
-	const base = "spec.kubernautAgent.llm"
-	llm := &kn.Spec.KubernautAgent.LLM
+	for name, profile := range kn.Spec.LLMProfiles {
+		errs = append(errs, validateLLMProfileContent(name, &profile)...)
+	}
+	errs = append(errs, validateLLMProfileRefs(kn)...)
+	return errs
+}
+
+// validateLLMProfileContent validates a single named profile's own fields.
+// These checks mirror the pre-refactor validateLLMPrerequisites, now scoped
+// per-profile instead of to the single spec.kubernautAgent.llm block.
+func validateLLMProfileContent(name string, llm *kubernautv1alpha1.LLMProfileSpec) []error {
+	var errs []error
+	base := fmt.Sprintf("spec.llmProfiles[%q]", name)
 	if llm.Provider == "" {
 		errs = append(errs, fmt.Errorf("%s.provider: required — specify the LLM provider (e.g. \"openai\", \"vertexai\")", base))
 	}
@@ -82,7 +96,6 @@ func validateLLMPrerequisites(kn *kubernautv1alpha1.Kubernaut) []error {
 	if !certSet && llm.TLSClientSecretRef != "" {
 		errs = append(errs, fmt.Errorf("%s.tlsClientSecretRef: set but tlsCertFile/tlsKeyFile are empty — both pairs are required for mTLS", base))
 	}
-	errs = append(errs, validatePhaseModels(llm.PhaseModels, base+".phaseModels")...)
 	return errs
 }
 
@@ -93,12 +106,107 @@ var validPhaseModelKeys = map[string]bool{
 	"validation":         true,
 }
 
-func validatePhaseModels(pm map[string]kubernautv1alpha1.LLMPhaseOverrideSpec, base string) []error {
+// lookupProfileRef looks up ref in profiles for the field at fieldPath, and
+// produces the standard "undefined profile" error shared by every
+// llmProfileRef/phaseModels field when ref doesn't match any key -- so the
+// message stays consistent without re-deriving it at each call site.
+//
+// allowEmpty controls how an empty ref is treated: fields like
+// apiFrontend.llmProfileRef fall back to another profile when empty (not an
+// error; ok=false, err=nil), while phaseModels values name no profile at all
+// when empty and are rejected the same as any other non-matching name.
+func lookupProfileRef(profiles map[string]kubernautv1alpha1.LLMProfileSpec, ref, fieldPath string, allowEmpty bool) (profile kubernautv1alpha1.LLMProfileSpec, ok bool, err error) {
+	if ref == "" && allowEmpty {
+		return kubernautv1alpha1.LLMProfileSpec{}, false, nil
+	}
+	profile, ok = profiles[ref]
+	if !ok {
+		return kubernautv1alpha1.LLMProfileSpec{}, false, fmt.Errorf(
+			"%s: references undefined profile %q — must match a key in spec.llmProfiles", fieldPath, ref)
+	}
+	return profile, true, nil
+}
+
+// sameCredentialsSecretErr builds the shared "cross-credential overrides are
+// not yet supported" error for a profile ref that resolves to a different
+// credentialsSecretName than the profile it would otherwise inherit from.
+func sameCredentialsSecretErr(fieldPath, ref, gotSecret, baseFieldPath, baseRef, wantSecret string) error {
+	return fmt.Errorf(
+		"%s: profile %q has credentialsSecretName %q, which must match %s's profile %q credentialsSecretName %q — cross-credential overrides are not yet supported",
+		fieldPath, ref, gotSecret, baseFieldPath, baseRef, wantSecret)
+}
+
+// validateLLMProfileRefs validates that every llmProfileRef (KA, AF,
+// AF severity-triage) and every phaseModels value points at a profile
+// defined in spec.llmProfiles, and enforces the same-credentialsSecretName
+// constraint on phase overrides and severity-triage relative to the profile
+// each of them would otherwise inherit from.
+func validateLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut) []error {
 	var errs []error
-	for key := range pm {
-		if !validPhaseModelKeys[key] {
-			errs = append(errs, fmt.Errorf("%s: invalid phase key %q — must be one of: rca, workflow_discovery, validation", base, key))
+	profiles := kn.Spec.LLMProfiles
+
+	kaRef := kn.Spec.KubernautAgent.LLMProfileRef
+	const kaBase = "spec.kubernautAgent.llmProfileRef"
+	if kaRef == "" {
+		errs = append(errs, fmt.Errorf("%s: required — reference a profile defined in spec.llmProfiles", kaBase))
+	}
+	kaProfile, kaOK, err := lookupProfileRef(profiles, kaRef, kaBase, true)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	for phase, ref := range kn.Spec.KubernautAgent.PhaseModels {
+		phaseBase := fmt.Sprintf("spec.kubernautAgent.phaseModels[%q]", phase)
+		if !validPhaseModelKeys[phase] {
+			errs = append(errs, fmt.Errorf("%s: invalid phase key %q — must be one of: rca, workflow_discovery, validation", phaseBase, phase))
+			continue
 		}
+		phaseProfile, ok, err := lookupProfileRef(profiles, ref, phaseBase, false)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if ok && kaOK && phaseProfile.CredentialsSecretName != kaProfile.CredentialsSecretName {
+			errs = append(errs, sameCredentialsSecretErr(
+				phaseBase, ref, phaseProfile.CredentialsSecretName, kaBase, kaRef, kaProfile.CredentialsSecretName))
+		}
+	}
+
+	if kn.Spec.APIFrontendEnabled() {
+		errs = append(errs, validateAFLLMProfileRefs(kn, profiles)...)
+	}
+
+	return errs
+}
+
+// validateAFLLMProfileRefs validates both of API Frontend's own llmProfileRef
+// fields: its main agent connection (apiFrontend.llmProfileRef) and its
+// independent severity-triage override (apiFrontend.severityTriage.llmProfileRef).
+func validateAFLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut, profiles map[string]kubernautv1alpha1.LLMProfileSpec) []error {
+	var errs []error
+
+	if _, _, err := lookupProfileRef(profiles, kn.Spec.APIFrontend.LLMProfileRef, "spec.apiFrontend.llmProfileRef", true); err != nil {
+		errs = append(errs, err)
+	}
+
+	st := kn.Spec.APIFrontend.SeverityTriage
+	if st == nil {
+		return errs
+	}
+
+	const stBase = "spec.apiFrontend.severityTriage.llmProfileRef"
+	stProfile, stOK, err := lookupProfileRef(profiles, st.LLMProfileRef, stBase, true)
+	if err != nil {
+		return append(errs, err)
+	}
+	if !stOK {
+		return errs // empty severityTriage.llmProfileRef: inherits AF's resolved profile, nothing further to check.
+	}
+
+	effectiveAFRef := AFLLMProfileRef(kn)
+	if afProfile, afOK := profiles[effectiveAFRef]; afOK && stProfile.CredentialsSecretName != afProfile.CredentialsSecretName {
+		errs = append(errs, sameCredentialsSecretErr(
+			stBase, st.LLMProfileRef, stProfile.CredentialsSecretName, "API Frontend's resolved profile", effectiveAFRef, afProfile.CredentialsSecretName))
 	}
 	return errs
 }

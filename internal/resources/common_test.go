@@ -62,13 +62,16 @@ func testKubernaut() *kubernautv1alpha1.Kubernaut {
 					Audience:  "kubernaut-apifrontend",
 				},
 			},
-			KubernautAgent: kubernautv1alpha1.KubernautAgentSpec{
-				LLM: kubernautv1alpha1.LLMSpec{
+			LLMProfiles: map[string]kubernautv1alpha1.LLMProfileSpec{
+				"primary": {
 					Provider:              "openai",
 					Model:                 "gpt-4o",
 					Endpoint:              "http://llm-gateway:8080",
 					CredentialsSecretName: "llm-creds",
 				},
+			},
+			KubernautAgent: kubernautv1alpha1.KubernautAgentSpec{
+				LLMProfileRef: "primary",
 			},
 			AIAnalysis: kubernautv1alpha1.AIAnalysisSpec{
 				Policy: kubernautv1alpha1.PolicyConfigMapRef{ConfigMapName: "aianalysis-policies"},
@@ -89,6 +92,15 @@ func testKubernautWithAF() *kubernautv1alpha1.Kubernaut {
 		},
 	}
 	return kn
+}
+
+// mutateLLMProfile mutates the named profile in kn.Spec.LLMProfiles by
+// applying fn to a copy and writing it back -- map values aren't
+// addressable, so tests can't write kn.Spec.LLMProfiles["x"].Field = v directly.
+func mutateLLMProfile(kn *kubernautv1alpha1.Kubernaut, name string, fn func(*kubernautv1alpha1.LLMProfileSpec)) {
+	p := kn.Spec.LLMProfiles[name]
+	fn(&p)
+	kn.Spec.LLMProfiles[name] = p
 }
 
 func testKubernautWithValkeyTLS() *kubernautv1alpha1.Kubernaut {
