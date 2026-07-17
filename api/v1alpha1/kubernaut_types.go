@@ -68,6 +68,13 @@ type KubernautSpec struct {
 	// +optional
 	EffectivenessMonitor EffectivenessMonitorSpec `json:"effectivenessMonitor,omitempty"`
 
+	// Named LLM provider profiles, keyed by an arbitrary user-chosen name
+	// (e.g. "primary", "lightweight"). Components reference a profile by
+	// name via their own llmProfileRef field instead of embedding LLM
+	// configuration directly, decoupling KA and API Frontend's LLM identity.
+	// +kubebuilder:validation:MinProperties=1
+	LLMProfiles map[string]LLMProfileSpec `json:"llmProfiles"`
+
 	// Kubernaut Agent (KA) -- LLM-powered investigation and analysis service.
 	KubernautAgent KubernautAgentSpec `json:"kubernautAgent"`
 
@@ -536,8 +543,26 @@ type EMAssessmentSpec struct {
 
 // KubernautAgentSpec configures the Kubernaut Agent (KA) LLM integration service.
 type KubernautAgentSpec struct {
-	// LLM provider and credentials configuration.
-	LLM LLMSpec `json:"llm"`
+	// Reference to a named profile in spec.llmProfiles used for KA's
+	// investigator LLM calls.
+	// +kubebuilder:validation:MinLength=1
+	LLMProfileRef string `json:"llmProfileRef"`
+
+	// Name of a pre-existing ConfigMap for the LLM runtime configuration.
+	// When set, the operator skips generating kubernaut-agent-llm-runtime
+	// and mounts this ConfigMap instead. Must contain key "llm-runtime.yaml".
+	// +optional
+	RuntimeConfigMapName string `json:"runtimeConfigMapName,omitempty"`
+
+	// Per-phase LLM profile overrides. Keys are agent phase names
+	// (rca, workflow_discovery, validation); values are profile names in
+	// spec.llmProfiles. Each referenced profile must share the same
+	// credentialsSecretName as llmProfileRef's profile (cross-credential
+	// phase overrides are not yet supported). When absent, all phases use
+	// llmProfileRef's profile.
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="self.all(k, k in ['rca','workflow_discovery','validation'])",message="phaseModels keys must be one of: rca, workflow_discovery, validation"
+	PhaseModels map[string]string `json:"phaseModels,omitempty"`
 
 	// MaxTurns is the maximum number of LLM conversation turns the
 	// investigator may execute per analysis session.
@@ -799,8 +824,11 @@ type AnomalySpec struct {
 	MaxRepeatedFailures *int `json:"maxRepeatedFailures,omitempty"`
 }
 
-// LLMSpec defines the LLM provider configuration.
-type LLMSpec struct {
+// LLMProfileSpec defines a single, named LLM provider configuration.
+// Profiles live in spec.llmProfiles and are referenced by name (llmProfileRef)
+// from KA, API Frontend, and API Frontend's severity-triage configuration,
+// decoupling each component's LLM identity from a single shared config.
+type LLMProfileSpec struct {
 	// LLM provider name (e.g. "openai", "vertexai", "bedrock", "azure").
 	// +kubebuilder:validation:MinLength=1
 	Provider string `json:"provider"`
@@ -871,34 +899,6 @@ type LLMSpec struct {
 	// OAuth2 configuration for LLM authentication.
 	// +optional
 	OAuth2 OAuth2Spec `json:"oauth2,omitempty"`
-
-	// Name of a pre-existing ConfigMap for the LLM runtime configuration.
-	// When set, the operator skips generating kubernaut-agent-llm-runtime
-	// and mounts this ConfigMap instead. Must contain key "llm-runtime.yaml".
-	// +optional
-	RuntimeConfigMapName string `json:"runtimeConfigMapName,omitempty"`
-
-	// Per-phase LLM model overrides. Keys are agent phase names
-	// (rca, workflow_discovery, validation). Each override can specify
-	// a different model (and optionally provider/endpoint) for that phase,
-	// allowing faster/cheaper models for structured tasks like workflow discovery.
-	// When absent, all phases use the default model above.
-	// +optional
-	// +kubebuilder:validation:XValidation:rule="self.all(k, k in ['rca','workflow_discovery','validation'])",message="phaseModels keys must be one of: rca, workflow_discovery, validation"
-	PhaseModels map[string]LLMPhaseOverrideSpec `json:"phaseModels,omitempty"`
-}
-
-// LLMPhaseOverrideSpec allows a specific agent phase to use a different LLM.
-// All fields are optional; non-zero fields override the corresponding base values.
-type LLMPhaseOverrideSpec struct {
-	// +optional
-	Provider string `json:"provider,omitempty"`
-	// +optional
-	Model string `json:"model,omitempty"`
-	// +optional
-	Endpoint string `json:"endpoint,omitempty"`
-	// +optional
-	APIKey string `json:"apiKey,omitempty"`
 }
 
 // OAuth2Spec configures OAuth2 token-based authentication for LLM endpoints.
@@ -1140,6 +1140,17 @@ type APIFrontendSpec struct {
 	// +optional
 	Shutdown APIFrontendShutdownSpec `json:"shutdown,omitempty"`
 
+	// Reference to a named profile in spec.llmProfiles used for API
+	// Frontend's own LLM calls. When empty, defaults to the same profile
+	// referenced by spec.kubernautAgent.llmProfileRef.
+	// +optional
+	LLMProfileRef string `json:"llmProfileRef,omitempty"`
+
+	// Independent LLM configuration for severity-triage's LLM fallback
+	// tiers, distinct from API Frontend's main llmProfileRef connection.
+	// +optional
+	SeverityTriage *APIFrontendSeverityTriageSpec `json:"severityTriage,omitempty"`
+
 	// Display name for the A2A agent card (/.well-known/agent-card.json).
 	// External URL for the A2A agent card discovery endpoint.
 	// When empty, auto-derived from the in-cluster service FQDN.
@@ -1287,6 +1298,34 @@ type APIFrontendRateLimitSpec struct {
 	// +kubebuilder:default=60
 	// +optional
 	ToolCallsPerMinute *int `json:"toolCallsPerMinute,omitempty"`
+}
+
+// APIFrontendSeverityTriageSpec configures an independent LLM profile for
+// severity-triage's LLM fallback tiers, distinct from API Frontend's main
+// agent LLM connection (llmProfileRef).
+type APIFrontendSeverityTriageSpec struct {
+	// Reference to a named profile in spec.llmProfiles for severity-triage
+	// LLM calls. When empty, triage inherits API Frontend's own resolved
+	// profile (llmProfileRef, or KA's when that is also empty) -- matching
+	// today's behavior. Must share the same credentialsSecretName as API
+	// Frontend's resolved profile (no new Secret volumes are provisioned
+	// for triage).
+	// +optional
+	LLMProfileRef string `json:"llmProfileRef,omitempty"`
+
+	// Whether LLM-based triage tiers are active. When false, the operator
+	// renders a present-but-empty severityTriage.llm block, forcing
+	// upstream's rule-based-only fallback -- independent of whether
+	// severity triage as a whole is enabled via monitoring.
+	// +kubebuilder:default=true
+	// +optional
+	LLMEnabled *bool `json:"llmEnabled,omitempty"`
+}
+
+// LLMTriageEnabled returns true when LLM-based severity-triage tiers should
+// be active. Defaults to true (nil LLMEnabled, or a nil receiver).
+func (s *APIFrontendSeverityTriageSpec) LLMTriageEnabled() bool {
+	return s == nil || s.LLMEnabled == nil || *s.LLMEnabled
 }
 
 // ShutdownSpec configures graceful shutdown for a service component.

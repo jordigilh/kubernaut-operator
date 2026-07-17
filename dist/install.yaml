@@ -326,6 +326,12 @@ spec:
                     maximum: 65535
                     minimum: 1024
                     type: integer
+                  llmProfileRef:
+                    description: |-
+                      Reference to a named profile in spec.llmProfiles used for API
+                      Frontend's own LLM calls. When empty, defaults to the same profile
+                      referenced by spec.kubernautAgent.llmProfileRef.
+                    type: string
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -510,6 +516,29 @@ spec:
                       hostname:
                         description: Hostname override. When empty, the OCP router
                           auto-generates a hostname.
+                        type: string
+                    type: object
+                  severityTriage:
+                    description: |-
+                      Independent LLM configuration for severity-triage's LLM fallback
+                      tiers, distinct from API Frontend's main llmProfileRef connection.
+                    properties:
+                      llmEnabled:
+                        default: true
+                        description: |-
+                          Whether LLM-based triage tiers are active. When false, the operator
+                          renders a present-but-empty severityTriage.llm block, forcing
+                          upstream's rule-based-only fallback -- independent of whether
+                          severity triage as a whole is enabled via monitoring.
+                        type: boolean
+                      llmProfileRef:
+                        description: |-
+                          Reference to a named profile in spec.llmProfiles for severity-triage
+                          LLM calls. When empty, triage inherits API Frontend's own resolved
+                          profile (llmProfileRef, or KA's when that is also empty) -- matching
+                          today's behavior. Must share the same credentialsSecretName as API
+                          Frontend's resolved profile (no new Secret volumes are provisioned
+                          for triage).
                         type: string
                     type: object
                   shutdown:
@@ -1265,129 +1294,12 @@ spec:
                           Must be a valid Go duration string (e.g. "30m").
                         type: string
                     type: object
-                  llm:
-                    description: LLM provider and credentials configuration.
-                    properties:
-                      azureApiVersion:
-                        description: Azure OpenAI API version.
-                        type: string
-                      bedrockRegion:
-                        description: AWS Bedrock region.
-                        type: string
-                      credentialsSecretName:
-                        description: Name of the Secret containing LLM API credentials.
-                        minLength: 1
-                        type: string
-                      endpoint:
-                        description: LLM API endpoint override. When empty, uses the
-                          provider default.
-                        type: string
-                      maxRetries:
-                        default: 3
-                        description: Maximum number of retries for LLM API calls.
-                        type: integer
-                      model:
-                        description: LLM model name (e.g. "gpt-4o", "gemini-2.5-pro").
-                        minLength: 1
-                        type: string
-                      oauth2:
-                        description: OAuth2 configuration for LLM authentication.
-                        properties:
-                          credentialsSecretRef:
-                            description: |-
-                              Name of the Secret containing OAuth2 client credentials
-                              (keys: "client-id", "client-secret").
-                            type: string
-                          enabled:
-                            default: false
-                            description: Whether OAuth2 authentication is enabled.
-                            type: boolean
-                          scopes:
-                            description: OAuth2 scopes.
-                            items:
-                              type: string
-                            type: array
-                          tokenURL:
-                            description: Token endpoint URL.
-                            type: string
-                        type: object
-                      phaseModels:
-                        additionalProperties:
-                          description: |-
-                            LLMPhaseOverrideSpec allows a specific agent phase to use a different LLM.
-                            All fields are optional; non-zero fields override the corresponding base values.
-                          properties:
-                            apiKey:
-                              type: string
-                            endpoint:
-                              type: string
-                            model:
-                              type: string
-                            provider:
-                              type: string
-                          type: object
-                        description: |-
-                          Per-phase LLM model overrides. Keys are agent phase names
-                          (rca, workflow_discovery, validation). Each override can specify
-                          a different model (and optionally provider/endpoint) for that phase,
-                          allowing faster/cheaper models for structured tasks like workflow discovery.
-                          When absent, all phases use the default model above.
-                        type: object
-                        x-kubernetes-validations:
-                        - message: 'phaseModels keys must be one of: rca, workflow_discovery,
-                            validation'
-                          rule: self.all(k, k in ['rca','workflow_discovery','validation'])
-                      provider:
-                        description: LLM provider name (e.g. "openai", "vertexai",
-                          "bedrock", "azure").
-                        minLength: 1
-                        type: string
-                      runtimeConfigMapName:
-                        description: |-
-                          Name of a pre-existing ConfigMap for the LLM runtime configuration.
-                          When set, the operator skips generating kubernaut-agent-llm-runtime
-                          and mounts this ConfigMap instead. Must contain key "llm-runtime.yaml".
-                        type: string
-                      temperature:
-                        description: |-
-                          Sampling temperature for LLM responses (e.g. "0.7").
-                          Serialized as string to avoid CRD float portability issues.
-                        type: string
-                      timeoutSeconds:
-                        default: 120
-                        description: Timeout in seconds for LLM API calls.
-                        type: integer
-                      tlsCaFile:
-                        description: Path to a CA certificate file for TLS to the
-                          LLM endpoint.
-                        type: string
-                      tlsCertFile:
-                        description: |-
-                          Path to a client certificate file for mTLS to the LLM endpoint.
-                          Must be set together with TLSKeyFile.
-                        type: string
-                      tlsClientSecretRef:
-                        description: |-
-                          Name of the Secret containing the TLS client certificate and key
-                          for mTLS to the LLM endpoint. The Secret must contain tls.crt and
-                          tls.key entries. Required when TLSCertFile and TLSKeyFile are set.
-                        type: string
-                      tlsKeyFile:
-                        description: |-
-                          Path to a client key file for mTLS to the LLM endpoint.
-                          Must be set together with TLSCertFile.
-                        type: string
-                      vertexLocation:
-                        description: GCP Vertex AI location (e.g. "us-central1").
-                        type: string
-                      vertexProject:
-                        description: GCP Vertex AI project ID.
-                        type: string
-                    required:
-                    - credentialsSecretName
-                    - model
-                    - provider
-                    type: object
+                  llmProfileRef:
+                    description: |-
+                      Reference to a named profile in spec.llmProfiles used for KA's
+                      investigator LLM calls.
+                    minLength: 1
+                    type: string
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -1412,6 +1324,21 @@ spec:
                       investigator may execute per analysis session.
                     minimum: 1
                     type: integer
+                  phaseModels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Per-phase LLM profile overrides. Keys are agent phase names
+                      (rca, workflow_discovery, validation); values are profile names in
+                      spec.llmProfiles. Each referenced profile must share the same
+                      credentialsSecretName as llmProfileRef's profile (cross-credential
+                      phase overrides are not yet supported). When absent, all phases use
+                      llmProfileRef's profile.
+                    type: object
+                    x-kubernetes-validations:
+                    - message: 'phaseModels keys must be one of: rca, workflow_discovery,
+                        validation'
+                      rule: self.all(k, k in ['rca','workflow_discovery','validation'])
                   resources:
                     description: Resource requirements.
                     properties:
@@ -1471,6 +1398,12 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
+                  runtimeConfigMapName:
+                    description: |-
+                      Name of a pre-existing ConfigMap for the LLM runtime configuration.
+                      When set, the operator skips generating kubernaut-agent-llm-runtime
+                      and mounts this ConfigMap instead. Must contain key "llm-runtime.yaml".
+                    type: string
                   safety:
                     description: Safety guardrails for LLM interactions.
                     properties:
@@ -1551,7 +1484,110 @@ spec:
                         type: integer
                     type: object
                 required:
-                - llm
+                - llmProfileRef
+                type: object
+              llmProfiles:
+                additionalProperties:
+                  description: |-
+                    LLMProfileSpec defines a single, named LLM provider configuration.
+                    Profiles live in spec.llmProfiles and are referenced by name (llmProfileRef)
+                    from KA, API Frontend, and API Frontend's severity-triage configuration,
+                    decoupling each component's LLM identity from a single shared config.
+                  properties:
+                    azureApiVersion:
+                      description: Azure OpenAI API version.
+                      type: string
+                    bedrockRegion:
+                      description: AWS Bedrock region.
+                      type: string
+                    credentialsSecretName:
+                      description: Name of the Secret containing LLM API credentials.
+                      minLength: 1
+                      type: string
+                    endpoint:
+                      description: LLM API endpoint override. When empty, uses the
+                        provider default.
+                      type: string
+                    maxRetries:
+                      default: 3
+                      description: Maximum number of retries for LLM API calls.
+                      type: integer
+                    model:
+                      description: LLM model name (e.g. "gpt-4o", "gemini-2.5-pro").
+                      minLength: 1
+                      type: string
+                    oauth2:
+                      description: OAuth2 configuration for LLM authentication.
+                      properties:
+                        credentialsSecretRef:
+                          description: |-
+                            Name of the Secret containing OAuth2 client credentials
+                            (keys: "client-id", "client-secret").
+                          type: string
+                        enabled:
+                          default: false
+                          description: Whether OAuth2 authentication is enabled.
+                          type: boolean
+                        scopes:
+                          description: OAuth2 scopes.
+                          items:
+                            type: string
+                          type: array
+                        tokenURL:
+                          description: Token endpoint URL.
+                          type: string
+                      type: object
+                    provider:
+                      description: LLM provider name (e.g. "openai", "vertexai", "bedrock",
+                        "azure").
+                      minLength: 1
+                      type: string
+                    temperature:
+                      description: |-
+                        Sampling temperature for LLM responses (e.g. "0.7").
+                        Serialized as string to avoid CRD float portability issues.
+                      type: string
+                    timeoutSeconds:
+                      default: 120
+                      description: Timeout in seconds for LLM API calls.
+                      type: integer
+                    tlsCaFile:
+                      description: Path to a CA certificate file for TLS to the LLM
+                        endpoint.
+                      type: string
+                    tlsCertFile:
+                      description: |-
+                        Path to a client certificate file for mTLS to the LLM endpoint.
+                        Must be set together with TLSKeyFile.
+                      type: string
+                    tlsClientSecretRef:
+                      description: |-
+                        Name of the Secret containing the TLS client certificate and key
+                        for mTLS to the LLM endpoint. The Secret must contain tls.crt and
+                        tls.key entries. Required when TLSCertFile and TLSKeyFile are set.
+                      type: string
+                    tlsKeyFile:
+                      description: |-
+                        Path to a client key file for mTLS to the LLM endpoint.
+                        Must be set together with TLSCertFile.
+                      type: string
+                    vertexLocation:
+                      description: GCP Vertex AI location (e.g. "us-central1").
+                      type: string
+                    vertexProject:
+                      description: GCP Vertex AI project ID.
+                      type: string
+                  required:
+                  - credentialsSecretName
+                  - model
+                  - provider
+                  type: object
+                description: |-
+                  Named LLM provider profiles, keyed by an arbitrary user-chosen name
+                  (e.g. "primary", "lightweight"). Components reference a profile by
+                  name via their own llmProfileRef field instead of embedding LLM
+                  configuration directly, decoupling KA and API Frontend's LLM identity.
+                minProperties: 1
                 type: object
               monitoring:
                 description: OCP monitoring integration (Prometheus, AlertManager).
@@ -2157,6 +2193,7 @@ spec:
                 type: object
             required:
             - kubernautAgent
+            - llmProfiles
             - postgresql
             - valkey
             type: object

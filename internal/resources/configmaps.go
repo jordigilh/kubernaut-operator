@@ -628,11 +628,14 @@ type llmRuntimeYAML struct {
 	PhaseModels    map[string]llmPhaseOverrideYAML `json:"phaseModels,omitempty" yaml:"phaseModels,omitempty"`
 }
 
+// llmPhaseOverrideYAML has no credential field: phase overrides must share
+// the primary profile's credentialsSecretName (enforced by
+// validateLLMProfileRefs), so the phase always authenticates via the same
+// mounted credentials as the primary LLM connection.
 type llmPhaseOverrideYAML struct {
 	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
 	Model    string `json:"model,omitempty" yaml:"model,omitempty"`
 	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
-	APIKey   string `json:"apiKey,omitempty" yaml:"apiKey,omitempty"`
 }
 
 type authWebhookWebhookYAML struct {
@@ -1251,6 +1254,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 	o := resolveOpts(opts)
 	ns := kn.Namespace
 	ka := &kn.Spec.KubernautAgent
+	kaProfile, _ := ResolveLLMProfile(kn, ka.LLMProfileRef)
 	maxTurns := ka.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 40
@@ -1274,7 +1278,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 		},
 		AI: kaAIYAML{
 			LLM: kaLLMYAML{
-				Provider: ka.LLM.Provider,
+				Provider: kaProfile.Provider,
 			},
 			Investigation: kaInvestigationYAML{MaxTurns: maxTurns},
 		},
@@ -1295,34 +1299,34 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 		cfg.Runtime.Session = &kaSessionYAML{TTL: ttl}
 	}
 
-	if ka.LLM.VertexProject != "" {
-		cfg.AI.LLM.VertexProject = ka.LLM.VertexProject
+	if kaProfile.VertexProject != "" {
+		cfg.AI.LLM.VertexProject = kaProfile.VertexProject
 	}
-	if ka.LLM.VertexLocation != "" {
-		cfg.AI.LLM.VertexLocation = ka.LLM.VertexLocation
+	if kaProfile.VertexLocation != "" {
+		cfg.AI.LLM.VertexLocation = kaProfile.VertexLocation
 	}
-	if ka.LLM.BedrockRegion != "" {
-		cfg.AI.LLM.BedrockRegion = ka.LLM.BedrockRegion
+	if kaProfile.BedrockRegion != "" {
+		cfg.AI.LLM.BedrockRegion = kaProfile.BedrockRegion
 	}
-	if ka.LLM.AzureAPIVersion != "" {
-		cfg.AI.LLM.AzureApiVersion = ka.LLM.AzureAPIVersion
+	if kaProfile.AzureAPIVersion != "" {
+		cfg.AI.LLM.AzureApiVersion = kaProfile.AzureAPIVersion
 	}
-	if ka.LLM.TLSCaFile != "" {
-		cfg.AI.LLM.TLSCaFile = ka.LLM.TLSCaFile
+	if kaProfile.TLSCaFile != "" {
+		cfg.AI.LLM.TLSCaFile = kaProfile.TLSCaFile
 	}
-	if ka.LLM.TLSCertFile != "" {
-		cfg.AI.LLM.TLSCertFile = ka.LLM.TLSCertFile
+	if kaProfile.TLSCertFile != "" {
+		cfg.AI.LLM.TLSCertFile = kaProfile.TLSCertFile
 	}
-	if ka.LLM.TLSKeyFile != "" {
-		cfg.AI.LLM.TLSKeyFile = ka.LLM.TLSKeyFile
+	if kaProfile.TLSKeyFile != "" {
+		cfg.AI.LLM.TLSKeyFile = kaProfile.TLSKeyFile
 	}
 
-	if ka.LLM.OAuth2.Enabled {
+	if kaProfile.OAuth2.Enabled {
 		cfg.AI.LLM.OAuth2 = &kaOAuth2YAML{
 			Enabled:        true,
-			TokenURL:       ka.LLM.OAuth2.TokenURL,
+			TokenURL:       kaProfile.OAuth2.TokenURL,
 			CredentialsDir: "/etc/kubernaut-agent/oauth2",
-			Scopes:         ka.LLM.OAuth2.Scopes,
+			Scopes:         kaProfile.OAuth2.Scopes,
 		}
 	}
 
@@ -1425,33 +1429,35 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 // KubernautAgentLLMRuntimeConfigMap builds the kubernaut-agent-llm-runtime ConfigMap
 // when the user hasn't provided a pre-existing one.
 func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
-	if kn.Spec.KubernautAgent.LLM.RuntimeConfigMapName != "" {
+	ka := &kn.Spec.KubernautAgent
+	if ka.RuntimeConfigMapName != "" {
 		return nil, nil
 	}
+	kaProfile, _ := ResolveLLMProfile(kn, ka.LLMProfileRef)
 	temp := 0.7
-	if kn.Spec.KubernautAgent.LLM.Temperature != "" {
-		if parsed, err := strconv.ParseFloat(kn.Spec.KubernautAgent.LLM.Temperature, 64); err == nil {
+	if kaProfile.Temperature != "" {
+		if parsed, err := strconv.ParseFloat(kaProfile.Temperature, 64); err == nil {
 			temp = parsed
 		}
 	}
 	cfg := llmRuntimeYAML{
-		Provider:       kn.Spec.KubernautAgent.LLM.Provider,
-		Model:          kn.Spec.KubernautAgent.LLM.Model,
-		Endpoint:       kn.Spec.KubernautAgent.LLM.Endpoint,
+		Provider:       kaProfile.Provider,
+		Model:          kaProfile.Model,
+		Endpoint:       kaProfile.Endpoint,
 		Temperature:    temp,
-		MaxRetries:     intPtrDefault(kn.Spec.KubernautAgent.LLM.MaxRetries, 3),
-		TimeoutSeconds: intPtrDefault(kn.Spec.KubernautAgent.LLM.TimeoutSeconds, 120),
-		VertexProject:  kn.Spec.KubernautAgent.LLM.VertexProject,
-		VertexLocation: kn.Spec.KubernautAgent.LLM.VertexLocation,
+		MaxRetries:     intPtrDefault(kaProfile.MaxRetries, 3),
+		TimeoutSeconds: intPtrDefault(kaProfile.TimeoutSeconds, 120),
+		VertexProject:  kaProfile.VertexProject,
+		VertexLocation: kaProfile.VertexLocation,
 	}
-	if len(kn.Spec.KubernautAgent.LLM.PhaseModels) > 0 {
-		cfg.PhaseModels = make(map[string]llmPhaseOverrideYAML, len(kn.Spec.KubernautAgent.LLM.PhaseModels))
-		for phase, override := range kn.Spec.KubernautAgent.LLM.PhaseModels {
+	if len(ka.PhaseModels) > 0 {
+		cfg.PhaseModels = make(map[string]llmPhaseOverrideYAML, len(ka.PhaseModels))
+		for phase, ref := range ka.PhaseModels {
+			phaseProfile, _ := ResolveLLMProfile(kn, ref)
 			cfg.PhaseModels[phase] = llmPhaseOverrideYAML{
-				Provider: override.Provider,
-				Model:    override.Model,
-				Endpoint: override.Endpoint,
-				APIKey:   override.APIKey,
+				Provider: phaseProfile.Provider,
+				Model:    phaseProfile.Model,
+				Endpoint: phaseProfile.Endpoint,
 			}
 		}
 	}
@@ -1715,6 +1721,13 @@ type afSeverityTriageYAML struct {
 	MaxQueriesPerCall         int     `json:"maxQueriesPerCall" yaml:"maxQueriesPerCall"`
 	MaxRulesEvaluated         int     `json:"maxRulesEvaluated" yaml:"maxRulesEvaluated"`
 	LLMConfidence             float64 `json:"llmConfidence" yaml:"llmConfidence"`
+
+	// LLM is independent from Agent.LLM (kubernaut#1404). Nil (omitted)
+	// means triage inherits AF's main agent.llm connection -- today's
+	// default behavior. A non-nil, zero-value LLM forces upstream's
+	// rule-based-only Noop triager. A populated LLM configures triage's
+	// own independent provider/credentials.
+	LLM *afAgentLLMYAML `json:"llm,omitempty" yaml:"llm,omitempty"`
 }
 
 type afCircuitBreakerYAML struct {
@@ -1750,6 +1763,7 @@ type KagentiOIDCDefaults struct {
 func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode, oidc *KagentiOIDCDefaults) (*corev1.ConfigMap, error) {
 	af := kn.Spec.APIFrontend
 	ns := kn.Namespace
+	afProfile, _ := ResolveLLMProfile(kn, AFLLMProfileRef(kn))
 
 	kaBaseURL := fmt.Sprintf("https://kubernaut-agent.%s.svc.cluster.local:%d", ns, PortHTTPS)
 	dsBaseURL := fmt.Sprintf("https://data-storage-service.%s.svc.cluster.local:%d", ns, PortHTTPS)
@@ -1790,7 +1804,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSideca
 			KABearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
 			KATLSCAFile:       "/etc/apifrontend/tls-ca/ca.crt",
 			DSTLSCAFile:       "/etc/apifrontend/tls-ca/ca.crt",
-			LLM:               afAgentLLMConfig(kn),
+			LLM:               afAgentLLMConfig(afProfile),
 		},
 		MCP: afMCPYAML{
 			Enabled:            true,
@@ -1856,11 +1870,15 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSideca
 	}, nil
 }
 
+// afSeverityTriageConfig builds the severityTriage config section. The
+// same-credentialsSecretName constraint between severityTriage.llmProfileRef
+// and AF's own resolved profile is enforced by validateAFLLMProfileRefs
+// at validation time, so rendering here only needs the triage profile itself.
 func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut) afSeverityTriageYAML {
 	if !kn.Spec.Monitoring.MonitoringEnabled() {
 		return afSeverityTriageYAML{Enabled: false}
 	}
-	return afSeverityTriageYAML{
+	cfg := afSeverityTriageYAML{
 		Enabled:                   true,
 		PrometheusURL:             OCPPrometheusURL,
 		PrometheusTLSCAFile:       "/etc/ssl/af/service-ca.crt",
@@ -1870,18 +1888,36 @@ func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut) afSeverityTriageYAM
 		MaxRulesEvaluated:         100,
 		LLMConfidence:             0.7,
 	}
+
+	st := kn.Spec.APIFrontend.SeverityTriage
+	switch {
+	case !st.LLMTriageEnabled():
+		// Non-nil, zero-value LLM forces upstream's rule-based-only Noop triager.
+		cfg.LLM = &afAgentLLMYAML{}
+	case st != nil && st.LLMProfileRef != "":
+		triageProfile, ok := ResolveLLMProfile(kn, st.LLMProfileRef)
+		if ok {
+			llm := afAgentLLMConfig(triageProfile)
+			cfg.LLM = &llm
+		}
+	}
+	// default (nil severityTriage, or empty llmProfileRef): LLM left nil,
+	// triage inherits AF's main agent.llm connection.
+
+	return cfg
 }
 
-// afAgentLLMConfig builds the nested agent.llm config section for the AF,
-// matching the schema introduced in kubernaut#1252 / PR#1255.
+// afAgentLLMConfig builds an agent.llm-shaped config section from a resolved
+// LLM profile, matching the schema introduced in kubernaut#1252 / PR#1255.
+// Shared by AF's main agent.llm block and severity-triage's independent
+// llm block (both need identical provider/credential/OAuth2 translation).
 //
 // AF and KA have divergent OpenAI config formats (kubernaut#1487/#1488):
-//   - CR "openai" -> AF receives "openai_compatible" (superset that works with/without API key)
+//   - CR "openai" -> AF receives "openai_compatible" (superset that works without API key)
 //   - AF expects the endpoint to include "/v1"; KA appends it internally
 //
 // This translation will be removed when upstream normalizes (kubernaut#1488).
-func afAgentLLMConfig(kn *kubernautv1alpha1.Kubernaut) afAgentLLMYAML {
-	llm := kn.Spec.KubernautAgent.LLM
+func afAgentLLMConfig(llm kubernautv1alpha1.LLMProfileSpec) afAgentLLMYAML {
 	provider := llm.Provider
 	if provider == "" {
 		provider = LLMProviderVertexAI

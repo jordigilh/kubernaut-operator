@@ -27,10 +27,13 @@ import (
 )
 
 const (
-	testEnvTLSCAFile     = "TLS_CA_FILE"
-	testVolumeTLSCA      = "tls-ca"
-	testVolumeAAPCA      = "aap-ca"
-	testVolumeCombinedCA = "combined-ca"
+	testEnvTLSCAFile       = "TLS_CA_FILE"
+	testVolumeTLSCA        = "tls-ca"
+	testVolumeAAPCA        = "aap-ca"
+	testVolumeCombinedCA   = "combined-ca"
+	testVolumeLLMTLSClient = "llm-tls-client"
+	testMTLSCertFile       = "/etc/tls/tls.crt"
+	testMTLSKeyFile        = "/etc/tls/tls.key"
 )
 
 func getAllDeployments(kn *kubernautv1alpha1.Kubernaut) []*appsv1.Deployment {
@@ -343,8 +346,8 @@ var _ = Describe("Deployments", func() {
 
 		It("mounts OAuth2 credentials when enabled", func() {
 			kn := testKubernaut()
-			kn.Spec.KubernautAgent.LLM.OAuth2.Enabled = true
-			kn.Spec.KubernautAgent.LLM.OAuth2.CredentialsSecretRef = "oauth2-credentials-secret"
+			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Enabled = true })
+			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.CredentialsSecretRef = "oauth2-credentials-secret" })
 			dep, err := KubernautAgentDeployment(kn)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1002,6 +1005,90 @@ var _ = Describe("APIFrontendDeployment", func() {
 		expectHasVolumeMount(dep, "tls-server", "/etc/apifrontend/tls")
 		expectHasVolumeMount(dep, testVolumeTLSCA, "/etc/apifrontend/tls-ca")
 		expectHasVolumeMount(dep, "tmp", "/tmp")
+	})
+
+	It("mounts llm-credentials volume from AF's own resolved profile", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.LLMProfiles[testAFOnlyProfile] = kubernautv1alpha1.LLMProfileSpec{
+			Provider:              LLMProviderVertexAI,
+			Model:                 "gemini-2.5-flash",
+			CredentialsSecretName: "af-llm-creds",
+		}
+		kn.Spec.APIFrontend.LLMProfileRef = testAFOnlyProfile
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+
+		expectHasVolume(dep, "llm-credentials")
+		expectHasVolumeMount(dep, "llm-credentials", "/etc/apifrontend/llm-credentials")
+		found := false
+		for _, v := range dep.Spec.Template.Spec.Volumes {
+			if v.Name == "llm-credentials" {
+				found = true
+				Expect(v.Secret).NotTo(BeNil())
+				Expect(v.Secret.SecretName).To(Equal("af-llm-creds"), "AF must mount its own profile's secret, not KA's (llm-creds)")
+			}
+		}
+		Expect(found).To(BeTrue(), "llm-credentials volume not found")
+	})
+
+	It("mounts llm-tls-client volume from AF's own resolved profile's tlsClientSecretRef", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.LLMProfiles[testAFOnlyProfile] = kubernautv1alpha1.LLMProfileSpec{
+			Provider:              LLMProviderOpenAI,
+			Model:                 "gpt-4o",
+			Endpoint:              testOpenAIEndpoint,
+			CredentialsSecretName: "af-llm-creds",
+			TLSCertFile:           testMTLSCertFile,
+			TLSKeyFile:            testMTLSKeyFile,
+			TLSClientSecretRef:    "af-llm-tls-client",
+		}
+		kn.Spec.APIFrontend.LLMProfileRef = testAFOnlyProfile
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+
+		expectHasVolume(dep, testVolumeLLMTLSClient)
+		expectHasVolumeMount(dep, testVolumeLLMTLSClient, "/etc/apifrontend/llm-tls-client")
+		found := false
+		for _, v := range dep.Spec.Template.Spec.Volumes {
+			if v.Name == testVolumeLLMTLSClient {
+				found = true
+				Expect(v.Secret).NotTo(BeNil())
+				Expect(v.Secret.SecretName).To(Equal("af-llm-tls-client"))
+			}
+		}
+		Expect(found).To(BeTrue(), "llm-tls-client volume not found")
+	})
+
+	It("mounts OAuth2 credentials when enabled on AF's resolved profile (regression: pre-existing crash-loop)", func() {
+		kn := testKubernautWithAF()
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Enabled = true })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
+			p.OAuth2.CredentialsSecretRef = "af-oauth2-credentials-secret"
+		})
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+
+		expectHasVolume(dep, "oauth2-credentials")
+		expectHasVolumeMount(dep, "oauth2-credentials", "/etc/apifrontend/oauth2")
+		found := false
+		for _, v := range dep.Spec.Template.Spec.Volumes {
+			if v.Name == "oauth2-credentials" {
+				found = true
+				Expect(v.Secret).NotTo(BeNil())
+				Expect(v.Secret.SecretName).To(Equal("af-oauth2-credentials-secret"))
+			}
+		}
+		Expect(found).To(BeTrue(), "AF must mount an oauth2-credentials volume when its resolved profile has OAuth2 enabled -- "+
+			"otherwise upstream AF hard-fails at startup reading client-id/client-secret from a directory nothing ever mounted")
+	})
+
+	It("omits oauth2-credentials volume when OAuth2 is not enabled", func() {
+		kn := testKubernautWithAF()
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+		for _, v := range dep.Spec.Template.Spec.Volumes {
+			Expect(v.Name).NotTo(Equal("oauth2-credentials"))
+		}
 	})
 
 	It("sets liveness and readiness probes", func() {

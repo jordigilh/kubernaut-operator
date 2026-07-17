@@ -18,8 +18,8 @@ The operator and managed workloads expect Kubernetes Secret objects (bring-your-
 |--------|---------------|---------|
 | PostgreSQL (`spec.postgresql.secretName`) | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | Database access for DataStorage and migrations |
 | Valkey or Redis (`spec.valkey.secretName`) | `password` | Cache and stream access for DataStorage |
-| LLM credentials (`spec.kubernautAgent.llm.credentialsSecretName`) | Provider-dependent: `credentials.json` (Vertex AI), `api_key` (OpenAI or Anthropic), and similar | Authenticate to the LLM provider API |
-| OAuth2 (optional, `spec.kubernautAgent.llm.oauth2.credentialsSecretName`) | `client_id`, `client_secret` | OAuth2 client-credentials flow for LLM access |
+| LLM credentials (`spec.llmProfiles.<name>.credentialsSecretName`) | Provider-dependent: `credentials.json` (Vertex AI), `api_key` (OpenAI or Anthropic), and similar | Authenticate to the LLM provider API |
+| OAuth2 (optional, `spec.llmProfiles.<name>.oauth2.credentialsSecretRef`) | `client_id`, `client_secret` | OAuth2 client-credentials flow for LLM access |
 | Notification Slack (optional, `spec.notification.slack.secretName`) | `webhook_url` or `bot_token` | Deliver notifications to Slack |
 | Ansible or AAP (optional, `spec.ansible.tokenSecretRef`) | `token` | Authenticate to AWX or Ansible Automation Platform API |
 
@@ -51,7 +51,7 @@ The following table summarizes primary east-west trust patterns for the managed 
 
 **Inter-service TLS:** OpenShift injects TLS material for internal services using the platform service CA. Service objects are annotated so workloads receive appropriate certificates.
 
-**External TLS (LLM and corporate egress):** Custom CA bundles for corporate TLS inspection or private PKI may be supplied via `spec.kubernautAgent.llm.tlsCaFile` so the agent trusts required roots when calling external LLM endpoints.
+**External TLS (LLM and corporate egress):** Custom CA bundles for corporate TLS inspection or private PKI may be supplied via `spec.llmProfiles.<name>.tlsCaFile` so any component resolving to that profile trusts required roots when calling external LLM endpoints.
 
 **Platform TLS profile:** The effective TLS minimum version and cipher policy for routes and platform components follows the OpenShift APIServer cluster configuration (`tlsProfile`). Mapping is summarized below.
 

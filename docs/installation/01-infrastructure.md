@@ -188,7 +188,7 @@ EOF
 
 ## LLM Credentials
 
-The Kubernaut Agent requires credentials for an LLM provider. Create a secret named to match what you will set in `spec.kubernautAgent.llm.credentialsSecretName`.
+The Kubernaut Agent requires credentials for an LLM provider. Create a secret named to match what you will set in the profile's `spec.llmProfiles.<name>.credentialsSecretName`.
 
 **OpenAI / Anthropic:**
 

@@ -21,8 +21,13 @@ spec:
     port: 6379
     secretName: valkey-secret
 
-  kubernautAgent:
-    llm:
+  # Named LLM profiles, referenced by name from kubernautAgent.llmProfileRef,
+  # apiFrontend.llmProfileRef, apiFrontend.severityTriage.llmProfileRef, and
+  # kubernautAgent.phaseModels. Profiles referenced from phaseModels or
+  # severityTriage must share their referring component's credentialsSecretName
+  # (cross-credential overrides are not yet supported).
+  llmProfiles:
+    primary:
       provider: vertex_ai
       model: claude-sonnet-4-6
       credentialsSecretName: llm-credentials
@@ -30,9 +35,17 @@ spec:
       vertexLocation: "global"
       maxRetries: 3
       timeoutSeconds: 120
-      phaseModels:
-        workflow_discovery:
-          model: claude-haiku-4-5
+    lightweight:
+      provider: vertex_ai
+      model: claude-haiku-4-5
+      credentialsSecretName: llm-credentials
+      vertexProject: "itpc-gcp-eco-eng-claude"
+      vertexLocation: "global"
+
+  kubernautAgent:
+    llmProfileRef: primary
+    phaseModels:
+      workflow_discovery: lightweight
     logging:
       level: debug
     maxTurns: 40
