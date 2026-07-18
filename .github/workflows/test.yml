@@ -55,6 +55,12 @@ jobs:
       - name: Run tests
         run: make test
 
+      - name: Shellcheck hack/ scripts
+        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh
+
+      - name: Run hack/ script tests
+        run: make test-hack-scripts
+
       - name: Check coverage threshold
         run: |
           # cover.out is produced by `make test` (Makefile: -coverprofile cover.out)
