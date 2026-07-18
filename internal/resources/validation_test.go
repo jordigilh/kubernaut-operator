@@ -1164,4 +1164,24 @@ var _ = Describe("Fleet Config Validation", func() {
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())
 	})
+
+	It("FL-010 [IA-5]: rejects fleet enabled with backend=acm and no tokenSecretName", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1),
+			"IA-5: backend=acm has no unauthenticated mode upstream — omitting tokenSecretName crash-loops Gateway/RemediationOrchestrator at startup instead of failing fast at admission")
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.tokenSecretName"))
+	})
+
+	It("FL-011 [IA-5]: accepts fleet enabled with backend=fleetmetadatacache and no tokenSecretName", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty(), "tokenSecretName is optional for fleetmetadatacache, mandatory only for acm")
+	})
 })

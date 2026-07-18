@@ -59,6 +59,8 @@ ConfigMap/Deployment builders already handle. Full `test-integration`
 | FL-007 | CM-6    | accepts `fleet` enabled with `backend: fleetmetadatacache` and an `endpoint` |
 | FL-008 | CM-6    | accepts `fleet` enabled with `backend: acm`, an `endpoint`, and a `tokenSecretName` |
 | FL-009 | CM-6    | accepts `fleet` enabled with a `caSecretName` set alongside a valid `backend`/`endpoint` |
+| FL-010 | IA-5    | rejects `fleet` enabled with `backend: acm` and no `tokenSecretName` — ACM Search GraphQL has no unauthenticated mode upstream; omitting the token crash-loops Gateway/RemediationOrchestrator at startup instead of failing fast at admission |
+| FL-011 | IA-5    | accepts `fleet` enabled with `backend: fleetmetadatacache` and no `tokenSecretName` (optional for FMC, mandatory only for ACM) |
 
 ### 3.2 Resource rendering — ConfigMaps (`internal/resources/configmaps_test.go`, `Describe("Gateway ConfigMap")` / `Describe("RemediationOrchestrator ConfigMap")`)
 

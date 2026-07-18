@@ -232,8 +232,9 @@ type FleetSpec struct {
 	CASecretName string `json:"caSecretName,omitempty"`
 
 	// Name of a Secret containing a bearer token (key: token) for ACM
-	// Search GraphQL authentication. Optional; typically required for
-	// backend=acm.
+	// Search GraphQL authentication. Optional when backend=fleetmetadatacache;
+	// required (enforced at admission, FedRAMP IA-5) when backend=acm, since
+	// ACM Search's GraphQL API has no unauthenticated mode.
 	// +optional
 	TokenSecretName string `json:"tokenSecretName,omitempty"`
 }

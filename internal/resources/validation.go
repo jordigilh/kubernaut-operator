@@ -481,5 +481,13 @@ func validateFleetConfig(kn *kubernautv1alpha1.Kubernaut) []error {
 		errs = append(errs, fmt.Errorf("%s.endpoint: must be set when fleet.enabled is true", base))
 	}
 
+	// FedRAMP IA-5 (authenticator management): upstream pkg/fleet has no
+	// unauthenticated mode for the ACM Search GraphQL API. Without a token,
+	// Gateway/RemediationOrchestrator crash-loop at startup instead of
+	// failing fast here at admission.
+	if fleet.Backend == "acm" && fleet.TokenSecretName == "" {
+		errs = append(errs, fmt.Errorf("%s.tokenSecretName: must be set when fleet.backend is \"acm\" — the ACM Search GraphQL API requires bearer token authentication", base))
+	}
+
 	return errs
 }
