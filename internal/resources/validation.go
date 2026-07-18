@@ -40,6 +40,7 @@ func ValidateKubernaut(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMo
 	errs = append(errs, validateAlignmentCheck(kn)...)
 	errs = append(errs, validateDryRun(kn)...)
 	errs = append(errs, validateInteractive(kn)...)
+	errs = append(errs, validateFleetConfig(kn)...)
 	return errs
 }
 
@@ -445,6 +446,39 @@ func validateInteractive(kn *kubernautv1alpha1.Kubernaut) []error {
 		if _, err := time.ParseDuration(interactive.InactivityTimeout); err != nil {
 			errs = append(errs, fmt.Errorf("%s.inactivityTimeout: invalid Go duration %q: %w", base, interactive.InactivityTimeout, err))
 		}
+	}
+
+	return errs
+}
+
+// validFleetBackends are the only backends recognized by upstream
+// pkg/fleet.FleetConfig (jordigilh/kubernaut). "valkey" was explicitly
+// removed upstream and is rejected here for the same reason.
+var validFleetBackends = map[string]bool{
+	"fleetmetadatacache": true,
+	"acm":                true,
+}
+
+// validateFleetConfig validates spec.fleet. When Enabled is false or
+// omitted, the other fields are inert and left unvalidated so users can
+// pre-stage configuration ahead of enabling it.
+func validateFleetConfig(kn *kubernautv1alpha1.Kubernaut) []error {
+	fleet := &kn.Spec.Fleet
+	if fleet.Enabled == nil || !*fleet.Enabled {
+		return nil
+	}
+
+	var errs []error
+	const base = "spec.fleet"
+
+	if fleet.Backend == "" {
+		errs = append(errs, fmt.Errorf("%s.backend: must not be empty when fleet.enabled is true — must be one of: fleetmetadatacache, acm", base))
+	} else if !validFleetBackends[fleet.Backend] {
+		errs = append(errs, fmt.Errorf("%s.backend: invalid backend %q — must be one of: fleetmetadatacache, acm", base, fleet.Backend))
+	}
+
+	if fleet.Endpoint == "" {
+		errs = append(errs, fmt.Errorf("%s.endpoint: must be set when fleet.enabled is true", base))
 	}
 
 	return errs
