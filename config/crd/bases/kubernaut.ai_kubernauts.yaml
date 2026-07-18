@@ -968,6 +968,44 @@ spec:
                         type: object
                     type: object
                 type: object
+              fleet:
+                description: |-
+                  Fleet configures federated scope-checking for Gateway and
+                  RemediationOrchestrator against a shared fleet backend (ADR-068).
+                properties:
+                  backend:
+                    description: |-
+                      Fleet backend to query for scope information. Required when Enabled
+                      is true. "fleetmetadatacache" targets the Fleet Metadata Cache (FMC)
+                      service's HTTP API; "acm" targets Red Hat Advanced Cluster Management
+                      Search's GraphQL API.
+                    enum:
+                    - fleetmetadatacache
+                    - acm
+                    type: string
+                  caSecretName:
+                    description: |-
+                      Name of a Secret containing a CA bundle (key: ca.crt) to verify the
+                      backend endpoint's TLS certificate. Optional.
+                    type: string
+                  enabled:
+                    default: false
+                    description: |-
+                      Whether federated scope-checking is enabled for Gateway and
+                      RemediationOrchestrator.
+                    type: boolean
+                  endpoint:
+                    description: HTTP(S) endpoint of the fleet backend. Required when
+                      Enabled is true.
+                    type: string
+                  tokenSecretName:
+                    description: |-
+                      Name of a Secret containing a bearer token (key: token) for ACM
+                      Search GraphQL authentication. Optional when backend=fleetmetadatacache;
+                      required (enforced at admission, FedRAMP IA-5) when backend=acm, since
+                      ACM Search's GraphQL API has no unauthenticated mode.
+                    type: string
+                type: object
               gateway:
                 description: Gateway service settings.
                 properties:

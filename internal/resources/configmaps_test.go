@@ -144,6 +144,47 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("allowCredentials: true"))
 			Expect(data).To(ContainSubstring("maxAge: 600"))
 		})
+
+		It("omits the fleet block when fleet is disabled", func() {
+			kn := testKubernaut()
+			cm, err := GatewayConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).NotTo(ContainSubstring("fleet:"), "gateway config should omit fleet block when disabled, got:\n%s", data)
+		})
+
+		It("renders the fleet block with backend and endpoint when enabled", func() {
+			kn := testKubernaut()
+			enabled := true
+			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			}
+			cm, err := GatewayConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			for _, want := range []string{
+				"fleet:",
+				"enabled: true",
+				"backend: fleetmetadatacache",
+				"endpoint: https://fmc.kubernaut.svc:8443",
+			} {
+				Expect(data).To(ContainSubstring(want), "gateway config should contain %q when fleet enabled, got:\n%s", want, data)
+			}
+		})
+
+		It("renders tlsCAFile and tokenPath when the corresponding secrets are set", func() {
+			kn := testKubernaut()
+			enabled := true
+			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+				Enabled: &enabled, Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
+				CASecretName: "fmc-ca-bundle", TokenSecretName: "acm-search-token",
+			}
+			cm, err := GatewayConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("tlsCAFile: /etc/fleet-tls/ca/ca.crt"), "gateway config should render tlsCAFile mount path, got:\n%s", data)
+			Expect(data).To(ContainSubstring("tokenPath: /etc/fleet-token/token"), "gateway config should render tokenPath mount path, got:\n%s", data)
+		})
 	})
 
 	Describe("DataStorage ConfigMap", func() {
@@ -380,6 +421,49 @@ var _ = Describe("ConfigMaps", func() {
 			} {
 				Expect(data).To(ContainSubstring(want), "RO v1.4 config should contain %q, got:\n%s", want, data)
 			}
+		})
+
+		It("omits the fleet block when fleet is disabled", func() {
+			kn := testKubernaut()
+			cm, err := RemediationOrchestratorConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["remediationorchestrator.yaml"]
+			Expect(data).NotTo(ContainSubstring("fleet:"), "RO config should omit fleet block when disabled, got:\n%s", data)
+		})
+
+		It("renders the fleet block with backend and endpoint when enabled", func() {
+			kn := testKubernaut()
+			enabled := true
+			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			}
+			cm, err := RemediationOrchestratorConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["remediationorchestrator.yaml"]
+			for _, want := range []string{
+				"fleet:",
+				"enabled: true",
+				"backend: fleetmetadatacache",
+				"endpoint: https://fmc.kubernaut.svc:8443",
+			} {
+				Expect(data).To(ContainSubstring(want), "RO config should contain %q when fleet enabled, got:\n%s", want, data)
+			}
+			Expect(data).NotTo(ContainSubstring("tlsCAFile"), "RO config should omit tlsCAFile when no CA secret set, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("tokenPath"), "RO config should omit tokenPath when no token secret set, got:\n%s", data)
+		})
+
+		It("renders tlsCAFile and tokenPath when the corresponding secrets are set", func() {
+			kn := testKubernaut()
+			enabled := true
+			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+				Enabled: &enabled, Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
+				CASecretName: "fmc-ca-bundle", TokenSecretName: "acm-search-token",
+			}
+			cm, err := RemediationOrchestratorConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["remediationorchestrator.yaml"]
+			Expect(data).To(ContainSubstring("tlsCAFile: /etc/fleet-tls/ca/ca.crt"), "RO config should render tlsCAFile mount path, got:\n%s", data)
+			Expect(data).To(ContainSubstring("tokenPath: /etc/fleet-token/token"), "RO config should render tokenPath mount path, got:\n%s", data)
 		})
 	})
 

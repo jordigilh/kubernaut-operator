@@ -104,6 +104,48 @@ type gatewayConfigYAML struct {
 	CORS        gatewayCORSYAML        `json:"cors" yaml:"cors"`
 	Middleware  gatewayMiddlewareYAML  `json:"middleware" yaml:"middleware"`
 	Datastorage gatewayDatastorageYAML `json:"datastorage" yaml:"datastorage"`
+	Fleet       *fleetConfigYAML       `json:"fleet,omitempty" yaml:"fleet,omitempty"`
+}
+
+// fleetConfigYAML mirrors upstream pkg/fleet.FleetConfig's rendered subset
+// (ADR-068): scope-checking against FMC's HTTP API or ACM Search's GraphQL
+// API. See FleetSpec for the CRD-level field documentation.
+type fleetConfigYAML struct {
+	Enabled   bool   `json:"enabled" yaml:"enabled"`
+	Backend   string `json:"backend" yaml:"backend"`
+	Endpoint  string `json:"endpoint" yaml:"endpoint"`
+	TLSCAFile string `json:"tlsCAFile,omitempty" yaml:"tlsCAFile,omitempty"`
+	TokenPath string `json:"tokenPath,omitempty" yaml:"tokenPath,omitempty"`
+}
+
+// fleetCAMountPath and fleetTokenMountPath must stay in sync with the
+// volume mounts added in deployments.go (GatewayDeployment /
+// RemediationOrchestratorDeployment).
+const (
+	fleetCAMountPath    = "/etc/fleet-tls/ca/ca.crt"
+	fleetTokenMountPath = "/etc/fleet-token/token"
+)
+
+// resolveFleetConfig builds the shared fleet: block rendered into both the
+// Gateway and RemediationOrchestrator ConfigMaps. Returns nil when fleet is
+// disabled so the key is omitted entirely.
+func resolveFleetConfig(kn *kubernautv1alpha1.Kubernaut) *fleetConfigYAML {
+	fleet := &kn.Spec.Fleet
+	if fleet.Enabled == nil || !*fleet.Enabled {
+		return nil
+	}
+	cfg := &fleetConfigYAML{
+		Enabled:  true,
+		Backend:  fleet.Backend,
+		Endpoint: fleet.Endpoint,
+	}
+	if fleet.CASecretName != "" {
+		cfg.TLSCAFile = fleetCAMountPath
+	}
+	if fleet.TokenSecretName != "" {
+		cfg.TokenPath = fleetTokenMountPath
+	}
+	return cfg
 }
 
 type gatewayCORSYAML struct {
@@ -309,6 +351,7 @@ type remediationOrchestratorConfigYAML struct {
 	Retention               roRetentionYAML        `json:"retention" yaml:"retention"`
 	DryRun                  bool                   `json:"dryRun" yaml:"dryRun"`
 	DryRunHoldPeriod        string                 `json:"dryRunHoldPeriod" yaml:"dryRunHoldPeriod"`
+	Fleet                   *fleetConfigYAML       `json:"fleet,omitempty" yaml:"fleet,omitempty"`
 }
 
 type weExecutionYAML struct {
@@ -761,6 +804,7 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) 
 			Timeout: "10s",
 			Buffer:  dataStorageBufferYAML{BufferSize: 10000, BatchSize: 100, FlushInterval: "1s", MaxRetries: 3},
 		},
+		Fleet: resolveFleetConfig(kn),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1042,6 +1086,7 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...C
 		},
 		DryRun:           ro.DryRun,
 		DryRunHoldPeriod: withDefault(ro.DryRunHoldPeriod, "1h"),
+		Fleet:            resolveFleetConfig(kn),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {

@@ -18,7 +18,8 @@ metadata:
       ,\n          \"enabled\": true\n        }\n      },\n      \"authWebhook\": {\n        \"logging\": {\n          \"level\": \"info\"\n        }\n      },\n      \"console\": {\n        \"auth\": {\n\
       \          \"secretName\": \"kubernaut-console-oidc\"\n        },\n        \"enabled\": true,\n        \"route\": {\n          \"enabled\": true\n        }\n      },\n      \"dataStorage\": {\n  \
       \      \"endpointPropagationDelay\": \"10s\",\n        \"logging\": {\n          \"level\": \"info\"\n        }\n      },\n      \"effectivenessMonitor\": {\n        \"assessment\": {\n          \"\
-      stabilizationWindow\": \"30s\",\n          \"validityWindow\": \"300s\"\n        },\n        \"logging\": {\n          \"level\": \"info\"\n        }\n      },\n      \"gateway\": {\n        \"config\"\
+      stabilizationWindow\": \"30s\",\n          \"validityWindow\": \"300s\"\n        },\n        \"logging\": {\n          \"level\": \"info\"\n        }\n      },\n      \"fleet\": {\n        \"backend\"\
+      : \"fleetmetadatacache\",\n        \"enabled\": false,\n        \"endpoint\": \"https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443\"\n      },\n      \"gateway\": {\n        \"config\"\
       : {\n          \"cors\": {\n            \"allowCredentials\": false,\n            \"maxAge\": 300\n          },\n          \"deduplicationCooldown\": \"5m\",\n          \"k8sRequestTimeout\": \"15s\"\
       \n        },\n        \"enabled\": false,\n        \"logging\": {\n          \"level\": \"info\"\n        },\n        \"route\": {\n          \"enabled\": false\n        }\n      },\n      \"image\"\
       : {\n        \"pullPolicy\": \"IfNotPresent\"\n      },\n      \"kubernautAgent\": {\n        \"alignmentCheck\": {\n          \"enabled\": false,\n          \"maxStepTokens\": 500,\n          \"\
@@ -49,7 +50,7 @@ metadata:
     categories: AI/Machine Learning,Monitoring
     com.redhat.openshift.versions: v4.18
     containerImage: quay.io/kubernaut-ai/kubernaut-operator:1.5.5
-    createdAt: '2026-07-17T01:19:36Z'
+    createdAt: '2026-07-18T00:53:10Z'
     description: "Automated Kubernetes remediation powered by AI \u2014 detects issues, analyzes root causes, and executes verified fixes."
     documentation: https://jordigilh.github.io/kubernaut-docs/latest/
     features.operators.openshift.io/cnf: 'false'
@@ -356,7 +357,7 @@ spec:
                 - /manager
                 env:
                 - name: RELATED_IMAGE_GATEWAY
-                  value: quay.io/kubernaut-ai/gateway@sha256:e7ec937048c864e793730c543f7a1b961fa540adb1bd4aaa0332875ce0d48ebd
+                  value: quay.io/kubernaut-ai/gateway@sha256:8b09bafdfd119424c93915703f347994e786b59a902028e8c51def51fda87ee3
                 - name: RELATED_IMAGE_DATA_STORAGE
                   value: quay.io/kubernaut-ai/datastorage@sha256:e07fa27f2c3e3f14ad96f33f89387d0fb735699a6cdd6b794065ca840eecb649
                 - name: RELATED_IMAGE_AIANALYSIS
@@ -364,7 +365,7 @@ spec:
                 - name: RELATED_IMAGE_SIGNALPROCESSING
                   value: quay.io/kubernaut-ai/signalprocessing@sha256:4e770e3010529974a95653eabdf3a77c6e9c08ff7559e852ff3838d1279f4035
                 - name: RELATED_IMAGE_REMEDIATIONORCHESTRATOR
-                  value: quay.io/kubernaut-ai/remediationorchestrator@sha256:179b0d6829bc9d843df22b51386ed0528aff4194cfe13db2f0ff5ed62e2e31c7
+                  value: quay.io/kubernaut-ai/remediationorchestrator@sha256:129cc18a6374bc901a17de8d8bc650802443d311c8b4cb05245d6ae3f03dab53
                 - name: RELATED_IMAGE_WORKFLOWEXECUTION
                   value: quay.io/kubernaut-ai/workflowexecution@sha256:e9d8292719139cf845b26bfa5d8d4911af197aba853b7e69538061175063c3e0
                 - name: RELATED_IMAGE_EFFECTIVENESSMONITOR
@@ -489,7 +490,7 @@ spec:
     name: Kubernaut AI
     url: https://github.com/jordigilh/kubernaut
   relatedImages:
-  - image: quay.io/kubernaut-ai/gateway@sha256:e7ec937048c864e793730c543f7a1b961fa540adb1bd4aaa0332875ce0d48ebd
+  - image: quay.io/kubernaut-ai/gateway@sha256:8b09bafdfd119424c93915703f347994e786b59a902028e8c51def51fda87ee3
     name: gateway
   - image: quay.io/kubernaut-ai/datastorage@sha256:e07fa27f2c3e3f14ad96f33f89387d0fb735699a6cdd6b794065ca840eecb649
     name: data-storage
@@ -497,7 +498,7 @@ spec:
     name: aianalysis
   - image: quay.io/kubernaut-ai/signalprocessing@sha256:4e770e3010529974a95653eabdf3a77c6e9c08ff7559e852ff3838d1279f4035
     name: signalprocessing
-  - image: quay.io/kubernaut-ai/remediationorchestrator@sha256:179b0d6829bc9d843df22b51386ed0528aff4194cfe13db2f0ff5ed62e2e31c7
+  - image: quay.io/kubernaut-ai/remediationorchestrator@sha256:129cc18a6374bc901a17de8d8bc650802443d311c8b4cb05245d6ae3f03dab53
     name: remediationorchestrator
   - image: quay.io/kubernaut-ai/workflowexecution@sha256:e9d8292719139cf845b26bfa5d8d4911af197aba853b7e69538061175063c3e0
     name: workflowexecution

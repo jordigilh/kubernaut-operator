@@ -1338,3 +1338,82 @@ var _ = Describe("DataStorage Signing Cert", func() {
 		Expect(found).To(BeTrue(), "signing-cert volume should use the service-ca TLS secret")
 	})
 })
+
+var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func() {
+	enabled := true
+
+	It("does not mount fleet-ca or fleet-token volumes when fleet is disabled", func() {
+		kn := testKubernaut()
+		gwDep, err := GatewayDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		roDep, err := RemediationOrchestratorDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		for _, dep := range []*appsv1.Deployment{gwDep, roDep} {
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				Expect(v.Name).NotTo(HavePrefix("fleet-"),
+					"%s should not have fleet volume %q when fleet is disabled", dep.Name, v.Name)
+			}
+		}
+	})
+
+	It("does not mount fleet-ca or fleet-token volumes when enabled but no secret names are set", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+		}
+		gwDep, err := GatewayDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		roDep, err := RemediationOrchestratorDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		for _, dep := range []*appsv1.Deployment{gwDep, roDep} {
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				Expect(v.Name).NotTo(HavePrefix("fleet-"),
+					"%s should not have fleet volume %q when no secret names are set", dep.Name, v.Name)
+			}
+		}
+	})
+
+	It("mounts fleet-ca on both Gateway and RemediationOrchestrator when caSecretName is set", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			CASecretName: "fmc-ca-bundle",
+		}
+		gwDep, err := GatewayDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		roDep, err := RemediationOrchestratorDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		for _, dep := range []*appsv1.Deployment{gwDep, roDep} {
+			expectHasVolume(dep, "fleet-ca")
+			expectHasVolumeMount(dep, "fleet-ca", "/etc/fleet-tls/ca")
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == "fleet-ca" {
+					Expect(v.Secret).NotTo(BeNil())
+					Expect(v.Secret.SecretName).To(Equal("fmc-ca-bundle"))
+				}
+			}
+		}
+	})
+
+	It("mounts fleet-token on both Gateway and RemediationOrchestrator when tokenSecretName is set", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
+			TokenSecretName: "acm-search-token",
+		}
+		gwDep, err := GatewayDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		roDep, err := RemediationOrchestratorDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		for _, dep := range []*appsv1.Deployment{gwDep, roDep} {
+			expectHasVolume(dep, "fleet-token")
+			expectHasVolumeMount(dep, "fleet-token", "/etc/fleet-token")
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == "fleet-token" {
+					Expect(v.Secret).NotTo(BeNil())
+					Expect(v.Secret.SecretName).To(Equal("acm-search-token"))
+				}
+			}
+		}
+	})
+})

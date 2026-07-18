@@ -21,6 +21,16 @@ spec:
     port: 6379
     secretName: valkey-secret
 
+  # Federated scope-checking for Gateway and RemediationOrchestrator against
+  # a shared fleet backend (ADR-068). Disabled by default; both fields below
+  # are inert (no validation, no rendering) until enabled: true is set.
+  fleet:
+    enabled: false
+    backend: fleetmetadatacache
+    endpoint: "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443"
+    # caSecretName: fmc-ca-bundle   # Secret key: ca.crt (optional; verifies the endpoint's TLS cert)
+    # tokenSecretName: acm-search-token   # Secret key: token (typically required for backend: acm)
+
   # Named LLM profiles, referenced by name from kubernautAgent.llmProfileRef,
   # apiFrontend.llmProfileRef, apiFrontend.severityTriage.llmProfileRef, and
   # kubernautAgent.phaseModels. Profiles referenced from phaseModels or

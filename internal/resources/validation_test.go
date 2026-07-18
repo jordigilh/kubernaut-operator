@@ -1085,3 +1085,103 @@ var _ = Describe("API Frontend Severity Triage LLM Validation", func() {
 		Expect(errs).To(BeEmpty())
 	})
 })
+
+var _ = Describe("Fleet Config Validation", func() {
+	enabled := true
+
+	It("accepts a nil fleet spec (feature untouched)", func() {
+		kn := testKubernaut()
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("accepts fleet disabled with backend/endpoint unset (pre-staging allowed)", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("accepts fleet disabled even with an invalid backend value (inert fields are not validated)", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{Backend: "valkey"}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("rejects fleet enabled with an empty backend", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{Enabled: &enabled, Endpoint: "https://fmc.kubernaut.svc:8443"}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.backend"))
+	})
+
+	It("rejects fleet enabled with an unsupported backend value", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "valkey", Endpoint: "https://fmc.kubernaut.svc:8443",
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.backend"))
+		Expect(errs[0].Error()).To(ContainSubstring("valkey"))
+	})
+
+	It("rejects fleet enabled with an empty endpoint", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{Enabled: &enabled, Backend: "fleetmetadatacache"}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.endpoint"))
+	})
+
+	It("accepts fleet enabled with backend=fleetmetadatacache and an endpoint", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("accepts fleet enabled with backend=acm, an endpoint, and a token secret ref", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
+			TokenSecretName: "acm-search-token",
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("accepts fleet enabled with a caSecretName set alongside a valid backend/endpoint", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			CASecretName: "fmc-ca-bundle",
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("FL-010 [IA-5]: rejects fleet enabled with backend=acm and no tokenSecretName", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1),
+			"IA-5: backend=acm has no unauthenticated mode upstream — omitting tokenSecretName crash-loops Gateway/RemediationOrchestrator at startup instead of failing fast at admission")
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.tokenSecretName"))
+	})
+
+	It("FL-011 [IA-5]: accepts fleet enabled with backend=fleetmetadatacache and no tokenSecretName", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty(), "tokenSecretName is optional for fleetmetadatacache, mandatory only for acm")
+	})
+})

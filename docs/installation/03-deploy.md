@@ -150,6 +150,17 @@ spec:
     #   deduplicationCooldown: "5m"     # dedup window for identical signals
     #   k8sRequestTimeout: "15s"        # timeout for K8s API calls
 
+  # --- Fleet federation (optional, ADR-068) ---
+  # Points Gateway and RemediationOrchestrator at a shared fleet backend for
+  # scope-checking across a fleet of clusters. Both fields are inert until
+  # enabled: true is set — safe to pre-stage ahead of enabling.
+  # fleet:
+  #   enabled: false
+  #   backend: fleetmetadatacache          # or: acm (Red Hat ACM Search GraphQL)
+  #   endpoint: "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443"
+  #   caSecretName: fmc-ca-bundle          # optional; Secret key: ca.crt
+  #   tokenSecretName: acm-search-token    # optional; Secret key: token (typically required for backend: acm)
+
   # --- Remediation orchestrator tuning (optional) ---
   remediationOrchestrator:
     # dryRun: false                     # enable dry-run mode (plans but does not execute)

@@ -101,6 +101,11 @@ type KubernautSpec struct {
 	// Console configures the standalone web console (A2A chat UI).
 	// +optional
 	Console ConsoleSpec `json:"console,omitempty"`
+
+	// Fleet configures federated scope-checking for Gateway and
+	// RemediationOrchestrator against a shared fleet backend (ADR-068).
+	// +optional
+	Fleet FleetSpec `json:"fleet,omitempty"`
 }
 
 // ImageSpec configures container image policy for all services.
@@ -195,6 +200,43 @@ type ValkeyTLSSpec struct {
 // ValkeyTLSEnabled returns true when Valkey TLS is configured and enabled.
 func (v *ValkeySpec) ValkeyTLSEnabled() bool {
 	return v.TLS != nil && v.TLS.Enabled
+}
+
+// FleetSpec configures federated scope-checking for Gateway and
+// RemediationOrchestrator against a shared fleet backend (ADR-068). Both
+// components render the same resolved fleet config; there is no per-component
+// override. When Enabled is false or omitted, the other fields are inert
+// (no validation, no rendering) so users can pre-stage configuration.
+type FleetSpec struct {
+	// Whether federated scope-checking is enabled for Gateway and
+	// RemediationOrchestrator.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Fleet backend to query for scope information. Required when Enabled
+	// is true. "fleetmetadatacache" targets the Fleet Metadata Cache (FMC)
+	// service's HTTP API; "acm" targets Red Hat Advanced Cluster Management
+	// Search's GraphQL API.
+	// +kubebuilder:validation:Enum=fleetmetadatacache;acm
+	// +optional
+	Backend string `json:"backend,omitempty"`
+
+	// HTTP(S) endpoint of the fleet backend. Required when Enabled is true.
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// Name of a Secret containing a CA bundle (key: ca.crt) to verify the
+	// backend endpoint's TLS certificate. Optional.
+	// +optional
+	CASecretName string `json:"caSecretName,omitempty"`
+
+	// Name of a Secret containing a bearer token (key: token) for ACM
+	// Search GraphQL authentication. Optional when backend=fleetmetadatacache;
+	// required (enforced at admission, FedRAMP IA-5) when backend=acm, since
+	// ACM Search's GraphQL API has no unauthenticated mode.
+	// +optional
+	TokenSecretName string `json:"tokenSecretName,omitempty"`
 }
 
 // AnsibleSpec configures the optional AWX/AAP integration.

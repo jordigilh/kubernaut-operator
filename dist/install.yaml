@@ -976,6 +976,44 @@ spec:
                         type: object
                     type: object
                 type: object
+              fleet:
+                description: |-
+                  Fleet configures federated scope-checking for Gateway and
+                  RemediationOrchestrator against a shared fleet backend (ADR-068).
+                properties:
+                  backend:
+                    description: |-
+                      Fleet backend to query for scope information. Required when Enabled
+                      is true. "fleetmetadatacache" targets the Fleet Metadata Cache (FMC)
+                      service's HTTP API; "acm" targets Red Hat Advanced Cluster Management
+                      Search's GraphQL API.
+                    enum:
+                    - fleetmetadatacache
+                    - acm
+                    type: string
+                  caSecretName:
+                    description: |-
+                      Name of a Secret containing a CA bundle (key: ca.crt) to verify the
+                      backend endpoint's TLS certificate. Optional.
+                    type: string
+                  enabled:
+                    default: false
+                    description: |-
+                      Whether federated scope-checking is enabled for Gateway and
+                      RemediationOrchestrator.
+                    type: boolean
+                  endpoint:
+                    description: HTTP(S) endpoint of the fleet backend. Required when
+                      Enabled is true.
+                    type: string
+                  tokenSecretName:
+                    description: |-
+                      Name of a Secret containing a bearer token (key: token) for ACM
+                      Search GraphQL authentication. Optional when backend=fleetmetadatacache;
+                      required (enforced at admission, FedRAMP IA-5) when backend=acm, since
+                      ACM Search's GraphQL API has no unauthenticated mode.
+                    type: string
+                type: object
               gateway:
                 description: Gateway service settings.
                 properties:
@@ -2818,7 +2856,7 @@ spec:
         - /manager
         env:
         - name: RELATED_IMAGE_GATEWAY
-          value: quay.io/kubernaut-ai/gateway@sha256:e7ec937048c864e793730c543f7a1b961fa540adb1bd4aaa0332875ce0d48ebd
+          value: quay.io/kubernaut-ai/gateway@sha256:8b09bafdfd119424c93915703f347994e786b59a902028e8c51def51fda87ee3
         - name: RELATED_IMAGE_DATA_STORAGE
           value: quay.io/kubernaut-ai/datastorage@sha256:e07fa27f2c3e3f14ad96f33f89387d0fb735699a6cdd6b794065ca840eecb649
         - name: RELATED_IMAGE_AIANALYSIS
@@ -2826,7 +2864,7 @@ spec:
         - name: RELATED_IMAGE_SIGNALPROCESSING
           value: quay.io/kubernaut-ai/signalprocessing@sha256:4e770e3010529974a95653eabdf3a77c6e9c08ff7559e852ff3838d1279f4035
         - name: RELATED_IMAGE_REMEDIATIONORCHESTRATOR
-          value: quay.io/kubernaut-ai/remediationorchestrator@sha256:179b0d6829bc9d843df22b51386ed0528aff4194cfe13db2f0ff5ed62e2e31c7
+          value: quay.io/kubernaut-ai/remediationorchestrator@sha256:129cc18a6374bc901a17de8d8bc650802443d311c8b4cb05245d6ae3f03dab53
         - name: RELATED_IMAGE_WORKFLOWEXECUTION
           value: quay.io/kubernaut-ai/workflowexecution@sha256:e9d8292719139cf845b26bfa5d8d4911af197aba853b7e69538061175063c3e0
         - name: RELATED_IMAGE_EFFECTIVENESSMONITOR

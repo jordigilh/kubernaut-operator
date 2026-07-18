@@ -55,6 +55,7 @@ func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, err
 		{Name: "tls-certs", MountPath: InterServiceTLSCertDir, ReadOnly: true},
 		{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
 	}
+	volumes, mounts = appendFleetSecretMounts(volumes, mounts, kn)
 
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentGateway, ImageName: "gateway",
@@ -264,6 +265,7 @@ func RemediationOrchestratorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1
 	mounts := []corev1.VolumeMount{{Name: "config", MountPath: "/etc/config", ReadOnly: true}}
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
+	volumes, mounts = appendFleetSecretMounts(volumes, mounts, kn)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentRemediationOrchestrator, ImageName: "remediationorchestrator",
 		Resources: kn.Spec.RemediationOrchestrator.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
@@ -987,6 +989,26 @@ func appendInterServiceTLSCA(volumes []corev1.Volume, mounts []corev1.VolumeMoun
 	mounts = append(mounts, corev1.VolumeMount{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true})
 	env = append(env, corev1.EnvVar{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile})
 	return volumes, mounts, env
+}
+
+// appendFleetSecretMounts adds the fleet-ca / fleet-token volume mounts
+// shared by Gateway and RemediationOrchestrator when spec.fleet.enabled is
+// true and the corresponding BYO secret name is set. Mount paths must stay
+// in sync with fleetCAMountPath / fleetTokenMountPath in configmaps.go.
+func appendFleetSecretMounts(volumes []corev1.Volume, mounts []corev1.VolumeMount, kn *kubernautv1alpha1.Kubernaut) ([]corev1.Volume, []corev1.VolumeMount) {
+	fleet := &kn.Spec.Fleet
+	if fleet.Enabled == nil || !*fleet.Enabled {
+		return volumes, mounts
+	}
+	if fleet.CASecretName != "" {
+		volumes = append(volumes, secretVolume("fleet-ca", fleet.CASecretName))
+		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-ca", MountPath: "/etc/fleet-tls/ca", ReadOnly: true})
+	}
+	if fleet.TokenSecretName != "" {
+		volumes = append(volumes, secretVolume("fleet-token", fleet.TokenSecretName))
+		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-token", MountPath: "/etc/fleet-token", ReadOnly: true})
+	}
+	return volumes, mounts
 }
 
 func overrideTLSCAFile(env []corev1.EnvVar, path string) []corev1.EnvVar {
