@@ -1111,7 +1111,10 @@ var _ = Describe("Fleet Config Validation", func() {
 
 	It("rejects fleet enabled with an empty backend", func() {
 		kn := testKubernaut()
-		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{Enabled: &enabled, Endpoint: "https://fmc.kubernaut.svc:8443"}
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+		}
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.backend"))
@@ -1121,6 +1124,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		kn := testKubernaut()
 		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
 			Enabled: &enabled, Backend: "valkey", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
 		}
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(HaveLen(1))
@@ -1130,7 +1134,10 @@ var _ = Describe("Fleet Config Validation", func() {
 
 	It("rejects fleet enabled with an empty endpoint", func() {
 		kn := testKubernaut()
-		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{Enabled: &enabled, Backend: "fleetmetadatacache"}
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+		}
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.endpoint"))
@@ -1140,6 +1147,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		kn := testKubernaut()
 		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
 		}
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())
@@ -1149,7 +1157,8 @@ var _ = Describe("Fleet Config Validation", func() {
 		kn := testKubernaut()
 		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
 			Enabled: &enabled, Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
-			TokenSecretName: "acm-search-token",
+			TokenSecretName:    "acm-search-token",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
 		}
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())
@@ -1159,7 +1168,8 @@ var _ = Describe("Fleet Config Validation", func() {
 		kn := testKubernaut()
 		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			CASecretName: "fmc-ca-bundle",
+			CASecretName:       "fmc-ca-bundle",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
 		}
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())
@@ -1169,6 +1179,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		kn := testKubernaut()
 		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
 			Enabled: &enabled, Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
 		}
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(HaveLen(1),
@@ -1180,8 +1191,100 @@ var _ = Describe("Fleet Config Validation", func() {
 		kn := testKubernaut()
 		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
 		}
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty(), "tokenSecretName is optional for fleetmetadatacache, mandatory only for acm")
+	})
+
+	// #222: Gateway and RemediationOrchestrator both fail closed at startup
+	// (upstream Fleet.ValidateFullFederation) when fleet is enabled without
+	// mcpGatewayEndpoint/mcpGatewayType. FL-012..FL-015 catch this at
+	// admission instead of letting both components crash-loop.
+	It("FL-012 [SC-8]: rejects fleet enabled with no mcpGatewayEndpoint", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayType: "eaigw",
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1),
+			"Gateway/RemediationOrchestrator crash-loop at startup without mcpGatewayEndpoint (upstream Fleet.ValidateFullFederation) — this must fail fast at admission instead")
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGatewayEndpoint"))
+	})
+
+	It("FL-013 [SC-8]: rejects fleet enabled with mcpGatewayEndpoint set but no mcpGatewayType", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse",
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGatewayType"))
+	})
+
+	It("FL-014 [SC-8]: rejects fleet enabled with an unsupported mcpGatewayType value", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "istio",
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGatewayType"))
+		Expect(errs[0].Error()).To(ContainSubstring("istio"))
+	})
+
+	It("FL-015 [SC-8]: accepts fleet enabled with mcpGatewayType=kuadrant", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "kuadrant",
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
+
+	// FL-016..FL-018: mirrors upstream FleetConfig.Validate()'s OAuth2 pairing
+	// check — oauth2.enabled=true without tokenURL/credentialsSecretRef
+	// silently sends unauthenticated requests to the MCP Gateway instead of
+	// failing closed at startup.
+	It("FL-016 [IA-5]: rejects fleet oauth2 enabled with no tokenURL", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{Enabled: true, CredentialsSecretRef: "fleet-oauth2-creds"},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.tokenURL"))
+	})
+
+	It("FL-017 [IA-5]: rejects fleet oauth2 enabled with no credentialsSecretRef", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.credentialsSecretRef"))
+	})
+
+	It("FL-018 [IA-5]: accepts fleet oauth2 enabled with tokenURL and credentialsSecretRef set", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{
+				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				CredentialsSecretRef: "fleet-oauth2-creds",
+			},
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
 	})
 })

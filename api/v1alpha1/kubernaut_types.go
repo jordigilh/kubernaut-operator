@@ -237,6 +237,29 @@ type FleetSpec struct {
 	// ACM Search's GraphQL API has no unauthenticated mode.
 	// +optional
 	TokenSecretName string `json:"tokenSecretName,omitempty"`
+
+	// MCPGatewayEndpoint is the fleet-wide MCP Gateway (Envoy AI Gateway or
+	// Kuadrant) SSE endpoint used for remote-cluster K8s reads. Required
+	// (enforced at admission) when Enabled is true: Gateway and
+	// RemediationOrchestrator both fail closed at startup without it
+	// (upstream Fleet.ValidateFullFederation) — see #222. This field is not
+	// specific to any one backend; it is shared config used independently
+	// of Backend/Endpoint.
+	// +optional
+	MCPGatewayEndpoint string `json:"mcpGatewayEndpoint,omitempty"`
+
+	// MCPGatewayType selects the MCP Gateway implementation backing
+	// MCPGatewayEndpoint. Required (enforced at admission) when Enabled is
+	// true.
+	// +kubebuilder:validation:Enum=eaigw;kuadrant
+	// +optional
+	MCPGatewayType string `json:"mcpGatewayType,omitempty"`
+
+	// OAuth2 credentials for authenticating to the MCP Gateway. Shared by
+	// every fleet-aware component. Optional — some MCP Gateway deployments
+	// do not require authentication.
+	// +optional
+	OAuth2 OAuth2Spec `json:"oauth2,omitempty"`
 }
 
 // AnsibleSpec configures the optional AWX/AAP integration.

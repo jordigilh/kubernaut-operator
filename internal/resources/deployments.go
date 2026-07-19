@@ -55,7 +55,7 @@ func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, err
 		{Name: "tls-certs", MountPath: InterServiceTLSCertDir, ReadOnly: true},
 		{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
 	}
-	volumes, mounts = appendFleetSecretMounts(volumes, mounts, kn)
+	volumes, mounts = appendFleetSecretMounts(volumes, mounts, kn, "/etc/gateway")
 
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentGateway, ImageName: "gateway",
@@ -265,7 +265,7 @@ func RemediationOrchestratorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1
 	mounts := []corev1.VolumeMount{{Name: "config", MountPath: "/etc/config", ReadOnly: true}}
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
-	volumes, mounts = appendFleetSecretMounts(volumes, mounts, kn)
+	volumes, mounts = appendFleetSecretMounts(volumes, mounts, kn, "/etc/remediationorchestrator")
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentRemediationOrchestrator, ImageName: "remediationorchestrator",
 		Resources: kn.Spec.RemediationOrchestrator.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
@@ -991,11 +991,15 @@ func appendInterServiceTLSCA(volumes []corev1.Volume, mounts []corev1.VolumeMoun
 	return volumes, mounts, env
 }
 
-// appendFleetSecretMounts adds the fleet-ca / fleet-token volume mounts
-// shared by Gateway and RemediationOrchestrator when spec.fleet.enabled is
-// true and the corresponding BYO secret name is set. Mount paths must stay
-// in sync with fleetCAMountPath / fleetTokenMountPath in configmaps.go.
-func appendFleetSecretMounts(volumes []corev1.Volume, mounts []corev1.VolumeMount, kn *kubernautv1alpha1.Kubernaut) ([]corev1.Volume, []corev1.VolumeMount) {
+// appendFleetSecretMounts adds the fleet-ca / fleet-token / fleet-oauth2
+// volume mounts shared by Gateway and RemediationOrchestrator when
+// spec.fleet.enabled is true and the corresponding BYO secret name is set.
+// Mount paths must stay in sync with fleetCAMountPath / fleetTokenMountPath
+// in configmaps.go. componentEtcDir is the component's own config directory
+// (e.g. "/etc/gateway") — upstream GW/RO each read OAuth2 client-id/secret
+// files from "<componentEtcDir>/<credentialsSecretRef>/{client-id,client-secret}",
+// so the mount path must be built per-component, not shared.
+func appendFleetSecretMounts(volumes []corev1.Volume, mounts []corev1.VolumeMount, kn *kubernautv1alpha1.Kubernaut, componentEtcDir string) ([]corev1.Volume, []corev1.VolumeMount) {
 	fleet := &kn.Spec.Fleet
 	if fleet.Enabled == nil || !*fleet.Enabled {
 		return volumes, mounts
@@ -1007,6 +1011,14 @@ func appendFleetSecretMounts(volumes []corev1.Volume, mounts []corev1.VolumeMoun
 	if fleet.TokenSecretName != "" {
 		volumes = append(volumes, secretVolume("fleet-token", fleet.TokenSecretName))
 		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-token", MountPath: "/etc/fleet-token", ReadOnly: true})
+	}
+	if fleet.OAuth2.Enabled && fleet.OAuth2.CredentialsSecretRef != "" {
+		volumes = append(volumes, secretVolume("fleet-oauth2", fleet.OAuth2.CredentialsSecretRef))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name:      "fleet-oauth2",
+			MountPath: componentEtcDir + "/" + fleet.OAuth2.CredentialsSecretRef,
+			ReadOnly:  true,
+		})
 	}
 	return volumes, mounts
 }

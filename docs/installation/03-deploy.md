@@ -152,14 +152,25 @@ spec:
 
   # --- Fleet federation (optional, ADR-068) ---
   # Points Gateway and RemediationOrchestrator at a shared fleet backend for
-  # scope-checking across a fleet of clusters. Both fields are inert until
+  # scope-checking across a fleet of clusters. All fields are inert until
   # enabled: true is set — safe to pre-stage ahead of enabling.
+  #
+  # mcpGatewayEndpoint/mcpGatewayType are REQUIRED alongside backend/endpoint
+  # when enabled: both Gateway and RemediationOrchestrator fail closed at
+  # startup without them (upstream Fleet.ValidateFullFederation).
   # fleet:
   #   enabled: false
   #   backend: fleetmetadatacache          # or: acm (Red Hat ACM Search GraphQL)
   #   endpoint: "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443"
   #   caSecretName: fmc-ca-bundle          # optional; Secret key: ca.crt
   #   tokenSecretName: acm-search-token    # optional; Secret key: token (typically required for backend: acm)
+  #   mcpGatewayEndpoint: "https://mcp-gateway.example.com/sse"
+  #   mcpGatewayType: eaigw                # or: kuadrant
+  #   oauth2:
+  #     enabled: true
+  #     tokenURL: "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token"
+  #     credentialsSecretRef: fleet-oauth2-creds   # optional; Secret keys: client-id, client-secret
+  #     scopes: ["openid", "groups"]
 
   # --- Remediation orchestrator tuning (optional) ---
   remediationOrchestrator:

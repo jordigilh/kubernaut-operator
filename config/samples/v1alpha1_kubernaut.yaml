@@ -22,14 +22,25 @@ spec:
     secretName: valkey-secret
 
   # Federated scope-checking for Gateway and RemediationOrchestrator against
-  # a shared fleet backend (ADR-068). Disabled by default; both fields below
+  # a shared fleet backend (ADR-068). Disabled by default; all fields below
   # are inert (no validation, no rendering) until enabled: true is set.
+  #
+  # mcpGatewayEndpoint/mcpGatewayType are REQUIRED alongside backend/endpoint:
+  # both Gateway and RemediationOrchestrator fail closed at startup without
+  # them (upstream Fleet.ValidateFullFederation).
   fleet:
     enabled: false
     backend: fleetmetadatacache
     endpoint: "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443"
     # caSecretName: fmc-ca-bundle   # Secret key: ca.crt (optional; verifies the endpoint's TLS cert)
     # tokenSecretName: acm-search-token   # Secret key: token (typically required for backend: acm)
+    mcpGatewayEndpoint: "https://mcp-gateway.example.com/sse"
+    mcpGatewayType: eaigw   # or "kuadrant"
+    # oauth2:
+    #   enabled: true
+    #   tokenURL: "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token"
+    #   credentialsSecretRef: fleet-oauth2-creds   # Secret keys: client-id, client-secret
+    #   scopes: ["openid", "groups"]
 
   # Named LLM profiles, referenced by name from kubernautAgent.llmProfileRef,
   # apiFrontend.llmProfileRef, apiFrontend.severityTriage.llmProfileRef, and
