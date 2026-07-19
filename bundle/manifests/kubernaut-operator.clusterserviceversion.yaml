@@ -30,9 +30,9 @@ metadata:
       credentialScrubEnabled\": true,\n            \"injectionPatternsEnabled\": true\n          }\n        },\n        \"serverRateLimit\": {\n          \"burst\": 100,\n          \"requestsPerSecond\"\
       : 50\n        },\n        \"session\": {\n          \"ttl\": \"30m\"\n        },\n        \"shutdown\": {\n          \"drainSeconds\": 15\n        },\n        \"summarizer\": {\n          \"maxToolOutputSize\"\
       : 100000,\n          \"threshold\": 8000\n        }\n      },\n      \"llmProfiles\": {\n        \"lightweight\": {\n          \"credentialsSecretName\": \"llm-credentials\",\n          \"model\"\
-      : \"claude-haiku-4-5\",\n          \"provider\": \"vertex_ai\",\n          \"vertexLocation\": \"global\",\n          \"vertexProject\": \"itpc-gcp-eco-eng-claude\"\n        },\n        \"primary\"\
+      : \"claude-haiku-4-5\",\n          \"provider\": \"vertex_ai\",\n          \"vertexLocation\": \"us-central1\",\n          \"vertexProject\": \"example-gcp-project\"\n        },\n        \"primary\"\
       : {\n          \"credentialsSecretName\": \"llm-credentials\",\n          \"maxRetries\": 3,\n          \"model\": \"claude-sonnet-4-6\",\n          \"provider\": \"vertex_ai\",\n          \"timeoutSeconds\"\
-      : 120,\n          \"vertexLocation\": \"global\",\n          \"vertexProject\": \"itpc-gcp-eco-eng-claude\"\n        }\n      },\n      \"monitoring\": {\n        \"enabled\": true\n      },\n   \
+      : 120,\n          \"vertexLocation\": \"us-central1\",\n          \"vertexProject\": \"example-gcp-project\"\n        }\n      },\n      \"monitoring\": {\n        \"enabled\": true\n      },\n   \
       \   \"networkPolicies\": {\n        \"enabled\": false\n      },\n      \"notification\": {\n        \"logging\": {\n          \"level\": \"info\"\n        },\n        \"slack\": {\n          \"channel\"\
       : \"#kubernaut-alerts\",\n          \"secretName\": \"slack-webhook\"\n        }\n      },\n      \"postgresql\": {\n        \"host\": \"postgresql.kubernaut-system.svc.cluster.local\",\n        \"\
       port\": 5432,\n        \"secretName\": \"postgresql-secret\",\n        \"sslMode\": \"require\"\n      },\n      \"remediationOrchestrator\": {\n        \"asyncPropagation\": {\n          \"gitOpsSyncDelay\"\
