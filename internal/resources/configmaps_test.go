@@ -238,6 +238,25 @@ var _ = Describe("ConfigMaps", func() {
 				Expect(data).To(ContainSubstring(want), "gateway config should contain %q when fleet oauth2 enabled, got:\n%s", want, data)
 			}
 		})
+
+		It("renders gateway.fleetOAuth2CredentialsSecretRef instead of the shared credentialsSecretRef when set", func() {
+			kn := testKubernaut()
+			enabled := true
+			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+				OAuth2: kubernautv1alpha1.OAuth2Spec{
+					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+					CredentialsSecretRef: "fleet-oauth2-creds",
+				},
+			}
+			kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef = testGatewayFleetOAuth2SecretRef
+			cm, err := GatewayConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("credentialsSecretRef: gateway-oauth2-creds"), "gateway config should use its own oauth2 client override, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("credentialsSecretRef: fleet-oauth2-creds"), "gateway config should not fall back to the shared credentialsSecretRef when it has its own override, got:\n%s", data)
+		})
 	})
 
 	Describe("DataStorage ConfigMap", func() {
@@ -557,6 +576,25 @@ var _ = Describe("ConfigMaps", func() {
 			} {
 				Expect(data).To(ContainSubstring(want), "RO config should contain %q when fleet oauth2 enabled, got:\n%s", want, data)
 			}
+		})
+
+		It("renders remediationOrchestrator.fleetOAuth2CredentialsSecretRef instead of the shared credentialsSecretRef when set", func() {
+			kn := testKubernaut()
+			enabled := true
+			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+				OAuth2: kubernautv1alpha1.OAuth2Spec{
+					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+					CredentialsSecretRef: "fleet-oauth2-creds",
+				},
+			}
+			kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef = testROFleetOAuth2SecretRef
+			cm, err := RemediationOrchestratorConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["remediationorchestrator.yaml"]
+			Expect(data).To(ContainSubstring("credentialsSecretRef: ro-oauth2-creds"), "RO config should use its own oauth2 client override, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("credentialsSecretRef: fleet-oauth2-creds"), "RO config should not fall back to the shared credentialsSecretRef when it has its own override, got:\n%s", data)
 		})
 	})
 

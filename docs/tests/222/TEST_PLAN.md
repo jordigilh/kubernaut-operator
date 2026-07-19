@@ -55,6 +55,45 @@ today, so adding it here would be unvalidated, unrendered, speculative CRD
 surface. It belongs in kubernaut-operator#200 (FMC), landing alongside the
 code that actually reads it.
 
+### 1.1 Addendum: per-component OAuth2 client override
+
+The original design in this plan rendered a single, shared
+`spec.fleet.oauth2` block identically into both Gateway's and
+RemediationOrchestrator's ConfigMaps — i.e. both components would
+necessarily authenticate to the MCP Gateway with the *same* OAuth2 client.
+Grounded review of upstream's own Helm chart
+(`charts/kubernaut/templates/_helpers.tpl`, `kubernaut.fleet.oauth2`) shows
+this is not how upstream itself models it: `global.fleet.oauth2.*` is a
+fleet-wide *default*, and each service's own `<service>.fleet.oauth2.*`
+(`tokenURL`/`credentialsSecretRef`/`scopes`/`tlsCAFile`) overrides it
+per-field when set — resolved to one flat value per component before
+being used for both the rendered config and the Secret volume mount. This
+is the documented, working mechanism for a federated IdP (e.g. Keycloak)
+issuing distinct per-service client registrations against a single token
+endpoint — not a rare edge case.
+
+Scope for this addendum (deliberately narrower than full Helm parity):
+only `credentialsSecretRef` — the field that is inherently
+per-registered-client — gains a per-component override, added to
+`GatewaySpec`/`RemediationOrchestratorSpec`. `tokenURL`/`scopes`/`tlsCAFile`
+stay fleet-wide only (same Keycloak realm/CA for every fleet-aware
+component in practice, matching upstream's own comment that "in practice
+they share one ... OAuth2 client" for those fields). Overriding just
+`credentialsSecretRef` is sufficient to let each component authenticate as
+its own distinct OAuth2 client against the same shared token endpoint.
+
+Additional verification for this addendum:
+
+- `spec.gateway.fleetOAuth2CredentialsSecretRef` and
+  `spec.remediationOrchestrator.fleetOAuth2CredentialsSecretRef`
+  (optional, per-component), when set, override
+  `spec.fleet.oauth2.credentialsSecretRef` for that component only —
+  admission validation, ConfigMap rendering, and Secret volume mounts all
+  resolve the *effective* value (override-or-shared) per component.
+- Admission validation's `credentialsSecretRef`-required check
+  (`fleet.oauth2.enabled=true`) is satisfied by either the shared field or
+  the component's own override — not the shared field alone.
+
 ## 2. Test Strategy
 
 Standard TDD (RED → GREEN → REFACTOR), unit-tier only — this is a pure
@@ -79,6 +118,10 @@ already cover.
 | FL-016  | IA-5    | rejects `fleet.oauth2.enabled=true` with no `tokenURL` | Yes |
 | FL-017  | IA-5    | rejects `fleet.oauth2.enabled=true` with no `credentialsSecretRef` | Yes |
 | FL-018  | IA-5    | accepts `fleet.oauth2.enabled=true` with both fields set | Yes |
+| FL-019  | IA-5    | accepts `fleet.oauth2.enabled=true` with no shared `credentialsSecretRef` when both `gateway.fleetOAuth2CredentialsSecretRef` and `remediationOrchestrator.fleetOAuth2CredentialsSecretRef` are set | Yes |
+| FL-020  | IA-5    | accepts a shared `credentialsSecretRef` while `gateway.fleetOAuth2CredentialsSecretRef` overrides Gateway's own (mixed; RO falls back to the shared value) | Yes |
+| FL-021  | IA-5    | rejects when `gateway.fleetOAuth2CredentialsSecretRef` is set but RemediationOrchestrator has neither an override nor a shared fallback | Yes |
+| FL-022  | IA-5    | rejects when `remediationOrchestrator.fleetOAuth2CredentialsSecretRef` is set but Gateway has neither an override nor a shared fallback | Yes |
 
 Eight pre-existing Fleet Config Validation tests (empty backend, unsupported
 backend, empty endpoint, valid fleetmetadatacache/acm configs, FL-010,
@@ -95,6 +138,8 @@ written to test instead of also tripping the new mandatory fields.
 | — | Gateway config renders the `oauth2:` block (`enabled`/`tokenURL`/`credentialsSecretRef`) when enabled | Yes |
 | — | RemediationOrchestrator config renders `mcpGatewayEndpoint`/`mcpGatewayType` when set | Yes |
 | — | RemediationOrchestrator config renders the `oauth2:` block when enabled | Yes |
+| — | Gateway config renders `oauth2.credentialsSecretRef` from `gateway.fleetOAuth2CredentialsSecretRef` when set, overriding the shared value | Yes |
+| — | RemediationOrchestrator config renders `oauth2.credentialsSecretRef` from `remediationOrchestrator.fleetOAuth2CredentialsSecretRef` when set, overriding the shared value | Yes |
 
 ### 3.3 Deployment mounts (`internal/resources/deployments_test.go`)
 
@@ -103,6 +148,8 @@ written to test instead of also tripping the new mandatory fields.
 | — | no `fleet-oauth2` volume on either Deployment when `fleet.oauth2.enabled` is false | Yes |
 | — | Gateway mounts `fleet-oauth2` at `/etc/gateway/<credentialsSecretRef>` when enabled | Yes |
 | — | RemediationOrchestrator mounts `fleet-oauth2` at `/etc/remediationorchestrator/<credentialsSecretRef>` when enabled | Yes |
+| — | Gateway mounts `fleet-oauth2` using its own override secret name when `gateway.fleetOAuth2CredentialsSecretRef` is set, not the shared one | Yes |
+| — | RemediationOrchestrator mounts `fleet-oauth2` using its own override secret name when `remediationOrchestrator.fleetOAuth2CredentialsSecretRef` is set, not the shared one | Yes |
 
 ## 4. Acceptance Criteria
 

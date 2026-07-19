@@ -517,8 +517,25 @@ func validateFleetConfig(kn *kubernautv1alpha1.Kubernaut) []error {
 		if fleet.OAuth2.TokenURL == "" {
 			errs = append(errs, fmt.Errorf("%s.oauth2.tokenURL: must be set when fleet.oauth2.enabled is true", base))
 		}
-		if fleet.OAuth2.CredentialsSecretRef == "" {
+
+		// A federated IdP (e.g. Keycloak) issues distinct per-service OAuth2
+		// client registrations against one shared token endpoint (confirmed
+		// against upstream's own Helm chart: kubernaut.fleet.oauth2 helper
+		// resolves each service's own credentialsSecretRef, falling back to
+		// the fleet-wide default). Gateway and RemediationOrchestrator each
+		// need their own *effective* value (own override, or the shared
+		// fallback) — a shared credentialsSecretRef covers whichever
+		// component doesn't override it, but a component that overrides it
+		// no longer benefits from the shared value covering it too.
+		gwRef := withDefault(kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef, fleet.OAuth2.CredentialsSecretRef)
+		roRef := withDefault(kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef, fleet.OAuth2.CredentialsSecretRef)
+		switch {
+		case gwRef == "" && roRef == "":
 			errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set when fleet.oauth2.enabled is true", base))
+		case gwRef == "":
+			errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set, or spec.gateway.fleetOAuth2CredentialsSecretRef must be set, when fleet.oauth2.enabled is true (remediationOrchestrator already overrides its own)", base))
+		case roRef == "":
+			errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set, or spec.remediationOrchestrator.fleetOAuth2CredentialsSecretRef must be set, when fleet.oauth2.enabled is true (gateway already overrides its own)", base))
 		}
 	}
 

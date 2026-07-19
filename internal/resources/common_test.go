@@ -34,6 +34,12 @@ import (
 const (
 	testSystemNamespace = "kubernaut-system"
 	testIngressDomain   = "apps.test.example.com"
+
+	// Per-component fleet OAuth2 credentialsSecretRef overrides (federated
+	// IdP scenario: Gateway and RemediationOrchestrator authenticate as
+	// distinct OAuth2 clients against the same shared token endpoint).
+	testGatewayFleetOAuth2SecretRef = "gateway-oauth2-creds"
+	testROFleetOAuth2SecretRef      = "ro-oauth2-creds"
 )
 
 func testKubernaut() *kubernautv1alpha1.Kubernaut {

@@ -149,6 +149,7 @@ spec:
     #     - "10.128.0.0/14"
     #   deduplicationCooldown: "5m"     # dedup window for identical signals
     #   k8sRequestTimeout: "15s"        # timeout for K8s API calls
+    # fleetOAuth2CredentialsSecretRef: gateway-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for Gateway only
 
   # --- Fleet federation (optional, ADR-068) ---
   # Points Gateway and RemediationOrchestrator at a shared fleet backend for
@@ -171,11 +172,20 @@ spec:
   #     tokenURL: "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token"
   #     credentialsSecretRef: fleet-oauth2-creds   # optional; Secret keys: client-id, client-secret
   #     scopes: ["openid", "groups"]
+  #
+  # A federated IdP (e.g. Keycloak) can issue distinct per-service OAuth2
+  # client registrations against the same tokenURL above — set
+  # gateway.fleetOAuth2CredentialsSecretRef and/or
+  # remediationOrchestrator.fleetOAuth2CredentialsSecretRef to override
+  # fleet.oauth2.credentialsSecretRef for that component only. Each falls
+  # back to the shared value when unset, so setting the shared field alone
+  # is enough when every component uses the same OAuth2 client.
 
   # --- Remediation orchestrator tuning (optional) ---
   remediationOrchestrator:
     # dryRun: false                     # enable dry-run mode (plans but does not execute)
     # dryRunHoldPeriod: "1h"            # how long to hold dry-run plans before expiry
+    # fleetOAuth2CredentialsSecretRef: ro-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for RemediationOrchestrator only
     # logging:
     #   level: info
     # timeouts:

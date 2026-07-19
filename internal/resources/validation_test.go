@@ -1287,4 +1287,72 @@ var _ = Describe("Fleet Config Validation", func() {
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())
 	})
+
+	// FL-019..FL-022: a federated IdP (e.g. Keycloak) issues distinct
+	// per-service OAuth2 client registrations against one shared token
+	// endpoint (confirmed against upstream's own Helm chart:
+	// kubernaut.fleet.oauth2 helper resolves each service's own
+	// credentialsSecretRef, falling back to the fleet-wide default). Gateway
+	// and RemediationOrchestrator must each be able to authenticate as their
+	// own client without requiring the other to share the same Secret — but
+	// each still needs *some* effective value (its own override, or the
+	// shared fallback), so a component whose override is unset must not go
+	// uncovered when the shared field is also empty.
+	It("FL-019 [IA-5]: accepts fleet oauth2 enabled with no shared credentialsSecretRef when both components set their own override", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
+		}
+		kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef = testGatewayFleetOAuth2SecretRef
+		kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef = testROFleetOAuth2SecretRef
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("FL-020 [IA-5]: accepts fleet oauth2 enabled with a shared credentialsSecretRef while gateway overrides its own (mixed)", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{
+				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				CredentialsSecretRef: "fleet-oauth2-creds",
+			},
+		}
+		kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef = testGatewayFleetOAuth2SecretRef
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty(), "remediationOrchestrator should fall back to the shared credentialsSecretRef when it has no override of its own")
+	})
+
+	It("FL-021 [IA-5]: rejects fleet oauth2 enabled when gateway overrides its own but remediationOrchestrator has neither an override nor a shared fallback", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
+		}
+		kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef = testGatewayFleetOAuth2SecretRef
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1),
+			"remediationOrchestrator has no effective credentialsSecretRef (no override, shared field empty) and would crash-loop at startup")
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.credentialsSecretRef"))
+		Expect(errs[0].Error()).To(ContainSubstring("remediationOrchestrator"))
+	})
+
+	It("FL-022 [IA-5]: rejects fleet oauth2 enabled when remediationOrchestrator overrides its own but gateway has neither an override nor a shared fallback", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
+		}
+		kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef = testROFleetOAuth2SecretRef
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1),
+			"gateway has no effective credentialsSecretRef (no override, shared field empty) and would crash-loop at startup")
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.credentialsSecretRef"))
+		Expect(errs[0].Error()).To(ContainSubstring("gateway"))
+	})
 })

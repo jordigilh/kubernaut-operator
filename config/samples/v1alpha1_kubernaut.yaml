@@ -41,6 +41,12 @@ spec:
     #   tokenURL: "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token"
     #   credentialsSecretRef: fleet-oauth2-creds   # Secret keys: client-id, client-secret
     #   scopes: ["openid", "groups"]
+    #
+    # A federated IdP (e.g. Keycloak) can issue distinct per-service OAuth2
+    # client registrations against the same tokenURL above. Override
+    # credentialsSecretRef per component with gateway.fleetOAuth2CredentialsSecretRef
+    # / remediationOrchestrator.fleetOAuth2CredentialsSecretRef (see below) —
+    # each falls back to the shared fleet.oauth2.credentialsSecretRef when unset.
 
   # Named LLM profiles, referenced by name from kubernautAgent.llmProfileRef,
   # apiFrontend.llmProfileRef, apiFrontend.severityTriage.llmProfileRef, and
@@ -150,6 +156,7 @@ spec:
       cors:
         allowCredentials: false
         maxAge: 300
+    # fleetOAuth2CredentialsSecretRef: gateway-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for Gateway only
 
   dataStorage:
     endpointPropagationDelay: 10s
@@ -203,6 +210,7 @@ spec:
       gitOpsSyncDelay: 10s
       operatorReconcileDelay: 1m
       proactiveAlertDelay: 5m
+    # fleetOAuth2CredentialsSecretRef: ro-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for RemediationOrchestrator only
 
   workflowExecution:
     cooldownPeriod: 1m

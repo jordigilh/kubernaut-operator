@@ -1115,6 +1115,15 @@ spec:
                       Whether the Gateway component is deployed. Defaults to true.
                       Set to false to skip all Gateway resources (Deployment, Service, RBAC, etc.).
                     type: boolean
+                  fleetOAuth2CredentialsSecretRef:
+                    description: |-
+                      FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
+                      for Gateway only. Use when Gateway must authenticate to the MCP Gateway
+                      as a different OAuth2 client than other fleet-aware components (e.g. a
+                      federated Keycloak issuing distinct per-service client registrations
+                      against the same shared spec.fleet.oauth2.tokenURL). Falls back to
+                      spec.fleet.oauth2.credentialsSecretRef when unset.
+                    type: string
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -1871,6 +1880,16 @@ spec:
                         default: 5m
                         type: string
                     type: object
+                  fleetOAuth2CredentialsSecretRef:
+                    description: |-
+                      FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
+                      for RemediationOrchestrator only. Use when RemediationOrchestrator must
+                      authenticate to the MCP Gateway as a different OAuth2 client than other
+                      fleet-aware components (e.g. a federated Keycloak issuing distinct
+                      per-service client registrations against the same shared
+                      spec.fleet.oauth2.tokenURL). Falls back to
+                      spec.fleet.oauth2.credentialsSecretRef when unset.
+                    type: string
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:

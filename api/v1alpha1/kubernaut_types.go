@@ -450,6 +450,16 @@ type RemediationOrchestratorSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
+	// for RemediationOrchestrator only. Use when RemediationOrchestrator must
+	// authenticate to the MCP Gateway as a different OAuth2 client than other
+	// fleet-aware components (e.g. a federated Keycloak issuing distinct
+	// per-service client registrations against the same shared
+	// spec.fleet.oauth2.tokenURL). Falls back to
+	// spec.fleet.oauth2.credentialsSecretRef when unset.
+	// +optional
+	FleetOAuth2CredentialsSecretRef string `json:"fleetOAuth2CredentialsSecretRef,omitempty"`
 }
 
 // ROTimeoutsSpec defines phase-level timeouts for the RemediationOrchestrator.
@@ -1006,6 +1016,15 @@ type GatewaySpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
+	// for Gateway only. Use when Gateway must authenticate to the MCP Gateway
+	// as a different OAuth2 client than other fleet-aware components (e.g. a
+	// federated Keycloak issuing distinct per-service client registrations
+	// against the same shared spec.fleet.oauth2.tokenURL). Falls back to
+	// spec.fleet.oauth2.credentialsSecretRef when unset.
+	// +optional
+	FleetOAuth2CredentialsSecretRef string `json:"fleetOAuth2CredentialsSecretRef,omitempty"`
 }
 
 // ConsoleSpec configures the standalone web console (A2A chat UI).

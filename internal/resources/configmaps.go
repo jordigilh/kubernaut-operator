@@ -141,10 +141,15 @@ const (
 	fleetTokenMountPath = "/etc/fleet-token/token"
 )
 
-// resolveFleetConfig builds the shared fleet: block rendered into both the
-// Gateway and RemediationOrchestrator ConfigMaps. Returns nil when fleet is
-// disabled so the key is omitted entirely.
-func resolveFleetConfig(kn *kubernautv1alpha1.Kubernaut) *fleetConfigYAML {
+// resolveFleetConfig builds the fleet: block rendered into a component's
+// ConfigMap. Returns nil when fleet is disabled so the key is omitted
+// entirely. credentialsSecretRefOverride, when non-empty, overrides
+// spec.fleet.oauth2.credentialsSecretRef for this component only — a
+// federated IdP (e.g. Keycloak) issues distinct per-service OAuth2 client
+// registrations against one shared token endpoint (confirmed against
+// upstream's own Helm chart: kubernaut.fleet.oauth2 helper), so Gateway and
+// RemediationOrchestrator must be able to authenticate as different clients.
+func resolveFleetConfig(kn *kubernautv1alpha1.Kubernaut, credentialsSecretRefOverride string) *fleetConfigYAML {
 	fleet := &kn.Spec.Fleet
 	if fleet.Enabled == nil || !*fleet.Enabled {
 		return nil
@@ -166,7 +171,7 @@ func resolveFleetConfig(kn *kubernautv1alpha1.Kubernaut) *fleetConfigYAML {
 		cfg.OAuth2 = &fleetOAuth2YAML{
 			Enabled:              true,
 			TokenURL:             fleet.OAuth2.TokenURL,
-			CredentialsSecretRef: fleet.OAuth2.CredentialsSecretRef,
+			CredentialsSecretRef: withDefault(credentialsSecretRefOverride, fleet.OAuth2.CredentialsSecretRef),
 			Scopes:               fleet.OAuth2.Scopes,
 		}
 	}
@@ -829,7 +834,7 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) 
 			Timeout: "10s",
 			Buffer:  dataStorageBufferYAML{BufferSize: 10000, BatchSize: 100, FlushInterval: "1s", MaxRetries: 3},
 		},
-		Fleet: resolveFleetConfig(kn),
+		Fleet: resolveFleetConfig(kn, kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1111,7 +1116,7 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...C
 		},
 		DryRun:           ro.DryRun,
 		DryRunHoldPeriod: withDefault(ro.DryRunHoldPeriod, "1h"),
-		Fleet:            resolveFleetConfig(kn),
+		Fleet:            resolveFleetConfig(kn, kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
