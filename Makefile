@@ -128,6 +128,10 @@ test: test-unit test-integration ## Run all tests (unit + integration).
 	@tail -n +2 cover-unit.out >> cover.out 2>/dev/null || true
 	@tail -n +2 cover-integration.out >> cover.out 2>/dev/null || true
 
+.PHONY: test-hack-scripts
+test-hack-scripts: yq ## Run fixture-based tests for standalone hack/ shell tooling.
+	PATH="$(LOCALBIN):$$PATH" bash hack/migrate-llm-profile.test.sh
+
 # E2E tests run against a live OCP cluster. Ensure you are logged in (oc login)
 # and IMG points to a registry reachable from the cluster.
 
@@ -249,6 +253,7 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+YQ ?= $(LOCALBIN)/yq
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.6.0
@@ -258,6 +263,11 @@ ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
 ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
 GOLANGCI_LINT_VERSION ?= v2.11.4
+# YQ_VERSION pins github.com/mikefarah/yq (Go-based YAML processor), used by
+# hack/migrate-llm-profile.sh and its test suite. Provisioned the same way as
+# the other dev tools below purely for CI/dev-machine reproducibility; the
+# script itself is meant to be run by end users with their own system `yq`.
+YQ_VERSION ?= v4.53.3
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -286,6 +296,11 @@ $(ENVTEST): $(LOCALBIN)
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+
+.PHONY: yq
+yq: $(YQ) ## Download yq locally if necessary.
+$(YQ): $(LOCALBIN)
+	$(call go-install-tool,$(YQ),github.com/mikefarah/yq/v4,$(YQ_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary
