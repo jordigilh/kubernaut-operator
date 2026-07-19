@@ -32,8 +32,8 @@ spec:
       provider: vertex_ai
       model: claude-sonnet-4-6
       credentialsSecretName: llm-credentials
-      vertexProject: itpc-gcp-eco-eng-claude
-      vertexLocation: global
+      vertexProject: example-gcp-project
+      vertexLocation: us-central1
       maxRetries: 3
       timeoutSeconds: 120
       phaseModels:
@@ -51,16 +51,16 @@ spec:
       provider: vertex_ai
       model: claude-sonnet-4-6
       credentialsSecretName: llm-credentials
-      vertexProject: itpc-gcp-eco-eng-claude
-      vertexLocation: global
+      vertexProject: example-gcp-project
+      vertexLocation: us-central1
       maxRetries: 3
       timeoutSeconds: 120
     workflow_discovery:
       provider: vertex_ai
       model: claude-haiku-4-5
       credentialsSecretName: llm-credentials
-      vertexProject: itpc-gcp-eco-eng-claude
-      vertexLocation: global
+      vertexProject: example-gcp-project
+      vertexLocation: us-central1
       maxRetries: 3
       timeoutSeconds: 120
   kubernautAgent:

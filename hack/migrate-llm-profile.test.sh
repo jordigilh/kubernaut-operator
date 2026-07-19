@@ -108,8 +108,8 @@ spec:
       provider: vertex_ai
       model: claude-sonnet-4-6
       credentialsSecretName: llm-credentials
-      vertexProject: itpc-gcp-eco-eng-claude
-      vertexLocation: global
+      vertexProject: example-gcp-project
+      vertexLocation: us-central1
       maxRetries: 3
       timeoutSeconds: 120
       phaseModels:
@@ -160,7 +160,7 @@ test_MIG_003() {
   assert_eq "$(yq_at '.spec.llmProfiles.workflow_discovery.model')" "claude-haiku-4-5" "phase profile model"
   assert_eq "$(yq_at '.spec.llmProfiles.workflow_discovery.provider')" "vertex_ai" "phase profile inherits base provider"
   assert_eq "$(yq_at '.spec.llmProfiles.workflow_discovery.credentialsSecretName')" "llm-credentials" "phase profile must share base credentialsSecretName"
-  assert_eq "$(yq_at '.spec.llmProfiles.workflow_discovery.vertexProject')" "itpc-gcp-eco-eng-claude" "phase profile inherits non-overridden fields"
+  assert_eq "$(yq_at '.spec.llmProfiles.workflow_discovery.vertexProject')" "example-gcp-project" "phase profile inherits non-overridden fields"
 }
 
 test_MIG_004() {
