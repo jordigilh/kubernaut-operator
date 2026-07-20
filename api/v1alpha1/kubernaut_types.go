@@ -237,6 +237,29 @@ type FleetSpec struct {
 	// ACM Search's GraphQL API has no unauthenticated mode.
 	// +optional
 	TokenSecretName string `json:"tokenSecretName,omitempty"`
+
+	// MCPGatewayEndpoint is the fleet-wide MCP Gateway (Envoy AI Gateway or
+	// Kuadrant) SSE endpoint used for remote-cluster K8s reads. Required
+	// (enforced at admission) when Enabled is true: Gateway and
+	// RemediationOrchestrator both fail closed at startup without it
+	// (upstream Fleet.ValidateFullFederation) — see #222. This field is not
+	// specific to any one backend; it is shared config used independently
+	// of Backend/Endpoint.
+	// +optional
+	MCPGatewayEndpoint string `json:"mcpGatewayEndpoint,omitempty"`
+
+	// MCPGatewayType selects the MCP Gateway implementation backing
+	// MCPGatewayEndpoint. Required (enforced at admission) when Enabled is
+	// true.
+	// +kubebuilder:validation:Enum=eaigw;kuadrant
+	// +optional
+	MCPGatewayType string `json:"mcpGatewayType,omitempty"`
+
+	// OAuth2 credentials for authenticating to the MCP Gateway. Shared by
+	// every fleet-aware component. Optional — some MCP Gateway deployments
+	// do not require authentication.
+	// +optional
+	OAuth2 OAuth2Spec `json:"oauth2,omitempty"`
 }
 
 // AnsibleSpec configures the optional AWX/AAP integration.
@@ -427,6 +450,16 @@ type RemediationOrchestratorSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
+	// for RemediationOrchestrator only. Use when RemediationOrchestrator must
+	// authenticate to the MCP Gateway as a different OAuth2 client than other
+	// fleet-aware components (e.g. a federated Keycloak issuing distinct
+	// per-service client registrations against the same shared
+	// spec.fleet.oauth2.tokenURL). Falls back to
+	// spec.fleet.oauth2.credentialsSecretRef when unset.
+	// +optional
+	FleetOAuth2CredentialsSecretRef string `json:"fleetOAuth2CredentialsSecretRef,omitempty"`
 }
 
 // ROTimeoutsSpec defines phase-level timeouts for the RemediationOrchestrator.
@@ -983,6 +1016,15 @@ type GatewaySpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
+	// for Gateway only. Use when Gateway must authenticate to the MCP Gateway
+	// as a different OAuth2 client than other fleet-aware components (e.g. a
+	// federated Keycloak issuing distinct per-service client registrations
+	// against the same shared spec.fleet.oauth2.tokenURL). Falls back to
+	// spec.fleet.oauth2.credentialsSecretRef when unset.
+	// +optional
+	FleetOAuth2CredentialsSecretRef string `json:"fleetOAuth2CredentialsSecretRef,omitempty"`
 }
 
 // ConsoleSpec configures the standalone web console (A2A chat UI).

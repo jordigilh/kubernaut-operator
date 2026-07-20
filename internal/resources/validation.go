@@ -454,6 +454,13 @@ func validateInteractive(kn *kubernautv1alpha1.Kubernaut) []error {
 // validFleetBackends are the only backends recognized by upstream
 // pkg/fleet.FleetConfig (jordigilh/kubernaut). "valkey" was explicitly
 // removed upstream and is rejected here for the same reason.
+// validMCPGatewayTypes are the only MCP Gateway implementations recognized
+// by upstream pkg/fleet/registry (jordigilh/kubernaut).
+var validMCPGatewayTypes = map[string]bool{
+	"eaigw":    true,
+	"kuadrant": true,
+}
+
 var validFleetBackends = map[string]bool{
 	"fleetmetadatacache": true,
 	"acm":                true,
@@ -487,6 +494,49 @@ func validateFleetConfig(kn *kubernautv1alpha1.Kubernaut) []error {
 	// failing fast here at admission.
 	if fleet.Backend == "acm" && fleet.TokenSecretName == "" {
 		errs = append(errs, fmt.Errorf("%s.tokenSecretName: must be set when fleet.backend is \"acm\" — the ACM Search GraphQL API requires bearer token authentication", base))
+	}
+
+	// #222: Gateway and RemediationOrchestrator both unconditionally call
+	// upstream Fleet.ValidateFullFederation() at startup, which requires
+	// mcpGatewayEndpoint+mcpGatewayType whenever fleet is enabled. Omitting
+	// either crash-loops both components instead of failing fast here.
+	if fleet.MCPGatewayEndpoint == "" {
+		errs = append(errs, fmt.Errorf("%s.mcpGatewayEndpoint: must be set when fleet.enabled is true — Gateway and RemediationOrchestrator require it for remote-cluster reads (upstream Fleet.ValidateFullFederation)", base))
+	}
+
+	if fleet.MCPGatewayType == "" {
+		errs = append(errs, fmt.Errorf("%s.mcpGatewayType: must be set when fleet.enabled is true — must be one of: eaigw, kuadrant", base))
+	} else if !validMCPGatewayTypes[fleet.MCPGatewayType] {
+		errs = append(errs, fmt.Errorf("%s.mcpGatewayType: invalid value %q — must be one of: eaigw, kuadrant", base, fleet.MCPGatewayType))
+	}
+
+	// #222: mirrors upstream FleetConfig.Validate()'s OAuth2 pairing check —
+	// oauth2.enabled=true without both fields silently sends unauthenticated
+	// requests to the MCP Gateway instead of failing closed at startup.
+	if fleet.OAuth2.Enabled {
+		if fleet.OAuth2.TokenURL == "" {
+			errs = append(errs, fmt.Errorf("%s.oauth2.tokenURL: must be set when fleet.oauth2.enabled is true", base))
+		}
+
+		// A federated IdP (e.g. Keycloak) issues distinct per-service OAuth2
+		// client registrations against one shared token endpoint (confirmed
+		// against upstream's own Helm chart: kubernaut.fleet.oauth2 helper
+		// resolves each service's own credentialsSecretRef, falling back to
+		// the fleet-wide default). Gateway and RemediationOrchestrator each
+		// need their own *effective* value (own override, or the shared
+		// fallback) — a shared credentialsSecretRef covers whichever
+		// component doesn't override it, but a component that overrides it
+		// no longer benefits from the shared value covering it too.
+		gwRef := withDefault(kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef, fleet.OAuth2.CredentialsSecretRef)
+		roRef := withDefault(kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef, fleet.OAuth2.CredentialsSecretRef)
+		switch {
+		case gwRef == "" && roRef == "":
+			errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set when fleet.oauth2.enabled is true", base))
+		case gwRef == "":
+			errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set, or spec.gateway.fleetOAuth2CredentialsSecretRef must be set, when fleet.oauth2.enabled is true (remediationOrchestrator already overrides its own)", base))
+		case roRef == "":
+			errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set, or spec.remediationOrchestrator.fleetOAuth2CredentialsSecretRef must be set, when fleet.oauth2.enabled is true (gateway already overrides its own)", base))
+		}
 	}
 
 	return errs

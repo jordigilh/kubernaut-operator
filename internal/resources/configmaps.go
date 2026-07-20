@@ -109,13 +109,28 @@ type gatewayConfigYAML struct {
 
 // fleetConfigYAML mirrors upstream pkg/fleet.FleetConfig's rendered subset
 // (ADR-068): scope-checking against FMC's HTTP API or ACM Search's GraphQL
-// API. See FleetSpec for the CRD-level field documentation.
+// API, plus the shared MCP Gateway endpoint/auth used for remote-cluster
+// reads. See FleetSpec for the CRD-level field documentation.
 type fleetConfigYAML struct {
-	Enabled   bool   `json:"enabled" yaml:"enabled"`
-	Backend   string `json:"backend" yaml:"backend"`
-	Endpoint  string `json:"endpoint" yaml:"endpoint"`
-	TLSCAFile string `json:"tlsCAFile,omitempty" yaml:"tlsCAFile,omitempty"`
-	TokenPath string `json:"tokenPath,omitempty" yaml:"tokenPath,omitempty"`
+	Enabled            bool             `json:"enabled" yaml:"enabled"`
+	Backend            string           `json:"backend" yaml:"backend"`
+	Endpoint           string           `json:"endpoint" yaml:"endpoint"`
+	TLSCAFile          string           `json:"tlsCAFile,omitempty" yaml:"tlsCAFile,omitempty"`
+	TokenPath          string           `json:"tokenPath,omitempty" yaml:"tokenPath,omitempty"`
+	MCPGatewayEndpoint string           `json:"mcpGatewayEndpoint,omitempty" yaml:"mcpGatewayEndpoint,omitempty"`
+	MCPGatewayType     string           `json:"mcpGatewayType,omitempty" yaml:"mcpGatewayType,omitempty"`
+	OAuth2             *fleetOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+}
+
+// fleetOAuth2YAML mirrors upstream pkg/fleet.FleetOAuth2Config. CredentialsSecretRef
+// is rendered as the bare Secret name (not a mount path) — GW/RO each build
+// their own "/etc/<component>/<credentialsSecretRef>/{client-id,client-secret}"
+// path at runtime, so the mount path (deployments.go) must use the same name.
+type fleetOAuth2YAML struct {
+	Enabled              bool     `json:"enabled" yaml:"enabled"`
+	TokenURL             string   `json:"tokenURL,omitempty" yaml:"tokenURL,omitempty"`
+	CredentialsSecretRef string   `json:"credentialsSecretRef,omitempty" yaml:"credentialsSecretRef,omitempty"`
+	Scopes               []string `json:"scopes,omitempty" yaml:"scopes,omitempty"`
 }
 
 // fleetCAMountPath and fleetTokenMountPath must stay in sync with the
@@ -126,24 +141,39 @@ const (
 	fleetTokenMountPath = "/etc/fleet-token/token"
 )
 
-// resolveFleetConfig builds the shared fleet: block rendered into both the
-// Gateway and RemediationOrchestrator ConfigMaps. Returns nil when fleet is
-// disabled so the key is omitted entirely.
-func resolveFleetConfig(kn *kubernautv1alpha1.Kubernaut) *fleetConfigYAML {
+// resolveFleetConfig builds the fleet: block rendered into a component's
+// ConfigMap. Returns nil when fleet is disabled so the key is omitted
+// entirely. credentialsSecretRefOverride, when non-empty, overrides
+// spec.fleet.oauth2.credentialsSecretRef for this component only — a
+// federated IdP (e.g. Keycloak) issues distinct per-service OAuth2 client
+// registrations against one shared token endpoint (confirmed against
+// upstream's own Helm chart: kubernaut.fleet.oauth2 helper), so Gateway and
+// RemediationOrchestrator must be able to authenticate as different clients.
+func resolveFleetConfig(kn *kubernautv1alpha1.Kubernaut, credentialsSecretRefOverride string) *fleetConfigYAML {
 	fleet := &kn.Spec.Fleet
 	if fleet.Enabled == nil || !*fleet.Enabled {
 		return nil
 	}
 	cfg := &fleetConfigYAML{
-		Enabled:  true,
-		Backend:  fleet.Backend,
-		Endpoint: fleet.Endpoint,
+		Enabled:            true,
+		Backend:            fleet.Backend,
+		Endpoint:           fleet.Endpoint,
+		MCPGatewayEndpoint: fleet.MCPGatewayEndpoint,
+		MCPGatewayType:     fleet.MCPGatewayType,
 	}
 	if fleet.CASecretName != "" {
 		cfg.TLSCAFile = fleetCAMountPath
 	}
 	if fleet.TokenSecretName != "" {
 		cfg.TokenPath = fleetTokenMountPath
+	}
+	if fleet.OAuth2.Enabled {
+		cfg.OAuth2 = &fleetOAuth2YAML{
+			Enabled:              true,
+			TokenURL:             fleet.OAuth2.TokenURL,
+			CredentialsSecretRef: withDefault(credentialsSecretRefOverride, fleet.OAuth2.CredentialsSecretRef),
+			Scopes:               fleet.OAuth2.Scopes,
+		}
 	}
 	return cfg
 }
@@ -804,7 +834,7 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) 
 			Timeout: "10s",
 			Buffer:  dataStorageBufferYAML{BufferSize: 10000, BatchSize: 100, FlushInterval: "1s", MaxRetries: 3},
 		},
-		Fleet: resolveFleetConfig(kn),
+		Fleet: resolveFleetConfig(kn, kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1086,7 +1116,7 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...C
 		},
 		DryRun:           ro.DryRun,
 		DryRunHoldPeriod: withDefault(ro.DryRunHoldPeriod, "1h"),
-		Fleet:            resolveFleetConfig(kn),
+		Fleet:            resolveFleetConfig(kn, kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {

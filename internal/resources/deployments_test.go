@@ -34,6 +34,7 @@ const (
 	testVolumeLLMTLSClient = "llm-tls-client"
 	testMTLSCertFile       = "/etc/tls/tls.crt"
 	testMTLSKeyFile        = "/etc/tls/tls.key"
+	testVolumeFleetOAuth2  = "fleet-oauth2"
 )
 
 func getAllDeployments(kn *kubernautv1alpha1.Kubernaut) []*appsv1.Deployment {
@@ -1413,6 +1414,120 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 					Expect(v.Secret).NotTo(BeNil())
 					Expect(v.Secret.SecretName).To(Equal("acm-search-token"))
 				}
+			}
+		}
+	})
+
+	// #222: upstream GW/RO read the OAuth2 client-id/client-secret files from
+	// "/etc/<component>/<credentialsSecretRef>/{client-id,client-secret}" —
+	// each component needs its own mount under its own /etc/<component> tree.
+	It("does not mount fleet-oauth2 volume when fleet oauth2 is disabled", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+		}
+		gwDep, err := GatewayDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		roDep, err := RemediationOrchestratorDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		for _, dep := range []*appsv1.Deployment{gwDep, roDep} {
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				Expect(v.Name).NotTo(Equal(testVolumeFleetOAuth2),
+					"%s should not have a fleet-oauth2 volume when fleet.oauth2.enabled is false", dep.Name)
+			}
+		}
+	})
+
+	It("mounts fleet-oauth2 on Gateway at /etc/gateway/<credentialsSecretRef> when oauth2 is enabled", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{
+				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				CredentialsSecretRef: "fleet-oauth2-creds",
+			},
+		}
+		gwDep, err := GatewayDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(gwDep, testVolumeFleetOAuth2)
+		expectHasVolumeMount(gwDep, testVolumeFleetOAuth2, "/etc/gateway/fleet-oauth2-creds")
+		for _, v := range gwDep.Spec.Template.Spec.Volumes {
+			if v.Name == testVolumeFleetOAuth2 {
+				Expect(v.Secret).NotTo(BeNil())
+				Expect(v.Secret.SecretName).To(Equal("fleet-oauth2-creds"))
+			}
+		}
+	})
+
+	It("mounts fleet-oauth2 on RemediationOrchestrator at /etc/remediationorchestrator/<credentialsSecretRef> when oauth2 is enabled", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{
+				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				CredentialsSecretRef: "fleet-oauth2-creds",
+			},
+		}
+		roDep, err := RemediationOrchestratorDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(roDep, testVolumeFleetOAuth2)
+		expectHasVolumeMount(roDep, testVolumeFleetOAuth2, "/etc/remediationorchestrator/fleet-oauth2-creds")
+		for _, v := range roDep.Spec.Template.Spec.Volumes {
+			if v.Name == testVolumeFleetOAuth2 {
+				Expect(v.Secret).NotTo(BeNil())
+				Expect(v.Secret.SecretName).To(Equal("fleet-oauth2-creds"))
+			}
+		}
+	})
+
+	// A federated IdP issuing distinct per-service OAuth2 client
+	// registrations (confirmed against upstream's own Helm chart) means
+	// Gateway and RemediationOrchestrator must be able to mount *different*
+	// Secrets, not the one shared fleet.oauth2.credentialsSecretRef.
+	It("mounts fleet-oauth2 on Gateway using gateway.fleetOAuth2CredentialsSecretRef when set, not the shared credentialsSecretRef", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{
+				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				CredentialsSecretRef: "fleet-oauth2-creds",
+			},
+		}
+		kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef = testGatewayFleetOAuth2SecretRef
+		gwDep, err := GatewayDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(gwDep, testVolumeFleetOAuth2)
+		expectHasVolumeMount(gwDep, testVolumeFleetOAuth2, "/etc/gateway/gateway-oauth2-creds")
+		for _, v := range gwDep.Spec.Template.Spec.Volumes {
+			if v.Name == testVolumeFleetOAuth2 {
+				Expect(v.Secret).NotTo(BeNil())
+				Expect(v.Secret.SecretName).To(Equal(testGatewayFleetOAuth2SecretRef))
+			}
+		}
+	})
+
+	It("mounts fleet-oauth2 on RemediationOrchestrator using remediationOrchestrator.fleetOAuth2CredentialsSecretRef when set, not the shared credentialsSecretRef", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{
+				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				CredentialsSecretRef: "fleet-oauth2-creds",
+			},
+		}
+		kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef = testROFleetOAuth2SecretRef
+		roDep, err := RemediationOrchestratorDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(roDep, testVolumeFleetOAuth2)
+		expectHasVolumeMount(roDep, testVolumeFleetOAuth2, "/etc/remediationorchestrator/ro-oauth2-creds")
+		for _, v := range roDep.Spec.Template.Spec.Volumes {
+			if v.Name == testVolumeFleetOAuth2 {
+				Expect(v.Secret).NotTo(BeNil())
+				Expect(v.Secret.SecretName).To(Equal(testROFleetOAuth2SecretRef))
 			}
 		}
 	})
