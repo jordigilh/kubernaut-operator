@@ -1355,4 +1355,137 @@ var _ = Describe("Fleet Config Validation", func() {
 		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.credentialsSecretRef"))
 		Expect(errs[0].Error()).To(ContainSubstring("gateway"))
 	})
+
+	// FM-008/FM-009: #200 endpoint auto-derivation. spec.fleet.endpoint is
+	// required whenever fleet.enabled is true UNLESS the operator itself is
+	// managing FMC (backend=fleetmetadatacache,
+	// fleetMetadataCache.enabled=true) -- resolveFleetEndpoint derives the
+	// in-cluster FMC service URL in that case, so the user doesn't have to.
+	It("FM-008: accepts fleet enabled with backend=fleetmetadatacache and no endpoint when the operator manages FMC", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{
+				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				CredentialsSecretRef: "fleet-oauth2-creds",
+			},
+		}
+		kn.Spec.FleetMetadataCache = kubernautv1alpha1.FleetMetadataCacheSpec{Enabled: &enabled}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("FM-009: rejects fleet enabled with backend=fleetmetadatacache and no endpoint when FMC is BYO (not operator-managed)", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		found := false
+		for _, e := range errs {
+			if strings.Contains(e.Error(), "spec.fleet.endpoint") {
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue(), "a BYO FMC (fleetMetadataCache.enabled=false) still requires an explicit endpoint")
+	})
+})
+
+// FleetMetadataCache Validation: FM-001..FM-007 (#200). FMC's own MCP
+// Gateway/OAuth2 requirements (mirroring upstream's Helm chart "fail"
+// guards and cmd/fleetmetadatacache/config.Validate()) are checked
+// independently of spec.fleet.enabled -- that flag only gates
+// Gateway/RemediationOrchestrator's own scope-check consumption, but FMC
+// needs the MCP Gateway address and credentials to poll managed clusters
+// regardless of whether any consumer queries it for scope-checking.
+var _ = Describe("FleetMetadataCache Validation", func() {
+	enabled := true
+
+	It("FM-001: fleetMetadataCache disabled (default) leaves FMC's own rules unvalidated", func() {
+		kn := testKubernaut()
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("FM-002 [SC-8]: rejects fleetMetadataCache enabled with no mcpGatewayEndpoint, independent of fleet.enabled", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{
+				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				CredentialsSecretRef: "fmc-oauth2-creds",
+			},
+		}
+		kn.Spec.FleetMetadataCache = kubernautv1alpha1.FleetMetadataCacheSpec{Enabled: &enabled}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1),
+			"fleet.enabled is unset/false, proving FMC's mcpGatewayEndpoint check does not depend on it")
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGatewayEndpoint"))
+	})
+
+	It("FM-003 [SC-8]: rejects fleetMetadataCache enabled with mcpGatewayEndpoint set but no mcpGatewayType", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{
+				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				CredentialsSecretRef: "fmc-oauth2-creds",
+			},
+		}
+		kn.Spec.FleetMetadataCache = kubernautv1alpha1.FleetMetadataCacheSpec{Enabled: &enabled}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGatewayType"))
+	})
+
+	It("FM-004 [IA-5]: rejects fleetMetadataCache enabled with fleet.oauth2.enabled false", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+		}
+		kn.Spec.FleetMetadataCache = kubernautv1alpha1.FleetMetadataCacheSpec{Enabled: &enabled}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1),
+			"FMC has no unauthenticated mode for the MCP Gateway (cmd/fleetmetadatacache/config.Validate())")
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.enabled"))
+	})
+
+	It("FM-005 [IA-5]: rejects fleetMetadataCache enabled with oauth2.enabled true but no tokenURL", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{Enabled: true, CredentialsSecretRef: "fmc-oauth2-creds"},
+		}
+		kn.Spec.FleetMetadataCache = kubernautv1alpha1.FleetMetadataCacheSpec{Enabled: &enabled}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.tokenURL"))
+	})
+
+	It("FM-006 [IA-5]: rejects fleetMetadataCache enabled with no credentialsSecretRef (neither shared nor own override)", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
+		}
+		kn.Spec.FleetMetadataCache = kubernautv1alpha1.FleetMetadataCacheSpec{Enabled: &enabled}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleetMetadataCache.fleetOAuth2CredentialsSecretRef"))
+	})
+
+	It("FM-007 [IA-5]: accepts fleetMetadataCache's own credentialsSecretRef override with no shared fleet.oauth2.credentialsSecretRef", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
+		}
+		kn.Spec.FleetMetadataCache = kubernautv1alpha1.FleetMetadataCacheSpec{
+			Enabled: &enabled, FleetOAuth2CredentialsSecretRef: "fmc-own-oauth2-creds",
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
 })
