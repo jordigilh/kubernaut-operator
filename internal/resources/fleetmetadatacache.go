@@ -45,13 +45,6 @@ const (
 	// fleetMetadataCacheOAuth2YAML.CredentialsDir below and the volume mount
 	// path added in FleetMetadataCacheDeployment.
 	fleetMetadataCacheOAuth2Dir = "/etc/fleetmetadatacache/fleet-oauth2"
-
-	// fleetMetadataCacheMCPGatewayCommonPort is the conventional MCP
-	// Gateway listener port used in upstream's own example
-	// (fleetmetadatacache.mcpGatewayEndpoint: "http://envoy-ai-gateway...:8080/mcp")
-	// and NetworkPolicy egress. spec.fleet.mcpGatewayEndpoint is a free-form
-	// URL, so this is a best-effort allow, not a parsed value.
-	fleetMetadataCacheMCPGatewayCommonPort int32 = 8080
 )
 
 // --- ConfigMap ---
@@ -108,7 +101,7 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Confi
 		MCPGateway: fleetMetadataCacheMCPGatewayYAML{
 			Endpoint:    fleet.MCPGatewayEndpoint,
 			GatewayType: fleet.MCPGatewayType,
-			Namespace:   fmc.MCPGatewayNamespace,
+			Namespace:   effectiveFleetMetadataCacheMCPGatewayNamespace(kn),
 		},
 		Valkey: fleetMetadataCacheValkeyYAML{
 			Addr: ValkeyAddr(&kn.Spec.Valkey),
@@ -195,25 +188,20 @@ func FleetMetadataCacheService(kn *kubernautv1alpha1.Kubernaut) *corev1.Service 
 // (Backend/MCPRoute for Envoy AI Gateway, MCPServerRegistration/Gateway/
 // HTTPRoute for Kuadrant) that represent managed clusters, matching
 // upstream's own Helm chart rules exactly (gatewayType-conditional).
-// Cluster-scoped regardless of spec.fleetMetadataCache.mcpGatewayNamespace:
-// upstream's chart grants this ClusterRole unconditionally today even when
-// a watch namespace is configured -- a namespace-scoped Role is not yet an
-// upstream option (tracked in kubernaut#1686). Mirroring that here (rather
-// than inventing an operator-only namespace-scoped Role ahead of upstream
-// capability) avoids the same unconsumed-CRD-surface mistake as the
-// mcpGatewayNamespace field removed from spec.fleet in #223.
+//
+// #224: cluster-scoped only when FMC's effective mcpGatewayNamespace
+// (its own override, falling back to the shared spec.fleet.mcpGatewayNamespace)
+// is empty. When a namespace resolves, these rules move to a
+// namespace-scoped Role instead (see MCPGatewayNamespaceRBAC) -- unlike
+// upstream's own Helm chart, which still grants this ClusterRole
+// unconditionally (tracked in kubernaut#1686), the operator can do better
+// because FMC's own binary already supports Namespace-scoped watches
+// (cmd/fleetmetadatacache/main.go passes cfg.MCPGateway.Namespace straight
+// into registry.RegistryConfig{Namespace: ...}).
 func fleetMetadataCacheClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	var rules []rbacv1.PolicyRule
-	if kn.Spec.Fleet.MCPGatewayType == "kuadrant" {
-		rules = []rbacv1.PolicyRule{
-			{APIGroups: []string{"mcp.kuadrant.io"}, Resources: []string{"mcpserverregistrations"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"gateway.networking.k8s.io"}, Resources: []string{"gateways", "httproutes"}, Verbs: []string{"get", "list", "watch"}},
-		}
-	} else {
-		rules = []rbacv1.PolicyRule{
-			{APIGroups: []string{"gateway.envoyproxy.io"}, Resources: []string{"backends"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"aigateway.envoyproxy.io"}, Resources: []string{"mcproutes"}, Verbs: []string{"get", "list", "watch"}},
-		}
+	if effectiveFleetMetadataCacheMCPGatewayNamespace(kn) == "" {
+		rules = mcpGatewayCRDPolicyRules(kn.Spec.Fleet.MCPGatewayType)
 	}
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{
@@ -222,6 +210,22 @@ func fleetMetadataCacheClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[s
 		},
 		Rules: rules,
 	}
+}
+
+// effectiveFleetMetadataCacheMCPGatewayNamespace resolves FMC's own
+// mcpGatewayNamespace override, falling back to the shared
+// spec.fleet.mcpGatewayNamespace -- mirroring SignalProcessing's precedent
+// (resolveSignalProcessingFleetConfig).
+func effectiveFleetMetadataCacheMCPGatewayNamespace(kn *kubernautv1alpha1.Kubernaut) string {
+	return withDefault(kn.Spec.FleetMetadataCache.MCPGatewayNamespace, kn.Spec.Fleet.MCPGatewayNamespace)
+}
+
+// EffectiveFleetMetadataCacheMCPGatewayNamespace is the exported form of
+// effectiveFleetMetadataCacheMCPGatewayNamespace, used by the controller
+// package to detect the ClusterRole-to-namespace-Role transition and clean
+// up FMC's now-stale cluster-scoped ClusterRole/ClusterRoleBinding (#224).
+func EffectiveFleetMetadataCacheMCPGatewayNamespace(kn *kubernautv1alpha1.Kubernaut) string {
+	return effectiveFleetMetadataCacheMCPGatewayNamespace(kn)
 }
 
 // FleetMetadataCacheClusterRoleBinding binds FMC's SA to its ClusterRole.
@@ -260,8 +264,6 @@ func fleetMetadataCacheNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkin
 		valkeyPort = DefaultValkeyPort
 	}
 	pValkey := intstr.FromInt32(valkeyPort)
-	p443 := intstr.FromInt32(443)
-	pMCPGateway := intstr.FromInt32(fleetMetadataCacheMCPGatewayCommonPort)
 
 	egress := baseEgress(2)
 	egress = append(egress,
@@ -269,13 +271,7 @@ func fleetMetadataCacheNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkin
 			To:    sameNamespacePeers(),
 			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protoTCP, Port: &pValkey}},
 		},
-		networkingv1.NetworkPolicyEgressRule{
-			To: []networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{}}},
-			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protoTCP, Port: &p443},
-				{Protocol: &protoTCP, Port: &pMCPGateway},
-			},
-		},
+		fleetDestinationsEgressRule(),
 	)
 
 	return &networkingv1.NetworkPolicy{

@@ -1397,3 +1397,220 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include services/kubernaut-agent create for KA SAR gate")
 	})
 })
+
+// #224: mcpGatewayCRDPolicyRules extracts the gatewayType-conditional MCP
+// Gateway CRD watch rules FMC already had (#200) into a shared helper
+// reused by SP/AF/EM's ClusterRoles and by MCPGatewayNamespaceRBAC's
+// namespace-scoped Role variant.
+var _ = Describe("mcpGatewayCRDPolicyRules", func() {
+	It("returns Envoy AI Gateway CRD rules for eaigw", func() {
+		var apiGroups []string
+		for _, r := range mcpGatewayCRDPolicyRules("eaigw") {
+			apiGroups = append(apiGroups, r.APIGroups...)
+		}
+		Expect(apiGroups).To(ContainElement("gateway.envoyproxy.io"))
+		Expect(apiGroups).To(ContainElement("aigateway.envoyproxy.io"))
+		Expect(apiGroups).NotTo(ContainElement("mcp.kuadrant.io"))
+	})
+
+	It("returns Kuadrant CRD rules for kuadrant", func() {
+		var apiGroups []string
+		for _, r := range mcpGatewayCRDPolicyRules(mcpGatewayTypeKuadrant) {
+			apiGroups = append(apiGroups, r.APIGroups...)
+		}
+		Expect(apiGroups).To(ContainElement("mcp.kuadrant.io"))
+		Expect(apiGroups).To(ContainElement("gateway.networking.k8s.io"))
+		Expect(apiGroups).NotTo(ContainElement("gateway.envoyproxy.io"))
+	})
+
+	It("matches FleetMetadataCache's pre-existing rule sets exactly (extracted helper, no behavior change)", func() {
+		kn := testKubernautWithFMC()
+		Expect(fleetMetadataCacheClusterRole(kn, CommonLabels(kn)).Rules).To(Equal(mcpGatewayCRDPolicyRules("eaigw")))
+
+		kn.Spec.Fleet.MCPGatewayType = mcpGatewayTypeKuadrant
+		Expect(fleetMetadataCacheClusterRole(kn, CommonLabels(kn)).Rules).To(Equal(mcpGatewayCRDPolicyRules(mcpGatewayTypeKuadrant)))
+	})
+})
+
+var _ = Describe("SignalProcessing fleet RBAC", func() {
+	It("omits MCP Gateway CRD rules when fleet is disabled", func() {
+		kn := testKubernaut()
+		cr := signalprocessingClusterRole(kn, CommonLabels(kn))
+		var apiGroups []string
+		for _, r := range cr.Rules {
+			apiGroups = append(apiGroups, r.APIGroups...)
+		}
+		Expect(apiGroups).NotTo(ContainElement("gateway.envoyproxy.io"))
+	})
+
+	It("gains MCP Gateway CRD rules when fleet enabled with mcpGatewayEndpoint set and no namespace override", func() {
+		kn := testKubernautWithFleetMCP()
+		cr := signalprocessingClusterRole(kn, CommonLabels(kn))
+		var apiGroups []string
+		for _, r := range cr.Rules {
+			apiGroups = append(apiGroups, r.APIGroups...)
+		}
+		Expect(apiGroups).To(ContainElement("gateway.envoyproxy.io"), "signalprocessing ClusterRole should gain MCP Gateway CRD rules when fleet enabled")
+		Expect(apiGroups).To(ContainElement("kubernaut.ai"), "signalprocessing ClusterRole should keep its pre-existing rules")
+	})
+
+	It("omits MCP Gateway CRD rules from the ClusterRole when its effective mcpGatewayNamespace resolves non-empty (moved to a namespace-scoped Role instead)", func() {
+		kn := testKubernautWithFleetMCP()
+		kn.Spec.SignalProcessing.MCPGatewayNamespace = testSPMCPGatewayNamespace
+		cr := signalprocessingClusterRole(kn, CommonLabels(kn))
+		var apiGroups []string
+		for _, r := range cr.Rules {
+			apiGroups = append(apiGroups, r.APIGroups...)
+		}
+		Expect(apiGroups).NotTo(ContainElement("gateway.envoyproxy.io"), "signalprocessing ClusterRole should not grant cluster-wide MCP Gateway CRD access once a namespace resolves")
+	})
+
+	It("falls back to the shared spec.fleet.mcpGatewayNamespace when signalProcessing has no override", func() {
+		kn := testKubernautWithFleetMCP()
+		kn.Spec.Fleet.MCPGatewayNamespace = testSharedMCPGatewayNamespace
+		cr := signalprocessingClusterRole(kn, CommonLabels(kn))
+		var apiGroups []string
+		for _, r := range cr.Rules {
+			apiGroups = append(apiGroups, r.APIGroups...)
+		}
+		Expect(apiGroups).NotTo(ContainElement("gateway.envoyproxy.io"), "signalprocessing ClusterRole should defer to the namespace-scoped Role once the shared namespace resolves")
+	})
+})
+
+// #224 Finding 4: AF/EM's ClusterRegistry construction hardcodes
+// registry.RegistryConfig{} (cluster-wide) upstream -- their ClusterRole
+// must stay cluster-scoped regardless of any mcpGatewayNamespace hint
+// (which they don't even have a field for). Tracked upstream separately.
+var _ = Describe("APIFrontend/EffectivenessMonitor fleet RBAC", func() {
+	It("apifrontendClusterRole gains MCP Gateway CRD rules when fleet enabled with mcpGatewayEndpoint set", func() {
+		kn := testKubernautWithFleetMCP()
+		kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
+			Auth: kubernautv1alpha1.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
+		}
+		cr := apifrontendClusterRole(kn, CommonLabels(kn))
+		var apiGroups []string
+		for _, r := range cr.Rules {
+			apiGroups = append(apiGroups, r.APIGroups...)
+		}
+		Expect(apiGroups).To(ContainElement("gateway.envoyproxy.io"))
+	})
+
+	It("apifrontendClusterRole omits MCP Gateway CRD rules when fleet is disabled", func() {
+		kn := testKubernautWithAF()
+		cr := apifrontendClusterRole(kn, CommonLabels(kn))
+		var apiGroups []string
+		for _, r := range cr.Rules {
+			apiGroups = append(apiGroups, r.APIGroups...)
+		}
+		Expect(apiGroups).NotTo(ContainElement("gateway.envoyproxy.io"))
+	})
+
+	It("effectivenessMonitorControllerClusterRole gains MCP Gateway CRD rules when fleet enabled with mcpGatewayEndpoint set", func() {
+		kn := testKubernautWithFleetMCP()
+		cr := effectivenessMonitorControllerClusterRole(kn, CommonLabels(kn))
+		var apiGroups []string
+		for _, r := range cr.Rules {
+			apiGroups = append(apiGroups, r.APIGroups...)
+		}
+		Expect(apiGroups).To(ContainElement("gateway.envoyproxy.io"))
+	})
+
+	It("effectivenessMonitorControllerClusterRole omits MCP Gateway CRD rules when fleet is disabled", func() {
+		kn := testKubernaut()
+		cr := effectivenessMonitorControllerClusterRole(kn, CommonLabels(kn))
+		var apiGroups []string
+		for _, r := range cr.Rules {
+			apiGroups = append(apiGroups, r.APIGroups...)
+		}
+		Expect(apiGroups).NotTo(ContainElement("gateway.envoyproxy.io"))
+	})
+})
+
+var _ = Describe("MCPGatewayNamespaceRBAC", func() {
+	It("returns nothing for either FMC or SignalProcessing when their effective namespace is empty", func() {
+		kn := testKubernautWithFleetMCP()
+		roles, rbs := MCPGatewayNamespaceRBAC(kn)
+		Expect(roles).To(BeEmpty())
+		Expect(rbs).To(BeEmpty())
+	})
+
+	It("returns a Role/RoleBinding pair for SignalProcessing when its effective namespace resolves", func() {
+		kn := testKubernautWithFleetMCP()
+		kn.Spec.SignalProcessing.MCPGatewayNamespace = testSPMCPGatewayNamespace
+		roles, rbs := MCPGatewayNamespaceRBAC(kn)
+		Expect(roles).To(HaveLen(1))
+		Expect(roles[0].Namespace).To(Equal(testSPMCPGatewayNamespace))
+		var apiGroups []string
+		for _, r := range roles[0].Rules {
+			apiGroups = append(apiGroups, r.APIGroups...)
+		}
+		Expect(apiGroups).To(ContainElement("gateway.envoyproxy.io"))
+		Expect(rbs).To(HaveLen(1))
+		Expect(rbs[0].Namespace).To(Equal(testSPMCPGatewayNamespace))
+		Expect(rbs[0].Subjects[0].Name).To(Equal(ServiceAccountName(ComponentSignalProcessing)))
+	})
+
+	It("returns a Role/RoleBinding pair for FleetMetadataCache when its effective namespace resolves", func() {
+		kn := testKubernautWithFMC()
+		kn.Spec.FleetMetadataCache.MCPGatewayNamespace = testFMCMCPGatewayNamespace
+		roles, rbs := MCPGatewayNamespaceRBAC(kn)
+		Expect(roles).To(HaveLen(1))
+		Expect(roles[0].Namespace).To(Equal(testFMCMCPGatewayNamespace))
+		Expect(rbs).To(HaveLen(1))
+		Expect(rbs[0].Subjects[0].Name).To(Equal(ServiceAccountName(ComponentFleetMetadataCache)))
+	})
+
+	It("FleetMetadataCache falls back to the shared spec.fleet.mcpGatewayNamespace when it has no override", func() {
+		kn := testKubernautWithFMC()
+		kn.Spec.Fleet.MCPGatewayNamespace = testSharedMCPGatewayNamespace
+		roles, _ := MCPGatewayNamespaceRBAC(kn)
+		// SP also falls back to the same shared namespace here since
+		// testKubernautWithFMC() already satisfies mcpGatewayRemoteReadsEnabled
+		// (fleet.enabled + mcpGatewayEndpoint) -- SP's cluster classification
+		// is orthogonal to FMC's backend choice (BR-INTEGRATION-054).
+		var fmcRole *rbacv1.Role
+		for _, r := range roles {
+			if r.Namespace == testSharedMCPGatewayNamespace && strings.Contains(r.Name, "fleetmetadatacache") {
+				fmcRole = r
+			}
+		}
+		Expect(fmcRole).NotTo(BeNil())
+	})
+
+	It("returns both when both FMC and SignalProcessing resolve to (possibly different) namespaces", func() {
+		kn := testKubernautWithFMC()
+		kn.Spec.FleetMetadataCache.MCPGatewayNamespace = testFMCMCPGatewayNamespace
+		kn.Spec.Fleet.MCPGatewayEndpoint = "https://mcp-gateway.example.com/sse"
+		kn.Spec.Fleet.MCPGatewayType = "eaigw"
+		kn.Spec.SignalProcessing.MCPGatewayNamespace = testSPMCPGatewayNamespace
+		roles, rbs := MCPGatewayNamespaceRBAC(kn)
+		Expect(roles).To(HaveLen(2))
+		Expect(rbs).To(HaveLen(2))
+	})
+})
+
+var _ = Describe("FleetMetadataCache RBAC namespace retrofit", func() {
+	It("fleetMetadataCacheClusterRole/Binding are excluded from ClusterRoles()/ClusterRoleBindings() once FMC's effective namespace resolves", func() {
+		kn := testKubernautWithFMC()
+		kn.Spec.FleetMetadataCache.MCPGatewayNamespace = testFMCMCPGatewayNamespace
+
+		for _, cr := range ClusterRoles(kn) {
+			Expect(cr.Name).NotTo(Equal(clusterRoleName(kn, "fleetmetadatacache")),
+				"FMC's ClusterRole should be superseded by MCPGatewayNamespaceRBAC's namespace-scoped Role once a namespace resolves")
+		}
+		for _, crb := range ClusterRoleBindings(kn) {
+			Expect(crb.Name).NotTo(Equal(clusterRoleName(kn, "fleetmetadatacache-binding")))
+		}
+	})
+
+	It("still includes fleetMetadataCacheClusterRole/Binding when FMC has no effective namespace (regression)", func() {
+		kn := testKubernautWithFMC()
+		found := false
+		for _, cr := range ClusterRoles(kn) {
+			if cr.Name == clusterRoleName(kn, "fleetmetadatacache") {
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue())
+	})
+})

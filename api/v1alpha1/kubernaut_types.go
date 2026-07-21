@@ -342,6 +342,13 @@ func (s *KubernautSpec) FleetMetadataCacheEnabled() bool {
 	return s.FleetMetadataCache.Enabled != nil && *s.FleetMetadataCache.Enabled
 }
 
+// FleetEnabled returns true when fleet federation (multi-cluster reads via
+// MCP Gateway, and optionally the Backend/Endpoint scope-check adapter) is
+// enabled. Defaults to false (opt-in).
+func (s *KubernautSpec) FleetEnabled() bool {
+	return s.Fleet.Enabled != nil && *s.Fleet.Enabled
+}
+
 // AnsibleSpec configures the optional AWX/AAP integration.
 // +kubebuilder:validation:XValidation:rule="!self.enabled || has(self.apiURL)",message="ansible.apiURL is required when ansible.enabled is true"
 type AnsibleSpec struct {

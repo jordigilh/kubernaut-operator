@@ -588,7 +588,48 @@ func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv
 			return err
 		}
 	}
+	if err := r.deployMCPGatewayNamespaceRBAC(ctx, kn); err != nil {
+		return err
+	}
 	return r.deployAdditionalAgentRBAC(ctx, kn)
+}
+
+// deployMCPGatewayNamespaceRBAC provisions the namespace-scoped Roles/
+// RoleBindings for FMC/SP's MCP Gateway CRD reads (#224 Finding 5) and
+// cleans up FMC's cluster-scoped ClusterRole/ClusterRoleBinding once its
+// effective mcpGatewayNamespace resolves. SP's ClusterRole is always
+// present (it carries unconditional core rules too), so ensureUnowned
+// naturally drops its MCP Gateway rules in place when SP's namespace
+// resolves -- no explicit delete is needed there, unlike FMC where the
+// entire ClusterRole is MCP-Gateway-only and ClusterRoles()/
+// ClusterRoleBindings() stop returning it entirely, which would otherwise
+// leave a stale, over-privileged ClusterRole behind.
+func (r *KubernautReconciler) deployMCPGatewayNamespaceRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
+	roles, rbs := resources.MCPGatewayNamespaceRBAC(kn)
+	for _, role := range roles {
+		if err := r.ensureUnowned(ctx, role); err != nil {
+			return fmt.Errorf("ensuring mcp gateway namespace role %s/%s: %w", role.Namespace, role.Name, err)
+		}
+	}
+	for _, rb := range rbs {
+		if err := r.ensureUnowned(ctx, rb); err != nil {
+			return fmt.Errorf("ensuring mcp gateway namespace rolebinding %s/%s: %w", rb.Namespace, rb.Name, err)
+		}
+	}
+
+	if kn.Spec.FleetMetadataCacheEnabled() && resources.EffectiveFleetMetadataCacheMCPGatewayNamespace(kn) != "" {
+		cr := &rbacv1.ClusterRole{}
+		cr.Name = kn.Namespace + "-fleetmetadatacache"
+		if err := r.deleteIfExists(ctx, cr); err != nil {
+			return fmt.Errorf("deleting stale fleetmetadatacache ClusterRole after namespace retrofit: %w", err)
+		}
+		crb := &rbacv1.ClusterRoleBinding{}
+		crb.Name = kn.Namespace + "-fleetmetadatacache-binding"
+		if err := r.deleteIfExists(ctx, crb); err != nil {
+			return fmt.Errorf("deleting stale fleetmetadatacache ClusterRoleBinding after namespace retrofit: %w", err)
+		}
+	}
+	return nil
 }
 
 // deployAdditionalAgentRBAC ensures user-specified additional ClusterRoleBindings
@@ -1944,6 +1985,34 @@ func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kuber
 			if err := r.deleteIfExists(ctx, &extCRBList.Items[i]); err != nil {
 				errs = append(errs, fmt.Errorf("deleting additional agent CRB %s: %w", extCRBList.Items[i].Name, err))
 			}
+		}
+	}
+
+	// #224: FMC's ClusterRole/CRB are unconditionally attempted here too
+	// (like the rest of this function) because resources.ClusterRoles()/
+	// ClusterRoleBindings() above stop returning them once FMC's effective
+	// mcpGatewayNamespace resolves -- deleteIfExists is a no-op if they
+	// were never created in cluster-scoped mode.
+	fmcCR := &rbacv1.ClusterRole{}
+	fmcCR.Name = kn.Namespace + "-fleetmetadatacache"
+	if err := r.deleteIfExists(ctx, fmcCR); err != nil {
+		errs = append(errs, fmt.Errorf("deleting fleetmetadatacache ClusterRole: %w", err))
+	}
+	fmcCRB := &rbacv1.ClusterRoleBinding{}
+	fmcCRB.Name = kn.Namespace + "-fleetmetadatacache-binding"
+	if err := r.deleteIfExists(ctx, fmcCRB); err != nil {
+		errs = append(errs, fmt.Errorf("deleting fleetmetadatacache ClusterRoleBinding: %w", err))
+	}
+
+	mgRoles, mgRBs := resources.MCPGatewayNamespaceRBAC(kn)
+	for _, role := range mgRoles {
+		if err := r.deleteIfExists(ctx, role); err != nil {
+			errs = append(errs, fmt.Errorf("deleting mcp gateway namespace role %s/%s: %w", role.Namespace, role.Name, err))
+		}
+	}
+	for _, rb := range mgRBs {
+		if err := r.deleteIfExists(ctx, rb); err != nil {
+			errs = append(errs, fmt.Errorf("deleting mcp gateway namespace rolebinding %s/%s: %w", rb.Namespace, rb.Name, err))
 		}
 	}
 

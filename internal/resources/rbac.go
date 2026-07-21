@@ -78,7 +78,12 @@ func ClusterRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRole {
 		roles = append(roles, apifrontendClusterRole(kn, labels))
 	}
 
-	if kn.Spec.FleetMetadataCacheEnabled() {
+	// #224 Finding 5: once FMC's effective mcpGatewayNamespace resolves,
+	// its MCP Gateway CRD rules move to a namespace-scoped Role instead
+	// (see MCPGatewayNamespaceRBAC) -- the cluster-scoped ClusterRole
+	// would otherwise be a permission-less no-op, so it's omitted
+	// entirely rather than left behind as dead weight.
+	if kn.Spec.FleetMetadataCacheEnabled() && effectiveFleetMetadataCacheMCPGatewayNamespace(kn) == "" {
 		roles = append(roles, fleetMetadataCacheClusterRole(kn, labels))
 	}
 
@@ -147,7 +152,7 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 		)
 	}
 
-	if kn.Spec.FleetMetadataCacheEnabled() {
+	if kn.Spec.FleetMetadataCacheEnabled() && effectiveFleetMetadataCacheMCPGatewayNamespace(kn) == "" {
 		crbs = append(crbs, fleetMetadataCacheClusterRoleBinding(kn, labels))
 	}
 
@@ -361,6 +366,59 @@ func WorkflowNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut) ([]*rbacv1.Role, []*
 			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: "workflow-runner-ns-writer"},
 			Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: "kubernaut-workflow-runner", Namespace: wfNs}},
 		},
+	}
+
+	return roles, rbs
+}
+
+// MCPGatewayNamespaceRBAC returns the namespace-scoped Roles/RoleBindings
+// granting MCP Gateway CRD read access to FMC and SignalProcessing when
+// their effective mcpGatewayNamespace (own override, falling back to the
+// shared spec.fleet.mcpGatewayNamespace) resolves non-empty (#224 Finding
+// 5). When empty, the corresponding cluster-scoped ClusterRole rule in
+// fleetMetadataCacheClusterRole/signalprocessingClusterRole is used
+// instead -- callers must not double-grant.
+//
+// AF/EM are deliberately excluded: their upstream ClusterRegistry
+// construction always uses registry.RegistryConfig{} (cluster-wide watch,
+// no Namespace field to populate), confirmed against
+// cmd/apifrontend/backend_deps.go and cmd/effectivenessmonitor/main.go
+// (Finding 4) -- granting them a namespace-scoped Role today would make
+// the apiserver reject their LIST/WATCH with 403 Forbidden.
+func MCPGatewayNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut) ([]*rbacv1.Role, []*rbacv1.RoleBinding) {
+	labels := CommonLabels(kn)
+	ns := kn.Namespace
+	rules := mcpGatewayCRDPolicyRules(kn.Spec.Fleet.MCPGatewayType)
+
+	// One code path shared by FMC and SP -- both grant the same rules,
+	// differing only in whether they're active, their effective namespace,
+	// their role-name base, and the ServiceAccount bound to the RoleBinding.
+	grants := []struct {
+		active    bool
+		namespace string
+		roleBase  string
+		component string
+	}{
+		{kn.Spec.FleetMetadataCacheEnabled(), effectiveFleetMetadataCacheMCPGatewayNamespace(kn), "fleetmetadatacache-mcpgateway", ComponentFleetMetadataCache},
+		{mcpGatewayRemoteReadsEnabled(kn), effectiveSignalProcessingMCPGatewayNamespace(kn), "signalprocessing-mcpgateway", ComponentSignalProcessing},
+	}
+
+	var roles []*rbacv1.Role
+	var rbs []*rbacv1.RoleBinding
+	for _, g := range grants {
+		if !g.active || g.namespace == "" {
+			continue
+		}
+		roleName := clusterRoleName(kn, g.roleBase)
+		roles = append(roles, &rbacv1.Role{
+			ObjectMeta: metav1.ObjectMeta{Name: roleName, Namespace: g.namespace, Labels: labels},
+			Rules:      rules,
+		})
+		rbs = append(rbs, &rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: roleName + "-binding", Namespace: g.namespace, Labels: labels},
+			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: roleName},
+			Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: ServiceAccountName(g.component), Namespace: ns}},
+		})
 	}
 
 	return roles, rbs
@@ -794,20 +852,69 @@ func kubernautAgentInvestigatorClusterRole(kn *kubernautv1alpha1.Kubernaut, labe
 	}
 }
 
+// mcpGatewayCRDPolicyRules returns the gatewayType-conditional PolicyRules
+// granting read access to the MCP Gateway CRDs (Backend/MCPRoute for Envoy
+// AI Gateway, MCPServerRegistration/Gateway/HTTPRoute for Kuadrant) that
+// represent managed clusters (#224). Extracted from FMC's original,
+// unconditional rule set (#200) so SP/AF/EM's ClusterRoles -- and
+// MCPGatewayNamespaceRBAC's namespace-scoped Role variant for FMC/SP --
+// can share the exact same rules rather than re-deriving them.
+// mcpGatewayTypeKuadrant is spec.fleet.mcpGatewayType's Kuadrant value
+// (validated against validMCPGatewayTypes in validation.go).
+const mcpGatewayTypeKuadrant = "kuadrant"
+
+func mcpGatewayCRDPolicyRules(gatewayType string) []rbacv1.PolicyRule {
+	if gatewayType == mcpGatewayTypeKuadrant {
+		return []rbacv1.PolicyRule{
+			{APIGroups: []string{"mcp.kuadrant.io"}, Resources: []string{"mcpserverregistrations"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"gateway.networking.k8s.io"}, Resources: []string{"gateways", "httproutes"}, Verbs: []string{"get", "list", "watch"}},
+		}
+	}
+	return []rbacv1.PolicyRule{
+		{APIGroups: []string{"gateway.envoyproxy.io"}, Resources: []string{"backends"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"aigateway.envoyproxy.io"}, Resources: []string{"mcproutes"}, Verbs: []string{"get", "list", "watch"}},
+	}
+}
+
+// mcpGatewayRemoteReadsEnabled reports whether a component should construct
+// a ClusterRegistry for MCP Gateway remote-cluster reads (BR-FLEET-003,
+// BR-INTEGRATION-054): fleet enabled and an MCP Gateway endpoint is
+// configured. Shared gating condition confirmed against
+// cmd/signalprocessing/main.go, cmd/apifrontend/backend_deps.go, and
+// cmd/effectivenessmonitor/main.go (preflight Finding 4).
+func mcpGatewayRemoteReadsEnabled(kn *kubernautv1alpha1.Kubernaut) bool {
+	fleet := &kn.Spec.Fleet
+	return fleet.Enabled != nil && *fleet.Enabled && fleet.MCPGatewayEndpoint != ""
+}
+
+// effectiveSignalProcessingMCPGatewayNamespace resolves SP's own
+// mcpGatewayNamespace override, falling back to the shared
+// spec.fleet.mcpGatewayNamespace.
+func effectiveSignalProcessingMCPGatewayNamespace(kn *kubernautv1alpha1.Kubernaut) string {
+	return withDefault(kn.Spec.SignalProcessing.MCPGatewayNamespace, kn.Spec.Fleet.MCPGatewayNamespace)
+}
+
 func signalprocessingClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
+	rules := []rbacv1.PolicyRule{
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings", "remediationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings/status", "signalprocessings/finalizers"}, Verbs: []string{"get", "update", "patch"}},
+		{APIGroups: []string{""}, Resources: []string{"pods", "services", "namespaces", "nodes"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
+		{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"networkpolicies"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+	}
+	// #224: grant MCP Gateway CRD read access here only when SP's effective
+	// namespace is empty; a resolved namespace moves these rules to a
+	// namespace-scoped Role instead (see MCPGatewayNamespaceRBAC).
+	if mcpGatewayRemoteReadsEnabled(kn) && effectiveSignalProcessingMCPGatewayNamespace(kn) == "" {
+		rules = append(rules, mcpGatewayCRDPolicyRules(kn.Spec.Fleet.MCPGatewayType)...)
+	}
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "signalprocessing-controller"), Labels: labels},
-		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings", "remediationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings/status", "signalprocessings/finalizers"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"pods", "services", "namespaces", "nodes"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
-			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"networkpolicies"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
-		},
+		Rules:      rules,
 	}
 }
 
@@ -896,6 +1003,14 @@ func effectivenessMonitorControllerClusterRole(kn *kubernautv1alpha1.Kubernaut, 
 		{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
 	}...)
 	rules = append(rules, ocr...)
+	// #224 Finding 4: always cluster-scoped, never namespace-scoped -- EM's
+	// upstream ClusterRegistry construction hardcodes registry.RegistryConfig{}
+	// (cluster-wide watch) because its config schema has no Namespace field,
+	// unlike SP/FMC. Tracked upstream (kubernaut#1686 follow-up) before this
+	// can safely move to a namespace-scoped Role.
+	if mcpGatewayRemoteReadsEnabled(kn) {
+		rules = append(rules, mcpGatewayCRDPolicyRules(kn.Spec.Fleet.MCPGatewayType)...)
+	}
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "effectivenessmonitor-controller"), Labels: labels},
 		Rules:      rules,
@@ -965,35 +1080,44 @@ func gatewaySignalSourceClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[
 }
 
 func apifrontendClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
+	rules := []rbacv1.PolicyRule{
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch", "create", "update", "delete"}},
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update"}},
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/status"}, Verbs: []string{"get", "update", "patch"}},
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests/status"}, Verbs: []string{"get", "update", "patch"}},
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"effectivenessassessments"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"authorization.k8s.io"}, Resources: []string{"subjectaccessreviews"}, Verbs: []string{"create"}},
+		{APIGroups: []string{"authentication.k8s.io"}, Resources: []string{"tokenreviews"}, Verbs: []string{"create"}},
+		// KA DD-AUTH-014 SAR gate: AF SA must be able to "create" on services/kubernaut-agent
+		{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"kubernaut-agent"}, Verbs: []string{"create"}},
+		// kubectl_list_events
+		{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"get", "list", "create", "patch"}},
+		// kubectl_get / kubectl_list triage tools (AF SA reads cluster state)
+		{APIGroups: []string{""}, Resources: []string{"pods", "replicationcontrollers", "services", "configmaps", "secrets", "endpoints", "namespaces", "nodes", "persistentvolumeclaims"}, Verbs: []string{"get", "list"}},
+		{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list"}},
+		{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list"}},
+		{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses", "networkpolicies"}, Verbs: []string{"get", "list"}},
+		{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: []string{"get", "list"}},
+		{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: []string{"get", "list"}},
+		{APIGroups: []string{"cert-manager.io"}, Resources: []string{"certificates"}, Verbs: []string{"get", "list"}},
+		// KubeVirt / CDI: VM triage and investigation
+		{APIGroups: []string{"kubevirt.io"}, Resources: []string{"virtualmachines", "virtualmachineinstances", "virtualmachineinstancemigrations"}, Verbs: []string{"get", "list"}},
+		{APIGroups: []string{"cdi.kubevirt.io"}, Resources: []string{"datavolumes"}, Verbs: []string{"get", "list"}},
+	}
+	// #224 Finding 4: always cluster-scoped, never namespace-scoped -- AF's
+	// upstream ClusterRegistry construction hardcodes registry.RegistryConfig{}
+	// (cluster-wide watch) because its config schema has no Namespace field,
+	// unlike SP/FMC. Tracked upstream (kubernaut#1686 follow-up) before this
+	// can safely move to a namespace-scoped Role.
+	if mcpGatewayRemoteReadsEnabled(kn) {
+		rules = append(rules, mcpGatewayCRDPolicyRules(kn.Spec.Fleet.MCPGatewayType)...)
+	}
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "apifrontend-role"), Labels: labels},
-		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch", "create", "update", "delete"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/status"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests/status"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"effectivenessassessments"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"authorization.k8s.io"}, Resources: []string{"subjectaccessreviews"}, Verbs: []string{"create"}},
-			{APIGroups: []string{"authentication.k8s.io"}, Resources: []string{"tokenreviews"}, Verbs: []string{"create"}},
-			// KA DD-AUTH-014 SAR gate: AF SA must be able to "create" on services/kubernaut-agent
-			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"kubernaut-agent"}, Verbs: []string{"create"}},
-			// kubectl_list_events
-			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"get", "list", "create", "patch"}},
-			// kubectl_get / kubectl_list triage tools (AF SA reads cluster state)
-			{APIGroups: []string{""}, Resources: []string{"pods", "replicationcontrollers", "services", "configmaps", "secrets", "endpoints", "namespaces", "nodes", "persistentvolumeclaims"}, Verbs: []string{"get", "list"}},
-			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list"}},
-			{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list"}},
-			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"ingresses", "networkpolicies"}, Verbs: []string{"get", "list"}},
-			{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: []string{"get", "list"}},
-			{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: []string{"get", "list"}},
-			{APIGroups: []string{"cert-manager.io"}, Resources: []string{"certificates"}, Verbs: []string{"get", "list"}},
-			// KubeVirt / CDI: VM triage and investigation
-			{APIGroups: []string{"kubevirt.io"}, Resources: []string{"virtualmachines", "virtualmachineinstances", "virtualmachineinstancemigrations"}, Verbs: []string{"get", "list"}},
-			{APIGroups: []string{"cdi.kubevirt.io"}, Resources: []string{"datavolumes"}, Verbs: []string{"get", "list"}},
-		},
+		Rules:      rules,
 	}
 }

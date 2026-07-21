@@ -1240,7 +1240,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		kn := testKubernaut()
 		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "kuadrant",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: mcpGatewayTypeKuadrant,
 		}
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())
@@ -1298,7 +1298,7 @@ var _ = Describe("Fleet Config Validation", func() {
 	// each still needs *some* effective value (its own override, or the
 	// shared fallback), so a component whose override is unset must not go
 	// uncovered when the shared field is also empty.
-	It("FL-019 [IA-5]: accepts fleet oauth2 enabled with no shared credentialsSecretRef when both components set their own override", func() {
+	It("FL-019 [IA-5]: accepts fleet oauth2 enabled with no shared credentialsSecretRef when all five fleet-aware components set their own override", func() {
 		kn := testKubernaut()
 		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
@@ -1307,6 +1307,9 @@ var _ = Describe("Fleet Config Validation", func() {
 		}
 		kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef = testGatewayFleetOAuth2SecretRef
 		kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef = testROFleetOAuth2SecretRef
+		kn.Spec.SignalProcessing.FleetOAuth2CredentialsSecretRef = testSPFleetOAuth2SecretRef
+		kn.Spec.APIFrontend.FleetOAuth2CredentialsSecretRef = testAFFleetOAuth2SecretRef
+		kn.Spec.EffectivenessMonitor.FleetOAuth2CredentialsSecretRef = testEMFleetOAuth2SecretRef
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())
 	})
@@ -1323,7 +1326,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		}
 		kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef = testGatewayFleetOAuth2SecretRef
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
-		Expect(errs).To(BeEmpty(), "remediationOrchestrator should fall back to the shared credentialsSecretRef when it has no override of its own")
+		Expect(errs).To(BeEmpty(), "remediationOrchestrator/signalProcessing/apiFrontend/effectivenessMonitor should all fall back to the shared credentialsSecretRef when they have no override of their own")
 	})
 
 	It("FL-021 [IA-5]: rejects fleet oauth2 enabled when gateway overrides its own but remediationOrchestrator has neither an override nor a shared fallback", func() {
@@ -1334,6 +1337,9 @@ var _ = Describe("Fleet Config Validation", func() {
 			OAuth2: kubernautv1alpha1.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
 		}
 		kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef = testGatewayFleetOAuth2SecretRef
+		kn.Spec.SignalProcessing.FleetOAuth2CredentialsSecretRef = testSPFleetOAuth2SecretRef
+		kn.Spec.APIFrontend.FleetOAuth2CredentialsSecretRef = testAFFleetOAuth2SecretRef
+		kn.Spec.EffectivenessMonitor.FleetOAuth2CredentialsSecretRef = testEMFleetOAuth2SecretRef
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(HaveLen(1),
 			"remediationOrchestrator has no effective credentialsSecretRef (no override, shared field empty) and would crash-loop at startup")
@@ -1349,11 +1355,53 @@ var _ = Describe("Fleet Config Validation", func() {
 			OAuth2: kubernautv1alpha1.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
 		}
 		kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef = testROFleetOAuth2SecretRef
+		kn.Spec.SignalProcessing.FleetOAuth2CredentialsSecretRef = testSPFleetOAuth2SecretRef
+		kn.Spec.APIFrontend.FleetOAuth2CredentialsSecretRef = testAFFleetOAuth2SecretRef
+		kn.Spec.EffectivenessMonitor.FleetOAuth2CredentialsSecretRef = testEMFleetOAuth2SecretRef
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(HaveLen(1),
 			"gateway has no effective credentialsSecretRef (no override, shared field empty) and would crash-loop at startup")
 		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.credentialsSecretRef"))
 		Expect(errs[0].Error()).To(ContainSubstring("gateway"))
+	})
+
+	// #224: SP/AF/EM gained their own FleetOAuth2CredentialsSecretRef
+	// override fields alongside GW/RO -- FL-023/FL-024 cover the same
+	// missing-effective-value failure mode for the three new components.
+	It("FL-023 [IA-5]: rejects fleet oauth2 enabled when signalProcessing has neither an override nor a shared fallback", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
+		}
+		kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef = testGatewayFleetOAuth2SecretRef
+		kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef = testROFleetOAuth2SecretRef
+		kn.Spec.APIFrontend.FleetOAuth2CredentialsSecretRef = testAFFleetOAuth2SecretRef
+		kn.Spec.EffectivenessMonitor.FleetOAuth2CredentialsSecretRef = testEMFleetOAuth2SecretRef
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1),
+			"signalProcessing has no effective credentialsSecretRef (no override, shared field empty) and would crash-loop at startup")
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.credentialsSecretRef"))
+		Expect(errs[0].Error()).To(ContainSubstring("signalProcessing"))
+	})
+
+	It("FL-024 [IA-5]: rejects fleet oauth2 enabled when apiFrontend and effectivenessMonitor have neither an override nor a shared fallback", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
+		}
+		kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef = testGatewayFleetOAuth2SecretRef
+		kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef = testROFleetOAuth2SecretRef
+		kn.Spec.SignalProcessing.FleetOAuth2CredentialsSecretRef = testSPFleetOAuth2SecretRef
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(HaveLen(1),
+			"apiFrontend and effectivenessMonitor have no effective credentialsSecretRef (no override, shared field empty) and would crash-loop at startup")
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.credentialsSecretRef"))
+		Expect(errs[0].Error()).To(ContainSubstring("apiFrontend"))
+		Expect(errs[0].Error()).To(ContainSubstring("effectivenessMonitor"))
 	})
 
 	// FM-008/FM-009: #200 endpoint auto-derivation. spec.fleet.endpoint is

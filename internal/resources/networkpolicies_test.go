@@ -459,3 +459,90 @@ var _ = Describe("APIFrontend NetworkPolicy OIDC egress", func() {
 		}
 	})
 })
+
+// #224 Finding 6: GW/RO/SP/AF/EM gain the same all-namespace 443+8080
+// fleet egress rule FMC already has, once spec.fleet.enabled=true.
+// fleetDestinationsEgressRule() extracts FMC's existing rule (previously
+// inline in fleetMetadataCacheNetworkPolicy) for reuse across components.
+var _ = Describe("fleetDestinationsEgressRule", func() {
+	It("matches FleetMetadataCache's pre-existing fleet egress rule exactly (extracted helper, no behavior change)", func() {
+		kn := testKubernautWithFMC()
+		fmcNP := fleetMetadataCacheNetworkPolicy(kn)
+		want := fleetDestinationsEgressRule()
+		Expect(fmcNP.Spec.Egress).To(ContainElement(want))
+	})
+})
+
+func hasFleetEgressRule(np *networkingv1.NetworkPolicy) bool {
+	want := fleetDestinationsEgressRule()
+	for _, rule := range np.Spec.Egress {
+		if len(rule.To) == len(want.To) && len(rule.Ports) == len(want.Ports) {
+			match := true
+			for i := range rule.Ports {
+				if rule.Ports[i].Port == nil || want.Ports[i].Port == nil || rule.Ports[i].Port.IntValue() != want.Ports[i].Port.IntValue() {
+					match = false
+					break
+				}
+			}
+			if match && len(rule.To) == 1 && rule.To[0].NamespaceSelector != nil && len(rule.To[0].NamespaceSelector.MatchLabels) == 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+var _ = Describe("Gateway/RemediationOrchestrator/SignalProcessing/APIFrontend/EffectivenessMonitor fleet NetworkPolicy egress", func() {
+	It("gateway omits fleet egress when fleet disabled", func() {
+		kn := testKubernaut()
+		Expect(hasFleetEgressRule(gatewayNetworkPolicy(kn))).To(BeFalse())
+	})
+
+	It("gateway gains fleet egress when fleet enabled", func() {
+		kn := testKubernautWithFleetMCP()
+		Expect(hasFleetEgressRule(gatewayNetworkPolicy(kn))).To(BeTrue())
+	})
+
+	It("remediationorchestrator omits fleet egress when fleet disabled", func() {
+		kn := testKubernaut()
+		Expect(hasFleetEgressRule(remediationOrchestratorNetworkPolicy(kn))).To(BeFalse())
+	})
+
+	It("remediationorchestrator gains fleet egress when fleet enabled", func() {
+		kn := testKubernautWithFleetMCP()
+		Expect(hasFleetEgressRule(remediationOrchestratorNetworkPolicy(kn))).To(BeTrue())
+	})
+
+	It("signalprocessing omits fleet egress when fleet disabled", func() {
+		kn := testKubernaut()
+		Expect(hasFleetEgressRule(signalProcessingNetworkPolicy(kn))).To(BeFalse())
+	})
+
+	It("signalprocessing gains fleet egress when fleet enabled", func() {
+		kn := testKubernautWithFleetMCP()
+		Expect(hasFleetEgressRule(signalProcessingNetworkPolicy(kn))).To(BeTrue())
+	})
+
+	It("apifrontend omits fleet egress when fleet disabled", func() {
+		kn := testKubernautWithAF()
+		Expect(hasFleetEgressRule(apifrontendNetworkPolicy(kn, KagentiSidecarNone))).To(BeFalse())
+	})
+
+	It("apifrontend gains fleet egress when fleet enabled", func() {
+		kn := testKubernautWithFleetMCP()
+		kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
+			Auth: kubernautv1alpha1.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
+		}
+		Expect(hasFleetEgressRule(apifrontendNetworkPolicy(kn, KagentiSidecarNone))).To(BeTrue())
+	})
+
+	It("effectivenessmonitor omits fleet egress when fleet disabled", func() {
+		kn := testKubernaut()
+		Expect(hasFleetEgressRule(effectivenessMonitorNetworkPolicy(kn))).To(BeFalse())
+	})
+
+	It("effectivenessmonitor gains fleet egress when fleet enabled", func() {
+		kn := testKubernautWithFleetMCP()
+		Expect(hasFleetEgressRule(effectivenessMonitorNetworkPolicy(kn))).To(BeTrue())
+	})
+})

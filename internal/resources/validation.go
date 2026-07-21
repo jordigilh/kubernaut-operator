@@ -458,8 +458,8 @@ func validateInteractive(kn *kubernautv1alpha1.Kubernaut) []error {
 // validMCPGatewayTypes are the only MCP Gateway implementations recognized
 // by upstream pkg/fleet/registry (jordigilh/kubernaut).
 var validMCPGatewayTypes = map[string]bool{
-	"eaigw":    true,
-	"kuadrant": true,
+	"eaigw":                true,
+	mcpGatewayTypeKuadrant: true,
 }
 
 var validFleetBackends = map[string]bool{
@@ -529,20 +529,39 @@ func validateFleetConfig(kn *kubernautv1alpha1.Kubernaut) []error {
 		// client registrations against one shared token endpoint (confirmed
 		// against upstream's own Helm chart: kubernaut.fleet.oauth2 helper
 		// resolves each service's own credentialsSecretRef, falling back to
-		// the fleet-wide default). Gateway and RemediationOrchestrator each
-		// need their own *effective* value (own override, or the shared
+		// the fleet-wide default). Each of the five fleet-aware components
+		// needs its own *effective* value (own override, or the shared
 		// fallback) — a shared credentialsSecretRef covers whichever
 		// component doesn't override it, but a component that overrides it
 		// no longer benefits from the shared value covering it too.
-		gwRef := withDefault(kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef, fleet.OAuth2.CredentialsSecretRef)
-		roRef := withDefault(kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef, fleet.OAuth2.CredentialsSecretRef)
-		switch {
-		case gwRef == "" && roRef == "":
+		//
+		// #224: generalized from a 2-way Gateway/RemediationOrchestrator
+		// switch to a loop over all five fleet-aware components (SP/AF/EM
+		// gained their own FleetOAuth2CredentialsSecretRef override fields)
+		// -- see Finding 7.
+		components := []struct {
+			specPath string
+			override string
+		}{
+			{"spec.gateway.fleetOAuth2CredentialsSecretRef", kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef},
+			{"spec.remediationOrchestrator.fleetOAuth2CredentialsSecretRef", kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef},
+			{"spec.signalProcessing.fleetOAuth2CredentialsSecretRef", kn.Spec.SignalProcessing.FleetOAuth2CredentialsSecretRef},
+			{"spec.apiFrontend.fleetOAuth2CredentialsSecretRef", kn.Spec.APIFrontend.FleetOAuth2CredentialsSecretRef},
+			{"spec.effectivenessMonitor.fleetOAuth2CredentialsSecretRef", kn.Spec.EffectivenessMonitor.FleetOAuth2CredentialsSecretRef},
+		}
+		var missing []string
+		for _, c := range components {
+			if withDefault(c.override, fleet.OAuth2.CredentialsSecretRef) == "" {
+				missing = append(missing, c.specPath)
+			}
+		}
+		switch len(missing) {
+		case 0:
+			// all five have an effective value.
+		case len(components):
 			errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set when fleet.oauth2.enabled is true", base))
-		case gwRef == "":
-			errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set, or spec.gateway.fleetOAuth2CredentialsSecretRef must be set, when fleet.oauth2.enabled is true (remediationOrchestrator already overrides its own)", base))
-		case roRef == "":
-			errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set, or spec.remediationOrchestrator.fleetOAuth2CredentialsSecretRef must be set, when fleet.oauth2.enabled is true (gateway already overrides its own)", base))
+		default:
+			errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set, or %s must be set, when fleet.oauth2.enabled is true (the other fleet-aware components already override their own)", base, strings.Join(missing, " or ")))
 		}
 	}
 
