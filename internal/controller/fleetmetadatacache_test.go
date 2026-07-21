@@ -26,6 +26,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
@@ -228,6 +229,51 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			kn := &kubernautv1alpha1.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseError))
+		})
+
+		It("emits a FleetMetadataCacheUnused warning event when enabled but spec.fleet.backend is not fleetmetadatacache", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithFMCEnabled()
+			cr.Spec.Fleet.Backend = "acm"
+			cr.Spec.Fleet.Endpoint = "https://search-search-api.example.com:4010"
+			cr.Spec.Fleet.TokenSecretName = "acm-search-token"
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			r := reconcileToRunning(ctx)
+
+			recorder := r.Recorder.(*events.FakeRecorder)
+			var collected []string
+		drain:
+			for {
+				select {
+				case ev := <-recorder.Events:
+					collected = append(collected, ev)
+				default:
+					break drain
+				}
+			}
+			Expect(collected).To(ContainElement(ContainSubstring("FleetMetadataCacheUnused")),
+				"expected a FleetMetadataCacheUnused warning event when backend=acm, got: %v", collected)
+		})
+
+		It("does not emit FleetMetadataCacheUnused when backend=fleetmetadatacache (the consuming configuration)", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
+
+			r := reconcileToRunning(ctx)
+
+			recorder := r.Recorder.(*events.FakeRecorder)
+			var collected []string
+		drainOK:
+			for {
+				select {
+				case ev := <-recorder.Events:
+					collected = append(collected, ev)
+				default:
+					break drainOK
+				}
+			}
+			Expect(collected).NotTo(ContainElement(ContainSubstring("FleetMetadataCacheUnused")))
 		})
 	})
 })
