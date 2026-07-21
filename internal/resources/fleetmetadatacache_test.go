@@ -214,7 +214,7 @@ var _ = Describe("FleetMetadataCache RBAC", func() {
 
 	It("grants Kuadrant CRD watch access when mcpGatewayType=kuadrant", func() {
 		kn := testKubernautWithFMC()
-		kn.Spec.Fleet.MCPGatewayType = "kuadrant"
+		kn.Spec.Fleet.MCPGatewayType = mcpGatewayTypeKuadrant
 		labels := CommonLabels(kn)
 		cr := fleetMetadataCacheClusterRole(kn, labels)
 

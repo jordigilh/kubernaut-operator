@@ -121,6 +121,8 @@ spec:
       configMapName: signalprocessing-policy
     # proactiveSignalMappings:
     #   configMapName: proactive-signal-mappings  # uncomment to enable proactive mode
+    # mcpGatewayNamespace: managed-clusters   # optional; overrides fleet.mcpGatewayNamespace for SignalProcessing only -- used when fleet.enabled: true, for cluster-label classification via the MCP Gateway CRD
+    # fleetOAuth2CredentialsSecretRef: sp-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for SignalProcessing only
 
   # --- Notifications (from Step 2: Configure Services) ---
   notification:
@@ -137,6 +139,7 @@ spec:
     auth:
       issuerURL: "https://keycloak.apps.example.com/realms/kubernaut"
       audience: "kubernaut-apifrontend"     # must match the OIDC client
+    # fleetOAuth2CredentialsSecretRef: af-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for APIFrontend only -- used when fleet.enabled: true, for its list_clusters MCP tool
 
   # --- Gateway tuning (optional) ---
   gateway:
@@ -152,13 +155,19 @@ spec:
     # fleetOAuth2CredentialsSecretRef: gateway-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for Gateway only
 
   # --- Fleet federation (optional, ADR-068) ---
-  # Points Gateway and RemediationOrchestrator at a shared fleet backend for
-  # scope-checking across a fleet of clusters. All fields are inert until
-  # enabled: true is set — safe to pre-stage ahead of enabling.
+  # Points Gateway/RemediationOrchestrator (scope-checking) and
+  # SignalProcessing/APIFrontend/EffectivenessMonitor (cluster classification
+  # + multi-cluster reads, #224) at a shared fleet backend across a fleet of
+  # clusters. All fields are inert until enabled: true is set — safe to
+  # pre-stage ahead of enabling.
   #
   # mcpGatewayEndpoint/mcpGatewayType are REQUIRED alongside backend/endpoint
-  # when enabled: both Gateway and RemediationOrchestrator fail closed at
-  # startup without them (upstream Fleet.ValidateFullFederation).
+  # when enabled: Gateway and RemediationOrchestrator fail closed at startup
+  # without them (upstream Fleet.ValidateFullFederation). SignalProcessing/
+  # APIFrontend/EffectivenessMonitor only need mcpGatewayEndpoint+
+  # mcpGatewayType — they never call the Backend/Endpoint scope-check
+  # adapter, so backend/endpoint don't apply to them and are omitted from
+  # their rendered config.
   # fleet:
   #   enabled: false
   #   backend: fleetmetadatacache          # or: acm (Red Hat ACM Search GraphQL)
@@ -167,6 +176,7 @@ spec:
   #   tokenSecretName: acm-search-token    # optional; Secret key: token (typically required for backend: acm)
   #   mcpGatewayEndpoint: "https://mcp-gateway.example.com/sse"
   #   mcpGatewayType: eaigw                # or: kuadrant
+  #   mcpGatewayNamespace: managed-clusters   # optional shared fallback; see FMC/SignalProcessing notes below
   #   oauth2:
   #     enabled: true
   #     tokenURL: "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token"
@@ -175,11 +185,23 @@ spec:
   #
   # A federated IdP (e.g. Keycloak) can issue distinct per-service OAuth2
   # client registrations against the same tokenURL above — set
-  # gateway.fleetOAuth2CredentialsSecretRef and/or
-  # remediationOrchestrator.fleetOAuth2CredentialsSecretRef to override
+  # gateway.fleetOAuth2CredentialsSecretRef,
+  # remediationOrchestrator.fleetOAuth2CredentialsSecretRef,
+  # signalProcessing.fleetOAuth2CredentialsSecretRef,
+  # apiFrontend.fleetOAuth2CredentialsSecretRef, and/or
+  # effectivenessMonitor.fleetOAuth2CredentialsSecretRef to override
   # fleet.oauth2.credentialsSecretRef for that component only. Each falls
   # back to the shared value when unset, so setting the shared field alone
   # is enough when every component uses the same OAuth2 client.
+  #
+  # mcpGatewayNamespace scopes the MCP Gateway CRD watch — and the RBAC
+  # backing it — to one namespace instead of cluster-wide, for whichever of
+  # FleetMetadataCache/SignalProcessing enable it (their upstream binaries
+  # support namespace-scoped watches; the operator grants a namespace Role/
+  # RoleBinding instead of a cluster-scoped ClusterRole once it resolves).
+  # APIFrontend/EffectivenessMonitor always watch cluster-wide today — their
+  # upstream ClusterRegistry construction has no namespace knob yet — so
+  # they ignore this field and always need a cluster-scoped ClusterRole.
 
   # --- Fleet Metadata Cache (FMC) — optional, ADR-068 ---
   # Deploys the operator-managed FMC service, which polls managed clusters
@@ -196,7 +218,7 @@ spec:
   #
   # fleetMetadataCache:
   #   enabled: false
-  #   mcpGatewayNamespace: managed-clusters   # optional; scopes FMC's own watch, not the ClusterRole (cluster-wide either way, see kubernaut#1686)
+  #   mcpGatewayNamespace: managed-clusters   # optional; overrides fleet.mcpGatewayNamespace for FMC only
   #   fleetOAuth2CredentialsSecretRef: fmc-oauth2-creds   # optional; overrides fleet.oauth2.credentialsSecretRef for FMC only
   #   syncInterval: "30s"
   #   keyTTL: "45s"
@@ -226,6 +248,12 @@ spec:
     #   noActionRequiredDelayHours: 24
     # retention:
     #   period: "24h"
+
+  # --- Effectiveness Monitor tuning (optional) ---
+  effectivenessMonitor:
+    # fleetOAuth2CredentialsSecretRef: em-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for EffectivenessMonitor only -- used when fleet.enabled: true, for remote-cluster effectiveness reads
+    # logging:
+    #   level: info
 
   # --- OCP integration ---
   monitoring:

@@ -83,8 +83,11 @@ func gatewayNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Network
 		},
 	}
 
-	egress := baseEgress(1)
+	egress := baseEgress(2)
 	egress = append(egress, datastorageEgressRule())
+	if kn.Spec.FleetEnabled() {
+		egress = append(egress, fleetDestinationsEgressRule())
+	}
 
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: ObjectMeta(kn, ComponentGateway+"-netpol", ComponentGateway),
@@ -172,11 +175,19 @@ func aiAnalysisNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Netw
 }
 
 func signalProcessingNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
-	return controllerWithDataStorageEgressOnly(kn, ComponentSignalProcessing, metricsOnlyIngress(kn))
+	np := controllerWithDataStorageEgressOnly(kn, ComponentSignalProcessing, metricsOnlyIngress(kn))
+	if kn.Spec.FleetEnabled() {
+		np.Spec.Egress = append(np.Spec.Egress, fleetDestinationsEgressRule())
+	}
+	return np
 }
 
 func remediationOrchestratorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
-	return controllerWithDataStorageEgressOnly(kn, ComponentRemediationOrchestrator, metricsOnlyIngress(kn))
+	np := controllerWithDataStorageEgressOnly(kn, ComponentRemediationOrchestrator, metricsOnlyIngress(kn))
+	if kn.Spec.FleetEnabled() {
+		np.Spec.Egress = append(np.Spec.Egress, fleetDestinationsEgressRule())
+	}
+	return np
 }
 
 func workflowExecutionNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
@@ -219,7 +230,7 @@ func effectivenessMonitorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *network
 	p9093 := intstr.FromInt32(9093)
 
 	ingress := metricsOnlyIngress(kn)
-	egress := baseEgress(2)
+	egress := baseEgress(3)
 	egress = append(egress, datastorageEgressRule(), networkingv1.NetworkPolicyEgressRule{
 		To: ipWorldPeers(),
 		Ports: []networkingv1.NetworkPolicyPort{
@@ -227,6 +238,9 @@ func effectivenessMonitorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *network
 			{Protocol: &protoTCP, Port: &p9093},
 		},
 	})
+	if kn.Spec.FleetEnabled() {
+		egress = append(egress, fleetDestinationsEgressRule())
+	}
 
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: ObjectMeta(kn, ComponentEffectivenessMonitor+"-netpol", ComponentEffectivenessMonitor),
@@ -661,6 +675,10 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSi
 		})
 	}
 
+	if kn.Spec.FleetEnabled() {
+		egress = append(egress, fleetDestinationsEgressRule())
+	}
+
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: ObjectMeta(kn, ComponentAPIFrontend+"-netpol", ComponentAPIFrontend),
 		Spec: networkingv1.NetworkPolicySpec{
@@ -687,6 +705,36 @@ func hasOIDCEgress(kn *kubernautv1alpha1.Kubernaut) bool {
 		}
 	}
 	return false
+}
+
+// fleetDestinationsCommonPort is the conventional MCP Gateway listener port
+// used in upstream's own example
+// (fleetmetadatacache.mcpGatewayEndpoint: "http://envoy-ai-gateway...:8080/mcp").
+// spec.fleet.mcpGatewayEndpoint (and the OAuth2 token endpoint / ACM Search
+// API) are free-form URLs, so this is a best-effort allow, not a parsed
+// value.
+const fleetDestinationsCommonPort int32 = 8080
+
+// fleetDestinationsEgressRule allows all-namespace egress on 443 (HTTPS --
+// covers the OAuth2 token endpoint, ACM Search API, and HTTPS-fronted MCP
+// Gateways) plus fleetDestinationsCommonPort (the conventional MCP Gateway
+// listener port). Extracted from FMC's original rule (#200) so
+// GW/RO/SP/AF/EM can share it once spec.fleet.enabled=true (#224 Finding
+// 6) -- none of these destinations live in a fixed, known namespace (the
+// MCP Gateway, OAuth2 IdP, and ACM Search API are all external or
+// cluster-wide), so, like FMC, an all-namespace peer is the correct scope,
+// not a namespace- or pod-selector peer.
+func fleetDestinationsEgressRule() networkingv1.NetworkPolicyEgressRule {
+	protoTCP := corev1.ProtocolTCP
+	p443 := intstr.FromInt32(443)
+	pMCPGateway := intstr.FromInt32(fleetDestinationsCommonPort)
+	return networkingv1.NetworkPolicyEgressRule{
+		To: []networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{}}},
+		Ports: []networkingv1.NetworkPolicyPort{
+			{Protocol: &protoTCP, Port: &p443},
+			{Protocol: &protoTCP, Port: &pMCPGateway},
+		},
+	}
 }
 
 // datastorageEgressRule allows TCP 8443 to DataStorage pods in the same

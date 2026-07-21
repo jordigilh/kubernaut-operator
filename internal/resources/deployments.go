@@ -247,6 +247,7 @@ func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deploy
 
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
+	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, kn, "/etc/signalprocessing", kn.Spec.SignalProcessing.FleetOAuth2CredentialsSecretRef)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentSignalProcessing, ImageName: "signalprocessing",
 		Resources: kn.Spec.SignalProcessing.Resources, VolumeMounts: mounts, Volumes: volumes,
@@ -393,6 +394,7 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.De
 
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
+	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, kn, "/etc/effectivenessmonitor", kn.Spec.EffectivenessMonitor.FleetOAuth2CredentialsSecretRef)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentEffectivenessMonitor, ImageName: "effectivenessmonitor",
 		Resources: kn.Spec.EffectivenessMonitor.Resources, VolumeMounts: mounts, Volumes: volumes,
@@ -769,6 +771,8 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidec
 		})
 	}
 
+	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, kn, "/etc/apifrontend", kn.Spec.APIFrontend.FleetOAuth2CredentialsSecretRef)
+
 	drainSec := int64(15)
 	if kn.Spec.APIFrontend.Shutdown.DrainSeconds != nil {
 		drainSec = int64(*kn.Spec.APIFrontend.Shutdown.DrainSeconds)
@@ -1003,19 +1007,38 @@ func appendInterServiceTLSCA(volumes []corev1.Volume, mounts []corev1.VolumeMoun
 // ACM bearer token, and OAuth2 client credentials. credentialsSecretRefOverride,
 // when non-empty, overrides spec.fleet.oauth2.credentialsSecretRef for this
 // component only — see resolveFleetConfig for why (per-service OAuth2 client
-// registrations against a shared token endpoint).
+// registrations against a shared token endpoint). Used by GW/RO, the only
+// components that read the Backend/Endpoint scope-check adapter.
 func appendFleetSecretMounts(volumes []corev1.Volume, mounts []corev1.VolumeMount, kn *kubernautv1alpha1.Kubernaut, componentEtcDir, credentialsSecretRefOverride string) ([]corev1.Volume, []corev1.VolumeMount) {
+	return appendFleetSecretMountsVariant(volumes, mounts, kn, componentEtcDir, credentialsSecretRefOverride, true)
+}
+
+// appendMCPGatewayOnlyFleetSecretMount mounts only the fleet-oauth2
+// credentials Secret, never fleet-ca/fleet-token (#224). Used by
+// SP/AF/EM, which only ever consume MCP Gateway remote reads and never
+// read the Backend/Endpoint scope-check adapter -- their upstream config
+// schemas have no field for the Backend/Endpoint TLS CA or ACM bearer
+// token at all (see resolveMCPGatewayOnlyFleetConfig /
+// resolveSignalProcessingFleetConfig), so mounting those Secrets would be
+// dead weight.
+func appendMCPGatewayOnlyFleetSecretMount(volumes []corev1.Volume, mounts []corev1.VolumeMount, kn *kubernautv1alpha1.Kubernaut, componentEtcDir, credentialsSecretRefOverride string) ([]corev1.Volume, []corev1.VolumeMount) {
+	return appendFleetSecretMountsVariant(volumes, mounts, kn, componentEtcDir, credentialsSecretRefOverride, false)
+}
+
+func appendFleetSecretMountsVariant(volumes []corev1.Volume, mounts []corev1.VolumeMount, kn *kubernautv1alpha1.Kubernaut, componentEtcDir, credentialsSecretRefOverride string, includeBackend bool) ([]corev1.Volume, []corev1.VolumeMount) {
 	fleet := &kn.Spec.Fleet
 	if fleet.Enabled == nil || !*fleet.Enabled {
 		return volumes, mounts
 	}
-	if fleet.CASecretName != "" {
-		volumes = append(volumes, secretVolume("fleet-ca", fleet.CASecretName))
-		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-ca", MountPath: "/etc/fleet-tls/ca", ReadOnly: true})
-	}
-	if fleet.TokenSecretName != "" {
-		volumes = append(volumes, secretVolume("fleet-token", fleet.TokenSecretName))
-		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-token", MountPath: "/etc/fleet-token", ReadOnly: true})
+	if includeBackend {
+		if fleet.CASecretName != "" {
+			volumes = append(volumes, secretVolume("fleet-ca", fleet.CASecretName))
+			mounts = append(mounts, corev1.VolumeMount{Name: "fleet-ca", MountPath: "/etc/fleet-tls/ca", ReadOnly: true})
+		}
+		if fleet.TokenSecretName != "" {
+			volumes = append(volumes, secretVolume("fleet-token", fleet.TokenSecretName))
+			mounts = append(mounts, corev1.VolumeMount{Name: "fleet-token", MountPath: "/etc/fleet-token", ReadOnly: true})
+		}
 	}
 	if credentialsSecretRef := withDefault(credentialsSecretRefOverride, fleet.OAuth2.CredentialsSecretRef); fleet.OAuth2.Enabled && credentialsSecretRef != "" {
 		volumes = append(volumes, secretVolume("fleet-oauth2", credentialsSecretRef))
