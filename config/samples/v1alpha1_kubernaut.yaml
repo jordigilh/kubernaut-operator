@@ -48,6 +48,19 @@ spec:
     # / remediationOrchestrator.fleetOAuth2CredentialsSecretRef (see below) —
     # each falls back to the shared fleet.oauth2.credentialsSecretRef when unset.
 
+  # Operator-managed Fleet Metadata Cache (FMC) service (ADR-068), optional.
+  # Most deployments that enable spec.fleet above use backend: acm (an
+  # existing RHACM Search installation) instead of standing up FMC — only
+  # enable this when backend: fleetmetadatacache above and you want the
+  # operator to run FMC itself. When enabled with fleet.endpoint left unset,
+  # the operator auto-derives FMC's in-cluster URL.
+  # fleetMetadataCache:
+  #   enabled: false
+  #   mcpGatewayNamespace: managed-clusters   # optional; scopes FMC's own watch, not the ClusterRole (cluster-wide either way, see kubernaut#1686)
+  #   fleetOAuth2CredentialsSecretRef: fmc-oauth2-creds   # optional; overrides fleet.oauth2.credentialsSecretRef for FMC only
+  #   syncInterval: "30s"
+  #   keyTTL: "45s"
+
   # Named LLM profiles, referenced by name from kubernautAgent.llmProfileRef,
   # apiFrontend.llmProfileRef, apiFrontend.severityTriage.llmProfileRef, and
   # kubernautAgent.phaseModels. Profiles referenced from phaseModels or
