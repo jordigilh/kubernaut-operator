@@ -1532,3 +1532,98 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		}
 	})
 })
+
+// #224: SP/AF/EM only ever consume the MCP Gateway remote-read path (never
+// Backend/Endpoint), so they must never mount fleet-ca/fleet-token --
+// those Secrets back Backend/Endpoint's ACM TLS CA / bearer token, which
+// SP/AF/EM's own upstream config schemas have no field for at all.
+var _ = Describe("SignalProcessing/APIFrontend/EffectivenessMonitor Fleet secret mounts", func() {
+	It("does not mount any fleet- volumes when fleet is disabled", func() {
+		kn := testKubernaut()
+		spDep, err := SignalProcessingDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		emDep, err := EffectivenessMonitorDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		afKn := testKubernautWithAF()
+		afDep, err := APIFrontendDeployment(afKn, KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+		for _, dep := range []*appsv1.Deployment{spDep, emDep, afDep} {
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				Expect(v.Name).NotTo(HavePrefix("fleet-"),
+					"%s should not have fleet volume %q when fleet is disabled", dep.Name, v.Name)
+			}
+		}
+	})
+
+	It("never mounts fleet-ca or fleet-token even when caSecretName/tokenSecretName are set", func() {
+		kn := testKubernautWithFleetMCP()
+		kn.Spec.Fleet.CASecretName = "fmc-ca-bundle"
+		kn.Spec.Fleet.TokenSecretName = "acm-search-token"
+		spDep, err := SignalProcessingDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		emDep, err := EffectivenessMonitorDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
+			Auth: kubernautv1alpha1.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
+		}
+		afDep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+		for _, dep := range []*appsv1.Deployment{spDep, emDep, afDep} {
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				Expect(v.Name).NotTo(Equal("fleet-ca"), "%s should never mount fleet-ca (Backend/Endpoint-only concern)", dep.Name)
+				Expect(v.Name).NotTo(Equal("fleet-token"), "%s should never mount fleet-token (Backend/Endpoint-only concern)", dep.Name)
+			}
+		}
+	})
+
+	It("mounts fleet-oauth2 on SignalProcessing at /etc/signalprocessing/<credentialsSecretRef> when oauth2 is enabled", func() {
+		kn := testKubernautWithFleetMCP()
+		kn.Spec.Fleet.OAuth2 = kubernautv1alpha1.OAuth2Spec{
+			Enabled: true, TokenURL: "https://keycloak.example.com/token",
+			CredentialsSecretRef: "fleet-oauth2-creds",
+		}
+		spDep, err := SignalProcessingDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(spDep, testVolumeFleetOAuth2)
+		expectHasVolumeMount(spDep, testVolumeFleetOAuth2, "/etc/signalprocessing/fleet-oauth2-creds")
+	})
+
+	It("mounts fleet-oauth2 on APIFrontend at /etc/apifrontend/<credentialsSecretRef> when oauth2 is enabled", func() {
+		kn := testKubernautWithFleetMCP()
+		kn.Spec.Fleet.OAuth2 = kubernautv1alpha1.OAuth2Spec{
+			Enabled: true, TokenURL: "https://keycloak.example.com/token",
+			CredentialsSecretRef: "fleet-oauth2-creds",
+		}
+		kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
+			Auth: kubernautv1alpha1.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
+		}
+		afDep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(afDep, testVolumeFleetOAuth2)
+		expectHasVolumeMount(afDep, testVolumeFleetOAuth2, "/etc/apifrontend/fleet-oauth2-creds")
+	})
+
+	It("mounts fleet-oauth2 on EffectivenessMonitor at /etc/effectivenessmonitor/<credentialsSecretRef> when oauth2 is enabled", func() {
+		kn := testKubernautWithFleetMCP()
+		kn.Spec.Fleet.OAuth2 = kubernautv1alpha1.OAuth2Spec{
+			Enabled: true, TokenURL: "https://keycloak.example.com/token",
+			CredentialsSecretRef: "fleet-oauth2-creds",
+		}
+		emDep, err := EffectivenessMonitorDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(emDep, testVolumeFleetOAuth2)
+		expectHasVolumeMount(emDep, testVolumeFleetOAuth2, "/etc/effectivenessmonitor/fleet-oauth2-creds")
+	})
+
+	It("SignalProcessing uses its own fleetOAuth2CredentialsSecretRef override instead of the shared credentialsSecretRef", func() {
+		kn := testKubernautWithFleetMCP()
+		kn.Spec.Fleet.OAuth2 = kubernautv1alpha1.OAuth2Spec{
+			Enabled: true, TokenURL: "https://keycloak.example.com/token",
+			CredentialsSecretRef: "fleet-oauth2-creds",
+		}
+		kn.Spec.SignalProcessing.FleetOAuth2CredentialsSecretRef = testSPFleetOAuth2SecretRef
+		spDep, err := SignalProcessingDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolumeMount(spDep, testVolumeFleetOAuth2, "/etc/signalprocessing/"+testSPFleetOAuth2SecretRef)
+	})
+})

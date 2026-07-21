@@ -112,9 +112,17 @@ type gatewayConfigYAML struct {
 // API, plus the shared MCP Gateway endpoint/auth used for remote-cluster
 // reads. See FleetSpec for the CRD-level field documentation.
 type fleetConfigYAML struct {
-	Enabled            bool             `json:"enabled" yaml:"enabled"`
-	Backend            string           `json:"backend" yaml:"backend"`
-	Endpoint           string           `json:"endpoint" yaml:"endpoint"`
+	Enabled bool `json:"enabled" yaml:"enabled"`
+
+	// Backend/Endpoint use omitempty so resolveMCPGatewayOnlyFleetConfig
+	// (AF/EM, #224) can omit them entirely -- those services never call
+	// the Backend/Endpoint scope-check adapter, so upstream's own
+	// FleetConfig.Validate() doc comment says requiring them "whenever
+	// Enabled=true would force an unused dependency." GW/RO's admission
+	// validation (validateFleetConfig) still requires non-empty values
+	// for those two components, so this is safe.
+	Backend            string           `json:"backend,omitempty" yaml:"backend,omitempty"`
+	Endpoint           string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
 	TLSCAFile          string           `json:"tlsCAFile,omitempty" yaml:"tlsCAFile,omitempty"`
 	TokenPath          string           `json:"tokenPath,omitempty" yaml:"tokenPath,omitempty"`
 	MCPGatewayEndpoint string           `json:"mcpGatewayEndpoint,omitempty" yaml:"mcpGatewayEndpoint,omitempty"`
@@ -356,6 +364,51 @@ type signalProcessingConfigYAML struct {
 	Enrichment  signalProcessingEnrichmentYAML  `json:"enrichment" yaml:"enrichment"`
 	Classifier  signalProcessingClassifierYAML  `json:"classifier" yaml:"classifier"`
 	Datastorage signalProcessingDatastorageYAML `json:"datastorage" yaml:"datastorage"`
+	Fleet       *signalProcessingFleetYAML      `json:"fleet,omitempty" yaml:"fleet,omitempty"`
+}
+
+// signalProcessingFleetYAML mirrors upstream pkg/signalprocessing/config.FleetConfig
+// (#224, Finding 3) -- a bespoke shape distinct from the shared
+// pkg/fleet.FleetConfig used by GW/RO/AF/EM. Critically, the MCP Gateway
+// endpoint key is "endpoint", not "mcpGatewayEndpoint" -- using the wrong
+// key silently no-ops (SP never constructs a ClusterRegistry) with no
+// validation error, since YAML unmarshal leaves the zero value on a key
+// mismatch.
+type signalProcessingFleetYAML struct {
+	Endpoint       string           `json:"endpoint" yaml:"endpoint"`
+	OAuth2         *fleetOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	MCPGatewayType string           `json:"mcpGatewayType,omitempty" yaml:"mcpGatewayType,omitempty"`
+	Namespace      string           `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+}
+
+// resolveSignalProcessingFleetConfig builds the fleet: block rendered into
+// SignalProcessingConfigMap. Returns nil when fleet is disabled so the key
+// is omitted entirely (upstream's Config.Fleet is a non-pointer struct that
+// tolerates an all-zero-value fleet: block -- BR-INTEGRATION-054, "when
+// Endpoint is empty, SP operates in local-only mode" -- but omitting the
+// key keeps non-fleet deployments' rendered YAML unchanged).
+// spec.signalProcessing.mcpGatewayNamespace overrides the shared
+// spec.fleet.mcpGatewayNamespace, mirroring FleetMetadataCache's precedent.
+func resolveSignalProcessingFleetConfig(kn *kubernautv1alpha1.Kubernaut) *signalProcessingFleetYAML {
+	fleet := &kn.Spec.Fleet
+	if fleet.Enabled == nil || !*fleet.Enabled {
+		return nil
+	}
+	cfg := &signalProcessingFleetYAML{
+		Endpoint:       fleet.MCPGatewayEndpoint,
+		MCPGatewayType: fleet.MCPGatewayType,
+		Namespace:      withDefault(kn.Spec.SignalProcessing.MCPGatewayNamespace, fleet.MCPGatewayNamespace),
+	}
+	if fleet.OAuth2.Enabled {
+		cfg.OAuth2 = &fleetOAuth2YAML{
+			Enabled:              true,
+			TokenURL:             fleet.OAuth2.TokenURL,
+			CredentialsSecretRef: withDefault(kn.Spec.SignalProcessing.FleetOAuth2CredentialsSecretRef, fleet.OAuth2.CredentialsSecretRef),
+			Scopes:               fleet.OAuth2.Scopes,
+			TLSCAFile:            InterServiceTLSCAFile,
+		}
+	}
+	return cfg
 }
 
 type roTimeoutsYAML struct {
@@ -493,6 +546,7 @@ type effectivenessMonitorConfigYAML struct {
 	Controller  controllerBlock   `json:"controller" yaml:"controller"`
 	Datastorage emDatastorageYAML `json:"datastorage" yaml:"datastorage"`
 	External    *emExternalYAML   `json:"external,omitempty" yaml:"external,omitempty"`
+	Fleet       *fleetConfigYAML  `json:"fleet,omitempty" yaml:"fleet,omitempty"`
 }
 
 type notificationConsoleYAML struct {
@@ -1066,6 +1120,7 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMa
 			Timeout: "10s",
 			Buffer:  buf,
 		},
+		Fleet: resolveSignalProcessingFleetConfig(kn),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1248,6 +1303,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...Conf
 				MaxRetries:    3,
 			},
 		},
+		Fleet: resolveMCPGatewayOnlyFleetConfig(kn, em.FleetOAuth2CredentialsSecretRef, InterServiceTLSCAFile),
 	}
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		cfg.External = &emExternalYAML{
@@ -1711,6 +1767,7 @@ type afConfigYAML struct {
 	SeverityTriage afSeverityTriageYAML `json:"severityTriage" yaml:"severityTriage"`
 	Resilience     afResilienceYAML     `json:"resilience" yaml:"resilience"`
 	Session        afSessionYAML        `json:"session" yaml:"session"`
+	Fleet          *fleetConfigYAML     `json:"fleet,omitempty" yaml:"fleet,omitempty"`
 }
 
 type afSessionYAML struct {
@@ -1952,6 +2009,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSideca
 			DisconnectTTL: "10m",
 			RetentionTTL:  "720h",
 		},
+		Fleet: resolveMCPGatewayOnlyFleetConfig(kn, af.FleetOAuth2CredentialsSecretRef, apifrontendTLSCAFile),
 		Resilience: afResilienceYAML{
 			KA: afCircuitBreakerYAML{
 				ConnectTimeout: "5s", RequestTimeout: "30s",

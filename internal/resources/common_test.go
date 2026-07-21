@@ -36,10 +36,19 @@ const (
 	testIngressDomain   = "apps.test.example.com"
 
 	// Per-component fleet OAuth2 credentialsSecretRef overrides (federated
-	// IdP scenario: Gateway and RemediationOrchestrator authenticate as
-	// distinct OAuth2 clients against the same shared token endpoint).
+	// IdP scenario: each fleet-aware component authenticates as a distinct
+	// OAuth2 client against the same shared token endpoint).
 	testGatewayFleetOAuth2SecretRef = "gateway-oauth2-creds"
 	testROFleetOAuth2SecretRef      = "ro-oauth2-creds"
+	testSPFleetOAuth2SecretRef      = "sp-oauth2-creds"
+	testAFFleetOAuth2SecretRef      = "af-oauth2-creds"
+	testEMFleetOAuth2SecretRef      = "em-oauth2-creds"
+
+	// Per-component/shared MCP Gateway namespace fixtures used across
+	// configmaps_test.go and rbac_test.go's namespace-retrofit coverage.
+	testSPMCPGatewayNamespace     = "sp-ns"
+	testFMCMCPGatewayNamespace    = "fmc-ns"
+	testSharedMCPGatewayNamespace = "shared-ns"
 )
 
 func testKubernaut() *kubernautv1alpha1.Kubernaut {
@@ -103,6 +112,24 @@ func testKubernautWithAF() *kubernautv1alpha1.Kubernaut {
 // testFMCEnabled is a package-level *bool so FleetMetadataCacheSpec.Enabled
 // (a pointer) can point at a stable true value across test helpers.
 var testFMCEnabled = true
+
+// testFleetEnabled is a package-level *bool so FleetSpec.Enabled (a
+// pointer) can point at a stable true value across test helpers.
+var testFleetEnabled = true
+
+// testKubernautWithFleetMCP returns a Kubernaut with spec.fleet enabled for
+// MCP Gateway remote reads only (mcpGatewayEndpoint/mcpGatewayType set, no
+// backend/endpoint) -- the shape SP/AF/EM care about (#224), as opposed to
+// testKubernautWithFMC's GW/RO/FMC-oriented backend+endpoint shape.
+func testKubernautWithFleetMCP() *kubernautv1alpha1.Kubernaut {
+	kn := testKubernaut()
+	kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+		Enabled:            &testFleetEnabled,
+		MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse",
+		MCPGatewayType:     "eaigw",
+	}
+	return kn
+}
 
 func testKubernautWithFMC() *kubernautv1alpha1.Kubernaut {
 	kn := testKubernaut()

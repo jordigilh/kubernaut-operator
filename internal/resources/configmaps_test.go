@@ -358,6 +358,100 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("data-storage-service.kubernaut-system.svc.cluster.local"), "signalprocessing config should contain datastorage URL, got:\n%s", data)
 			Expect(data).To(ContainSubstring("classifier:"), "signalprocessing config should contain classifier section, got:\n%s", data)
 		})
+
+		// #224: SP constructs a ClusterRegistry (BR-FLEET-003) for cluster
+		// classification labels via its own bespoke FleetConfig shape --
+		// critically "endpoint", not "mcpGatewayEndpoint" (upstream
+		// pkg/signalprocessing/config.FleetConfig.Endpoint).
+		It("omits the fleet block when fleet is disabled", func() {
+			kn := testKubernaut()
+			cm, err := SignalProcessingConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).NotTo(ContainSubstring("fleet:"), "signalprocessing config should omit fleet block when disabled, got:\n%s", data)
+		})
+
+		It("renders fleet.endpoint (not mcpGatewayEndpoint) from spec.fleet.mcpGatewayEndpoint", func() {
+			kn := testKubernaut()
+			enabled := true
+			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			}
+			cm, err := SignalProcessingConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("fleet:"), "signalprocessing config should contain fleet block when enabled, got:\n%s", data)
+			Expect(data).To(ContainSubstring("endpoint: https://mcp-gateway.example.com/sse"), "signalprocessing fleet.endpoint should carry spec.fleet.mcpGatewayEndpoint's value (upstream field is named 'endpoint', not 'mcpGatewayEndpoint'), got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("mcpGatewayEndpoint:"), "signalprocessing config must not render the mcpGatewayEndpoint key -- upstream FleetConfig.Endpoint has no such key, got:\n%s", data)
+			Expect(data).To(ContainSubstring("mcpGatewayType: eaigw"), "signalprocessing config should render mcpGatewayType, got:\n%s", data)
+		})
+
+		It("renders fleet.namespace from spec.signalProcessing.mcpGatewayNamespace, overriding the shared spec.fleet.mcpGatewayNamespace", func() {
+			kn := testKubernaut()
+			enabled := true
+			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+				MCPGatewayNamespace: testSharedMCPGatewayNamespace,
+			}
+			kn.Spec.SignalProcessing.MCPGatewayNamespace = testSPMCPGatewayNamespace
+			cm, err := SignalProcessingConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("namespace: sp-ns"), "signalprocessing fleet.namespace should use its own override, got:\n%s", data)
+		})
+
+		It("falls back to the shared spec.fleet.mcpGatewayNamespace when signalProcessing has no override", func() {
+			kn := testKubernaut()
+			enabled := true
+			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+				MCPGatewayNamespace: testSharedMCPGatewayNamespace,
+			}
+			cm, err := SignalProcessingConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("namespace: shared-ns"), "signalprocessing fleet.namespace should fall back to the shared value, got:\n%s", data)
+		})
+
+		It("renders fleet.oauth2.tlsCAFile defaulting to the inter-service CA path when oauth2 is enabled", func() {
+			kn := testKubernaut()
+			enabled := true
+			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+				OAuth2: kubernautv1alpha1.OAuth2Spec{
+					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+					CredentialsSecretRef: "fleet-oauth2-creds",
+				},
+			}
+			cm, err := SignalProcessingConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("credentialsSecretRef: fleet-oauth2-creds"), "signalprocessing fleet.oauth2 should render the shared credentialsSecretRef, got:\n%s", data)
+			Expect(data).To(ContainSubstring("tlsCAFile: "+InterServiceTLSCAFile), "signalprocessing fleet.oauth2 should default tlsCAFile to the inter-service CA path, got:\n%s", data)
+		})
+
+		It("renders signalProcessing.fleetOAuth2CredentialsSecretRef instead of the shared credentialsSecretRef when set", func() {
+			kn := testKubernaut()
+			enabled := true
+			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+				OAuth2: kubernautv1alpha1.OAuth2Spec{
+					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+					CredentialsSecretRef: "fleet-oauth2-creds",
+				},
+			}
+			kn.Spec.SignalProcessing.FleetOAuth2CredentialsSecretRef = testSPFleetOAuth2SecretRef
+			cm, err := SignalProcessingConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("credentialsSecretRef: sp-oauth2-creds"), "signalprocessing config should use its own oauth2 client override, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("credentialsSecretRef: fleet-oauth2-creds"), "signalprocessing config should not fall back to the shared credentialsSecretRef when it has its own override, got:\n%s", data)
+		})
 	})
 
 	Describe("RemediationOrchestrator ConfigMap", func() {
@@ -782,6 +876,73 @@ var _ = Describe("ConfigMaps", func() {
 			} {
 				Expect(data).To(ContainSubstring(want), "EM v1.4 config should contain %q, got:\n%s", want, data)
 			}
+		})
+
+		// #224: EM reads a remediation's target cluster via the MCP
+		// Gateway, reusing the shared fleet.FleetConfig shape (upstream
+		// internal/config/effectivenessmonitor.Config.Fleet), never the
+		// Backend/Endpoint scope-check adapter.
+		It("omits the fleet block when fleet is disabled", func() {
+			kn := testKubernaut()
+			cm, err := EffectivenessMonitorConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["effectivenessmonitor.yaml"]
+			Expect(data).NotTo(ContainSubstring("fleet:"), "EM config should omit fleet block when disabled, got:\n%s", data)
+		})
+
+		It("renders mcpGatewayEndpoint/mcpGatewayType but omits backend/endpoint/tokenPath even when spec.fleet.backend/endpoint are set", func() {
+			kn := testKubernaut()
+			enabled := true
+			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+				CASecretName: "fmc-ca-bundle", TokenSecretName: "acm-search-token",
+			}
+			cm, err := EffectivenessMonitorConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["effectivenessmonitor.yaml"]
+			Expect(data).To(ContainSubstring("fleet:"), "EM config should contain fleet block when enabled, got:\n%s", data)
+			Expect(data).To(ContainSubstring("mcpGatewayEndpoint: https://mcp-gateway.example.com/sse"), "EM config should render mcpGatewayEndpoint, got:\n%s", data)
+			Expect(data).To(ContainSubstring("mcpGatewayType: eaigw"), "EM config should render mcpGatewayType, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("backend:"), "EM never calls the Backend/Endpoint scope-check adapter -- backend must be omitted even when spec.fleet.backend is set, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("endpoint:"), "EM fleet block must omit endpoint, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("tokenPath:"), "EM fleet block must omit tokenPath, got:\n%s", data)
+		})
+
+		It("renders fleet.oauth2.tlsCAFile defaulting to the inter-service CA path when oauth2 is enabled", func() {
+			kn := testKubernaut()
+			enabled := true
+			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+				OAuth2: kubernautv1alpha1.OAuth2Spec{
+					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+					CredentialsSecretRef: "fleet-oauth2-creds",
+				},
+			}
+			cm, err := EffectivenessMonitorConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["effectivenessmonitor.yaml"]
+			Expect(data).To(ContainSubstring("tlsCAFile: "+InterServiceTLSCAFile), "EM fleet.oauth2 should default tlsCAFile to the inter-service CA path, got:\n%s", data)
+		})
+
+		It("renders effectivenessMonitor.fleetOAuth2CredentialsSecretRef instead of the shared credentialsSecretRef when set", func() {
+			kn := testKubernaut()
+			enabled := true
+			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+				OAuth2: kubernautv1alpha1.OAuth2Spec{
+					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+					CredentialsSecretRef: "fleet-oauth2-creds",
+				},
+			}
+			kn.Spec.EffectivenessMonitor.FleetOAuth2CredentialsSecretRef = testEMFleetOAuth2SecretRef
+			cm, err := EffectivenessMonitorConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["effectivenessmonitor.yaml"]
+			Expect(data).To(ContainSubstring("credentialsSecretRef: em-oauth2-creds"), "EM config should use its own oauth2 client override, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("credentialsSecretRef: fleet-oauth2-creds"), "EM config should not fall back to the shared credentialsSecretRef when it has its own override, got:\n%s", data)
 		})
 	})
 
@@ -1858,6 +2019,78 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(root.SeverityTriage.LLM.Provider).To(Equal("anthropic"))
 		Expect(root.SeverityTriage.LLM.Model).To(Equal("claude-haiku-4-6"))
 		Expect(root.Agent.LLM.Provider).NotTo(Equal("anthropic"), "triage's independent profile must not leak into AF's main agent.llm")
+	})
+
+	// #224: AF backs the list_clusters MCP tool and routes remote reads via
+	// a ClusterRegistry, reusing the shared fleet.FleetConfig shape GW/RO
+	// already use (upstream pkg/apifrontend/config.Config.Fleet), but AF
+	// never calls the Backend/Endpoint scope-check adapter -- see
+	// FleetConfig.Validate()'s own doc comment.
+	It("omits the fleet block when fleet is disabled", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).NotTo(ContainSubstring("fleet:"), "apifrontend config should omit fleet block when disabled, got:\n%s", data)
+	})
+
+	It("renders mcpGatewayEndpoint/mcpGatewayType but omits backend/endpoint/tokenPath even when spec.fleet.backend/endpoint are set", func() {
+		kn := testKubernautWithAF()
+		enabled := true
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			CASecretName: "fmc-ca-bundle", TokenSecretName: "acm-search-token",
+		}
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("fleet:"), "apifrontend config should contain fleet block when enabled, got:\n%s", data)
+		Expect(data).To(ContainSubstring("mcpGatewayEndpoint: https://mcp-gateway.example.com/sse"), "apifrontend config should render mcpGatewayEndpoint, got:\n%s", data)
+		Expect(data).To(ContainSubstring("mcpGatewayType: eaigw"), "apifrontend config should render mcpGatewayType, got:\n%s", data)
+		// fleet:'s own keys are 2-space indented; other "backend:"/"endpoint:"
+		// substrings exist elsewhere in AF's config (e.g. auth.replayCache.backend)
+		// at deeper indentation, so match on indentation to target fleet: only.
+		Expect(data).NotTo(ContainSubstring("\n  backend:"), "apifrontend never calls the Backend/Endpoint scope-check adapter -- backend must be omitted even when spec.fleet.backend is set, got:\n%s", data)
+		Expect(data).NotTo(ContainSubstring("\n  endpoint:"), "apifrontend fleet block must omit endpoint (AF has no Backend/Endpoint adapter use), got:\n%s", data)
+		Expect(data).NotTo(ContainSubstring("\n  tokenPath:"), "apifrontend fleet block must omit tokenPath (no Backend/Endpoint adapter use), got:\n%s", data)
+	})
+
+	It("renders fleet.oauth2 with tlsCAFile defaulting to AF's own inter-service CA path", func() {
+		kn := testKubernautWithAF()
+		enabled := true
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{
+				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				CredentialsSecretRef: "fleet-oauth2-creds",
+			},
+		}
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("credentialsSecretRef: fleet-oauth2-creds"), "apifrontend fleet.oauth2 should render the shared credentialsSecretRef, got:\n%s", data)
+		Expect(data).To(ContainSubstring("tlsCAFile: "+apifrontendTLSCAFile), "apifrontend fleet.oauth2 should default tlsCAFile to AF's own CA mount path, got:\n%s", data)
+	})
+
+	It("renders apiFrontend.fleetOAuth2CredentialsSecretRef instead of the shared credentialsSecretRef when set", func() {
+		kn := testKubernautWithAF()
+		enabled := true
+		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			OAuth2: kubernautv1alpha1.OAuth2Spec{
+				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				CredentialsSecretRef: "fleet-oauth2-creds",
+			},
+		}
+		kn.Spec.APIFrontend.FleetOAuth2CredentialsSecretRef = testAFFleetOAuth2SecretRef
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("credentialsSecretRef: af-oauth2-creds"), "apifrontend config should use its own oauth2 client override, got:\n%s", data)
+		Expect(data).NotTo(ContainSubstring("credentialsSecretRef: fleet-oauth2-creds"), "apifrontend config should not fall back to the shared credentialsSecretRef when it has its own override, got:\n%s", data)
 	})
 })
 
