@@ -55,6 +55,9 @@ func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode
 	if kn.Spec.APIFrontendEnabled() {
 		nps = append(nps, apifrontendNetworkPolicy(kn, sidecar))
 	}
+	if kn.Spec.FleetMetadataCacheEnabled() {
+		nps = append(nps, fleetMetadataCacheNetworkPolicy(kn))
+	}
 	return nps
 }
 
@@ -520,6 +523,8 @@ func apiServerEgressRule() networkingv1.NetworkPolicyEgressRule {
 
 // metricsIngressRule allows TCP 9090 scrape traffic from pods in the
 // monitoring namespace. Returns nil when monitoringNS is empty.
+//
+//nolint:unparam // all current call sites pass OCPMonitoringNamespace, but the nil-on-empty guard keeps this generic for a future non-OCP monitoring namespace.
 func metricsIngressRule(monitoringNS string) *networkingv1.NetworkPolicyIngressRule {
 	if monitoringNS == "" {
 		return nil

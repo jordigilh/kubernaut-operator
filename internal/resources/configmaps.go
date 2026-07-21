@@ -157,7 +157,7 @@ func resolveFleetConfig(kn *kubernautv1alpha1.Kubernaut, credentialsSecretRefOve
 	cfg := &fleetConfigYAML{
 		Enabled:            true,
 		Backend:            fleet.Backend,
-		Endpoint:           fleet.Endpoint,
+		Endpoint:           resolveFleetEndpoint(kn),
 		MCPGatewayEndpoint: fleet.MCPGatewayEndpoint,
 		MCPGatewayType:     fleet.MCPGatewayType,
 	}

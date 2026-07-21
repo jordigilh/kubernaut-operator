@@ -78,6 +78,10 @@ func ClusterRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRole {
 		roles = append(roles, apifrontendClusterRole(kn, labels))
 	}
 
+	if kn.Spec.FleetMetadataCacheEnabled() {
+		roles = append(roles, fleetMetadataCacheClusterRole(kn, labels))
+	}
+
 	return roles
 }
 
@@ -141,6 +145,10 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 			clusterRoleBinding(p("apifrontend-binding"), p("apifrontend-role"),
 				ServiceAccountName(ComponentAPIFrontend), ns, labels),
 		)
+	}
+
+	if kn.Spec.FleetMetadataCacheEnabled() {
+		crbs = append(crbs, fleetMetadataCacheClusterRoleBinding(kn, labels))
 	}
 
 	return crbs

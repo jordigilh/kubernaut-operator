@@ -130,6 +130,10 @@ func Services(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) []*co
 		}))
 	}
 
+	if kn.Spec.FleetMetadataCacheEnabled() {
+		services = append(services, FleetMetadataCacheService(kn))
+	}
+
 	return services
 }
 

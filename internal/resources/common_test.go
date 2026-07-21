@@ -100,6 +100,24 @@ func testKubernautWithAF() *kubernautv1alpha1.Kubernaut {
 	return kn
 }
 
+// testFMCEnabled is a package-level *bool so FleetMetadataCacheSpec.Enabled
+// (a pointer) can point at a stable true value across test helpers.
+var testFMCEnabled = true
+
+func testKubernautWithFMC() *kubernautv1alpha1.Kubernaut {
+	kn := testKubernaut()
+	kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+		Enabled: &testFMCEnabled, Backend: "fleetmetadatacache",
+		MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+		OAuth2: kubernautv1alpha1.OAuth2Spec{
+			Enabled: true, TokenURL: "https://keycloak.example.com/token",
+			CredentialsSecretRef: "fleet-oauth2-creds",
+		},
+	}
+	kn.Spec.FleetMetadataCache = kubernautv1alpha1.FleetMetadataCacheSpec{Enabled: &testFMCEnabled}
+	return kn
+}
+
 // testPrimaryProfile is the profile name testKubernaut()/testKubernautWithAF()
 // wire kubernautAgent.llmProfileRef to. mutateLLMProfile always targets it --
 // tests needing a second, distinctly-named profile add one to
@@ -327,8 +345,8 @@ var _ = Describe("MergeResources", func() {
 })
 
 var _ = Describe("AllComponents", func() {
-	It("returns 11 components", func() {
-		Expect(AllComponents()).To(HaveLen(11))
+	It("returns 12 components", func() {
+		Expect(AllComponents()).To(HaveLen(12))
 	})
 })
 
