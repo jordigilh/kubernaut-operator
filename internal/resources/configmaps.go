@@ -131,6 +131,16 @@ type fleetOAuth2YAML struct {
 	TokenURL             string   `json:"tokenURL,omitempty" yaml:"tokenURL,omitempty"`
 	CredentialsSecretRef string   `json:"credentialsSecretRef,omitempty" yaml:"credentialsSecretRef,omitempty"`
 	Scopes               []string `json:"scopes,omitempty" yaml:"scopes,omitempty"`
+
+	// TLSCAFile mirrors upstream pkg/fleet.FleetOAuth2Config.TLSCAFile: the
+	// CA bundle used to verify the OAuth2 provider's TLS certificate when it
+	// isn't signed by a public/system CA (e.g. a cluster-local Keycloak).
+	// Pre-existing gap (#223 triage) -- upstream has consumed this field
+	// since before #223, but the operator never rendered it. Defaults to
+	// InterServiceTLSCAFile via resolveFleetConfigDefaultCA, since the
+	// OAuth2 provider is typically another in-cluster/OCP service whose
+	// cert is signed by the service-ca operator.
+	TLSCAFile string `json:"tlsCAFile,omitempty" yaml:"tlsCAFile,omitempty"`
 }
 
 // fleetCAMountPath and fleetTokenMountPath must stay in sync with the
@@ -141,6 +151,14 @@ const (
 	fleetTokenMountPath = "/etc/fleet-token/token"
 )
 
+// apifrontendTLSCAFile is AF's own combined inter-service CA bundle mount
+// path (APIFrontendDeployment mounts the same InterServiceCAConfigMapName
+// content as every other component, but under its own component-prefixed
+// directory rather than the shared /etc/tls-ca used by
+// appendInterServiceTLSCA). Used both for AF's existing kaTlsCaFile/
+// dsTlsCaFile fields and as the default for AF's fleet oauth2.tlsCAFile.
+const apifrontendTLSCAFile = "/etc/apifrontend/tls-ca/ca.crt"
+
 // resolveFleetConfig builds the fleet: block rendered into a component's
 // ConfigMap. Returns nil when fleet is disabled so the key is omitted
 // entirely. credentialsSecretRefOverride, when non-empty, overrides
@@ -149,7 +167,7 @@ const (
 // registrations against one shared token endpoint (confirmed against
 // upstream's own Helm chart: kubernaut.fleet.oauth2 helper), so Gateway and
 // RemediationOrchestrator must be able to authenticate as different clients.
-func resolveFleetConfig(kn *kubernautv1alpha1.Kubernaut, credentialsSecretRefOverride string) *fleetConfigYAML {
+func resolveFleetConfig(kn *kubernautv1alpha1.Kubernaut, credentialsSecretRefOverride, defaultOAuth2CAFile string) *fleetConfigYAML {
 	fleet := &kn.Spec.Fleet
 	if fleet.Enabled == nil || !*fleet.Enabled {
 		return nil
@@ -173,8 +191,28 @@ func resolveFleetConfig(kn *kubernautv1alpha1.Kubernaut, credentialsSecretRefOve
 			TokenURL:             fleet.OAuth2.TokenURL,
 			CredentialsSecretRef: withDefault(credentialsSecretRefOverride, fleet.OAuth2.CredentialsSecretRef),
 			Scopes:               fleet.OAuth2.Scopes,
+			TLSCAFile:            defaultOAuth2CAFile,
 		}
 	}
+	return cfg
+}
+
+// resolveMCPGatewayOnlyFleetConfig builds the fleet: block for components
+// that only ever consume MCP Gateway remote reads, never the
+// Backend/Endpoint scope-check adapter (AF, EM -- see upstream
+// FleetConfig.Validate()'s own doc comment: "AF and EM... never call the
+// Backend/Endpoint scope-check adapter"). Reuses resolveFleetConfig's
+// marshaling and TLSCAFile defaulting, then strips the backend/endpoint/
+// tokenPath fields those services neither need nor read.
+func resolveMCPGatewayOnlyFleetConfig(kn *kubernautv1alpha1.Kubernaut, credentialsSecretRefOverride, defaultOAuth2CAFile string) *fleetConfigYAML {
+	cfg := resolveFleetConfig(kn, credentialsSecretRefOverride, defaultOAuth2CAFile)
+	if cfg == nil {
+		return nil
+	}
+	cfg.Backend = ""
+	cfg.Endpoint = ""
+	cfg.TLSCAFile = ""
+	cfg.TokenPath = ""
 	return cfg
 }
 
@@ -834,7 +872,7 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) 
 			Timeout: "10s",
 			Buffer:  dataStorageBufferYAML{BufferSize: 10000, BatchSize: 100, FlushInterval: "1s", MaxRetries: 3},
 		},
-		Fleet: resolveFleetConfig(kn, kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef),
+		Fleet: resolveFleetConfig(kn, kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef, InterServiceTLSCAFile),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1116,7 +1154,7 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...C
 		},
 		DryRun:           ro.DryRun,
 		DryRunHoldPeriod: withDefault(ro.DryRunHoldPeriod, "1h"),
-		Fleet:            resolveFleetConfig(kn, kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef),
+		Fleet:            resolveFleetConfig(kn, kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef, InterServiceTLSCAFile),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1877,8 +1915,8 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSideca
 			DSBaseURL:         dsBaseURL,
 			DSBearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
 			KABearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
-			KATLSCAFile:       "/etc/apifrontend/tls-ca/ca.crt",
-			DSTLSCAFile:       "/etc/apifrontend/tls-ca/ca.crt",
+			KATLSCAFile:       apifrontendTLSCAFile,
+			DSTLSCAFile:       apifrontendTLSCAFile,
 			LLM:               afAgentLLMConfig(afProfile),
 		},
 		MCP: afMCPYAML{

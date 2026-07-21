@@ -239,6 +239,28 @@ var _ = Describe("ConfigMaps", func() {
 			}
 		})
 
+		// Pre-existing gap (#223 triage): upstream FleetOAuth2Config.TLSCAFile
+		// exists and is consumed, but the operator's rendered oauth2 block
+		// never included it. Defaults to InterServiceTLSCAFile so a
+		// cluster-local OAuth2 provider's TLS cert (signed by the
+		// service-ca operator) verifies without extra configuration.
+		It("renders oauth2.tlsCAFile defaulting to the inter-service CA path when oauth2 is enabled", func() {
+			kn := testKubernaut()
+			enabled := true
+			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+				OAuth2: kubernautv1alpha1.OAuth2Spec{
+					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+					CredentialsSecretRef: "fleet-oauth2-creds",
+				},
+			}
+			cm, err := GatewayConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("tlsCAFile: "+InterServiceTLSCAFile), "gateway oauth2 block should default tlsCAFile to the inter-service CA path, got:\n%s", data)
+		})
+
 		It("renders gateway.fleetOAuth2CredentialsSecretRef instead of the shared credentialsSecretRef when set", func() {
 			kn := testKubernaut()
 			enabled := true
@@ -576,6 +598,23 @@ var _ = Describe("ConfigMaps", func() {
 			} {
 				Expect(data).To(ContainSubstring(want), "RO config should contain %q when fleet oauth2 enabled, got:\n%s", want, data)
 			}
+		})
+
+		It("renders oauth2.tlsCAFile defaulting to the inter-service CA path when oauth2 is enabled", func() {
+			kn := testKubernaut()
+			enabled := true
+			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+				OAuth2: kubernautv1alpha1.OAuth2Spec{
+					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+					CredentialsSecretRef: "fleet-oauth2-creds",
+				},
+			}
+			cm, err := RemediationOrchestratorConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["remediationorchestrator.yaml"]
+			Expect(data).To(ContainSubstring("tlsCAFile: "+InterServiceTLSCAFile), "RO oauth2 block should default tlsCAFile to the inter-service CA path, got:\n%s", data)
 		})
 
 		It("renders remediationOrchestrator.fleetOAuth2CredentialsSecretRef instead of the shared credentialsSecretRef when set", func() {
