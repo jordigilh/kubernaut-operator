@@ -106,6 +106,13 @@ type KubernautSpec struct {
 	// RemediationOrchestrator against a shared fleet backend (ADR-068).
 	// +optional
 	Fleet FleetSpec `json:"fleet,omitempty"`
+
+	// FleetMetadataCache configures the operator-managed Fleet Metadata
+	// Cache (FMC) service (ADR-068). Disabled by default -- most
+	// deployments that enable spec.fleet use backend=acm (an existing RHACM
+	// Search installation) instead of standing up FMC.
+	// +optional
+	FleetMetadataCache FleetMetadataCacheSpec `json:"fleetMetadataCache,omitempty"`
 }
 
 // ImageSpec configures container image policy for all services.
@@ -260,6 +267,66 @@ type FleetSpec struct {
 	// do not require authentication.
 	// +optional
 	OAuth2 OAuth2Spec `json:"oauth2,omitempty"`
+}
+
+// FleetMetadataCacheSpec configures the operator-managed Fleet Metadata
+// Cache (FMC) service (ADR-068). FMC polls managed clusters via the MCP
+// Gateway (spec.fleet.mcpGatewayEndpoint/mcpGatewayType) and serves
+// federated scope-check results from Valkey over HTTP, so Gateway and
+// RemediationOrchestrator (spec.fleet.backend=fleetmetadatacache) query
+// scope without holding federated K8s credentials themselves. Disabled by
+// default (opt-in) -- most deployments that enable spec.fleet use
+// backend=acm (an existing RHACM Search installation) instead.
+type FleetMetadataCacheSpec struct {
+	// Whether the operator deploys the FMC service.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Namespace to scope FMC's informer watch for MCP Gateway CRDs
+	// (Backend for Envoy AI Gateway, MCPServerRegistration for Kuadrant)
+	// representing managed clusters. Empty means cluster-wide (all
+	// namespaces). This only scopes the watch itself -- the ClusterRole
+	// granted is cluster-wide regardless (matches upstream's own Helm
+	// chart; a namespace-scoped Role is not yet an option upstream, see
+	// kubernaut#1686).
+	// +optional
+	MCPGatewayNamespace string `json:"mcpGatewayNamespace,omitempty"`
+
+	// FleetOAuth2CredentialsSecretRef overrides
+	// spec.fleet.oauth2.credentialsSecretRef for FMC only. Use when FMC
+	// must authenticate to the MCP Gateway as a different OAuth2 client
+	// than Gateway/RemediationOrchestrator (e.g. a federated Keycloak
+	// issuing distinct per-service client registrations against the same
+	// shared spec.fleet.oauth2.tokenURL). Falls back to
+	// spec.fleet.oauth2.credentialsSecretRef when unset.
+	// +optional
+	FleetOAuth2CredentialsSecretRef string `json:"fleetOAuth2CredentialsSecretRef,omitempty"`
+
+	// How often FMC polls managed clusters for resource metadata. Must be
+	// a valid Go duration string.
+	// +kubebuilder:default="30s"
+	// +optional
+	SyncInterval string `json:"syncInterval,omitempty"`
+
+	// TTL for cached resource metadata entries in Valkey. Must be a valid
+	// Go duration string.
+	// +kubebuilder:default="45s"
+	// +optional
+	KeyTTL string `json:"keyTTL,omitempty"`
+
+	// +optional
+	Logging LoggingSpec `json:"logging,omitempty"`
+
+	// Resource requirements.
+	// +optional
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// FleetMetadataCacheEnabled returns true when the operator should deploy
+// the FMC service. Defaults to false (opt-in).
+func (s *KubernautSpec) FleetMetadataCacheEnabled() bool {
+	return s.FleetMetadataCache.Enabled != nil && *s.FleetMetadataCache.Enabled
 }
 
 // AnsibleSpec configures the optional AWX/AAP integration.

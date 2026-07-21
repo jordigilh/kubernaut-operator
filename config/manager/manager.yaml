@@ -79,6 +79,8 @@ spec:
           value: quay.io/kubernaut-ai/authwebhook@sha256:dbc42f8a27331f0795b3bfb96ff13e1de73a2517801d7a7b5d6acedc36835ded
         - name: RELATED_IMAGE_API_FRONTEND
           value: quay.io/kubernaut-ai/apifrontend@sha256:4e60d1e5e88717f991c20739fee408cfc985e5ba072c3273d91dc9f805600e1b
+        - name: RELATED_IMAGE_FLEETMETADATACACHE
+          value: quay.io/kubernaut-ai/fleetmetadatacache@sha256:3bcac1b04288f67656f91f96c790e5cb441a765bfdd88e43379b348d95d9b2d7
         - name: RELATED_IMAGE_DB_MIGRATE
           value: quay.io/kubernaut-ai/db-migrate@sha256:b364243e5780dd8fbf19309ce5d17011b12edaba0e591e499e1c3a9e8df3576f
         - name: RELATED_IMAGE_CONSOLE

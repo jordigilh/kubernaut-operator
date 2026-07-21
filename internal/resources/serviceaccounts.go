@@ -36,6 +36,7 @@ var serviceAccountNames = map[string]string{
 	ComponentNotification:            "notification-controller",
 	ComponentKubernautAgent:          "kubernaut-agent-sa",
 	ComponentAuthWebhook:             "authwebhook",
+	ComponentFleetMetadataCache:      "fleetmetadatacache",
 }
 
 // ServiceAccountName returns the canonical SA name for a component.

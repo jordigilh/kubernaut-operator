@@ -1100,6 +1100,11 @@ func probeConfigForComponent(component string) ProbeConfig {
 			LivenessPath: "/healthz", LivenessInitialDelay: 15, LivenessPeriod: 10, LivenessTimeout: 5, LivenessFailureThreshold: 3,
 			ReadinessPath: "/readyz", ReadinessInitialDelay: 5, ReadinessPeriod: 5, ReadinessTimeout: 3, ReadinessFailureThreshold: 3,
 		}
+	case ComponentFleetMetadataCache:
+		return ProbeConfig{
+			LivenessPath: "/healthz", LivenessInitialDelay: 5, LivenessPeriod: 10, LivenessTimeout: 5, LivenessFailureThreshold: 3,
+			ReadinessPath: "/readyz", ReadinessInitialDelay: 3, ReadinessPeriod: 5, ReadinessTimeout: 3, ReadinessFailureThreshold: 3,
+		}
 	default:
 		// SignalProcessing, RemediationOrchestrator, WorkflowExecution
 		return ProbeConfig{

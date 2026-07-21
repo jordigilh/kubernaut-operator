@@ -46,6 +46,7 @@ var _ = BeforeSuite(func() {
 		"RELATED_IMAGE_DB_MIGRATE":              "quay.io/kubernaut-ai/db-migrate:v1.3.0",
 		"RELATED_IMAGE_INIT_UBI_MINIMAL":        "registry.access.redhat.com/ubi10/ubi-minimal:latest",
 		"RELATED_IMAGE_OAUTH2_PROXY":            "quay.io/oauth2-proxy/oauth2-proxy:v7.9.0",
+		"RELATED_IMAGE_FLEETMETADATACACHE":      "quay.io/kubernaut-ai/fleetmetadatacache:v1.6.0-rc1",
 	} {
 		Expect(os.Setenv(k, v)).To(Succeed())
 	}
@@ -68,6 +69,7 @@ var _ = AfterSuite(func() {
 		"RELATED_IMAGE_DB_MIGRATE",
 		"RELATED_IMAGE_INIT_UBI_MINIMAL",
 		"RELATED_IMAGE_OAUTH2_PROXY",
+		"RELATED_IMAGE_FLEETMETADATACACHE",
 	} {
 		Expect(os.Unsetenv(k)).To(Succeed())
 	}

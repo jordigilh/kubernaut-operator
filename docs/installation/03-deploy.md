@@ -181,6 +181,28 @@ spec:
   # back to the shared value when unset, so setting the shared field alone
   # is enough when every component uses the same OAuth2 client.
 
+  # --- Fleet Metadata Cache (FMC) — optional, ADR-068 ---
+  # Deploys the operator-managed FMC service, which polls managed clusters
+  # via the MCP Gateway (fleet.mcpGatewayEndpoint/mcpGatewayType above) and
+  # serves federated scope-check results from Valkey over plain HTTP inside
+  # the cluster (upstream's binary has no TLS server support). Most
+  # deployments that enable spec.fleet use backend: acm (an existing RHACM
+  # Search installation) instead of standing up FMC — only set
+  # fleetMetadataCache.enabled: true when backend: fleetmetadatacache above
+  # and you want the operator, rather than a separately-managed FMC, to be
+  # the thing Gateway/RemediationOrchestrator query. When enabled with no
+  # fleet.endpoint set, the operator auto-derives FMC's in-cluster URL — no
+  # need to also fill in fleet.endpoint by hand.
+  #
+  # fleetMetadataCache:
+  #   enabled: false
+  #   mcpGatewayNamespace: managed-clusters   # optional; scopes FMC's own watch, not the ClusterRole (cluster-wide either way, see kubernaut#1686)
+  #   fleetOAuth2CredentialsSecretRef: fmc-oauth2-creds   # optional; overrides fleet.oauth2.credentialsSecretRef for FMC only
+  #   syncInterval: "30s"
+  #   keyTTL: "45s"
+  #   logging:
+  #     level: info
+
   # --- Remediation orchestrator tuning (optional) ---
   remediationOrchestrator:
     # dryRun: false                     # enable dry-run mode (plans but does not execute)

@@ -48,6 +48,7 @@ const (
 	ComponentAuthWebhook             = "authwebhook"
 	ComponentAPIFrontend             = "apifrontend"
 	ComponentConsole                 = "kubernaut-console"
+	ComponentFleetMetadataCache      = "fleetmetadatacache"
 )
 
 // controllerSuffix lists components that are actual Kubernetes controllers
@@ -226,6 +227,7 @@ func AllComponents() []string {
 		ComponentKubernautAgent,
 		ComponentAuthWebhook,
 		ComponentAPIFrontend,
+		ComponentFleetMetadataCache,
 	}
 }
 
@@ -239,6 +241,8 @@ func isComponentActive(kn *kubernautv1alpha1.Kubernaut, component string) bool {
 		return kn.Spec.GatewayEnabled()
 	case ComponentConsole:
 		return kn.Spec.ConsoleEnabled()
+	case ComponentFleetMetadataCache:
+		return kn.Spec.FleetMetadataCacheEnabled()
 	default:
 		return true
 	}
@@ -301,6 +305,7 @@ var componentEnvSuffix = map[string]string{
 	"init-ubi-minimal":        "INIT_UBI_MINIMAL",
 	"console":                 "CONSOLE",
 	"oauth2-proxy":            "OAUTH2_PROXY",
+	"fleetmetadatacache":      "FLEETMETADATACACHE",
 }
 
 // ResolveImage returns the fully-qualified container image for a component.
@@ -405,6 +410,34 @@ func DataStorageURL(namespace string) string {
 // GatewayURL returns the in-cluster Gateway service URL (HTTPS via service-ca).
 func GatewayURL(namespace string) string {
 	return fmt.Sprintf("https://gateway-service.%s.svc.cluster.local:8443", namespace)
+}
+
+// FleetMetadataCacheURL returns the in-cluster FMC service URL. Plain HTTP,
+// not HTTPS: upstream's FMC binary (cmd/fleetmetadatacache) has no TLS
+// server support (ServerConfig has no cert fields, buildFMCServers()
+// constructs a bare http.Server) and its own Helm chart serves the api port
+// unencrypted, so there is no server-side cert for the operator to
+// provision here either. FMC is only reachable from Gateway/
+// RemediationOrchestrator pods in the same namespace (enforced by
+// fleetMetadataCacheNetworkPolicy), the same trust boundary already
+// accepted for unencrypted Valkey traffic elsewhere in this operator.
+func FleetMetadataCacheURL(namespace string) string {
+	return fmt.Sprintf("http://fleetmetadatacache-service.%s.svc.cluster.local:8080", namespace)
+}
+
+// resolveFleetEndpoint returns the effective spec.fleet.endpoint value.
+// When the user leaves it empty, backend=fleetmetadatacache, and the
+// operator is managing FMC itself (spec.fleetMetadataCache.enabled=true),
+// the in-cluster FMC service URL is auto-derived -- the whole point of the
+// operator deploying FMC is that Gateway/RemediationOrchestrator don't need
+// the user to separately wire up its address. BYO FMC (or backend=acm)
+// still requires an explicit endpoint (enforced in validation.go).
+func resolveFleetEndpoint(kn *kubernautv1alpha1.Kubernaut) string {
+	fleet := &kn.Spec.Fleet
+	if fleet.Endpoint == "" && fleet.Backend == "fleetmetadatacache" && kn.Spec.FleetMetadataCacheEnabled() {
+		return FleetMetadataCacheURL(kn.Namespace)
+	}
+	return fleet.Endpoint
 }
 
 // PostgreSQLPort returns the effective PostgreSQL port, defaulting to 5432.
