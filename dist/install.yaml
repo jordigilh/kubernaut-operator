@@ -1057,6 +1057,126 @@ spec:
                       ACM Search's GraphQL API has no unauthenticated mode.
                     type: string
                 type: object
+              fleetMetadataCache:
+                description: |-
+                  FleetMetadataCache configures the operator-managed Fleet Metadata
+                  Cache (FMC) service (ADR-068). Disabled by default -- most
+                  deployments that enable spec.fleet use backend=acm (an existing RHACM
+                  Search installation) instead of standing up FMC.
+                properties:
+                  enabled:
+                    default: false
+                    description: Whether the operator deploys the FMC service.
+                    type: boolean
+                  fleetOAuth2CredentialsSecretRef:
+                    description: |-
+                      FleetOAuth2CredentialsSecretRef overrides
+                      spec.fleet.oauth2.credentialsSecretRef for FMC only. Use when FMC
+                      must authenticate to the MCP Gateway as a different OAuth2 client
+                      than Gateway/RemediationOrchestrator (e.g. a federated Keycloak
+                      issuing distinct per-service client registrations against the same
+                      shared spec.fleet.oauth2.tokenURL). Falls back to
+                      spec.fleet.oauth2.credentialsSecretRef when unset.
+                    type: string
+                  keyTTL:
+                    default: 45s
+                    description: |-
+                      TTL for cached resource metadata entries in Valkey. Must be a valid
+                      Go duration string.
+                    type: string
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: info
+                        description: 'Log level. One of: DEBUG, INFO, WARN, ERROR.'
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        - debug
+                        - info
+                        - warn
+                        - error
+                        type: string
+                    type: object
+                  mcpGatewayNamespace:
+                    description: |-
+                      Namespace to scope FMC's informer watch for MCP Gateway CRDs
+                      (Backend for Envoy AI Gateway, MCPServerRegistration for Kuadrant)
+                      representing managed clusters. Empty means cluster-wide (all
+                      namespaces). This only scopes the watch itself -- the ClusterRole
+                      granted is cluster-wide regardless (matches upstream's own Helm
+                      chart; a namespace-scoped Role is not yet an option upstream, see
+                      kubernaut#1686).
+                    type: string
+                  resources:
+                    description: Resource requirements.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  syncInterval:
+                    default: 30s
+                    description: |-
+                      How often FMC polls managed clusters for resource metadata. Must be
+                      a valid Go duration string.
+                    type: string
+                type: object
               gateway:
                 description: Gateway service settings.
                 properties:
@@ -2939,6 +3059,8 @@ spec:
           value: quay.io/kubernaut-ai/authwebhook@sha256:dbc42f8a27331f0795b3bfb96ff13e1de73a2517801d7a7b5d6acedc36835ded
         - name: RELATED_IMAGE_API_FRONTEND
           value: quay.io/kubernaut-ai/apifrontend@sha256:4e60d1e5e88717f991c20739fee408cfc985e5ba072c3273d91dc9f805600e1b
+        - name: RELATED_IMAGE_FLEETMETADATACACHE
+          value: quay.io/kubernaut-ai/fleetmetadatacache@sha256:3bcac1b04288f67656f91f96c790e5cb441a765bfdd88e43379b348d95d9b2d7
         - name: RELATED_IMAGE_DB_MIGRATE
           value: quay.io/kubernaut-ai/db-migrate@sha256:b364243e5780dd8fbf19309ce5d17011b12edaba0e591e499e1c3a9e8df3576f
         - name: RELATED_IMAGE_CONSOLE
