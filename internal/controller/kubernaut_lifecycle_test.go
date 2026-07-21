@@ -154,9 +154,15 @@ func setDeploymentReady(ctx context.Context, name string) {
 	Expect(k8sClient.Status().Update(ctx, dep)).To(Succeed())
 }
 
-// setAllDeploymentsReady marks all 10 service Deployments as ready.
+// setAllDeploymentsReady marks every active service Deployment as ready.
+// Uses ActiveComponents rather than AllComponents: opt-in components
+// (Gateway, APIFrontend, FleetMetadataCache) don't get a Deployment at all
+// when disabled, and most callers' CRs leave FleetMetadataCache at its
+// default (disabled).
 func setAllDeploymentsReady(ctx context.Context) {
-	for _, c := range resources.AllComponents() {
+	kn := &kubernautv1alpha1.Kubernaut{}
+	Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+	for _, c := range resources.ActiveComponents(kn) {
 		setDeploymentReady(ctx, resources.DeploymentName(c))
 	}
 }
@@ -460,7 +466,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			r := reconcileToDeployPhase(ctx)
 
 			By("marking all except gateway as ready")
-			for _, c := range resources.AllComponents() {
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			for _, c := range resources.ActiveComponents(kn) {
 				if c != resources.ComponentGateway {
 					setDeploymentReady(ctx, resources.DeploymentName(c))
 				}
@@ -472,7 +480,6 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(result.RequeueAfter).To(BeNumerically("==", 15_000_000_000),
 				"should requeue after 15s when degraded")
 
-			kn := &kubernautv1alpha1.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseDegraded))
 
@@ -489,7 +496,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			r := reconcileToDeployPhase(ctx)
 
 			By("driving to degraded")
-			for _, c := range resources.AllComponents() {
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			for _, c := range resources.ActiveComponents(kn) {
 				if c != resources.ComponentGateway {
 					setDeploymentReady(ctx, resources.DeploymentName(c))
 				}
@@ -497,7 +506,6 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
-			kn := &kubernautv1alpha1.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseDegraded))
 
