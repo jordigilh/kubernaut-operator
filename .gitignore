@@ -29,3 +29,8 @@ go.work
 *.swo
 *~
 index-check.db
+
+# Cursor MCP config contains machine-specific absolute paths; keep rules/skills shared
+.cursor/*
+!.cursor/rules/
+!.cursor/skills/
