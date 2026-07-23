@@ -805,6 +805,16 @@ type KubernautAgentSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
+	// for the Kubernaut Agent only. Use when KA must authenticate to the
+	// MCP Gateway (for fleet tool discovery, ADR-068 decision #11) as a
+	// different OAuth2 client than other fleet-aware components (e.g. a
+	// federated Keycloak issuing distinct per-service client registrations
+	// against the same shared spec.fleet.oauth2.tokenURL). Falls back to
+	// spec.fleet.oauth2.credentialsSecretRef when unset.
+	// +optional
+	FleetOAuth2CredentialsSecretRef string `json:"fleetOAuth2CredentialsSecretRef,omitempty"`
 }
 
 // KARateLimitSpec configures request rate limiting for the Kubernaut Agent server.
