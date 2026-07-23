@@ -1447,6 +1447,100 @@ var _ = Describe("ConfigMaps", func() {
 				Expect(phase.Reasoning).To(BeNil(), "CM-6: phaseModels.validation.reasoning must stay absent when its own profile has none, even though the base agent's does — a phase-specific profile swap must not inherit reasoning spend it never opted into")
 			})
 		})
+
+		Context("Fleet Gateway Discovery (#204)", func() {
+			It("KFG-010 [CM-6]: omits integrations.fleet entirely when spec.fleet is disabled — KA registers no fleet discovery tools by default", func() {
+				kn := testKubernaut()
+				cm, err := KubernautAgentConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				data := cm.Data["config.yaml"]
+				Expect(data).NotTo(ContainSubstring("fleet:"), "KA config should omit integrations.fleet when spec.fleet.enabled is false, got:\n%s", data)
+			})
+
+			It("KFG-011 [CM-6]: renders integrations.fleet.endpoint/gatewayType verbatim from spec.fleet when enabled (kuadrant)", func() {
+				kn := testKubernautWithFleetMCP()
+				kn.Spec.Fleet.MCPGatewayType = mcpGatewayTypeKuadrant
+				cm, err := KubernautAgentConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				var root struct {
+					Integrations struct {
+						Fleet *struct {
+							Endpoint    string `yaml:"endpoint"`
+							GatewayType string `yaml:"gatewayType"`
+						} `yaml:"fleet"`
+					} `yaml:"integrations"`
+				}
+				Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+				Expect(root.Integrations.Fleet).NotTo(BeNil(), "integrations.fleet should be present when spec.fleet.enabled is true")
+				Expect(root.Integrations.Fleet.Endpoint).To(Equal(kn.Spec.Fleet.MCPGatewayEndpoint), "integrations.fleet.endpoint = %q, want %q", root.Integrations.Fleet.Endpoint, kn.Spec.Fleet.MCPGatewayEndpoint)
+				Expect(root.Integrations.Fleet.GatewayType).To(Equal(mcpGatewayTypeKuadrant), "integrations.fleet.gatewayType = %q, want %q", root.Integrations.Fleet.GatewayType, mcpGatewayTypeKuadrant)
+			})
+
+			It("KFG-011b [CM-6]: renders integrations.fleet.gatewayType verbatim for eaigw too", func() {
+				kn := testKubernautWithFleetMCP()
+				cm, err := KubernautAgentConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				data := cm.Data["config.yaml"]
+				Expect(data).To(ContainSubstring("gatewayType: eaigw"), "KA config should render gatewayType: eaigw, got:\n%s", data)
+			})
+
+			It("KFG-012 [CM-6]: omits integrations.fleet.oauth2 when spec.fleet.oauth2.enabled is false, even though fleet itself is enabled", func() {
+				kn := testKubernautWithFleetMCP()
+				cm, err := KubernautAgentConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				data := cm.Data["config.yaml"]
+				Expect(data).NotTo(ContainSubstring("oauth2:"), "KA should not send fleet OAuth2 credentials it wasn't configured with, got:\n%s", data)
+			})
+
+			It("KFG-013 [CM-6]: integrations.fleet.oauth2.credentialsSecretRef uses KA's own override when set, so KA can authenticate as a distinct OAuth2 client from other fleet-aware components", func() {
+				kn := testKubernautWithFleetMCP()
+				kn.Spec.Fleet.OAuth2 = kubernautv1alpha1.OAuth2Spec{
+					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+					CredentialsSecretRef: "shared-fleet-oauth2-creds",
+				}
+				kn.Spec.KubernautAgent.FleetOAuth2CredentialsSecretRef = "ka-oauth2-creds"
+				cm, err := KubernautAgentConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				var root struct {
+					Integrations struct {
+						Fleet *struct {
+							OAuth2 *struct {
+								CredentialsSecretRef string `yaml:"credentialsSecretRef"`
+							} `yaml:"oauth2"`
+						} `yaml:"fleet"`
+					} `yaml:"integrations"`
+				}
+				Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+				Expect(root.Integrations.Fleet.OAuth2).NotTo(BeNil(), "integrations.fleet.oauth2 should be present when spec.fleet.oauth2.enabled is true")
+				Expect(root.Integrations.Fleet.OAuth2.CredentialsSecretRef).To(Equal("ka-oauth2-creds"), "integrations.fleet.oauth2.credentialsSecretRef should use KA's own override, got %q", root.Integrations.Fleet.OAuth2.CredentialsSecretRef)
+			})
+
+			It("KFG-013b [CM-6]: integrations.fleet.oauth2.credentialsSecretRef falls back to spec.fleet.oauth2.credentialsSecretRef when KA has no override", func() {
+				kn := testKubernautWithFleetMCP()
+				kn.Spec.Fleet.OAuth2 = kubernautv1alpha1.OAuth2Spec{
+					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+					CredentialsSecretRef: "shared-fleet-oauth2-creds",
+				}
+				cm, err := KubernautAgentConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				data := cm.Data["config.yaml"]
+				Expect(data).To(ContainSubstring("credentialsSecretRef: shared-fleet-oauth2-creds"), "KA should fall back to the shared spec.fleet.oauth2.credentialsSecretRef, got:\n%s", data)
+			})
+
+			It("KFG-014 [CM-6]: renders integrations.fleet.oauth2.tokenURL/scopes verbatim from spec.fleet.oauth2", func() {
+				kn := testKubernautWithFleetMCP()
+				kn.Spec.Fleet.OAuth2 = kubernautv1alpha1.OAuth2Spec{
+					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+					CredentialsSecretRef: "fleet-oauth2-creds",
+					Scopes:               []string{"fleet:read"},
+				}
+				cm, err := KubernautAgentConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				data := cm.Data["config.yaml"]
+				Expect(data).To(ContainSubstring("tokenURL: https://keycloak.example.com/token"), "KA config should contain fleet oauth2 tokenURL, got:\n%s", data)
+				Expect(data).To(ContainSubstring("fleet:read"), "KA config should contain fleet oauth2 scopes, got:\n%s", data)
+			})
+		})
 	})
 
 	Describe("AuthWebhook ConfigMap", func() {

@@ -545,4 +545,14 @@ var _ = Describe("Gateway/RemediationOrchestrator/SignalProcessing/APIFrontend/E
 		kn := testKubernautWithFleetMCP()
 		Expect(hasFleetEgressRule(effectivenessMonitorNetworkPolicy(kn))).To(BeTrue())
 	})
+
+	It("KFG-030 [AC-4]: kubernautagent omits fleet egress when fleet disabled", func() {
+		kn := testKubernaut()
+		Expect(hasFleetEgressRule(kubernautAgentNetworkPolicy(kn))).To(BeFalse())
+	})
+
+	It("KFG-031 [AC-4]: kubernautagent gains fleet egress when fleet enabled, so KA can reach the MCP Gateway for GatewayDiscoverer tool calls", func() {
+		kn := testKubernautWithFleetMCP()
+		Expect(hasFleetEgressRule(kubernautAgentNetworkPolicy(kn))).To(BeTrue())
+	})
 })

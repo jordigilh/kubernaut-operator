@@ -323,6 +323,9 @@ func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.
 			},
 		})
 	}
+	if kn.Spec.FleetEnabled() {
+		egress = append(egress, fleetDestinationsEgressRule())
+	}
 
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: ObjectMeta(kn, ComponentKubernautAgent+"-netpol", ComponentKubernautAgent),

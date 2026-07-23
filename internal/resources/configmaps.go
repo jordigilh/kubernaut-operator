@@ -778,6 +778,56 @@ type kaAnomalyYAML struct {
 type kaIntegrationsYAML struct {
 	DataStorage kaIntegrationsDataStorageYAML `json:"dataStorage" yaml:"dataStorage"`
 	Tools       *kaIntegrationsToolsYAML      `json:"tools,omitempty" yaml:"tools,omitempty"`
+	Fleet       *kaFleetYAML                  `json:"fleet,omitempty" yaml:"fleet,omitempty"`
+}
+
+// kaFleetYAML mirrors upstream internal/kubernautagent/config.FleetConfig
+// (#204) -- a shape distinct from the shared fleetConfigYAML rendered for
+// GW/RO/SP/AF/EM: no backend/tlsCAFile/tokenPath/mcpGateway-prefixed field
+// names. Consumed by registerFleetTools() to instantiate the right
+// GatewayDiscoverer (Kuadrant vs EAIGW) and register the
+// list_clusters/list_tools_for_cluster tools (ADR-068 decision #11).
+type kaFleetYAML struct {
+	Endpoint    string             `json:"endpoint" yaml:"endpoint"`
+	GatewayType string             `json:"gatewayType" yaml:"gatewayType"`
+	OAuth2      *kaFleetOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+}
+
+// kaFleetOAuth2YAML mirrors upstream internal/kubernautagent/config.FleetOAuth2.
+// CredentialsSecretRef is rendered as the bare Secret name, matching every
+// other fleet-aware component's convention (deployments.go builds the
+// actual mount path, which for KA is the hardcoded, unhyphenated
+// "/etc/kubernautagent/<credentialsSecretRef>" -- see
+// appendMCPGatewayOnlyFleetSecretMount's call site in KubernautAgentDeployment).
+type kaFleetOAuth2YAML struct {
+	Enabled              bool     `json:"enabled" yaml:"enabled"`
+	TokenURL             string   `json:"tokenURL,omitempty" yaml:"tokenURL,omitempty"`
+	CredentialsSecretRef string   `json:"credentialsSecretRef,omitempty" yaml:"credentialsSecretRef,omitempty"`
+	Scopes               []string `json:"scopes,omitempty" yaml:"scopes,omitempty"`
+}
+
+// resolveKAFleetConfig builds KA's integrations.fleet: block. Returns nil
+// when spec.fleet is disabled, so KA registers no GatewayDiscoverer tools
+// by default (#204 "default behavior unchanged" acceptance criterion,
+// matching upstream's own "empty gatewayType = fleet disabled" contract).
+func resolveKAFleetConfig(kn *kubernautv1alpha1.Kubernaut) *kaFleetYAML {
+	fleet := &kn.Spec.Fleet
+	if fleet.Enabled == nil || !*fleet.Enabled {
+		return nil
+	}
+	cfg := &kaFleetYAML{
+		Endpoint:    fleet.MCPGatewayEndpoint,
+		GatewayType: fleet.MCPGatewayType,
+	}
+	if fleet.OAuth2.Enabled {
+		cfg.OAuth2 = &kaFleetOAuth2YAML{
+			Enabled:              true,
+			TokenURL:             fleet.OAuth2.TokenURL,
+			CredentialsSecretRef: withDefault(kn.Spec.KubernautAgent.FleetOAuth2CredentialsSecretRef, fleet.OAuth2.CredentialsSecretRef),
+			Scopes:               fleet.OAuth2.Scopes,
+		}
+	}
+	return cfg
 }
 
 type kaIntegrationsDataStorageYAML struct {
@@ -1595,6 +1645,8 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 			},
 		}
 	}
+
+	cfg.Integrations.Fleet = resolveKAFleetConfig(kn)
 
 	if interactive := ka.Interactive; interactive == nil || interactive.InteractiveEnabled() {
 		defaultMaxSessions := 100

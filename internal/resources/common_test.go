@@ -43,6 +43,7 @@ const (
 	testSPFleetOAuth2SecretRef      = "sp-oauth2-creds"
 	testAFFleetOAuth2SecretRef      = "af-oauth2-creds"
 	testEMFleetOAuth2SecretRef      = "em-oauth2-creds"
+	testKAFleetOAuth2SecretRef      = "ka-oauth2-creds"
 
 	// Per-component/shared MCP Gateway namespace fixtures used across
 	// configmaps_test.go and rbac_test.go's namespace-retrofit coverage.

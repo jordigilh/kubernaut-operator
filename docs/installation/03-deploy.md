@@ -105,6 +105,7 @@ spec:
     # summarizer:                          # tool output summarization
     #   threshold: 8000                    # token count to trigger summarization
     #   maxToolOutputSize: 100000          # max tool output size in bytes
+    # fleetOAuth2CredentialsSecretRef: ka-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for KubernautAgent only -- used when fleet.enabled: true, for its list_clusters/list_tools_for_cluster MCP tools (ADR-068 decision #11)
 
   # --- NetworkPolicies (default: disabled) ---
   # networkPolicies:
@@ -155,19 +156,20 @@ spec:
     # fleetOAuth2CredentialsSecretRef: gateway-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for Gateway only
 
   # --- Fleet federation (optional, ADR-068) ---
-  # Points Gateway/RemediationOrchestrator (scope-checking) and
+  # Points Gateway/RemediationOrchestrator (scope-checking),
   # SignalProcessing/APIFrontend/EffectivenessMonitor (cluster classification
-  # + multi-cluster reads, #224) at a shared fleet backend across a fleet of
-  # clusters. All fields are inert until enabled: true is set — safe to
-  # pre-stage ahead of enabling.
+  # + multi-cluster reads, #224), and KubernautAgent (GatewayDiscoverer tool
+  # discovery -- list_clusters/list_tools_for_cluster, #204) at a shared
+  # fleet backend across a fleet of clusters. All fields are inert until
+  # enabled: true is set — safe to pre-stage ahead of enabling.
   #
   # mcpGatewayEndpoint/mcpGatewayType are REQUIRED alongside backend/endpoint
   # when enabled: Gateway and RemediationOrchestrator fail closed at startup
   # without them (upstream Fleet.ValidateFullFederation). SignalProcessing/
-  # APIFrontend/EffectivenessMonitor only need mcpGatewayEndpoint+
-  # mcpGatewayType — they never call the Backend/Endpoint scope-check
-  # adapter, so backend/endpoint don't apply to them and are omitted from
-  # their rendered config.
+  # APIFrontend/EffectivenessMonitor/KubernautAgent only need
+  # mcpGatewayEndpoint+mcpGatewayType — they never call the Backend/Endpoint
+  # scope-check adapter, so backend/endpoint don't apply to them and are
+  # omitted from their rendered config.
   # fleet:
   #   enabled: false
   #   backend: fleetmetadatacache          # or: acm (Red Hat ACM Search GraphQL)
@@ -188,8 +190,9 @@ spec:
   # gateway.fleetOAuth2CredentialsSecretRef,
   # remediationOrchestrator.fleetOAuth2CredentialsSecretRef,
   # signalProcessing.fleetOAuth2CredentialsSecretRef,
-  # apiFrontend.fleetOAuth2CredentialsSecretRef, and/or
-  # effectivenessMonitor.fleetOAuth2CredentialsSecretRef to override
+  # apiFrontend.fleetOAuth2CredentialsSecretRef,
+  # effectivenessMonitor.fleetOAuth2CredentialsSecretRef, and/or
+  # kubernautAgent.fleetOAuth2CredentialsSecretRef to override
   # fleet.oauth2.credentialsSecretRef for that component only. Each falls
   # back to the shared value when unset, so setting the shared field alone
   # is enough when every component uses the same OAuth2 client.
