@@ -250,13 +250,48 @@ const AnnotationCreatedBy = "kubernaut.ai/created-by"
 
 // WorkflowNamespace builds the Namespace resource for workflow execution.
 func WorkflowNamespace(kn *kubernautv1alpha1.Kubernaut) *corev1.Namespace {
+	labels := CommonLabels(kn)
+	for k, v := range RestrictedPSALabels() {
+		labels[k] = v
+	}
 	return &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   ResolveWorkflowNamespace(kn),
-			Labels: CommonLabels(kn),
+			Labels: labels,
 			Annotations: map[string]string{
 				AnnotationCreatedBy: "kubernaut-operator",
 			},
 		},
 	}
+}
+
+// RestrictedPSALabels returns the Pod Security Admission labels that pin a
+// namespace to the "restricted" level. Used unconditionally (no CR
+// opt-out) on kubernaut-workflows as a defense-in-depth backstop for the
+// WorkflowExecution controller's spawned Job/Tekton pods (#208, companion
+// to kubernaut BR-WE-018/GAP-03): even if the controller's
+// SecurityContext-authoring code ever regresses, the API server
+// independently rejects non-compliant pods at admission time.
+func RestrictedPSALabels() map[string]string {
+	return map[string]string{
+		"pod-security.kubernetes.io/enforce": "restricted",
+		"pod-security.kubernetes.io/audit":   "restricted",
+		"pod-security.kubernetes.io/warn":    "restricted",
+	}
+}
+
+// EnsureRestrictedPSALabels patches labels with any missing/mismatched
+// RestrictedPSALabels() entries in place. Returns true if it changed
+// anything, so callers can skip an unnecessary Update when the namespace
+// already converged. Mirrors ensurePSALabels' (privileged, SPIFFE-CSI
+// namespace) shape for the "restricted" level.
+func EnsureRestrictedPSALabels(labels map[string]string) bool {
+	changed := false
+	for k, v := range RestrictedPSALabels() {
+		if labels[k] != v {
+			labels[k] = v
+			changed = true
+		}
+	}
+	return changed
 }

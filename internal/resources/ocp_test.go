@@ -306,4 +306,22 @@ var _ = Describe("WorkflowNamespace", func() {
 
 		Expect(ns.Name).To(Equal("my-workflows"), "name = %q, want %q", ns.Name, "my-workflows")
 	})
+
+	It("WNS-001 [AC-4]: sets the 3 Pod Security Admission 'restricted' labels unconditionally, as a defense-in-depth backstop for spawned workflow Job/Tekton pods (BR-WE-018/GAP-03 companion)", func() {
+		kn := testKubernaut()
+		ns := WorkflowNamespace(kn)
+
+		Expect(ns.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/enforce", "restricted"))
+		Expect(ns.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/audit", "restricted"))
+		Expect(ns.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/warn", "restricted"))
+	})
+
+	It("WNS-002 [CM-6]: the PSA labels are present alongside the existing common labels, not instead of them", func() {
+		kn := testKubernaut()
+		ns := WorkflowNamespace(kn)
+
+		Expect(ns.Labels).To(HaveKeyWithValue("app.kubernetes.io/managed-by", testOperatorManagedByValue))
+		Expect(ns.Labels).To(HaveKeyWithValue("app.kubernetes.io/instance", kn.Name))
+		Expect(ns.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/enforce", "restricted"))
+	})
 })
