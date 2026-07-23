@@ -3,7 +3,7 @@ module github.com/jordigilh/kubernaut-operator
 go 1.26.5
 
 require (
-	github.com/jordigilh/kubernaut v1.6.0-rc1.0.20260721030347-814d8dd84fef
+	github.com/jordigilh/kubernaut v1.6.0-rc1.0.20260723152521-56562f9f1adb
 	github.com/onsi/ginkgo/v2 v2.32.0
 	github.com/onsi/gomega v1.42.1
 	github.com/openshift/api v0.0.0-20260327162646-993e604705e3
@@ -94,7 +94,7 @@ require (
 	gomodules.xyz/jsonpatch/v2 v2.5.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260615183401-62b3387ff324 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260610212136-7ab31c22f7ad // indirect
-	google.golang.org/grpc v1.81.1 // indirect
+	google.golang.org/grpc v1.82.1 // indirect
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
