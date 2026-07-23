@@ -1777,6 +1777,47 @@ spec:
                         "azure").
                       minLength: 1
                       type: string
+                    reasoning:
+                      description: Reasoning/thinking-token configuration. Disabled
+                        by default.
+                      properties:
+                        budgetTokens:
+                          description: |-
+                            Exact-value thinking-token budget. When set, this always takes
+                            precedence over Effort for Anthropic (native and Vertex-hosted
+                            Claude); providers with no effort-dial concept at all ignore it.
+                          type: integer
+                        capabilityOverride:
+                          default: auto
+                          description: |-
+                            Capability override for self-hosted/custom models that cannot be
+                            identified by vendor enum. One of "auto" (default), "force_on",
+                            "force_off".
+                          enum:
+                          - auto
+                          - force_on
+                          - force_off
+                          type: string
+                        effort:
+                          description: |-
+                            Unified, provider-agnostic reasoning-depth knob (kubernaut#1604).
+                            One of "" (unset -- vendor default), "none", "minimal", "low",
+                            "medium", "high", "xhigh". Same value means the same thing across
+                            providers; each client maps it into its own wire dialect.
+                          enum:
+                          - none
+                          - minimal
+                          - low
+                          - medium
+                          - high
+                          - xhigh
+                          type: string
+                        enabled:
+                          default: false
+                          description: Enable reasoning/thinking token requests where
+                            the model supports it.
+                          type: boolean
+                      type: object
                     temperature:
                       description: |-
                         Sampling temperature for LLM responses (e.g. "0.7").
