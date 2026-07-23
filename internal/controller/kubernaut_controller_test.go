@@ -152,8 +152,10 @@ var _ = Describe("Kubernaut Controller", func() {
 	ctx := context.Background()
 
 	AfterEach(func() {
+		cleanupNamespacedResources(ctx)
 		deleteCRIfExists(ctx)
 		deleteBYOSecrets(ctx)
+		cleanupClusterScoped(ctx)
 	})
 
 	// ---- Singleton Guard ----
@@ -419,7 +421,39 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(errors.IsInvalid(err)).To(BeTrue(), "expected a schema validation rejection, got: %v", err)
 		})
 	})
+
+	// ---- KA Fleet GatewayType propagation (#204) ----
+	//
+	// Unit tests construct spec.fleet and call KubernautAgentConfigMap
+	// directly, never proving the reconcile loop itself actually threads
+	// spec.fleet through to KA's rendered ConfigMap in a live cluster
+	// (Pyramid Invariant: "IT proves wiring").
+	Context("KA Fleet GatewayType propagation", func() {
+		It("KFG-060 [CM-6]: a Kubernaut CR with spec.fleet.enabled and mcpGatewayType=kuadrant reconciles successfully and KA's rendered ConfigMap carries the gatewayType through", func() {
+			createBYOSecrets(ctx)
+			kn := newCRWithRouteDisabled()
+			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+				Enabled:            &enabled,
+				Backend:            "fleetmetadatacache",
+				Endpoint:           "https://fmc.kubernaut.svc:8443",
+				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse",
+				MCPGatewayType:     "kuadrant",
+			}
+			Expect(k8sClient.Create(ctx, kn)).To(Succeed(),
+				"CM-6: a legitimate spec.fleet configuration must be accepted end-to-end")
+
+			reconcileToDeployPhase(ctx)
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "kubernaut-agent-config", Namespace: testNamespace}, cm)).To(Succeed())
+			Expect(cm.Data["config.yaml"]).To(ContainSubstring("gatewayType: kuadrant"),
+				"CM-6: the reconcile loop must render spec.fleet.mcpGatewayType into KA's live ConfigMap, not just in unit-level struct construction")
+		})
+	})
 })
+
+// enabled is a package-level *bool for FleetSpec.Enabled (a pointer field).
+var enabled = true
 
 func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
 	for i := range conditions {

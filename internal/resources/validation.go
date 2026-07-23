@@ -559,7 +559,7 @@ func validateFleetConfig(kn *kubernautv1alpha1.Kubernaut) []error {
 		// client registrations against one shared token endpoint (confirmed
 		// against upstream's own Helm chart: kubernaut.fleet.oauth2 helper
 		// resolves each service's own credentialsSecretRef, falling back to
-		// the fleet-wide default). Each of the five fleet-aware components
+		// the fleet-wide default). Each of the six fleet-aware components
 		// needs its own *effective* value (own override, or the shared
 		// fallback) — a shared credentialsSecretRef covers whichever
 		// component doesn't override it, but a component that overrides it
@@ -569,6 +569,10 @@ func validateFleetConfig(kn *kubernautv1alpha1.Kubernaut) []error {
 		// switch to a loop over all five fleet-aware components (SP/AF/EM
 		// gained their own FleetOAuth2CredentialsSecretRef override fields)
 		// -- see Finding 7.
+		//
+		// #204: extended to a sixth component -- KA authenticates its own
+		// list_clusters/list_tools_for_cluster GatewayDiscoverer calls to
+		// the MCP Gateway and needs the same effective-value guarantee.
 		components := []struct {
 			specPath string
 			override string
@@ -578,6 +582,7 @@ func validateFleetConfig(kn *kubernautv1alpha1.Kubernaut) []error {
 			{"spec.signalProcessing.fleetOAuth2CredentialsSecretRef", kn.Spec.SignalProcessing.FleetOAuth2CredentialsSecretRef},
 			{"spec.apiFrontend.fleetOAuth2CredentialsSecretRef", kn.Spec.APIFrontend.FleetOAuth2CredentialsSecretRef},
 			{"spec.effectivenessMonitor.fleetOAuth2CredentialsSecretRef", kn.Spec.EffectivenessMonitor.FleetOAuth2CredentialsSecretRef},
+			{"spec.kubernautAgent.fleetOAuth2CredentialsSecretRef", kn.Spec.KubernautAgent.FleetOAuth2CredentialsSecretRef},
 		}
 		var missing []string
 		for _, c := range components {
@@ -587,7 +592,7 @@ func validateFleetConfig(kn *kubernautv1alpha1.Kubernaut) []error {
 		}
 		switch len(missing) {
 		case 0:
-			// all five have an effective value.
+			// all six have an effective value.
 		case len(components):
 			errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set when fleet.oauth2.enabled is true", base))
 		default:

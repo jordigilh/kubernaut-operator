@@ -535,6 +535,14 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 		})
 	}
 
+	// #204: componentEtcDir is deliberately "/etc/kubernautagent"
+	// (unhyphenated), NOT "/etc/kubernaut-agent" like every other mount
+	// above. Upstream's registerFleetTools() hardcodes the fleet-oauth2
+	// credentials lookup to "/etc/kubernautagent/<credentialsSecretRef>"
+	// literally -- it is not derived from KA's -config flag directory, so
+	// the mount path here must match that hardcoded string exactly.
+	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, kn, "/etc/kubernautagent", kn.Spec.KubernautAgent.FleetOAuth2CredentialsSecretRef)
+
 	res := kn.Spec.KubernautAgent.Resources
 	if len(res.Requests) == 0 && len(res.Limits) == 0 {
 		res = corev1.ResourceRequirements{

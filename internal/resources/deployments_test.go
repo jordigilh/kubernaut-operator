@@ -452,6 +452,54 @@ var _ = Describe("Deployments", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(*dep.Spec.Template.Spec.TerminationGracePeriodSeconds).To(Equal(int64(125)))
 		})
+
+		Context("Fleet OAuth2 credentials mount (#204)", func() {
+			It("KFG-020 [IA-5]: no fleet-oauth2 volume/mount when fleet OAuth2 is disabled", func() {
+				kn := testKubernautWithFleetMCP()
+				dep, err := KubernautAgentDeployment(kn)
+				Expect(err).NotTo(HaveOccurred())
+				for _, v := range dep.Spec.Template.Spec.Volumes {
+					Expect(v.Name).NotTo(Equal(testVolumeFleetOAuth2), "should not mount fleet-oauth2 when fleet OAuth2 is disabled")
+				}
+			})
+
+			It("KFG-021 [IA-5]: mounts the fleet-oauth2 Secret at the unhyphenated /etc/kubernautagent path KA's registerFleetTools() hardcodes, not /etc/kubernaut-agent", func() {
+				kn := testKubernautWithFleetMCP()
+				kn.Spec.Fleet.OAuth2 = kubernautv1alpha1.OAuth2Spec{
+					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+					CredentialsSecretRef: "fleet-oauth2-creds",
+				}
+				dep, err := KubernautAgentDeployment(kn)
+				Expect(err).NotTo(HaveOccurred())
+				expectHasVolume(dep, testVolumeFleetOAuth2)
+				expectHasVolumeMount(dep, testVolumeFleetOAuth2, "/etc/kubernautagent/fleet-oauth2-creds")
+				for _, v := range dep.Spec.Template.Spec.Volumes {
+					if v.Name == testVolumeFleetOAuth2 {
+						Expect(v.Secret).NotTo(BeNil())
+						Expect(v.Secret.SecretName).To(Equal("fleet-oauth2-creds"))
+					}
+				}
+			})
+
+			It("KFG-021b [IA-5]: uses KA's own FleetOAuth2CredentialsSecretRef override for the mount when set, not the shared credentialsSecretRef", func() {
+				kn := testKubernautWithFleetMCP()
+				kn.Spec.Fleet.OAuth2 = kubernautv1alpha1.OAuth2Spec{
+					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+					CredentialsSecretRef: "shared-fleet-oauth2-creds",
+				}
+				kn.Spec.KubernautAgent.FleetOAuth2CredentialsSecretRef = "ka-oauth2-creds"
+				dep, err := KubernautAgentDeployment(kn)
+				Expect(err).NotTo(HaveOccurred())
+				expectHasVolume(dep, testVolumeFleetOAuth2)
+				expectHasVolumeMount(dep, testVolumeFleetOAuth2, "/etc/kubernautagent/ka-oauth2-creds")
+				for _, v := range dep.Spec.Template.Spec.Volumes {
+					if v.Name == testVolumeFleetOAuth2 {
+						Expect(v.Secret).NotTo(BeNil())
+						Expect(v.Secret.SecretName).To(Equal("ka-oauth2-creds"))
+					}
+				}
+			})
+		})
 	})
 
 	Context("EffectivenessMonitor", func() {
