@@ -54,7 +54,8 @@ spec:
     # / remediationOrchestrator.fleetOAuth2CredentialsSecretRef /
     # signalProcessing.fleetOAuth2CredentialsSecretRef /
     # apiFrontend.fleetOAuth2CredentialsSecretRef /
-    # effectivenessMonitor.fleetOAuth2CredentialsSecretRef (see below) —
+    # effectivenessMonitor.fleetOAuth2CredentialsSecretRef /
+    # kubernautAgent.fleetOAuth2CredentialsSecretRef (see below) —
     # each falls back to the shared fleet.oauth2.credentialsSecretRef when unset.
 
   # Operator-managed Fleet Metadata Cache (FMC) service (ADR-068), optional.
@@ -143,6 +144,7 @@ spec:
       burst: 100
     shutdown:
       drainSeconds: 15
+    # fleetOAuth2CredentialsSecretRef: ka-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for KubernautAgent only (used only when fleet.enabled: true, for its list_clusters/list_tools_for_cluster MCP tools, ADR-068 decision #11)
 
   apiFrontend:
     enabled: true
