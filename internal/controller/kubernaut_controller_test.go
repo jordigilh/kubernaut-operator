@@ -222,6 +222,7 @@ var _ = Describe("Kubernaut Controller", func() {
 			kn := &kubernautv1alpha1.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
+			stripWorkflowNamespaceCreatedByAnnotation(ctx)
 
 			By("reconciling the deletion")
 			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})

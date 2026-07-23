@@ -521,6 +521,21 @@ func (r *KubernautReconciler) deployWorkflowNamespace(ctx context.Context, kn *k
 		if err := r.Create(ctx, wfNs); err != nil && !apierrors.IsAlreadyExists(err) {
 			return fmt.Errorf("creating workflow namespace: %w", err)
 		}
+		return nil
+	}
+
+	// #208: converge a pre-existing kubernaut-workflows namespace (created
+	// by an older operator version, before this defense-in-depth backstop
+	// existed) to carry the restricted PSA labels too, not just namespaces
+	// created after this upgrade.
+	if existing.Labels == nil {
+		existing.Labels = make(map[string]string)
+	}
+	if resources.EnsureRestrictedPSALabels(existing.Labels) {
+		logf.FromContext(ctx).Info("setting restricted pod security labels on workflow namespace", "namespace", existing.Name)
+		if err := r.Update(ctx, existing); err != nil {
+			return fmt.Errorf("patching restricted PSA labels on workflow namespace: %w", err)
+		}
 	}
 	return nil
 }
