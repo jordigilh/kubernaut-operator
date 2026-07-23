@@ -1088,6 +1088,43 @@ type LLMProfileSpec struct {
 	// OAuth2 configuration for LLM authentication.
 	// +optional
 	OAuth2 OAuth2Spec `json:"oauth2,omitempty"`
+
+	// Reasoning/thinking-token configuration. Disabled by default.
+	// +optional
+	Reasoning *LLMReasoningSpec `json:"reasoning,omitempty"`
+}
+
+// LLMReasoningSpec configures model-aware reasoning/thinking token support.
+// Disabled by default; see kubernaut BR-AI-086 for rationale. Mirrors
+// upstream pkg/shared/types.LLMReasoningConfig's shape exactly so the
+// operator's rendering is a straight field-for-field forward.
+type LLMReasoningSpec struct {
+	// Enable reasoning/thinking token requests where the model supports it.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Exact-value thinking-token budget. When set, this always takes
+	// precedence over Effort for Anthropic (native and Vertex-hosted
+	// Claude); providers with no effort-dial concept at all ignore it.
+	// +optional
+	BudgetTokens *int `json:"budgetTokens,omitempty"`
+
+	// Unified, provider-agnostic reasoning-depth knob (kubernaut#1604).
+	// One of "" (unset -- vendor default), "none", "minimal", "low",
+	// "medium", "high", "xhigh". Same value means the same thing across
+	// providers; each client maps it into its own wire dialect.
+	// +kubebuilder:validation:Enum=none;minimal;low;medium;high;xhigh
+	// +optional
+	Effort string `json:"effort,omitempty"`
+
+	// Capability override for self-hosted/custom models that cannot be
+	// identified by vendor enum. One of "auto" (default), "force_on",
+	// "force_off".
+	// +kubebuilder:validation:Enum=auto;force_on;force_off
+	// +kubebuilder:default=auto
+	// +optional
+	CapabilityOverride string `json:"capabilityOverride,omitempty"`
 }
 
 // OAuth2Spec configures OAuth2 token-based authentication for LLM endpoints.

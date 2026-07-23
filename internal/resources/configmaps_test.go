@@ -1235,6 +1235,47 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(len(root.AI.LLM.OAuth2.Scopes) == 2 && root.AI.LLM.OAuth2.Scopes[0] == "openid" && root.AI.LLM.OAuth2.Scopes[1] == "api.read").To(BeTrue(), "oauth2.scopes = %#v, want [openid api.read]", root.AI.LLM.OAuth2.Scopes)
 		})
 
+		It("LR-010 [CM-6]: KA does not spend extra reasoning/thinking tokens unless the administrator explicitly opts in", func() {
+			kn := testKubernaut()
+			cm, err := KubernautAgentConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).NotTo(ContainSubstring("reasoning:"), "CM-6: extended reasoning has real cost/latency impact and must stay off by default (ai.llm.reasoning omitted), got:\n%s", data)
+		})
+
+		It("LR-011 [CM-6]: KA's reasoning/thinking-token policy exactly matches what the administrator configured on the profile", func() {
+			kn := testKubernaut()
+			budget := 4096
+			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
+				p.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{
+					Enabled:            true,
+					BudgetTokens:       &budget,
+					Effort:             "high",
+					CapabilityOverride: "force_on",
+				}
+			})
+			cm, err := KubernautAgentConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			var root struct {
+				AI struct {
+					LLM struct {
+						Reasoning *struct {
+							Enabled            bool   `yaml:"enabled"`
+							BudgetTokens       int    `yaml:"budgetTokens"`
+							Effort             string `yaml:"effort"`
+							CapabilityOverride string `yaml:"capabilityOverride"`
+						} `yaml:"reasoning"`
+					} `yaml:"llm"`
+				} `yaml:"ai"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.AI.LLM.Reasoning).NotTo(BeNil(), "CM-6: expected ai.llm.reasoning block when the administrator sets Reasoning on the profile")
+			Expect(root.AI.LLM.Reasoning.Enabled).To(BeTrue(), "CM-6: enabled must match the administrator's configured value")
+			Expect(root.AI.LLM.Reasoning.BudgetTokens).To(Equal(4096), "CM-6: budgetTokens must match the administrator's configured token spend cap")
+			Expect(root.AI.LLM.Reasoning.Effort).To(Equal("high"), "CM-6: effort must match the administrator's configured depth")
+			Expect(root.AI.LLM.Reasoning.CapabilityOverride).To(Equal("force_on"), "CM-6: capabilityOverride must match the administrator's configured value")
+		})
+
 		Describe("LLM runtime ConfigMap", func() {
 			It("is generated when no existing ConfigMap is specified", func() {
 				kn := testKubernaut()
@@ -1340,6 +1381,70 @@ var _ = Describe("ConfigMaps", func() {
 				} {
 					Expect(data).To(ContainSubstring(want), "phase override should contain %q, got:\n%s", want, data)
 				}
+			})
+
+			It("LR-020 [CM-6]: the base profile's reasoning policy is static-only and does not leak into the hot-reloadable runtime config", func() {
+				kn := testKubernaut()
+				mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
+					p.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "high"}
+				})
+				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				data := cm.Data["llm-runtime.yaml"]
+				Expect(data).NotTo(ContainSubstring("reasoning:"), "CM-6: base profile's reasoning is static-only (matches upstream LLMRuntimeConfig, which has no top-level Reasoning field) — it must not appear where an operator could mistake it for a hot-reloadable setting, got:\n%s", data)
+			})
+
+			It("LR-021 [CM-6]: a workflow phase's reasoning budget is independently configurable from the base agent's, so per-phase cost/latency tuning actually takes effect", func() {
+				kn := testKubernaut()
+				mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
+					p.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "high"}
+				})
+				kn.Spec.LLMProfiles["workflow_discovery_profile"] = kubernautv1alpha1.LLMProfileSpec{
+					Provider:              "anthropic",
+					Model:                 "claude-sonnet-4-6",
+					CredentialsSecretName: "llm-creds",
+					Reasoning:             &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "low"},
+				}
+				kn.Spec.KubernautAgent.PhaseModels = map[string]string{"workflow_discovery": "workflow_discovery_profile"}
+				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				var root struct {
+					PhaseModels map[string]struct {
+						Reasoning *struct {
+							Enabled bool   `yaml:"enabled"`
+							Effort  string `yaml:"effort"`
+						} `yaml:"reasoning"`
+					} `yaml:"phaseModels"`
+				}
+				Expect(yaml.Unmarshal([]byte(cm.Data["llm-runtime.yaml"]), &root)).To(Succeed())
+				phase, ok := root.PhaseModels["workflow_discovery"]
+				Expect(ok).To(BeTrue(), "expected phaseModels.workflow_discovery entry")
+				Expect(phase.Reasoning).NotTo(BeNil(), "CM-6: expected phaseModels.workflow_discovery.reasoning when its own profile sets Reasoning — without this, a hot-reload phase override pointing at a lighter-weight reasoning profile would silently not apply at runtime")
+				Expect(phase.Reasoning.Effort).To(Equal("low"), "CM-6: phase override's reasoning.effort must reflect its own profile ('low'), not the base agent's ('high'), or the administrator's per-phase cost tuning is ineffective")
+			})
+
+			It("LR-022 [CM-6]: a phase that opts out of reasoning stays opted out, even when the base agent has reasoning enabled", func() {
+				kn := testKubernaut()
+				mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
+					p.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "high"}
+				})
+				kn.Spec.LLMProfiles["validation_profile"] = kubernautv1alpha1.LLMProfileSpec{
+					Provider:              "anthropic",
+					Model:                 "claude-sonnet-4-6",
+					CredentialsSecretName: "llm-creds",
+				}
+				kn.Spec.KubernautAgent.PhaseModels = map[string]string{"validation": "validation_profile"}
+				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				var root struct {
+					PhaseModels map[string]struct {
+						Reasoning *struct{} `yaml:"reasoning"`
+					} `yaml:"phaseModels"`
+				}
+				Expect(yaml.Unmarshal([]byte(cm.Data["llm-runtime.yaml"]), &root)).To(Succeed())
+				phase, ok := root.PhaseModels["validation"]
+				Expect(ok).To(BeTrue(), "expected phaseModels.validation entry")
+				Expect(phase.Reasoning).To(BeNil(), "CM-6: phaseModels.validation.reasoning must stay absent when its own profile has none, even though the base agent's does — a phase-specific profile swap must not inherit reasoning spend it never opted into")
 			})
 		})
 	})
@@ -1724,7 +1829,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderVertexAI })
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Model = "gemini-2.5-pro" })
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexProject = "my-project" })
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexLocation = "us-central1" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexLocation = testVertexLocation })
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
@@ -1745,7 +1850,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(root.Agent.LLM.Provider).To(Equal(LLMProviderVertexAI))
 		Expect(root.Agent.LLM.Model).To(Equal("gemini-2.5-pro"))
 		Expect(root.Agent.LLM.VertexProject).To(Equal("my-project"))
-		Expect(root.Agent.LLM.VertexLocation).To(Equal("us-central1"))
+		Expect(root.Agent.LLM.VertexLocation).To(Equal(testVertexLocation))
 		Expect(root.Agent.LLM.APIKeyFile).To(BeEmpty(),
 			"vertex_ai should use GOOGLE_APPLICATION_CREDENTIALS (ADC), not apiKeyFile")
 	})
@@ -1843,7 +1948,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		kn := testKubernautWithAF()
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderVertexAI })
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexProject = "my-project" })
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexLocation = "us-central1" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexLocation = testVertexLocation })
 		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -1911,6 +2016,39 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).NotTo(ContainSubstring("oauth2:"))
+	})
+
+	It("LR-030 [CM-6]: AF does not spend extra reasoning/thinking tokens unless the administrator explicitly opts in", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).NotTo(ContainSubstring("reasoning:"), "CM-6: extended reasoning has real cost/latency impact and must stay off by default (agent.llm.reasoning omitted), got:\n%s", data)
+	})
+
+	It("LR-031 [CM-6]: AF's reasoning/thinking-token policy exactly matches what the administrator configured on the profile", func() {
+		kn := testKubernautWithAF()
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
+			p.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "medium", CapabilityOverride: "force_off"}
+		})
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		var root struct {
+			Agent struct {
+				LLM struct {
+					Reasoning *struct {
+						Enabled            bool   `yaml:"enabled"`
+						Effort             string `yaml:"effort"`
+						CapabilityOverride string `yaml:"capabilityOverride"`
+					} `yaml:"reasoning"`
+				} `yaml:"llm"`
+			} `yaml:"agent"`
+		}
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.Agent.LLM.Reasoning).NotTo(BeNil(), "CM-6: expected agent.llm.reasoning block when the administrator sets Reasoning on the profile")
+		Expect(root.Agent.LLM.Reasoning.Enabled).To(BeTrue(), "CM-6: enabled must match the administrator's configured value")
+		Expect(root.Agent.LLM.Reasoning.Effort).To(Equal("medium"), "CM-6: effort must match the administrator's configured depth")
+		Expect(root.Agent.LLM.Reasoning.CapabilityOverride).To(Equal("force_off"), "CM-6: capabilityOverride must match the administrator's configured value")
 	})
 
 	It("renders AF's own resolved profile when apiFrontend.llmProfileRef differs from KA's", func() {
@@ -2019,6 +2157,45 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(root.SeverityTriage.LLM.Provider).To(Equal("anthropic"))
 		Expect(root.SeverityTriage.LLM.Model).To(Equal("claude-haiku-4-6"))
 		Expect(root.Agent.LLM.Provider).NotTo(Equal("anthropic"), "triage's independent profile must not leak into AF's main agent.llm")
+	})
+
+	It("LR-032 [CM-6]: severity-triage's reasoning budget is independently configurable from AF's main agent, so triage cost/latency can be tuned separately", func() {
+		kn := testKubernautWithAF()
+		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
+			p.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "high"}
+		})
+		kn.Spec.LLMProfiles["triage-profile"] = kubernautv1alpha1.LLMProfileSpec{
+			Provider:              "anthropic",
+			Model:                 "claude-haiku-4-6",
+			Endpoint:              "https://api.anthropic.com",
+			CredentialsSecretName: "llm-creds",
+			Reasoning:             &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "minimal"},
+		}
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-profile"}
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		var root struct {
+			Agent struct {
+				LLM struct {
+					Reasoning *struct {
+						Effort string `yaml:"effort"`
+					} `yaml:"reasoning"`
+				} `yaml:"llm"`
+			} `yaml:"agent"`
+			SeverityTriage struct {
+				LLM *struct {
+					Reasoning *struct {
+						Effort string `yaml:"effort"`
+					} `yaml:"reasoning"`
+				} `yaml:"llm"`
+			} `yaml:"severityTriage"`
+		}
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.Agent.LLM.Reasoning).NotTo(BeNil())
+		Expect(root.Agent.LLM.Reasoning.Effort).To(Equal("high"))
+		Expect(root.SeverityTriage.LLM).NotTo(BeNil())
+		Expect(root.SeverityTriage.LLM.Reasoning).NotTo(BeNil(), "CM-6: expected severityTriage.llm.reasoning when triage's own profile sets Reasoning — without this, an administrator cannot dial down triage's reasoning spend independently of the main agent's")
+		Expect(root.SeverityTriage.LLM.Reasoning.Effort).To(Equal("minimal"), "CM-6: triage's reasoning.effort must reflect its own profile ('minimal'), not AF's main agent.llm.reasoning ('high')")
 	})
 
 	// #224: AF backs the list_clusters MCP tool and routes remote reads via

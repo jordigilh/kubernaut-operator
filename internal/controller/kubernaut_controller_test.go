@@ -372,6 +372,53 @@ var _ = Describe("Kubernaut Controller", func() {
 			}
 		})
 	})
+
+	// ---- LLM Reasoning CRD Schema (#211) ----
+	//
+	// Unit tests construct kubernautv1alpha1.LLMReasoningSpec Go values
+	// directly and never touch the generated OpenAPI schema, so they cannot
+	// prove the kubebuilder Enum/default markers on Effort/CapabilityOverride
+	// are correct. Only a real envtest apiserver round-trip can (Pyramid
+	// Invariant: "IT proves wiring").
+	Context("LLM Reasoning CRD Schema", func() {
+		It("LR-060 [CM-6]: an administrator's non-default reasoning configuration is accepted end-to-end and reconciles successfully", func() {
+			createBYOSecrets(ctx)
+			kn := newMinimalCR()
+			profile := kn.Spec.LLMProfiles["primary"]
+			profile.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "high"}
+			kn.Spec.LLMProfiles["primary"] = profile
+			Expect(k8sClient.Create(ctx, kn)).To(Succeed(),
+				"CM-6: the regenerated CRD schema must accept a legitimate, non-default reasoning block")
+
+			r := newReconciler()
+			By("first reconcile: adds finalizer")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("second reconcile: validates")
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			result := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), result)).To(Succeed())
+			cond := findCondition(result.Status.Conditions, kubernautv1alpha1.ConditionBYOValidated)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue),
+				"CM-6: setting reasoning on a profile must not itself break reconciliation")
+		})
+
+		It("LR-061 [SI-10]: the API server itself rejects an out-of-enum reasoning.effort value, before any reconciler logic runs", func() {
+			kn := newMinimalCR()
+			profile := kn.Spec.LLMProfiles["primary"]
+			profile.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "extreme"}
+			kn.Spec.LLMProfiles["primary"] = profile
+
+			err := k8sClient.Create(ctx, kn)
+			Expect(err).To(HaveOccurred(),
+				"SI-10: the CRD's Enum marker on reasoning.effort must be enforced by the apiserver itself, not just by application-level validation")
+			Expect(errors.IsInvalid(err)).To(BeTrue(), "expected a schema validation rejection, got: %v", err)
+		})
+	})
 })
 
 func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {

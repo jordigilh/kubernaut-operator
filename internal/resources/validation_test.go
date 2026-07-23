@@ -786,7 +786,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 	It("UT-VL-196-001 [SI-10]: provider openai without endpoint fails validation", func() {
 		kn := testKubernaut()
 		profile := kn.Spec.LLMProfiles["primary"]
-		profile.Provider = "openai"
+		profile.Provider = LLMProviderOpenAI
 		profile.Endpoint = ""
 		kn.Spec.LLMProfiles["primary"] = profile
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
@@ -803,7 +803,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 	It("UT-VL-196-002 [SI-10]: provider openai with endpoint passes validation", func() {
 		kn := testKubernaut()
 		profile := kn.Spec.LLMProfiles["primary"]
-		profile.Provider = "openai"
+		profile.Provider = LLMProviderOpenAI
 		profile.Endpoint = "http://llm-gateway:8080"
 		kn.Spec.LLMProfiles["primary"] = profile
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
@@ -866,6 +866,72 @@ var _ = Describe("LLM Profile Content Validation", func() {
 		kn.Spec.LLMProfiles["primary"] = profile
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty())
+	})
+
+	It("LR-040 [SI-10]: an administrator may explicitly disable reasoning while still declaring an effort tier for later re-enablement", func() {
+		kn := testKubernaut()
+		profile := kn.Spec.LLMProfiles["primary"]
+		profile.Provider = LLMProviderAnthropic
+		profile.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: false, Effort: "none"}
+		kn.Spec.LLMProfiles["primary"] = profile
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty(), "SI-10: effort:none with enabled:false is not a contradiction (reasoning is off, so no wire-level conflict exists)")
+	})
+
+	It("LR-041 [SI-10]: an administrator may enable Anthropic's lowest real reasoning tier without being incorrectly blocked", func() {
+		kn := testKubernaut()
+		profile := kn.Spec.LLMProfiles["primary"]
+		profile.Provider = LLMProviderAnthropic
+		profile.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "minimal"}
+		kn.Spec.LLMProfiles["primary"] = profile
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty(), "SI-10: minimal is Anthropic's lowest real tier, not a contradiction — validation must not false-positive on legitimate configurations")
+	})
+
+	It("LR-042 [SI-10]: rejects a profile that would deploy successfully but fail every Anthropic LLM call at runtime, and names which profile to fix", func() {
+		kn := testKubernaut()
+		profile := kn.Spec.LLMProfiles["primary"]
+		profile.Provider = LLMProviderAnthropic
+		profile.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "none"}
+		kn.Spec.LLMProfiles["primary"] = profile
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).NotTo(BeEmpty(), "SI-10: anthropic has no \"thinking enabled, zero effort\" wire state — left undetected here, this ships a CR that reconciles cleanly but causes KA/AF to fail every LLM call against Anthropic's API at runtime, only surfacing as a production incident")
+		found := false
+		for _, e := range errs {
+			if strings.Contains(e.Error(), `llmProfiles["primary"]`) && strings.Contains(e.Error(), "reasoning") {
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue(), "SI-10: the error must name the offending profile so an operator with dozens of profiles can find and fix it without trial-and-error, got: %v", errs)
+	})
+
+	It("LR-043 [SI-10]: rejects the same runtime-failure-inducing contradiction for Vertex-hosted Claude, not just native Anthropic", func() {
+		kn := testKubernaut()
+		profile := kn.Spec.LLMProfiles["primary"]
+		profile.Provider = LLMProviderVertexAI
+		profile.VertexProject = "example-gcp-project"
+		profile.VertexLocation = testVertexLocation
+		profile.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "none"}
+		kn.Spec.LLMProfiles["primary"] = profile
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		found := false
+		for _, e := range errs {
+			if strings.Contains(e.Error(), "reasoning") {
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue(), "SI-10: vertex_ai routes to the same Claude thinking API as native anthropic, so it shares the same runtime-failure risk and must be caught the same way, got: %v", errs)
+	})
+
+	It("LR-044 [SI-10]: does not block a legitimate OpenAI configuration that has no analogous wire-level conflict", func() {
+		kn := testKubernaut()
+		profile := kn.Spec.LLMProfiles["primary"]
+		profile.Provider = LLMProviderOpenAI
+		profile.Endpoint = "http://llm-gateway:8080"
+		profile.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "none"}
+		kn.Spec.LLMProfiles["primary"] = profile
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty(), "SI-10: the none+enabled runtime-failure contradiction is specific to Anthropic-family providers — validation must not over-broadly reject OpenAI configurations that have no such conflict")
 	})
 })
 

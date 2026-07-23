@@ -156,6 +156,19 @@ const LLMProviderOpenAI = "openai"
 // normalizes the config (kubernaut#1488).
 const LLMProviderOpenAICompatible = "openai_compatible"
 
+// LLMProviderAnthropic identifies the native Anthropic LLM provider.
+const LLMProviderAnthropic = "anthropic"
+
+// anthropicFamilyReasoningProviders are the providers routed to the
+// Anthropic thinking API (native and Vertex-hosted Claude), mirroring
+// upstream's pkg/shared/types.anthropicFamilyProviders. Anthropic has no
+// "thinking enabled, zero effort" wire state, so effort: "none" combined
+// with enabled: true is a genuine contradiction for these providers only.
+var anthropicFamilyReasoningProviders = map[string]bool{
+	LLMProviderAnthropic: true,
+	LLMProviderVertexAI:  true,
+}
+
 // Kagenti discovery labels for A2A agent auto-discovery.
 const (
 	KagentiAgentTypeLabel                = "kagenti.io/type"

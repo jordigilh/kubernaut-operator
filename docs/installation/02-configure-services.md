@@ -66,6 +66,42 @@ spec:
       llmEnabled: true        # set to false to force the rule-based-only fallback
 ```
 
+### Reasoning/thinking tokens
+
+Model-aware reasoning (a.k.a. thinking tokens) is disabled by default on every profile until you explicitly opt in. Both Kubernaut Agent's main LLM connection and API Frontend's (main agent *and* independent severity-triage) forward the same `reasoning` block from whichever profile they resolve to:
+
+```yaml
+spec:
+  llmProfiles:
+    primary:
+      provider: anthropic
+      model: claude-sonnet-4-6
+      credentialsSecretName: llm-credentials
+      reasoning:
+        enabled: true
+        effort: high              # none | minimal | low | medium | high | xhigh
+        # budgetTokens: 4096      # exact-value override; wins over effort for Anthropic when set
+        # capabilityOverride: auto  # auto (default) | force_on | force_off -- self-hosted/custom models only
+    lightweight:
+      provider: anthropic
+      model: claude-haiku-4-5
+      credentialsSecretName: llm-credentials
+      reasoning:
+        enabled: true
+        effort: minimal            # cheaper/faster tier for the phase it's swapped into below
+
+  kubernautAgent:
+    llmProfileRef: primary
+    phaseModels:
+      workflow_discovery: lightweight   # gets its own reasoning policy, independent of primary's
+```
+
+`effort` is a unified, provider-agnostic depth knob: the same value means the same thing regardless of which provider a profile points at, but each provider's client maps it into its own wire dialect (e.g. Anthropic's thinking-level tiers, OpenAI/Azure o-series and gpt-5's `reasoning_effort`, DeepSeek's own two-tier dialect). Providers with no effort-dial concept simply ignore it.
+
+> **Constraint**: for Anthropic-family providers (`anthropic`, and Claude models served via `vertex_ai`), `effort: "none"` combined with `enabled: true` is rejected -- Anthropic has no "thinking enabled, zero effort" wire state. Use `enabled: false` to fully disable reasoning, or `effort: "minimal"` for Anthropic's lowest real tier.
+
+Because `reasoning` is a per-profile field, `severityTriage.llmProfileRef` and every `phaseModels` entry each get their own independent reasoning policy -- pointing a phase or triage at a different profile changes its reasoning budget/effort along with everything else on that profile, without touching the base agent's.
+
 ### OAuth2 authentication for LLM endpoints
 
 If your LLM endpoint requires OAuth2 token exchange (e.g. corporate proxy, IAP), configure it on the profile:

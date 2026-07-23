@@ -84,12 +84,27 @@ spec:
       vertexLocation: "us-central1"
       maxRetries: 3
       timeoutSeconds: 120
+      # Model-aware reasoning/thinking tokens (disabled by default; opt in
+      # per profile). BudgetTokens always wins over effort for Anthropic
+      # (native or Vertex-hosted Claude, as here) when both are set.
+      # effort: "none" combined with enabled: true is rejected for
+      # Anthropic-family providers — Anthropic has no "thinking enabled,
+      # zero effort" wire state; use enabled: false to disable instead.
+      # reasoning:
+      #   enabled: true
+      #   effort: high   # one of: none, minimal, low, medium, high, xhigh
+      #   # budgetTokens: 4096   # exact-value override; wins over effort when set
     lightweight:
       provider: vertex_ai
       model: claude-haiku-4-5
       credentialsSecretName: llm-credentials
       vertexProject: "example-gcp-project"
       vertexLocation: "us-central1"
+      # Cheaper/faster reasoning tier for the high-volume phase this
+      # profile is swapped into below (kubernautAgent.phaseModels).
+      # reasoning:
+      #   enabled: true
+      #   effort: minimal
 
   kubernautAgent:
     llmProfileRef: primary

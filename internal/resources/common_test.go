@@ -49,6 +49,11 @@ const (
 	testSPMCPGatewayNamespace     = "sp-ns"
 	testFMCMCPGatewayNamespace    = "fmc-ns"
 	testSharedMCPGatewayNamespace = "shared-ns"
+
+	// testVertexLocation is a placeholder region used across vertex_ai
+	// profile fixtures; never a real project's location (kubernaut-docs
+	// #209 scrub precedent — no real GCP identifiers in examples/tests).
+	testVertexLocation = "us-central1"
 )
 
 func testKubernaut() *kubernautv1alpha1.Kubernaut {

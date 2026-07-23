@@ -98,7 +98,37 @@ func validateLLMProfileContent(name string, llm *kubernautv1alpha1.LLMProfileSpe
 	if !certSet && llm.TLSClientSecretRef != "" {
 		errs = append(errs, fmt.Errorf("%s.tlsClientSecretRef: set but tlsCertFile/tlsKeyFile are empty — both pairs are required for mTLS", base))
 	}
+	if err := validateLLMReasoning(base, llm.Reasoning, llm.Provider); err != nil {
+		errs = append(errs, err)
+	}
 	return errs
+}
+
+// validateLLMReasoning rejects effort: "none" combined with enabled: true
+// for Anthropic-family providers, mirroring upstream's
+// pkg/shared/types.ValidateReasoningConfig verbatim (verified against
+// kubernaut@v1.6.0-rc1.0.20260723152521-56562f9f1adb) — Anthropic has no
+// "thinking enabled, zero effort" wire state, so this is a genuine
+// contradiction rather than a gracefully-degradable value. Left undetected,
+// the CR reconciles cleanly but every affected LLM call fails at runtime.
+//
+// Unlike upstream, this does not re-validate r.Effort against the allowed
+// set: the CRD's kubebuilder Enum marker on LLMReasoningSpec.Effort already
+// rejects out-of-set values at admission, before this function ever runs.
+//
+// r may be nil (no reasoning configured on this profile).
+func validateLLMReasoning(base string, r *kubernautv1alpha1.LLMReasoningSpec, provider string) error {
+	if r == nil {
+		return nil
+	}
+	if r.Enabled && r.Effort == "none" && anthropicFamilyReasoningProviders[provider] {
+		return fmt.Errorf(
+			"%s.reasoning: effort: \"none\" is not supported for provider %q while reasoning is enabled "+
+				"(Anthropic has no \"thinking enabled with zero effort\" state) — use enabled: false to fully "+
+				"disable reasoning, or effort: \"minimal\" for Anthropic's lowest real tier",
+			base, provider)
+	}
+	return nil
 }
 
 // validPhaseModelKeys enumerates the agent phases that support per-phase LLM overrides.

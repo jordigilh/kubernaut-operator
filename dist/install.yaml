@@ -317,6 +317,16 @@ spec:
                       Whether the API Frontend component is deployed. Defaults to true.
                       Set to false to skip all AF resources (Deployment, Service, RBAC, etc.).
                     type: boolean
+                  fleetOAuth2CredentialsSecretRef:
+                    description: |-
+                      FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
+                      for APIFrontend only. Use when APIFrontend must authenticate to the
+                      MCP Gateway as a different OAuth2 client than other fleet-aware
+                      components (e.g. a federated Keycloak issuing distinct per-service
+                      client registrations against the same shared
+                      spec.fleet.oauth2.tokenURL). Falls back to
+                      spec.fleet.oauth2.credentialsSecretRef when unset.
+                    type: string
                   healthPort:
                     description: |-
                       Override for the AF health probe port. Defaults to 8081 (or 8082 when
@@ -899,6 +909,16 @@ spec:
                         default: 300s
                         type: string
                     type: object
+                  fleetOAuth2CredentialsSecretRef:
+                    description: |-
+                      FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
+                      for EffectivenessMonitor only. Use when EffectivenessMonitor must
+                      authenticate to the MCP Gateway as a different OAuth2 client than
+                      other fleet-aware components (e.g. a federated Keycloak issuing
+                      distinct per-service client registrations against the same shared
+                      spec.fleet.oauth2.tokenURL). Falls back to
+                      spec.fleet.oauth2.credentialsSecretRef when unset.
+                    type: string
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -1016,6 +1036,19 @@ spec:
                       specific to any one backend; it is shared config used independently
                       of Backend/Endpoint.
                     type: string
+                  mcpGatewayNamespace:
+                    description: |-
+                      MCPGatewayNamespace restricts every fleet-aware component's MCP
+                      Gateway CRD watch (Backend for Envoy AI Gateway,
+                      MCPServerRegistration for Kuadrant) to a single namespace. Empty means
+                      cluster-wide (all namespaces). Serves as the fallback for
+                      SignalProcessing and FleetMetadataCache's own per-component overrides
+                      (spec.signalProcessing.mcpGatewayNamespace,
+                      spec.fleetMetadataCache.mcpGatewayNamespace); APIFrontend and
+                      EffectivenessMonitor have no override and no namespace-scoped RBAC
+                      path yet — their ClusterRegistry construction has no namespace knob
+                      upstream (tracked separately for v1.6).
+                    type: string
                   mcpGatewayType:
                     description: |-
                       MCPGatewayType selects the MCP Gateway implementation backing
@@ -1105,11 +1138,11 @@ spec:
                     description: |-
                       Namespace to scope FMC's informer watch for MCP Gateway CRDs
                       (Backend for Envoy AI Gateway, MCPServerRegistration for Kuadrant)
-                      representing managed clusters. Empty means cluster-wide (all
-                      namespaces). This only scopes the watch itself -- the ClusterRole
-                      granted is cluster-wide regardless (matches upstream's own Helm
-                      chart; a namespace-scoped Role is not yet an option upstream, see
-                      kubernaut#1686).
+                      representing managed clusters. Falls back to
+                      spec.fleet.mcpGatewayNamespace when unset. Empty (after fallback)
+                      means cluster-wide (all namespaces), granting a cluster-scoped
+                      ClusterRole. When non-empty, the operator grants a namespace-scoped
+                      Role/RoleBinding in that namespace instead (least privilege).
                     type: string
                   resources:
                     description: Resource requirements.
@@ -1752,6 +1785,47 @@ spec:
                         "azure").
                       minLength: 1
                       type: string
+                    reasoning:
+                      description: Reasoning/thinking-token configuration. Disabled
+                        by default.
+                      properties:
+                        budgetTokens:
+                          description: |-
+                            Exact-value thinking-token budget. When set, this always takes
+                            precedence over Effort for Anthropic (native and Vertex-hosted
+                            Claude); providers with no effort-dial concept at all ignore it.
+                          type: integer
+                        capabilityOverride:
+                          default: auto
+                          description: |-
+                            Capability override for self-hosted/custom models that cannot be
+                            identified by vendor enum. One of "auto" (default), "force_on",
+                            "force_off".
+                          enum:
+                          - auto
+                          - force_on
+                          - force_off
+                          type: string
+                        effort:
+                          description: |-
+                            Unified, provider-agnostic reasoning-depth knob (kubernaut#1604).
+                            One of "" (unset -- vendor default), "none", "minimal", "low",
+                            "medium", "high", "xhigh". Same value means the same thing across
+                            providers; each client maps it into its own wire dialect.
+                          enum:
+                          - none
+                          - minimal
+                          - low
+                          - medium
+                          - high
+                          - xhigh
+                          type: string
+                        enabled:
+                          default: false
+                          description: Enable reasoning/thinking token requests where
+                            the model supports it.
+                          type: boolean
+                      type: object
                     temperature:
                       description: |-
                         Sampling temperature for LLM responses (e.g. "0.7").
@@ -2168,6 +2242,16 @@ spec:
               signalProcessing:
                 description: SignalProcessing controller configuration.
                 properties:
+                  fleetOAuth2CredentialsSecretRef:
+                    description: |-
+                      FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
+                      for SignalProcessing only. Use when SignalProcessing must authenticate
+                      to the MCP Gateway as a different OAuth2 client than other fleet-aware
+                      components (e.g. a federated Keycloak issuing distinct per-service
+                      client registrations against the same shared
+                      spec.fleet.oauth2.tokenURL). Falls back to
+                      spec.fleet.oauth2.credentialsSecretRef when unset.
+                    type: string
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -2185,6 +2269,13 @@ spec:
                         - error
                         type: string
                     type: object
+                  mcpGatewayNamespace:
+                    description: |-
+                      MCPGatewayNamespace overrides spec.fleet.mcpGatewayNamespace for
+                      SignalProcessing's own ClusterRegistry watch (used for cluster
+                      classification labels, BR-FLEET-003). Falls back to
+                      spec.fleet.mcpGatewayNamespace when unset.
+                    type: string
                   policy:
                     description: |-
                       Policy ConfigMap reference. Required.

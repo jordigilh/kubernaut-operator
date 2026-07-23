@@ -685,15 +685,16 @@ type kaAIYAML struct {
 }
 
 type kaLLMYAML struct {
-	Provider        string        `json:"provider" yaml:"provider"`
-	VertexProject   string        `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
-	VertexLocation  string        `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
-	BedrockRegion   string        `json:"bedrockRegion,omitempty" yaml:"bedrockRegion,omitempty"`
-	AzureApiVersion string        `json:"azureApiVersion,omitempty" yaml:"azureApiVersion,omitempty"`
-	TLSCaFile       string        `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
-	TLSCertFile     string        `json:"tlsCertFile,omitempty" yaml:"tlsCertFile,omitempty"`
-	TLSKeyFile      string        `json:"tlsKeyFile,omitempty" yaml:"tlsKeyFile,omitempty"`
-	OAuth2          *kaOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	Provider        string           `json:"provider" yaml:"provider"`
+	VertexProject   string           `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
+	VertexLocation  string           `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
+	BedrockRegion   string           `json:"bedrockRegion,omitempty" yaml:"bedrockRegion,omitempty"`
+	AzureApiVersion string           `json:"azureApiVersion,omitempty" yaml:"azureApiVersion,omitempty"`
+	TLSCaFile       string           `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
+	TLSCertFile     string           `json:"tlsCertFile,omitempty" yaml:"tlsCertFile,omitempty"`
+	TLSKeyFile      string           `json:"tlsKeyFile,omitempty" yaml:"tlsKeyFile,omitempty"`
+	OAuth2          *kaOAuth2YAML    `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	Reasoning       *kaReasoningYAML `json:"reasoning,omitempty" yaml:"reasoning,omitempty"`
 }
 
 type kaOAuth2YAML struct {
@@ -701,6 +702,38 @@ type kaOAuth2YAML struct {
 	TokenURL       string   `json:"tokenURL" yaml:"tokenURL"`
 	CredentialsDir string   `json:"credentialsDir" yaml:"credentialsDir"`
 	Scopes         []string `json:"scopes,omitempty" yaml:"scopes,omitempty"`
+}
+
+// kaReasoningYAML mirrors upstream pkg/shared/types.LLMReasoningConfig's
+// shape (Provider/Model identity fields aside), so rendering from
+// kubernautv1alpha1.LLMReasoningSpec is a straight field-for-field forward.
+// Enabled always renders (matches kaOAuth2YAML's convention). BudgetTokens
+// stays a pointer, matching this CRD's existing convention for optional
+// integer fields (see LLMProfileSpec.MaxRetries/TimeoutSeconds) — upstream's
+// own BudgetTokens is a plain int, so this distinction doesn't survive past
+// this ConfigMap's YAML text, but it keeps the CRD's API surface consistent.
+type kaReasoningYAML struct {
+	Enabled            bool   `json:"enabled" yaml:"enabled"`
+	BudgetTokens       *int   `json:"budgetTokens,omitempty" yaml:"budgetTokens,omitempty"`
+	Effort             string `json:"effort,omitempty" yaml:"effort,omitempty"`
+	CapabilityOverride string `json:"capabilityOverride,omitempty" yaml:"capabilityOverride,omitempty"`
+}
+
+// kaReasoningFromSpec converts a resolved profile's Reasoning into its KA
+// ConfigMap rendering, shared by the static profile (KubernautAgentConfigMap)
+// and every per-phase override (KubernautAgentLLMRuntimeConfigMap) so a
+// profile's reasoning policy renders identically regardless of which
+// ConfigMap resolves it. r may be nil (no reasoning configured).
+func kaReasoningFromSpec(r *kubernautv1alpha1.LLMReasoningSpec) *kaReasoningYAML {
+	if r == nil {
+		return nil
+	}
+	return &kaReasoningYAML{
+		Enabled:            r.Enabled,
+		BudgetTokens:       r.BudgetTokens,
+		Effort:             r.Effort,
+		CapabilityOverride: r.CapabilityOverride,
+	}
 }
 
 type kaInvestigationYAML struct {
@@ -796,11 +829,14 @@ type llmRuntimeYAML struct {
 // llmPhaseOverrideYAML has no credential field: phase overrides must share
 // the primary profile's credentialsSecretName (enforced by
 // validateLLMProfileRefs), so the phase always authenticates via the same
-// mounted credentials as the primary LLM connection.
+// mounted credentials as the primary LLM connection. Reasoning is exempted
+// from that restart-required LLM-identity lock upstream (DD-LLM-008), so
+// it is forwarded like any other per-phase override.
 type llmPhaseOverrideYAML struct {
-	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
-	Model    string `json:"model,omitempty" yaml:"model,omitempty"`
-	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	Provider  string           `json:"provider,omitempty" yaml:"provider,omitempty"`
+	Model     string           `json:"model,omitempty" yaml:"model,omitempty"`
+	Endpoint  string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	Reasoning *kaReasoningYAML `json:"reasoning,omitempty" yaml:"reasoning,omitempty"`
 }
 
 type authWebhookWebhookYAML struct {
@@ -1499,6 +1535,8 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 		}
 	}
 
+	cfg.AI.LLM.Reasoning = kaReasoningFromSpec(kaProfile.Reasoning)
+
 	if ka.AlignmentCheck.Enabled {
 		ac := &kaAlignmentYAML{
 			Enabled:       true,
@@ -1624,9 +1662,10 @@ func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1
 		for phase, ref := range ka.PhaseModels {
 			phaseProfile, _ := ResolveLLMProfile(kn, ref)
 			cfg.PhaseModels[phase] = llmPhaseOverrideYAML{
-				Provider: phaseProfile.Provider,
-				Model:    phaseProfile.Model,
-				Endpoint: phaseProfile.Endpoint,
+				Provider:  phaseProfile.Provider,
+				Model:     phaseProfile.Model,
+				Endpoint:  phaseProfile.Endpoint,
+				Reasoning: kaReasoningFromSpec(phaseProfile.Reasoning),
 			}
 		}
 	}
@@ -1814,6 +1853,7 @@ type afAgentLLMYAML struct {
 	TLSCertFile    string                `json:"tlsCertFile,omitempty" yaml:"tlsCertFile,omitempty"`
 	TLSKeyFile     string                `json:"tlsKeyFile,omitempty" yaml:"tlsKeyFile,omitempty"`
 	OAuth2         *afAgentLLMOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	Reasoning      *afReasoningYAML      `json:"reasoning,omitempty" yaml:"reasoning,omitempty"`
 }
 
 type afAgentLLMOAuth2YAML struct {
@@ -1821,6 +1861,17 @@ type afAgentLLMOAuth2YAML struct {
 	TokenURL       string   `json:"tokenURL,omitempty" yaml:"tokenURL,omitempty"`
 	Scopes         []string `json:"scopes,omitempty" yaml:"scopes,omitempty"`
 	CredentialsDir string   `json:"credentialsDir,omitempty" yaml:"credentialsDir,omitempty"`
+}
+
+// afReasoningYAML mirrors kaReasoningYAML's shape (both forward upstream
+// pkg/shared/types.LLMReasoningConfig field-for-field); kept as its own type
+// rather than shared, matching this file's existing per-component DTO
+// convention (see kaOAuth2YAML vs afAgentLLMOAuth2YAML).
+type afReasoningYAML struct {
+	Enabled            bool   `json:"enabled" yaml:"enabled"`
+	BudgetTokens       *int   `json:"budgetTokens,omitempty" yaml:"budgetTokens,omitempty"`
+	Effort             string `json:"effort,omitempty" yaml:"effort,omitempty"`
+	CapabilityOverride string `json:"capabilityOverride,omitempty" yaml:"capabilityOverride,omitempty"`
 }
 
 type afMCPYAML struct {
@@ -2126,6 +2177,15 @@ func afAgentLLMConfig(llm kubernautv1alpha1.LLMProfileSpec) afAgentLLMYAML {
 			TokenURL:       llm.OAuth2.TokenURL,
 			Scopes:         llm.OAuth2.Scopes,
 			CredentialsDir: "/etc/apifrontend/oauth2",
+		}
+	}
+
+	if llm.Reasoning != nil {
+		cfg.Reasoning = &afReasoningYAML{
+			Enabled:            llm.Reasoning.Enabled,
+			BudgetTokens:       llm.Reasoning.BudgetTokens,
+			Effort:             llm.Reasoning.Effort,
+			CapabilityOverride: llm.Reasoning.CapabilityOverride,
 		}
 	}
 
