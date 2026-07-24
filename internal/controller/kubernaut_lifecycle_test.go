@@ -1156,6 +1156,13 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
+			By("WNS-030 [AC-4]: verifying the reconciled workflow namespace carries the restricted PSA labels (pyramid invariant: proves end-to-end wiring through a real reconcile, not just Go-level struct construction)")
+			createdNs := &corev1.Namespace{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.DefaultWorkflowNamespace}, createdNs)).To(Succeed())
+			Expect(createdNs.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/enforce", "restricted"))
+			Expect(createdNs.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/audit", "restricted"))
+			Expect(createdNs.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/warn", "restricted"))
+
 			By("removing created-by annotation to simulate user-managed namespace")
 			stripWorkflowNamespaceCreatedByAnnotation(ctx)
 
@@ -2325,6 +2332,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			r := reconcileToRunning(ctx)
 
+			By("preventing namespace deletion for envtest stability")
+			stripWorkflowNamespaceCreatedByAnnotation(ctx)
+
 			kn := &kubernautv1alpha1.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
@@ -2376,6 +2386,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			kn := &kubernautv1alpha1.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
+			stripWorkflowNamespaceCreatedByAnnotation(ctx)
 
 			By("setting now() to 11 minutes after DeletionTimestamp (past 10min timeout)")
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
@@ -3036,6 +3047,67 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(r.Get(ctx, types.NamespacedName{Name: testNamespace}, updated)).To(Succeed())
 			Expect(updated.Labels).NotTo(HaveKey("kagenti-enabled"))
 			Expect(updated.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/enforce", "privileged"))
+		})
+	})
+
+	// ======================================================================
+	// Workflow Namespace PSA Labels (#208)
+	// ======================================================================
+
+	Context("Workflow Namespace PSA Labels", func() {
+		wfNsName := resources.DefaultWorkflowNamespace
+
+		wfNamespace := func(labels map[string]string) *corev1.Namespace {
+			return &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{Name: wfNsName, Labels: labels},
+			}
+		}
+
+		It("WNS-010 [AC-4]: patches an existing kubernaut-workflows namespace that is missing the restricted PSA labels, so upgrades of pre-existing clusters converge to the defense-in-depth backstop, not just fresh installs", func() {
+			ns := wfNamespace(map[string]string{"app.kubernetes.io/managed-by": "kubernaut-operator"})
+			kn := unitTestKubernautCR(true, false)
+			r := newFakeUnitReconciler(ns)
+
+			Expect(r.deployWorkflowNamespace(ctx, kn)).To(Succeed())
+
+			updated := &corev1.Namespace{}
+			Expect(r.Get(ctx, types.NamespacedName{Name: wfNsName}, updated)).To(Succeed())
+			Expect(updated.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/enforce", "restricted"))
+			Expect(updated.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/audit", "restricted"))
+			Expect(updated.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/warn", "restricted"))
+		})
+
+		It("WNS-011 [CM-6]: performs no update when an existing namespace already has all 3 PSA labels set correctly, avoiding unnecessary writes on every reconcile", func() {
+			ns := wfNamespace(map[string]string{
+				"pod-security.kubernetes.io/enforce": "restricted",
+				"pod-security.kubernetes.io/audit":   "restricted",
+				"pod-security.kubernetes.io/warn":    "restricted",
+			})
+			kn := unitTestKubernautCR(true, false)
+			r := newFakeUnitReconciler(ns)
+
+			before := &corev1.Namespace{}
+			Expect(r.Get(ctx, types.NamespacedName{Name: wfNsName}, before)).To(Succeed())
+
+			Expect(r.deployWorkflowNamespace(ctx, kn)).To(Succeed())
+
+			after := &corev1.Namespace{}
+			Expect(r.Get(ctx, types.NamespacedName{Name: wfNsName}, after)).To(Succeed())
+			Expect(after.ResourceVersion).To(Equal(before.ResourceVersion),
+				"namespace should not be updated when the desired labels are already present")
+		})
+
+		It("WNS-012 [CM-6]: patching preserves pre-existing unrelated labels on the namespace", func() {
+			ns := wfNamespace(map[string]string{"custom-team-label": "sre"})
+			kn := unitTestKubernautCR(true, false)
+			r := newFakeUnitReconciler(ns)
+
+			Expect(r.deployWorkflowNamespace(ctx, kn)).To(Succeed())
+
+			updated := &corev1.Namespace{}
+			Expect(r.Get(ctx, types.NamespacedName{Name: wfNsName}, updated)).To(Succeed())
+			Expect(updated.Labels).To(HaveKeyWithValue("custom-team-label", "sre"))
+			Expect(updated.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/enforce", "restricted"))
 		})
 	})
 
