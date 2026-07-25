@@ -73,11 +73,14 @@ spec:
 
   # Named LLM profiles, referenced by name from kubernautAgent.llmProfileRef,
   # apiFrontend.llmProfileRef, apiFrontend.severityTriage.llmProfileRef, and
-  # kubernautAgent.phaseModels. Profiles referenced from phaseModels may use
-  # their own provider and credentialsSecretName, independent of
-  # kubernautAgent.llmProfileRef's profile (#233). severityTriage's profile
-  # must still share API Frontend's resolved profile's credentialsSecretName
-  # (cross-credential overrides there are not yet supported).
+  # kubernautAgent.phaseModels. Profiles referenced from phaseModels (#233)
+  # or apiFrontend.severityTriage.llmProfileRef (#234) may use their own
+  # provider and credentialsSecretName, independent of the profile they'd
+  # otherwise inherit from -- except when severityTriage's and API
+  # Frontend's own resolved profile are both vertex_ai, in which case they
+  # must still share a credentialsSecretName (API Frontend's Vertex AI
+  # client relies on ambient Application Default Credentials rather than
+  # per-profile credentials, kubernaut#1731).
   llmProfiles:
     primary:
       provider: vertex_ai

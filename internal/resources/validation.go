@@ -159,12 +159,21 @@ func lookupProfileRef(profiles map[string]kubernautv1alpha1.LLMProfileSpec, ref,
 	return profile, true, nil
 }
 
-// sameCredentialsSecretErr builds the shared "cross-credential overrides are
-// not yet supported" error for a profile ref that resolves to a different
-// credentialsSecretName than the profile it would otherwise inherit from.
-func sameCredentialsSecretErr(fieldPath, ref, gotSecret, baseFieldPath, baseRef, wantSecret string) error {
+// vertexADCCredentialsSecretErr builds the error for a severity-triage
+// profile that resolves to a different credentialsSecretName than API
+// Frontend's own resolved profile when both use vertex_ai. Unlike every
+// other provider, AF's Vertex AI client construction
+// (cmd/apifrontend/backend_deps.go's newGenAITriagerForVertex and
+// newAnthropicTriagerForVertex) never reads a profile's own APIKey/
+// APIKeyFile — it relies solely on ambient Application Default Credentials,
+// shared process-wide (kubernaut#1731). Two vertex_ai profiles with
+// different credentialsSecretName would silently both authenticate with
+// whichever ADC happens to be ambient rather than each with its own Secret,
+// so this specific combination stays blocked until kubernaut#1731 lands.
+func vertexADCCredentialsSecretErr(fieldPath, ref, gotSecret, baseFieldPath, baseRef, wantSecret string) error {
 	return fmt.Errorf(
-		"%s: profile %q has credentialsSecretName %q, which must match %s's profile %q credentialsSecretName %q — cross-credential overrides are not yet supported",
+		"%s: profile %q has credentialsSecretName %q, which must match %s's profile %q credentialsSecretName %q when both use vertex_ai — "+
+			"API Frontend's Vertex AI client relies on ambient Application Default Credentials rather than per-profile credentials (kubernaut#1731), so cross-credential vertex_ai overrides are not yet supported",
 		fieldPath, ref, gotSecret, baseFieldPath, baseRef, wantSecret)
 }
 
@@ -217,6 +226,17 @@ func validateLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut) []error {
 // validateAFLLMProfileRefs validates both of API Frontend's own llmProfileRef
 // fields: its main agent connection (apiFrontend.llmProfileRef) and its
 // independent severity-triage override (apiFrontend.severityTriage.llmProfileRef).
+//
+// #234: cross-credential severity-triage overrides are accepted for every
+// provider except vertex_ai-vs-vertex_ai. AF resolves severityTriage.llm
+// independently of agent.llm (resolveLLMKey() in
+// pkg/apifrontend/config/config.go), so non-vertex overrides with a
+// different credentialsSecretName are already safe today. vertex_ai is the
+// one exception: AF's Vertex AI client construction never reads a
+// profile's own APIKey/APIKeyFile and relies solely on ambient Application
+// Default Credentials (kubernaut#1731), so when both severityTriage's
+// resolved profile and AF's own resolved profile are vertex_ai, they must
+// still share a credentialsSecretName to avoid silently misauthenticating.
 func validateAFLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut, profiles map[string]kubernautv1alpha1.LLMProfileSpec) []error {
 	var errs []error
 
@@ -239,8 +259,11 @@ func validateAFLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut, profiles map[stri
 	}
 
 	effectiveAFRef := AFLLMProfileRef(kn)
-	if afProfile, afOK := profiles[effectiveAFRef]; afOK && stProfile.CredentialsSecretName != afProfile.CredentialsSecretName {
-		errs = append(errs, sameCredentialsSecretErr(
+	afProfile, afOK := profiles[effectiveAFRef]
+	sameCreds := afOK && stProfile.CredentialsSecretName == afProfile.CredentialsSecretName
+	bothVertex := afOK && stProfile.Provider == LLMProviderVertexAI && afProfile.Provider == LLMProviderVertexAI
+	if afOK && !sameCreds && bothVertex {
+		errs = append(errs, vertexADCCredentialsSecretErr(
 			stBase, st.LLMProfileRef, stProfile.CredentialsSecretName, "API Frontend's resolved profile", effectiveAFRef, afProfile.CredentialsSecretName))
 	}
 	return errs

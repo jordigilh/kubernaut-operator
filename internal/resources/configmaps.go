@@ -2167,10 +2167,17 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSideca
 	}, nil
 }
 
-// afSeverityTriageConfig builds the severityTriage config section. The
-// same-credentialsSecretName constraint between severityTriage.llmProfileRef
-// and AF's own resolved profile is enforced by validateAFLLMProfileRefs
-// at validation time, so rendering here only needs the triage profile itself.
+// afSeverityTriageConfig builds the severityTriage config section. #234:
+// validateAFLLMProfileRefs only blocks one cross-credential combination --
+// both severityTriage's and AF's own resolved profile being vertex_ai with
+// a different credentialsSecretName (kubernaut#1731's ambient-ADC gap) --
+// so every other combination with a different credentialsSecretName needs
+// its own apiKeyFile rendered against the dedicated mount deployments.go
+// provisions for it (severityTriageCredentialsMountPath), mirroring #233's
+// phaseModels pattern. vertex_ai itself never gets an apiKeyFile (matching
+// afAgentLLMConfig's existing behavior for AF's main agent.llm): its
+// credentials flow through GOOGLE_APPLICATION_CREDENTIALS instead, wired
+// in deployments.go.
 func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut) afSeverityTriageYAML {
 	if !kn.Spec.Monitoring.MonitoringEnabled() {
 		return afSeverityTriageYAML{Enabled: false}
@@ -2195,6 +2202,12 @@ func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut) afSeverityTriageYAM
 		triageProfile, ok := ResolveLLMProfile(kn, st.LLMProfileRef)
 		if ok {
 			llm := afAgentLLMConfig(triageProfile)
+			afProfile, _ := ResolveLLMProfile(kn, AFLLMProfileRef(kn))
+			if triageProfile.Provider != LLMProviderVertexAI &&
+				triageProfile.CredentialsSecretName != "" &&
+				triageProfile.CredentialsSecretName != afProfile.CredentialsSecretName {
+				llm.APIKeyFile = severityTriageCredentialsMountPath() + "/api_key"
+			}
 			cfg.LLM = &llm
 		}
 	}

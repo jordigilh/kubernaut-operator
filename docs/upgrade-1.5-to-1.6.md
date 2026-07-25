@@ -96,6 +96,20 @@ needs manual migration.
 can reference its own profile (or be disabled independently of KA) instead
 of implicitly sharing KA's LLM configuration.
 
+Earlier 1.6 milestones additionally required `severityTriage.llmProfileRef`
+to reference a profile sharing API Frontend's own resolved profile's exact
+`credentialsSecretName`. That constraint has been lifted for every provider
+except `vertex_ai` (#234): severity triage may now reference a profile with
+its own `provider` and `credentialsSecretName`, since API Frontend already
+resolves `severityTriage.llm` independently of `agent.llm`. The one
+remaining restriction is that when *both* severity triage's and API
+Frontend's own resolved profile use `vertex_ai`, they must still share a
+`credentialsSecretName` — API Frontend's Vertex AI client relies on ambient
+Application Default Credentials rather than per-profile credentials
+([jordigilh/kubernaut#1731](https://github.com/jordigilh/kubernaut/issues/1731)),
+so two different `vertex_ai` Secrets would silently collide rather than
+each taking effect.
+
 ## Migrating your CR
 
 ### Option A: migration script (recommended for the common case)

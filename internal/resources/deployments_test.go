@@ -1154,6 +1154,83 @@ var _ = Describe("APIFrontendDeployment", func() {
 		Expect(found).To(BeTrue(), "llm-credentials volume not found")
 	})
 
+	It("KFG-025 [IA-5]: mounts a dedicated severity-triage-credentials Secret volume when severityTriage's profile has a different credentialsSecretName than AF's own (#234)", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.LLMProfiles["triage-other-creds"] = kubernautv1alpha1.LLMProfileSpec{
+			Provider:              "anthropic",
+			Model:                 "claude-haiku-4-6",
+			CredentialsSecretName: "different-secret",
+		}
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-other-creds"}
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+
+		expectHasVolume(dep, "severity-triage-credentials")
+		expectHasVolumeMount(dep, "severity-triage-credentials", "/etc/apifrontend/severity-triage-credentials")
+		found := false
+		for _, v := range dep.Spec.Template.Spec.Volumes {
+			if v.Name == "severity-triage-credentials" {
+				found = true
+				Expect(v.Secret).NotTo(BeNil())
+				Expect(v.Secret.SecretName).To(Equal("different-secret"),
+					"#234: dedicated severity-triage volume must mount severityTriage's own profile's Secret, not AF's")
+			}
+		}
+		Expect(found).To(BeTrue(), "severity-triage-credentials volume not found")
+	})
+
+	It("KFG-026 [IA-5]: does not mount a dedicated severity-triage-credentials volume when severityTriage shares AF's credentialsSecretName (regression guard, #234)", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.LLMProfiles["triage-shared-creds"] = kubernautv1alpha1.LLMProfileSpec{
+			Provider:              "anthropic",
+			Model:                 "claude-haiku-4-6",
+			CredentialsSecretName: "llm-creds", // same as testKubernaut()'s "primary" profile
+		}
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-shared-creds"}
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+
+		for _, v := range dep.Spec.Template.Spec.Volumes {
+			Expect(v.Name).NotTo(Equal("severity-triage-credentials"),
+				"#234: a severityTriage profile sharing AF's credentialsSecretName must keep using the already-mounted llm-credentials volume")
+		}
+	})
+
+	It("KFG-027 [IA-5]: redirects GOOGLE_APPLICATION_CREDENTIALS to the dedicated mount when severityTriage's profile is vertex_ai with a different credentialsSecretName than AF's non-vertex_ai own profile (#234)", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.LLMProfiles[testAFOnlyProfile] = kubernautv1alpha1.LLMProfileSpec{
+			Provider:              LLMProviderOpenAI,
+			Model:                 "gpt-4o",
+			Endpoint:              testOpenAIEndpoint,
+			CredentialsSecretName: "af-llm-creds",
+		}
+		kn.Spec.APIFrontend.LLMProfileRef = testAFOnlyProfile
+		kn.Spec.LLMProfiles["triage-vertex"] = kubernautv1alpha1.LLMProfileSpec{
+			Provider:              LLMProviderVertexAI,
+			Model:                 "gemini-2.5-flash",
+			CredentialsSecretName: "triage-vertex-creds",
+			VertexProject:         "example-gcp-project", VertexLocation: "us-central1",
+		}
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-vertex"}
+		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+
+		expectHasVolume(dep, "severity-triage-credentials")
+		expectHasVolumeMount(dep, "severity-triage-credentials", "/etc/apifrontend/severity-triage-credentials")
+		container := dep.Spec.Template.Spec.Containers[0]
+		var gacValue string
+		gacCount := 0
+		for _, e := range container.Env {
+			if e.Name == "GOOGLE_APPLICATION_CREDENTIALS" {
+				gacCount++
+				gacValue = e.Value
+			}
+		}
+		Expect(gacCount).To(Equal(1), "GOOGLE_APPLICATION_CREDENTIALS must be set exactly once, not duplicated")
+		Expect(gacValue).To(Equal("/etc/apifrontend/severity-triage-credentials/credentials.json"), // pre-commit:allow-sensitive -- mount-path convention constant, not a real credential/secret value
+			"#234: severityTriage's own vertex_ai credentials must be ambient for AF's ADC-only Vertex client, since AF's own profile isn't vertex_ai and doesn't need this env var")
+	})
+
 	It("mounts llm-tls-client volume from AF's own resolved profile's tlsClientSecretRef", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.LLMProfiles[testAFOnlyProfile] = kubernautv1alpha1.LLMProfileSpec{

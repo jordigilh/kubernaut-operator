@@ -1129,7 +1129,7 @@ var _ = Describe("API Frontend Severity Triage LLM Validation", func() {
 		Expect(errs).To(BeEmpty())
 	})
 
-	It("rejects severityTriage.llmProfileRef with a different credentialsSecretName than AF's resolved profile", func() {
+	It("#234: accepts severityTriage.llmProfileRef with a different credentialsSecretName than AF's resolved profile (non-vertex_ai; AF resolves severityTriage.llm independently)", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.LLMProfiles["triage-other-creds"] = kubernautv1alpha1.LLMProfileSpec{
 			Provider: "openai", Model: "gpt-4o-mini", Endpoint: "http://llm-gateway:8080",
@@ -1139,13 +1139,67 @@ var _ = Describe("API Frontend Severity Triage LLM Validation", func() {
 			LLMProfileRef: "triage-other-creds",
 		}
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("#234: accepts severityTriage.llmProfileRef with a different provider AND a different credentialsSecretName than AF's resolved profile", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.LLMProfiles["triage-anthropic"] = kubernautv1alpha1.LLMProfileSpec{
+			Provider: "anthropic", Model: "claude-sonnet-4-5",
+			CredentialsSecretName: "triage-anthropic-creds",
+		}
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{
+			LLMProfileRef: "triage-anthropic",
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty(),
+			"#234: AF resolves severityTriage.llm independently via resolveLLMKey(), so cross-provider triage overrides are safe")
+	})
+
+	It("#234: rejects severityTriage.llmProfileRef with a different credentialsSecretName than AF's resolved profile when both use vertex_ai (kubernaut#1731: AF's Vertex AI client relies on ambient ADC, not per-profile credentials)", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.LLMProfiles["af-vertex"] = kubernautv1alpha1.LLMProfileSpec{
+			Provider: LLMProviderVertexAI, Model: "gemini-2.5-pro",
+			CredentialsSecretName: "af-vertex-creds",
+			VertexProject:         "example-gcp-project", VertexLocation: "us-central1",
+		}
+		kn.Spec.LLMProfiles["triage-vertex"] = kubernautv1alpha1.LLMProfileSpec{
+			Provider: LLMProviderVertexAI, Model: "gemini-2.5-flash",
+			CredentialsSecretName: "triage-vertex-creds",
+			VertexProject:         "example-gcp-project", VertexLocation: "us-central1",
+		}
+		kn.Spec.APIFrontend.LLMProfileRef = "af-vertex"
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{
+			LLMProfileRef: "triage-vertex",
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		found := false
 		for _, e := range errs {
-			if strings.Contains(e.Error(), "severityTriage.llmProfileRef") && strings.Contains(e.Error(), "credentialsSecretName") {
+			if strings.Contains(e.Error(), "severityTriage.llmProfileRef") && strings.Contains(e.Error(), "vertex_ai") {
 				found = true
 			}
 		}
 		Expect(found).To(BeTrue())
+	})
+
+	It("#234: accepts severityTriage.llmProfileRef and AF's resolved profile both vertex_ai when they share the same credentialsSecretName", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.LLMProfiles["af-vertex"] = kubernautv1alpha1.LLMProfileSpec{
+			Provider: LLMProviderVertexAI, Model: "gemini-2.5-pro",
+			CredentialsSecretName: "af-vertex-creds",
+			VertexProject:         "example-gcp-project", VertexLocation: "us-central1",
+		}
+		kn.Spec.LLMProfiles["triage-vertex-same-creds"] = kubernautv1alpha1.LLMProfileSpec{
+			Provider: LLMProviderVertexAI, Model: "gemini-2.5-flash",
+			CredentialsSecretName: "af-vertex-creds",
+			VertexProject:         "example-gcp-project", VertexLocation: "us-central1",
+		}
+		kn.Spec.APIFrontend.LLMProfileRef = "af-vertex"
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{
+			LLMProfileRef: "triage-vertex-same-creds",
+		}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
 	})
 
 	It("accepts llmEnabled=false regardless of profile ref validity concerns", func() {

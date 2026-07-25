@@ -537,6 +537,40 @@ func AFLLMProfileRef(kn *kubernautv1alpha1.Kubernaut) string {
 	return kn.Spec.KubernautAgent.LLMProfileRef
 }
 
+// severityTriageCredentialsVolumeName is the Volume/VolumeMount name for
+// severityTriage.llmProfileRef's dedicated Secret mount, used whenever its
+// resolved profile has a different credentialsSecretName than API
+// Frontend's own resolved profile (#234). AF resolves severityTriage.llm
+// independently of agent.llm (resolveLLMKey() in
+// pkg/apifrontend/config/config.go), so — outside the vertex_ai-vs-vertex_ai
+// exception blocked by validateAFLLMProfileRefs (kubernaut#1731) — a
+// distinct mount is always safe.
+func severityTriageCredentialsVolumeName() string {
+	return "severity-triage-credentials"
+}
+
+// severityTriageCredentialsMountPath is the mount directory for
+// severityTriage.llmProfileRef's dedicated credentials Secret (#234).
+func severityTriageCredentialsMountPath() string {
+	return "/etc/apifrontend/severity-triage-credentials"
+}
+
+// upsertEnvVar sets name=value in env, replacing an existing entry with the
+// same name in place (rather than appending a duplicate, which would leave
+// two ambiguous entries for the same variable in the rendered container
+// spec). Used by #234's severityTriage credentials wiring to redirect
+// GOOGLE_APPLICATION_CREDENTIALS to a dedicated mount when it differs from
+// API Frontend's own resolved profile's mount.
+func upsertEnvVar(env []corev1.EnvVar, name, value string) []corev1.EnvVar {
+	for i := range env {
+		if env[i].Name == name {
+			env[i] = corev1.EnvVar{Name: name, Value: value}
+			return env
+		}
+	}
+	return append(env, corev1.EnvVar{Name: name, Value: value})
+}
+
 // ValkeyAddr returns the Valkey address in host:port format.
 func ValkeyAddr(spec *kubernautv1alpha1.ValkeySpec) string {
 	port := spec.Port

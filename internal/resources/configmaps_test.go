@@ -2358,6 +2358,83 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(root.SeverityTriage.LLM.Reasoning.Effort).To(Equal("minimal"), "CM-6: triage's reasoning.effort must reflect its own profile ('minimal'), not AF's main agent.llm.reasoning ('high')")
 	})
 
+	It("LR-033 [IA-5]: emits apiKeyFile pointing at a dedicated mount when severityTriage's own profile has a different credentialsSecretName than AF's (#234)", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.LLMProfiles["triage-other-creds"] = kubernautv1alpha1.LLMProfileSpec{
+			Provider:              "anthropic",
+			Model:                 "claude-haiku-4-6",
+			Endpoint:              "https://api.anthropic.com",
+			CredentialsSecretName: "different-secret",
+		}
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-other-creds"}
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		var root struct {
+			SeverityTriage struct {
+				LLM *struct {
+					APIKeyFile string `yaml:"apiKeyFile"`
+				} `yaml:"llm"`
+			} `yaml:"severityTriage"`
+		}
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.SeverityTriage.LLM).NotTo(BeNil())
+		Expect(root.SeverityTriage.LLM.APIKeyFile).To(Equal("/etc/apifrontend/severity-triage-credentials/api_key"),
+			"#234: a severityTriage override with its own credentialsSecretName must render its own apiKeyFile pointing at its dedicated mount, not AF's shared llm-credentials one")
+	})
+
+	It("LR-034 [IA-5]: emits vertexProject/vertexLocation but no apiKeyFile for a vertex_ai severityTriage override with its own credentials (#234, matches AF's ADC-only vertex_ai convention)", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.LLMProfiles["triage-vertex"] = kubernautv1alpha1.LLMProfileSpec{
+			Provider:              LLMProviderVertexAI,
+			Model:                 "gemini-2.5-flash",
+			CredentialsSecretName: "triage-vertex-creds",
+			VertexProject:         "example-gcp-project",
+			VertexLocation:        "us-central1",
+		}
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-vertex"}
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		var root struct {
+			SeverityTriage struct {
+				LLM *struct {
+					APIKeyFile     string `yaml:"apiKeyFile"`
+					VertexProject  string `yaml:"vertexProject"`
+					VertexLocation string `yaml:"vertexLocation"`
+				} `yaml:"llm"`
+			} `yaml:"severityTriage"`
+		}
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.SeverityTriage.LLM).NotTo(BeNil())
+		Expect(root.SeverityTriage.LLM.APIKeyFile).To(BeEmpty(),
+			"#234: AF's vertex_ai path never reads apiKeyFile (kubernaut#1731) — credentials flow through GOOGLE_APPLICATION_CREDENTIALS, wired in deployments.go, matching AF's main agent.llm convention")
+		Expect(root.SeverityTriage.LLM.VertexProject).To(Equal("example-gcp-project"))
+		Expect(root.SeverityTriage.LLM.VertexLocation).To(Equal("us-central1"))
+	})
+
+	It("LR-035 [IA-5]: emits AF's own shared apiKeyFile when severityTriage shares AF's credentialsSecretName (regression guard, #234)", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.LLMProfiles["triage-shared-creds"] = kubernautv1alpha1.LLMProfileSpec{
+			Provider:              "anthropic",
+			Model:                 "claude-haiku-4-6",
+			Endpoint:              "https://api.anthropic.com",
+			CredentialsSecretName: "llm-creds", // same as testKubernaut()'s "primary" profile
+		}
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-shared-creds"}
+		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		var root struct {
+			SeverityTriage struct {
+				LLM *struct {
+					APIKeyFile string `yaml:"apiKeyFile"`
+				} `yaml:"llm"`
+			} `yaml:"severityTriage"`
+		}
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.SeverityTriage.LLM).NotTo(BeNil())
+		Expect(root.SeverityTriage.LLM.APIKeyFile).To(Equal("/etc/apifrontend/llm-credentials/api_key"),
+			"#234: a severityTriage profile sharing AF's credentialsSecretName must keep pointing at AF's already-mounted shared credentials, not a redundant dedicated one")
+	})
+
 	// #224: AF backs the list_clusters MCP tool and routes remote reads via
 	// a ClusterRegistry, reusing the shared fleet.FleetConfig shape GW/RO
 	// already use (upstream pkg/apifrontend/config.Config.Fleet), but AF

@@ -778,6 +778,30 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidec
 		)
 	}
 
+	// #234: severityTriage.llmProfileRef resolves independently of AF's own
+	// profile (resolveLLMKey() in pkg/apifrontend/config/config.go), so
+	// when its resolved profile names a different credentialsSecretName
+	// than AF's own, mount a dedicated Secret rather than reusing AF's
+	// "llm-credentials" volume. validateAFLLMProfileRefs (kubernaut#1731)
+	// blocks the one combination this can't safely support -- both
+	// profiles vertex_ai with different secrets -- so by the time we get
+	// here it's always safe to redirect GOOGLE_APPLICATION_CREDENTIALS to
+	// the dedicated mount when triage itself is vertex_ai: AF's own
+	// connection, if it too were vertex_ai, is guaranteed to already share
+	// the same Secret.
+	if st := kn.Spec.APIFrontend.SeverityTriage; st != nil && st.LLMProfileRef != "" {
+		if stProfile, ok := ResolveLLMProfile(kn, st.LLMProfileRef); ok &&
+			stProfile.CredentialsSecretName != "" && stProfile.CredentialsSecretName != afProfile.CredentialsSecretName {
+			volumes = append(volumes, secretVolume(severityTriageCredentialsVolumeName(), stProfile.CredentialsSecretName))
+			mounts = append(mounts, corev1.VolumeMount{
+				Name: severityTriageCredentialsVolumeName(), MountPath: severityTriageCredentialsMountPath(), ReadOnly: true,
+			})
+			if stProfile.Provider == LLMProviderVertexAI {
+				env = upsertEnvVar(env, "GOOGLE_APPLICATION_CREDENTIALS", severityTriageCredentialsMountPath()+"/credentials.json")
+			}
+		}
+	}
+
 	if kn.Spec.Valkey.SecretName != "" {
 		volumes = append(volumes, secretVolume("valkey-secrets", kn.Spec.Valkey.SecretName))
 		mounts = append(mounts, corev1.VolumeMount{
