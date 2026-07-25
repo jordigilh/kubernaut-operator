@@ -508,6 +508,23 @@ func ResolveLLMProfile(kn *kubernautv1alpha1.Kubernaut, ref string) (kubernautv1
 	return p, ok
 }
 
+// phaseCredentialsVolumeName returns the Volume/VolumeMount name for the
+// dedicated Secret mount of a spec.kubernautAgent.phaseModels override
+// whose profile has a different credentialsSecretName than KA's own
+// profile (#233). Keyed by phase so concurrently-configured phase
+// overrides never collide.
+func phaseCredentialsVolumeName(phase string) string {
+	return "phase-credentials-" + phase
+}
+
+// phaseCredentialsMountPath returns the mount directory for a phase
+// override's dedicated credentials Secret (#233). KA resolves each
+// phase's own apiKeyFile independently as of kubernaut#1728, so this no
+// longer needs to alias KA's base "llm-credentials" mount.
+func phaseCredentialsMountPath(phase string) string {
+	return "/etc/kubernaut-agent/phase-credentials/" + phase
+}
+
 // AFLLMProfileRef returns the name of the profile API Frontend's own LLM
 // connection resolves to: its own spec.apiFrontend.llmProfileRef when set,
 // defaulting to spec.kubernautAgent.llmProfileRef otherwise. This gives AF

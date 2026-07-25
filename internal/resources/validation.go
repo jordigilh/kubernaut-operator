@@ -171,8 +171,18 @@ func sameCredentialsSecretErr(fieldPath, ref, gotSecret, baseFieldPath, baseRef,
 // validateLLMProfileRefs validates that every llmProfileRef (KA, AF,
 // AF severity-triage) and every phaseModels value points at a profile
 // defined in spec.llmProfiles, and enforces the same-credentialsSecretName
-// constraint on phase overrides and severity-triage relative to the profile
-// each of them would otherwise inherit from.
+// constraint on severity-triage relative to the profile it would otherwise
+// inherit from.
+//
+// #233: phaseModels is deliberately exempt from that constraint. It
+// originally existed because KA's LLMOverrideConfig silently reused the
+// base profile's already-resolved API key for every phase override,
+// regardless of what credentialsSecretName the phase's own profile named
+// (kubernaut#1726) — so representing independent phase credentials in the
+// CRD would have produced a config the operator could validate but KA
+// would silently misauthenticate. kubernaut#1728 fixed that by resolving
+// each phase's own APIKeyFile independently, so cross-credential (and
+// cross-provider) phase overrides are now safe to accept.
 func validateLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut) []error {
 	var errs []error
 	profiles := kn.Spec.LLMProfiles
@@ -182,8 +192,7 @@ func validateLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut) []error {
 	if kaRef == "" {
 		errs = append(errs, fmt.Errorf("%s: required — reference a profile defined in spec.llmProfiles", kaBase))
 	}
-	kaProfile, kaOK, err := lookupProfileRef(profiles, kaRef, kaBase, true)
-	if err != nil {
+	if _, _, err := lookupProfileRef(profiles, kaRef, kaBase, true); err != nil {
 		errs = append(errs, err)
 	}
 
@@ -193,14 +202,8 @@ func validateLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut) []error {
 			errs = append(errs, fmt.Errorf("%s: invalid phase key %q — must be one of: rca, workflow_discovery, validation", phaseBase, phase))
 			continue
 		}
-		phaseProfile, ok, err := lookupProfileRef(profiles, ref, phaseBase, false)
-		if err != nil {
+		if _, _, err := lookupProfileRef(profiles, ref, phaseBase, false); err != nil {
 			errs = append(errs, err)
-			continue
-		}
-		if ok && kaOK && phaseProfile.CredentialsSecretName != kaProfile.CredentialsSecretName {
-			errs = append(errs, sameCredentialsSecretErr(
-				phaseBase, ref, phaseProfile.CredentialsSecretName, kaBase, kaRef, kaProfile.CredentialsSecretName))
 		}
 	}
 

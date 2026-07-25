@@ -876,17 +876,26 @@ type llmRuntimeYAML struct {
 	PhaseModels    map[string]llmPhaseOverrideYAML `json:"phaseModels,omitempty" yaml:"phaseModels,omitempty"`
 }
 
-// llmPhaseOverrideYAML has no credential field: phase overrides must share
-// the primary profile's credentialsSecretName (enforced by
-// validateLLMProfileRefs), so the phase always authenticates via the same
-// mounted credentials as the primary LLM connection. Reasoning is exempted
-// from that restart-required LLM-identity lock upstream (DD-LLM-008), so
-// it is forwarded like any other per-phase override.
+// llmPhaseOverrideYAML carries a phase override's fully-resolved fields,
+// including its own credentials when the phase's profile names a
+// credentialsSecretName different from the primary profile's (#233).
+// APIKeyFile is only populated in that cross-credential case -- when the
+// phase's profile shares the primary profile's credentialsSecretName, the
+// phase keeps authenticating via KA's already-mounted base credentials and
+// no dedicated Secret volume is created. This split relies on
+// kubernaut#1728, which fixed KA's LLMOverrideConfig to resolve each
+// phase's own APIKeyFile independently rather than silently reusing the
+// base profile's already-resolved API key (kubernaut#1726). Reasoning is
+// exempted from the restart-required LLM-identity lock upstream
+// (DD-LLM-008), so it is forwarded like any other per-phase override.
 type llmPhaseOverrideYAML struct {
-	Provider  string           `json:"provider,omitempty" yaml:"provider,omitempty"`
-	Model     string           `json:"model,omitempty" yaml:"model,omitempty"`
-	Endpoint  string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
-	Reasoning *kaReasoningYAML `json:"reasoning,omitempty" yaml:"reasoning,omitempty"`
+	Provider       string           `json:"provider,omitempty" yaml:"provider,omitempty"`
+	Model          string           `json:"model,omitempty" yaml:"model,omitempty"`
+	Endpoint       string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	APIKeyFile     string           `json:"apiKeyFile,omitempty" yaml:"apiKeyFile,omitempty"`
+	VertexProject  string           `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
+	VertexLocation string           `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
+	Reasoning      *kaReasoningYAML `json:"reasoning,omitempty" yaml:"reasoning,omitempty"`
 }
 
 type authWebhookWebhookYAML struct {
@@ -1713,12 +1722,26 @@ func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1
 		cfg.PhaseModels = make(map[string]llmPhaseOverrideYAML, len(ka.PhaseModels))
 		for phase, ref := range ka.PhaseModels {
 			phaseProfile, _ := ResolveLLMProfile(kn, ref)
-			cfg.PhaseModels[phase] = llmPhaseOverrideYAML{
-				Provider:  phaseProfile.Provider,
-				Model:     phaseProfile.Model,
-				Endpoint:  phaseProfile.Endpoint,
-				Reasoning: kaReasoningFromSpec(phaseProfile.Reasoning),
+			override := llmPhaseOverrideYAML{
+				Provider:       phaseProfile.Provider,
+				Model:          phaseProfile.Model,
+				Endpoint:       phaseProfile.Endpoint,
+				VertexProject:  phaseProfile.VertexProject,
+				VertexLocation: phaseProfile.VertexLocation,
+				Reasoning:      kaReasoningFromSpec(phaseProfile.Reasoning),
 			}
+			// #233: only render a dedicated apiKeyFile when the phase's
+			// profile names a different credentialsSecretName than KA's
+			// own -- otherwise the phase keeps using KA's already-mounted
+			// base credentials (see phaseCredentialsMountPath/deployments.go).
+			if phaseProfile.CredentialsSecretName != "" && phaseProfile.CredentialsSecretName != kaProfile.CredentialsSecretName {
+				credFile := "api_key"
+				if phaseProfile.Provider == LLMProviderVertexAI {
+					credFile = "credentials.json"
+				}
+				override.APIKeyFile = phaseCredentialsMountPath(phase) + "/" + credFile
+			}
+			cfg.PhaseModels[phase] = override
 		}
 	}
 	data, err := marshalYAML(cfg)

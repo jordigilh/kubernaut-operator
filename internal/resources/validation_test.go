@@ -1061,7 +1061,7 @@ var _ = Describe("LLM Profile Referential Integrity", func() {
 		Expect(errs).To(BeEmpty())
 	})
 
-	It("rejects phaseModels referencing a profile with a different credentialsSecretName than KA's", func() {
+	It("#233: accepts phaseModels referencing a profile with a different credentialsSecretName than KA's (KA #1726/#1728 fixed independent per-phase apiKeyFile resolution)", func() {
 		kn := testKubernaut()
 		kn.Spec.LLMProfiles["other-creds"] = kubernautv1alpha1.LLMProfileSpec{
 			Provider: "openai", Model: "gpt-4o-mini", Endpoint: "http://llm-gateway:8080",
@@ -1069,13 +1069,20 @@ var _ = Describe("LLM Profile Referential Integrity", func() {
 		}
 		kn.Spec.KubernautAgent.PhaseModels = map[string]string{"workflow_discovery": "other-creds"}
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
-		found := false
-		for _, e := range errs {
-			if strings.Contains(e.Error(), "phaseModels") && strings.Contains(e.Error(), "credentialsSecretName") {
-				found = true
-			}
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("#233: accepts a phaseModels entry with a different provider AND a different credentialsSecretName than KA's", func() {
+		kn := testKubernaut()
+		kn.Spec.LLMProfiles["vertex-phase"] = kubernautv1alpha1.LLMProfileSpec{
+			Provider: LLMProviderVertexAI, Model: "gemini-2.5-flash",
+			CredentialsSecretName: "vertex-phase-creds",
+			VertexProject:         "example-gcp-project", VertexLocation: "us-central1",
 		}
-		Expect(found).To(BeTrue())
+		kn.Spec.KubernautAgent.PhaseModels = map[string]string{"rca": "vertex-phase"}
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty(),
+			"#233: cross-provider phase overrides are representable now that KA resolves each phase's own apiKeyFile independently")
 	})
 })
 

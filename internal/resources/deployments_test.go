@@ -17,6 +17,8 @@ limitations under the License.
 package resources
 
 import (
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -307,6 +309,78 @@ var _ = Describe("Deployments", func() {
 			expectDeploymentBasics(dep, "kubernautagent")
 			expectHasVolume(dep, "llm-credentials")
 			expectHasVolumeMount(dep, "llm-credentials", "/etc/kubernaut-agent/credentials")
+		})
+
+		It("KFG-022 [IA-5]: mounts a dedicated phase-credentials Secret volume when a phase's profile has a different credentialsSecretName than KA's (#233)", func() {
+			kn := testKubernaut()
+			kn.Spec.LLMProfiles["workflow-cross-cred"] = kubernautv1alpha1.LLMProfileSpec{
+				Provider:              "anthropic",
+				Model:                 "claude-haiku-4-6",
+				CredentialsSecretName: "different-secret",
+			}
+			kn.Spec.KubernautAgent.PhaseModels = map[string]string{"workflow_discovery": "workflow-cross-cred"}
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectHasVolume(dep, "phase-credentials-workflow_discovery")
+			expectHasVolumeMount(dep, "phase-credentials-workflow_discovery", "/etc/kubernaut-agent/phase-credentials/workflow_discovery")
+			found := false
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == "phase-credentials-workflow_discovery" {
+					found = true
+					Expect(v.Secret).NotTo(BeNil())
+					Expect(v.Secret.SecretName).To(Equal("different-secret"),
+						"#233: dedicated phase volume must mount the phase's own profile's Secret, not KA's")
+				}
+			}
+			Expect(found).To(BeTrue(), "phase-credentials-workflow_discovery volume not found")
+		})
+
+		It("KFG-023 [IA-5]: does not mount a dedicated phase-credentials volume when a phase shares KA's credentialsSecretName (regression guard, #233)", func() {
+			kn := testKubernaut()
+			kn.Spec.LLMProfiles["workflow-lite"] = kubernautv1alpha1.LLMProfileSpec{
+				Provider:              "openai",
+				Model:                 "gpt-4o-mini",
+				Endpoint:              testOpenAIEndpoint,
+				CredentialsSecretName: "llm-creds", // same as testKubernaut()'s "primary" profile
+			}
+			kn.Spec.KubernautAgent.PhaseModels = map[string]string{"validation": "workflow-lite"}
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				Expect(v.Name).NotTo(Equal("phase-credentials-validation"),
+					"#233: a phase sharing KA's credentialsSecretName must keep using the already-mounted llm-credentials volume")
+			}
+		})
+
+		It("KFG-024 [IA-5]: mounts phase-credentials volumes in deterministic (sorted-by-phase) order across multiple cross-credential phase overrides (#233)", func() {
+			kn := testKubernaut()
+			kn.Spec.LLMProfiles["rca-vertex"] = kubernautv1alpha1.LLMProfileSpec{
+				Provider: LLMProviderVertexAI, Model: "gemini-2.5-flash",
+				CredentialsSecretName: "secret-a",
+				VertexProject:         "example-gcp-project", VertexLocation: "us-central1",
+			}
+			kn.Spec.LLMProfiles["workflow-cross-cred"] = kubernautv1alpha1.LLMProfileSpec{
+				Provider: "anthropic", Model: "claude-haiku-4-6",
+				CredentialsSecretName: "secret-b",
+			}
+			kn.Spec.KubernautAgent.PhaseModels = map[string]string{
+				"workflow_discovery": "workflow-cross-cred",
+				"rca":                "rca-vertex",
+			}
+			for i := 0; i < 15; i++ {
+				dep, err := KubernautAgentDeployment(kn)
+				Expect(err).NotTo(HaveOccurred())
+				var phaseVolumeNames []string
+				for _, v := range dep.Spec.Template.Spec.Volumes {
+					if strings.HasPrefix(v.Name, "phase-credentials-") {
+						phaseVolumeNames = append(phaseVolumeNames, v.Name)
+					}
+				}
+				Expect(phaseVolumeNames).To(Equal([]string{"phase-credentials-rca", "phase-credentials-workflow_discovery"}),
+					"#233: phase-credentials volumes must be sorted by phase name for deterministic Deployment diffs, iteration %d", i)
+			}
 		})
 
 		It("passes config args", func() {

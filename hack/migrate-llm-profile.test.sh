@@ -199,7 +199,7 @@ EOF
   assert_contains "$LAST_STDERR" '"rca"' "error names the phase"
   assert_contains "$LAST_STDERR" "vertex_ai" "error names the base provider"
   assert_contains "$LAST_STDERR" "openai" "error names the override provider"
-  assert_contains "$LAST_STDERR" "jordigilh/kubernaut/issues/1676" "error cites the cross-credential tracking issue"
+  assert_contains "$LAST_STDERR" "credentialsSecretName" "error explains the script cannot infer a per-phase Secret from the 1.5 schema"
   [[ ! -s "$TMP_OUT" ]] || fail "no output should be written on validation failure"
 }
 

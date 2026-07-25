@@ -19,6 +19,7 @@ package resources
 import (
 	"fmt"
 	"net"
+	"sort"
 	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -532,6 +533,31 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 		volumes = append(volumes, secretVolume("llm-tls-client", kaProfile.TLSClientSecretRef))
 		mounts = append(mounts, corev1.VolumeMount{
 			Name: "llm-tls-client", MountPath: "/etc/kubernaut-agent/llm-tls-client", ReadOnly: true,
+		})
+	}
+
+	// #233: mount a dedicated Secret volume per phase override whose own
+	// profile names a credentialsSecretName different from KA's base
+	// profile -- KA resolves each phase's own apiKeyFile independently
+	// (kubernaut#1728), so cross-credential phases need their own mount
+	// rather than reusing KA's "llm-credentials" volume. Iterate phases in
+	// sorted order so the Volumes/VolumeMounts slices -- and therefore the
+	// rendered Deployment -- are deterministic regardless of Go's
+	// randomized map iteration order.
+	phases := make([]string, 0, len(kn.Spec.KubernautAgent.PhaseModels))
+	for phase := range kn.Spec.KubernautAgent.PhaseModels {
+		phases = append(phases, phase)
+	}
+	sort.Strings(phases)
+	for _, phase := range phases {
+		phaseProfile, _ := ResolveLLMProfile(kn, kn.Spec.KubernautAgent.PhaseModels[phase])
+		if phaseProfile.CredentialsSecretName == "" || phaseProfile.CredentialsSecretName == kaProfile.CredentialsSecretName {
+			continue
+		}
+		volumeName := phaseCredentialsVolumeName(phase)
+		volumes = append(volumes, secretVolume(volumeName, phaseProfile.CredentialsSecretName))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: volumeName, MountPath: phaseCredentialsMountPath(phase), ReadOnly: true,
 		})
 	}
 

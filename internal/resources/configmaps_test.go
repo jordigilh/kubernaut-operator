@@ -1383,6 +1383,72 @@ var _ = Describe("ConfigMaps", func() {
 				}
 			})
 
+			It("LR-023 [IA-5]: emits apiKeyFile pointing at a dedicated mount when a phase's own profile has a different credentialsSecretName than KA's (#233)", func() {
+				kn := testKubernaut()
+				kn.Spec.LLMProfiles["workflow-cross-cred"] = kubernautv1alpha1.LLMProfileSpec{
+					Provider:              "anthropic",
+					Model:                 "claude-haiku-4-6",
+					CredentialsSecretName: "different-secret",
+				}
+				kn.Spec.KubernautAgent.PhaseModels = map[string]string{"workflow_discovery": "workflow-cross-cred"}
+				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				var root struct {
+					PhaseModels map[string]struct {
+						APIKeyFile string `yaml:"apiKeyFile"`
+					} `yaml:"phaseModels"`
+				}
+				Expect(yaml.Unmarshal([]byte(cm.Data["llm-runtime.yaml"]), &root)).To(Succeed())
+				phase, ok := root.PhaseModels["workflow_discovery"]
+				Expect(ok).To(BeTrue(), "expected phaseModels.workflow_discovery entry")
+				Expect(phase.APIKeyFile).To(Equal("/etc/kubernaut-agent/phase-credentials/workflow_discovery/api_key"),
+					"#233: a phase override with its own credentialsSecretName must render its own apiKeyFile pointing at its dedicated mount, not inherit KA's")
+			})
+
+			It("LR-024 [IA-5]: emits vertexProject/vertexLocation and a credentials.json apiKeyFile for a vertex_ai phase override with its own credentials (#233)", func() {
+				kn := testKubernaut()
+				kn.Spec.LLMProfiles["rca-vertex"] = kubernautv1alpha1.LLMProfileSpec{
+					Provider:              LLMProviderVertexAI,
+					Model:                 "gemini-2.5-flash",
+					CredentialsSecretName: "vertex-phase-creds",
+					VertexProject:         "example-gcp-project",
+					VertexLocation:        "us-central1",
+				}
+				kn.Spec.KubernautAgent.PhaseModels = map[string]string{"rca": "rca-vertex"}
+				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				var root struct {
+					PhaseModels map[string]struct {
+						APIKeyFile     string `yaml:"apiKeyFile"`
+						VertexProject  string `yaml:"vertexProject"`
+						VertexLocation string `yaml:"vertexLocation"`
+					} `yaml:"phaseModels"`
+				}
+				Expect(yaml.Unmarshal([]byte(cm.Data["llm-runtime.yaml"]), &root)).To(Succeed())
+				phase, ok := root.PhaseModels["rca"]
+				Expect(ok).To(BeTrue(), "expected phaseModels.rca entry")
+				Expect(phase.APIKeyFile).To(Equal("/etc/kubernaut-agent/phase-credentials/rca/credentials.json"), // pre-commit:allow-sensitive -- mount-path convention constant, not a real credential/secret value
+					"#233: a vertex_ai phase override's own credentials must resolve via its own credentials.json file, matching the base profile's ADC-file convention")
+				Expect(phase.VertexProject).To(Equal("example-gcp-project"))
+				Expect(phase.VertexLocation).To(Equal("us-central1"))
+			})
+
+			It("LR-025 [IA-5]: does not emit apiKeyFile when a phase shares KA's credentialsSecretName (regression guard, #233)", func() {
+				kn := testKubernaut()
+				kn.Spec.LLMProfiles["workflow-lite"] = kubernautv1alpha1.LLMProfileSpec{
+					Provider:              "openai",
+					Model:                 "gpt-4o-mini",
+					Endpoint:              testOpenAIEndpoint,
+					CredentialsSecretName: "llm-creds", // same as testKubernaut()'s "primary" profile
+				}
+				kn.Spec.KubernautAgent.PhaseModels = map[string]string{"validation": "workflow-lite"}
+				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				data := cm.Data["llm-runtime.yaml"]
+				Expect(data).NotTo(ContainSubstring("apiKeyFile"),
+					"#233: a phase sharing KA's credentialsSecretName must keep inheriting the base's already-mounted credentials, not get a redundant apiKeyFile")
+			})
+
 			It("LR-020 [CM-6]: the base profile's reasoning policy is static-only and does not leak into the hot-reloadable runtime config", func() {
 				kn := testKubernaut()
 				mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {

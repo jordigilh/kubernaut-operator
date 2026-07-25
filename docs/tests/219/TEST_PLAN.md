@@ -72,7 +72,7 @@ on `yq` being present on the *end user's* machine (documented in
 | MIG-002 | CM-6    | migrates `llm.runtimeConfigMapName` to the new `kubernautAgent.runtimeConfigMapName` location (moved up one level in the new schema) | Yes |
 | MIG-003 | CM-6    | migrates a phase override that only changes `model` — creates a new named profile sharing the base's `credentialsSecretName`, wires `phaseModels[phase]` to it | Yes |
 | MIG-004 | CM-6    | migrates a phase override that also changes `endpoint` — new profile carries the overridden endpoint | Yes |
-| MIG-005 | CM-6    | rejects (clear error, not silent drop/corruption) a phase override with a `provider` different from the base profile's, naming the phase and citing the cross-credential constraint (`jordigilh/kubernaut#1676`) | Yes |
+| MIG-005 | CM-6    | rejects (clear error, not silent drop/corruption) a phase override with a `provider` different from the base profile's, naming the phase and explaining that the 1.5 schema has no per-phase `credentialsSecretName` to carry forward (the operator itself supports this shape as of #233; this is a migration-tooling limitation) | Yes |
 | MIG-006 | IA-5    | rejects a phase override with an inline `apiKey` — new schema is Secret-only for credentials; error tells the user to create a Secret and wire it by hand; error text must NOT echo the key value | Yes |
 | MIG-007 | CM-6    | aggregates errors from multiple bad phases in one call rather than stopping at the first | Yes |
 | MIG-008 | CM-6    | is a clear no-op (success, input returned unchanged) when given an already-migrated CR (`spec.llmProfiles` present, no `spec.kubernautAgent.llm`) | Yes |
