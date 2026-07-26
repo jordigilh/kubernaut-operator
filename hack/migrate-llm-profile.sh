@@ -19,14 +19,17 @@
 # every time a provider gains a new LLMProfileSpec field upstream.
 #
 # Phase overrides that set a different provider than the base profile, or
-# an inline apiKey, have no equivalent in the new schema (phaseModels
-# values must reference a profile sharing the base profile's
-# credentialsSecretName) and are reported as errors -- all of them, not
-# just the first -- rather than silently dropped or converted into an
-# invalid CR.
+# an inline apiKey, are reported as errors -- all of them, not just the
+# first -- rather than silently dropped or converted into an invalid CR.
+# Cross-provider/cross-credential phaseModels overrides ARE supported by
+# the operator as of #233 (kubernaut#1728 fixed KA to resolve each phase's
+# own credentials independently), but this script still can't auto-migrate
+# a cross-provider phase override: the 1.5 schema never recorded a
+# per-phase credentialsSecretName, so there's no Secret reference to carry
+# forward into the new profile. An inline apiKey has no equivalent at all
+# -- 1.6 credentials are Secret-only.
 set -euo pipefail
 
-readonly CROSS_PROVIDER_ISSUE="https://github.com/jordigilh/kubernaut/issues/1676"
 readonly PRIMARY_PROFILE="primary"
 
 usage() {
@@ -114,7 +117,7 @@ for phase in "${phases[@]}"; do
     continue
   fi
   if [[ -n "$override_provider" && "$override_provider" != "$base_provider" ]]; then
-    errors+=("phase \"$phase\": overrides provider from \"$base_provider\" to \"$override_provider\", which is not representable in the new schema -- a phaseModels profile must share the base profile's credentialsSecretName (tracked in $CROSS_PROVIDER_ISSUE); resolve by hand")
+    errors+=("phase \"$phase\": overrides provider from \"$base_provider\" to \"$override_provider\" -- the 1.5 schema never recorded a per-phase credentialsSecretName, so this script cannot determine which Secret the new profile should reference (the operator itself supports cross-provider phaseModels overrides as of #233; this is a migration-tooling limitation, not a schema limitation) -- create a Secret with $override_provider's credentials, add a spec.llmProfiles entry referencing it, and set spec.kubernautAgent.phaseModels[\"$phase\"] to it by hand")
     continue
   fi
   valid_phases+=("$phase")

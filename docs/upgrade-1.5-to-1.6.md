@@ -70,22 +70,45 @@ spec:
     maxTurns: 40
 ```
 
-Two constraints on the new shape carried over from #187, neither of which
-has an automated workaround:
+One constraint on the new shape carried over from #187, with no automated
+workaround:
 
-- A `phaseModels` entry must reference a profile that shares the base
-  profile's exact `credentialsSecretName` (cross-credential phase overrides
-  are not yet supported — tracked in
-  [jordigilh/kubernaut#1676](https://github.com/jordigilh/kubernaut/issues/1676)).
 - Credentials are Secret-only. There is no `apiKey` field on `LLMProfileSpec`;
   any old inline `apiKey` must be moved into a Secret referenced by
   `credentialsSecretName` by hand.
+
+Earlier 1.6 milestones additionally required every `phaseModels` entry to
+reference a profile sharing the base profile's exact `credentialsSecretName`.
+That constraint has been lifted (#233): each `phaseModels` entry may now
+reference a profile with its own `provider` and `credentialsSecretName`,
+independent of `llmProfileRef`'s profile, once
+[jordigilh/kubernaut#1728](https://github.com/jordigilh/kubernaut/pull/1728)
+fixed Kubernaut Agent to resolve each phase's own credentials independently
+rather than silently reusing the base profile's. The migration script below
+still can't *auto-migrate* a 1.5 phase override that changes `provider`,
+though — the 1.5 schema never recorded a per-phase `credentialsSecretName`,
+so there is no Secret reference for it to carry forward; that case still
+needs manual migration.
 
 ### API Frontend severity triage LLM is now independently configurable (#187)
 
 `spec.apiFrontend.severityTriage.llmProfileRef` was added so severity triage
 can reference its own profile (or be disabled independently of KA) instead
 of implicitly sharing KA's LLM configuration.
+
+Earlier 1.6 milestones additionally required `severityTriage.llmProfileRef`
+to reference a profile sharing API Frontend's own resolved profile's exact
+`credentialsSecretName`. That constraint has been lifted for every provider
+except `vertex_ai` (#234): severity triage may now reference a profile with
+its own `provider` and `credentialsSecretName`, since API Frontend already
+resolves `severityTriage.llm` independently of `agent.llm`. The one
+remaining restriction is that when *both* severity triage's and API
+Frontend's own resolved profile use `vertex_ai`, they must still share a
+`credentialsSecretName` — API Frontend's Vertex AI client relies on ambient
+Application Default Credentials rather than per-profile credentials
+([jordigilh/kubernaut#1731](https://github.com/jordigilh/kubernaut/issues/1731)),
+so two different `vertex_ai` Secrets would silently collide rather than
+each taking effect.
 
 ## Migrating your CR
 
@@ -106,10 +129,14 @@ hack/migrate-llm-profile.sh < old-cr.yaml > new-cr.yaml
 
 The script **refuses** (with a clear error on stderr naming the offending
 phase and a non-zero exit code, rather than silently producing an invalid or
-lossy CR) the two cases the new schema cannot represent:
+lossy CR) two cases it cannot safely auto-migrate:
 
-- a phase override with a different `provider` than the base profile
-- a phase override with an inline `apiKey`
+- a phase override with a different `provider` than the base profile — the
+  operator itself supports this shape fine as of #233, but the 1.5 schema
+  never recorded a per-phase `credentialsSecretName`, so the script has no
+  way to infer which Secret the new profile should reference
+- a phase override with an inline `apiKey` — the new schema is Secret-only
+  for credentials, with no equivalent field to convert into
 
 Both require manual resolution — see the constraints above.
 

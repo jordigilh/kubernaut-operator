@@ -745,10 +745,11 @@ type KubernautAgentSpec struct {
 
 	// Per-phase LLM profile overrides. Keys are agent phase names
 	// (rca, workflow_discovery, validation); values are profile names in
-	// spec.llmProfiles. Each referenced profile must share the same
-	// credentialsSecretName as llmProfileRef's profile (cross-credential
-	// phase overrides are not yet supported). When absent, all phases use
-	// llmProfileRef's profile.
+	// spec.llmProfiles. Each referenced profile may use its own provider
+	// and credentialsSecretName, independent of llmProfileRef's profile —
+	// the operator mounts a dedicated Secret volume for any phase profile
+	// whose credentialsSecretName differs from llmProfileRef's. When
+	// absent, all phases use llmProfileRef's profile.
 	// +optional
 	// +kubebuilder:validation:XValidation:rule="self.all(k, k in ['rca','workflow_discovery','validation'])",message="phaseModels keys must be one of: rca, workflow_discovery, validation"
 	PhaseModels map[string]string `json:"phaseModels,omitempty"`
@@ -1562,9 +1563,15 @@ type APIFrontendSeverityTriageSpec struct {
 	// Reference to a named profile in spec.llmProfiles for severity-triage
 	// LLM calls. When empty, triage inherits API Frontend's own resolved
 	// profile (llmProfileRef, or KA's when that is also empty) -- matching
-	// today's behavior. Must share the same credentialsSecretName as API
-	// Frontend's resolved profile (no new Secret volumes are provisioned
-	// for triage).
+	// today's behavior. May reference a profile with a different provider
+	// and/or credentialsSecretName than API Frontend's own resolved
+	// profile; the operator provisions a dedicated Secret volume for
+	// triage's credentials when they differ. The one exception is
+	// vertex_ai: when both triage's and API Frontend's own resolved
+	// profile use vertex_ai, they must still share a credentialsSecretName,
+	// since API Frontend's Vertex AI client relies on ambient Application
+	// Default Credentials rather than per-profile credentials
+	// (kubernaut#1731).
 	// +optional
 	LLMProfileRef string `json:"llmProfileRef,omitempty"`
 
