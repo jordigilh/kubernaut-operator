@@ -1317,6 +1317,13 @@ spec:
                               type: string
                             provider:
                               type: string
+                            temperature:
+                              description: |-
+                                Sampling temperature override for this phase (e.g. "0.7").
+                                Serialized as string to avoid CRD float portability issues (#242).
+                                When empty, the phase uses the base agent's temperature (which may
+                                itself be unset -- see LLMConfig.Temperature).
+                              type: string
                           type: object
                         description: |-
                           Per-phase LLM model overrides. Keys are agent phase names
