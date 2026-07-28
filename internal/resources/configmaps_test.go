@@ -819,7 +819,6 @@ var _ = Describe("ConfigMaps", func() {
 				Expect(cm).NotTo(BeNil(), "KubernautAgentLLMRuntimeConfigMap should not be nil when no existing CM specified")
 				data := cm.Data["llm-runtime.yaml"]
 				Expect(data).To(ContainSubstring("model: gpt-4o"), "LLM runtime config should contain model, got:\n%s", data)
-				Expect(data).To(ContainSubstring("temperature:"), "LLM runtime config should contain temperature, got:\n%s", data)
 			})
 
 			It("is nil when user provides existing ConfigMap name", func() {
@@ -837,12 +836,19 @@ var _ = Describe("ConfigMaps", func() {
 				data := cm.Data["llm-runtime.yaml"]
 				for _, want := range []string{
 					"model: gpt-4o",
-					"temperature: 0.7",
 					"maxRetries: 3",
 					"timeoutSeconds: 120",
 				} {
 					Expect(data).To(ContainSubstring(want), "llm-runtime defaults should contain %q, got:\n%s", want, data)
 				}
+			})
+
+			It("LR-030: omits temperature from llm-runtime.yaml when not configured (regression: kubernaut v1.5.5 CHANGELOG -- an explicit temperature alongside top_p causes HTTP 400 on models like claude-opus-4 that reject the combination; unset must mean 'let the provider default', not 'send 0.7')", func() {
+				kn := testKubernaut()
+				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				data := cm.Data["llm-runtime.yaml"]
+				Expect(data).NotTo(ContainSubstring("temperature:"), "llm-runtime.yaml must omit temperature entirely when KubernautAgent.LLM.Temperature is unset, got:\n%s", data)
 			})
 
 			It("applies custom LLM runtime values", func() {
