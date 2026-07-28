@@ -1518,6 +1518,57 @@ var _ = Describe("ConfigMaps", func() {
 				Expect(ok).To(BeTrue(), "expected phaseModels.validation entry")
 				Expect(phase.Reasoning).To(BeNil(), "CM-6: phaseModels.validation.reasoning must stay absent when its own profile has none, even though the base agent's does — a phase-specific profile swap must not inherit reasoning spend it never opted into")
 			})
+
+			It("LR-031 [#241]: a phase's own temperature is independently configurable from the base agent's, so per-phase model-compatibility tuning actually takes effect", func() {
+				kn := testKubernaut()
+				mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
+					p.Temperature = "0.7"
+				})
+				kn.Spec.LLMProfiles["workflow_discovery_profile"] = kubernautv1alpha1.LLMProfileSpec{
+					Provider:              "anthropic",
+					Model:                 "claude-sonnet-4-6",
+					CredentialsSecretName: "llm-creds",
+					Temperature:           "0.3",
+				}
+				kn.Spec.KubernautAgent.PhaseModels = map[string]string{"workflow_discovery": "workflow_discovery_profile"}
+				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				var root struct {
+					PhaseModels map[string]struct {
+						Temperature *float64 `yaml:"temperature"`
+					} `yaml:"phaseModels"`
+				}
+				Expect(yaml.Unmarshal([]byte(cm.Data["llm-runtime.yaml"]), &root)).To(Succeed())
+				phase, ok := root.PhaseModels["workflow_discovery"]
+				Expect(ok).To(BeTrue(), "expected phaseModels.workflow_discovery entry")
+				Expect(phase.Temperature).NotTo(BeNil(), "#241: expected phaseModels.workflow_discovery.temperature when its own profile sets Temperature -- without this, a phase pinned to a model needing a different temperature than the base agent would silently not apply it at runtime")
+				Expect(*phase.Temperature).To(Equal(0.3), "#241: phase override's temperature must reflect its own profile (0.3), not the base agent's (0.7)")
+			})
+
+			It("LR-032 [#241]: a phase without its own temperature omits it, even when the base agent has one configured (mirrors the primary-profile fix in #239 -- unset must mean 'let the provider default')", func() {
+				kn := testKubernaut()
+				mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
+					p.Temperature = "0.7"
+				})
+				kn.Spec.LLMProfiles["validation_profile"] = kubernautv1alpha1.LLMProfileSpec{
+					Provider:              "anthropic",
+					Model:                 "claude-sonnet-4-6",
+					CredentialsSecretName: "llm-creds",
+				}
+				kn.Spec.KubernautAgent.PhaseModels = map[string]string{"validation": "validation_profile"}
+				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				data := cm.Data["llm-runtime.yaml"]
+				var root struct {
+					PhaseModels map[string]struct {
+						Temperature *float64 `yaml:"temperature"`
+					} `yaml:"phaseModels"`
+				}
+				Expect(yaml.Unmarshal([]byte(data), &root)).To(Succeed())
+				phase, ok := root.PhaseModels["validation"]
+				Expect(ok).To(BeTrue(), "expected phaseModels.validation entry")
+				Expect(phase.Temperature).To(BeNil(), "#241: phaseModels.validation.temperature must stay absent when its own profile has none, even though the base agent's does -- a phase-specific profile swap must not inherit a temperature it never opted into, and some models (e.g. claude-opus-4) reject an explicit temperature entirely")
+			})
 		})
 
 		Context("Fleet Gateway Discovery (#204)", func() {
