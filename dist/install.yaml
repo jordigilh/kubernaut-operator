@@ -2812,7 +2812,7 @@ spec:
           value: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
         - name: RELATED_IMAGE_INIT_UBI_MINIMAL
           value: registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c
-        image: quay.io/kubernaut-ai/kubernaut-operator:1.5.7
+        image: quay.io/kubernaut-ai/kubernaut-operator@sha256:c7e1d796b83ec37e803886cd3204c64e73ebcb7e5170871b18b627c3438154ad
         livenessProbe:
           httpGet:
             path: /healthz
