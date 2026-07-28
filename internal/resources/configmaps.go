@@ -893,6 +893,7 @@ type llmPhaseOverrideYAML struct {
 	Model          string           `json:"model,omitempty" yaml:"model,omitempty"`
 	Endpoint       string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
 	APIKeyFile     string           `json:"apiKeyFile,omitempty" yaml:"apiKeyFile,omitempty"`
+	Temperature    *float64         `json:"temperature,omitempty" yaml:"temperature,omitempty"` //nolint:musttag
 	VertexProject  string           `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
 	VertexLocation string           `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
 	Reasoning      *kaReasoningYAML `json:"reasoning,omitempty" yaml:"reasoning,omitempty"`
@@ -1735,6 +1736,17 @@ func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1
 				VertexProject:  phaseProfile.VertexProject,
 				VertexLocation: phaseProfile.VertexLocation,
 				Reasoning:      kaReasoningFromSpec(phaseProfile.Reasoning),
+			}
+			// #241: a phase's own temperature is independently configurable
+			// from the base agent's -- mirrors the base-profile fix (#239)
+			// so a phase pinned to a model that rejects an explicit
+			// temperature can omit it even when the base agent sets one,
+			// and vice versa. Omitted (nil) unless the phase's own profile
+			// explicitly configures it.
+			if phaseProfile.Temperature != "" {
+				if parsed, err := strconv.ParseFloat(phaseProfile.Temperature, 64); err == nil {
+					override.Temperature = &parsed
+				}
 			}
 			// #233: only render a dedicated apiKeyFile when the phase's
 			// profile names a different credentialsSecretName than KA's
