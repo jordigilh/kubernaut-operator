@@ -475,7 +475,15 @@ func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
 // resolveAPIServerIPs returns the real endpoint IPs of the kubernetes API
 // server by querying the "kubernetes" endpoints in the default namespace.
 // Falls back to KUBERNETES_SERVICE_HOST if endpoint lookup fails.
-func resolveAPIServerIPs() []string {
+//
+// Deliberately uses context.Background() instead of the reconcile-scoped
+// context: this is a best-effort, self-degrading lookup (every error path,
+// including a cancelled context, falls back to KUBERNETES_SERVICE_HOST), and
+// propagating ctx here would require adding a context parameter to all ~14
+// NetworkPolicy builder functions in this file, breaking the "builder takes
+// only *Kubernaut" convention (AGENTS.md Resource Builder Patterns) for a
+// call whose behavior would not otherwise change.
+func resolveAPIServerIPs() []string { //nolint:contextcheck
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		if host := os.Getenv("KUBERNETES_SERVICE_HOST"); host != "" {

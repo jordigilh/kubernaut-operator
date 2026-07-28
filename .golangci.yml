@@ -4,9 +4,12 @@ run:
 linters:
   default: none
   enable:
+    - containedctx
+    - contextcheck
     - copyloopvar
     - dupl
     - errcheck
+    - errorlint
     - ginkgolinter
     - goconst
     - gocyclo
@@ -15,12 +18,17 @@ linters:
     - lll
     - misspell
     - nakedret
+    - nilerr
+    - nilnil
+    - noctx
     - prealloc
+    - predeclared
     - revive
     - staticcheck
     - unconvert
     - unparam
     - unused
+    - wastedassign
   settings:
     revive:
       rules:
@@ -50,3 +58,10 @@ formatters:
       - third_party$
       - builtin$
       - examples$
+
+# Surface every finding per run instead of golangci-lint's default caps
+# (max-issues-per-linter: 50, max-same-issues: 3) so incremental linter
+# rollout doesn't hide additional occurrences behind repeated re-runs.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

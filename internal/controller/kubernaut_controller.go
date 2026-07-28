@@ -1056,7 +1056,11 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	}
 	tlsOpt := resources.WithTLSProfile(tlsProfile)
 	builders := []cmBuilder{
-		{"datastorage", func() (*corev1.ConfigMap, error) { return resources.DataStorageConfigMap(kn, dbName, dbUser, tlsOpt) }},
+		// DataStorageConfigMap transitively calls resolveHostToIP, a best-effort
+		// DNS lookup that deliberately uses context.Background() (see its doc
+		// comment): every error path, including a cancelled context, falls back
+		// to the configured hostname, so propagating ctx would not change behavior.
+		{"datastorage", func() (*corev1.ConfigMap, error) { return resources.DataStorageConfigMap(kn, dbName, dbUser, tlsOpt) }}, //nolint:contextcheck
 		{"aianalysis", func() (*corev1.ConfigMap, error) { return resources.AIAnalysisConfigMap(kn, tlsOpt) }},
 		{"signalprocessing", func() (*corev1.ConfigMap, error) { return resources.SignalProcessingConfigMap(kn, tlsOpt) }},
 		{"remediationorchestrator", func() (*corev1.ConfigMap, error) { return resources.RemediationOrchestratorConfigMap(kn, tlsOpt) }},
@@ -1065,7 +1069,10 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 		{"notification-controller", func() (*corev1.ConfigMap, error) { return resources.NotificationControllerConfigMap(kn, tlsOpt) }},
 		{"notification-routing", func() (*corev1.ConfigMap, error) {
 			if kn.Spec.Notification.Routing != nil && kn.Spec.Notification.Routing.ConfigMapName != "" {
-				return nil, nil
+				// Caller supplied their own routing ConfigMap (spec.notification.routing.configMapName);
+				// the operator must not build/own one. (nil, nil) is a deliberate
+				// "nothing to build" sentinel -- the loop below skips nil results.
+				return nil, nil //nolint:nilnil
 			}
 			return resources.NotificationRoutingConfigMap(kn)
 		}},
@@ -1079,6 +1086,12 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 		cm, err := b.fn()
 		if err != nil {
 			return nil, fmt.Errorf("building %s ConfigMap: %w", b.name, err)
+		}
+		// A nil result (no error) means the builder deliberately has nothing to
+		// create -- e.g. notification-routing when the caller supplied their
+		// own ConfigMap via spec.notification.routing.configMapName.
+		if cm == nil {
+			continue
 		}
 		configMaps = append(configMaps, cm)
 		cmHashes[b.name] = resources.ConfigMapDataHash(cm.Data)
@@ -1285,7 +1298,11 @@ func (r *KubernautReconciler) ensureServices(ctx context.Context, kn *kubernautv
 
 func (r *KubernautReconciler) reconcileNetworkPolicies(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode) error {
 	if kn.Spec.NetworkPolicies.NetworkPoliciesEnabled() {
-		for _, np := range resources.NetworkPolicies(kn, sidecar) {
+		// NetworkPolicies transitively calls resolveAPIServerIPs, a best-effort
+		// API-server-IP discovery that deliberately uses context.Background()
+		// (see its doc comment) rather than threading ctx through all ~14
+		// NetworkPolicy builder functions in networkpolicies.go.
+		for _, np := range resources.NetworkPolicies(kn, sidecar) { //nolint:contextcheck
 			if err := r.ensureNamespaced(ctx, kn, np); err != nil {
 				return fmt.Errorf("ensuring NetworkPolicy %s: %w", np.Name, err)
 			}
@@ -1441,7 +1458,8 @@ func (r *KubernautReconciler) detectKagentiSidecarMode(ctx context.Context, kn *
 // truth rather than relying on error-prone manual configuration.
 func (r *KubernautReconciler) resolveKagentiOIDCDefaults(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode) (*resources.KagentiOIDCDefaults, error) {
 	if sidecar == resources.KagentiSidecarNone {
-		return nil, nil
+		// No kagenti sidecar active: OIDC auto-detection is not applicable, not an error.
+		return nil, nil //nolint:nilnil
 	}
 
 	log := logf.FromContext(ctx)
@@ -1454,7 +1472,9 @@ func (r *KubernautReconciler) resolveKagentiOIDCDefaults(ctx context.Context, kn
 			// strictly needed — the operator can proceed without auto-detection.
 			if kn.Spec.APIFrontend.Auth.IssuerURL != "" {
 				log.Info("kagenti authbridge-config not found but CR has issuerURL set — skipping OIDC auto-detection")
-				return nil, nil
+				// CR already provides issuerURL manually: auto-detection is
+				// unnecessary, not a failure.
+				return nil, nil //nolint:nilnil
 			}
 			return nil, fmt.Errorf("kagenti sidecar is active but %s/%s ConfigMap not found — "+
 				"set spec.apiFrontend.auth.issuerURL manually or ensure kagenti-operator is installed",
@@ -1467,7 +1487,9 @@ func (r *KubernautReconciler) resolveKagentiOIDCDefaults(ctx context.Context, kn
 	if issuer == "" {
 		if kn.Spec.APIFrontend.Auth.IssuerURL != "" {
 			log.Info("kagenti authbridge-config missing ISSUER key but CR has issuerURL — skipping OIDC auto-detection")
-			return nil, nil
+			// CR already provides issuerURL manually: auto-detection is
+			// unnecessary, not a failure.
+			return nil, nil //nolint:nilnil
 		}
 		return nil, fmt.Errorf("kagenti %s/%s ConfigMap is missing the ISSUER key — "+
 			"set spec.apiFrontend.auth.issuerURL manually", kagentiSystemNamespace, kagentiAuthbridgeConfigMapName)
@@ -1657,7 +1679,7 @@ func (r *KubernautReconciler) patchAuthbridgeConfig(ctx context.Context, kn *kub
 
 	var full map[string]interface{}
 	if err := sigsyaml.Unmarshal([]byte(raw), &full); err != nil {
-		return nil
+		return fmt.Errorf("parsing authbridge config %s: %w", cmName, err)
 	}
 
 	if !patchFn(full) {

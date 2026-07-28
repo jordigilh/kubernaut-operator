@@ -17,6 +17,7 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -468,7 +469,7 @@ func createBYOSecrets() {
 		for k, v := range s.data {
 			args = append(args, fmt.Sprintf("--from-literal=%s=%s", k, v))
 		}
-		cmd := exec.Command("kubectl", args...)
+		cmd := exec.CommandContext(context.Background(), "kubectl", args...)
 		_, err := utils.Run(cmd)
 		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create secret %q", s.name)
 	}
@@ -490,7 +491,7 @@ func serviceAccountToken() (string, error) {
 
 	var out string
 	verifyTokenCreation := func(g Gomega) {
-		cmd := exec.Command("kubectl", "create", "--raw", fmt.Sprintf(
+		cmd := exec.CommandContext(context.Background(), "kubectl", "create", "--raw", fmt.Sprintf(
 			"/api/v1/namespaces/%s/serviceaccounts/%s/token",
 			operatorNS, serviceAccountName,
 		), "-f", tokenRequestFile)
@@ -512,7 +513,7 @@ func serviceAccountToken() (string, error) {
 // getMetricsOutput retrieves logs from the curl-metrics pod.
 func getMetricsOutput() string {
 	By("getting the curl-metrics logs")
-	cmd := exec.Command("kubectl", "logs", "curl-metrics", "-n", operatorNS)
+	cmd := exec.CommandContext(context.Background(), "kubectl", "logs", "curl-metrics", "-n", operatorNS)
 	metricsOutput, err := utils.Run(cmd)
 	Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
 	Expect(metricsOutput).To(ContainSubstring("< HTTP/1.1 200 OK"))
@@ -532,7 +533,7 @@ func kubectlGetLabeled(kind, label, gotemplate string) (string, error) {
 	if gotemplate != "" {
 		args = append(args, "-o", fmt.Sprintf("go-template=%s", gotemplate))
 	}
-	return utils.Run(exec.Command("kubectl", args...))
+	return utils.Run(exec.CommandContext(context.Background(), "kubectl", args...))
 }
 
 // verifyCleanedUp polls until all operator-managed resources of the given kind
@@ -550,7 +551,7 @@ func verifyCleanedUp(kind string) {
 
 // collectDiagnostic runs a command and writes its output to GinkgoWriter.
 func collectDiagnostic(args ...string) {
-	cmd := exec.Command("kubectl", args...)
+	cmd := exec.CommandContext(context.Background(), "kubectl", args...)
 	output, err := utils.Run(cmd)
 	if err == nil {
 		_, _ = fmt.Fprintf(GinkgoWriter, "=== kubectl %v ===\n%s\n", args, output)

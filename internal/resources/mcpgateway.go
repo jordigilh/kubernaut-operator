@@ -34,7 +34,9 @@ const (
 // to the apifrontend Service. Returns nil if AF is not enabled.
 func MCPGatewayHTTPRoute(kn *kubernautv1alpha1.Kubernaut) (*unstructured.Unstructured, error) {
 	if !kn.Spec.APIFrontendEnabled() {
-		return nil, nil
+		// APIFrontend disabled: no MCP route to build, not an error. The
+		// caller guards on a nil result before use.
+		return nil, nil //nolint:nilnil
 	}
 	ns := kn.Namespace
 	svcName := ComponentAPIFrontend
@@ -86,7 +88,9 @@ func MCPGatewayHTTPRoute(kn *kubernautv1alpha1.Kubernaut) (*unstructured.Unstruc
 // is not enabled.
 func MCPServerRegistration(kn *kubernautv1alpha1.Kubernaut) (*unstructured.Unstructured, error) {
 	if !kn.Spec.APIFrontendEnabled() {
-		return nil, nil
+		// APIFrontend disabled: no MCP registration to build, not an error.
+		// The caller guards on a nil result before use.
+		return nil, nil //nolint:nilnil
 	}
 	ns := kn.Namespace
 	endpointURL := fmt.Sprintf("https://%s.%s.svc.cluster.local:%d/mcp",

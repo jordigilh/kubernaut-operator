@@ -1700,7 +1700,9 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
 	ka := &kn.Spec.KubernautAgent
 	if ka.RuntimeConfigMapName != "" {
-		return nil, nil
+		// Caller supplied their own ConfigMap: nothing to build, not an error.
+		// All callers guard on a nil result before use.
+		return nil, nil //nolint:nilnil
 	}
 	kaProfile, _ := ResolveLLMProfile(kn, ka.LLMProfileRef)
 	// Temperature is only sent to the LLM API when the administrator

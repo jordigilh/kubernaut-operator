@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sort"
@@ -82,7 +83,11 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 	// NetworkPolicies. Go's built-in resolver works because it queries DNS
 	// natively over UDP.
 	pgHost := kn.Spec.PostgreSQL.Host
-	if addrs, err := net.LookupHost(pgHost); err == nil && len(addrs) > 0 {
+	// Best-effort, bounded lookup with no natural deadline of its own (any
+	// error, including a cancelled context, falls back to the configured
+	// host below), so context.Background() is used rather than threading
+	// ctx through the resource-builder call chain.
+	if addrs, err := net.DefaultResolver.LookupHost(context.Background(), pgHost); err == nil && len(addrs) > 0 {
 		pgHost = addrs[0]
 	}
 
