@@ -1,0 +1,44 @@
+name: Dependabot Auto-Merge
+
+# Automatically enables GitHub's native auto-merge on every Dependabot PR as
+# soon as it's opened/updated, so it merges itself the moment required
+# checks pass and it has a code-owner approval -- no manual "Enable
+# auto-merge" click needed for every single dependency bump.
+#
+# This does NOT bypass review: CODEOWNERS requires an approval from
+# @jordigilh (branch protection: require_code_owner_review +
+# require_last_push_approval), and the GITHUB_TOKEN used here cannot
+# satisfy that on its own. Auto-merge just queues the merge to complete
+# unattended once a human approves and CI is green.
+#
+# Restricts to patch/minor updates only -- major-version bumps stay fully
+# manual (no auto-merge enabled), since they're the most likely to need a
+# closer look before merging.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Enable auto-merge (patch/minor only)
+        if: |
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr merge --auto --squash "${PR_URL}"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
