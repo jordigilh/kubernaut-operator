@@ -868,7 +868,7 @@ type llmRuntimeYAML struct {
 	Provider       string                          `json:"provider,omitempty" yaml:"provider,omitempty"`
 	Model          string                          `json:"model" yaml:"model"`
 	Endpoint       string                          `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
-	Temperature    float64                         `json:"temperature" yaml:"temperature"` //nolint:musttag
+	Temperature    *float64                        `json:"temperature,omitempty" yaml:"temperature,omitempty"` //nolint:musttag
 	MaxRetries     int                             `json:"maxRetries" yaml:"maxRetries"`
 	TimeoutSeconds int                             `json:"timeoutSeconds" yaml:"timeoutSeconds"`
 	VertexProject  string                          `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
@@ -1702,10 +1702,16 @@ func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1
 		return nil, nil
 	}
 	kaProfile, _ := ResolveLLMProfile(kn, ka.LLMProfileRef)
-	temp := 0.7
+	// Temperature is only sent to the LLM API when the administrator
+	// explicitly configures it. Some models (e.g. claude-opus-4) reject an
+	// explicit temperature alongside top_p with an HTTP 400 -- silently
+	// defaulting to 0.7 here would resend that rejected value on every
+	// reconcile even when the profile leaves it unset (kubernaut v1.5.5
+	// fixed the equivalent bug upstream; see CHANGELOG.md#155).
+	var temp *float64
 	if kaProfile.Temperature != "" {
 		if parsed, err := strconv.ParseFloat(kaProfile.Temperature, 64); err == nil {
-			temp = parsed
+			temp = &parsed
 		}
 	}
 	cfg := llmRuntimeYAML{
