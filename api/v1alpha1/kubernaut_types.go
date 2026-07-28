@@ -899,6 +899,12 @@ type LLMPhaseOverrideSpec struct {
 	Endpoint string `json:"endpoint,omitempty"`
 	// +optional
 	APIKey string `json:"apiKey,omitempty"`
+	// Sampling temperature override for this phase (e.g. "0.7").
+	// Serialized as string to avoid CRD float portability issues (#242).
+	// When empty, the phase uses the base agent's temperature (which may
+	// itself be unset -- see LLMConfig.Temperature).
+	// +optional
+	Temperature string `json:"temperature,omitempty"`
 }
 
 // OAuth2Spec configures OAuth2 token-based authentication for LLM endpoints.

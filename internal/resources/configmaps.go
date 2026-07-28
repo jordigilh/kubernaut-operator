@@ -623,10 +623,11 @@ type llmRuntimeYAML struct {
 }
 
 type llmPhaseOverrideYAML struct {
-	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
-	Model    string `json:"model,omitempty" yaml:"model,omitempty"`
-	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
-	APIKey   string `json:"apiKey,omitempty" yaml:"apiKey,omitempty"`
+	Provider    string   `json:"provider,omitempty" yaml:"provider,omitempty"`
+	Model       string   `json:"model,omitempty" yaml:"model,omitempty"`
+	Endpoint    string   `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	APIKey      string   `json:"apiKey,omitempty" yaml:"apiKey,omitempty"`
+	Temperature *float64 `json:"temperature,omitempty" yaml:"temperature,omitempty"` //nolint:musttag
 }
 
 type authWebhookWebhookYAML struct {
@@ -1440,12 +1441,24 @@ func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1
 	if len(kn.Spec.KubernautAgent.LLM.PhaseModels) > 0 {
 		cfg.PhaseModels = make(map[string]llmPhaseOverrideYAML, len(kn.Spec.KubernautAgent.LLM.PhaseModels))
 		for phase, override := range kn.Spec.KubernautAgent.LLM.PhaseModels {
-			cfg.PhaseModels[phase] = llmPhaseOverrideYAML{
+			phaseOverride := llmPhaseOverrideYAML{
 				Provider: override.Provider,
 				Model:    override.Model,
 				Endpoint: override.Endpoint,
 				APIKey:   override.APIKey,
 			}
+			// #242: a phase's own temperature is independently configurable
+			// from the base agent's -- mirrors the base-agent fix so a
+			// phase pinned to a model that rejects an explicit temperature
+			// can omit it even when the base agent sets one, and vice
+			// versa. Omitted (nil) unless the phase's own override
+			// explicitly configures it.
+			if override.Temperature != "" {
+				if parsed, err := strconv.ParseFloat(override.Temperature, 64); err == nil {
+					phaseOverride.Temperature = &parsed
+				}
+			}
+			cfg.PhaseModels[phase] = phaseOverride
 		}
 	}
 	data, err := marshalYAML(cfg)
