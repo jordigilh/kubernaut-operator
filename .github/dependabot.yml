@@ -1,0 +1,196 @@
+version: 2
+updates:
+  # ============================================================
+  # main (default branch)
+  # ============================================================
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - security
+    commit-message:
+      prefix: "deps"
+    ignore:
+      - dependency-name: "k8s.io/*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "sigs.k8s.io/*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    groups:
+      all-go-deps:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: "ci"
+    groups:
+      all-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - docker
+    commit-message:
+      prefix: "docker"
+    groups:
+      all-docker:
+        patterns:
+          - "*"
+
+  # ============================================================
+  # release/v1.x maintenance branches
+  #
+  # Dependabot's `target-branch` option does not support wildcards/globs
+  # (https://github.com/dependabot/dependabot-core/issues/6890 -- still
+  # open), so each actively maintained release/v1.x branch needs its own
+  # explicit block per ecosystem below; it cannot be expressed as a single
+  # `release/v1.*` pattern the way CI workflow `branches:` filters can.
+  # Also note: any block with a non-default target-branch is excluded from
+  # Dependabot's security-update PRs -- those always target the default
+  # branch (main) regardless of this config.
+  #
+  # Process: when cutting a new release/vX.Y maintenance branch, copy the
+  # three blocks for an existing branch below and retarget them (update
+  # target-branch and the commit-message suffix, e.g. "deps(vX.Y)"). When
+  # a maintenance branch stops receiving patches (superseded or EOL),
+  # remove its three blocks in the same PR that retires it -- leaving
+  # stale blocks around just generates PRs against a branch nobody merges.
+  #
+  # release/1.3 and release/v1.5.0-rc12 are intentionally excluded: both
+  # are inactive (no commits in 60+ days) and release/v1.5.0-rc12 was a
+  # one-off pre-GA release-candidate branch superseded by release/v1.5,
+  # not an ongoing minor-line maintenance branch.
+  # ============================================================
+
+  # ---- release/v1.4.0 ----
+  - package-ecosystem: gomod
+    target-branch: release/v1.4.0
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - security
+    commit-message:
+      prefix: "deps(v1.4)"
+    ignore:
+      - dependency-name: "k8s.io/*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "sigs.k8s.io/*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    groups:
+      all-go-deps:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    target-branch: release/v1.4.0
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: "ci(v1.4)"
+    groups:
+      all-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    target-branch: release/v1.4.0
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - docker
+    commit-message:
+      prefix: "docker(v1.4)"
+    groups:
+      all-docker:
+        patterns:
+          - "*"
+
+  # ---- release/v1.5 ----
+  - package-ecosystem: gomod
+    target-branch: release/v1.5
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - security
+    commit-message:
+      prefix: "deps(v1.5)"
+    ignore:
+      - dependency-name: "k8s.io/*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "sigs.k8s.io/*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    groups:
+      all-go-deps:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    target-branch: release/v1.5
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: "ci(v1.5)"
+    groups:
+      all-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    target-branch: release/v1.5
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - docker
+    commit-message:
+      prefix: "docker(v1.5)"
+    groups:
+      all-docker:
+        patterns:
+          - "*"
