@@ -25,6 +25,7 @@ import (
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
+	routev1 "github.com/openshift/api/route/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 	"golang.org/x/time/rate"
@@ -345,37 +346,10 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 
 	for _, cond := range existingJob.Status.Conditions {
 		if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
-			if existingJob.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash {
-				now := metav1.Now()
-				return ctrl.Result{}, r.patchStatus(ctx, kn, func() {
-					kn.Status.LastMigrationHash = desiredHash
-					kn.Status.LastMigrationTime = &now
-				})
-			}
-			log.Info("completed migration job has stale spec-hash, deleting for re-run")
-			propagation := metav1.DeletePropagationBackground
-			if err := r.Delete(ctx, existingJob, &client.DeleteOptions{
-				PropagationPolicy: &propagation,
-			}); err != nil && !apierrors.IsNotFound(err) {
-				return ctrl.Result{}, fmt.Errorf("deleting stale migration job: %w", err)
-			}
-			return ctrl.Result{RequeueAfter: time.Millisecond}, nil
+			return r.handleCompleteMigrationJob(ctx, kn, existingJob, desiredHash)
 		}
 		if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
-			if existingJob.Status.Failed >= int32(maxMigrationRetries) {
-				log.Info("migration job exceeded retry limit", "failed", existingJob.Status.Failed, "max", maxMigrationRetries)
-				return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionMigrationComplete,
-					ReasonMigrationFailed, fmt.Sprintf("Database migration failed after %d attempts; manual intervention required", existingJob.Status.Failed))
-			}
-			log.Info("migration job failed, deleting for retry", "attempt", existingJob.Status.Failed)
-			propagation := metav1.DeletePropagationBackground
-			if err := r.Delete(ctx, existingJob, &client.DeleteOptions{
-				PropagationPolicy: &propagation,
-			}); err != nil && !apierrors.IsNotFound(err) {
-				return ctrl.Result{}, fmt.Errorf("deleting failed migration job: %w", err)
-			}
-			return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionMigrationComplete,
-				ReasonMigrationFailed, "Database migration job failed; will retry")
+			return r.handleFailedMigrationJob(ctx, kn, existingJob)
 		}
 	}
 
@@ -392,6 +366,59 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: requeueMigrationPoll}, nil
+}
+
+// handleCompleteMigrationJob processes a migration Job that has reached
+// JobComplete. If its spec-hash annotation still matches the desired hash,
+// migration status is recorded as done; otherwise the stale job is deleted
+// so a fresh one gets created on the next reconcile.
+func (r *KubernautReconciler) handleCompleteMigrationJob(
+	ctx context.Context, kn *kubernautv1alpha1.Kubernaut, existingJob *batchv1.Job, desiredHash string,
+) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	if existingJob.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash {
+		now := metav1.Now()
+		return ctrl.Result{}, r.patchStatus(ctx, kn, func() {
+			kn.Status.LastMigrationHash = desiredHash
+			kn.Status.LastMigrationTime = &now
+		})
+	}
+
+	log.Info("completed migration job has stale spec-hash, deleting for re-run")
+	propagation := metav1.DeletePropagationBackground
+	if err := r.Delete(ctx, existingJob, &client.DeleteOptions{
+		PropagationPolicy: &propagation,
+	}); err != nil && !apierrors.IsNotFound(err) {
+		return ctrl.Result{}, fmt.Errorf("deleting stale migration job: %w", err)
+	}
+	return ctrl.Result{RequeueAfter: time.Millisecond}, nil
+}
+
+// handleFailedMigrationJob processes a migration Job that has reached
+// JobFailed. Once the retry limit is exceeded, migration is marked failed
+// requiring manual intervention; otherwise the failed job is deleted so a
+// fresh attempt is created on the next reconcile.
+func (r *KubernautReconciler) handleFailedMigrationJob(
+	ctx context.Context, kn *kubernautv1alpha1.Kubernaut, existingJob *batchv1.Job,
+) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	if existingJob.Status.Failed >= int32(maxMigrationRetries) {
+		log.Info("migration job exceeded retry limit", "failed", existingJob.Status.Failed, "max", maxMigrationRetries)
+		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionMigrationComplete,
+			ReasonMigrationFailed, fmt.Sprintf("Database migration failed after %d attempts; manual intervention required", existingJob.Status.Failed))
+	}
+
+	log.Info("migration job failed, deleting for retry", "attempt", existingJob.Status.Failed)
+	propagation := metav1.DeletePropagationBackground
+	if err := r.Delete(ctx, existingJob, &client.DeleteOptions{
+		PropagationPolicy: &propagation,
+	}); err != nil && !apierrors.IsNotFound(err) {
+		return ctrl.Result{}, fmt.Errorf("deleting failed migration job: %w", err)
+	}
+	return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha1.ConditionMigrationComplete,
+		ReasonMigrationFailed, "Database migration job failed; will retry")
 }
 
 // setCRDsReady sets the ConditionCRDsInstalled condition to True on the
@@ -414,18 +441,7 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		return err
 	}
 	if err := r.deployRBAC(ctx, kn); err != nil {
-		if statusErr := r.patchStatus(ctx, kn, func() {
-			meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-				Type: kubernautv1alpha1.ConditionRBACProvisioned, Status: metav1.ConditionFalse,
-				Reason: ReasonRBACApplyFailed, Message: err.Error(),
-				ObservedGeneration: kn.Generation,
-			})
-		}); statusErr != nil {
-			logf.FromContext(ctx).Error(statusErr, "failed to patch RBAC status condition")
-		}
-		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, ReasonRBACApplyFailed, "Reconcile",
-			"Failed to provision RBAC: %v", err)
-		return err
+		return r.handleRBACDeployError(ctx, kn, err)
 	}
 
 	pgSecret := &corev1.Secret{}
@@ -441,16 +457,7 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 
 	oidcDefaults, err := r.resolveKagentiOIDCDefaults(ctx, kn, sidecar)
 	if err != nil {
-		if statusErr := r.patchStatus(ctx, kn, func() {
-			meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-				Type: kubernautv1alpha1.ConditionBYOValidated, Status: metav1.ConditionFalse,
-				Reason: ReasonOIDCDetectionFailed, Message: err.Error(),
-				ObservedGeneration: kn.Generation,
-			})
-		}); statusErr != nil {
-			logf.FromContext(ctx).Error(statusErr, "failed to patch OIDC detection status")
-		}
-		return fmt.Errorf("resolving kagenti OIDC defaults: %w", err)
+		return r.handleOIDCDetectionError(ctx, kn, err)
 	}
 
 	cmHashes, err := r.deployConfigMaps(ctx, kn, dbName, dbUser, tlsProfile, sidecar, oidcDefaults)
@@ -478,6 +485,49 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 	}
 
 	r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, ReasonManifestsApplied, "Reconcile", "All service manifests applied")
+	return r.finalizeDeployStatus(ctx, kn, hasRoute)
+}
+
+// handleRBACDeployError records a failed-RBAC status condition and a
+// warning event, then returns the original error for the caller to
+// propagate. Extracted from phaseDeploy to keep its cyclomatic complexity
+// within threshold.
+func (r *KubernautReconciler) handleRBACDeployError(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, err error) error {
+	if statusErr := r.patchStatus(ctx, kn, func() {
+		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+			Type: kubernautv1alpha1.ConditionRBACProvisioned, Status: metav1.ConditionFalse,
+			Reason: ReasonRBACApplyFailed, Message: err.Error(),
+			ObservedGeneration: kn.Generation,
+		})
+	}); statusErr != nil {
+		logf.FromContext(ctx).Error(statusErr, "failed to patch RBAC status condition")
+	}
+	r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, ReasonRBACApplyFailed, "Reconcile",
+		"Failed to provision RBAC: %v", err)
+	return err
+}
+
+// handleOIDCDetectionError records a failed-BYO-OIDC status condition, then
+// returns a wrapped error for the caller to propagate. Extracted from
+// phaseDeploy to keep its cyclomatic complexity within threshold.
+func (r *KubernautReconciler) handleOIDCDetectionError(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, err error) error {
+	if statusErr := r.patchStatus(ctx, kn, func() {
+		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+			Type: kubernautv1alpha1.ConditionBYOValidated, Status: metav1.ConditionFalse,
+			Reason: ReasonOIDCDetectionFailed, Message: err.Error(),
+			ObservedGeneration: kn.Generation,
+		})
+	}); statusErr != nil {
+		logf.FromContext(ctx).Error(statusErr, "failed to patch OIDC detection status")
+	}
+	return fmt.Errorf("resolving kagenti OIDC defaults: %w", err)
+}
+
+// finalizeDeployStatus records the terminal Deploying-phase status
+// conditions (RBAC, webhooks, route, services) once all deploy sub-steps
+// have succeeded. Extracted from phaseDeploy to keep its cyclomatic
+// complexity within threshold.
+func (r *KubernautReconciler) finalizeDeployStatus(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, hasRoute bool) error {
 	return r.patchStatus(ctx, kn, func() {
 		r.setPhase(kn, kubernautv1alpha1.PhaseDeploying)
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
@@ -490,19 +540,17 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 			Reason: ReasonWebhooksReady, Message: "Admission webhooks configured",
 			ObservedGeneration: kn.Generation,
 		})
-		if hasRoute {
-			meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-				Type: kubernautv1alpha1.ConditionRouteReady, Status: metav1.ConditionTrue,
-				Reason: ReasonRouteCreated, Message: "Gateway OCP Route created",
-				ObservedGeneration: kn.Generation,
-			})
-		} else {
-			meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-				Type: kubernautv1alpha1.ConditionRouteReady, Status: metav1.ConditionFalse,
-				Reason: ReasonRouteDisabled, Message: "Gateway OCP Route is disabled",
-				ObservedGeneration: kn.Generation,
-			})
+		routeCondition := metav1.Condition{
+			Type: kubernautv1alpha1.ConditionRouteReady, Status: metav1.ConditionFalse,
+			Reason: ReasonRouteDisabled, Message: "Gateway OCP Route is disabled",
+			ObservedGeneration: kn.Generation,
 		}
+		if hasRoute {
+			routeCondition.Status = metav1.ConditionTrue
+			routeCondition.Reason = ReasonRouteCreated
+			routeCondition.Message = "Gateway OCP Route created"
+		}
+		meta.SetStatusCondition(&kn.Status.Conditions, routeCondition)
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 			Type: kubernautv1alpha1.ConditionServicesDeployed, Status: metav1.ConditionTrue,
 			Reason: ReasonManifestsApplied, Message: "All service manifests applied",
@@ -651,8 +699,6 @@ func (r *KubernautReconciler) deployMCPGatewayNamespaceRBAC(ctx context.Context,
 // for the Kubernaut Agent SA, prunes stale ones removed from the spec, validates
 // that referenced ClusterRoles exist, and updates status + conditions.
 func (r *KubernautReconciler) deployAdditionalAgentRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
-	log := logf.FromContext(ctx)
-
 	desiredSet := deduplicate(kn.Spec.KubernautAgent.AdditionalClusterRoleBindings)
 	boundSet := kn.Status.BoundAdditionalClusterRoles
 
@@ -663,64 +709,23 @@ func (r *KubernautReconciler) deployAdditionalAgentRBAC(ctx context.Context, kn 
 		}
 	}
 
-	desiredMap := make(map[string]struct{}, len(desiredSet))
-	for _, name := range desiredSet {
-		desiredMap[name] = struct{}{}
+	if err := r.pruneStaleAdditionalAgentCRBs(ctx, kn, desiredSet, boundSet); err != nil {
+		return err
 	}
-	for _, name := range boundSet {
-		if _, ok := desiredMap[name]; !ok {
-			staleCRB := &rbacv1.ClusterRoleBinding{}
-			staleCRB.Name = resources.AdditionalAgentCRBName(kn, name)
-			if err := r.deleteIfExists(ctx, staleCRB); err != nil {
-				return fmt.Errorf("pruning stale additional agent CRB for %s: %w", name, err)
-			}
-			log.Info("pruned stale additional agent CRB", "clusterRole", name)
-			r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "AdditionalRBACUnbound", "Reconcile",
-				"Removed additional ClusterRoleBinding for %s", name)
-		}
-	}
+	r.recordAdditionalRBACBoundEvents(kn, desiredSet, boundSet)
 
-	for _, crName := range desiredSet {
-		if !contains(boundSet, crName) {
-			r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "AdditionalRBACBound", "Reconcile",
-				"Created additional ClusterRoleBinding for %s", crName)
-		}
-	}
-
-	var missingRoles []string
-	for _, crName := range desiredSet {
-		cr := &rbacv1.ClusterRole{}
-		if err := r.Get(ctx, types.NamespacedName{Name: crName}, cr); err != nil {
-			if apierrors.IsNotFound(err) {
-				missingRoles = append(missingRoles, crName)
-			} else {
-				return fmt.Errorf("checking ClusterRole %s: %w", crName, err)
-			}
-		}
+	missingRoles, err := r.detectMissingClusterRoles(ctx, desiredSet)
+	if err != nil {
+		return err
 	}
 
 	if err := r.patchStatus(ctx, kn, func() {
 		kn.Status.BoundAdditionalClusterRoles = desiredSet
-
 		if len(desiredSet) == 0 {
 			meta.RemoveStatusCondition(&kn.Status.Conditions, kubernautv1alpha1.ConditionAdditionalRBACBound)
 			return
 		}
-
-		cond := metav1.Condition{
-			Type:               kubernautv1alpha1.ConditionAdditionalRBACBound,
-			ObservedGeneration: kn.Generation,
-		}
-		if len(missingRoles) > 0 {
-			cond.Status = metav1.ConditionFalse
-			cond.Reason = ReasonAdditionalRBACPartialBound
-			cond.Message = fmt.Sprintf("CRBs created but ClusterRoles not found: %v", missingRoles)
-		} else {
-			cond.Status = metav1.ConditionTrue
-			cond.Reason = ReasonAdditionalRBACFullyBound
-			cond.Message = fmt.Sprintf("%d additional ClusterRoleBindings active", len(desiredSet))
-		}
-		meta.SetStatusCondition(&kn.Status.Conditions, cond)
+		meta.SetStatusCondition(&kn.Status.Conditions, additionalRBACCondition(kn.Generation, desiredSet, missingRoles))
 	}); err != nil {
 		return fmt.Errorf("patching additional RBAC status: %w", err)
 	}
@@ -731,6 +736,80 @@ func (r *KubernautReconciler) deployAdditionalAgentRBAC(ctx context.Context, kn 
 	}
 
 	return nil
+}
+
+// pruneStaleAdditionalAgentCRBs deletes additional-agent ClusterRoleBindings
+// that were bound in a previous reconcile but are no longer present in
+// desiredSet, emitting an "unbound" event for each pruned entry.
+func (r *KubernautReconciler) pruneStaleAdditionalAgentCRBs(
+	ctx context.Context, kn *kubernautv1alpha1.Kubernaut, desiredSet, boundSet []string,
+) error {
+	log := logf.FromContext(ctx)
+	desiredMap := make(map[string]struct{}, len(desiredSet))
+	for _, name := range desiredSet {
+		desiredMap[name] = struct{}{}
+	}
+	for _, name := range boundSet {
+		if _, ok := desiredMap[name]; ok {
+			continue
+		}
+		staleCRB := &rbacv1.ClusterRoleBinding{}
+		staleCRB.Name = resources.AdditionalAgentCRBName(kn, name)
+		if err := r.deleteIfExists(ctx, staleCRB); err != nil {
+			return fmt.Errorf("pruning stale additional agent CRB for %s: %w", name, err)
+		}
+		log.Info("pruned stale additional agent CRB", "clusterRole", name)
+		r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "AdditionalRBACUnbound", "Reconcile",
+			"Removed additional ClusterRoleBinding for %s", name)
+	}
+	return nil
+}
+
+// recordAdditionalRBACBoundEvents emits a "bound" event for every entry in
+// desiredSet that was not already present in boundSet from a prior reconcile.
+func (r *KubernautReconciler) recordAdditionalRBACBoundEvents(kn *kubernautv1alpha1.Kubernaut, desiredSet, boundSet []string) {
+	for _, crName := range desiredSet {
+		if !contains(boundSet, crName) {
+			r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "AdditionalRBACBound", "Reconcile",
+				"Created additional ClusterRoleBinding for %s", crName)
+		}
+	}
+}
+
+// detectMissingClusterRoles returns the subset of crNames that do not
+// currently exist as ClusterRoles on the cluster.
+func (r *KubernautReconciler) detectMissingClusterRoles(ctx context.Context, crNames []string) ([]string, error) {
+	var missingRoles []string
+	for _, crName := range crNames {
+		cr := &rbacv1.ClusterRole{}
+		if err := r.Get(ctx, types.NamespacedName{Name: crName}, cr); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return nil, fmt.Errorf("checking ClusterRole %s: %w", crName, err)
+			}
+			missingRoles = append(missingRoles, crName)
+		}
+	}
+	return missingRoles, nil
+}
+
+// additionalRBACCondition builds the ConditionAdditionalRBACBound status
+// condition reflecting whether all desired additional ClusterRoleBindings
+// resolved to existing ClusterRoles.
+func additionalRBACCondition(generation int64, desiredSet, missingRoles []string) metav1.Condition {
+	cond := metav1.Condition{
+		Type:               kubernautv1alpha1.ConditionAdditionalRBACBound,
+		ObservedGeneration: generation,
+	}
+	if len(missingRoles) > 0 {
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = ReasonAdditionalRBACPartialBound
+		cond.Message = fmt.Sprintf("CRBs created but ClusterRoles not found: %v", missingRoles)
+		return cond
+	}
+	cond.Status = metav1.ConditionTrue
+	cond.Reason = ReasonAdditionalRBACFullyBound
+	cond.Message = fmt.Sprintf("%d additional ClusterRoleBindings active", len(desiredSet))
+	return cond
 }
 
 // deployToolRBAC provisions persona-based tool ClusterRoles and group-to-role
@@ -837,8 +916,6 @@ func (r *KubernautReconciler) deployWorkflowRBAC(ctx context.Context, kn *kubern
 // monitoring teardown when disabled. Cleanup errors are collected and returned
 // so the reconcile loop retries (stale RBAC is a security concern).
 func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
-	var errs []error
-
 	cr, crb := resources.AnsibleRBAC(kn)
 	if kn.Spec.Ansible.Enabled {
 		if err := r.ensureUnowned(ctx, cr); err != nil {
@@ -847,68 +924,95 @@ func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernau
 		if err := r.ensureUnowned(ctx, crb); err != nil {
 			return fmt.Errorf("ensuring AWX CRB: %w", err)
 		}
-	} else {
-		if err := r.deleteIfExists(ctx, cr); err != nil {
-			errs = append(errs, fmt.Errorf("removing stale AWX ClusterRole: %w", err))
-		}
-		if err := r.deleteIfExists(ctx, crb); err != nil {
-			errs = append(errs, fmt.Errorf("removing stale AWX CRB: %w", err))
-		}
 	}
 
+	var errs []error
+	if !kn.Spec.Ansible.Enabled {
+		errs = append(errs, r.pruneStaleAnsibleRBAC(ctx, cr, crb)...)
+	}
 	if !kn.Spec.GatewayEnabled() {
-		p := func(base string) string { return kn.Namespace + "-" + base }
-		for _, name := range []string{p("gateway-role")} {
-			staleCR := &rbacv1.ClusterRole{}
-			staleCR.Name = name
-			if err := r.deleteIfExists(ctx, staleCR); err != nil {
-				errs = append(errs, fmt.Errorf("removing stale gateway ClusterRole %s: %w", name, err))
-			}
-		}
-		for _, name := range []string{p("gateway-role-binding"), p("alertmanager-gateway-signal-source")} {
-			staleCRB := &rbacv1.ClusterRoleBinding{}
-			staleCRB.Name = name
-			if err := r.deleteIfExists(ctx, staleCRB); err != nil {
-				errs = append(errs, fmt.Errorf("removing stale gateway CRB %s: %w", name, err))
-			}
-		}
-		staleRB := &rbacv1.RoleBinding{}
-		staleRB.Name = "data-storage-client-gateway"
-		staleRB.Namespace = kn.Namespace
-		if err := r.deleteIfExists(ctx, staleRB); err != nil {
-			errs = append(errs, fmt.Errorf("removing stale gateway DS client RoleBinding: %w", err))
-		}
+		errs = append(errs, r.pruneStaleGatewayRBAC(ctx, kn)...)
 	}
-
 	if !kn.Spec.Monitoring.MonitoringEnabled() {
-		for _, name := range resources.MonitoringCRBNames(kn) {
-			monCRB := &rbacv1.ClusterRoleBinding{}
-			monCRB.Name = name
-			if err := r.deleteIfExists(ctx, monCRB); err != nil {
-				errs = append(errs, fmt.Errorf("removing stale monitoring CRB %s: %w", name, err))
-			}
-		}
-		for _, name := range resources.MonitoringClusterRoleNames(kn) {
-			monCR := &rbacv1.ClusterRole{}
-			monCR.Name = name
-			if err := r.deleteIfExists(ctx, monCR); err != nil {
-				errs = append(errs, fmt.Errorf("removing stale monitoring ClusterRole %s: %w", name, err))
-			}
-		}
-		for _, name := range []string{"effectivenessmonitor-service-ca", "kubernaut-agent-service-ca"} {
-			staleCM := &corev1.ConfigMap{}
-			staleCM.Name = name
-			staleCM.Namespace = kn.Namespace
-			if err := r.deleteIfExists(ctx, staleCM); err != nil {
-				errs = append(errs, fmt.Errorf("removing stale service-ca ConfigMap %s: %w", name, err))
-			}
-		}
+		errs = append(errs, r.pruneStaleMonitoringRBAC(ctx, kn)...)
 	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("toggle cleanup: %w", errors.Join(errs...))
 	}
 	return nil
+}
+
+// pruneStaleAnsibleRBAC deletes the AWX ClusterRole/ClusterRoleBinding when
+// Ansible integration is disabled.
+func (r *KubernautReconciler) pruneStaleAnsibleRBAC(ctx context.Context, cr *rbacv1.ClusterRole, crb *rbacv1.ClusterRoleBinding) []error {
+	var errs []error
+	if err := r.deleteIfExists(ctx, cr); err != nil {
+		errs = append(errs, fmt.Errorf("removing stale AWX ClusterRole: %w", err))
+	}
+	if err := r.deleteIfExists(ctx, crb); err != nil {
+		errs = append(errs, fmt.Errorf("removing stale AWX CRB: %w", err))
+	}
+	return errs
+}
+
+// pruneStaleGatewayRBAC deletes cluster-scoped gateway RBAC and the
+// namespaced DataStorage-client RoleBinding when the gateway component is
+// disabled.
+func (r *KubernautReconciler) pruneStaleGatewayRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
+	var errs []error
+	p := func(base string) string { return kn.Namespace + "-" + base }
+
+	for _, name := range []string{p("gateway-role")} {
+		staleCR := &rbacv1.ClusterRole{}
+		staleCR.Name = name
+		if err := r.deleteIfExists(ctx, staleCR); err != nil {
+			errs = append(errs, fmt.Errorf("removing stale gateway ClusterRole %s: %w", name, err))
+		}
+	}
+	for _, name := range []string{p("gateway-role-binding"), p("alertmanager-gateway-signal-source")} {
+		staleCRB := &rbacv1.ClusterRoleBinding{}
+		staleCRB.Name = name
+		if err := r.deleteIfExists(ctx, staleCRB); err != nil {
+			errs = append(errs, fmt.Errorf("removing stale gateway CRB %s: %w", name, err))
+		}
+	}
+	staleRB := &rbacv1.RoleBinding{}
+	staleRB.Name = "data-storage-client-gateway"
+	staleRB.Namespace = kn.Namespace
+	if err := r.deleteIfExists(ctx, staleRB); err != nil {
+		errs = append(errs, fmt.Errorf("removing stale gateway DS client RoleBinding: %w", err))
+	}
+	return errs
+}
+
+// pruneStaleMonitoringRBAC deletes monitoring ClusterRoleBindings,
+// ClusterRoles, and service-ca ConfigMaps when monitoring is disabled.
+func (r *KubernautReconciler) pruneStaleMonitoringRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
+	var errs []error
+	for _, name := range resources.MonitoringCRBNames(kn) {
+		monCRB := &rbacv1.ClusterRoleBinding{}
+		monCRB.Name = name
+		if err := r.deleteIfExists(ctx, monCRB); err != nil {
+			errs = append(errs, fmt.Errorf("removing stale monitoring CRB %s: %w", name, err))
+		}
+	}
+	for _, name := range resources.MonitoringClusterRoleNames(kn) {
+		monCR := &rbacv1.ClusterRole{}
+		monCR.Name = name
+		if err := r.deleteIfExists(ctx, monCR); err != nil {
+			errs = append(errs, fmt.Errorf("removing stale monitoring ClusterRole %s: %w", name, err))
+		}
+	}
+	for _, name := range []string{"effectivenessmonitor-service-ca", "kubernaut-agent-service-ca"} {
+		staleCM := &corev1.ConfigMap{}
+		staleCM.Name = name
+		staleCM.Namespace = kn.Namespace
+		if err := r.deleteIfExists(ctx, staleCM); err != nil {
+			errs = append(errs, fmt.Errorf("removing stale service-ca ConfigMap %s: %w", name, err))
+		}
+	}
+	return errs
 }
 
 // cleanupDisabledGateway removes all namespaced gateway resources when the
@@ -1050,11 +1154,47 @@ func (r *KubernautReconciler) warnIfFleetMetadataCacheUnused(kn *kubernautv1alph
 // of component name to SHA-256 hash of the ConfigMap data, used to stamp pod
 // template annotations and force rolling restarts when config content changes.
 func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, dbName, dbUser, tlsProfile string, sidecar resources.KagentiSidecarMode, oidc *resources.KagentiOIDCDefaults) (map[string]string, error) {
+	tlsOpt := resources.WithTLSProfile(tlsProfile)
+
+	// buildCoreConfigMaps transitively calls resolveHostToIP (via
+	// DataStorageConfigMap), a best-effort DNS lookup that deliberately uses
+	// context.Background() (see its doc comment): every error path,
+	// including a cancelled context, falls back to the configured hostname,
+	// so threading ctx through the builder-table plumbing would not change
+	// behavior. See the inline nolint on the datastorage builder entry.
+	configMaps, cmHashes, err := buildCoreConfigMaps(kn, tlsOpt, dbName, dbUser) //nolint:contextcheck
+	if err != nil {
+		return nil, err
+	}
+
+	configMaps, err = r.appendOptionalComponentConfigMaps(kn, sidecar, oidc, tlsOpt, configMaps, cmHashes)
+	if err != nil {
+		return nil, err
+	}
+	configMaps = appendServiceCAConfigMaps(kn, configMaps)
+
+	for _, cm := range configMaps {
+		if err := r.ensureNamespaced(ctx, kn, cm); err != nil {
+			return nil, fmt.Errorf("ensuring ConfigMap %s: %w", cm.Name, err)
+		}
+	}
+	return cmHashes, nil
+}
+
+// buildCoreConfigMaps constructs the ConfigMaps that are always considered
+// regardless of component toggles: the strategy-table-driven builder set,
+// the proactive-signal-mappings ConfigMap, and the
+// kubernaut-agent-llm-runtime ConfigMap (whose content hash is folded into
+// the kubernaut-agent entry so either change triggers a rollout). Returns
+// the accumulated ConfigMap list and their name->hash map, used to stamp pod
+// template annotations and force rolling restarts when config content changes.
+func buildCoreConfigMaps(
+	kn *kubernautv1alpha1.Kubernaut, tlsOpt resources.ConfigMapOption, dbName, dbUser string,
+) ([]*corev1.ConfigMap, map[string]string, error) {
 	type cmBuilder struct {
 		name string
 		fn   func() (*corev1.ConfigMap, error)
 	}
-	tlsOpt := resources.WithTLSProfile(tlsProfile)
 	builders := []cmBuilder{
 		// DataStorageConfigMap transitively calls resolveHostToIP, a best-effort
 		// DNS lookup that deliberately uses context.Background() (see its doc
@@ -1085,7 +1225,7 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	for _, b := range builders {
 		cm, err := b.fn()
 		if err != nil {
-			return nil, fmt.Errorf("building %s ConfigMap: %w", b.name, err)
+			return nil, nil, fmt.Errorf("building %s ConfigMap: %w", b.name, err)
 		}
 		// A nil result (no error) means the builder deliberately has nothing to
 		// create -- e.g. notification-routing when the caller supplied their
@@ -1102,7 +1242,7 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	}
 	llmRuntimeCM, err := resources.KubernautAgentLLMRuntimeConfigMap(kn)
 	if err != nil {
-		return nil, fmt.Errorf("building kubernaut-agent-llm-runtime ConfigMap: %w", err)
+		return nil, nil, fmt.Errorf("building kubernaut-agent-llm-runtime ConfigMap: %w", err)
 	}
 	if llmRuntimeCM != nil {
 		llmHash := resources.ConfigMapDataHash(llmRuntimeCM.Data)
@@ -1111,6 +1251,16 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 		}
 		configMaps = append(configMaps, llmRuntimeCM)
 	}
+	return configMaps, cmHashes, nil
+}
+
+// appendOptionalComponentConfigMaps builds and appends ConfigMaps for
+// components that are toggled on/off via the CR spec (gateway, apifrontend,
+// fleetmetadatacache), recording each one's content hash in cmHashes.
+func (r *KubernautReconciler) appendOptionalComponentConfigMaps(
+	kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode, oidc *resources.KagentiOIDCDefaults,
+	tlsOpt resources.ConfigMapOption, configMaps []*corev1.ConfigMap, cmHashes map[string]string,
+) ([]*corev1.ConfigMap, error) {
 	if kn.Spec.GatewayEnabled() {
 		gwCM, err := resources.GatewayConfigMap(kn, tlsOpt)
 		if err != nil {
@@ -1136,7 +1286,13 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 		configMaps = append(configMaps, fmcCM)
 		cmHashes["fleetmetadatacache"] = resources.ConfigMapDataHash(fmcCM.Data)
 	}
+	return configMaps, nil
+}
 
+// appendServiceCAConfigMaps appends the always-present inter-service CA
+// bundle ConfigMap and, when monitoring is enabled, the per-component
+// service-CA ConfigMaps consumed by mTLS-scraping sidecars.
+func appendServiceCAConfigMaps(kn *kubernautv1alpha1.Kubernaut, configMaps []*corev1.ConfigMap) []*corev1.ConfigMap {
 	configMaps = append(configMaps, resources.InterServiceCAConfigMap(kn))
 	if kn.Spec.Monitoring.MonitoringEnabled() {
 		configMaps = append(configMaps,
@@ -1145,12 +1301,7 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 			resources.APIFrontendServiceCAConfigMap(kn),
 		)
 	}
-	for _, cm := range configMaps {
-		if err := r.ensureNamespaced(ctx, kn, cm); err != nil {
-			return nil, fmt.Errorf("ensuring ConfigMap %s: %w", cm.Name, err)
-		}
-	}
-	return cmHashes, nil
+	return configMaps
 }
 
 // deployAdmissionWebhooks ensures both MutatingWebhookConfiguration and
@@ -1190,9 +1341,19 @@ var componentCMHashKey = map[string]string{
 // route. cmHashes maps ConfigMap builder names to content hashes; these are
 // stamped as pod template annotations to force rolling restarts when config
 // content changes. Returns true if a route was created.
-func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, cmHashes map[string]string, sidecar resources.KagentiSidecarMode) (hasRoute bool, _ error) {
-	type depBuilder func(*kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error)
-	depBuilders := []depBuilder{
+// deploymentBuilderFunc constructs a component Deployment from the
+// Kubernaut CR. Used to assemble the list of builders to run in
+// deployWorkloads, which varies by which optional components are enabled.
+type deploymentBuilderFunc func(*kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error)
+
+// enabledDeploymentBuilders returns the deployment builder functions for all
+// always-on components plus any toggled-on optional components (gateway,
+// apifrontend, console, fleetmetadatacache). When an optional component is
+// disabled instead, its namespaced resources are cleaned up here.
+func (r *KubernautReconciler) enabledDeploymentBuilders(
+	ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode,
+) ([]deploymentBuilderFunc, error) {
+	depBuilders := []deploymentBuilderFunc{
 		resources.DataStorageDeployment,
 		resources.AIAnalysisDeployment,
 		resources.SignalProcessingDeployment,
@@ -1205,10 +1366,8 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 	}
 	if kn.Spec.GatewayEnabled() {
 		depBuilders = append(depBuilders, resources.GatewayDeployment)
-	} else {
-		if err := r.cleanupDisabledGateway(ctx, kn); err != nil {
-			return false, fmt.Errorf("cleaning up disabled gateway: %w", err)
-		}
+	} else if err := r.cleanupDisabledGateway(ctx, kn); err != nil {
+		return nil, fmt.Errorf("cleaning up disabled gateway: %w", err)
 	}
 	if kn.Spec.APIFrontendEnabled() {
 		depBuilders = append(depBuilders, func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
@@ -1223,20 +1382,38 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 	}
 	if kn.Spec.FleetMetadataCacheEnabled() {
 		depBuilders = append(depBuilders, resources.FleetMetadataCacheDeployment)
-	} else {
-		if err := r.cleanupDisabledFleetMetadataCache(ctx, kn); err != nil {
-			return false, fmt.Errorf("cleaning up disabled fleetmetadatacache: %w", err)
-		}
+	} else if err := r.cleanupDisabledFleetMetadataCache(ctx, kn); err != nil {
+		return nil, fmt.Errorf("cleaning up disabled fleetmetadatacache: %w", err)
 	}
-	for _, build := range depBuilders {
+	return depBuilders, nil
+}
+
+// ensureDeployments builds and reconciles each Deployment produced by
+// builders, stamping ConfigMap-hash pod-template annotations from cmHashes
+// so configuration changes trigger rolling restarts.
+func (r *KubernautReconciler) ensureDeployments(
+	ctx context.Context, kn *kubernautv1alpha1.Kubernaut, builders []deploymentBuilderFunc, cmHashes map[string]string,
+) error {
+	for _, build := range builders {
 		dep, err := build(kn)
 		if err != nil {
-			return false, fmt.Errorf("building deployment: %w", err)
+			return fmt.Errorf("building deployment: %w", err)
 		}
 		stampConfigMapHash(dep, cmHashes)
 		if err := r.ensureNamespaced(ctx, kn, dep); err != nil {
-			return false, fmt.Errorf("ensuring Deployment %s: %w", dep.Name, err)
+			return fmt.Errorf("ensuring Deployment %s: %w", dep.Name, err)
 		}
+	}
+	return nil
+}
+
+func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, cmHashes map[string]string, sidecar resources.KagentiSidecarMode) (hasRoute bool, _ error) {
+	depBuilders, err := r.enabledDeploymentBuilders(ctx, kn, sidecar)
+	if err != nil {
+		return false, err
+	}
+	if err := r.ensureDeployments(ctx, kn, depBuilders, cmHashes); err != nil {
+		return false, err
 	}
 
 	if err := r.ensureServices(ctx, kn, sidecar); err != nil {
@@ -1379,57 +1556,53 @@ func (r *KubernautReconciler) deployMonitoring(ctx context.Context, kn *kubernau
 func (r *KubernautReconciler) reconcileRoutes(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (bool, error) {
 	hasRoute := false
 
+	var gwRoute *routev1.Route
 	if kn.Spec.GatewayEnabled() {
-		if route := resources.GatewayRoute(kn); route != nil {
-			if err := r.ensureNamespaced(ctx, kn, route); err != nil {
-				return false, fmt.Errorf("ensuring Gateway Route: %w", err)
-			}
-			hasRoute = true
-		} else {
-			staleRoute := resources.GatewayRouteStub(kn)
-			if err := r.deleteIfExists(ctx, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
-				return false, fmt.Errorf("deleting stale Gateway Route: %w", err)
-			}
-		}
-	} else {
-		staleRoute := resources.GatewayRouteStub(kn)
-		if err := r.deleteIfExists(ctx, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
-			return false, fmt.Errorf("deleting stale Gateway Route: %w", err)
-		}
+		gwRoute = resources.GatewayRoute(kn)
 	}
-
-	if route := resources.APIFrontendRoute(kn); route != nil {
-		if err := r.ensureNamespaced(ctx, kn, route); err != nil {
-			return false, fmt.Errorf("ensuring AF Route: %w", err)
-		}
-		hasRoute = true
-	} else {
-		staleRoute := resources.APIFrontendRouteStub(kn)
-		if err := r.deleteIfExists(ctx, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
-			return false, fmt.Errorf("deleting stale AF Route: %w", err)
-		}
+	gwHasRoute, err := r.reconcileOptionalRoute(ctx, kn, "Gateway", gwRoute, resources.GatewayRouteStub(kn))
+	if err != nil {
+		return false, err
 	}
+	hasRoute = hasRoute || gwHasRoute
 
+	afHasRoute, err := r.reconcileOptionalRoute(ctx, kn, "AF", resources.APIFrontendRoute(kn), resources.APIFrontendRouteStub(kn))
+	if err != nil {
+		return false, err
+	}
+	hasRoute = hasRoute || afHasRoute
+
+	var consoleRoute *routev1.Route
 	if kn.Spec.ConsoleEnabled() {
-		if route := resources.ConsoleRoute(kn); route != nil {
-			if err := r.ensureNamespaced(ctx, kn, route); err != nil {
-				return false, fmt.Errorf("ensuring Console Route: %w", err)
-			}
-			hasRoute = true
-		} else {
-			staleRoute := resources.ConsoleRouteStub(kn)
-			if err := r.deleteIfExists(ctx, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
-				return false, fmt.Errorf("deleting stale Console Route: %w", err)
-			}
-		}
-	} else {
-		staleRoute := resources.ConsoleRouteStub(kn)
-		if err := r.deleteIfExists(ctx, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
-			return false, fmt.Errorf("deleting stale Console Route: %w", err)
-		}
+		consoleRoute = resources.ConsoleRoute(kn)
 	}
+	consoleHasRoute, err := r.reconcileOptionalRoute(ctx, kn, "Console", consoleRoute, resources.ConsoleRouteStub(kn))
+	if err != nil {
+		return false, err
+	}
+	hasRoute = hasRoute || consoleHasRoute
 
 	return hasRoute, nil
+}
+
+// reconcileOptionalRoute ensures route when it is non-nil (the component is
+// enabled and its builder produced a Route, e.g. not BYO-ingress), or
+// deletes staleRoute -- a name-only stub -- otherwise, covering both
+// "component disabled" and "component enabled but no Route needed". Returns
+// true when a Route now exists.
+func (r *KubernautReconciler) reconcileOptionalRoute(
+	ctx context.Context, kn *kubernautv1alpha1.Kubernaut, label string, route, staleRoute *routev1.Route,
+) (bool, error) {
+	if route != nil {
+		if err := r.ensureNamespaced(ctx, kn, route); err != nil {
+			return false, fmt.Errorf("ensuring %s Route: %w", label, err)
+		}
+		return true, nil
+	}
+	if err := r.deleteIfExists(ctx, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
+		return false, fmt.Errorf("deleting stale %s Route: %w", label, err)
+	}
+	return false, nil
 }
 
 // detectKagentiSidecarMode determines which sidecar injection strategy the
@@ -1750,50 +1923,76 @@ func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *k
 		return fmt.Errorf("ensuring AF HPA: %w", err)
 	}
 
-	if kn.Spec.Monitoring.MonitoringEnabled() && r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com") {
-		sm := resources.APIFrontendServiceMonitor(kn)
-		if err := r.ensureNamespaced(ctx, kn, sm); err != nil {
-			return fmt.Errorf("ensuring AF ServiceMonitor: %w", err)
-		}
-		pr := resources.APIFrontendPrometheusRule(kn)
-		if err := r.ensureNamespaced(ctx, kn, pr); err != nil {
-			return fmt.Errorf("ensuring AF PrometheusRule: %w", err)
+	if err := r.ensureAPIFrontendMonitoring(ctx, kn); err != nil {
+		return err
+	}
+	if err := r.ensureMCPGatewayResources(ctx, kn); err != nil {
+		return err
+	}
+	return r.ensureAPIFrontendSPIFFEID(ctx, kn)
+}
+
+// ensureAPIFrontendMonitoring provisions the APIFrontend ServiceMonitor and
+// PrometheusRule when monitoring is enabled and the Prometheus Operator CRDs
+// are installed.
+func (r *KubernautReconciler) ensureAPIFrontendMonitoring(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
+	if !kn.Spec.Monitoring.MonitoringEnabled() || !r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com") {
+		return nil
+	}
+	sm := resources.APIFrontendServiceMonitor(kn)
+	if err := r.ensureNamespaced(ctx, kn, sm); err != nil {
+		return fmt.Errorf("ensuring AF ServiceMonitor: %w", err)
+	}
+	pr := resources.APIFrontendPrometheusRule(kn)
+	if err := r.ensureNamespaced(ctx, kn, pr); err != nil {
+		return fmt.Errorf("ensuring AF PrometheusRule: %w", err)
+	}
+	return nil
+}
+
+// ensureMCPGatewayResources provisions the MCP HTTPRoute and
+// MCPServerRegistration when the kagenti MCPServerRegistration CRD is
+// installed and the builders determine one is needed (e.g. not BYO gateway).
+func (r *KubernautReconciler) ensureMCPGatewayResources(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
+	if !r.hasCRD(ctx, "mcpserverregistrations.kagenti.dev") {
+		return nil
+	}
+	route, err := resources.MCPGatewayHTTPRoute(kn)
+	if err != nil {
+		return fmt.Errorf("building MCP HTTPRoute: %w", err)
+	}
+	if route != nil {
+		if err := r.ensureNamespaced(ctx, kn, route); err != nil {
+			return fmt.Errorf("ensuring MCP HTTPRoute: %w", err)
 		}
 	}
-
-	if r.hasCRD(ctx, "mcpserverregistrations.kagenti.dev") {
-		route, err := resources.MCPGatewayHTTPRoute(kn)
-		if err != nil {
-			return fmt.Errorf("building MCP HTTPRoute: %w", err)
-		}
-		if route != nil {
-			if err := r.ensureNamespaced(ctx, kn, route); err != nil {
-				return fmt.Errorf("ensuring MCP HTTPRoute: %w", err)
-			}
-		}
-		reg, err := resources.MCPServerRegistration(kn)
-		if err != nil {
-			return fmt.Errorf("building MCPServerRegistration: %w", err)
-		}
-		if reg != nil {
-			if err := r.ensureNamespaced(ctx, kn, reg); err != nil {
-				return fmt.Errorf("ensuring MCPServerRegistration: %w", err)
-			}
+	reg, err := resources.MCPServerRegistration(kn)
+	if err != nil {
+		return fmt.Errorf("building MCPServerRegistration: %w", err)
+	}
+	if reg != nil {
+		if err := r.ensureNamespaced(ctx, kn, reg); err != nil {
+			return fmt.Errorf("ensuring MCPServerRegistration: %w", err)
 		}
 	}
+	return nil
+}
 
-	if r.hasCRD(ctx, "clusterspiffeids.spire.spiffe.io") {
-		spiffeID, err := resources.ClusterSPIFFEID(kn)
-		if err != nil {
-			return fmt.Errorf("building ClusterSPIFFEID: %w", err)
-		}
-		if spiffeID != nil {
-			if err := r.ensureUnowned(ctx, spiffeID); err != nil {
-				return fmt.Errorf("ensuring ClusterSPIFFEID: %w", err)
-			}
+// ensureAPIFrontendSPIFFEID provisions the ClusterSPIFFEID for APIFrontend
+// when the SPIRE CRD is installed and the builder determines one is needed.
+func (r *KubernautReconciler) ensureAPIFrontendSPIFFEID(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
+	if !r.hasCRD(ctx, "clusterspiffeids.spire.spiffe.io") {
+		return nil
+	}
+	spiffeID, err := resources.ClusterSPIFFEID(kn)
+	if err != nil {
+		return fmt.Errorf("building ClusterSPIFFEID: %w", err)
+	}
+	if spiffeID != nil {
+		if err := r.ensureUnowned(ctx, spiffeID); err != nil {
+			return fmt.Errorf("ensuring ClusterSPIFFEID: %w", err)
 		}
 	}
-
 	return nil
 }
 
@@ -1869,29 +2068,41 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 // ---------- Deletion ----------
 
 func (r *KubernautReconciler) reconcileDelete(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (ctrl.Result, error) {
-	log := logf.FromContext(ctx)
-	log.Info("reconciling deletion")
+	logf.FromContext(ctx).Info("reconciling deletion")
 
 	if controllerutil.ContainsFinalizer(kn, kubernautv1alpha1.FinalizerName) {
-		if err := r.deleteClusterScopedResources(ctx, kn); err != nil {
-			deletionAge := r.now().Sub(kn.DeletionTimestamp.Time)
-			if deletionAge > time.Duration(maxFinalizerAttempts)*requeueError {
-				r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "FinalizerTimeout", "Reconcile",
-					"cleanup failed after %s; force-removing finalizer: %v", deletionAge.Round(time.Second), err)
-				log.Error(err, "cleanup failed past timeout, force-removing finalizer")
-			} else {
-				return ctrl.Result{RequeueAfter: requeueError}, err
-			}
-		}
-		r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "CleanupComplete", "Reconcile", "Cluster-scoped resources cleaned up")
-
-		controllerutil.RemoveFinalizer(kn, kubernautv1alpha1.FinalizerName)
-		if err := r.Update(ctx, kn); err != nil {
-			return ctrl.Result{}, err
+		if result, err, retry := r.runFinalizerCleanup(ctx, kn); retry {
+			return result, err
 		}
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// runFinalizerCleanup deletes cluster-scoped resources and removes the
+// finalizer once cleanup succeeds. If cleanup keeps failing past
+// maxFinalizerAttempts, it force-removes the finalizer instead of blocking
+// deletion forever. retry is true when the caller should return immediately
+// with (result, err) to requeue and try again later.
+func (r *KubernautReconciler) runFinalizerCleanup(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (result ctrl.Result, err error, retry bool) {
+	log := logf.FromContext(ctx)
+
+	if err := r.deleteClusterScopedResources(ctx, kn); err != nil {
+		deletionAge := r.now().Sub(kn.DeletionTimestamp.Time)
+		if deletionAge <= time.Duration(maxFinalizerAttempts)*requeueError {
+			return ctrl.Result{RequeueAfter: requeueError}, err, true
+		}
+		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "FinalizerTimeout", "Reconcile",
+			"cleanup failed after %s; force-removing finalizer: %v", deletionAge.Round(time.Second), err)
+		log.Error(err, "cleanup failed past timeout, force-removing finalizer")
+	}
+	r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "CleanupComplete", "Reconcile", "Cluster-scoped resources cleaned up")
+
+	controllerutil.RemoveFinalizer(kn, kubernautv1alpha1.FinalizerName)
+	if err := r.Update(ctx, kn); err != nil {
+		return ctrl.Result{}, err, true
+	}
+	return ctrl.Result{}, nil, false
 }
 
 // NOTE: CRDs installed during migration are intentionally NOT deleted here.
@@ -1948,8 +2159,20 @@ func (r *KubernautReconciler) deleteAgentRuntimeCR(ctx context.Context, kn *kube
 // AWX RBAC, and monitoring RBAC. Always attempts all resources regardless
 // of current feature-flag state.
 func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
-	var errs []error
+	errs := make([]error, 0, 6)
+	errs = append(errs, r.deleteCoreClusterRBAC(ctx, kn)...)
+	errs = append(errs, r.deleteAnsibleClusterRBAC(ctx, kn)...)
+	errs = append(errs, r.deleteMonitoringClusterRBAC(ctx, kn)...)
+	errs = append(errs, r.deleteAdditionalAgentAndToolRBAC(ctx, kn)...)
+	errs = append(errs, r.deleteFleetMetadataCacheClusterRBAC(ctx, kn)...)
+	errs = append(errs, r.deleteMCPGatewayNamespaceRBAC(ctx, kn)...)
+	return errs
+}
 
+// deleteCoreClusterRBAC removes the always-present cluster-scoped
+// ClusterRoles and ClusterRoleBindings built from the current spec.
+func (r *KubernautReconciler) deleteCoreClusterRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
+	var errs []error
 	for _, cr := range resources.ClusterRoles(kn) {
 		if err := r.deleteIfExists(ctx, cr); err != nil {
 			errs = append(errs, fmt.Errorf("deleting ClusterRole %s: %w", cr.Name, err))
@@ -1960,7 +2183,12 @@ func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kuber
 			errs = append(errs, fmt.Errorf("deleting CRB %s: %w", crb.Name, err))
 		}
 	}
+	return errs
+}
 
+// deleteAnsibleClusterRBAC removes the AWX ClusterRole/ClusterRoleBinding.
+func (r *KubernautReconciler) deleteAnsibleClusterRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
+	var errs []error
 	cr, crb := resources.AnsibleRBAC(kn)
 	if err := r.deleteIfExists(ctx, cr); err != nil {
 		errs = append(errs, fmt.Errorf("deleting AWX ClusterRole: %w", err))
@@ -1968,7 +2196,13 @@ func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kuber
 	if err := r.deleteIfExists(ctx, crb); err != nil {
 		errs = append(errs, fmt.Errorf("deleting AWX CRB: %w", err))
 	}
+	return errs
+}
 
+// deleteMonitoringClusterRBAC removes monitoring ClusterRoleBindings and
+// ClusterRoles.
+func (r *KubernautReconciler) deleteMonitoringClusterRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
+	var errs []error
 	for _, name := range resources.MonitoringCRBNames(kn) {
 		monCRB := &rbacv1.ClusterRoleBinding{}
 		monCRB.Name = name
@@ -1983,6 +2217,15 @@ func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kuber
 			errs = append(errs, fmt.Errorf("deleting monitoring ClusterRole %s: %w", name, err))
 		}
 	}
+	return errs
+}
+
+// deleteAdditionalAgentAndToolRBAC removes the additional-agent
+// ClusterRoleBindings recorded in status, all tool ClusterRoles and their
+// bound ClusterRoleBindings, and any additional-agent CRBs discovered via
+// label selector (covering entries the status field may have missed).
+func (r *KubernautReconciler) deleteAdditionalAgentAndToolRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
+	var errs []error
 
 	for _, name := range kn.Status.BoundAdditionalClusterRoles {
 		extCRB := &rbacv1.ClusterRoleBinding{}
@@ -2015,19 +2258,26 @@ func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kuber
 		},
 	); err != nil {
 		errs = append(errs, fmt.Errorf("listing additional agent CRBs: %w", err))
-	} else {
-		for i := range extCRBList.Items {
-			if err := r.deleteIfExists(ctx, &extCRBList.Items[i]); err != nil {
-				errs = append(errs, fmt.Errorf("deleting additional agent CRB %s: %w", extCRBList.Items[i].Name, err))
-			}
+		return errs
+	}
+	for i := range extCRBList.Items {
+		if err := r.deleteIfExists(ctx, &extCRBList.Items[i]); err != nil {
+			errs = append(errs, fmt.Errorf("deleting additional agent CRB %s: %w", extCRBList.Items[i].Name, err))
 		}
 	}
+	return errs
+}
 
-	// #224: FMC's ClusterRole/CRB are unconditionally attempted here too
-	// (like the rest of this function) because resources.ClusterRoles()/
-	// ClusterRoleBindings() above stop returning them once FMC's effective
-	// mcpGatewayNamespace resolves -- deleteIfExists is a no-op if they
-	// were never created in cluster-scoped mode.
+// deleteFleetMetadataCacheClusterRBAC removes FMC's ClusterRole and
+// ClusterRoleBinding unconditionally.
+//
+// #224: this is required in addition to deleteCoreClusterRBAC because
+// resources.ClusterRoles()/ClusterRoleBindings() stop returning FMC's
+// entries once FMC's effective mcpGatewayNamespace resolves --
+// deleteIfExists here is the only path that still covers cluster-scoped-mode
+// installs, and is a no-op if they were never created.
+func (r *KubernautReconciler) deleteFleetMetadataCacheClusterRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
+	var errs []error
 	fmcCR := &rbacv1.ClusterRole{}
 	fmcCR.Name = kn.Namespace + "-fleetmetadatacache"
 	if err := r.deleteIfExists(ctx, fmcCR); err != nil {
@@ -2038,7 +2288,13 @@ func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kuber
 	if err := r.deleteIfExists(ctx, fmcCRB); err != nil {
 		errs = append(errs, fmt.Errorf("deleting fleetmetadatacache ClusterRoleBinding: %w", err))
 	}
+	return errs
+}
 
+// deleteMCPGatewayNamespaceRBAC removes the namespaced Roles/RoleBindings
+// used for MCP Gateway authorization.
+func (r *KubernautReconciler) deleteMCPGatewayNamespaceRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
+	var errs []error
 	mgRoles, mgRBs := resources.MCPGatewayNamespaceRBAC(kn)
 	for _, role := range mgRoles {
 		if err := r.deleteIfExists(ctx, role); err != nil {
@@ -2050,7 +2306,6 @@ func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kuber
 			errs = append(errs, fmt.Errorf("deleting mcp gateway namespace rolebinding %s/%s: %w", rb.Namespace, rb.Name, err))
 		}
 	}
-
 	return errs
 }
 
@@ -2072,7 +2327,6 @@ func (r *KubernautReconciler) deleteWebhookResources(ctx context.Context, kn *ku
 // deleteWorkflowResources removes workflow namespace roles/bindings, the
 // workflow runner SA, and the workflow namespace itself (if operator-managed).
 func (r *KubernautReconciler) deleteWorkflowResources(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
-	log := logf.FromContext(ctx)
 	var errs []error
 
 	wfRoles, wfRBs := resources.WorkflowNamespaceRBAC(kn)
@@ -2092,23 +2346,34 @@ func (r *KubernautReconciler) deleteWorkflowResources(ctx context.Context, kn *k
 		errs = append(errs, fmt.Errorf("deleting workflow runner SA: %w", err))
 	}
 
-	wfNs := resources.WorkflowNamespace(kn)
-	existingNs := &corev1.Namespace{}
-	if err := r.Get(ctx, types.NamespacedName{Name: wfNs.Name}, existingNs); err != nil {
-		if !apierrors.IsNotFound(err) {
-			errs = append(errs, fmt.Errorf("getting workflow namespace %s: %w", wfNs.Name, err))
-		}
-	} else {
-		if existingNs.Annotations[resources.AnnotationCreatedBy] == "kubernaut-operator" {
-			if err := r.deleteIfExists(ctx, existingNs); err != nil {
-				errs = append(errs, fmt.Errorf("deleting workflow namespace %s: %w", wfNs.Name, err))
-			}
-		} else {
-			log.Info("skipping deletion of workflow namespace (not created by operator)", "namespace", wfNs.Name)
-		}
+	if err := r.deleteOperatorManagedWorkflowNamespace(ctx, resources.WorkflowNamespace(kn)); err != nil {
+		errs = append(errs, err)
 	}
 
 	return errs
+}
+
+// deleteOperatorManagedWorkflowNamespace deletes the workflow namespace only
+// if it exists and was created by this operator (see the #208 backstop
+// comment in deployWorkflowNamespace); a user-provided pre-existing
+// namespace is left alone.
+func (r *KubernautReconciler) deleteOperatorManagedWorkflowNamespace(ctx context.Context, wfNs *corev1.Namespace) error {
+	existingNs := &corev1.Namespace{}
+	if err := r.Get(ctx, types.NamespacedName{Name: wfNs.Name}, existingNs); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("getting workflow namespace %s: %w", wfNs.Name, err)
+	}
+
+	if existingNs.Annotations[resources.AnnotationCreatedBy] != "kubernaut-operator" {
+		logf.FromContext(ctx).Info("skipping deletion of workflow namespace (not created by operator)", "namespace", wfNs.Name)
+		return nil
+	}
+	if err := r.deleteIfExists(ctx, existingNs); err != nil {
+		return fmt.Errorf("deleting workflow namespace %s: %w", wfNs.Name, err)
+	}
+	return nil
 }
 
 // ---------- Helpers ----------
@@ -2339,28 +2604,40 @@ func (r *KubernautReconciler) ensureResource(ctx context.Context, obj client.Obj
 	key := types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}
 	err := r.Get(ctx, key, existing)
 	if apierrors.IsNotFound(err) {
-		if createErr := r.Create(ctx, obj); createErr != nil {
-			if !apierrors.IsAlreadyExists(createErr) {
-				return createErr
-			}
-			if err := r.Get(ctx, key, existing); err != nil {
-				return fmt.Errorf("getting %s after AlreadyExists: %w", key, err)
-			}
-		} else {
+		created, err := r.createOrAdoptExisting(ctx, obj, existing, key)
+		if err != nil {
+			return err
+		}
+		if created {
 			return nil
 		}
 	} else if err != nil {
 		return fmt.Errorf("getting %s: %w", key, err)
 	}
 
-	if existing.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash {
-		if !contentDrifted(obj, existing) {
-			return nil
-		}
+	if existing.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash && !contentDrifted(obj, existing) {
+		return nil
 	}
 
 	obj.SetResourceVersion(existing.GetResourceVersion())
 	return r.Update(ctx, obj)
+}
+
+// createOrAdoptExisting attempts to Create obj. If Create raced with another
+// writer (AlreadyExists), it re-Gets the now-existing object into existing
+// so the caller's update-or-skip comparison has current state to work with.
+// created is true when Create succeeded and no further action is needed.
+func (r *KubernautReconciler) createOrAdoptExisting(ctx context.Context, obj, existing client.Object, key types.NamespacedName) (bool, error) {
+	if err := r.Create(ctx, obj); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return false, err
+		}
+		if err := r.Get(ctx, key, existing); err != nil {
+			return false, fmt.Errorf("getting %s after AlreadyExists: %w", key, err)
+		}
+		return false, nil
+	}
+	return true, nil
 }
 
 // contentDrifted performs a targeted comparison of operator-managed content
