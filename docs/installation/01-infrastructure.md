@@ -25,7 +25,15 @@ oc new-app --image=registry.redhat.io/rhel10/postgresql-16:latest \
 
 ### Enable TLS
 
-Kubernaut requires TLS connections to PostgreSQL (`sslMode` defaults to `verify-full`; `disable` is rejected). On OCP, use the service-ca operator to provision a serving certificate:
+Kubernaut requires TLS connections to PostgreSQL (`sslMode` defaults to `verify-full`; `disable` is rejected). On OCP, use the service-ca operator to provision a serving certificate.
+
+The `registry.redhat.io/rhel10/postgresql-16` image referenced above only auto-includes
+config snippets dropped into `/opt/app-root/src/postgresql-cfg`; it has no built-in
+default certificate path, so `ssl_cert_file`/`ssl_key_file` must point at wherever you
+actually mount the secret (`/etc/tls` below -- verified against a real deployment of this
+exact image; an earlier revision of this doc used `/etc/pki/tls/certs/postgresql`, which
+this image does not create or expect, causing `postgres` to fail to start with `FATAL:
+could not load server certificate file`):
 
 ```bash
 # Request a service-ca TLS certificate
@@ -34,10 +42,10 @@ oc annotate service postgresql -n kubernaut-system \
 
 # Create a PostgreSQL config snippet to enable SSL
 oc create configmap postgresql-ssl-config -n kubernaut-system \
-  --from-literal=ssl.conf="$(cat <<CONF
+  --from-literal=postgresql-ssl.conf="$(cat <<CONF
 ssl = on
-ssl_cert_file = '/etc/pki/tls/certs/postgresql/tls.crt'
-ssl_key_file = '/etc/pki/tls/certs/postgresql/tls.key'
+ssl_cert_file = '/etc/tls/tls.crt'
+ssl_key_file = '/etc/tls/tls.key'
 CONF
 )"
 
@@ -48,7 +56,7 @@ oc patch deployment postgresql -n kubernaut-system --type=json -p '[
     {"name": "ssl-config", "configMap": {"name": "postgresql-ssl-config"}}
   ]},
   {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts", "value": [
-    {"name": "tls-certs", "mountPath": "/etc/pki/tls/certs/postgresql", "readOnly": true},
+    {"name": "tls-certs", "mountPath": "/etc/tls", "readOnly": true},
     {"name": "ssl-config", "mountPath": "/opt/app-root/src/postgresql-cfg", "readOnly": true}
   ]}
 ]'
