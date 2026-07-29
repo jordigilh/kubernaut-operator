@@ -1515,6 +1515,139 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Conf
 }
 
 // KubernautAgentConfigMap builds the kubernaut-agent-config ConfigMap.
+// applyKALLMProfileFields copies the optional provider-specific and
+// credential fields from a resolved LLM profile onto llmCfg, leaving zero
+// values (and thus YAML omission) for anything the profile doesn't set.
+func applyKALLMProfileFields(llmCfg *kaLLMYAML, profile kubernautv1alpha1.LLMProfileSpec) {
+	if profile.VertexProject != "" {
+		llmCfg.VertexProject = profile.VertexProject
+	}
+	if profile.VertexLocation != "" {
+		llmCfg.VertexLocation = profile.VertexLocation
+	}
+	if profile.BedrockRegion != "" {
+		llmCfg.BedrockRegion = profile.BedrockRegion
+	}
+	if profile.AzureAPIVersion != "" {
+		llmCfg.AzureApiVersion = profile.AzureAPIVersion
+	}
+	if profile.TLSCaFile != "" {
+		llmCfg.TLSCaFile = profile.TLSCaFile
+	}
+	if profile.TLSCertFile != "" {
+		llmCfg.TLSCertFile = profile.TLSCertFile
+	}
+	if profile.TLSKeyFile != "" {
+		llmCfg.TLSKeyFile = profile.TLSKeyFile
+	}
+	if profile.OAuth2.Enabled {
+		llmCfg.OAuth2 = &kaOAuth2YAML{
+			Enabled:        true,
+			TokenURL:       profile.OAuth2.TokenURL,
+			CredentialsDir: "/etc/kubernaut-agent/oauth2",
+			Scopes:         profile.OAuth2.Scopes,
+		}
+	}
+	llmCfg.Reasoning = kaReasoningFromSpec(profile.Reasoning)
+}
+
+// kaAlignmentConfig builds the AI alignment-check config block, or nil when
+// alignment checking is disabled.
+func kaAlignmentConfig(ac kubernautv1alpha1.AlignmentCheckSpec) *kaAlignmentYAML {
+	if !ac.Enabled {
+		return nil
+	}
+	cfg := &kaAlignmentYAML{
+		Enabled:       true,
+		Timeout:       withDefault(ac.Timeout, "10s"),
+		MaxStepTokens: intDefault(ac.MaxStepTokens, 500),
+	}
+	if ac.LLM != nil {
+		cfg.LLM = &kaAlignLLMYAML{
+			Provider: ac.LLM.Provider,
+			Model:    ac.LLM.Model,
+			Endpoint: ac.LLM.Endpoint,
+			APIKey:   ac.LLM.APIKey,
+		}
+	}
+	return cfg
+}
+
+// kaSafetyConfig builds the AI safety-guardrail config block (prompt
+// sanitization + tool-call anomaly detection) from spec, layering
+// administrator overrides onto documented defaults.
+func kaSafetyConfig(safety kubernautv1alpha1.SafetySpec) *kaSafetyYAML {
+	injEnabled := safety.Sanitization.InjectionPatternsEnabled == nil || *safety.Sanitization.InjectionPatternsEnabled
+	credEnabled := safety.Sanitization.CredentialScrubEnabled == nil || *safety.Sanitization.CredentialScrubEnabled
+	return &kaSafetyYAML{
+		Sanitization: kaSanitizationYAML{
+			InjectionPatternsEnabled: injEnabled,
+			CredentialScrubEnabled:   credEnabled,
+		},
+		Anomaly: kaAnomalyYAML{
+			MaxToolCallsPerTool: intPtrDefault(safety.Anomaly.MaxToolCallsPerTool, 10),
+			MaxTotalToolCalls:   intPtrDefault(safety.Anomaly.MaxTotalToolCalls, 40),
+			MaxRepeatedFailures: intPtrDefault(safety.Anomaly.MaxRepeatedFailures, 3),
+		},
+	}
+}
+
+// kaInteractiveConfig builds the AI interactive-session config block, with
+// spec-provided overrides layered onto its documented defaults. A nil
+// interactive spec means interactive mode is enabled with all defaults;
+// a non-nil spec can opt out entirely via InteractiveEnabled().
+func kaInteractiveConfig(interactive *kubernautv1alpha1.InteractiveSpec) *kaInteractiveYAML {
+	if interactive != nil && !interactive.InteractiveEnabled() {
+		return nil
+	}
+	defaultMaxSessions := 100
+	defaultRateLimit := 20
+	ic := &kaInteractiveYAML{
+		Enabled:               true,
+		SessionTTL:            "30m",
+		InactivityTimeout:     "10m",
+		MaxConcurrentSessions: &defaultMaxSessions,
+		RateLimitPerUser:      &defaultRateLimit,
+	}
+	if interactive == nil {
+		return ic
+	}
+	if interactive.SessionTTL != "" {
+		ic.SessionTTL = interactive.SessionTTL
+	}
+	if interactive.InactivityTimeout != "" {
+		ic.InactivityTimeout = interactive.InactivityTimeout
+	}
+	if interactive.MaxConcurrentSessions != nil {
+		ic.MaxConcurrentSessions = interactive.MaxConcurrentSessions
+	}
+	if interactive.RateLimitPerUser != nil {
+		ic.RateLimitPerUser = interactive.RateLimitPerUser
+	}
+	return ic
+}
+
+// kaToolsConfig builds the Prometheus/Alertmanager tool-integration block
+// when cluster monitoring is enabled, or nil otherwise.
+func kaToolsConfig(monitoring kubernautv1alpha1.MonitoringSpec) *kaIntegrationsToolsYAML {
+	if !monitoring.MonitoringEnabled() {
+		return nil
+	}
+	return &kaIntegrationsToolsYAML{
+		Prometheus: kaIntegrationsPrometheusYAML{
+			URL:       OCPPrometheusURL,
+			TLSCaFile: "/etc/ssl/ka/service-ca.crt",
+		},
+		// Alertmanager tools (get_alerts, get_silences) added upstream in
+		// kubernaut#1508 (#205). Follows the same SA-bearer-auth-via-service-CA
+		// pattern as Prometheus.
+		Alertmanager: &kaIntegrationsAlertmanagerYAML{
+			URL:       OCPAlertManagerURL,
+			TLSCaFile: "/etc/ssl/ka/service-ca.crt",
+		},
+	}
+}
+
 func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ns := kn.Namespace
@@ -1564,55 +1697,9 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 		cfg.Runtime.Session = &kaSessionYAML{TTL: ttl}
 	}
 
-	if kaProfile.VertexProject != "" {
-		cfg.AI.LLM.VertexProject = kaProfile.VertexProject
-	}
-	if kaProfile.VertexLocation != "" {
-		cfg.AI.LLM.VertexLocation = kaProfile.VertexLocation
-	}
-	if kaProfile.BedrockRegion != "" {
-		cfg.AI.LLM.BedrockRegion = kaProfile.BedrockRegion
-	}
-	if kaProfile.AzureAPIVersion != "" {
-		cfg.AI.LLM.AzureApiVersion = kaProfile.AzureAPIVersion
-	}
-	if kaProfile.TLSCaFile != "" {
-		cfg.AI.LLM.TLSCaFile = kaProfile.TLSCaFile
-	}
-	if kaProfile.TLSCertFile != "" {
-		cfg.AI.LLM.TLSCertFile = kaProfile.TLSCertFile
-	}
-	if kaProfile.TLSKeyFile != "" {
-		cfg.AI.LLM.TLSKeyFile = kaProfile.TLSKeyFile
-	}
+	applyKALLMProfileFields(&cfg.AI.LLM, kaProfile)
 
-	if kaProfile.OAuth2.Enabled {
-		cfg.AI.LLM.OAuth2 = &kaOAuth2YAML{
-			Enabled:        true,
-			TokenURL:       kaProfile.OAuth2.TokenURL,
-			CredentialsDir: "/etc/kubernaut-agent/oauth2",
-			Scopes:         kaProfile.OAuth2.Scopes,
-		}
-	}
-
-	cfg.AI.LLM.Reasoning = kaReasoningFromSpec(kaProfile.Reasoning)
-
-	if ka.AlignmentCheck.Enabled {
-		ac := &kaAlignmentYAML{
-			Enabled:       true,
-			Timeout:       withDefault(ka.AlignmentCheck.Timeout, "10s"),
-			MaxStepTokens: intDefault(ka.AlignmentCheck.MaxStepTokens, 500),
-		}
-		if ka.AlignmentCheck.LLM != nil {
-			ac.LLM = &kaAlignLLMYAML{
-				Provider: ka.AlignmentCheck.LLM.Provider,
-				Model:    ka.AlignmentCheck.LLM.Model,
-				Endpoint: ka.AlignmentCheck.LLM.Endpoint,
-				APIKey:   ka.AlignmentCheck.LLM.APIKey,
-			}
-		}
-		cfg.AI.AlignmentCheck = ac
-	}
+	cfg.AI.AlignmentCheck = kaAlignmentConfig(ka.AlignmentCheck)
 
 	threshold := intDefault(ka.Summarizer.Threshold, 8000)
 	maxOutput := intDefault(ka.Summarizer.MaxToolOutputSize, 100000)
@@ -1623,67 +1710,11 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 		}
 	}
 
-	injEnabled := ka.Safety.Sanitization.InjectionPatternsEnabled == nil || *ka.Safety.Sanitization.InjectionPatternsEnabled
-	credEnabled := ka.Safety.Sanitization.CredentialScrubEnabled == nil || *ka.Safety.Sanitization.CredentialScrubEnabled
-	maxPerTool := intPtrDefault(ka.Safety.Anomaly.MaxToolCallsPerTool, 10)
-	maxTotal := intPtrDefault(ka.Safety.Anomaly.MaxTotalToolCalls, 40)
-	maxFail := intPtrDefault(ka.Safety.Anomaly.MaxRepeatedFailures, 3)
-	cfg.AI.Safety = &kaSafetyYAML{
-		Sanitization: kaSanitizationYAML{
-			InjectionPatternsEnabled: injEnabled,
-			CredentialScrubEnabled:   credEnabled,
-		},
-		Anomaly: kaAnomalyYAML{
-			MaxToolCallsPerTool: maxPerTool,
-			MaxTotalToolCalls:   maxTotal,
-			MaxRepeatedFailures: maxFail,
-		},
-	}
-
-	if kn.Spec.Monitoring.MonitoringEnabled() {
-		cfg.Integrations.Tools = &kaIntegrationsToolsYAML{
-			Prometheus: kaIntegrationsPrometheusYAML{
-				URL:       OCPPrometheusURL,
-				TLSCaFile: "/etc/ssl/ka/service-ca.crt",
-			},
-			// Alertmanager tools (get_alerts, get_silences) added upstream in
-			// kubernaut#1508 (#205). Follows the same SA-bearer-auth-via-service-CA
-			// pattern as Prometheus.
-			Alertmanager: &kaIntegrationsAlertmanagerYAML{
-				URL:       OCPAlertManagerURL,
-				TLSCaFile: "/etc/ssl/ka/service-ca.crt",
-			},
-		}
-	}
-
+	cfg.AI.Safety = kaSafetyConfig(ka.Safety)
+	cfg.Integrations.Tools = kaToolsConfig(kn.Spec.Monitoring)
 	cfg.Integrations.Fleet = resolveKAFleetConfig(kn)
 
-	if interactive := ka.Interactive; interactive == nil || interactive.InteractiveEnabled() {
-		defaultMaxSessions := 100
-		defaultRateLimit := 20
-		ic := &kaInteractiveYAML{
-			Enabled:               true,
-			SessionTTL:            "30m",
-			InactivityTimeout:     "10m",
-			MaxConcurrentSessions: &defaultMaxSessions,
-			RateLimitPerUser:      &defaultRateLimit,
-		}
-		if interactive != nil {
-			if interactive.SessionTTL != "" {
-				ic.SessionTTL = interactive.SessionTTL
-			}
-			if interactive.InactivityTimeout != "" {
-				ic.InactivityTimeout = interactive.InactivityTimeout
-			}
-			if interactive.MaxConcurrentSessions != nil {
-				ic.MaxConcurrentSessions = interactive.MaxConcurrentSessions
-			}
-			if interactive.RateLimitPerUser != nil {
-				ic.RateLimitPerUser = interactive.RateLimitPerUser
-			}
-		}
-		cfg.Interactive = ic
-	}
+	cfg.Interactive = kaInteractiveConfig(ka.Interactive)
 
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1697,6 +1728,56 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 
 // KubernautAgentLLMRuntimeConfigMap builds the kubernaut-agent-llm-runtime ConfigMap
 // when the user hasn't provided a pre-existing one.
+// parseLLMTemperature parses an optional string-encoded temperature into a
+// pointer, returning nil (omitted from YAML) when unset or unparsable.
+// Temperature is only sent to the LLM API when explicitly configured --
+// some models (e.g. claude-opus-4) reject an explicit temperature alongside
+// top_p with an HTTP 400, so silently defaulting here would resend a
+// rejected value on every reconcile (kubernaut v1.5.5 fixed the equivalent
+// bug upstream; see CHANGELOG.md#155).
+func parseLLMTemperature(s string) *float64 {
+	if s == "" {
+		return nil
+	}
+	parsed, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return nil
+	}
+	return &parsed
+}
+
+// resolveKAPhaseModelOverride builds a single phase's LLM override entry,
+// resolving its own profile and layering phase-specific temperature and
+// credential handling on top of the base agent profile.
+func resolveKAPhaseModelOverride(kn *kubernautv1alpha1.Kubernaut, phase, ref string, kaProfile kubernautv1alpha1.LLMProfileSpec) llmPhaseOverrideYAML {
+	phaseProfile, _ := ResolveLLMProfile(kn, ref)
+	override := llmPhaseOverrideYAML{
+		Provider:       phaseProfile.Provider,
+		Model:          phaseProfile.Model,
+		Endpoint:       phaseProfile.Endpoint,
+		VertexProject:  phaseProfile.VertexProject,
+		VertexLocation: phaseProfile.VertexLocation,
+		Reasoning:      kaReasoningFromSpec(phaseProfile.Reasoning),
+		// #241: a phase's own temperature is independently configurable
+		// from the base agent's -- mirrors the base-profile fix (#239) so a
+		// phase pinned to a model that rejects an explicit temperature can
+		// omit it even when the base agent sets one, and vice versa.
+		Temperature: parseLLMTemperature(phaseProfile.Temperature),
+	}
+	// #233: only render a dedicated apiKeyFile when the phase's profile
+	// names a different credentialsSecretName than KA's own -- otherwise
+	// the phase keeps using KA's already-mounted base credentials (see
+	// phaseCredentialsMountPath/deployments.go).
+	if phaseProfile.CredentialsSecretName != "" && phaseProfile.CredentialsSecretName != kaProfile.CredentialsSecretName {
+		credFile := "api_key"
+		if phaseProfile.Provider == LLMProviderVertexAI {
+			credFile = "credentials.json"
+		}
+		override.APIKeyFile = phaseCredentialsMountPath(phase) + "/" + credFile
+	}
+	return override
+}
+
 func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
 	ka := &kn.Spec.KubernautAgent
 	if ka.RuntimeConfigMapName != "" {
@@ -1711,17 +1792,11 @@ func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1
 	// defaulting to 0.7 here would resend that rejected value on every
 	// reconcile even when the profile leaves it unset (kubernaut v1.5.5
 	// fixed the equivalent bug upstream; see CHANGELOG.md#155).
-	var temp *float64
-	if kaProfile.Temperature != "" {
-		if parsed, err := strconv.ParseFloat(kaProfile.Temperature, 64); err == nil {
-			temp = &parsed
-		}
-	}
 	cfg := llmRuntimeYAML{
 		Provider:       kaProfile.Provider,
 		Model:          kaProfile.Model,
 		Endpoint:       kaProfile.Endpoint,
-		Temperature:    temp,
+		Temperature:    parseLLMTemperature(kaProfile.Temperature),
 		MaxRetries:     intPtrDefault(kaProfile.MaxRetries, 3),
 		TimeoutSeconds: intPtrDefault(kaProfile.TimeoutSeconds, 120),
 		VertexProject:  kaProfile.VertexProject,
@@ -1730,38 +1805,7 @@ func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1
 	if len(ka.PhaseModels) > 0 {
 		cfg.PhaseModels = make(map[string]llmPhaseOverrideYAML, len(ka.PhaseModels))
 		for phase, ref := range ka.PhaseModels {
-			phaseProfile, _ := ResolveLLMProfile(kn, ref)
-			override := llmPhaseOverrideYAML{
-				Provider:       phaseProfile.Provider,
-				Model:          phaseProfile.Model,
-				Endpoint:       phaseProfile.Endpoint,
-				VertexProject:  phaseProfile.VertexProject,
-				VertexLocation: phaseProfile.VertexLocation,
-				Reasoning:      kaReasoningFromSpec(phaseProfile.Reasoning),
-			}
-			// #241: a phase's own temperature is independently configurable
-			// from the base agent's -- mirrors the base-profile fix (#239)
-			// so a phase pinned to a model that rejects an explicit
-			// temperature can omit it even when the base agent sets one,
-			// and vice versa. Omitted (nil) unless the phase's own profile
-			// explicitly configures it.
-			if phaseProfile.Temperature != "" {
-				if parsed, err := strconv.ParseFloat(phaseProfile.Temperature, 64); err == nil {
-					override.Temperature = &parsed
-				}
-			}
-			// #233: only render a dedicated apiKeyFile when the phase's
-			// profile names a different credentialsSecretName than KA's
-			// own -- otherwise the phase keeps using KA's already-mounted
-			// base credentials (see phaseCredentialsMountPath/deployments.go).
-			if phaseProfile.CredentialsSecretName != "" && phaseProfile.CredentialsSecretName != kaProfile.CredentialsSecretName {
-				credFile := "api_key"
-				if phaseProfile.Provider == LLMProviderVertexAI {
-					credFile = "credentials.json"
-				}
-				override.APIKeyFile = phaseCredentialsMountPath(phase) + "/" + credFile
-			}
-			cfg.PhaseModels[phase] = override
+			cfg.PhaseModels[phase] = resolveKAPhaseModelOverride(kn, phase, ref, kaProfile)
 		}
 	}
 	data, err := marshalYAML(cfg)
@@ -2076,6 +2120,57 @@ type KagentiOIDCDefaults struct {
 // APIFrontendConfigMap generates the apifrontend-config ConfigMap.
 // oidc may be nil when kagenti is not active; when non-nil, its values
 // fill in any OIDC fields left empty in the CR (CR values always win).
+// afServerConfig builds the top-level server block: listen port, TLS
+// settings, and metrics/health port overrides derived from the sidecar mode
+// and any administrator-supplied overrides.
+func afServerConfig(af kubernautv1alpha1.APIFrontendSpec, sidecar KagentiSidecarMode) afServerYAML {
+	afTLS := afTLSYAML{CertDir: "/etc/apifrontend/tls", Required: true}
+	if sidecar != KagentiSidecarNone {
+		afTLS = afTLSYAML{}
+	}
+
+	server := afServerYAML{
+		Port: int(sidecar.AFListenPort()),
+		TLS:  afTLS,
+	}
+	if sidecar.ShiftsPorts() {
+		server.MetricsPort = 9092
+		server.HealthPort = 8082
+	}
+	if af.MetricsPort != nil {
+		server.MetricsPort = int(*af.MetricsPort)
+	}
+	if af.HealthPort != nil {
+		server.HealthPort = int(*af.HealthPort)
+	}
+	return server
+}
+
+// afResilienceConfig builds the fixed circuit-breaker/retry settings for
+// AF's outbound connections to kubernaut-agent, data-storage, and the
+// Kubernetes API. These are not currently administrator-configurable.
+func afResilienceConfig() afResilienceYAML {
+	return afResilienceYAML{
+		KA: afCircuitBreakerYAML{
+			ConnectTimeout: "5s", RequestTimeout: "30s",
+			CBMaxRequests: 3, CBInterval: "10s", CBTimeout: "30s", CBFailureThreshold: 5,
+			RetryMax: 2, RetryInitBackoff: "500ms", RetryMaxBackoff: "5s",
+			RetryableStatuses: []int{502, 503, 504},
+		},
+		DS: afCircuitBreakerYAML{
+			ConnectTimeout: "3s", RequestTimeout: "10s",
+			CBMaxRequests: 3, CBInterval: "10s", CBTimeout: "15s", CBFailureThreshold: 3,
+			RetryMax: 3, RetryInitBackoff: "200ms", RetryMaxBackoff: "3s",
+			RetryableStatuses: []int{502, 503, 504},
+		},
+		K8s: afCircuitBreakerYAML{
+			ConnectTimeout: "5s", RequestTimeout: "30s",
+			CBMaxRequests: 3, CBInterval: "10s", CBTimeout: "30s", CBFailureThreshold: 5,
+			RetryMax: 0, RetryableStatuses: []int{},
+		},
+	}
+}
+
 func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode, oidc *KagentiOIDCDefaults) (*corev1.ConfigMap, error) {
 	af := kn.Spec.APIFrontend
 	ns := kn.Namespace
@@ -2088,30 +2183,8 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSideca
 		agentCardURL = fmt.Sprintf("https://apifrontend.%s.svc.cluster.local:%d/a2a/invoke", ns, PortHTTPS)
 	}
 
-	listenPort := sidecar.AFListenPort()
-
-	afTLS := afTLSYAML{CertDir: "/etc/apifrontend/tls", Required: true}
-	if sidecar != KagentiSidecarNone {
-		afTLS = afTLSYAML{}
-	}
-
-	afServer := afServerYAML{
-		Port: int(listenPort),
-		TLS:  afTLS,
-	}
-	if sidecar.ShiftsPorts() {
-		afServer.MetricsPort = 9092
-		afServer.HealthPort = 8082
-	}
-	if af.MetricsPort != nil {
-		afServer.MetricsPort = int(*af.MetricsPort)
-	}
-	if af.HealthPort != nil {
-		afServer.HealthPort = int(*af.HealthPort)
-	}
-
 	cfg := afConfigYAML{
-		Server: afServer,
+		Server: afServerConfig(af, sidecar),
 		Agent: afAgentYAML{
 			KABaseURL:         kaBaseURL,
 			KAMCPEndpoint:     kaBaseURL + "/api/v1/mcp/",
@@ -2155,26 +2228,8 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSideca
 			DisconnectTTL: "10m",
 			RetentionTTL:  "720h",
 		},
-		Fleet: resolveMCPGatewayOnlyFleetConfig(kn, af.FleetOAuth2CredentialsSecretRef, apifrontendTLSCAFile),
-		Resilience: afResilienceYAML{
-			KA: afCircuitBreakerYAML{
-				ConnectTimeout: "5s", RequestTimeout: "30s",
-				CBMaxRequests: 3, CBInterval: "10s", CBTimeout: "30s", CBFailureThreshold: 5,
-				RetryMax: 2, RetryInitBackoff: "500ms", RetryMaxBackoff: "5s",
-				RetryableStatuses: []int{502, 503, 504},
-			},
-			DS: afCircuitBreakerYAML{
-				ConnectTimeout: "3s", RequestTimeout: "10s",
-				CBMaxRequests: 3, CBInterval: "10s", CBTimeout: "15s", CBFailureThreshold: 3,
-				RetryMax: 3, RetryInitBackoff: "200ms", RetryMaxBackoff: "3s",
-				RetryableStatuses: []int{502, 503, 504},
-			},
-			K8s: afCircuitBreakerYAML{
-				ConnectTimeout: "5s", RequestTimeout: "30s",
-				CBMaxRequests: 3, CBInterval: "10s", CBTimeout: "30s", CBFailureThreshold: 5,
-				RetryMax: 0, RetryableStatuses: []int{},
-			},
-		},
+		Fleet:      resolveMCPGatewayOnlyFleetConfig(kn, af.FleetOAuth2CredentialsSecretRef, apifrontendTLSCAFile),
+		Resilience: afResilienceConfig(),
 	}
 
 	data, err := marshalYAML(cfg)
