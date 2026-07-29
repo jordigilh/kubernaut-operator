@@ -279,6 +279,23 @@ var _ = Describe("Console Resources", func() {
 			Expect(route).NotTo(BeNil())
 			Expect(route.Spec.Host).To(Equal("console.example.com"))
 		})
+
+		It("UT-CR-04 [#268]: sets HAProxy timeout annotation for SSE streaming", func() {
+			// The A2A investigation stream (list_alerts, RCA, workflow
+			// discovery) routinely runs several minutes. OCP HAProxy
+			// routes default to a 30s server timeout, which silently
+			// kills the stream mid-investigation ("context canceled")
+			// and drops the train-of-thought/decision UI. GatewayRoute
+			// and APIFrontendRoute already carry this annotation;
+			// ConsoleRoute is the actual externally-reachable ingress
+			// for the console's A2A calls and must carry it too.
+			kn := testKubernautWithConsole()
+
+			route := ConsoleRoute(kn)
+			Expect(route).NotTo(BeNil())
+			Expect(route.Annotations).To(HaveKeyWithValue("haproxy.router.openshift.io/timeout", routeSSETimeout),
+				"console route should have HAProxy timeout annotation for SSE streams")
+		})
 	})
 
 	Context("ConsoleRouteStub", func() {
