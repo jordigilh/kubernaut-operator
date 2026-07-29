@@ -63,9 +63,9 @@ func ConfigMapDataHash(data map[string]string) string {
 // itself are excluded so the hash is stable across reconcile loops.
 // OwnerReferences are included so that CR re-creation triggers re-adoption.
 func SpecHash(obj client.Object) string {
-	copy := obj.DeepCopyObject().(client.Object)
-	stripServerMetadata(copy)
-	data, err := json.Marshal(copy)
+	objCopy := obj.DeepCopyObject().(client.Object)
+	stripServerMetadata(objCopy)
+	data, err := json.Marshal(objCopy)
 	if err != nil {
 		return ""
 	}

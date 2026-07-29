@@ -1408,6 +1408,7 @@ type APIFrontendSpec struct {
 	// Reference to a pre-existing ConfigMap containing RBAC role-to-tool
 	// mappings (key: "rbac_roles.yaml"). When empty, the operator generates
 	// a default RBAC roles ConfigMap.
+	//
 	// Deprecated: replaced by RBAC field with SAR-based tool authorization.
 	// +optional
 	RBACRolesConfigMapRef *ConfigMapRef `json:"rbacRolesConfigMapRef,omitempty"`

@@ -50,7 +50,9 @@ func AFSpiffeID(kn *kubernautv1alpha1.Kubernaut) string {
 // /ns/{namespace}/sa/{serviceaccount} convention used by kagenti.
 func ClusterSPIFFEID(kn *kubernautv1alpha1.Kubernaut) (*unstructured.Unstructured, error) {
 	if !kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
-		return nil, nil
+		// SPIRE disabled: no identity to register, not an error. Callers
+		// guard on a nil result before use.
+		return nil, nil //nolint:nilnil
 	}
 
 	ns := kn.Namespace

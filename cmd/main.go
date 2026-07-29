@@ -19,6 +19,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -70,77 +71,19 @@ func init() {
 }
 
 func main() {
-	var metricsAddr string
-	var metricsCertPath, metricsCertName, metricsCertKey string
-	var enableLeaderElection bool
-	var probeAddr string
-	var secureMetrics bool
-	var enableHTTP2 bool
-	var tlsOpts []func(*tls.Config)
+	f := parseFlags()
 
-	flag.StringVar(&metricsAddr, "metrics-bind-address", "0",
-		"The address the metrics endpoint binds to. Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable.")
-	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081",
-		"The address the probe endpoint binds to.")
-	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
-		"Enable leader election for controller manager.")
-	flag.BoolVar(&secureMetrics, "metrics-secure", true,
-		"If set, the metrics endpoint is served securely via HTTPS.")
-	flag.StringVar(&metricsCertPath, "metrics-cert-path", "",
-		"The directory that contains the metrics server certificate.")
-	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt",
-		"The name of the metrics server certificate file.")
-	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key",
-		"The name of the metrics server key file.")
-	flag.BoolVar(&enableHTTP2, "enable-http2", false,
-		"If set, HTTP/2 will be enabled for the metrics and webhook servers.")
-
-	opts := zap.Options{Development: false}
-	opts.BindFlags(flag.CommandLine)
-	flag.Parse()
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
-
-	disableHTTP2 := func(c *tls.Config) {
-		setupLog.Info("disabling http/2")
-		c.NextProtos = []string{"http/1.1"}
-	}
-	if !enableHTTP2 {
-		tlsOpts = append(tlsOpts, disableHTTP2)
-	}
-
-	var metricsCertWatcher *certwatcher.CertWatcher
-
-	metricsServerOptions := metricsserver.Options{
-		BindAddress:   metricsAddr,
-		SecureServing: secureMetrics,
-		TLSOpts:       tlsOpts,
-	}
-	if secureMetrics {
-		metricsServerOptions.FilterProvider = filters.WithAuthenticationAndAuthorization
-	}
-
-	if len(metricsCertPath) > 0 {
-		setupLog.Info("Initializing metrics certificate watcher",
-			"metrics-cert-path", metricsCertPath)
-		var err error
-		metricsCertWatcher, err = certwatcher.New(
-			filepath.Join(metricsCertPath, metricsCertName),
-			filepath.Join(metricsCertPath, metricsCertKey),
-		)
-		if err != nil {
-			setupLog.Error(err, "failed to initialize metrics certificate watcher")
-			os.Exit(1)
-		}
-		metricsServerOptions.TLSOpts = append(metricsServerOptions.TLSOpts, func(config *tls.Config) {
-			config.GetCertificate = metricsCertWatcher.GetCertificate
-		})
+	metricsServerOptions, metricsCertWatcher, err := buildMetricsServerOptions(f)
+	if err != nil {
+		setupLog.Error(err, "failed to initialize metrics certificate watcher")
+		os.Exit(1)
 	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
+		HealthProbeBindAddress: f.probeAddr,
+		LeaderElection:         f.enableLeaderElection,
 		LeaderElectionID:       "kubernaut-operator.kubernaut.ai",
 	})
 	if err != nil {
@@ -156,17 +99,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "Kubernaut")
 		os.Exit(1)
 	}
-	webhookCertDir := filepath.Join(os.TempDir(), "k8s-webhook-server", "serving-certs")
-	if _, err := os.Stat(filepath.Join(webhookCertDir, "tls.crt")); err == nil {
-		setupLog.Info("webhook TLS certs found, registering singleton validating webhook")
-		mgr.GetWebhookServer().Register("/validate-kubernaut-singleton", &admission.Webhook{
-			Handler: &webhook.SingletonValidator{
-				Client: mgr.GetClient(),
-			},
-		})
-	} else {
-		setupLog.Info("webhook TLS certs not found, skipping singleton webhook registration")
-	}
+	registerSingletonWebhook(mgr)
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {
@@ -176,12 +109,8 @@ func main() {
 		}
 	}
 
-	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
-		setupLog.Error(err, "unable to set up health check")
-		os.Exit(1)
-	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-		setupLog.Error(err, "unable to set up ready check")
+	if err := setupHealthChecks(mgr); err != nil {
+		setupLog.Error(err, "unable to set up health checks")
 		os.Exit(1)
 	}
 
@@ -190,4 +119,121 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// operatorFlags holds the operator's command-line flags, parsed once in
+// parseFlags and threaded through manager setup.
+type operatorFlags struct {
+	metricsAddr          string
+	probeAddr            string
+	metricsCertPath      string
+	metricsCertName      string
+	metricsCertKey       string
+	enableLeaderElection bool
+	secureMetrics        bool
+	enableHTTP2          bool
+}
+
+// parseFlags registers and parses the operator's command-line flags and zap
+// logging options, then configures the global controller-runtime logger.
+func parseFlags() *operatorFlags {
+	f := &operatorFlags{}
+	flag.StringVar(&f.metricsAddr, "metrics-bind-address", "0",
+		"The address the metrics endpoint binds to. Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable.")
+	flag.StringVar(&f.probeAddr, "health-probe-bind-address", ":8081",
+		"The address the probe endpoint binds to.")
+	flag.BoolVar(&f.enableLeaderElection, "leader-elect", false,
+		"Enable leader election for controller manager.")
+	flag.BoolVar(&f.secureMetrics, "metrics-secure", true,
+		"If set, the metrics endpoint is served securely via HTTPS.")
+	flag.StringVar(&f.metricsCertPath, "metrics-cert-path", "",
+		"The directory that contains the metrics server certificate.")
+	flag.StringVar(&f.metricsCertName, "metrics-cert-name", "tls.crt",
+		"The name of the metrics server certificate file.")
+	flag.StringVar(&f.metricsCertKey, "metrics-cert-key", "tls.key",
+		"The name of the metrics server key file.")
+	flag.BoolVar(&f.enableHTTP2, "enable-http2", false,
+		"If set, HTTP/2 will be enabled for the metrics and webhook servers.")
+
+	opts := zap.Options{Development: false}
+	opts.BindFlags(flag.CommandLine)
+	flag.Parse()
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	return f
+}
+
+// buildMetricsServerOptions assembles the controller-runtime metrics server
+// options from f, initializing a certificate watcher when a cert path is
+// configured. The returned watcher, when non-nil, must be registered with
+// the manager via mgr.Add so it starts/stops with the manager's lifecycle.
+func buildMetricsServerOptions(f *operatorFlags) (metricsserver.Options, *certwatcher.CertWatcher, error) {
+	var tlsOpts []func(*tls.Config)
+	if !f.enableHTTP2 {
+		tlsOpts = append(tlsOpts, func(c *tls.Config) {
+			setupLog.Info("disabling http/2")
+			c.NextProtos = []string{"http/1.1"}
+		})
+	}
+
+	opts := metricsserver.Options{
+		BindAddress:   f.metricsAddr,
+		SecureServing: f.secureMetrics,
+		TLSOpts:       tlsOpts,
+	}
+	if f.secureMetrics {
+		opts.FilterProvider = filters.WithAuthenticationAndAuthorization
+	}
+
+	if len(f.metricsCertPath) == 0 {
+		return opts, nil, nil
+	}
+	watcher, err := setupMetricsCertWatcher(f.metricsCertPath, f.metricsCertName, f.metricsCertKey, &opts)
+	return opts, watcher, err
+}
+
+// setupMetricsCertWatcher initializes a certificate watcher for the metrics
+// server and wires its GetCertificate callback into opts.TLSOpts.
+func setupMetricsCertWatcher(certPath, certName, certKey string,
+	opts *metricsserver.Options) (*certwatcher.CertWatcher, error) {
+	setupLog.Info("Initializing metrics certificate watcher", "metrics-cert-path", certPath)
+	watcher, err := certwatcher.New(
+		filepath.Join(certPath, certName),
+		filepath.Join(certPath, certKey),
+	)
+	if err != nil {
+		return nil, err
+	}
+	opts.TLSOpts = append(opts.TLSOpts, func(config *tls.Config) {
+		config.GetCertificate = watcher.GetCertificate
+	})
+	return watcher, nil
+}
+
+// registerSingletonWebhook registers the Kubernaut singleton validating
+// webhook when webhook serving certs are present on disk. In environments
+// without cert-manager-provisioned certs (e.g. some local/dev setups), the
+// webhook is skipped so the manager can still start.
+func registerSingletonWebhook(mgr ctrl.Manager) {
+	webhookCertDir := filepath.Join(os.TempDir(), "k8s-webhook-server", "serving-certs")
+	if _, err := os.Stat(filepath.Join(webhookCertDir, "tls.crt")); err != nil {
+		setupLog.Info("webhook TLS certs not found, skipping singleton webhook registration")
+		return
+	}
+	setupLog.Info("webhook TLS certs found, registering singleton validating webhook")
+	mgr.GetWebhookServer().Register("/validate-kubernaut-singleton", &admission.Webhook{
+		Handler: &webhook.SingletonValidator{
+			Client: mgr.GetClient(),
+		},
+	})
+}
+
+// setupHealthChecks registers the liveness and readiness probes on mgr.
+func setupHealthChecks(mgr ctrl.Manager) error {
+	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+		return fmt.Errorf("setting up health check: %w", err)
+	}
+	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+		return fmt.Errorf("setting up ready check: %w", err)
+	}
+	return nil
 }

@@ -99,92 +99,8 @@ func ConsoleDeployment(kn *kubernautv1alpha1.Kubernaut, ingressDomain string) (*
 						},
 					},
 					Containers: []corev1.Container{
-						{
-							Name:  "oauth2-proxy",
-							Image: oauth2ProxyImage,
-							Args:  oauthArgs,
-							Env: []corev1.EnvVar{
-								{Name: "OAUTH2_PROXY_CLIENT_ID", ValueFrom: &corev1.EnvVarSource{
-									SecretKeyRef: &corev1.SecretKeySelector{
-										LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
-										Key:                  "client-id",
-									},
-								}},
-								{Name: "OAUTH2_PROXY_CLIENT_SECRET", ValueFrom: &corev1.EnvVarSource{
-									SecretKeyRef: &corev1.SecretKeySelector{
-										LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
-										Key:                  "client-secret",
-									},
-								}},
-								{Name: "OAUTH2_PROXY_COOKIE_SECRET", ValueFrom: &corev1.EnvVarSource{
-									SecretKeyRef: &corev1.SecretKeySelector{
-										LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
-										Key:                  "cookie-secret",
-									},
-								}},
-							},
-							Ports: []corev1.ContainerPort{
-								{Name: "http", ContainerPort: consoleProxyPort, Protocol: corev1.ProtocolTCP},
-							},
-							SecurityContext: &corev1.SecurityContext{
-								AllowPrivilegeEscalation: ptr.To(false),
-								Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-								ReadOnlyRootFilesystem:   ptr.To(true),
-							},
-							ReadinessProbe: &corev1.Probe{
-								ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
-									Path: "/oauth2/ping", Port: intstr.FromInt32(consoleProxyPort),
-								}},
-								InitialDelaySeconds: 3, PeriodSeconds: 5,
-							},
-							LivenessProbe: &corev1.Probe{
-								ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
-									Path: "/oauth2/ping", Port: intstr.FromInt32(consoleProxyPort),
-								}},
-								InitialDelaySeconds: 10, PeriodSeconds: 15,
-							},
-							Resources: corev1.ResourceRequirements{
-								Requests: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse("25m"),
-									corev1.ResourceMemory: resource.MustParse("32Mi"),
-								},
-								Limits: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse("100m"),
-									corev1.ResourceMemory: resource.MustParse("128Mi"),
-								},
-							},
-						},
-						{
-							Name:            "console",
-							Image:           consoleImage,
-							ImagePullPolicy: kn.Spec.Image.PullPolicy,
-							Ports: []corev1.ContainerPort{
-								{Name: "static", ContainerPort: consoleStaticPort, Protocol: corev1.ProtocolTCP},
-							},
-							SecurityContext: &corev1.SecurityContext{
-								AllowPrivilegeEscalation: ptr.To(false),
-								Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-							},
-							ReadinessProbe: &corev1.Probe{
-								ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
-									Path: "/healthz", Port: intstr.FromInt32(consoleStaticPort),
-								}},
-								InitialDelaySeconds: 2, PeriodSeconds: 5,
-							},
-							LivenessProbe: &corev1.Probe{
-								ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
-									Path: "/healthz", Port: intstr.FromInt32(consoleStaticPort),
-								}},
-								InitialDelaySeconds: 5, PeriodSeconds: 10,
-							},
-							Resources: consoleContainerResources(kn),
-							VolumeMounts: []corev1.VolumeMount{
-								{Name: "nginx-tmp", MountPath: "/tmp"},
-								{Name: "nginx-config", MountPath: "/opt/app-root/etc/nginx.d/kubernaut-http.conf", SubPath: "http.conf", ReadOnly: true},
-								{Name: "nginx-config", MountPath: "/opt/app-root/etc/nginx.default.d/kubernaut-server.conf", SubPath: "server.conf", ReadOnly: true},
-								{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
-							},
-						},
+						consoleOAuth2ProxyContainer(oauth2ProxyImage, oauthArgs, secretName),
+						consoleAppContainer(kn, consoleImage),
 					},
 					Volumes: []corev1.Volume{
 						{Name: "nginx-tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
@@ -199,6 +115,102 @@ func ConsoleDeployment(kn *kubernautv1alpha1.Kubernaut, ingressDomain string) (*
 	}
 
 	return dep, nil
+}
+
+// consoleOAuth2ProxyContainer builds the oauth2-proxy sidecar container that
+// terminates OIDC auth in front of the static console container.
+func consoleOAuth2ProxyContainer(image string, args []string, secretName string) corev1.Container {
+	return corev1.Container{
+		Name:  "oauth2-proxy",
+		Image: image,
+		Args:  args,
+		Env: []corev1.EnvVar{
+			{Name: "OAUTH2_PROXY_CLIENT_ID", ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+					Key:                  "client-id",
+				},
+			}},
+			{Name: "OAUTH2_PROXY_CLIENT_SECRET", ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+					Key:                  "client-secret",
+				},
+			}},
+			{Name: "OAUTH2_PROXY_COOKIE_SECRET", ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+					Key:                  "cookie-secret",
+				},
+			}},
+		},
+		Ports: []corev1.ContainerPort{
+			{Name: "http", ContainerPort: consoleProxyPort, Protocol: corev1.ProtocolTCP},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: ptr.To(false),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			ReadOnlyRootFilesystem:   ptr.To(true),
+		},
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
+				Path: "/oauth2/ping", Port: intstr.FromInt32(consoleProxyPort),
+			}},
+			InitialDelaySeconds: 3, PeriodSeconds: 5,
+		},
+		LivenessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
+				Path: "/oauth2/ping", Port: intstr.FromInt32(consoleProxyPort),
+			}},
+			InitialDelaySeconds: 10, PeriodSeconds: 15,
+		},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("25m"),
+				corev1.ResourceMemory: resource.MustParse("32Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("128Mi"),
+			},
+		},
+	}
+}
+
+// consoleAppContainer builds the static nginx container that serves the
+// console SPA and proxies /a2a, /mcp, and /.well-known to API Frontend.
+func consoleAppContainer(kn *kubernautv1alpha1.Kubernaut, image string) corev1.Container {
+	return corev1.Container{
+		Name:            "console",
+		Image:           image,
+		ImagePullPolicy: kn.Spec.Image.PullPolicy,
+		Ports: []corev1.ContainerPort{
+			{Name: "static", ContainerPort: consoleStaticPort, Protocol: corev1.ProtocolTCP},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: ptr.To(false),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		},
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
+				Path: "/healthz", Port: intstr.FromInt32(consoleStaticPort),
+			}},
+			InitialDelaySeconds: 2, PeriodSeconds: 5,
+		},
+		LivenessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
+				Path: "/healthz", Port: intstr.FromInt32(consoleStaticPort),
+			}},
+			InitialDelaySeconds: 5, PeriodSeconds: 10,
+		},
+		Resources: consoleContainerResources(kn),
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "nginx-tmp", MountPath: "/tmp"},
+			{Name: "nginx-config", MountPath: "/opt/app-root/etc/nginx.d/kubernaut-http.conf", SubPath: "http.conf", ReadOnly: true},
+			{Name: "nginx-config", MountPath: "/opt/app-root/etc/nginx.default.d/kubernaut-server.conf", SubPath: "server.conf", ReadOnly: true},
+			{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
+		},
+	}
 }
 
 // ConsoleService builds the Service for the console.

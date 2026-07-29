@@ -61,92 +61,116 @@ func APIFrontendPrometheusRule(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.Pr
 		ObjectMeta: ObjectMeta(kn, "apifrontend-rules", ComponentAPIFrontend),
 		Spec: monitoringv1.PrometheusRuleSpec{
 			Groups: []monitoringv1.RuleGroup{
-				{
-					Name: "apifrontend.availability",
-					Rules: []monitoringv1.Rule{
-						{
-							Alert:       "ApifrontendDown",
-							Expr:        intstr.FromString(`up{job="apifrontend"} == 0`),
-							For:         durationPtr("5m"),
-							Labels:      map[string]string{"severity": "critical"},
-							Annotations: map[string]string{"summary": "API Frontend is down", "description": "The API Frontend service has been unreachable for more than 5 minutes.", "runbook_url": "https://docs.kubernaut.ai/runbooks/apifrontend-down"},
-						},
-					},
-				},
-				{
-					Name: "apifrontend.latency",
-					Rules: []monitoringv1.Rule{
-						{
-							Alert:       "ApifrontendHighLatencyP95",
-							Expr:        intstr.FromString(`histogram_quantile(0.95, sum(rate(af_http_request_duration_seconds_bucket{job="apifrontend"}[5m])) by (le)) > 0.5`),
-							For:         durationPtr("2m"),
-							Labels:      map[string]string{"severity": "warning"},
-							Annotations: map[string]string{"summary": "API Frontend P95 latency > 500ms", "runbook_url": "https://docs.kubernaut.ai/runbooks/apifrontend-high-latency"},
-						},
-						{
-							Alert:       "ApifrontendHighLatencyP99",
-							Expr:        intstr.FromString(`histogram_quantile(0.99, sum(rate(af_http_request_duration_seconds_bucket{job="apifrontend"}[5m])) by (le)) > 1.0`),
-							For:         durationPtr("2m"),
-							Labels:      map[string]string{"severity": "critical"},
-							Annotations: map[string]string{"summary": "API Frontend P99 latency > 1s", "runbook_url": "https://docs.kubernaut.ai/runbooks/apifrontend-high-latency"},
-						},
-					},
-				},
-				{
-					Name: "apifrontend.errors",
-					Rules: []monitoringv1.Rule{
-						{
-							Alert:       "ApifrontendHighErrorRate",
-							Expr:        intstr.FromString(`sum(rate(af_http_requests_total{job="apifrontend",status=~"5.."}[5m])) / sum(rate(af_http_requests_total{job="apifrontend"}[5m])) > 0.01`),
-							For:         durationPtr("2m"),
-							Labels:      map[string]string{"severity": "critical"},
-							Annotations: map[string]string{"summary": "API Frontend error rate > 1%", "runbook_url": "https://docs.kubernaut.ai/runbooks/apifrontend-high-error-rate"},
-						},
-					},
-				},
-				{
-					Name: "apifrontend.auth",
-					Rules: []monitoringv1.Rule{
-						{
-							Alert:       "ApifrontendAuthFailureSpike",
-							Expr:        intstr.FromString(`sum(rate(af_http_requests_total{job="apifrontend",status="401"}[5m])) / sum(rate(af_http_requests_total{job="apifrontend"}[5m])) > 0.1`),
-							For:         durationPtr("2m"),
-							Labels:      map[string]string{"severity": "critical"},
-							Annotations: map[string]string{"summary": "API Frontend auth failure rate > 10%", "runbook_url": "https://docs.kubernaut.ai/runbooks/apifrontend-auth-failure"},
-						},
-					},
-				},
-				{
-					Name: "apifrontend.circuitbreaker",
-					Rules: []monitoringv1.Rule{
-						{
-							Alert:       "ApifrontendCircuitBreakerOpenKA",
-							Expr:        intstr.FromString(`af_circuit_breaker_state{job="apifrontend",dependency="ka"} == 2`),
-							For:         durationPtr("2m"),
-							Labels:      map[string]string{"severity": "critical"},
-							Annotations: map[string]string{"summary": "KA circuit breaker is open", "runbook_url": "https://docs.kubernaut.ai/runbooks/apifrontend-circuit-breaker"},
-						},
-						{
-							Alert:       "ApifrontendCircuitBreakerOpenDS",
-							Expr:        intstr.FromString(`af_circuit_breaker_state{job="apifrontend",dependency="ds"} == 2`),
-							For:         durationPtr("2m"),
-							Labels:      map[string]string{"severity": "warning"},
-							Annotations: map[string]string{"summary": "DS circuit breaker is open", "runbook_url": "https://docs.kubernaut.ai/runbooks/apifrontend-circuit-breaker"},
-						},
-					},
-				},
-				{
-					Name: "apifrontend.tools",
-					Rules: []monitoringv1.Rule{
-						{
-							Alert:       "ApifrontendToolErrorRate",
-							Expr:        intstr.FromString(`sum(rate(af_tool_calls_total{job="apifrontend",result=~"error|timeout|panic"}[5m])) / sum(rate(af_tool_calls_total{job="apifrontend"}[5m])) > 0.05`),
-							For:         durationPtr("5m"),
-							Labels:      map[string]string{"severity": "critical"},
-							Annotations: map[string]string{"summary": "MCP tool error rate > 5%", "runbook_url": "https://docs.kubernaut.ai/runbooks/apifrontend-tool-error-rate"},
-						},
-					},
-				},
+				afAvailabilityRuleGroup(),
+				afLatencyRuleGroup(),
+				afErrorsRuleGroup(),
+				afAuthRuleGroup(),
+				afCircuitBreakerRuleGroup(),
+				afToolsRuleGroup(),
+			},
+		},
+	}
+}
+
+func afAvailabilityRuleGroup() monitoringv1.RuleGroup {
+	return monitoringv1.RuleGroup{
+		Name: "apifrontend.availability",
+		Rules: []monitoringv1.Rule{
+			{
+				Alert:       "ApifrontendDown",
+				Expr:        intstr.FromString(`up{job="apifrontend"} == 0`),
+				For:         durationPtr("5m"),
+				Labels:      map[string]string{"severity": "critical"},
+				Annotations: map[string]string{"summary": "API Frontend is down", "description": "The API Frontend service has been unreachable for more than 5 minutes.", "runbook_url": "https://docs.kubernaut.ai/runbooks/apifrontend-down"},
+			},
+		},
+	}
+}
+
+func afLatencyRuleGroup() monitoringv1.RuleGroup {
+	return monitoringv1.RuleGroup{
+		Name: "apifrontend.latency",
+		Rules: []monitoringv1.Rule{
+			{
+				Alert:       "ApifrontendHighLatencyP95",
+				Expr:        intstr.FromString(`histogram_quantile(0.95, sum(rate(af_http_request_duration_seconds_bucket{job="apifrontend"}[5m])) by (le)) > 0.5`),
+				For:         durationPtr("2m"),
+				Labels:      map[string]string{"severity": "warning"},
+				Annotations: map[string]string{"summary": "API Frontend P95 latency > 500ms", "runbook_url": "https://docs.kubernaut.ai/runbooks/apifrontend-high-latency"},
+			},
+			{
+				Alert:       "ApifrontendHighLatencyP99",
+				Expr:        intstr.FromString(`histogram_quantile(0.99, sum(rate(af_http_request_duration_seconds_bucket{job="apifrontend"}[5m])) by (le)) > 1.0`),
+				For:         durationPtr("2m"),
+				Labels:      map[string]string{"severity": "critical"},
+				Annotations: map[string]string{"summary": "API Frontend P99 latency > 1s", "runbook_url": "https://docs.kubernaut.ai/runbooks/apifrontend-high-latency"},
+			},
+		},
+	}
+}
+
+func afErrorsRuleGroup() monitoringv1.RuleGroup {
+	return monitoringv1.RuleGroup{
+		Name: "apifrontend.errors",
+		Rules: []monitoringv1.Rule{
+			{
+				Alert:       "ApifrontendHighErrorRate",
+				Expr:        intstr.FromString(`sum(rate(af_http_requests_total{job="apifrontend",status=~"5.."}[5m])) / sum(rate(af_http_requests_total{job="apifrontend"}[5m])) > 0.01`),
+				For:         durationPtr("2m"),
+				Labels:      map[string]string{"severity": "critical"},
+				Annotations: map[string]string{"summary": "API Frontend error rate > 1%", "runbook_url": "https://docs.kubernaut.ai/runbooks/apifrontend-high-error-rate"},
+			},
+		},
+	}
+}
+
+func afAuthRuleGroup() monitoringv1.RuleGroup {
+	return monitoringv1.RuleGroup{
+		Name: "apifrontend.auth",
+		Rules: []monitoringv1.Rule{
+			{
+				Alert:       "ApifrontendAuthFailureSpike",
+				Expr:        intstr.FromString(`sum(rate(af_http_requests_total{job="apifrontend",status="401"}[5m])) / sum(rate(af_http_requests_total{job="apifrontend"}[5m])) > 0.1`),
+				For:         durationPtr("2m"),
+				Labels:      map[string]string{"severity": "critical"},
+				Annotations: map[string]string{"summary": "API Frontend auth failure rate > 10%", "runbook_url": "https://docs.kubernaut.ai/runbooks/apifrontend-auth-failure"},
+			},
+		},
+	}
+}
+
+func afCircuitBreakerRuleGroup() monitoringv1.RuleGroup {
+	return monitoringv1.RuleGroup{
+		Name: "apifrontend.circuitbreaker",
+		Rules: []monitoringv1.Rule{
+			{
+				Alert:       "ApifrontendCircuitBreakerOpenKA",
+				Expr:        intstr.FromString(`af_circuit_breaker_state{job="apifrontend",dependency="ka"} == 2`),
+				For:         durationPtr("2m"),
+				Labels:      map[string]string{"severity": "critical"},
+				Annotations: map[string]string{"summary": "KA circuit breaker is open", "runbook_url": "https://docs.kubernaut.ai/runbooks/apifrontend-circuit-breaker"},
+			},
+			{
+				Alert:       "ApifrontendCircuitBreakerOpenDS",
+				Expr:        intstr.FromString(`af_circuit_breaker_state{job="apifrontend",dependency="ds"} == 2`),
+				For:         durationPtr("2m"),
+				Labels:      map[string]string{"severity": "warning"},
+				Annotations: map[string]string{"summary": "DS circuit breaker is open", "runbook_url": "https://docs.kubernaut.ai/runbooks/apifrontend-circuit-breaker"},
+			},
+		},
+	}
+}
+
+func afToolsRuleGroup() monitoringv1.RuleGroup {
+	return monitoringv1.RuleGroup{
+		Name: "apifrontend.tools",
+		Rules: []monitoringv1.Rule{
+			{
+				Alert:       "ApifrontendToolErrorRate",
+				Expr:        intstr.FromString(`sum(rate(af_tool_calls_total{job="apifrontend",result=~"error|timeout|panic"}[5m])) / sum(rate(af_tool_calls_total{job="apifrontend"}[5m])) > 0.05`),
+				For:         durationPtr("5m"),
+				Labels:      map[string]string{"severity": "critical"},
+				Annotations: map[string]string{"summary": "MCP tool error rate > 5%", "runbook_url": "https://docs.kubernaut.ai/runbooks/apifrontend-tool-error-rate"},
 			},
 		},
 	}
