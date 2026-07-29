@@ -20,8 +20,9 @@ limitations under the License.
 package v1alpha1
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/scheme"
 )
 
 var (
@@ -29,8 +30,30 @@ var (
 	GroupVersion = schema.GroupVersion{Group: "kubernaut.ai", Version: "v1alpha1"}
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme.
-	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
+	// Implemented directly against k8s.io/apimachinery rather than the
+	// deprecated sigs.k8s.io/controller-runtime/pkg/scheme.Builder, per that
+	// package's own migration guidance -- api packages should depend on
+	// only the standard library, k8s.io/apimachinery, and other api
+	// packages. Behavior (AddKnownTypes + AddToGroupVersion per Register
+	// call) is unchanged.
+	SchemeBuilder = &schemeBuilder{}
 
 	// AddToScheme adds the types in this group-version to the given scheme.
 	AddToScheme = SchemeBuilder.AddToScheme
 )
+
+type schemeBuilder struct {
+	runtime.SchemeBuilder
+}
+
+// Register adds one or more objects to the SchemeBuilder so they can be
+// added to a Scheme, mirroring the deprecated controller-runtime
+// scheme.Builder.Register behavior.
+func (b *schemeBuilder) Register(objects ...runtime.Object) *schemeBuilder {
+	b.SchemeBuilder.Register(func(s *runtime.Scheme) error {
+		s.AddKnownTypes(GroupVersion, objects...)
+		metav1.AddToGroupVersion(s, GroupVersion)
+		return nil
+	})
+	return b
+}
