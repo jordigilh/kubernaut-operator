@@ -81,6 +81,21 @@ linters:
       min-complexity: 5
     maintidx:
       under: 20
+    # NOTE: godox is intentionally NOT in the enabled linters list above --
+    # deferred-work tracking is TODO/FIXME's entire purpose, so it should
+    # never block a merge. It runs as a separate, deliberately
+    # continue-on-error step in .github/workflows/lint.yml instead, so
+    # findings are visible without gating CI. This settings block only
+    # configures its keyword scope for that step.
+    godox:
+      # Default keywords are [TODO, BUG, FIXME]; this list REPLACES the
+      # default rather than extending it. BUG is dropped for the same reason
+      # kubernaut (this operator's parent repo) drops it: "Bug:"/"bug fix"
+      # style doc-comment prose describing an already-fixed defect is common
+      # and is not a pending-work marker like TODO/FIXME.
+      keywords:
+        - TODO
+        - FIXME
   exclusions:
     generated: lax
     rules:
