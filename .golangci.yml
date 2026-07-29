@@ -42,6 +42,12 @@ linters:
     - unused
     - wastedassign
   settings:
+    govet:
+      enable:
+        - shadow  # Variable shadowing (100 Go Mistakes / AGENTS.md anti-pattern
+                  # checklist). The benign `err`/`ok` re-declaration idiom, and
+                  # Ginkgo BDD suite-scoped re-declarations in test files, are
+                  # excluded below.
     revive:
       rules:
         - name: comment-spacings
@@ -116,6 +122,20 @@ linters:
           - gocognit
           - nestif
           - maintidx
+      # govet shadow: the idiomatic `if err := ...; err != nil` re-declaration
+      # pattern is excluded everywhere. Only the benign err/ok re-declaration
+      # is excluded; shadowing of other identifiers still fails lint.
+      - linters:
+          - govet
+        text: 'shadow: declaration of "(err|ok)" shadows declaration'
+      # govet shadow: Ginkgo BDD suites idiomatically re-declare suite-scoped
+      # variables (ctx, client, logger, recorder, etc.) inside BeforeEach/It
+      # closures for readability. Shadowing still fails lint for production
+      # (non-test) code.
+      - path: "(_test\\.go|^test/)"
+        linters:
+          - govet
+        text: "shadow:"
     paths:
       - third_party$
       - builtin$
