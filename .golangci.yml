@@ -13,10 +13,13 @@ linters:
     - errorlint
     - ginkgolinter
     - goconst
+    - gocritic
     - gocyclo
     - govet
     - ineffassign
+    - interfacebloat
     - lll
+    - loggercheck
     - misspell
     - nakedret
     - nilerr

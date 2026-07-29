@@ -358,7 +358,9 @@ func validateAPIFrontend(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecar
 			"spec.apiFrontend.auth.issuerURL: required — API Frontend requires OAuth/OIDC authentication (FedRAMP IA-2, CM-6)"))
 	}
 
-	if ref := af.RBACRolesConfigMapRef; ref != nil && ref.ConfigMapName == "" {
+	// Deprecated field, but still supported for backward compatibility until
+	// removed from the API -- must keep validating it while it's honored.
+	if ref := af.RBACRolesConfigMapRef; ref != nil && ref.ConfigMapName == "" { //nolint:staticcheck
 		errs = append(errs, fmt.Errorf("spec.apiFrontend.rbacRolesConfigMapRef.configMapName: must not be empty when rbacRolesConfigMapRef is set"))
 	}
 

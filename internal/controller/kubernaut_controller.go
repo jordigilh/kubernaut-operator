@@ -1549,11 +1549,9 @@ func (r *KubernautReconciler) ensureKagentiNamespaceLabel(ctx context.Context, k
 			log.Info("setting pod security labels for SPIFFE CSI volume", "namespace", kn.Namespace)
 			needsUpdate = true
 		}
-	} else {
-		if have {
-			log.Info("removing kagenti-enabled label from namespace", "namespace", kn.Namespace)
-			delete(ns.Labels, "kagenti-enabled")
-		}
+	} else if have {
+		log.Info("removing kagenti-enabled label from namespace", "namespace", kn.Namespace)
+		delete(ns.Labels, "kagenti-enabled")
 	}
 
 	if !needsUpdate {
