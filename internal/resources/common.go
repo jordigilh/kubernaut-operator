@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -586,7 +587,11 @@ func ValkeyAddr(spec *kubernautv1alpha1.ValkeySpec) string {
 // into configs so that application containers bypass glibc DNS resolution,
 // which is broken under OVN-Kubernetes NetworkPolicies.
 func resolveHostToIP(host string) string {
-	if addrs, err := net.LookupHost(host); err == nil && len(addrs) > 0 {
+	// This is a best-effort, bounded lookup with no natural deadline of its
+	// own (any error, including a cancelled context, falls back to the
+	// original host below), so context.Background() is used rather than
+	// threading ctx through the resource-builder call chain.
+	if addrs, err := net.DefaultResolver.LookupHost(context.Background(), host); err == nil && len(addrs) > 0 {
 		return addrs[0]
 	}
 	return host

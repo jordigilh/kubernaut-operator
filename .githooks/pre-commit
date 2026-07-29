@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pre-commit hook — prevents accidental credential and API key leaks.
+# Pre-commit hook — anti-pattern detection and sensitive data leak prevention.
 #
 # Installation:
 #   git config core.hooksPath .githooks
@@ -8,10 +8,89 @@
 set -e
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🛡️  PRE-COMMIT: Sensitive Data Leak Detection"
+echo "🛡️  PRE-COMMIT: Anti-Pattern & Sensitive Data Detection"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 VIOLATIONS=0
+
+# Get staged Go test files once; reused by CHECKs 1-3 below.
+STAGED_TEST_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '_test\.go$' || true)
+
+# ========================================
+# CHECK 1: NULL-TESTING Anti-Pattern Detection
+# ========================================
+# Mirrors .golangci.yml's forbidigo NULL-TESTING patterns (AGENTS.md Testing
+# Requirements / Testing Conventions: assertions must validate business
+# outcomes, not just nil/empty checks). This is a fast local pre-flight;
+# forbidigo in CI is the unconditional backstop -- no exceptions either way.
+echo ""
+echo "🔍 Checking for NULL-TESTING anti-patterns..."
+
+if [ -n "$STAGED_TEST_FILES" ]; then
+    NULL_TESTING=$(echo "$STAGED_TEST_FILES" | xargs grep -nHE '\.(ToNot|ShouldNot)\((BeNil|BeEmpty)\(\)\)' 2>/dev/null || true)
+    if [ -n "$NULL_TESTING" ]; then
+        echo "❌ VIOLATION: NULL-TESTING anti-pattern detected"
+        echo "$NULL_TESTING"
+        echo ""
+        echo "   Validate business outcomes, not just nil/empty checks."
+        echo "   Example fix: Expect(kn.Status.Phase).To(Equal(PhaseRunning))"
+        echo "                Expect(container.Command).To(HaveLen(6))"
+        echo ""
+        VIOLATIONS=$((VIOLATIONS + 1))
+    fi
+fi
+
+# ========================================
+# CHECK 2: Skip() Anti-Pattern Detection
+# ========================================
+# AGENTS.md Rule 2 (No Pending Tests): never defer test implementation with
+# Skip(). Applies to all staged test files -- this repo has no test/integration/
+# split; envtest-backed integration specs live in internal/controller/*_test.go
+# alongside unit-style specs, and E2E specs live in test/e2e/.
+echo ""
+echo "🔍 Checking for Skip()..."
+
+if [ -n "$STAGED_TEST_FILES" ]; then
+    SKIP_VIOLATIONS=$(echo "$STAGED_TEST_FILES" | xargs grep -nH '\bSkip(' 2>/dev/null || true)
+    if [ -n "$SKIP_VIOLATIONS" ]; then
+        echo "❌ VIOLATION: Skip() is forbidden"
+        echo "$SKIP_VIOLATIONS"
+        echo ""
+        echo "   Per AGENTS.md Rule 2 (No Pending Tests) / DD-AUDIT-003: tests must Fail()"
+        echo "   when required infrastructure or preconditions are unavailable, not Skip()."
+        echo "   Example fix: Fail(\"envtest binary not found; run make setup-envtest\")"
+        echo ""
+        VIOLATIONS=$((VIOLATIONS + 1))
+    fi
+fi
+
+# ========================================
+# CHECK 3: time.Sleep() Anti-Pattern Detection
+# ========================================
+# AGENTS.md Testing Conventions: no time.Sleep() -- use gomega.Eventually with
+# explicit timeout/interval. Warning-only locally (forbidigo blocks
+# unconditionally in CI); kept non-blocking here so a legitimate work-in-
+# progress commit isn't wedged mid-edit.
+echo ""
+echo "🔍 Checking for time.Sleep()..."
+
+if [ -n "$STAGED_TEST_FILES" ]; then
+    SLEEP_VIOLATIONS=$(echo "$STAGED_TEST_FILES" | xargs grep -nH 'time\.Sleep(' 2>/dev/null || true)
+    if [ -n "$SLEEP_VIOLATIONS" ]; then
+        echo "⚠️  WARNING: time.Sleep() detected (forbidigo will block this in CI)"
+        echo "$SLEEP_VIOLATIONS"
+        echo ""
+        echo "   Use gomega.Eventually/Consistently with explicit timeout/interval instead."
+        echo ""
+        # Non-blocking: does not increment VIOLATIONS.
+    fi
+fi
+
+# ========================================
+# CHECK 4: Sensitive Data Leak Detection
+# ========================================
+echo ""
+echo "🔍 Checking for sensitive data in staged files..."
 
 STAGED_ALL=$(git diff --cached --name-only --diff-filter=ACM || true)
 
@@ -23,7 +102,7 @@ if [ -n "$STAGED_ALL" ]; then
 
     LEAK_MATCHES=""
 
-    # 1: Cloud provider API endpoint URLs
+    # 4a: Cloud provider API endpoint URLs
     EP_MATCHES=$(echo "$STAGED_DIFF" | \
         grep -iE '(aiplatform|bigquery|storage|compute|run)\.googleapis\.com' || true)
     EP_MATCHES="${EP_MATCHES}$(echo "$STAGED_DIFF" | \
@@ -34,7 +113,7 @@ if [ -n "$STAGED_ALL" ]; then
         LEAK_MATCHES="${LEAK_MATCHES}${EP_MATCHES}\n"
     fi
 
-    # 2: Cloud project/account/subscription identifiers in config fields
+    # 4b: Cloud project/account/subscription identifiers in config fields
     ID_MATCHES=$(echo "$STAGED_DIFF" | \
         grep -iE '(project_id|account_id|subscription_id|tenant_id)\s*[:=]\s*"[^"]+' | \
         grep -ivE '(your-|example-|placeholder|REDACTED|<|TODO|""$)' || true)
@@ -42,7 +121,7 @@ if [ -n "$STAGED_ALL" ]; then
         LEAK_MATCHES="${LEAK_MATCHES}${ID_MATCHES}\n"
     fi
 
-    # 3: Well-known API key formats
+    # 4c: Well-known API key formats
     KEY_MATCHES=$(echo "$STAGED_DIFF" | \
         grep -oE 'sk-[A-Za-z0-9_-]{20,}' || true)
     KEY_MATCHES="${KEY_MATCHES}$(echo "$STAGED_DIFF" | \
@@ -57,14 +136,14 @@ if [ -n "$STAGED_ALL" ]; then
         LEAK_MATCHES="${LEAK_MATCHES}${KEY_MATCHES}\n"
     fi
 
-    # 4: GCP service account JSON (client_email with iam.gserviceaccount.com) # pre-commit:allow-sensitive
+    # 4d: GCP service account JSON (client_email with iam.gserviceaccount.com) # pre-commit:allow-sensitive
     SA_MATCHES=$(echo "$STAGED_DIFF" | \
         grep -E 'iam\.gserviceaccount\.com' || true)
     if [ -n "$SA_MATCHES" ]; then
         LEAK_MATCHES="${LEAK_MATCHES}${SA_MATCHES}\n"
     fi
 
-    # 5: Absolute paths to credential files
+    # 4e: Absolute paths to credential files
     CRED_PATH_MATCHES=$(echo "$STAGED_DIFF" | \
         grep -E '(/home/|/Users/|/root/|/etc/|/var/)[^ ]*credentials[^ ]*\.(json|yaml|yml|key|pem)' | \
         grep -v '_test\.go' | \
@@ -73,7 +152,7 @@ if [ -n "$STAGED_ALL" ]; then
         LEAK_MATCHES="${LEAK_MATCHES}${CRED_PATH_MATCHES}\n"
     fi
 
-    # 6: Private key blocks
+    # 4f: Private key blocks
     PRIVKEY_MATCHES=$(echo "$STAGED_DIFF" | \
         grep -E 'BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY' || true)
     if [ -n "$PRIVKEY_MATCHES" ]; then
@@ -96,6 +175,9 @@ if [ -n "$STAGED_ALL" ]; then
     fi
 fi
 
+# ========================================
+# RESULT
+# ========================================
 echo ""
 if [ $VIOLATIONS -gt 0 ]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -104,7 +186,7 @@ if [ $VIOLATIONS -gt 0 ]; then
     exit 1
 else
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "✅ PASS: No sensitive data leaks detected"
+    echo "✅ PASS: No anti-pattern or sensitive data violations detected"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     exit 0
 fi

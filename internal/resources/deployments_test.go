@@ -1313,7 +1313,7 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("ignores deprecated rbacRolesConfigMapRef (volume is plain ConfigMap)", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBACRolesConfigMapRef = &kubernautv1alpha1.ConfigMapRef{
+		kn.Spec.APIFrontend.RBACRolesConfigMapRef = &kubernautv1alpha1.ConfigMapRef{ //nolint:staticcheck // exercising deprecated-field backward compat
 			ConfigMapName: "my-custom-rbac",
 		}
 		dep, err := APIFrontendDeployment(kn, KagentiSidecarNone)

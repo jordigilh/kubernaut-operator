@@ -323,7 +323,7 @@ var _ = Describe("APIFrontend Validation", func() {
 
 	It("rejects empty configMapName in rbacRolesConfigMapRef", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBACRolesConfigMapRef = &kubernautv1alpha1.ConfigMapRef{ConfigMapName: ""}
+		kn.Spec.APIFrontend.RBACRolesConfigMapRef = &kubernautv1alpha1.ConfigMapRef{ConfigMapName: ""} //nolint:staticcheck // exercising deprecated-field backward compat
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("configMapName"))

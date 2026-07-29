@@ -358,7 +358,9 @@ func validateAPIFrontend(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecar
 			"spec.apiFrontend.auth.issuerURL: required — API Frontend requires OAuth/OIDC authentication (FedRAMP IA-2, CM-6)"))
 	}
 
-	if ref := af.RBACRolesConfigMapRef; ref != nil && ref.ConfigMapName == "" {
+	// Deprecated field, but still supported for backward compatibility until
+	// removed from the API -- must keep validating it while it's honored.
+	if ref := af.RBACRolesConfigMapRef; ref != nil && ref.ConfigMapName == "" { //nolint:staticcheck
 		errs = append(errs, fmt.Errorf("spec.apiFrontend.rbacRolesConfigMapRef.configMapName: must not be empty when rbacRolesConfigMapRef is set"))
 	}
 
@@ -398,35 +400,42 @@ func validateToolRoleBindings(kn *kubernautv1alpha1.Kubernaut) []error {
 
 	seen := make(map[string]bool, len(rbac.RoleBindings))
 	for i, rb := range rbac.RoleBindings {
-		if rb.Role != "" && rb.ClusterRoleName != "" {
-			errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings[%d]: role and clusterRoleName are mutually exclusive", i))
-			continue
-		}
-		if rb.Role == "" && rb.ClusterRoleName == "" {
-			errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings[%d]: one of role or clusterRoleName must be set", i))
-			continue
-		}
-
-		if rb.Role != "" {
-			if seen[rb.Role] {
-				errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings: duplicate role %q", rb.Role))
-				continue
-			}
-			seen[rb.Role] = true
-
-			if !validToolPersonas[rb.Role] {
-				errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings: unknown persona %q", rb.Role))
-			}
-		} else {
-			if seen[rb.ClusterRoleName] {
-				errs = append(errs, fmt.Errorf("spec.apiFrontend.rbac.roleBindings: duplicate clusterRoleName %q", rb.ClusterRoleName))
-				continue
-			}
-			seen[rb.ClusterRoleName] = true
+		if err := validateToolRoleBinding(rb, i, seen); err != nil {
+			errs = append(errs, err)
 		}
 	}
 
 	return errs
+}
+
+// validateToolRoleBinding validates a single spec.apiFrontend.rbac.roleBindings
+// entry: exactly one of role/clusterRoleName must be set, it must not
+// duplicate an earlier entry (tracked via seen), and a persona-based role
+// must be a known persona.
+func validateToolRoleBinding(rb kubernautv1alpha1.ToolRoleBinding, index int, seen map[string]bool) error {
+	if rb.Role != "" && rb.ClusterRoleName != "" {
+		return fmt.Errorf("spec.apiFrontend.rbac.roleBindings[%d]: role and clusterRoleName are mutually exclusive", index)
+	}
+	if rb.Role == "" && rb.ClusterRoleName == "" {
+		return fmt.Errorf("spec.apiFrontend.rbac.roleBindings[%d]: one of role or clusterRoleName must be set", index)
+	}
+
+	if rb.Role == "" {
+		if seen[rb.ClusterRoleName] {
+			return fmt.Errorf("spec.apiFrontend.rbac.roleBindings: duplicate clusterRoleName %q", rb.ClusterRoleName)
+		}
+		seen[rb.ClusterRoleName] = true
+		return nil
+	}
+
+	if seen[rb.Role] {
+		return fmt.Errorf("spec.apiFrontend.rbac.roleBindings: duplicate role %q", rb.Role)
+	}
+	seen[rb.Role] = true
+	if !validToolPersonas[rb.Role] {
+		return fmt.Errorf("spec.apiFrontend.rbac.roleBindings: unknown persona %q", rb.Role)
+	}
+	return nil
 }
 
 const (
@@ -573,59 +582,69 @@ func validateFleetConfig(kn *kubernautv1alpha1.Kubernaut) []error {
 		errs = append(errs, fmt.Errorf("%s.mcpGatewayType: invalid value %q — must be one of: eaigw, kuadrant", base, fleet.MCPGatewayType))
 	}
 
-	// #222: mirrors upstream FleetConfig.Validate()'s OAuth2 pairing check —
-	// oauth2.enabled=true without both fields silently sends unauthenticated
-	// requests to the MCP Gateway instead of failing closed at startup.
-	if fleet.OAuth2.Enabled {
-		if fleet.OAuth2.TokenURL == "" {
-			errs = append(errs, fmt.Errorf("%s.oauth2.tokenURL: must be set when fleet.oauth2.enabled is true", base))
-		}
+	errs = append(errs, validateFleetOAuth2(kn, fleet)...)
 
-		// A federated IdP (e.g. Keycloak) issues distinct per-service OAuth2
-		// client registrations against one shared token endpoint (confirmed
-		// against upstream's own Helm chart: kubernaut.fleet.oauth2 helper
-		// resolves each service's own credentialsSecretRef, falling back to
-		// the fleet-wide default). Each of the six fleet-aware components
-		// needs its own *effective* value (own override, or the shared
-		// fallback) — a shared credentialsSecretRef covers whichever
-		// component doesn't override it, but a component that overrides it
-		// no longer benefits from the shared value covering it too.
-		//
-		// #224: generalized from a 2-way Gateway/RemediationOrchestrator
-		// switch to a loop over all five fleet-aware components (SP/AF/EM
-		// gained their own FleetOAuth2CredentialsSecretRef override fields)
-		// -- see Finding 7.
-		//
-		// #204: extended to a sixth component -- KA authenticates its own
-		// list_clusters/list_tools_for_cluster GatewayDiscoverer calls to
-		// the MCP Gateway and needs the same effective-value guarantee.
-		components := []struct {
-			specPath string
-			override string
-		}{
-			{"spec.gateway.fleetOAuth2CredentialsSecretRef", kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef},
-			{"spec.remediationOrchestrator.fleetOAuth2CredentialsSecretRef", kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef},
-			{"spec.signalProcessing.fleetOAuth2CredentialsSecretRef", kn.Spec.SignalProcessing.FleetOAuth2CredentialsSecretRef},
-			{"spec.apiFrontend.fleetOAuth2CredentialsSecretRef", kn.Spec.APIFrontend.FleetOAuth2CredentialsSecretRef},
-			{"spec.effectivenessMonitor.fleetOAuth2CredentialsSecretRef", kn.Spec.EffectivenessMonitor.FleetOAuth2CredentialsSecretRef},
-			{"spec.kubernautAgent.fleetOAuth2CredentialsSecretRef", kn.Spec.KubernautAgent.FleetOAuth2CredentialsSecretRef},
-		}
-		var missing []string
-		for _, c := range components {
-			if withDefault(c.override, fleet.OAuth2.CredentialsSecretRef) == "" {
-				missing = append(missing, c.specPath)
-			}
-		}
-		switch len(missing) {
-		case 0:
-			// all six have an effective value.
-		case len(components):
-			errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set when fleet.oauth2.enabled is true", base))
-		default:
-			errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set, or %s must be set, when fleet.oauth2.enabled is true (the other fleet-aware components already override their own)", base, strings.Join(missing, " or ")))
-		}
+	return errs
+}
+
+// validateFleetOAuth2 validates spec.fleet.oauth2, mirroring upstream
+// FleetConfig.Validate()'s pairing check: oauth2.enabled=true without both
+// fields silently sends unauthenticated requests to the MCP Gateway instead
+// of failing closed at startup.
+func validateFleetOAuth2(kn *kubernautv1alpha1.Kubernaut, fleet *kubernautv1alpha1.FleetSpec) []error {
+	if !fleet.OAuth2.Enabled {
+		return nil
+	}
+	const base = "spec.fleet"
+
+	var errs []error
+	if fleet.OAuth2.TokenURL == "" {
+		errs = append(errs, fmt.Errorf("%s.oauth2.tokenURL: must be set when fleet.oauth2.enabled is true", base))
 	}
 
+	// A federated IdP (e.g. Keycloak) issues distinct per-service OAuth2
+	// client registrations against one shared token endpoint (confirmed
+	// against upstream's own Helm chart: kubernaut.fleet.oauth2 helper
+	// resolves each service's own credentialsSecretRef, falling back to
+	// the fleet-wide default). Each of the six fleet-aware components
+	// needs its own *effective* value (own override, or the shared
+	// fallback) — a shared credentialsSecretRef covers whichever
+	// component doesn't override it, but a component that overrides it
+	// no longer benefits from the shared value covering it too.
+	//
+	// #224: generalized from a 2-way Gateway/RemediationOrchestrator
+	// switch to a loop over all five fleet-aware components (SP/AF/EM
+	// gained their own FleetOAuth2CredentialsSecretRef override fields)
+	// -- see Finding 7.
+	//
+	// #204: extended to a sixth component -- KA authenticates its own
+	// list_clusters/list_tools_for_cluster GatewayDiscoverer calls to
+	// the MCP Gateway and needs the same effective-value guarantee.
+	components := []struct {
+		specPath string
+		override string
+	}{
+		{"spec.gateway.fleetOAuth2CredentialsSecretRef", kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef},
+		{"spec.remediationOrchestrator.fleetOAuth2CredentialsSecretRef", kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef},
+		{"spec.signalProcessing.fleetOAuth2CredentialsSecretRef", kn.Spec.SignalProcessing.FleetOAuth2CredentialsSecretRef},
+		{"spec.apiFrontend.fleetOAuth2CredentialsSecretRef", kn.Spec.APIFrontend.FleetOAuth2CredentialsSecretRef},
+		{"spec.effectivenessMonitor.fleetOAuth2CredentialsSecretRef", kn.Spec.EffectivenessMonitor.FleetOAuth2CredentialsSecretRef},
+		{"spec.kubernautAgent.fleetOAuth2CredentialsSecretRef", kn.Spec.KubernautAgent.FleetOAuth2CredentialsSecretRef},
+	}
+	var missing []string
+	for _, c := range components {
+		if withDefault(c.override, fleet.OAuth2.CredentialsSecretRef) == "" {
+			missing = append(missing, c.specPath)
+		}
+	}
+	switch len(missing) {
+	case 0:
+		// all six have an effective value.
+	case len(components):
+		errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set when fleet.oauth2.enabled is true", base))
+	default:
+		errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set, or %s must be set, when fleet.oauth2.enabled is true (the other fleet-aware components already override their own)", base, strings.Join(missing, " or ")))
+	}
 	return errs
 }
 

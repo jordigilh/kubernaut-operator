@@ -1404,8 +1404,9 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 // namespace-scoped Role variant.
 var _ = Describe("mcpGatewayCRDPolicyRules", func() {
 	It("returns Envoy AI Gateway CRD rules for eaigw", func() {
-		var apiGroups []string
-		for _, r := range mcpGatewayCRDPolicyRules("eaigw") {
+		rules := mcpGatewayCRDPolicyRules("eaigw")
+		apiGroups := make([]string, 0, len(rules))
+		for _, r := range rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
 		}
 		Expect(apiGroups).To(ContainElement("gateway.envoyproxy.io"))
@@ -1414,8 +1415,9 @@ var _ = Describe("mcpGatewayCRDPolicyRules", func() {
 	})
 
 	It("returns Kuadrant CRD rules for kuadrant", func() {
-		var apiGroups []string
-		for _, r := range mcpGatewayCRDPolicyRules(mcpGatewayTypeKuadrant) {
+		rules := mcpGatewayCRDPolicyRules(mcpGatewayTypeKuadrant)
+		apiGroups := make([]string, 0, len(rules))
+		for _, r := range rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
 		}
 		Expect(apiGroups).To(ContainElement("mcp.kuadrant.io"))
@@ -1436,7 +1438,7 @@ var _ = Describe("SignalProcessing fleet RBAC", func() {
 	It("omits MCP Gateway CRD rules when fleet is disabled", func() {
 		kn := testKubernaut()
 		cr := signalprocessingClusterRole(kn, CommonLabels(kn))
-		var apiGroups []string
+		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
 		}
@@ -1446,7 +1448,7 @@ var _ = Describe("SignalProcessing fleet RBAC", func() {
 	It("gains MCP Gateway CRD rules when fleet enabled with mcpGatewayEndpoint set and no namespace override", func() {
 		kn := testKubernautWithFleetMCP()
 		cr := signalprocessingClusterRole(kn, CommonLabels(kn))
-		var apiGroups []string
+		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
 		}
@@ -1458,7 +1460,7 @@ var _ = Describe("SignalProcessing fleet RBAC", func() {
 		kn := testKubernautWithFleetMCP()
 		kn.Spec.SignalProcessing.MCPGatewayNamespace = testSPMCPGatewayNamespace
 		cr := signalprocessingClusterRole(kn, CommonLabels(kn))
-		var apiGroups []string
+		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
 		}
@@ -1469,7 +1471,7 @@ var _ = Describe("SignalProcessing fleet RBAC", func() {
 		kn := testKubernautWithFleetMCP()
 		kn.Spec.Fleet.MCPGatewayNamespace = testSharedMCPGatewayNamespace
 		cr := signalprocessingClusterRole(kn, CommonLabels(kn))
-		var apiGroups []string
+		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
 		}
@@ -1488,7 +1490,7 @@ var _ = Describe("APIFrontend/EffectivenessMonitor fleet RBAC", func() {
 			Auth: kubernautv1alpha1.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
 		cr := apifrontendClusterRole(kn, CommonLabels(kn))
-		var apiGroups []string
+		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
 		}
@@ -1498,7 +1500,7 @@ var _ = Describe("APIFrontend/EffectivenessMonitor fleet RBAC", func() {
 	It("apifrontendClusterRole omits MCP Gateway CRD rules when fleet is disabled", func() {
 		kn := testKubernautWithAF()
 		cr := apifrontendClusterRole(kn, CommonLabels(kn))
-		var apiGroups []string
+		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
 		}
@@ -1508,7 +1510,7 @@ var _ = Describe("APIFrontend/EffectivenessMonitor fleet RBAC", func() {
 	It("effectivenessMonitorControllerClusterRole gains MCP Gateway CRD rules when fleet enabled with mcpGatewayEndpoint set", func() {
 		kn := testKubernautWithFleetMCP()
 		cr := effectivenessMonitorControllerClusterRole(kn, CommonLabels(kn))
-		var apiGroups []string
+		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
 		}
@@ -1518,7 +1520,7 @@ var _ = Describe("APIFrontend/EffectivenessMonitor fleet RBAC", func() {
 	It("effectivenessMonitorControllerClusterRole omits MCP Gateway CRD rules when fleet is disabled", func() {
 		kn := testKubernaut()
 		cr := effectivenessMonitorControllerClusterRole(kn, CommonLabels(kn))
-		var apiGroups []string
+		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
 		}
@@ -1540,7 +1542,7 @@ var _ = Describe("MCPGatewayNamespaceRBAC", func() {
 		roles, rbs := MCPGatewayNamespaceRBAC(kn)
 		Expect(roles).To(HaveLen(1))
 		Expect(roles[0].Namespace).To(Equal(testSPMCPGatewayNamespace))
-		var apiGroups []string
+		apiGroups := make([]string, 0, len(roles[0].Rules))
 		for _, r := range roles[0].Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
 		}

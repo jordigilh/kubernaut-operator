@@ -475,7 +475,15 @@ func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
 // resolveAPIServerIPs returns the real endpoint IPs of the kubernetes API
 // server by querying the "kubernetes" endpoints in the default namespace.
 // Falls back to KUBERNETES_SERVICE_HOST if endpoint lookup fails.
-func resolveAPIServerIPs() []string {
+//
+// Deliberately uses context.Background() instead of the reconcile-scoped
+// context: this is a best-effort, self-degrading lookup (every error path,
+// including a cancelled context, falls back to KUBERNETES_SERVICE_HOST), and
+// propagating ctx here would require adding a context parameter to all ~14
+// NetworkPolicy builder functions in this file, breaking the "builder takes
+// only *Kubernaut" convention (AGENTS.md Resource Builder Patterns) for a
+// call whose behavior would not otherwise change.
+func resolveAPIServerIPs() []string { //nolint:contextcheck
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		if host := os.Getenv("KUBERNETES_SERVICE_HOST"); host != "" {
@@ -577,11 +585,27 @@ func monitoringStackEgressRule(monitoringNS string) networkingv1.NetworkPolicyEg
 }
 
 func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) *networkingv1.NetworkPolicy {
-	protoTCP := corev1.ProtocolTCP
-	p8443 := intstr.FromInt32(PortHTTPS)
+	healthPort, metricsPort := apifrontendHealthAndMetricsPorts(kn, sidecar)
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: ObjectMeta(kn, ComponentAPIFrontend+"-netpol", ComponentAPIFrontend),
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentAPIFrontend)},
+			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeIngress,
+				networkingv1.PolicyTypeEgress,
+			},
+			Ingress: apifrontendIngressRules(kn, healthPort, metricsPort),
+			Egress:  apifrontendEgressRules(kn, metricsPort),
+		},
+	}
+}
 
-	healthPort := PortHealthProbe
-	metricsPort := PortMetrics
+// apifrontendHealthAndMetricsPorts resolves AF's health and metrics ports,
+// applying the sidecar's shifted defaults and then any administrator
+// override, shared by both the ingress and egress rule builders below.
+func apifrontendHealthAndMetricsPorts(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) (healthPort, metricsPort int32) {
+	healthPort = PortHealthProbe
+	metricsPort = PortMetrics
 	if sidecar.ShiftsPorts() {
 		healthPort = 8082
 		metricsPort = 9092
@@ -592,6 +616,15 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSi
 	if kn.Spec.APIFrontend.MetricsPort != nil {
 		metricsPort = *kn.Spec.APIFrontend.MetricsPort
 	}
+	return healthPort, metricsPort
+}
+
+// apifrontendIngressRules builds AF's ingress rules: same-namespace HTTPS,
+// cluster-wide health probes, monitoring-namespace metrics scraping (when
+// enabled), and ingress-namespace HTTPS (when the OCP Route is enabled).
+func apifrontendIngressRules(kn *kubernautv1alpha1.Kubernaut, healthPort, metricsPort int32) []networkingv1.NetworkPolicyIngressRule {
+	protoTCP := corev1.ProtocolTCP
+	p8443 := intstr.FromInt32(PortHTTPS)
 	pHealth := intstr.FromInt32(healthPort)
 	pMetrics := intstr.FromInt32(metricsPort)
 
@@ -633,6 +666,15 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSi
 			},
 		})
 	}
+	return ingress
+}
+
+// apifrontendEgressRules builds AF's egress rules: the shared base egress
+// (DNS/API server), intra-kubernaut HTTPS, monitoring/Valkey/OIDC/Fleet
+// destinations gated on their respective spec fields.
+func apifrontendEgressRules(kn *kubernautv1alpha1.Kubernaut, metricsPort int32) []networkingv1.NetworkPolicyEgressRule {
+	protoTCP := corev1.ProtocolTCP
+	p8443 := intstr.FromInt32(PortHTTPS)
 
 	egress := baseEgress(5)
 	egress = append(egress, networkingv1.NetworkPolicyEgressRule{
@@ -646,6 +688,7 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSi
 		},
 	})
 	if kn.Spec.Monitoring.MonitoringEnabled() {
+		pMetrics := intstr.FromInt32(metricsPort)
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
 			To: []networkingv1.NetworkPolicyPeer{
 				{NamespaceSelector: namespaceNameSelector(OCPMonitoringNamespace)},
@@ -681,19 +724,7 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSi
 	if kn.Spec.FleetEnabled() {
 		egress = append(egress, fleetDestinationsEgressRule())
 	}
-
-	return &networkingv1.NetworkPolicy{
-		ObjectMeta: ObjectMeta(kn, ComponentAPIFrontend+"-netpol", ComponentAPIFrontend),
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentAPIFrontend)},
-			PolicyTypes: []networkingv1.PolicyType{
-				networkingv1.PolicyTypeIngress,
-				networkingv1.PolicyTypeEgress,
-			},
-			Ingress: ingress,
-			Egress:  egress,
-		},
-	}
+	return egress
 }
 
 // hasOIDCEgress returns true when AF needs outbound HTTPS for OIDC/JWKS

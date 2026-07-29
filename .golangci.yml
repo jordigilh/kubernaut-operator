@@ -4,28 +4,98 @@ run:
 linters:
   default: none
   enable:
+    - bodyclose
+    - containedctx
+    - contextcheck
     - copyloopvar
     - dupl
     - errcheck
+    - errorlint
+    - forbidigo
+    - funlen
     - ginkgolinter
     - goconst
+    - gocognit
+    - gocritic
     - gocyclo
+    - gosec
     - govet
     - ineffassign
+    - interfacebloat
     - lll
+    - loggercheck
+    - maintidx
     - misspell
     - nakedret
+    - nestif
+    - nilerr
+    - nilnil
+    - noctx
     - prealloc
+    - predeclared
     - revive
+    - rowserrcheck
+    - sqlclosecheck
     - staticcheck
     - unconvert
     - unparam
     - unused
+    - wastedassign
   settings:
+    govet:
+      enable:
+        - shadow  # Variable shadowing (100 Go Mistakes / AGENTS.md anti-pattern
+                  # checklist). The benign `err`/`ok` re-declaration idiom, and
+                  # Ginkgo BDD suite-scoped re-declarations in test files, are
+                  # excluded below.
     revive:
       rules:
         - name: comment-spacings
         - name: import-shadowing
+    # Per TESTING_GUIDELINES.md (mirrored from kubernaut's parent repo, no
+    # exceptions): forbid NULL-TESTING weak assertions, Skip() in tests that
+    # require infrastructure (use Fail() instead per DD-AUDIT-003), and
+    # time.Sleep() (use Eventually/Consistently for async validation).
+    forbidigo:
+      forbid:
+        - pattern: '\bExpect\([^)]+\)\.ToNot\(BeNil\(\)\)'
+          msg: "NULL-TESTING anti-pattern: Validate business outcomes, not just nil checks. See TESTING_GUIDELINES.md"
+        - pattern: '\bExpect\([^)]+\)\.ToNot\(BeEmpty\(\)\)'
+          msg: "NULL-TESTING anti-pattern: Validate specific values or counts, not just empty checks. See TESTING_GUIDELINES.md"
+        - pattern: '\.ShouldNot\(BeEmpty\(\)\)'
+          msg: "NULL-TESTING anti-pattern: Validate terminal states, not just empty checks"
+        - pattern: '\.ShouldNot\(BeNil\(\)\)'
+          msg: "NULL-TESTING anti-pattern: Validate actual pointer values after checking non-nil"
+        - pattern: '\bSkip\('
+          msg: "Skip() forbidden when required infrastructure unavailable (DD-AUDIT-003). Use Fail() instead."
+        - pattern: 'time\.Sleep\('
+          msg: "time.Sleep() forbidden. Use Eventually/Consistently for async validation."
+    funlen:
+      lines: 80
+      statements: 60
+    gocyclo:
+      min-complexity: 15
+    gocognit:
+      min-complexity: 20
+    nestif:
+      min-complexity: 5
+    maintidx:
+      under: 20
+    # NOTE: godox is intentionally NOT in the enabled linters list above --
+    # deferred-work tracking is TODO/FIXME's entire purpose, so it should
+    # never block a merge. It runs as a separate, deliberately
+    # continue-on-error step in .github/workflows/lint.yml instead, so
+    # findings are visible without gating CI. This settings block only
+    # configures its keyword scope for that step.
+    godox:
+      # Default keywords are [TODO, BUG, FIXME]; this list REPLACES the
+      # default rather than extending it. BUG is dropped for the same reason
+      # kubernaut (this operator's parent repo) drops it: "Bug:"/"bug fix"
+      # style doc-comment prose describing an already-fixed defect is common
+      # and is not a pending-work marker like TODO/FIXME.
+      keywords:
+        - TODO
+        - FIXME
   exclusions:
     generated: lax
     rules:
@@ -36,6 +106,51 @@ linters:
           - dupl
           - lll
         path: internal/*
+      # G101: test fixtures set CRD spec fields like CredentialsSecretName /
+      # CredentialsSecretRef to short fake strings (e.g. "llm-creds"); these
+      # are Secret *reference names*, not credential material.
+      - path: _test\.go
+        linters:
+          - gosec
+        text: "G101"
+      # G101: mount-path constants (e.g. fleetTokenMountPath) and
+      # *TLSSecretName / *SecretName identifiers in these two files are
+      # filesystem paths and Secret object names, not credential values.
+      - path: "internal/resources/(configmaps|services)\\.go"
+        linters:
+          - gosec
+        text: "G101"
+      # G204: test/e2e and test/utils intentionally build kubectl/make
+      # subprocess invocations from controlled, test-internal arguments.
+      - path: "(^test/|_test\\.go)"
+        linters:
+          - gosec
+        text: "G204"
+      # funlen/gocyclo/gocognit/nestif/maintidx apply to production code
+      # only. Ginkgo BDD test files/suites are long and branchy by nature
+      # (table-driven entries, multi-scenario Context/When nesting) and were
+      # never in scope for this remediation.
+      - path: "(_test\\.go|^test/)"
+        linters:
+          - funlen
+          - gocyclo
+          - gocognit
+          - nestif
+          - maintidx
+      # govet shadow: the idiomatic `if err := ...; err != nil` re-declaration
+      # pattern is excluded everywhere. Only the benign err/ok re-declaration
+      # is excluded; shadowing of other identifiers still fails lint.
+      - linters:
+          - govet
+        text: 'shadow: declaration of "(err|ok)" shadows declaration'
+      # govet shadow: Ginkgo BDD suites idiomatically re-declare suite-scoped
+      # variables (ctx, client, logger, recorder, etc.) inside BeforeEach/It
+      # closures for readability. Shadowing still fails lint for production
+      # (non-test) code.
+      - path: "(_test\\.go|^test/)"
+        linters:
+          - govet
+        text: "shadow:"
     paths:
       - third_party$
       - builtin$
@@ -50,3 +165,10 @@ formatters:
       - third_party$
       - builtin$
       - examples$
+
+# Surface every finding per run instead of golangci-lint's default caps
+# (max-issues-per-linter: 50, max-same-issues: 3) so incremental linter
+# rollout doesn't hide additional occurrences behind repeated re-runs.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
