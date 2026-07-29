@@ -80,7 +80,7 @@ func validateLLMProfileContent(name string, llm *kubernautv1alpha1.LLMProfileSpe
 		errs = append(errs, fmt.Errorf("%s.provider: required — specify the LLM provider (e.g. \"openai\", \"vertexai\")", base))
 	}
 	if llm.Model == "" {
-		errs = append(errs, fmt.Errorf("%s.model: required — specify the LLM model name (e.g. \"gpt-4o\", \"gemini-2.5-pro\")", base))
+		errs = append(errs, fmt.Errorf("%s.model: required — specify the LLM model name (e.g. \"gpt-4o\" for provider \"openai\", \"claude-sonnet-5\" for provider \"vertexai\"/\"anthropic\")", base))
 	}
 	if llm.CredentialsSecretName == "" {
 		errs = append(errs, fmt.Errorf("%s.credentialsSecretName: required — provide a Secret with LLM API credentials", base))

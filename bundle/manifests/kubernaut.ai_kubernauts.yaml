@@ -438,6 +438,7 @@ spec:
                       Reference to a pre-existing ConfigMap containing RBAC role-to-tool
                       mappings (key: "rbac_roles.yaml"). When empty, the operator generates
                       a default RBAC roles ConfigMap.
+
                       Deprecated: replaced by RBAC field with SAR-based tool authorization.
                     properties:
                       configMapName:
@@ -538,9 +539,15 @@ spec:
                           Reference to a named profile in spec.llmProfiles for severity-triage
                           LLM calls. When empty, triage inherits API Frontend's own resolved
                           profile (llmProfileRef, or KA's when that is also empty) -- matching
-                          today's behavior. Must share the same credentialsSecretName as API
-                          Frontend's resolved profile (no new Secret volumes are provisioned
-                          for triage).
+                          today's behavior. May reference a profile with a different provider
+                          and/or credentialsSecretName than API Frontend's own resolved
+                          profile; the operator provisions a dedicated Secret volume for
+                          triage's credentials when they differ. The one exception is
+                          vertex_ai: when both triage's and API Frontend's own resolved
+                          profile use vertex_ai, they must still share a credentialsSecretName,
+                          since API Frontend's Vertex AI client relies on ambient Application
+                          Default Credentials rather than per-profile credentials
+                          (kubernaut#1731).
                         type: string
                     type: object
                   shutdown:
@@ -1575,10 +1582,11 @@ spec:
                     description: |-
                       Per-phase LLM profile overrides. Keys are agent phase names
                       (rca, workflow_discovery, validation); values are profile names in
-                      spec.llmProfiles. Each referenced profile must share the same
-                      credentialsSecretName as llmProfileRef's profile (cross-credential
-                      phase overrides are not yet supported). When absent, all phases use
-                      llmProfileRef's profile.
+                      spec.llmProfiles. Each referenced profile may use its own provider
+                      and credentialsSecretName, independent of llmProfileRef's profile —
+                      the operator mounts a dedicated Secret volume for any phase profile
+                      whose credentialsSecretName differs from llmProfileRef's. When
+                      absent, all phases use llmProfileRef's profile.
                     type: object
                     x-kubernetes-validations:
                     - message: 'phaseModels keys must be one of: rca, workflow_discovery,
@@ -1758,7 +1766,13 @@ spec:
                       description: Maximum number of retries for LLM API calls.
                       type: integer
                     model:
-                      description: LLM model name (e.g. "gpt-4o", "gemini-2.5-pro").
+                      description: |-
+                        LLM model name (e.g. "gpt-4o" for provider "openai", "claude-sonnet-5"
+                        for provider "vertexai"/"anthropic"). Note: as of kubernaut v1.5/main,
+                        there is no native Gemini/Google-GenAI client — "vertexai" always
+                        builds an Anthropic-family client regardless of the configured model,
+                        so Gemini model names are not currently functional (see
+                        jordigilh/kubernaut#1778).
                       minLength: 1
                       type: string
                     oauth2:
