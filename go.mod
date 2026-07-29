@@ -1,6 +1,6 @@
 module github.com/jordigilh/kubernaut-operator
 
-go 1.26
+go 1.26.5
 
 require (
 	github.com/jordigilh/kubernaut v1.5.2
