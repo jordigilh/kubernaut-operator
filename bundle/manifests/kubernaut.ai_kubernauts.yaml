@@ -1279,7 +1279,13 @@ spec:
                         description: Maximum number of retries for LLM API calls.
                         type: integer
                       model:
-                        description: LLM model name (e.g. "gpt-4o", "gemini-2.5-pro").
+                        description: |-
+                          LLM model name (e.g. "gpt-4o" for provider "openai", "claude-sonnet-5"
+                          for provider "vertexai"/"anthropic"). Note: as of kubernaut v1.5/main,
+                          there is no native Gemini/Google-GenAI client — "vertexai" always
+                          builds an Anthropic-family client regardless of the configured model,
+                          so Gemini model names are not currently functional (see
+                          jordigilh/kubernaut#1778).
                         minLength: 1
                         type: string
                       oauth2:
@@ -1316,6 +1322,13 @@ spec:
                             model:
                               type: string
                             provider:
+                              type: string
+                            temperature:
+                              description: |-
+                                Sampling temperature override for this phase (e.g. "0.7").
+                                Serialized as string to avoid CRD float portability issues (#242).
+                                When empty, the phase uses the base agent's temperature (which may
+                                itself be unset -- see LLMConfig.Temperature).
                               type: string
                           type: object
                         description: |-

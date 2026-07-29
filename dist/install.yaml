@@ -1287,7 +1287,13 @@ spec:
                         description: Maximum number of retries for LLM API calls.
                         type: integer
                       model:
-                        description: LLM model name (e.g. "gpt-4o", "gemini-2.5-pro").
+                        description: |-
+                          LLM model name (e.g. "gpt-4o" for provider "openai", "claude-sonnet-5"
+                          for provider "vertexai"/"anthropic"). Note: as of kubernaut v1.5/main,
+                          there is no native Gemini/Google-GenAI client — "vertexai" always
+                          builds an Anthropic-family client regardless of the configured model,
+                          so Gemini model names are not currently functional (see
+                          jordigilh/kubernaut#1778).
                         minLength: 1
                         type: string
                       oauth2:
@@ -1324,6 +1330,13 @@ spec:
                             model:
                               type: string
                             provider:
+                              type: string
+                            temperature:
+                              description: |-
+                                Sampling temperature override for this phase (e.g. "0.7").
+                                Serialized as string to avoid CRD float portability issues (#242).
+                                When empty, the phase uses the base agent's temperature (which may
+                                itself be unset -- see LLMConfig.Temperature).
                               type: string
                           type: object
                         description: |-
@@ -2812,7 +2825,7 @@ spec:
           value: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
         - name: RELATED_IMAGE_INIT_UBI_MINIMAL
           value: registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c
-        image: quay.io/kubernaut-ai/kubernaut-operator@sha256:f8ad5602bc020add618d04717dc26fe3ddfaa69eb4c8fe3dd6df52046d4afc74
+        image: quay.io/kubernaut-ai/kubernaut-operator:1.5.7
         livenessProbe:
           httpGet:
             path: /healthz
