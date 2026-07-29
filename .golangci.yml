@@ -15,6 +15,7 @@ linters:
     - goconst
     - gocritic
     - gocyclo
+    - gosec
     - govet
     - ineffassign
     - interfacebloat
@@ -50,6 +51,26 @@ linters:
           - dupl
           - lll
         path: internal/*
+      # G101: test fixtures set CRD spec fields like CredentialsSecretName /
+      # CredentialsSecretRef to short fake strings (e.g. "llm-creds"); these
+      # are Secret *reference names*, not credential material.
+      - path: _test\.go
+        linters:
+          - gosec
+        text: "G101"
+      # G101: mount-path constants (e.g. fleetTokenMountPath) and
+      # *TLSSecretName / *SecretName identifiers in these two files are
+      # filesystem paths and Secret object names, not credential values.
+      - path: "internal/resources/(configmaps|services)\\.go"
+        linters:
+          - gosec
+        text: "G101"
+      # G204: test/e2e and test/utils intentionally build kubectl/make
+      # subprocess invocations from controlled, test-internal arguments.
+      - path: "(^test/|_test\\.go)"
+        linters:
+          - gosec
+        text: "G204"
     paths:
       - third_party$
       - builtin$

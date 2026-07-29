@@ -224,7 +224,11 @@ func DataStorageDBSecret(kn *kubernautv1alpha1.Kubernaut, pgSecret *corev1.Secre
 		}
 	}
 
-	content, err := yaml.Marshal(dbSecretsYAML{
+	// The Password field intentionally carries the value read from the
+	// source PostgreSQL Secret above -- this builds a derived Kubernetes
+	// Secret's data (RBAC-protected, encrypted at rest), not a log line or
+	// ConfigMap, so re-encoding it here is the function's whole purpose.
+	content, err := yaml.Marshal(dbSecretsYAML{ //nolint:gosec // G117: Secret-to-Secret transform, not exposure
 		Host:     kn.Spec.PostgreSQL.Host,
 		Port:     PostgreSQLPort(kn),
 		DBName:   string(pgSecret.Data["POSTGRES_DB"]),
