@@ -11,8 +11,10 @@ linters:
     - dupl
     - errcheck
     - errorlint
+    - funlen
     - ginkgolinter
     - goconst
+    - gocognit
     - gocritic
     - gocyclo
     - gosec
@@ -21,8 +23,10 @@ linters:
     - interfacebloat
     - lll
     - loggercheck
+    - maintidx
     - misspell
     - nakedret
+    - nestif
     - nilerr
     - nilnil
     - noctx
@@ -41,6 +45,17 @@ linters:
       rules:
         - name: comment-spacings
         - name: import-shadowing
+    funlen:
+      lines: 80
+      statements: 60
+    gocyclo:
+      min-complexity: 15
+    gocognit:
+      min-complexity: 20
+    nestif:
+      min-complexity: 5
+    maintidx:
+      under: 20
   exclusions:
     generated: lax
     rules:
@@ -71,6 +86,17 @@ linters:
         linters:
           - gosec
         text: "G204"
+      # funlen/gocyclo/gocognit/nestif/maintidx apply to production code
+      # only. Ginkgo BDD test files/suites are long and branchy by nature
+      # (table-driven entries, multi-scenario Context/When nesting) and were
+      # never in scope for this remediation.
+      - path: "(_test\\.go|^test/)"
+        linters:
+          - funlen
+          - gocyclo
+          - gocognit
+          - nestif
+          - maintidx
     paths:
       - third_party$
       - builtin$
