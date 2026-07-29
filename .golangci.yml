@@ -11,6 +11,7 @@ linters:
     - dupl
     - errcheck
     - errorlint
+    - forbidigo
     - funlen
     - ginkgolinter
     - goconst
@@ -45,6 +46,24 @@ linters:
       rules:
         - name: comment-spacings
         - name: import-shadowing
+    # Per TESTING_GUIDELINES.md (mirrored from kubernaut's parent repo, no
+    # exceptions): forbid NULL-TESTING weak assertions, Skip() in tests that
+    # require infrastructure (use Fail() instead per DD-AUDIT-003), and
+    # time.Sleep() (use Eventually/Consistently for async validation).
+    forbidigo:
+      forbid:
+        - pattern: '\bExpect\([^)]+\)\.ToNot\(BeNil\(\)\)'
+          msg: "NULL-TESTING anti-pattern: Validate business outcomes, not just nil checks. See TESTING_GUIDELINES.md"
+        - pattern: '\bExpect\([^)]+\)\.ToNot\(BeEmpty\(\)\)'
+          msg: "NULL-TESTING anti-pattern: Validate specific values or counts, not just empty checks. See TESTING_GUIDELINES.md"
+        - pattern: '\.ShouldNot\(BeEmpty\(\)\)'
+          msg: "NULL-TESTING anti-pattern: Validate terminal states, not just empty checks"
+        - pattern: '\.ShouldNot\(BeNil\(\)\)'
+          msg: "NULL-TESTING anti-pattern: Validate actual pointer values after checking non-nil"
+        - pattern: '\bSkip\('
+          msg: "Skip() forbidden when required infrastructure unavailable (DD-AUDIT-003). Use Fail() instead."
+        - pattern: 'time\.Sleep\('
+          msg: "time.Sleep() forbidden. Use Eventually/Consistently for async validation."
     funlen:
       lines: 80
       statements: 60
