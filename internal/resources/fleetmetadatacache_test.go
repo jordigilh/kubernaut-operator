@@ -204,7 +204,7 @@ var _ = Describe("FleetMetadataCache RBAC", func() {
 		cr := fleetMetadataCacheClusterRole(kn, labels)
 		Expect(cr.Name).To(Equal(kn.Namespace + "-fleetmetadatacache"))
 
-		var apiGroups []string
+		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
 		}
@@ -218,7 +218,7 @@ var _ = Describe("FleetMetadataCache RBAC", func() {
 		labels := CommonLabels(kn)
 		cr := fleetMetadataCacheClusterRole(kn, labels)
 
-		var apiGroups []string
+		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
 		}
