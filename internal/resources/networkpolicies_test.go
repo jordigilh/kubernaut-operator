@@ -381,6 +381,71 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 			}
 		}
 	})
+
+	// Issue #1839 (upstream kubernaut, merged as PR #1841): AF's severity-triage
+	// pipeline calls Prometheus (Thanos Querier) directly for GetAlerts/GetRules/
+	// InstantQuery via afSeverityTriageConfig's PrometheusURL (thanos-querier.
+	// openshift-monitoring.svc:9091), but AF's NetworkPolicy egress never opened
+	// port 9091 -- only the metrics port (9090, meant for the reverse/ingress
+	// direction) was ever allowed toward openshift-monitoring. On any cluster
+	// enforcing NetworkPolicy (OVN-Kubernetes on OpenShift), every AF->Prometheus
+	// call was silently dropped. Upstream's now-removed Tier 3 LLM fallback
+	// absorbed the resulting error identically to a genuine "no alert data"
+	// response, fully masking the connectivity gap until Tier 3's removal
+	// exposed it (see DD-AF-010 upstream).
+	It("allows egress to Thanos Querier (9091) when monitoring is enabled", func() {
+		kn := testKubernautWithAF()
+		enableNP(kn)
+		var afNP *networkingv1.NetworkPolicy
+		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
+			if np.Name == ComponentAPIFrontend+"-netpol" {
+				afNP = np
+				break
+			}
+		}
+		Expect(afNP).NotTo(BeNil())
+
+		found := false
+		for _, rule := range afNP.Spec.Egress {
+			for _, peer := range rule.To {
+				if peer.NamespaceSelector == nil ||
+					peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != OCPMonitoringNamespace {
+					continue
+				}
+				for _, port := range rule.Ports {
+					if port.Port != nil && int32(port.Port.IntValue()) == 9091 {
+						found = true
+					}
+				}
+			}
+		}
+		Expect(found).To(BeTrue(), "AF egress should allow port 9091 (Thanos Querier) to %s for severity-triage Prometheus calls", OCPMonitoringNamespace)
+	})
+
+	It("does not allow egress to the monitoring namespace when monitoring is disabled", func() {
+		kn := testKubernautWithAF()
+		enableNP(kn)
+		monitoringDisabled := false
+		kn.Spec.Monitoring.Enabled = &monitoringDisabled
+		var afNP *networkingv1.NetworkPolicy
+		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
+			if np.Name == ComponentAPIFrontend+"-netpol" {
+				afNP = np
+				break
+			}
+		}
+		Expect(afNP).NotTo(BeNil())
+
+		for _, rule := range afNP.Spec.Egress {
+			for _, peer := range rule.To {
+				if peer.NamespaceSelector != nil {
+					Expect(peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"]).
+						NotTo(Equal(OCPMonitoringNamespace),
+							"should not have monitoring-namespace egress when monitoring disabled")
+				}
+			}
+		}
+	})
 })
 
 var _ = Describe("KubernautAgent NetworkPolicy with AF", func() {
