@@ -5,6 +5,17 @@ All notable changes to the Kubernaut Operator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **BREAKING**: `spec.monitoring.enabled: false` is no longer accepted; the
+  CRD schema now rejects it via a CEL validation rule on both Create and
+  Update. This operator has no non-OCP monitoring backend to fall back to,
+  and disabling monitoring caused severity-gated remediation request
+  creation to fail closed once upstream kubernaut#1839 removed AF's
+  ungrounded LLM severity fallback. See `docs/upgrade-1.5-to-1.6.md` and
+  `docs/design/DD-273-deprecate-monitoring-disabled.md` (#273)
+
 ## [1.5.0] - 2026-06-01
 
 ### Added

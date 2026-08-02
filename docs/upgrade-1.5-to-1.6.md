@@ -110,6 +110,35 @@ Application Default Credentials rather than per-profile credentials
 so two different `vertex_ai` Secrets would silently collide rather than
 each taking effect.
 
+### `spec.monitoring.enabled: false` is no longer accepted (#273)
+
+`spec.monitoring.enabled` must now be `true` or omitted; the CRD schema
+rejects an explicit `false` on both Create and Update via an
+`x-kubernetes-validations` (CEL) rule.
+
+This operator is OCP-specific throughout — NetworkPolicy rules, RBAC, and
+ConfigMap generation all hardcode the `openshift-monitoring` namespace and
+Thanos Querier URL, and OCP ships cluster-monitoring by default, so there is
+no supported non-OCP fallback for this toggle to select between. Disabling
+it also silently degraded several integrations at once: Gateway's
+`AlertmanagerConfig`/token Secret, EffectivenessMonitor's external
+Prometheus/AlertManager config, Kubernaut Agent's Prometheus/AlertManager
+tools, and API Frontend's severity-triage Prometheus lookups. The last of
+these became a reliability bug rather than a silent no-op once upstream
+[jordigilh/kubernaut#1839](https://github.com/jordigilh/kubernaut/issues/1839)
+removed the ungrounded LLM fallback that had been absorbing the resulting
+"no data" response — with monitoring disabled, severity-gated remediation
+request creation now fails closed. See
+[jordigilh/kubernaut-operator#273](https://github.com/jordigilh/kubernaut-operator/issues/273)
+for the full analysis and alternatives considered.
+
+There is no automated in-operator conversion. If your 1.5 CR sets
+`spec.monitoring.enabled: false`, remove the field (it defaults to `true`)
+or set it explicitly to `true` before applying against the 1.6 CRD.
+
+This change is **not** backported to `release/v1.5` — see #271 for the
+separately-backported NetworkPolicy fix that applies to both lines.
+
 ## Migrating your CR
 
 ### Option A: migration script (recommended for the common case)

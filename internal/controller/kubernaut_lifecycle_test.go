@@ -649,52 +649,17 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(names).To(HaveKey(testNamespace + "-gateway-signal-source"))
 		})
 
-		It("should delete monitoring RBAC and service-CA CMs when monitoring is disabled", func() {
-			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
-			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
-			r := reconcileToRunning(ctx)
-
-			By("verifying monitoring CRs exist")
-			monCR := &rbacv1.ClusterRole{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNamespace + "-alertmanager-view"}, monCR)).To(Succeed())
-
-			By("verifying service-CA CMs exist")
-			emCA := &corev1.ConfigMap{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: "effectivenessmonitor-service-ca", Namespace: testNamespace,
-			}, emCA)).To(Succeed())
-			kaCA := &corev1.ConfigMap{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: "kubernaut-agent-service-ca", Namespace: testNamespace,
-			}, kaCA)).To(Succeed())
-
-			By("disabling monitoring")
-			kn := &kubernautv1alpha1.Kubernaut{}
-			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			f := false
-			kn.Spec.Monitoring.Enabled = &f
-			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
-
-			By("reconciling after toggle")
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			Expect(err).NotTo(HaveOccurred())
-
-			err = k8sClient.Get(ctx, types.NamespacedName{Name: testNamespace + "-alertmanager-view"}, monCR)
-			Expect(errors.IsNotFound(err)).To(BeTrue(), "monitoring ClusterRole should be deleted")
-
-			By("verifying service-CA CMs are cleaned up")
-			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name: "effectivenessmonitor-service-ca", Namespace: testNamespace,
-			}, emCA)
-			Expect(errors.IsNotFound(err)).To(BeTrue(),
-				"effectivenessmonitor-service-ca should be deleted when monitoring is disabled")
-			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name: "kubernaut-agent-service-ca", Namespace: testNamespace,
-			}, kaCA)
-			Expect(errors.IsNotFound(err)).To(BeTrue(),
-				"kubernaut-agent-service-ca should be deleted when monitoring is disabled")
-		})
+		// NOTE (#273): "should delete monitoring RBAC and service-CA CMs when
+		// monitoring is disabled" was removed here. As of v1.6, the CRD's
+		// XValidation rule on monitoring.enabled (api/v1alpha1/kubernaut_types.go)
+		// rejects false on both Create and Update, so toggling an existing CR
+		// to monitoring.enabled=false is no longer reachable through the API
+		// server -- see MON-001 in kubernaut_controller_test.go for the
+		// admission-rejection coverage. pruneStaleMonitoringRBAC and the
+		// service-CA cleanup it exercises remain in place defensively but are
+		// no longer exercised by an IT test that goes through k8sClient,
+		// since there is no longer a supported way to construct the
+		// precondition (an admitted CR with monitoring.enabled=false).
 
 		It("should create AWX RBAC when ansible is enabled", func() {
 			createBYOSecrets(ctx)
@@ -1220,33 +1185,11 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(crbList.Items).To(BeEmpty(), "all operator-managed CRBs should be deleted")
 		})
 
-		It("should always attempt monitoring cleanup even when monitoring is disabled", func() {
-			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
-			r := reconcileToRunning(ctx)
-
-			By("verifying monitoring CRBs exist")
-			monCRBName := testNamespace + "-effectivenessmonitor-alertmanager-view-binding"
-			crb := &rbacv1.ClusterRoleBinding{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: monCRBName}, crb)).To(Succeed())
-
-			By("disabling monitoring and deleting CR")
-			kn := &kubernautv1alpha1.Kubernaut{}
-			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			f := false
-			kn.Spec.Monitoring.Enabled = &f
-			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
-
-			stripWorkflowNamespaceCreatedByAnnotation(ctx)
-			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
-
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			Expect(err).NotTo(HaveOccurred())
-
-			err = k8sClient.Get(ctx, types.NamespacedName{Name: monCRBName}, crb)
-			Expect(errors.IsNotFound(err)).To(BeTrue(),
-				"monitoring CRB should be cleaned up even when monitoring is disabled")
-		})
+		// NOTE (#273): "should always attempt monitoring cleanup even when
+		// monitoring is disabled" was removed here for the same reason as
+		// the analogous test above -- monitoring.enabled=false is no longer
+		// admissible, so there is no supported way to reach this
+		// precondition through k8sClient.
 
 		It("should always attempt AWX cleanup even when ansible is disabled", func() {
 			createBYOSecrets(ctx)
