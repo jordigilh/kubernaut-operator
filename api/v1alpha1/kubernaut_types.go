@@ -40,10 +40,6 @@ type KubernautSpec struct {
 	// +optional
 	Ansible AnsibleSpec `json:"ansible,omitempty"`
 
-	// OCP monitoring integration (Prometheus, AlertManager).
-	// +optional
-	Monitoring MonitoringSpec `json:"monitoring,omitempty"`
-
 	// Notification controller settings.
 	// +optional
 	Notification NotificationSpec `json:"notification,omitempty"`
@@ -397,29 +393,6 @@ type SecretKeyRef struct {
 	// +kubebuilder:default="token"
 	// +optional
 	Key string `json:"key,omitempty"`
-}
-
-// MonitoringSpec configures OCP monitoring integration.
-// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || self.enabled == true",message="monitoring.enabled must not be set to false; OCP monitoring integration cannot be disabled and is required for severity-gated remediation (see #273)"
-type MonitoringSpec struct {
-	// Whether OCP monitoring integration is enabled. When true, the
-	// operator auto-derives Prometheus/AlertManager URLs and provisions
-	// monitoring RBAC.
-	//
-	// NOTE: explicitly setting this to false is rejected by the CRD schema
-	// as of v1.6 (the field itself is not deprecated -- only the false
-	// value is disallowed; omit it or set it to true). This operator is
-	// OCP-specific throughout (hardcoded openshift-monitoring namespace,
-	// Thanos Querier URL, OCP Routes) and has no non-OCP monitoring backend
-	// to fall back to; OCP ships cluster-monitoring by default. Disabling
-	// it also disables severity triage's Prometheus lookups, and upstream
-	// kubernaut#1839 removed the ungrounded LLM fallback that previously
-	// papered over the resulting "no data" response, so severity-gated
-	// remediation request creation now fails closed whenever this is
-	// false. See #273.
-	// +kubebuilder:default=true
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
 }
 
 // NotificationSpec configures the notification controller.
@@ -1856,11 +1829,6 @@ type KubernautList struct {
 
 func init() {
 	SchemeBuilder.Register(&Kubernaut{}, &KubernautList{})
-}
-
-// MonitoringEnabled returns true when OCP monitoring integration is active.
-func (s *MonitoringSpec) MonitoringEnabled() bool {
-	return s.Enabled == nil || *s.Enabled
 }
 
 // RouteEnabled returns true when the Gateway Route should be created.

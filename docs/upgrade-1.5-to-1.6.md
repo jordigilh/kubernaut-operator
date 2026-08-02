@@ -110,17 +110,20 @@ Application Default Credentials rather than per-profile credentials
 so two different `vertex_ai` Secrets would silently collide rather than
 each taking effect.
 
-### `spec.monitoring.enabled: false` is no longer accepted (#273)
+### `spec.monitoring` is removed — OCP monitoring integration can no longer be disabled (#273)
 
-`spec.monitoring.enabled` must now be `true` or omitted; the CRD schema
-rejects an explicit `false` on both Create and Update via an
-`x-kubernetes-validations` (CEL) rule.
+`spec.monitoring` (and its only field, `enabled`) is removed from the CRD
+schema entirely as of 1.6. It is not deprecated or defaulted — it no longer
+exists. OCP monitoring integration (Prometheus/AlertManager auto-discovery,
+the RBAC that grants it, and the NetworkPolicy egress that allows it) is now
+provisioned unconditionally on every reconcile, with no spec field left that
+can turn it off.
 
 This operator is OCP-specific throughout — NetworkPolicy rules, RBAC, and
 ConfigMap generation all hardcode the `openshift-monitoring` namespace and
-Thanos Querier URL, and OCP ships cluster-monitoring by default, so there is
-no supported non-OCP fallback for this toggle to select between. Disabling
-it also silently degraded several integrations at once: Gateway's
+Thanos Querier URL, and OCP ships cluster-monitoring by default, so there was
+never a supported non-OCP fallback for this toggle to select between.
+Disabling it used to silently degrade several integrations at once: Gateway's
 `AlertmanagerConfig`/token Secret, EffectivenessMonitor's external
 Prometheus/AlertManager config, Kubernaut Agent's Prometheus/AlertManager
 tools, and API Frontend's severity-triage Prometheus lookups. The last of
@@ -128,13 +131,17 @@ these became a reliability bug rather than a silent no-op once upstream
 [jordigilh/kubernaut#1839](https://github.com/jordigilh/kubernaut/issues/1839)
 removed the ungrounded LLM fallback that had been absorbing the resulting
 "no data" response — with monitoring disabled, severity-gated remediation
-request creation now fails closed. See
+request creation failed closed. See
 [jordigilh/kubernaut-operator#273](https://github.com/jordigilh/kubernaut-operator/issues/273)
 for the full analysis and alternatives considered.
 
 There is no automated in-operator conversion. If your 1.5 CR sets
-`spec.monitoring.enabled: false`, remove the field (it defaults to `true`)
-or set it explicitly to `true` before applying against the 1.6 CRD.
+`spec.monitoring` (with `enabled` set to either `true` or `false`), delete
+the block before applying against the 1.6 CRD — the field is not part of the
+1.6 schema, so the apiserver's structural schema will silently prune it if
+you apply the manifest as-is (this is harmless, since the behavior it used
+to gate now always runs), but the field should still be removed from your
+source-controlled manifests to avoid confusion.
 
 This change is **not** backported to `release/v1.5` — see #271 for the
 separately-backported NetworkPolicy fix that applies to both lines.

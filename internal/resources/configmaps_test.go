@@ -846,17 +846,6 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("tlsCaFile: /etc/ssl/em/service-ca.crt"), "EM config should contain external.tlsCaFile when monitoring enabled, got:\n%s", data)
 		})
 
-		It("omits external monitoring when monitoring is disabled", func() {
-			kn := testKubernaut()
-			disabled := false
-			kn.Spec.Monitoring.Enabled = &disabled
-			cm, err := EffectivenessMonitorConfigMap(kn)
-			Expect(err).NotTo(HaveOccurred())
-			data := cm.Data["effectivenessmonitor.yaml"]
-
-			Expect(data).NotTo(ContainSubstring("external:"), "EM config should not contain external monitoring section when disabled, got:\n%s", data)
-		})
-
 		It("renders v1.4 logging and datastorage buffer settings", func() {
 			kn := testKubernaut()
 			kn.Spec.EffectivenessMonitor.Logging.Level = "debug"
@@ -1004,18 +993,6 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(strings.Contains(data, "tools:") && strings.Contains(data, "prometheus:")).To(BeTrue(), "KA config should contain upstream tools.prometheus section when monitoring enabled, got:\n%s", data)
 			Expect(data).To(ContainSubstring("alertmanager:"), "KA config should contain upstream tools.alertmanager section when monitoring enabled (#205), got:\n%s", data)
 			Expect(data).To(ContainSubstring(OCPAlertManagerURL), "KA config should contain AlertManager URL when monitoring enabled (#205), got:\n%s", data)
-		})
-
-		It("omits Prometheus and Alertmanager tools when monitoring is disabled", func() {
-			kn := testKubernaut()
-			disabled := false
-			kn.Spec.Monitoring.Enabled = &disabled
-			cm, err := KubernautAgentConfigMap(kn)
-			Expect(err).NotTo(HaveOccurred())
-			data := cm.Data["config.yaml"]
-
-			Expect(strings.Contains(data, "prometheusUrl") || strings.Contains(data, "tools:")).To(BeFalse(), "KA config should not contain Prometheus tools section when monitoring is disabled, got:\n%s", data)
-			Expect(data).NotTo(ContainSubstring("alertmanager:"), "KA config should not contain alertmanager section when monitoring is disabled (#205), got:\n%s", data)
 		})
 
 		It("matches expected v1.4 structure and defaults", func() {
@@ -1872,18 +1849,6 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("port: 8443"))
 		Expect(data).NotTo(ContainSubstring("issuerURL: https://"))
-	})
-
-	It("disables severityTriage when monitoring is disabled", func() {
-		kn := testKubernautWithAF()
-		disabled := false
-		kn.Spec.Monitoring.Enabled = &disabled
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
-		Expect(err).NotTo(HaveOccurred())
-		data := cm.Data["config.yaml"]
-		Expect(data).To(ContainSubstring("enabled: false"))
-		Expect(data).NotTo(ContainSubstring("thanos-querier"),
-			"disabled severityTriage should not reference Thanos Querier URL")
 	})
 
 	It("uses OCP service-ca for severity triage when monitoring is enabled", func() {

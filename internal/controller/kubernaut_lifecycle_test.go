@@ -650,16 +650,13 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		})
 
 		// NOTE (#273): "should delete monitoring RBAC and service-CA CMs when
-		// monitoring is disabled" was removed here. As of v1.6, the CRD's
-		// XValidation rule on monitoring.enabled (api/v1alpha1/kubernaut_types.go)
-		// rejects false on both Create and Update, so toggling an existing CR
-		// to monitoring.enabled=false is no longer reachable through the API
-		// server -- see MON-001 in kubernaut_controller_test.go for the
-		// admission-rejection coverage. pruneStaleMonitoringRBAC and the
-		// service-CA cleanup it exercises remain in place defensively but are
-		// no longer exercised by an IT test that goes through k8sClient,
-		// since there is no longer a supported way to construct the
-		// precondition (an admitted CR with monitoring.enabled=false).
+		// monitoring is disabled" was removed here. As of v1.6, spec.monitoring
+		// is removed from the CRD entirely (api/v1alpha1/kubernaut_types.go) --
+		// there is no field left to disable, monitoring integration is always
+		// reconciled, and the pruneStaleMonitoringRBAC toggle-cleanup path it
+		// exercised was deleted along with the field. See MON-001/MON-002 in
+		// kubernaut_controller_test.go for coverage that monitoring RBAC/
+		// NetworkPolicy/severityTriage are always provisioned.
 
 		It("should create AWX RBAC when ansible is enabled", func() {
 			createBYOSecrets(ctx)
@@ -1187,9 +1184,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		// NOTE (#273): "should always attempt monitoring cleanup even when
 		// monitoring is disabled" was removed here for the same reason as
-		// the analogous test above -- monitoring.enabled=false is no longer
-		// admissible, so there is no supported way to reach this
-		// precondition through k8sClient.
+		// the analogous test above -- spec.monitoring no longer exists, so
+		// there is no supported way to reach this precondition through
+		// k8sClient, and the toggle-cleanup code path itself was deleted.
 
 		It("should always attempt AWX cleanup even when ansible is disabled", func() {
 			createBYOSecrets(ctx)

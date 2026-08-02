@@ -23,14 +23,19 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
 const (
@@ -423,44 +428,66 @@ var _ = Describe("Kubernaut Controller", func() {
 		})
 	})
 
-	// ---- Monitoring Enabled deprecation (#273) ----
+	// ---- Monitoring integration is unconditional (#273) ----
 	//
 	// Upstream kubernaut#1839/#1841 removed AF's ungrounded LLM severity
 	// fallback, so severity-gated RR creation now fails closed whenever
-	// severityTriage is disabled. This operator disables severityTriage (and
-	// several other integrations: Gateway AlertmanagerConfig, EM external
-	// Prometheus config, KA's Prometheus/Alertmanager tools, alertmanager-view
-	// RBAC) whenever spec.monitoring.enabled=false. Since this operator is
-	// OCP-specific throughout and OCP ships cluster-monitoring by default,
-	// monitoring.enabled=false no longer represents a supported deployment
-	// topology as of v1.6 -- the CRD schema itself now rejects it, so the
-	// misconfiguration is caught at admission time rather than surfacing as
-	// a runtime remediation failure.
-	Context("Monitoring Enabled deprecation", func() {
-		It("MON-001 [SI-10]: the API server itself rejects an explicit monitoring.enabled=false, before any reconciler logic runs", func() {
-			kn := newMinimalCR()
-			monitoringDisabled := false
-			kn.Spec.Monitoring.Enabled = &monitoringDisabled
-
-			err := k8sClient.Create(ctx, kn)
-			Expect(err).To(HaveOccurred(),
-				"SI-10: the CRD's XValidation rule on monitoring.enabled must be enforced by the apiserver itself, not just by application-level validation")
-			Expect(errors.IsInvalid(err)).To(BeTrue(), "expected a schema validation rejection, got: %v", err)
-		})
-
-		It("MON-002 [CM-6]: an explicit monitoring.enabled=true is still accepted end-to-end and reconciles successfully", func() {
+	// Prometheus lookups are unavailable. This operator used to let
+	// spec.monitoring.enabled=false turn off severityTriage (and several
+	// other integrations: Gateway AlertmanagerConfig, EM external Prometheus
+	// config, KA's Prometheus/Alertmanager tools, alertmanager-view RBAC).
+	// Since this operator is OCP-specific throughout and OCP ships
+	// cluster-monitoring by default, that toggle never represented a safe
+	// deployment topology -- as of v1.6/main the spec.monitoring field is
+	// removed entirely (not just restricted to true) and every one of those
+	// integrations is now wired unconditionally, with no spec field left
+	// that can turn it off.
+	Context("Monitoring integration is unconditional", func() {
+		It("MON-001 [CM-6]: a v1.5-style manifest carrying the removed spec.monitoring.enabled=false is accepted -- the CRD's structural schema silently prunes the unknown field instead of rejecting the request -- and still reconciles with monitoring fully wired", func() {
 			createBYOSecrets(ctx)
 			kn := newCRWithRouteDisabled()
-			kn.Spec.Monitoring.Enabled = &enabled
 
-			Expect(k8sClient.Create(ctx, kn)).To(Succeed(),
-				"CM-6: the regenerated CRD schema must still accept the only supported value, true")
+			u, err := runtime.DefaultUnstructuredConverter.ToUnstructured(kn)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(unstructured.SetNestedMap(u, map[string]interface{}{"enabled": false}, "spec", "monitoring")).To(Succeed())
+			legacyCR := &unstructured.Unstructured{Object: u}
+			legacyCR.SetGroupVersionKind(kubernautv1alpha1.GroupVersion.WithKind("Kubernaut"))
+
+			Expect(k8sClient.Create(ctx, legacyCR)).To(Succeed(),
+				"CM-6: a legacy manifest carrying the removed monitoring.enabled field must not be rejected -- structural schema pruning silently drops it")
 
 			reconcileToDeployPhase(ctx)
 
-			result := &kubernautv1alpha1.Kubernaut{}
-			Expect(k8sClient.Get(ctx, singletonKey(), result)).To(Succeed())
-			Expect(result.Spec.Monitoring.MonitoringEnabled()).To(BeTrue())
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "apifrontend-config", Namespace: testNamespace}, cm)).To(Succeed())
+			Expect(cm.Data["config.yaml"]).To(ContainSubstring(resources.OCPPrometheusURL),
+				"CM-6: severityTriage must still reconcile against Thanos Querier even though the legacy manifest tried to disable monitoring -- there is no spec field left that can turn it off")
+		})
+
+		It("MON-002 [CM-6]: monitoring RBAC and NetworkPolicy egress to openshift-monitoring are provisioned even without any monitoring spec field present", func() {
+			createBYOSecrets(ctx)
+			kn := newCRWithRouteDisabled()
+			kn.Spec.NetworkPolicies.Enabled = &enabled
+			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
+
+			reconcileToDeployPhase(ctx)
+
+			crb := &rbacv1.ClusterRoleBinding{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNamespace + "-effectivenessmonitor-alertmanager-view-binding"}, crb)).To(Succeed(),
+				"CM-6: alertmanager-view RBAC must be provisioned unconditionally now that monitoring can no longer be disabled")
+
+			np := &networkingv1.NetworkPolicy{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.ComponentAPIFrontend + "-netpol", Namespace: testNamespace}, np)).To(Succeed())
+			found := false
+			for _, rule := range np.Spec.Egress {
+				for _, peer := range rule.To {
+					if peer.NamespaceSelector != nil &&
+						peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == resources.OCPMonitoringNamespace {
+						found = true
+					}
+				}
+			}
+			Expect(found).To(BeTrue(), "CM-6: AF's NetworkPolicy must always egress to openshift-monitoring, since severityTriage's Prometheus calls can no longer be disabled")
 		})
 	})
 

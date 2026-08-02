@@ -41,19 +41,6 @@ var _ = Describe("ClusterRoles", func() {
 		Expect(roles).To(HaveLen(16), "ClusterRoles() should return exactly 16 roles (14 base + 2 monitoring), got %d", len(roles))
 	})
 
-	It("reduces count when monitoring is disabled", func() {
-		kn := testKubernaut()
-		enabled := false
-		kn.Spec.Monitoring.Enabled = &enabled
-
-		withMonitoring := ClusterRoles(testKubernaut())
-		withoutMonitoring := ClusterRoles(kn)
-
-		Expect(len(withoutMonitoring) < len(withMonitoring)).To(BeTrue(), //nolint:ginkgolinter // comparing lengths of two dynamic slices
-			"disabling monitoring should reduce ClusterRole count: %d vs %d",
-			len(withoutMonitoring), len(withMonitoring))
-	})
-
 	It("contains expected role names", func() {
 		kn := testKubernaut()
 		roles := ClusterRoles(kn)
@@ -484,25 +471,6 @@ var _ = Describe("ClusterRoleBindings", func() {
 		})
 	})
 
-	It("omits monitoring CRBs when monitoring is disabled", func() {
-		kn := testKubernaut()
-		disabled := false
-		kn.Spec.Monitoring.Enabled = &disabled
-		ns := kn.Namespace
-
-		crbs := ClusterRoleBindings(kn)
-		monitoringNames := map[string]bool{
-			ns + "-effectivenessmonitor-alertmanager-view-binding": true,
-			ns + "-effectivenessmonitor-monitoring-view":           true,
-			ns + "-kubernaut-agent-monitoring-view":                true,
-			ns + "-alertmanager-gateway-signal-source":             true,
-			ns + "-apifrontend-monitoring-view":                    true,
-		}
-
-		for _, crb := range crbs {
-			Expect(monitoringNames[crb.Name]).To(BeFalse(), "monitoring CRB %q should not exist when monitoring is disabled", crb.Name)
-		}
-	})
 })
 
 var _ = Describe("DataStorageClientRoleBindings", func() {

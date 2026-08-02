@@ -463,31 +463,6 @@ var _ = Describe("Deployments", func() {
 			Expect(found).To(BeTrue(), "should have IS_OPENSHIFT=True when monitoring enabled")
 		})
 
-		It("omits IS_OPENSHIFT env when monitoring disabled", func() {
-			kn := testKubernaut()
-			disabled := false
-			kn.Spec.Monitoring.Enabled = &disabled
-			dep, err := KubernautAgentDeployment(kn)
-			Expect(err).NotTo(HaveOccurred())
-
-			container := dep.Spec.Template.Spec.Containers[0]
-			for _, env := range container.Env {
-				Expect(env.Name).NotTo(Equal("IS_OPENSHIFT"), "should not have IS_OPENSHIFT when monitoring disabled")
-			}
-		})
-
-		It("omits service-ca volume when monitoring disabled", func() {
-			kn := testKubernaut()
-			disabled := false
-			kn.Spec.Monitoring.Enabled = &disabled
-			dep, err := KubernautAgentDeployment(kn)
-			Expect(err).NotTo(HaveOccurred())
-
-			for _, v := range dep.Spec.Template.Spec.Volumes {
-				Expect(v.Name).NotTo(Equal("service-ca"), "should not have service-ca when monitoring disabled")
-			}
-		})
-
 		It("has TLS cert volume", func() {
 			kn := testKubernaut()
 			dep, err := KubernautAgentDeployment(kn)
@@ -603,15 +578,6 @@ var _ = Describe("Deployments", func() {
 			Expect(hasMount).To(BeTrue(), "init container should mount service-ca at /etc/ssl/em")
 		})
 
-		It("has no init container when monitoring disabled", func() {
-			kn := testKubernaut()
-			disabled := false
-			kn.Spec.Monitoring.Enabled = &disabled
-			dep, err := EffectivenessMonitorDeployment(kn)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(dep.Spec.Template.Spec.InitContainers).To(BeEmpty())
-		})
 	})
 
 	Context("AuthWebhook", func() {
