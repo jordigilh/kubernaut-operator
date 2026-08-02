@@ -375,45 +375,40 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deplo
 func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
 	volumes := []corev1.Volume{
 		configMapVolume("config", "effectivenessmonitor-config"),
+		configMapVolume("service-ca", "effectivenessmonitor-service-ca"),
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: "config", MountPath: "/etc/effectivenessmonitor", ReadOnly: true},
+		{Name: "service-ca", MountPath: "/etc/ssl/em", ReadOnly: true},
 	}
 
-	var initContainers []corev1.Container
-	if kn.Spec.Monitoring.MonitoringEnabled() {
-		volumes = append(volumes, configMapVolume("service-ca", "effectivenessmonitor-service-ca"))
-		mounts = append(mounts, corev1.VolumeMount{
-			Name: "service-ca", MountPath: "/etc/ssl/em", ReadOnly: true,
-		})
-		emUbiImage, emErr := ResolveImage(kn, "init-ubi-minimal")
-		if emErr != nil {
-			return nil, emErr
-		}
-		initContainers = append(initContainers, corev1.Container{
-			Name:            "wait-for-service-ca",
-			Image:           emUbiImage,
-			ImagePullPolicy: kn.Spec.Image.PullPolicy,
-			Command:         []string{"sh", "-c"},
-			Args: []string{
-				`while [ ! -s /etc/ssl/em/service-ca.crt ]; do echo "waiting for service-ca.crt..."; sleep 2; done`,
-			},
-			VolumeMounts: []corev1.VolumeMount{
-				{Name: "service-ca", MountPath: "/etc/ssl/em", ReadOnly: true},
-			},
-			SecurityContext: ContainerSecurityContext(),
-			Resources: corev1.ResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("10m"),
-					corev1.ResourceMemory: resource.MustParse("16Mi"),
-				},
-				Limits: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("50m"),
-					corev1.ResourceMemory: resource.MustParse("32Mi"),
-				},
-			},
-		})
+	emUbiImage, emErr := ResolveImage(kn, "init-ubi-minimal")
+	if emErr != nil {
+		return nil, emErr
 	}
+	initContainers := []corev1.Container{{
+		Name:            "wait-for-service-ca",
+		Image:           emUbiImage,
+		ImagePullPolicy: kn.Spec.Image.PullPolicy,
+		Command:         []string{"sh", "-c"},
+		Args: []string{
+			`while [ ! -s /etc/ssl/em/service-ca.crt ]; do echo "waiting for service-ca.crt..."; sleep 2; done`,
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "service-ca", MountPath: "/etc/ssl/em", ReadOnly: true},
+		},
+		SecurityContext: ContainerSecurityContext(),
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("10m"),
+				corev1.ResourceMemory: resource.MustParse("16Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("50m"),
+				corev1.ResourceMemory: resource.MustParse("32Mi"),
+			},
+		},
+	}}
 
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
@@ -583,9 +578,6 @@ func kaCoreVolumesMountsEnv(kn *kubernautv1alpha1.Kubernaut, kaProfile kubernaut
 		corev1.EnvVar{Name: "GOOGLE_APPLICATION_CREDENTIALS", Value: "/etc/kubernaut-agent/credentials/credentials.json"},
 	)
 
-	if !kn.Spec.Monitoring.MonitoringEnabled() {
-		return volumes, mounts, envVars
-	}
 	volumes = append(volumes,
 		configMapVolume("service-ca", "kubernaut-agent-service-ca"),
 		corev1.Volume{Name: "combined-ca", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
@@ -665,13 +657,10 @@ func kaResources(kn *kubernautv1alpha1.Kubernaut) corev1.ResourceRequirements {
 	}
 }
 
-// kaInitContainers returns the build-ca-bundle init container (which
+// kaInitContainers returns the build-ca-bundle init container, which
 // concatenates the base image's trust bundle with the OpenShift service-ca
-// cert) when cluster monitoring is enabled, or nil otherwise.
+// cert.
 func kaInitContainers(kn *kubernautv1alpha1.Kubernaut) ([]corev1.Container, error) {
-	if !kn.Spec.Monitoring.MonitoringEnabled() {
-		return nil, nil
-	}
 	kaUbiImage, err := ResolveImage(kn, "init-ubi-minimal")
 	if err != nil {
 		return nil, err
@@ -821,19 +810,14 @@ func apifrontendBaseVolumesMountsEnv(kn *kubernautv1alpha1.Kubernaut, sidecar Ka
 				Optional:             ptr.To(true),
 			},
 		}},
+		configMapVolume("service-ca", "apifrontend-service-ca"),
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: "tmp", MountPath: "/tmp"},
 		{Name: "config", MountPath: "/etc/apifrontend", ReadOnly: true},
 		{Name: "tls-server", MountPath: "/etc/apifrontend/tls", ReadOnly: true},
 		{Name: "tls-ca", MountPath: "/etc/apifrontend/tls-ca", ReadOnly: true},
-	}
-
-	if kn.Spec.Monitoring.MonitoringEnabled() {
-		volumes = append(volumes, configMapVolume("service-ca", "apifrontend-service-ca"))
-		mounts = append(mounts, corev1.VolumeMount{
-			Name: "service-ca", MountPath: "/etc/ssl/af", ReadOnly: true,
-		})
+		{Name: "service-ca", MountPath: "/etc/ssl/af", ReadOnly: true},
 	}
 	return volumes, mounts, env
 }

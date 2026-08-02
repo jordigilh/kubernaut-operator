@@ -258,9 +258,6 @@ spec:
     # logging:
     #   level: info
 
-  # --- OCP integration ---
-  monitoring:
-    enabled: true
 EOF
 ```
 
@@ -320,7 +317,7 @@ For signals to flow into Kubernaut, OCP AlertManager must route alerts to the Ga
 
 ### Option A: Operator-managed AlertmanagerConfig (recommended)
 
-When `spec.monitoring.enabled` is true (the default), the operator creates a namespace-scoped `AlertmanagerConfig` CR that routes alerts originating from the `kubernaut-system` namespace to the Gateway. No manual AlertManager configuration is required.
+The operator always creates a namespace-scoped `AlertmanagerConfig` CR that routes alerts originating from the `kubernaut-system` namespace to the Gateway. No manual AlertManager configuration is required.
 
 The operator also provisions the RBAC binding (`alertmanager-main` SA → `gateway-signal-source` ClusterRole) so that the AlertManager bearer token is authorized by the Gateway's SAR middleware.
 

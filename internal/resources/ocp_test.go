@@ -259,14 +259,6 @@ var _ = Describe("GatewayAlertManagerConfig", func() {
 		Expect(wh.HTTPConfig.TLSConfig.CA.ConfigMap.Key).To(Equal("service-ca.crt"))
 	})
 
-	It("returns nil when monitoring is disabled", func() {
-		kn := testKubernaut()
-		disabled := false
-		kn.Spec.Monitoring.Enabled = &disabled
-		amcfg := GatewayAlertManagerConfig(kn)
-
-		Expect(amcfg).To(BeNil(), "AlertmanagerConfig should be nil when monitoring is disabled")
-	})
 })
 
 var _ = Describe("GatewayAlertManagerTokenSecret", func() {
@@ -280,14 +272,6 @@ var _ = Describe("GatewayAlertManagerTokenSecret", func() {
 		Expect(secret.Type).To(Equal(corev1.SecretTypeOpaque))
 	})
 
-	It("returns nil when monitoring is disabled", func() {
-		kn := testKubernaut()
-		disabled := false
-		kn.Spec.Monitoring.Enabled = &disabled
-		secret := GatewayAlertManagerTokenSecret(kn)
-
-		Expect(secret).To(BeNil())
-	})
 })
 
 var _ = Describe("WorkflowNamespace", func() {

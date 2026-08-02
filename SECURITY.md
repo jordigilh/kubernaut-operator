@@ -89,8 +89,8 @@ The operator requires these elevated permissions:
 | `<ns>-data-storage-auth-middleware` | Auth webhook token review | TokenReview create, SubjectAccessReview create |
 | `<ns>-data-storage-client` | Service-to-DataStorage API access | Full CRUD on `kubernaut.ai` CRs (datastorageapis). Bound per-service via RoleBindings |
 | `<ns>-authwebhook-role` | AuthWebhook admission control | TokenReview create, SubjectAccessReview create, webhook configuration read |
-| `<ns>-alertmanager-view` | EffectivenessMonitor reads Prometheus/AlertManager metrics | Created only when `monitoring.enabled=true` |
-| `<ns>-gateway-signal-source` | AlertManager pushes signals to Gateway | Created only when `monitoring.enabled=true`. Bound to OCP alertmanager SA |
+| `<ns>-alertmanager-view` | EffectivenessMonitor reads Prometheus/AlertManager metrics | Always created; cluster-monitoring integration cannot be disabled |
+| `<ns>-gateway-signal-source` | AlertManager pushes signals to Gateway | Created only when `gateway.enabled=true`. Bound to OCP alertmanager SA |
 | `<ns>-workflowexecution-awx` | WorkflowExecution talks to AWX/AAP | AWX Jobs (CRUD). Created only when `ansible.enabled=true` |
 
 #### Investigator RBAC Risk Assessment

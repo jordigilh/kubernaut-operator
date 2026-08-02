@@ -33,20 +33,19 @@ metadata:
       \     \"lightweight\": {\n          \"credentialsSecretName\": \"llm-credentials\",\n          \"model\": \"claude-haiku-4-5\",\n          \"provider\": \"vertex_ai\",\n          \"vertexLocation\"\
       : \"us-central1\",\n          \"vertexProject\": \"example-gcp-project\"\n        },\n        \"primary\": {\n          \"credentialsSecretName\": \"llm-credentials\",\n          \"maxRetries\": 3,\n\
       \          \"model\": \"claude-sonnet-4-6\",\n          \"provider\": \"vertex_ai\",\n          \"timeoutSeconds\": 120,\n          \"vertexLocation\": \"us-central1\",\n          \"vertexProject\"\
-      : \"example-gcp-project\"\n        }\n      },\n      \"monitoring\": {\n        \"enabled\": true\n      },\n      \"networkPolicies\": {\n        \"enabled\": false\n      },\n      \"notification\"\
-      : {\n        \"logging\": {\n          \"level\": \"info\"\n        },\n        \"slack\": {\n          \"channel\": \"#kubernaut-alerts\",\n          \"secretName\": \"slack-webhook\"\n        }\n\
-      \      },\n      \"postgresql\": {\n        \"host\": \"postgresql.kubernaut-system.svc.cluster.local\",\n        \"port\": 5432,\n        \"secretName\": \"postgresql-secret\",\n        \"sslMode\"\
-      : \"require\"\n      },\n      \"remediationOrchestrator\": {\n        \"asyncPropagation\": {\n          \"gitOpsSyncDelay\": \"10s\",\n          \"operatorReconcileDelay\": \"1m\",\n          \"\
-      proactiveAlertDelay\": \"5m\"\n        },\n        \"dryRun\": false,\n        \"dryRunHoldPeriod\": \"1h\",\n        \"effectivenessAssessment\": {\n          \"stabilizationWindow\": \"2m20s\"\n\
-      \        },\n        \"logging\": {\n          \"level\": \"info\"\n        },\n        \"notifications\": {\n          \"notifySelfResolved\": false\n        },\n        \"retention\": {\n      \
-      \    \"period\": \"24h\"\n        },\n        \"routing\": {\n          \"consecutiveFailureCooldown\": \"1h\",\n          \"consecutiveFailureThreshold\": 3,\n          \"exponentialBackoffBase\"\
-      : \"1m\",\n          \"exponentialBackoffMax\": \"10m\",\n          \"exponentialBackoffMaxExponent\": 4,\n          \"ineffectiveChainThreshold\": 3,\n          \"ineffectiveTimeWindow\": \"4h\"\
-      ,\n          \"noActionRequiredDelayHours\": 24,\n          \"recentlyRemediatedCooldown\": \"5m\",\n          \"recurrenceCountThreshold\": 5,\n          \"scopeBackoffBase\": \"5s\",\n         \
-      \ \"scopeBackoffMax\": \"5m\"\n        },\n        \"timeouts\": {\n          \"analyzing\": \"10m\",\n          \"awaitingApproval\": \"15m\",\n          \"executing\": \"30m\",\n          \"global\"\
-      : \"1h\",\n          \"processing\": \"5m\",\n          \"verifying\": \"30m\"\n        }\n      },\n      \"signalProcessing\": {\n        \"logging\": {\n          \"level\": \"info\"\n        },\n\
-      \        \"policy\": {\n          \"configMapName\": \"signalprocessing-policy\"\n        }\n      },\n      \"valkey\": {\n        \"host\": \"valkey.kubernaut-system.svc.cluster.local\",\n     \
-      \   \"port\": 6379,\n        \"secretName\": \"valkey-secret\"\n      },\n      \"workflowExecution\": {\n        \"cooldownPeriod\": \"1m\",\n        \"logging\": {\n          \"level\": \"info\"\
-      \n        },\n        \"workflowNamespace\": \"kubernaut-workflows\"\n      }\n    }\n  }\n]"
+      : \"example-gcp-project\"\n        }\n      },\n      \"networkPolicies\": {\n        \"enabled\": false\n      },\n      \"notification\": {\n        \"logging\": {\n          \"level\": \"info\"\
+      \n        },\n        \"slack\": {\n          \"channel\": \"#kubernaut-alerts\",\n          \"secretName\": \"slack-webhook\"\n        }\n      },\n      \"postgresql\": {\n        \"host\": \"postgresql.kubernaut-system.svc.cluster.local\"\
+      ,\n        \"port\": 5432,\n        \"secretName\": \"postgresql-secret\",\n        \"sslMode\": \"require\"\n      },\n      \"remediationOrchestrator\": {\n        \"asyncPropagation\": {\n    \
+      \      \"gitOpsSyncDelay\": \"10s\",\n          \"operatorReconcileDelay\": \"1m\",\n          \"proactiveAlertDelay\": \"5m\"\n        },\n        \"dryRun\": false,\n        \"dryRunHoldPeriod\"\
+      : \"1h\",\n        \"effectivenessAssessment\": {\n          \"stabilizationWindow\": \"2m20s\"\n        },\n        \"logging\": {\n          \"level\": \"info\"\n        },\n        \"notifications\"\
+      : {\n          \"notifySelfResolved\": false\n        },\n        \"retention\": {\n          \"period\": \"24h\"\n        },\n        \"routing\": {\n          \"consecutiveFailureCooldown\": \"\
+      1h\",\n          \"consecutiveFailureThreshold\": 3,\n          \"exponentialBackoffBase\": \"1m\",\n          \"exponentialBackoffMax\": \"10m\",\n          \"exponentialBackoffMaxExponent\": 4,\n\
+      \          \"ineffectiveChainThreshold\": 3,\n          \"ineffectiveTimeWindow\": \"4h\",\n          \"noActionRequiredDelayHours\": 24,\n          \"recentlyRemediatedCooldown\": \"5m\",\n     \
+      \     \"recurrenceCountThreshold\": 5,\n          \"scopeBackoffBase\": \"5s\",\n          \"scopeBackoffMax\": \"5m\"\n        },\n        \"timeouts\": {\n          \"analyzing\": \"10m\",\n   \
+      \       \"awaitingApproval\": \"15m\",\n          \"executing\": \"30m\",\n          \"global\": \"1h\",\n          \"processing\": \"5m\",\n          \"verifying\": \"30m\"\n        }\n      },\n\
+      \      \"signalProcessing\": {\n        \"logging\": {\n          \"level\": \"info\"\n        },\n        \"policy\": {\n          \"configMapName\": \"signalprocessing-policy\"\n        }\n    \
+      \  },\n      \"valkey\": {\n        \"host\": \"valkey.kubernaut-system.svc.cluster.local\",\n        \"port\": 6379,\n        \"secretName\": \"valkey-secret\"\n      },\n      \"workflowExecution\"\
+      : {\n        \"cooldownPeriod\": \"1m\",\n        \"logging\": {\n          \"level\": \"info\"\n        },\n        \"workflowNamespace\": \"kubernaut-workflows\"\n      }\n    }\n  }\n]"
     capabilities: Full Lifecycle
     categories: AI/Machine Learning,Monitoring
     com.redhat.openshift.versions: v4.18

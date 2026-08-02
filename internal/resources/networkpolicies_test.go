@@ -422,30 +422,6 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 		Expect(found).To(BeTrue(), "AF egress should allow port 9091 (Thanos Querier) to %s for severity-triage Prometheus calls", OCPMonitoringNamespace)
 	})
 
-	It("does not allow egress to the monitoring namespace when monitoring is disabled", func() {
-		kn := testKubernautWithAF()
-		enableNP(kn)
-		monitoringDisabled := false
-		kn.Spec.Monitoring.Enabled = &monitoringDisabled
-		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
-			if np.Name == ComponentAPIFrontend+"-netpol" {
-				afNP = np
-				break
-			}
-		}
-		Expect(afNP).NotTo(BeNil())
-
-		for _, rule := range afNP.Spec.Egress {
-			for _, peer := range rule.To {
-				if peer.NamespaceSelector != nil {
-					Expect(peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"]).
-						NotTo(Equal(OCPMonitoringNamespace),
-							"should not have monitoring-namespace egress when monitoring disabled")
-				}
-			}
-		}
-	})
 })
 
 var _ = Describe("KubernautAgent NetworkPolicy with AF", func() {
