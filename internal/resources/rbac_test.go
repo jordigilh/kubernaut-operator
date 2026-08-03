@@ -787,13 +787,35 @@ var _ = Describe("ToolClusterRoles", func() {
 				"tool ClusterRole %q should have %d resourceNames, got %d",
 				found.Name, expectedCount, len(found.Rules[0].ResourceNames))
 		},
-		Entry("SRE", "tool-sre", 27),
+		Entry("SRE", "tool-sre", 29),
 		Entry("AI-orchestrator", "tool-ai-orchestrator", 21),
 		Entry("CICD", "tool-cicd", 4),
 		Entry("Observability", "tool-observability", 6),
 		Entry("L3-audit", "tool-l3-audit", 6),
 		Entry("Remediation-approver", "tool-remediation-approver", 7),
 	)
+
+	// #278: sre already holds kubernaut_approve (it's the only console-interactive
+	// persona today), so it must also see kubernaut_get_approval_request to make an
+	// informed decision, and kubernaut_complete_no_action to dismiss/escalate --
+	// otherwise the approval gate silently breaks end-to-end for the persona it's
+	// meant to serve. Asserted by name (not just count) so a future accidental swap
+	// of a different tool doesn't silently satisfy the count-only check above.
+	It("SRE persona includes approval-visibility and completion tools (#278)", func() {
+		kn := testKubernautWithAF()
+		roles := ToolClusterRoles(kn)
+		var sre *rbacv1.ClusterRole
+		for _, r := range roles {
+			if strings.HasSuffix(r.Name, "tool-sre") {
+				sre = r
+				break
+			}
+		}
+		Expect(sre).NotTo(BeNil(), "tool-sre ClusterRole not found")
+		Expect(sre.Rules[0].ResourceNames).To(ContainElements(
+			"kubernaut_get_approval_request", "kubernaut_complete_no_action",
+		), "tool-sre should be able to view RAR details and complete-without-action (#278)")
+	})
 
 	It("tool ClusterRole names are namespace-prefixed", func() {
 		kn := testKubernautWithAF()

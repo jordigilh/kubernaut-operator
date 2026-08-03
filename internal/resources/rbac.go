@@ -454,6 +454,14 @@ type toolPersona struct {
 // aligned with the kubernaut Helm chart values.yaml after PRs #1231, #1233, #1236.
 var toolPersonas = []toolPersona{
 	{
+		// tool-sre carries kubernaut_approve plus approval-visibility/completion tools
+		// (kubernaut_get_approval_request, kubernaut_complete_no_action) even though
+		// tool-remediation-approver exists as the least-privilege home for approval
+		// decisions (see kubernaut#1235/#1239). This is intentional and interim: sre
+		// is currently the only console-interactive persona, so it's the only one that
+		// can reach a pending approval at all. Revisit once the console gains a
+		// management UI that lets remediation-approver log in and act independently
+		// (see docs/design/DD-278-sre-approval-visibility.md, #278).
 		name: "tool-sre",
 		resourceNames: []string{
 			"kubernaut_list_remediations", "kubernaut_get_remediation",
@@ -467,6 +475,7 @@ var toolPersonas = []toolPersona{
 			"kubectl_get", "kubectl_list", "kubectl_list_events",
 			"kubernaut_check_existing_remediation", "kubernaut_remediate",
 			"list_alerts", "get_alert_details", "kubernaut_investigate_alert",
+			"kubernaut_get_approval_request", "kubernaut_complete_no_action",
 		},
 	},
 	{
