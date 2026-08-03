@@ -1897,17 +1897,6 @@ spec:
                   configuration directly, decoupling KA and API Frontend's LLM identity.
                 minProperties: 1
                 type: object
-              monitoring:
-                description: OCP monitoring integration (Prometheus, AlertManager).
-                properties:
-                  enabled:
-                    default: true
-                    description: |-
-                      Whether OCP monitoring integration is enabled.
-                      When true, the operator auto-derives Prometheus/AlertManager URLs
-                      and provisions monitoring RBAC.
-                    type: boolean
-                type: object
               networkPolicies:
                 description: |-
                   NetworkPolicies controls the creation of Kubernetes NetworkPolicy

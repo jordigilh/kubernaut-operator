@@ -67,11 +67,7 @@ func gatewayNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Network
 
 	ingressFrom := []networkingv1.NetworkPolicyPeer{
 		{NamespaceSelector: namespaceNameSelector(OCPIngressNamespace)},
-	}
-	if kn.Spec.Monitoring.MonitoringEnabled() {
-		ingressFrom = append(ingressFrom, networkingv1.NetworkPolicyPeer{
-			NamespaceSelector: namespaceNameSelector(OCPMonitoringNamespace),
-		})
+		{NamespaceSelector: namespaceNameSelector(OCPMonitoringNamespace)},
 	}
 
 	ingress := []networkingv1.NetworkPolicyIngressRule{
@@ -135,9 +131,7 @@ func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 				{Protocol: &protoTCP, Port: &p8443},
 			},
 		},
-	}
-	if kn.Spec.Monitoring.MonitoringEnabled() {
-		ingress = append(ingress, *metricsIngressRule(OCPMonitoringNamespace))
+		*metricsIngressRule(OCPMonitoringNamespace),
 	}
 
 	valkeyPort := kn.Spec.Valkey.Port
@@ -171,11 +165,11 @@ func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 }
 
 func aiAnalysisNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
-	return controllerWithDataStorageAndAgentEgress(kn, ComponentAIAnalysis, metricsOnlyIngress(kn))
+	return controllerWithDataStorageAndAgentEgress(kn, ComponentAIAnalysis, metricsOnlyIngress())
 }
 
 func signalProcessingNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
-	np := controllerWithDataStorageEgressOnly(kn, ComponentSignalProcessing, metricsOnlyIngress(kn))
+	np := controllerWithDataStorageEgressOnly(kn, ComponentSignalProcessing, metricsOnlyIngress())
 	if kn.Spec.FleetEnabled() {
 		np.Spec.Egress = append(np.Spec.Egress, fleetDestinationsEgressRule())
 	}
@@ -183,7 +177,7 @@ func signalProcessingNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv
 }
 
 func remediationOrchestratorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
-	np := controllerWithDataStorageEgressOnly(kn, ComponentRemediationOrchestrator, metricsOnlyIngress(kn))
+	np := controllerWithDataStorageEgressOnly(kn, ComponentRemediationOrchestrator, metricsOnlyIngress())
 	if kn.Spec.FleetEnabled() {
 		np.Spec.Egress = append(np.Spec.Egress, fleetDestinationsEgressRule())
 	}
@@ -192,16 +186,16 @@ func remediationOrchestratorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *netw
 
 func workflowExecutionNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
 	if kn.Spec.Ansible.Enabled {
-		return controllerWithDataStorageAndHTTPSEgress(kn, ComponentWorkflowExecution, metricsOnlyIngress(kn))
+		return controllerWithDataStorageAndHTTPSEgress(kn, ComponentWorkflowExecution, metricsOnlyIngress())
 	}
-	return controllerWithDataStorageEgressOnly(kn, ComponentWorkflowExecution, metricsOnlyIngress(kn))
+	return controllerWithDataStorageEgressOnly(kn, ComponentWorkflowExecution, metricsOnlyIngress())
 }
 
 func notificationNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
 	protoTCP := corev1.ProtocolTCP
 	p443 := intstr.FromInt32(443)
 
-	ingress := metricsOnlyIngress(kn)
+	ingress := metricsOnlyIngress()
 	egress := baseEgress(2)
 	egress = append(egress, datastorageEgressRule(), networkingv1.NetworkPolicyEgressRule{
 		To: ipWorldPeers(),
@@ -229,7 +223,7 @@ func effectivenessMonitorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *network
 	p9090 := intstr.FromInt32(PortMetrics)
 	p9093 := intstr.FromInt32(9093)
 
-	ingress := metricsOnlyIngress(kn)
+	ingress := metricsOnlyIngress()
 	egress := baseEgress(3)
 	egress = append(egress, datastorageEgressRule(), networkingv1.NetworkPolicyEgressRule{
 		To: ipWorldPeers(),
@@ -303,16 +297,11 @@ func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.
 			From:  kaIngressPeers,
 			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protoTCP, Port: &p8443}},
 		},
-	}
-	if kn.Spec.Monitoring.MonitoringEnabled() {
-		ingress = append(ingress, *metricsIngressRule(OCPMonitoringNamespace))
+		*metricsIngressRule(OCPMonitoringNamespace),
 	}
 
 	egress := baseEgress(3)
-	egress = append(egress, datastorageEgressRule())
-	if kn.Spec.Monitoring.MonitoringEnabled() {
-		egress = append(egress, monitoringStackEgressRule(OCPMonitoringNamespace))
-	}
+	egress = append(egress, datastorageEgressRule(), monitoringStackEgressRule(OCPMonitoringNamespace))
 	kaProfile, _ := ResolveLLMProfile(kn, kn.Spec.KubernautAgent.LLMProfileRef)
 	if kaProfile.Provider != "" {
 		p443 := intstr.FromInt32(443)
@@ -341,11 +330,8 @@ func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.
 	}
 }
 
-func metricsOnlyIngress(kn *kubernautv1alpha1.Kubernaut) []networkingv1.NetworkPolicyIngressRule {
-	if kn.Spec.Monitoring.MonitoringEnabled() {
-		return []networkingv1.NetworkPolicyIngressRule{*metricsIngressRule(OCPMonitoringNamespace)}
-	}
-	return nil
+func metricsOnlyIngress() []networkingv1.NetworkPolicyIngressRule {
+	return []networkingv1.NetworkPolicyIngressRule{*metricsIngressRule(OCPMonitoringNamespace)}
 }
 
 func controllerWithDataStorageEgressOnly(kn *kubernautv1alpha1.Kubernaut, component string, ingress []networkingv1.NetworkPolicyIngressRule) *networkingv1.NetworkPolicy {
@@ -644,16 +630,14 @@ func apifrontendIngressRules(kn *kubernautv1alpha1.Kubernaut, healthPort, metric
 				{Protocol: &protoTCP, Port: &pHealth},
 			},
 		},
-	}
-	if kn.Spec.Monitoring.MonitoringEnabled() {
-		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
+		{
 			From: []networkingv1.NetworkPolicyPeer{
 				{NamespaceSelector: namespaceNameSelector(OCPMonitoringNamespace)},
 			},
 			Ports: []networkingv1.NetworkPolicyPort{
 				{Protocol: &protoTCP, Port: &pMetrics},
 			},
-		})
+		},
 	}
 
 	if kn.Spec.APIFrontend.Route.AFRouteEnabled() {
@@ -687,17 +671,17 @@ func apifrontendEgressRules(kn *kubernautv1alpha1.Kubernaut) []networkingv1.Netw
 			{Protocol: &protoTCP, Port: &p8443},
 		},
 	})
-	if kn.Spec.Monitoring.MonitoringEnabled() {
-		// #1839 (upstream, PR #1841): AF's severityTriage config wires
-		// PrometheusURL directly at OCPPrometheusURL (Thanos Querier, :9091)
-		// for GetAlerts/GetRules/InstantQuery. This previously granted only
-		// the metrics port (9090, the ingress/scrape direction) here instead,
-		// so every severity-triage call to Prometheus was silently dropped by
-		// this NetworkPolicy -- masked until upstream removed the ungrounded
-		// LLM fallback that had absorbed the resulting "no data" error
-		// identically to a genuinely alert-less resource.
-		egress = append(egress, monitoringStackEgressRule(OCPMonitoringNamespace))
-	}
+	// #1839 (upstream, PR #1841): AF's severityTriage config wires
+	// PrometheusURL directly at OCPPrometheusURL (Thanos Querier, :9091)
+	// for GetAlerts/GetRules/InstantQuery. This previously granted only
+	// the metrics port (9090, the ingress/scrape direction) here instead,
+	// so every severity-triage call to Prometheus was silently dropped by
+	// this NetworkPolicy -- masked until upstream removed the ungrounded
+	// LLM fallback that had absorbed the resulting "no data" error
+	// identically to a genuinely alert-less resource. Monitoring
+	// integration can no longer be disabled (#273), so this egress is
+	// unconditional.
+	egress = append(egress, monitoringStackEgressRule(OCPMonitoringNamespace))
 
 	if kn.Spec.Valkey.SecretName != "" {
 		valkeyPort := kn.Spec.Valkey.Port

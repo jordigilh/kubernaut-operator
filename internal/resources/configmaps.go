@@ -1401,15 +1401,13 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...Conf
 		},
 		Fleet: resolveMCPGatewayOnlyFleetConfig(kn, em.FleetOAuth2CredentialsSecretRef, InterServiceTLSCAFile),
 	}
-	if kn.Spec.Monitoring.MonitoringEnabled() {
-		cfg.External = &emExternalYAML{
-			PrometheusURL:       OCPPrometheusURL,
-			PrometheusEnabled:   true,
-			AlertManagerURL:     OCPAlertManagerURL,
-			AlertManagerEnabled: true,
-			ConnectionTimeout:   "10s",
-			TLSCaFile:           "/etc/ssl/em/service-ca.crt",
-		}
+	cfg.External = &emExternalYAML{
+		PrometheusURL:       OCPPrometheusURL,
+		PrometheusEnabled:   true,
+		AlertManagerURL:     OCPAlertManagerURL,
+		AlertManagerEnabled: true,
+		ConnectionTimeout:   "10s",
+		TLSCaFile:           "/etc/ssl/em/service-ca.crt",
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1627,12 +1625,8 @@ func kaInteractiveConfig(interactive *kubernautv1alpha1.InteractiveSpec) *kaInte
 	return ic
 }
 
-// kaToolsConfig builds the Prometheus/Alertmanager tool-integration block
-// when cluster monitoring is enabled, or nil otherwise.
-func kaToolsConfig(monitoring kubernautv1alpha1.MonitoringSpec) *kaIntegrationsToolsYAML {
-	if !monitoring.MonitoringEnabled() {
-		return nil
-	}
+// kaToolsConfig builds the Prometheus/Alertmanager tool-integration block.
+func kaToolsConfig() *kaIntegrationsToolsYAML {
 	return &kaIntegrationsToolsYAML{
 		Prometheus: kaIntegrationsPrometheusYAML{
 			URL:       OCPPrometheusURL,
@@ -1711,7 +1705,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 	}
 
 	cfg.AI.Safety = kaSafetyConfig(ka.Safety)
-	cfg.Integrations.Tools = kaToolsConfig(kn.Spec.Monitoring)
+	cfg.Integrations.Tools = kaToolsConfig()
 	cfg.Integrations.Fleet = resolveKAFleetConfig(kn)
 
 	cfg.Interactive = kaInteractiveConfig(ka.Interactive)
@@ -2254,9 +2248,6 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSideca
 // credentials flow through GOOGLE_APPLICATION_CREDENTIALS instead, wired
 // in deployments.go.
 func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut) afSeverityTriageYAML {
-	if !kn.Spec.Monitoring.MonitoringEnabled() {
-		return afSeverityTriageYAML{Enabled: false}
-	}
 	cfg := afSeverityTriageYAML{
 		Enabled:                   true,
 		PrometheusURL:             OCPPrometheusURL,

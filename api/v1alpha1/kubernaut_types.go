@@ -40,10 +40,6 @@ type KubernautSpec struct {
 	// +optional
 	Ansible AnsibleSpec `json:"ansible,omitempty"`
 
-	// OCP monitoring integration (Prometheus, AlertManager).
-	// +optional
-	Monitoring MonitoringSpec `json:"monitoring,omitempty"`
-
 	// Notification controller settings.
 	// +optional
 	Notification NotificationSpec `json:"notification,omitempty"`
@@ -397,16 +393,6 @@ type SecretKeyRef struct {
 	// +kubebuilder:default="token"
 	// +optional
 	Key string `json:"key,omitempty"`
-}
-
-// MonitoringSpec configures OCP monitoring integration.
-type MonitoringSpec struct {
-	// Whether OCP monitoring integration is enabled.
-	// When true, the operator auto-derives Prometheus/AlertManager URLs
-	// and provisions monitoring RBAC.
-	// +kubebuilder:default=true
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
 }
 
 // NotificationSpec configures the notification controller.
@@ -1848,11 +1834,6 @@ type KubernautList struct {
 
 func init() {
 	SchemeBuilder.Register(&Kubernaut{}, &KubernautList{})
-}
-
-// MonitoringEnabled returns true when OCP monitoring integration is active.
-func (s *MonitoringSpec) MonitoringEnabled() bool {
-	return s.Enabled == nil || *s.Enabled
 }
 
 // RouteEnabled returns true when the Gateway Route should be created.

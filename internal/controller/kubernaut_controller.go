@@ -912,9 +912,9 @@ func (r *KubernautReconciler) deployWorkflowRBAC(ctx context.Context, kn *kubern
 	return nil
 }
 
-// deployToggleRBAC handles feature-flag-dependent RBAC: Ansible on/off and
-// monitoring teardown when disabled. Cleanup errors are collected and returned
-// so the reconcile loop retries (stale RBAC is a security concern).
+// deployToggleRBAC handles feature-flag-dependent RBAC: Ansible on/off.
+// Cleanup errors are collected and returned so the reconcile loop retries
+// (stale RBAC is a security concern).
 func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
 	cr, crb := resources.AnsibleRBAC(kn)
 	if kn.Spec.Ansible.Enabled {
@@ -932,9 +932,6 @@ func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernau
 	}
 	if !kn.Spec.GatewayEnabled() {
 		errs = append(errs, r.pruneStaleGatewayRBAC(ctx, kn)...)
-	}
-	if !kn.Spec.Monitoring.MonitoringEnabled() {
-		errs = append(errs, r.pruneStaleMonitoringRBAC(ctx, kn)...)
 	}
 
 	if len(errs) > 0 {
@@ -982,35 +979,6 @@ func (r *KubernautReconciler) pruneStaleGatewayRBAC(ctx context.Context, kn *kub
 	staleRB.Namespace = kn.Namespace
 	if err := r.deleteIfExists(ctx, staleRB); err != nil {
 		errs = append(errs, fmt.Errorf("removing stale gateway DS client RoleBinding: %w", err))
-	}
-	return errs
-}
-
-// pruneStaleMonitoringRBAC deletes monitoring ClusterRoleBindings,
-// ClusterRoles, and service-ca ConfigMaps when monitoring is disabled.
-func (r *KubernautReconciler) pruneStaleMonitoringRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
-	var errs []error
-	for _, name := range resources.MonitoringCRBNames(kn) {
-		monCRB := &rbacv1.ClusterRoleBinding{}
-		monCRB.Name = name
-		if err := r.deleteIfExists(ctx, monCRB); err != nil {
-			errs = append(errs, fmt.Errorf("removing stale monitoring CRB %s: %w", name, err))
-		}
-	}
-	for _, name := range resources.MonitoringClusterRoleNames(kn) {
-		monCR := &rbacv1.ClusterRole{}
-		monCR.Name = name
-		if err := r.deleteIfExists(ctx, monCR); err != nil {
-			errs = append(errs, fmt.Errorf("removing stale monitoring ClusterRole %s: %w", name, err))
-		}
-	}
-	for _, name := range []string{"effectivenessmonitor-service-ca", "kubernaut-agent-service-ca"} {
-		staleCM := &corev1.ConfigMap{}
-		staleCM.Name = name
-		staleCM.Namespace = kn.Namespace
-		if err := r.deleteIfExists(ctx, staleCM); err != nil {
-			errs = append(errs, fmt.Errorf("removing stale service-ca ConfigMap %s: %w", name, err))
-		}
 	}
 	return errs
 }
@@ -1290,17 +1258,15 @@ func (r *KubernautReconciler) appendOptionalComponentConfigMaps(
 }
 
 // appendServiceCAConfigMaps appends the always-present inter-service CA
-// bundle ConfigMap and, when monitoring is enabled, the per-component
-// service-CA ConfigMaps consumed by mTLS-scraping sidecars.
+// bundle ConfigMap and the per-component service-CA ConfigMaps consumed by
+// mTLS-scraping sidecars.
 func appendServiceCAConfigMaps(kn *kubernautv1alpha1.Kubernaut, configMaps []*corev1.ConfigMap) []*corev1.ConfigMap {
 	configMaps = append(configMaps, resources.InterServiceCAConfigMap(kn))
-	if kn.Spec.Monitoring.MonitoringEnabled() {
-		configMaps = append(configMaps,
-			resources.EffectivenessMonitorServiceCAConfigMap(kn),
-			resources.KubernautAgentServiceCAConfigMap(kn),
-			resources.APIFrontendServiceCAConfigMap(kn),
-		)
-	}
+	configMaps = append(configMaps,
+		resources.EffectivenessMonitorServiceCAConfigMap(kn),
+		resources.KubernautAgentServiceCAConfigMap(kn),
+		resources.APIFrontendServiceCAConfigMap(kn),
+	)
 	return configMaps
 }
 
@@ -1502,7 +1468,7 @@ func (r *KubernautReconciler) reconcileNetworkPolicies(ctx context.Context, kn *
 }
 
 func (r *KubernautReconciler) reconcileMonitoringAndAlerts(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
-	if kn.Spec.Monitoring.MonitoringEnabled() && r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com") {
+	if r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com") {
 		if err := r.deployMonitoring(ctx, kn); err != nil {
 			return err
 		}
@@ -1933,10 +1899,9 @@ func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *k
 }
 
 // ensureAPIFrontendMonitoring provisions the APIFrontend ServiceMonitor and
-// PrometheusRule when monitoring is enabled and the Prometheus Operator CRDs
-// are installed.
+// PrometheusRule when the Prometheus Operator CRDs are installed.
 func (r *KubernautReconciler) ensureAPIFrontendMonitoring(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
-	if !kn.Spec.Monitoring.MonitoringEnabled() || !r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com") {
+	if !r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com") {
 		return nil
 	}
 	sm := resources.APIFrontendServiceMonitor(kn)

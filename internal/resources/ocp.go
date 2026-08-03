@@ -133,13 +133,7 @@ func APIFrontendRouteStub(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 // The AlertManager SA must be bound to the gateway-signal-source ClusterRole
 // (handled by the operator's RBAC provisioning) so that the bearer token
 // included via credentials_file is authorized by the Gateway's SAR middleware.
-//
-// Returns nil when monitoring is disabled.
 func GatewayAlertManagerConfig(kn *kubernautv1alpha1.Kubernaut) *monitoringv1alpha1.AlertmanagerConfig {
-	if !kn.Spec.Monitoring.MonitoringEnabled() {
-		return nil
-	}
-
 	gwURL := fmt.Sprintf("https://gateway-service.%s.svc.cluster.local:%d/api/v1/signals/prometheus",
 		kn.Namespace, PortHTTPS)
 
@@ -189,11 +183,7 @@ func GatewayAlertManagerConfig(kn *kubernautv1alpha1.Kubernaut) *monitoringv1alp
 // projected from the alertmanager-main ServiceAccount in openshift-monitoring,
 // but since AlertmanagerConfig webhook_configs reference a Secret in the local
 // namespace, the operator creates this bridging Secret.
-// Returns nil when monitoring is disabled.
 func GatewayAlertManagerTokenSecret(kn *kubernautv1alpha1.Kubernaut) *corev1.Secret {
-	if !kn.Spec.Monitoring.MonitoringEnabled() {
-		return nil
-	}
 	return &corev1.Secret{
 		ObjectMeta: ObjectMeta(kn, "alertmanager-gateway-token", ComponentGateway),
 		Type:       corev1.SecretTypeOpaque,

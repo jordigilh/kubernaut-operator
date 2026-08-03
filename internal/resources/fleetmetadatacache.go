@@ -254,9 +254,7 @@ func fleetMetadataCacheNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkin
 			},
 			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protoTCP, Port: &pAPI}},
 		},
-	}
-	if kn.Spec.Monitoring.MonitoringEnabled() {
-		ingress = append(ingress, *metricsIngressRule(OCPMonitoringNamespace))
+		*metricsIngressRule(OCPMonitoringNamespace),
 	}
 
 	valkeyPort := kn.Spec.Valkey.Port
