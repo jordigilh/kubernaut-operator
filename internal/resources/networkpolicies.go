@@ -623,14 +623,15 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSi
 		},
 	})
 	if kn.Spec.Monitoring.MonitoringEnabled() {
-		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
-			To: []networkingv1.NetworkPolicyPeer{
-				{NamespaceSelector: namespaceNameSelector(OCPMonitoringNamespace)},
-			},
-			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protoTCP, Port: &pMetrics},
-			},
-		})
+		// #1839 (upstream, PR #1841): AF's severityTriage config wires
+		// PrometheusURL directly at OCPPrometheusURL (Thanos Querier, :9091)
+		// for GetAlerts/GetRules/InstantQuery. This previously granted only
+		// the metrics port (9090, the ingress/scrape direction) here instead,
+		// so every severity-triage call to Prometheus was silently dropped by
+		// this NetworkPolicy -- masked until upstream removed the ungrounded
+		// LLM fallback that had absorbed the resulting "no data" error
+		// identically to a genuinely alert-less resource.
+		egress = append(egress, monitoringStackEgressRule(OCPMonitoringNamespace))
 	}
 
 	if kn.Spec.Valkey.SecretName != "" {
