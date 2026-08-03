@@ -41,19 +41,6 @@ var _ = Describe("ClusterRoles", func() {
 		Expect(roles).To(HaveLen(16), "ClusterRoles() should return exactly 16 roles (14 base + 2 monitoring), got %d", len(roles))
 	})
 
-	It("reduces count when monitoring is disabled", func() {
-		kn := testKubernaut()
-		enabled := false
-		kn.Spec.Monitoring.Enabled = &enabled
-
-		withMonitoring := ClusterRoles(testKubernaut())
-		withoutMonitoring := ClusterRoles(kn)
-
-		Expect(len(withoutMonitoring) < len(withMonitoring)).To(BeTrue(), //nolint:ginkgolinter // comparing lengths of two dynamic slices
-			"disabling monitoring should reduce ClusterRole count: %d vs %d",
-			len(withoutMonitoring), len(withMonitoring))
-	})
-
 	It("contains expected role names", func() {
 		kn := testKubernaut()
 		roles := ClusterRoles(kn)
@@ -484,25 +471,6 @@ var _ = Describe("ClusterRoleBindings", func() {
 		})
 	})
 
-	It("omits monitoring CRBs when monitoring is disabled", func() {
-		kn := testKubernaut()
-		disabled := false
-		kn.Spec.Monitoring.Enabled = &disabled
-		ns := kn.Namespace
-
-		crbs := ClusterRoleBindings(kn)
-		monitoringNames := map[string]bool{
-			ns + "-effectivenessmonitor-alertmanager-view-binding": true,
-			ns + "-effectivenessmonitor-monitoring-view":           true,
-			ns + "-kubernaut-agent-monitoring-view":                true,
-			ns + "-alertmanager-gateway-signal-source":             true,
-			ns + "-apifrontend-monitoring-view":                    true,
-		}
-
-		for _, crb := range crbs {
-			Expect(monitoringNames[crb.Name]).To(BeFalse(), "monitoring CRB %q should not exist when monitoring is disabled", crb.Name)
-		}
-	})
 })
 
 var _ = Describe("DataStorageClientRoleBindings", func() {
@@ -813,13 +781,35 @@ var _ = Describe("ToolClusterRoles", func() {
 				"tool ClusterRole %q should have %d resourceNames, got %d",
 				found.Name, expectedCount, len(found.Rules[0].ResourceNames))
 		},
-		Entry("SRE", "tool-sre", 27),
+		Entry("SRE", "tool-sre", 29),
 		Entry("AI-orchestrator", "tool-ai-orchestrator", 21),
 		Entry("CICD", "tool-cicd", 4),
 		Entry("Observability", "tool-observability", 6),
 		Entry("L3-audit", "tool-l3-audit", 6),
 		Entry("Remediation-approver", "tool-remediation-approver", 7),
 	)
+
+	// #278: sre already holds kubernaut_approve (it's the only console-interactive
+	// persona today), so it must also see kubernaut_get_approval_request to make an
+	// informed decision, and kubernaut_complete_no_action to dismiss/escalate --
+	// otherwise the approval gate silently breaks end-to-end for the persona it's
+	// meant to serve. Asserted by name (not just count) so a future accidental swap
+	// of a different tool doesn't silently satisfy the count-only check above.
+	It("SRE persona includes approval-visibility and completion tools (#278)", func() {
+		kn := testKubernautWithAF()
+		roles := ToolClusterRoles(kn)
+		var sre *rbacv1.ClusterRole
+		for _, r := range roles {
+			if strings.HasSuffix(r.Name, "tool-sre") {
+				sre = r
+				break
+			}
+		}
+		Expect(sre).NotTo(BeNil(), "tool-sre ClusterRole not found")
+		Expect(sre.Rules[0].ResourceNames).To(ContainElements(
+			"kubernaut_get_approval_request", "kubernaut_complete_no_action",
+		), "tool-sre should be able to view RAR details and complete-without-action (#278)")
+	})
 
 	It("tool ClusterRole names are namespace-prefixed", func() {
 		kn := testKubernautWithAF()

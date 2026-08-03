@@ -267,10 +267,8 @@ var _ = Describe("fleetMetadataCacheNetworkPolicy", func() {
 		Expect(selectors).To(ContainElement(SelectorLabels(ComponentRemediationOrchestrator)))
 	})
 
-	It("adds a metrics ingress rule when monitoring is enabled", func() {
+	It("adds a metrics ingress rule", func() {
 		kn := testKubernautWithFMC()
-		enabled := true
-		kn.Spec.Monitoring.Enabled = &enabled
 		np := fleetMetadataCacheNetworkPolicy(kn)
 		Expect(len(np.Spec.Ingress)).To(BeNumerically(">=", 2))
 	})

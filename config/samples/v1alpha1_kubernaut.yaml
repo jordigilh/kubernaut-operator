@@ -284,9 +284,6 @@ spec:
     logging:
       level: info
 
-  monitoring:
-    enabled: true
-
   networkPolicies:
     enabled: false
 
