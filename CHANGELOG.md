@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **CR**: `spec.apiFrontend.rbac.consoleAccessGroups` for the coarse-grained
+  `kubernaut.ai/console` `use` RBAC gate (kubernaut#1919/#1940). When unset,
+  defaults to the deduplicated union of groups already present in
+  `roleBindings`, so upgrading to an AF version enforcing this gate does not
+  silently deny existing deployments' console access. Set to an explicit
+  empty list to opt out, or a non-empty list for independent control (#290)
+
 ### Changed
 - **BREAKING**: `spec.monitoring` (and its `enabled` field) is removed from
   the CRD entirely. OCP monitoring integration (Prometheus/AlertManager
