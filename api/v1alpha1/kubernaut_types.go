@@ -1019,7 +1019,12 @@ type LLMProfileSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Provider string `json:"provider"`
 
-	// LLM model name (e.g. "gpt-4o", "gemini-2.5-pro").
+	// LLM model name (e.g. "gpt-4o" for provider "openai", "claude-sonnet-5"
+	// for provider "vertexai"/"anthropic"). Note: as of kubernaut v1.5/main,
+	// there is no native Gemini/Google-GenAI client — "vertexai" always
+	// builds an Anthropic-family client regardless of the configured model,
+	// so Gemini model names are not currently functional (see
+	// jordigilh/kubernaut#1778).
 	// +kubebuilder:validation:MinLength=1
 	Model string `json:"model"`
 
