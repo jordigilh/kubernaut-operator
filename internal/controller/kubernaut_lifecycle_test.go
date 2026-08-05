@@ -2862,6 +2862,134 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	})
 
 	// ======================================================================
+	// Console Access RBAC Lifecycle (#289)
+	// ======================================================================
+
+	Context("Console Access RBAC Lifecycle", func() {
+		It("IT-CONSOLE-001: creates the console-access ClusterRole during deploy phase", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			cr := &rbacv1.ClusterRole{}
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: resources.ConsoleAccessClusterRoleName(&kubernautv1alpha1.Kubernaut{
+				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
+			})}, cr)
+			Expect(err).NotTo(HaveOccurred(), "console-access ClusterRole should exist after deploy")
+			Expect(cr.Rules).To(HaveLen(1))
+			Expect(cr.Rules[0].APIGroups).To(ConsistOf("kubernaut.ai"))
+			Expect(cr.Rules[0].Resources).To(ConsistOf("console"))
+			Expect(cr.Rules[0].Verbs).To(ConsistOf("use"))
+		})
+
+		It("IT-CONSOLE-002: creates the console-access CRB with derived groups matching the #289 live scenario", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			roleBindings := make([]kubernautv1alpha1.ToolRoleBinding, 0, 6)
+			for _, role := range []string{"sre", "ai-orchestrator", "cicd", "observability", "l3-audit", "remediation-approver"} {
+				roleBindings = append(roleBindings, kubernautv1alpha1.ToolRoleBinding{
+					Role: role, Groups: []string{"platform-engineering"},
+				})
+			}
+			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{RoleBindings: roleBindings}
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			crbName := resources.ConsoleAccessCRBName(&kubernautv1alpha1.Kubernaut{
+				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
+			})
+			crb := &rbacv1.ClusterRoleBinding{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crbName}, crb)).To(Succeed(),
+				"console-access CRB should exist, derived from roleBindings groups")
+			Expect(crb.Subjects).To(HaveLen(1), "6 roleBindings sharing one group should collapse to 1 subject")
+			Expect(crb.Subjects[0].Kind).To(Equal("Group"))
+			Expect(crb.Subjects[0].Name).To(Equal("platform-engineering"))
+		})
+
+		It("IT-CONSOLE-003: reflects an explicit consoleAccessGroups override, independent of roleBindings", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+				RoleBindings:        []kubernautv1alpha1.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
+				ConsoleAccessGroups: []string{"console-admins"},
+			}
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			crbName := resources.ConsoleAccessCRBName(&kubernautv1alpha1.Kubernaut{
+				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
+			})
+			crb := &rbacv1.ClusterRoleBinding{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crbName}, crb)).To(Succeed())
+			Expect(crb.Subjects).To(HaveLen(1))
+			Expect(crb.Subjects[0].Name).To(Equal("console-admins"),
+				"explicit consoleAccessGroups should override roleBindings-derived groups")
+		})
+
+		It("IT-CONSOLE-004: removes the console-access CRB after switching to consoleAccessGroups: []", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+				RoleBindings: []kubernautv1alpha1.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
+			}
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			crbName := resources.ConsoleAccessCRBName(&kubernautv1alpha1.Kubernaut{
+				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
+			})
+			crb := &rbacv1.ClusterRoleBinding{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crbName}, crb)).To(Succeed(),
+				"precondition: console-access CRB derived from roleBindings should exist")
+
+			By("explicitly opting out via consoleAccessGroups: []")
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			kn.Spec.APIFrontend.RBAC.ConsoleAccessGroups = []string{}
+			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
+
+			By("reconciling to apply the opt-out")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: crbName}, crb)
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "console-access CRB should be removed after explicit opt-out")
+		})
+
+		It("IT-CONSOLE-005: deletes the console-access ClusterRole and CRB by finalizer", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+				RoleBindings: []kubernautv1alpha1.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
+			}
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			knForNames := &kubernautv1alpha1.Kubernaut{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}}
+			crName := resources.ConsoleAccessClusterRoleName(knForNames)
+			crbName := resources.ConsoleAccessCRBName(knForNames)
+
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crName}, &rbacv1.ClusterRole{})).To(Succeed())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crbName}, &rbacv1.ClusterRoleBinding{})).To(Succeed())
+
+			By("deleting the CR")
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
+			stripWorkflowNamespaceCreatedByAnnotation(ctx)
+
+			By("reconciling the finalizer")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: crName}, &rbacv1.ClusterRole{})
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "console-access ClusterRole should be deleted by finalizer")
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: crbName}, &rbacv1.ClusterRoleBinding{})
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "console-access CRB should be deleted by finalizer")
+		})
+	})
+
+	// ======================================================================
 	// Serving Cert Error Cleanup (migrated from serving_cert_test.go)
 	// ======================================================================
 
