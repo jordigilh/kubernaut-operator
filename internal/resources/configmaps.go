@@ -553,7 +553,6 @@ type kaAlignLLMYAML struct {
 	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
 	Model    string `json:"model,omitempty" yaml:"model,omitempty"`
 	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
-	APIKey   string `json:"apiKey,omitempty" yaml:"apiKey,omitempty"`
 }
 
 type kaSummarizerYAML struct {
@@ -1332,7 +1331,6 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 				Provider: ka.AlignmentCheck.LLM.Provider,
 				Model:    ka.AlignmentCheck.LLM.Model,
 				Endpoint: ka.AlignmentCheck.LLM.Endpoint,
-				APIKey:   ka.AlignmentCheck.LLM.APIKey,
 			}
 		}
 		cfg.AI.AlignmentCheck = ac
