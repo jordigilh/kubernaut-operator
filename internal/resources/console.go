@@ -331,6 +331,16 @@ func ConsoleRoute(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 			},
 		},
 	}
+	// #268: the console is the externally-reachable ingress for the A2A
+	// investigation stream (nginx proxies /a2a/ to apifrontend internally
+	// with a 3600s read/send timeout, see ConsoleNginxConfigMap); without
+	// this annotation OCP HAProxy's default server timeout kills
+	// long-running investigations mid-stream ("context canceled"),
+	// dropping the train-of-thought and decision UI. Mirrors
+	// GatewayRoute/APIFrontendRoute in ocp.go.
+	route.Annotations = map[string]string{
+		"haproxy.router.openshift.io/timeout": routeSSETimeout,
+	}
 
 	if kn.Spec.Console.Route.Host != "" {
 		route.Spec.Host = kn.Spec.Console.Route.Host

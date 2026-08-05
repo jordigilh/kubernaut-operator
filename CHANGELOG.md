@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/upgrade-1.5-to-1.6.md` and
   `docs/design/DD-273-deprecate-monitoring-disabled.md` (#273)
 
+### Fixed
+- `ConsoleRoute()` now sets the `haproxy.router.openshift.io/timeout: 3600s`
+  annotation, mirroring `GatewayRoute`/`APIFrontendRoute`. Without it, OCP
+  HAProxy's default route timeout silently killed long-running A2A
+  investigation streams mid-stream ("context canceled"), dropping the
+  console's train-of-thought and hanging tool calls (#268)
+
 ## [1.5.0] - 2026-06-01
 
 ### Added
