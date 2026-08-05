@@ -74,6 +74,7 @@ func ClusterRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRole {
 
 	if kn.Spec.APIFrontendEnabled() {
 		roles = append(roles, apifrontendClusterRole(kn, labels))
+		roles = append(roles, ConsoleAccessClusterRole(kn))
 	}
 
 	// #224 Finding 5: once FMC's effective mcpGatewayNamespace resolves,
@@ -708,6 +709,115 @@ func ToolCRBNames(kn *kubernautv1alpha1.Kubernaut) []string {
 		names = append(names, crb.Name)
 	}
 	return names
+}
+
+// ConsoleAccessClusterRoleName returns the name of the coarse-grained
+// console-access ClusterRole for finalizer cleanup.
+func ConsoleAccessClusterRoleName(kn *kubernautv1alpha1.Kubernaut) string {
+	return clusterRoleName(kn, "console-access")
+}
+
+// ConsoleAccessCRBName returns the name of the console-access
+// ClusterRoleBinding for finalizer cleanup.
+func ConsoleAccessCRBName(kn *kubernautv1alpha1.Kubernaut) string {
+	return clusterRoleName(kn, "console-access-binding")
+}
+
+// ConsoleAccessClusterRole builds the coarse-grained kubernaut.ai/console
+// "use" ClusterRole gating all console/tool access (kubernaut#1919). It
+// renders unconditionally whenever AF is enabled, independent of whether
+// any groups are currently bound to it -- mirroring upstream's own
+// always-render behavior for the equivalent Helm-templated ClusterRole.
+// Returns nil when AF is disabled.
+func ConsoleAccessClusterRole(kn *kubernautv1alpha1.Kubernaut) *rbacv1.ClusterRole {
+	if !kn.Spec.APIFrontendEnabled() {
+		return nil
+	}
+	return &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   ConsoleAccessClusterRoleName(kn),
+			Labels: CommonLabels(kn),
+		},
+		Rules: []rbacv1.PolicyRule{{
+			APIGroups: []string{"kubernaut.ai"},
+			Resources: []string{"console"},
+			Verbs:     []string{"use"},
+		}},
+	}
+}
+
+// effectiveConsoleAccessGroups returns the OIDC groups granted console
+// access. When RBAC.ConsoleAccessGroups is explicitly set (including an
+// explicit empty list to opt out), it is used verbatim. When unset (nil),
+// it defaults to the deduplicated union of all groups already present in
+// RoleBindings, so upgrading to an AF version enforcing the console gate
+// does not silently deny existing deployments' tool calls (#289). Nil
+// RBAC returns nil (no roleBindings configured at all).
+//
+// ConsoleAccessGroups deliberately has no `omitempty` JSON tag: Go's
+// encoding/json treats a non-nil empty slice as "empty" and would drop it
+// from the wire payload on a typed-client Update, collapsing an explicit
+// "[]" opt-out back into "unset" (nil) and silently defeating the
+// derive-vs-opt-out distinction this function implements. The apiserver
+// still treats an explicit JSON null (a nil slice) as field-absent, so the
+// nil/unset/derive-default case is unaffected by this.
+func effectiveConsoleAccessGroups(kn *kubernautv1alpha1.Kubernaut) []string {
+	if kn.Spec.APIFrontend.RBAC == nil {
+		return nil
+	}
+	if kn.Spec.APIFrontend.RBAC.ConsoleAccessGroups != nil {
+		return kn.Spec.APIFrontend.RBAC.ConsoleAccessGroups
+	}
+
+	roleBindings := kn.Spec.APIFrontend.RBAC.RoleBindings
+	seen := make(map[string]struct{}, len(roleBindings))
+	groups := make([]string, 0, len(roleBindings))
+	for _, rb := range roleBindings {
+		for _, g := range rb.Groups {
+			if _, ok := seen[g]; ok {
+				continue
+			}
+			seen[g] = struct{}{}
+			groups = append(groups, g)
+		}
+	}
+	return groups
+}
+
+// ConsoleAccessClusterRoleBinding builds the ClusterRoleBinding granting
+// effectiveConsoleAccessGroups the console-access ClusterRole. Returns nil
+// when AF is disabled or the effective group list is empty (no groups to
+// bind, or an explicit opt-out) -- callers must delete any previously
+// created CRB in that case rather than treating nil as "no-op".
+func ConsoleAccessClusterRoleBinding(kn *kubernautv1alpha1.Kubernaut) *rbacv1.ClusterRoleBinding {
+	if !kn.Spec.APIFrontendEnabled() {
+		return nil
+	}
+	groups := effectiveConsoleAccessGroups(kn)
+	if len(groups) == 0 {
+		return nil
+	}
+
+	subjects := make([]rbacv1.Subject, 0, len(groups))
+	for _, g := range groups {
+		subjects = append(subjects, rbacv1.Subject{
+			Kind: "Group",
+			Name: g,
+		})
+	}
+
+	return &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   ConsoleAccessCRBName(kn),
+			Labels: CommonLabels(kn),
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName,
+			Kind:     "ClusterRole",
+			Name:     ConsoleAccessClusterRoleName(kn),
+		},
+		Subjects: subjects,
+	}
 }
 
 // ownerChainResolutionRules returns the read-only PolicyRules needed for

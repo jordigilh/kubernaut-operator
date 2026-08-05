@@ -35,10 +35,10 @@ const (
 )
 
 var _ = Describe("ClusterRoles", func() {
-	It("returns exactly 16 roles (14 base + 2 monitoring)", func() {
+	It("returns exactly 17 roles (14 base + 2 monitoring + 1 console-access)", func() {
 		kn := testKubernaut()
 		roles := ClusterRoles(kn)
-		Expect(roles).To(HaveLen(16), "ClusterRoles() should return exactly 16 roles (14 base + 2 monitoring), got %d", len(roles))
+		Expect(roles).To(HaveLen(17), "ClusterRoles() should return exactly 17 roles (14 base + 2 monitoring + 1 console-access, #289), got %d", len(roles))
 	})
 
 	It("contains expected role names", func() {
@@ -964,6 +964,148 @@ var _ = Describe("ToolClusterRoleBindings", func() {
 		}
 		names := ToolCRBNames(kn)
 		Expect(names).To(HaveLen(2), "ToolCRBNames should include both persona and custom CRB names")
+	})
+})
+
+// --- Issue #289: console-access RBAC gate ---
+
+var _ = Describe("ConsoleAccessClusterRole", func() {
+	It("[CA-010] returns a ClusterRole with apiGroup kubernaut.ai, resource console, verb use", func() {
+		kn := testKubernautWithAF()
+		cr := ConsoleAccessClusterRole(kn)
+		Expect(cr).NotTo(BeNil())
+		Expect(cr.Rules).To(HaveLen(1))
+		rule := cr.Rules[0]
+		Expect(rule.APIGroups).To(ConsistOf(kubernautAPIGroup))
+		Expect(rule.Resources).To(ConsistOf("console"))
+		Expect(rule.Verbs).To(ConsistOf("use"))
+	})
+
+	It("[CA-011] name is namespace-prefixed", func() {
+		kn := testKubernautWithAF()
+		cr := ConsoleAccessClusterRole(kn)
+		Expect(cr).NotTo(BeNil())
+		Expect(cr.Name).To(Equal(kn.Namespace + "-console-access"))
+	})
+
+	It("[CA-012] returns nil when AF is disabled", func() {
+		kn := testKubernautWithAF()
+		disabled := false
+		kn.Spec.APIFrontend.Enabled = &disabled
+		Expect(ConsoleAccessClusterRole(kn)).To(BeNil())
+	})
+
+	It("[CA-013] renders even when no groups are bound anywhere", func() {
+		kn := testKubernautWithAF()
+		Expect(kn.Spec.APIFrontend.RBAC).To(BeNil(), "precondition: no roleBindings configured")
+		Expect(ConsoleAccessClusterRole(kn)).NotTo(BeNil(),
+			"ClusterRole should render unconditionally, matching upstream's always-render behavior")
+	})
+})
+
+var _ = Describe("effectiveConsoleAccessGroups", func() {
+	It("[CA-020] returns nil when RBAC is nil", func() {
+		kn := testKubernautWithAF()
+		Expect(kn.Spec.APIFrontend.RBAC).To(BeNil())
+		Expect(effectiveConsoleAccessGroups(kn)).To(BeNil())
+	})
+
+	It("[CA-021] nil ConsoleAccessGroups derives the deduplicated union of roleBindings groups", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Role: "sre", Groups: []string{"sre-team", "platform-eng"}},
+				{Role: "cicd", Groups: []string{"ci-bots"}},
+				{Role: "l3-audit", Groups: []string{"platform-eng"}},
+			},
+		}
+		Expect(effectiveConsoleAccessGroups(kn)).To(ConsistOf("sre-team", "platform-eng", "ci-bots"))
+	})
+
+	It("[CA-022] derivation collapses the #289 live scenario (6 roleBindings, one shared group) to a single group", func() {
+		kn := testKubernautWithAF()
+		roleBindings := make([]kubernautv1alpha1.ToolRoleBinding, 0, 6)
+		for _, role := range []string{"sre", "ai-orchestrator", "cicd", "observability", "l3-audit", "remediation-approver"} {
+			roleBindings = append(roleBindings, kubernautv1alpha1.ToolRoleBinding{
+				Role: role, Groups: []string{"platform-engineering"},
+			})
+		}
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{RoleBindings: roleBindings}
+		Expect(effectiveConsoleAccessGroups(kn)).To(Equal([]string{"platform-engineering"}))
+	})
+
+	It("[CA-023] explicit empty list opts out regardless of roleBindings content", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings:        []kubernautv1alpha1.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
+			ConsoleAccessGroups: []string{},
+		}
+		Expect(effectiveConsoleAccessGroups(kn)).To(BeEmpty())
+	})
+
+	It("[CA-024] explicit non-empty list is used verbatim, ignoring roleBindings", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings:        []kubernautv1alpha1.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
+			ConsoleAccessGroups: []string{"console-only-group"},
+		}
+		Expect(effectiveConsoleAccessGroups(kn)).To(ConsistOf("console-only-group"))
+	})
+})
+
+var _ = Describe("ConsoleAccessClusterRoleBinding", func() {
+	It("[CA-030] returns nil when AF is disabled", func() {
+		kn := testKubernautWithAF()
+		disabled := false
+		kn.Spec.APIFrontend.Enabled = &disabled
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			ConsoleAccessGroups: []string{"some-group"},
+		}
+		Expect(ConsoleAccessClusterRoleBinding(kn)).To(BeNil())
+	})
+
+	It("[CA-031] returns nil when the effective group list is empty", func() {
+		kn := testKubernautWithAF()
+		Expect(ConsoleAccessClusterRoleBinding(kn)).To(BeNil())
+	})
+
+	It("[CA-032] one Group-kind subject per effective group, no explicit APIGroup", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			ConsoleAccessGroups: []string{"group-a", "group-b"},
+		}
+		crb := ConsoleAccessClusterRoleBinding(kn)
+		Expect(crb).NotTo(BeNil())
+		Expect(crb.Subjects).To(HaveLen(2))
+		subjectNames := make([]string, 0, len(crb.Subjects))
+		for _, s := range crb.Subjects {
+			Expect(s.Kind).To(Equal("Group"))
+			Expect(s.APIGroup).To(BeEmpty(), "Group subjects should not set an explicit APIGroup (matches ToolClusterRoleBindings convention)")
+			subjectNames = append(subjectNames, s.Name)
+		}
+		Expect(subjectNames).To(ConsistOf("group-a", "group-b"))
+	})
+
+	It("[CA-033] roleRef points to the namespace-prefixed console-access ClusterRole", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			ConsoleAccessGroups: []string{"group-a"},
+		}
+		crb := ConsoleAccessClusterRoleBinding(kn)
+		Expect(crb).NotTo(BeNil())
+		Expect(crb.RoleRef.Kind).To(Equal("ClusterRole"))
+		Expect(crb.RoleRef.APIGroup).To(Equal(rbacv1.GroupName))
+		Expect(crb.RoleRef.Name).To(Equal(kn.Namespace + "-console-access"))
+	})
+
+	It("[CA-034] CRB name is namespace-prefixed and static regardless of group count", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			ConsoleAccessGroups: []string{"group-a", "group-b", "group-c"},
+		}
+		crb := ConsoleAccessClusterRoleBinding(kn)
+		Expect(crb).NotTo(BeNil())
+		Expect(crb.Name).To(Equal(kn.Namespace + "-console-access-binding"))
 	})
 })
 
