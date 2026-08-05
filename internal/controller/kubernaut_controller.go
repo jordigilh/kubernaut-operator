@@ -549,7 +549,33 @@ func (r *KubernautReconciler) deployRBAC(ctx context.Context, kn *kubernautv1alp
 	if err := r.deployToggleRBAC(ctx, kn); err != nil {
 		return err
 	}
-	return r.deployToolRBAC(ctx, kn)
+	if err := r.deployToolRBAC(ctx, kn); err != nil {
+		return err
+	}
+	return r.deployConsoleAccessRBAC(ctx, kn)
+}
+
+// deployConsoleAccessRBAC ensures the console-access ClusterRoleBinding
+// reflects the current effective group list (#289). The ClusterRole itself
+// rides the ClusterRoles(kn) aggregator via deployCoreRBAC and needs no
+// dedicated handling here. Unlike the multi-name tool CRBs, this CRB has a
+// single static name, so a plain ensure-or-delete on every reconcile is
+// sufficient to handle the "groups shrunk to zero / explicit opt-out"
+// transition -- no status-field pruning list is needed.
+func (r *KubernautReconciler) deployConsoleAccessRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
+	crb := resources.ConsoleAccessClusterRoleBinding(kn)
+	if crb == nil {
+		staleCRB := &rbacv1.ClusterRoleBinding{}
+		staleCRB.Name = resources.ConsoleAccessCRBName(kn)
+		if err := r.deleteIfExists(ctx, staleCRB); err != nil {
+			return fmt.Errorf("deleting console-access CRB: %w", err)
+		}
+		return nil
+	}
+	if err := r.ensureUnowned(ctx, crb); err != nil {
+		return fmt.Errorf("ensuring console-access CRB %s: %w", crb.Name, err)
+	}
+	return nil
 }
 
 // deployCoreRBAC provisions ClusterRoles, ClusterRoleBindings, namespace-scoped
@@ -1834,6 +1860,15 @@ func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kuber
 		if err := r.deleteIfExists(ctx, toolCRB); err != nil {
 			errs = append(errs, fmt.Errorf("deleting tool CRB %s: %w", name, err))
 		}
+	}
+
+	// #289: the console-access ClusterRole itself is already covered by the
+	// resources.ClusterRoles(kn) sweep above; only its CRB needs an explicit
+	// static-name delete here.
+	consoleCRB := &rbacv1.ClusterRoleBinding{}
+	consoleCRB.Name = resources.ConsoleAccessCRBName(kn)
+	if err := r.deleteIfExists(ctx, consoleCRB); err != nil {
+		errs = append(errs, fmt.Errorf("deleting console-access CRB: %w", err))
 	}
 
 	extCRBList := &rbacv1.ClusterRoleBindingList{}
