@@ -1207,6 +1207,18 @@ type APIFrontendRBACSpec struct {
 	// RoleBindings maps persona-based tool roles to OIDC groups.
 	// +optional
 	RoleBindings []ToolRoleBinding `json:"roleBindings,omitempty"`
+
+	// ConsoleAccessGroups are the OIDC groups granted the coarse-grained
+	// kubernaut-console-access ClusterRole (kubernaut.ai/console, verb=use) --
+	// a separate, independently-auditable grant from the per-tool RoleBindings
+	// above (kubernaut#1919). When unset (nil), defaults to the deduplicated
+	// union of all groups already present in RoleBindings, so upgrading to an
+	// AF version enforcing this gate does not silently deny existing
+	// deployments' tool calls (kubernaut-operator#289). Set to an explicit
+	// empty list to opt out (grant console access to nobody). Set to a
+	// non-empty list for independent, narrower control.
+	// +optional
+	ConsoleAccessGroups []string `json:"consoleAccessGroups"` // no omitempty: see rbac.go effectiveConsoleAccessGroups doc
 }
 
 // ToolRoleBinding binds a tool role to one or more OIDC groups.
