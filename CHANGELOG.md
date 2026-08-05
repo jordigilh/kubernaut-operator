@@ -34,6 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   investigation streams mid-stream ("context canceled"), dropping the
   console's train-of-thought and hanging tool calls (#268)
 
+### Removed
+- **BREAKING**: `spec.kubernautAgent.alignmentCheck.llm.apiKey` is removed
+  from the CRD. This field never had any effect -- KA resolves LLM API keys
+  purely via provider-named env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+  etc.), never from a plaintext CR field, and has no config field to bind
+  a rendered `apiKey` YAML key to. Setting this field on an existing CR is
+  a silent no-op both before and after this change (#237)
+
 ## [1.5.0] - 2026-06-01
 
 ### Added

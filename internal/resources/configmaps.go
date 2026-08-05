@@ -751,7 +751,6 @@ type kaAlignLLMYAML struct {
 	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
 	Model    string `json:"model,omitempty" yaml:"model,omitempty"`
 	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
-	APIKey   string `json:"apiKey,omitempty" yaml:"apiKey,omitempty"`
 }
 
 type kaSummarizerYAML struct {
@@ -1565,7 +1564,6 @@ func kaAlignmentConfig(ac kubernautv1alpha1.AlignmentCheckSpec) *kaAlignmentYAML
 			Provider: ac.LLM.Provider,
 			Model:    ac.LLM.Model,
 			Endpoint: ac.LLM.Endpoint,
-			APIKey:   ac.LLM.APIKey,
 		}
 	}
 	return cfg
