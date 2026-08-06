@@ -850,13 +850,12 @@ func apifrontendCredentialVolumesMountsEnv(kn *kubernautv1alpha1.Kubernaut,
 	// profile (resolveLLMKey() in pkg/apifrontend/config/config.go), so
 	// when its resolved profile names a different credentialsSecretName
 	// than AF's own, mount a dedicated Secret rather than reusing AF's
-	// "llm-credentials" volume. validateAFLLMProfileRefs (kubernaut#1731)
-	// blocks the one combination this can't safely support -- both
-	// profiles vertex_ai with different secrets -- so by the time we get
-	// here it's always safe to redirect GOOGLE_APPLICATION_CREDENTIALS to
-	// the dedicated mount when triage itself is vertex_ai: AF's own
-	// connection, if it too were vertex_ai, is guaranteed to already share
-	// the same Secret.
+	// "llm-credentials" volume. #279: this used to also redirect the
+	// process-wide GOOGLE_APPLICATION_CREDENTIALS env var when triage's
+	// profile was vertex_ai (kubernaut#1731's ambient-ADC gap); now that
+	// AF's Vertex AI client honors a profile's own APIKey/APIKeyFile, the
+	// ConfigMap's apiKeyFile (afSeverityTriageConfig, configmaps.go) reads
+	// straight from this mount and the redirect is no longer needed.
 	if st := kn.Spec.APIFrontend.SeverityTriage; st != nil && st.LLMProfileRef != "" {
 		if stProfile, ok := ResolveLLMProfile(kn, st.LLMProfileRef); ok &&
 			stProfile.CredentialsSecretName != "" && stProfile.CredentialsSecretName != afProfile.CredentialsSecretName {
@@ -864,9 +863,6 @@ func apifrontendCredentialVolumesMountsEnv(kn *kubernautv1alpha1.Kubernaut,
 			mounts = append(mounts, corev1.VolumeMount{
 				Name: severityTriageCredentialsVolumeName(), MountPath: severityTriageCredentialsMountPath(), ReadOnly: true,
 			})
-			if stProfile.Provider == LLMProviderVertexAI {
-				env = upsertEnvVar(env, "GOOGLE_APPLICATION_CREDENTIALS", severityTriageCredentialsMountPath()+"/credentials.json")
-			}
 		}
 	}
 

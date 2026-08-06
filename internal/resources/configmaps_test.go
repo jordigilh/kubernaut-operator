@@ -2006,7 +2006,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).NotTo(ContainSubstring("llmModel:"), "flat llmModel field should not be emitted")
 	})
 
-	It("renders Vertex AI fields in agent.llm config without apiKeyFile", func() {
+	It("#279: renders Vertex AI fields in agent.llm config with a credentials.json apiKeyFile now that kubernaut#1731 is fixed", func() {
 		kn := testKubernautWithAF()
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderVertexAI })
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Model = "gemini-2.5-pro" })
@@ -2033,8 +2033,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(root.Agent.LLM.Model).To(Equal("gemini-2.5-pro"))
 		Expect(root.Agent.LLM.VertexProject).To(Equal("my-project"))
 		Expect(root.Agent.LLM.VertexLocation).To(Equal(testVertexLocation))
-		Expect(root.Agent.LLM.APIKeyFile).To(BeEmpty(),
-			"vertex_ai should use GOOGLE_APPLICATION_CREDENTIALS (ADC), not apiKeyFile")
+		Expect(root.Agent.LLM.APIKeyFile).To(Equal("/etc/apifrontend/llm-credentials/credentials.json"), // pre-commit:allow-sensitive -- mount-path convention constant, not a real credential/secret value
+			"#279: vertex_ai now renders an explicit apiKeyFile pointing at the already-mounted credentials.json, same mount AF's own profile has used since kubernaut#1731 was fixed")
 	})
 
 	It("UT-CM-196-001 [SI-10]: AF receives openai_compatible when CR specifies openai", func() {
@@ -2404,7 +2404,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			"#234: a severityTriage override with its own credentialsSecretName must render its own apiKeyFile pointing at its dedicated mount, not AF's shared llm-credentials one")
 	})
 
-	It("LR-034 [IA-5]: emits vertexProject/vertexLocation but no apiKeyFile for a vertex_ai severityTriage override with its own credentials (#234, matches AF's ADC-only vertex_ai convention)", func() {
+	It("LR-034 [IA-5]: emits vertexProject/vertexLocation and a dedicated credentials.json apiKeyFile for a vertex_ai severityTriage override with its own credentials (#279, kubernaut#1731 is fixed)", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.LLMProfiles["triage-vertex"] = kubernautv1alpha1.LLMProfileSpec{
 			Provider:              LLMProviderVertexAI,
@@ -2427,8 +2427,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		}
 		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
 		Expect(root.SeverityTriage.LLM).NotTo(BeNil())
-		Expect(root.SeverityTriage.LLM.APIKeyFile).To(BeEmpty(),
-			"#234: AF's vertex_ai path never reads apiKeyFile (kubernaut#1731) — credentials flow through GOOGLE_APPLICATION_CREDENTIALS, wired in deployments.go, matching AF's main agent.llm convention")
+		Expect(root.SeverityTriage.LLM.APIKeyFile).To(Equal("/etc/apifrontend/severity-triage-credentials/credentials.json"), // pre-commit:allow-sensitive -- mount-path convention constant, not a real credential/secret value
+			"#279: a vertex_ai severityTriage override with its own credentialsSecretName must render its own credentials.json apiKeyFile pointing at its dedicated mount, mirroring #233's KA phaseModels pattern")
 		Expect(root.SeverityTriage.LLM.VertexProject).To(Equal("example-gcp-project"))
 		Expect(root.SeverityTriage.LLM.VertexLocation).To(Equal("us-central1"))
 	})

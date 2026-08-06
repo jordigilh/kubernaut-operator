@@ -1162,7 +1162,7 @@ var _ = Describe("APIFrontendDeployment", func() {
 		}
 	})
 
-	It("KFG-027 [IA-5]: redirects GOOGLE_APPLICATION_CREDENTIALS to the dedicated mount when severityTriage's profile is vertex_ai with a different credentialsSecretName than AF's non-vertex_ai own profile (#234)", func() {
+	It("KFG-027 [IA-5]: mounts the dedicated severity-triage-credentials Secret without redirecting GOOGLE_APPLICATION_CREDENTIALS when severityTriage's profile is vertex_ai with a different credentialsSecretName than AF's non-vertex_ai own profile (#279, kubernaut#1731 is fixed)", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.LLMProfiles[testAFOnlyProfile] = kubernautv1alpha1.LLMProfileSpec{
 			Provider:              LLMProviderOpenAI,
@@ -1192,9 +1192,9 @@ var _ = Describe("APIFrontendDeployment", func() {
 				gacValue = e.Value
 			}
 		}
-		Expect(gacCount).To(Equal(1), "GOOGLE_APPLICATION_CREDENTIALS must be set exactly once, not duplicated")
-		Expect(gacValue).To(Equal("/etc/apifrontend/severity-triage-credentials/credentials.json"), // pre-commit:allow-sensitive -- mount-path convention constant, not a real credential/secret value
-			"#234: severityTriage's own vertex_ai credentials must be ambient for AF's ADC-only Vertex client, since AF's own profile isn't vertex_ai and doesn't need this env var")
+		Expect(gacCount).To(Equal(1), "GOOGLE_APPLICATION_CREDENTIALS must be set exactly once, from AF's own profile only")
+		Expect(gacValue).To(Equal("/etc/apifrontend/llm-credentials/credentials.json"), // pre-commit:allow-sensitive -- mount-path convention constant, not a real credential/secret value
+			"#279: severityTriage's own vertex_ai credentials now flow through its dedicated apiKeyFile (rendered in the ConfigMap, resolved via its own credentials.json mount) instead of a process-wide GOOGLE_APPLICATION_CREDENTIALS redirect")
 	})
 
 	It("mounts llm-tls-client volume from AF's own resolved profile's tlsClientSecretRef", func() {

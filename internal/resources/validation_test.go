@@ -1156,7 +1156,7 @@ var _ = Describe("API Frontend Severity Triage LLM Validation", func() {
 			"#234: AF resolves severityTriage.llm independently via resolveLLMKey(), so cross-provider triage overrides are safe")
 	})
 
-	It("#234: rejects severityTriage.llmProfileRef with a different credentialsSecretName than AF's resolved profile when both use vertex_ai (kubernaut#1731: AF's Vertex AI client relies on ambient ADC, not per-profile credentials)", func() {
+	It("#279: accepts severityTriage.llmProfileRef with a different credentialsSecretName than AF's resolved profile when both use vertex_ai, now that kubernaut#1731 is fixed and each renders its own apiKeyFile", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.LLMProfiles["af-vertex"] = kubernautv1alpha1.LLMProfileSpec{
 			Provider: LLMProviderVertexAI, Model: "gemini-2.5-pro",
@@ -1173,13 +1173,8 @@ var _ = Describe("API Frontend Severity Triage LLM Validation", func() {
 			LLMProfileRef: "triage-vertex",
 		}
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
-		found := false
-		for _, e := range errs {
-			if strings.Contains(e.Error(), "severityTriage.llmProfileRef") && strings.Contains(e.Error(), "vertex_ai") {
-				found = true
-			}
-		}
-		Expect(found).To(BeTrue())
+		Expect(errs).To(BeEmpty(),
+			"#279: cross-credential vertex_ai-vs-vertex_ai overrides are safe now that each resolves its own apiKeyFile, matching every other provider combination unblocked in #234")
 	})
 
 	It("#234: accepts severityTriage.llmProfileRef and AF's resolved profile both vertex_ai when they share the same credentialsSecretName", func() {

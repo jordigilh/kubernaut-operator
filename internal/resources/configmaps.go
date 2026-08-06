@@ -1761,9 +1761,9 @@ func resolveKAPhaseModelOverride(kn *kubernautv1alpha1.Kubernaut, phase, ref str
 	// the phase keeps using KA's already-mounted base credentials (see
 	// phaseCredentialsMountPath/deployments.go).
 	if phaseProfile.CredentialsSecretName != "" && phaseProfile.CredentialsSecretName != kaProfile.CredentialsSecretName {
-		credFile := "api_key"
+		credFile := llmCredentialsFileAPIKey
 		if phaseProfile.Provider == LLMProviderVertexAI {
-			credFile = "credentials.json"
+			credFile = llmCredentialsFileVertexJSON
 		}
 		override.APIKeyFile = phaseCredentialsMountPath(phase) + "/" + credFile
 	}
@@ -2234,17 +2234,15 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSideca
 	}, nil
 }
 
-// afSeverityTriageConfig builds the severityTriage config section. #234:
-// validateAFLLMProfileRefs only blocks one cross-credential combination --
-// both severityTriage's and AF's own resolved profile being vertex_ai with
-// a different credentialsSecretName (kubernaut#1731's ambient-ADC gap) --
-// so every other combination with a different credentialsSecretName needs
-// its own apiKeyFile rendered against the dedicated mount deployments.go
-// provisions for it (severityTriageCredentialsMountPath), mirroring #233's
-// phaseModels pattern. vertex_ai itself never gets an apiKeyFile (matching
-// afAgentLLMConfig's existing behavior for AF's main agent.llm): its
-// credentials flow through GOOGLE_APPLICATION_CREDENTIALS instead, wired
-// in deployments.go.
+// afSeverityTriageConfig builds the severityTriage config section. #234
+// unblocked cross-credential severityTriage overrides for every provider
+// except vertex_ai-vs-vertex_ai (kubernaut#1731's ambient-ADC gap); #279
+// removes that last restriction now that kubernaut#1731 is fixed --
+// severityTriage's resolved profile always gets its own apiKeyFile
+// rendered against the dedicated mount deployments.go provisions for it
+// (severityTriageCredentialsMountPath) whenever it names a different
+// credentialsSecretName than AF's own resolved profile, mirroring #233's
+// KA phaseModels pattern, including for vertex_ai.
 func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut) afSeverityTriageYAML {
 	cfg := afSeverityTriageYAML{
 		Enabled:                   true,
@@ -2267,10 +2265,13 @@ func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut) afSeverityTriageYAM
 		if ok {
 			llm := afAgentLLMConfig(triageProfile)
 			afProfile, _ := ResolveLLMProfile(kn, AFLLMProfileRef(kn))
-			if triageProfile.Provider != LLMProviderVertexAI &&
-				triageProfile.CredentialsSecretName != "" &&
+			if triageProfile.CredentialsSecretName != "" &&
 				triageProfile.CredentialsSecretName != afProfile.CredentialsSecretName {
-				llm.APIKeyFile = severityTriageCredentialsMountPath() + "/api_key"
+				credFile := llmCredentialsFileAPIKey
+				if triageProfile.Provider == LLMProviderVertexAI {
+					credFile = llmCredentialsFileVertexJSON
+				}
+				llm.APIKeyFile = severityTriageCredentialsMountPath() + "/" + credFile
 			}
 			cfg.LLM = &llm
 		}
@@ -2319,8 +2320,18 @@ func afAgentLLMConfig(llm kubernautv1alpha1.LLMProfileSpec) afAgentLLMYAML {
 		TLSKeyFile:     llm.TLSKeyFile,
 	}
 
-	if llm.CredentialsSecretName != "" && afProvider != LLMProviderVertexAI {
-		cfg.APIKeyFile = "/etc/apifrontend/llm-credentials/api_key"
+	// #279: every provider, including vertex_ai, renders an explicit
+	// apiKeyFile now that kubernaut#1731 fixed AF's Vertex AI client
+	// construction to honor a profile's own APIKey/APIKeyFile instead of
+	// relying solely on ambient Application Default Credentials --
+	// mirrors resolveKAPhaseModelOverride's credFile selection for KA's
+	// phaseModels (#233).
+	if llm.CredentialsSecretName != "" {
+		credFile := llmCredentialsFileAPIKey
+		if afProvider == LLMProviderVertexAI {
+			credFile = llmCredentialsFileVertexJSON
+		}
+		cfg.APIKeyFile = "/etc/apifrontend/llm-credentials/" + credFile
 	}
 
 	if llm.OAuth2.Enabled {
