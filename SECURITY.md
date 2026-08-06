@@ -159,14 +159,31 @@ The operator's own ClusterRole (`config/rbac/role.yaml`, `manager-role`) grants 
 - SBOM (CycloneDX JSON) generated via Syft, attached to GitHub Releases.
 - SBOM attested to images via Cosign (`cosign attest --type cyclonedx`).
 - Image vulnerability scanning via Trivy (CRITICAL/HIGH gate in CI).
-- Build provenance: SLSA 1–2 via `actions/attest-build-provenance`.
+- Build provenance: SLSA Build Level 3, via [`slsa-framework/slsa-github-generator`](https://github.com/slsa-framework/slsa-github-generator)'s container workflow. The provenance's builder identity is the generator's own pinned reusable workflow (not `release.yml` itself), so it can't be forged or influenced by this repository's workflow.
 - Init container images pinned by digest and configurable via `RELATED_IMAGE_*` env vars.
-- Consumer verification:
+- Consumer verification (image signature):
 
 ```bash
 cosign verify \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
   --certificate-identity-regexp="^https://github.com/jordigilh/kubernaut-operator/.github/workflows/release.yml@refs/tags/" \
+  quay.io/kubernaut-ai/kubernaut-operator:<version>
+```
+
+- Consumer verification (SLSA provenance):
+
+```bash
+# via slsa-verifier (https://github.com/slsa-framework/slsa-verifier)
+slsa-verifier verify-image \
+  --source-uri github.com/jordigilh/kubernaut-operator \
+  --builder-id "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0" \
+  quay.io/kubernaut-ai/kubernaut-operator:<version>
+
+# or via cosign, against the in-toto/SLSA predicate attestation directly
+cosign verify-attestation \
+  --type slsaprovenance \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp="^https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/" \
   quay.io/kubernaut-ai/kubernaut-operator:<version>
 ```
 
