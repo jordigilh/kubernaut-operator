@@ -948,7 +948,11 @@ type AlignmentCheckSpec struct {
 	LLM *AlignmentCheckLLMSpec `json:"llm,omitempty"`
 }
 
-// AlignmentCheckLLMSpec configures a dedicated LLM for the alignment check shadow agent.
+// AlignmentCheckLLMSpec configures a dedicated LLM for the alignment check
+// shadow agent. Credentials are resolved the same way as the main
+// KubernautAgent LLM: via provider-named env vars (ANTHROPIC_API_KEY,
+// OPENAI_API_KEY, etc.) injected from Secrets, never from a plaintext CR
+// field (#237).
 type AlignmentCheckLLMSpec struct {
 	// +optional
 	Provider string `json:"provider,omitempty"`
@@ -956,8 +960,6 @@ type AlignmentCheckLLMSpec struct {
 	Model string `json:"model,omitempty"`
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
-	// +optional
-	APIKey string `json:"apiKey,omitempty"`
 }
 
 // SummarizerSpec configures tool output summarization thresholds.

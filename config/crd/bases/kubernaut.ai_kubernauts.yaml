@@ -1439,8 +1439,6 @@ spec:
                       llm:
                         description: Optional dedicated LLM for alignment checks.
                         properties:
-                          apiKey:
-                            type: string
                           endpoint:
                             type: string
                           model:
