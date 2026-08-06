@@ -2,8 +2,8 @@
 
 **Status**: Proposed -- awaiting sign-off (CHECKPOINT DD)
 **Decision Date**: 2026-08-06
-**Version**: 1.0
-**Confidence**: 88%
+**Version**: 1.1
+**Confidence**: 90%
 **Deciders**: Kubernaut Operator Team
 **Applies To**: `api/v1alpha1` -> `api/v1alpha2` CRD migration, conversion webhook, all `internal/resources/*.go` builders, `internal/controller/`, OLM bundle
 
@@ -27,6 +27,7 @@
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-08-06 | Operator Team | Initial design spike for sign-off |
+| 1.1 | 2026-08-06 | Operator Team | Reviewer feedback: (1) Axis 3/F9 premise retracted -- Helm's `aianalysis.yaml`/`signalprocessing.yaml` templates `fail` the install when policy content is unset, so `policy`/`proactiveSignalMappings` stay required in v1alpha2, matching Helm exactly, no bundled defaults. (2) F3 strengthened -- Helm has no `networkPolicies.enabled` toggle at all (unconditional render); `NetworkPoliciesSpec.Enabled *bool` is removed in v1alpha2, NetworkPolicies become unconditional, reinforced by Red Hat's OpenShift Hardening mandate (ship NetworkPolicies from 2027-02) and the already-satisfied Conforma RBAC check (`olm.required_network_policy_rbac_for_operands`, effective 2026-08-08). |
 
 ---
 
@@ -40,8 +41,8 @@ Two independent artifacts (Helm `values.schema.json`/`values.yaml`, and this CRD
 
 ### Problem Statement
 
-1. **Structural misalignment increases dual-maintenance cost.** The same nine findings below each represent a place where a Helm chart change and a CRD change, addressing the identical underlying capability, must be implemented independently because the shapes don't correspond.
-2. **The CRD has a higher "required fields" floor than the Helm chart.** A new user's first `Kubernaut` CR must specify `postgresql`, `valkey`, at least one `llmProfiles` entry, `kubernautAgent.llmProfileRef`, and (transitively) `aiAnalysis.policy`/`signalProcessing.policy` ConfigMap refs before the CR admits at all -- more mandatory surface than the Helm chart now requires for the equivalent `helm install`.
+1. **Structural misalignment increases dual-maintenance cost.** The eight active findings below (F1-F8; a ninth, F9, was investigated and retracted -- see below) each represent a place where a Helm chart change and a CRD change, addressing the identical underlying capability, must be implemented independently because the shapes don't correspond.
+2. **The CRD makes NetworkPolicies opt-in where Helm makes them unconditional (F3).** This is the one place the *required-fields* framing runs backwards from the rest of this document: Helm has no `enabled` toggle at all and always creates NetworkPolicies, while the CRD defaults `spec.networkPolicies.enabled` to `false`. Aligning means *removing* an optional field, not adding a default to one that's already required. (`postgresql`, `valkey`, `llmProfiles`, `kubernautAgent.llmProfileRef`, and `aiAnalysis.policy`/`signalProcessing.policy` were also reviewed for a "required fields floor" gap -- none found; Helm requires the same fields for the equivalent `helm install`.)
 3. **v1alpha1 already ships in production** (v1.1-v1.5), so any of the fixes below that are breaking (field rename, restructure, type change) cannot land in v1alpha1 without breaking existing CRs. A new API version is the standard Kubernetes mechanism for this.
 
 ### Key Alignment Findings (condensed from the 5-part comparative analysis)
@@ -50,13 +51,13 @@ Two independent artifacts (Helm `values.schema.json`/`values.yaml`, and this CRD
 |---|---------|----------|
 | F1 | **Fleet flat-vs-nested mismatch, and an outright gap.** 5 existing specs (Gateway, RemediationOrchestrator, SignalProcessing, EffectivenessMonitor, KubernautAgent) each carry a flat `FleetOAuth2CredentialsSecretRef string` field; Helm nests the equivalent as `<component>.fleet.{oauth2.credentialsSecretRef,namespace}`. `WorkflowExecutionSpec` (needed for #235) has **no** Fleet field at all. `APIFrontendSpec`/`EffectivenessMonitorSpec` (needed for #227) have the OAuth2 override but are missing the `namespace` override Helm already ships (only `SignalProcessingSpec`/`FleetMetadataCacheSpec` have `MCPGatewayNamespace` today). | `api/v1alpha1/kubernaut_types.go:307-315,481-496,546-554,700-708,798-806`; Helm `values.schema.json` `<component>.fleet.*` |
 | F2 | **No `MonitoringSpec` at all**, despite EM and AF severity-triage functionally depending on a Prometheus URL. The operator today hardcodes `OCPPrometheusURL = "https://thanos-querier.openshift-monitoring.svc:9091"` unconditionally (`internal/resources/common.go:218`) with no CRD override -- there is no BYO/external-Prometheus or non-OCP path. Helm exposes `monitoring.prometheus.{enabled,url,tlsCaFile}`. | `internal/resources/common.go:214-218`, `internal/resources/configmaps.go:1404-1405,2251-2253`; Helm `values.schema.json` `monitoring.prometheus.*` |
-| F3 | **`NetworkPoliciesSpec` is a single bool** (`enabled`); Helm has ~10 parameterized override groups (API server CIDRs, per-component ingress/egress, monitoring namespace, IdP/LLM/MCP Gateway egress). | `api/v1alpha1/kubernaut_types.go:1716-1724`; Helm `values.schema.json` `networkPolicies.*` |
+| F3 | **`NetworkPoliciesSpec` is a single opt-in bool** (`enabled`, defaults `false`); Helm has **no toggle at all** -- `networkPolicies.*` in `values.schema.json` has no `enabled` property, and every `templates/<component>/networkpolicy.yaml` renders unconditionally (no `{{- if }}` guard). Helm creates NetworkPolicies for every install, unconditionally; the CRD makes them opt-in and off by default -- this is a **security regression relative to Helm**, not just a granularity gap. Reinforced externally: Conforma's `olm.required_network_policy_rbac_for_operands` check (RBAC-only, effective 2026-08-08 -- already satisfied by this operator's existing `ClusterRole`) and Red Hat's OpenShift Hardening requirement that operators actually *ship* NetworkPolicies (not just have permission to manage them), beginning 2027-02. | `api/v1alpha1/kubernaut_types.go:1716-1724`; Helm `values.schema.json` `networkPolicies.*` (no `enabled` key); `charts/kubernaut/templates/aianalysis/networkpolicy.yaml` (unconditional render); `config/rbac/role.yaml:152-163` (RBAC already compliant) |
 | F4 | **Ansible/AAP scope mismatch.** CRD models it top-level (`spec.ansible`); Helm scopes it privately under `workflowexecution.config.ansible` (Ansible is only ever consumed by WorkflowExecution). | `api/v1alpha1/kubernaut_types.go:39-41,350-378`; Helm `values.schema.json` `workflowexecution.config.ansible.*` |
 | F5 | **`AlignmentCheckSpec.LLM` still uses the old `{Provider,Model,Endpoint}` shape** with no credentials field (same underlying bug class as `kubernaut#1726`/operator `#237`, which already fixed the *main* KA/AF LLM config to use `llmProfileRef` -- this one spot was missed). Helm already fixed this via `alignmentCheck.llmProfileRef`. | `api/v1alpha1/kubernaut_types.go:948-965` |
 | F6 | **JWT provider field mismatch.** CRD `JWTProviderSpec{IssuerURL, Audiences []string, JWKSURL optional}` vs. Helm `{issuer, audience}` (both singular, `jwksURL` required). | `api/v1alpha1/kubernaut_types.go:870-896`; Helm `values.schema.json` `*.jwtProviders[]` |
 | F7 | **Rate-limit default drift.** AF's CRD defaults (`ipRequestsPerSec=50, userRequestsPerSec=20, maxConcurrentSessions=100, toolCallsPerMinute=60`) vs. Helm's tuned defaults (`10000/100/50/600` respectively) -- same fields, materially different numbers, meaning a fresh CRD-based install is far more restrictive than a fresh Helm install for identical intent. | `api/v1alpha1/kubernaut_types.go:1545-1565`; Helm `values.schema.json` `apiFrontend.rateLimit.*` |
 | F8 | **Smaller drift**: `LoggingSpec.Level` accepts both cases (`DEBUG;INFO;WARN;ERROR;debug;info;warn;error`) where Helm's convention is uppercase-only (ADR-030 upstream); Console route/ingress default posture flips between CRD (`false`, opt-in) and Helm (varies by install profile). | `api/v1alpha1/kubernaut_types.go:1190-1194,1706-1713` |
-| F9 | **Required-field floor higher than necessary.** `aiAnalysis.policy` / `signalProcessing.policy` require a pre-existing, user-authored ConfigMap (`approval.rego` / `policy.rego`) with no operator-shipped default -- a new user must author Rego before their first CR admits, even though sane starter policies could ship with the operator. | `api/v1alpha1/kubernaut_types.go:444-467` |
+| F9 | ~~Required-field floor higher than necessary~~ -- **investigated and retracted, kept for audit trail.** Originally proposed that `aiAnalysis.policy` / `signalProcessing.policy` should become optional with an operator-bundled default. Re-verified against `charts/kubernaut/templates/aianalysis/aianalysis.yaml` (and the SignalProcessing equivalent): Helm's own template `{{- fail "aianalysis.policies.content is required ..." }}` when neither `content` nor `existingConfigMap` is set -- **Helm requires this too.** There is no alignment gap here; both artifacts already agree that a policy is mandatory. See Decision Axis 3 below -- premise retracted, decision flipped accordingly. | `api/v1alpha1/kubernaut_types.go:444-467`; `charts/kubernaut/templates/aianalysis/aianalysis.yaml` (`fail` guard) |
 
 **Note on `PostgreSQLSpec.SSLMode`**: verified separately (see [PR #306](https://github.com/jordigilh/kubernaut-operator/pull/306)) that the CRD's enum already correctly excludes `disable` -- this was a stale doc comment, not a structural finding, and is **not** part of this ADR's scope. The corresponding Helm gap (`datastorage.config.database.sslMode` has no enum and defaults to `disable`) was filed upstream as a comment on [`jordigilh/kubernaut#1120`](https://github.com/jordigilh/kubernaut/issues/1120) (SEC-3), also out of scope here.
 
@@ -183,26 +184,43 @@ Top-level `spec.monitoring.prometheus.{enabled,url,tlsCaFile}` (new `MonitoringS
 
 ## Decision Axis 3: Required-Field Minimization Strategy
 
-### Alternative A: Ship operator-bundled default Rego policies for AIAnalysis/SignalProcessing ✅ CHOSEN
+**Premise correction (post-draft, pre-sign-off)**: this axis originally proposed bundling default Rego policies so `aiAnalysis.policy`/`signalProcessing.policy` could become optional (F9). That premise was **incorrect**. Re-verification against `charts/kubernaut/templates/aianalysis/aianalysis.yaml` (and the SignalProcessing equivalent) shows Helm's own chart fails the install outright when neither `policies.content` nor `policies.existingConfigMap` is set:
 
-**Approach**: Bundle default `approval.rego` / `policy.rego` content in the operator binary (e.g. `internal/resources/policies/default_approval.rego`), auto-generate the ConfigMap when `spec.aiAnalysis.policy` / `spec.signalProcessing.policy` is unset, exactly mirroring how `spec.llmProfiles`/`llmProfileRef` already decouples LLM identity with sane per-component fallback (`APIFrontendSpec.LLMProfileRef` falls back to `KubernautAgentSpec.LLMProfileRef` today -- this is the existing precedent for "optional override with a working fallback").
+```yaml
+{{- if not .Values.aianalysis.policies.existingConfigMap }}
+{{- if not .Values.aianalysis.policies.content }}
+{{- fail "aianalysis.policies.content is required (via --set-file aianalysis.policies.content=approval.rego) or provide aianalysis.policies.existingConfigMap" }}
+{{- end }}
+{{- end }}
+```
+
+Helm requires exactly what the CRD requires today. There is no alignment gap to close, and Decision Driver 2 ("lower the barrier... consistent with the philosophy already applied to the Helm chart") does not apply here, because the Helm chart itself never adopted that philosophy for this field. Bundling a default *approval* policy would make the operator **less strict than Helm**, not more aligned with it -- the opposite of this ADR's stated goal.
+
+### Alternative A: Keep `policy`/`proactiveSignalMappings` required, matching Helm exactly ✅ CHOSEN
+
+**Approach**: No change. `spec.aiAnalysis.policy` / `spec.signalProcessing.policy` remain required in v1alpha2, identical to v1alpha1 and identical to Helm's `aianalysis.policies.{content,existingConfigMap}` mandatory-one-of.
 
 **Pros**:
-- Directly resolves F9; a minimal CR (`postgresql` + `valkey` + one `llmProfiles` entry + `kubernautAgent.llmProfileRef`) becomes sufficient to reach `Running`, matching Decision Driver 2.
-- Reuses an already-proven pattern in this codebase rather than inventing a new one (CHECKPOINT B).
+- Matches Helm's actual (verified) behavior exactly -- true structural alignment, not just "fewer required fields for its own sake."
+- Avoids shipping unrequested, security-sensitive default *approval* content (an approval gate is exactly the kind of default a platform team should author deliberately, not inherit silently from the operator binary).
+- Zero new code, zero new review surface, zero new conversion complexity.
+
+**Cons**: A new user must still author (or copy a documented starter) Rego policy before their first CR reaches `Running` -- but this is identical to the Helm `helm install` experience today, not a CRD-specific gap.
+
+**Confidence**: 95%
+
+### Alternative B: Ship operator-bundled default Rego policies for AIAnalysis/SignalProcessing ❌ Rejected
+
+**Approach**: Bundle default `approval.rego`/`policy.rego` content in the operator binary and auto-generate the ConfigMap when the ref is unset.
+
+**Pros**: Would let a minimal CR reach `Running` with even less user-authored content than Helm requires.
 
 **Cons**:
-- Default Rego policy content requires its own review (security-sensitive: it's an *approval* gate) -- scoped as a D4 implementation detail, not decided in this ADR. The *mechanism* (optional ref with a bundled fallback) is what this ADR decides; the *policy content* is not.
+- Contradicts the verified Helm behavior above -- this alternative would make the CRD *diverge* from Helm, not align with it.
+- Introduces unrequested, security-sensitive default content (an approval gate) into the operator binary with no upstream precedent asking for it.
+- No real user pain point motivates it once the false premise (F9) is removed -- both artifacts already agree a policy is mandatory.
 
-**Confidence**: 85% (chosen for the mechanism; policy content deferred)
-
-### Alternative B: Keep `policy`/`proactiveSignalMappings` required, document a "day-2" starter policy in `kubernaut-docs` ❌ Rejected
-
-**Pros**: No new operator-bundled content to review/maintain.
-
-**Cons**: Does not resolve F9 -- a new user still cannot reach `Running` without authoring Rego first; directly contradicts Decision Driver 2, which is the entire reason this axis exists.
-
-**Confidence**: 25% (rejected)
+**Confidence**: 15% (rejected)
 
 ---
 
@@ -210,7 +228,7 @@ Top-level `spec.monitoring.prometheus.{enabled,url,tlsCaFile}` (new `MonitoringS
 
 ### Chosen: A / A / A across all three axes
 
-v1alpha2 is the conversion hub; v1alpha1 is a spoke via a conversion webhook (Axis 1). Every cross-cutting finding (F1-F7) is resolved via a shared, embeddable spec type mirroring Helm's nesting, not a field-by-field patch (Axis 2). Required-field reduction is achieved via operator-bundled defaults following the existing `llmProfileRef` fallback precedent, not by leaving fields required (Axis 3).
+v1alpha2 is the conversion hub; v1alpha1 is a spoke via a conversion webhook (Axis 1). Every cross-cutting finding (F1-F8) is resolved via a shared, embeddable spec type mirroring Helm's nesting, not a field-by-field patch (Axis 2). Required-field minimization is scoped to where an actual gap exists (there is none for policy refs, once F9's premise is retracted); `aiAnalysis.policy`/`signalProcessing.policy` stay required, matching Helm exactly (Axis 3).
 
 ### Architecture
 
@@ -279,9 +297,17 @@ type PrometheusSpec struct {
 
 `spec.monitoring` added to `KubernautSpec`, `+optional`. `internal/resources/common.go`'s `OCPPrometheusURL` constant becomes the *default value* returned by a new `resolvePrometheusURL(kn)` helper, not the only value.
 
-### F3 -- Parameterized `NetworkPoliciesSpec`
+### F3 -- `NetworkPoliciesSpec` becomes unconditional; opt-out removed
 
-Expands the single `Enabled *bool` into the ~10 Helm override groups (API server CIDRs, per-component ingress/egress toggles, monitoring namespace override, IdP/LLM/MCP Gateway egress overrides). Exact field list is a D2/D3 implementation detail against the Helm schema at implementation time (not fully enumerated in this ADR to avoid the target drifting from Helm's schema between sign-off and D2); the *decision* here is that `NetworkPoliciesSpec` grows from 1 field to a fully parameterized struct mirroring `values.schema.json`'s `networkPolicies.*` tree.
+**Correction from the initial draft**: F3 is not just "expand a bool into more granular options." Helm has no opt-out at all -- verified no `enabled` property in `values.schema.json`'s `networkPolicies.*`, and every `templates/<component>/networkpolicy.yaml` renders with no `{{- if }}` guard. NetworkPolicies are created unconditionally on every Helm install. The CRD's `Enabled *bool` (default `false`, opt-in) is the opposite posture, and is a security regression relative to Helm, not merely a parameterization gap.
+
+This is also no longer just an alignment nice-to-have: Red Hat's OpenShift Hardening requirements mandate that operators actually *ship* NetworkPolicies (not just declare RBAC permission to manage them) beginning 2027-02, and the nearer-term Conforma check `olm.required_network_policy_rbac_for_operands` (RBAC-only, effective 2026-08-08) is already satisfied by this operator's existing `ClusterRole` (`config/rbac/role.yaml:152-163` already grants full CRUD on `networking.k8s.io/networkpolicies` -- no gap on the RBAC side).
+
+**Decision**: `NetworkPoliciesSpec.Enabled *bool` is removed entirely in v1alpha2. NetworkPolicies are created unconditionally for every component, matching Helm's actual behavior and the Red Hat 2027-02 trajectory. The remaining ~10 Helm override groups (API server CIDRs, per-component ingress/egress toggles, monitoring namespace override, IdP/LLM/MCP Gateway egress overrides) become tuning knobs for *how* the always-on policies are shaped, not gates for *whether* they exist. Exact field list is a D2/D3 implementation detail against the Helm schema at implementation time (not fully enumerated here to avoid the target drifting from Helm's schema between sign-off and D2).
+
+**Precedent already in this codebase**: issue #143 (closed) added a reconciler `Warning` event (`NetworkPoliciesDisabled`) when `spec.networkPolicies.enabled: false`, flagging FedRAMP SC-7 non-compliance without blocking it. v1alpha2 formalizes that warning into a hard requirement.
+
+**New migration consideration** (not present in the initial draft): unlike F1/F2/F4-F8, which only add v1alpha2 surface with no v1alpha1 equivalent, this field's removal changes runtime *behavior* for any existing v1alpha1 CR that has `networkPolicies.enabled: false` today (the current default). See the conversion table below for how this is handled -- flagged explicitly for sign-off.
 
 ### F4 -- Ansible relocation
 
@@ -324,21 +350,9 @@ type JWTProviderSpec struct {
 
 `LoggingSpec.Level` enum narrows to uppercase-only (`DEBUG;INFO;WARN;ERROR`), matching upstream ADR-030. Console/Route default posture is explicitly decided per-field at D2 implementation time against the current Helm default for that specific install profile (not a single global flip -- flagged here so it isn't silently forgotten, not resolved in this ADR).
 
-### F9 -- Optional policy refs with bundled defaults
+### F9 -- Retracted: no change
 
-```go
-type AIAnalysisSpec struct {
-    // Optional; when unset, the operator generates a ConfigMap from a
-    // bundled default approval.rego (D4 implementation detail: policy
-    // content reviewed separately, see Decision Axis 3).
-    // +optional
-    Policy *PolicyConfigMapRef `json:"policy,omitempty"`
-    ConfidenceThreshold string `json:"confidenceThreshold,omitempty"`
-    // ...unchanged
-}
-```
-
-Same pattern for `SignalProcessingSpec.Policy`.
+`aiAnalysis.policy`/`signalProcessing.policy` stay required, unchanged from v1alpha1, per the corrected Decision Axis 3 above. Listed here only so the target-shape section's F1-F9 numbering stays traceable to the findings table; there is no diff to show.
 
 ---
 
@@ -355,7 +369,8 @@ Same pattern for `SignalProcessingSpec.Policy`.
 | `kubernautAgent.alignmentCheck.llm.{provider,model,endpoint}` | `kubernautAgent.alignmentCheck.llmProfileRef` | **Lossy / no automatic mapping.** v1alpha1's `{provider,model,endpoint}` never had a working credentials path (F5), so there is no live profile to reference. `ConvertTo` (v1alpha2->v1alpha1) drops `llmProfileRef` back into the old shape as best-effort (`provider`/`model` only, `endpoint` empty); `ConvertFrom` (v1alpha1->v1alpha2) leaves `llmProfileRef` empty and the conversion webhook emits a `Warning` response so `kubectl apply` surfaces it. Documented explicitly in the D5 migration guide as a manual step. |
 | `jwtProviders[].jwksURL` (optional) | `jwtProviders[].jwksURL` (required) | Direct copy when present. When absent in v1alpha1, `ConvertFrom` derives it from `issuerURL + "/protocol/openid-connect/certs"` (same derivation the runtime already does today) so the required field is never left empty by an automatic conversion. |
 | `apiFrontend.rateLimit.*` (unset -- uses old defaults) | `apiFrontend.rateLimit.*` (unset -- uses new defaults) | No value copy needed; CRD defaulting produces the new numbers automatically for any CR that didn't explicitly override these fields. **Only CRs that explicitly set the old defaults as explicit values are unaffected by the default change** (unlikely in practice, since they'd be redundant with the old default) -- flagged in the migration guide regardless. |
-| `aiAnalysis.policy` / `signalProcessing.policy` (required) | `aiAnalysis.policy` / `signalProcessing.policy` (optional) | Direct value copy when present; conversion is non-lossy either direction (v1alpha2->v1alpha1 requires re-adding the field only if it was genuinely unset, which the webhook flags the same way as the AlignmentCheck case above). |
+| `aiAnalysis.policy` / `signalProcessing.policy` (required) | `aiAnalysis.policy` / `signalProcessing.policy` (required, unchanged) | Direct value copy; no behavior change either direction (F9 retracted -- see Decision Axis 3). |
+| `networkPolicies.enabled` (bool, default `false`) | *(field removed -- always on)* | **Lossy / behavior change.** `ConvertFrom` (v1alpha1->v1alpha2) drops the field entirely; NetworkPolicies are created regardless of its prior value. If the source value was explicitly `false`, the conversion webhook emits a `Warning` response (same pattern as the AlignmentCheck LLM case) so `kubectl apply`/`get` surfaces that this CR will now have NetworkPolicies created where it previously did not. `ConvertTo` (v1alpha2->v1alpha1) sets `enabled: true` for round-trip fidelity, reflecting actual runtime behavior. Documented explicitly in the D5 migration guide as a heads-up (not a manual step -- there is nothing to configure, only to be aware of). |
 
 **General principle**: every conversion is a direct value copy except the two flagged rows (AlignmentCheck LLM shape, and the theoretical "explicit old default" edge case for rate limits), both of which are pre-existing bugs or genuinely unrepresentable states in v1alpha1, not information the conversion function is responsible for inventing. Both lossy cases are called out explicitly in the D5 migration guide with a manual remediation step.
 
@@ -369,7 +384,7 @@ Same pattern for `SignalProcessingSpec.Policy`.
 | Conversion webhook (v1alpha1 <-> v1alpha2) | `cmd/main.go` (`ctrl.NewWebhookManagedBy`) | `api/v1alpha1/kubernaut_conversion.go` (new) | IT-CRD-V2-002 |
 | `FleetOverrideSpec` resolution | `internal/resources/*.go` (per-component builders) | new `resolveFleetOverride(kn, component)` helper in `internal/resources/common.go` | re-points existing Fleet IT coverage |
 | `MonitoringSpec`/`resolvePrometheusURL` | `internal/resources/configmaps.go` (EM, AF severity-triage) | `internal/resources/common.go` | re-points existing monitoring IT coverage |
-| Default Rego policy bundling | `internal/controller/kubernaut_controller.go` (AIAnalysis/SignalProcessing reconcile) | new `internal/resources/policies/` package | new IT test, ID TBD at D4 |
+| Unconditional `NetworkPoliciesSpec` (opt-out removed) | `internal/controller/kubernaut_controller.go` (all component reconcile paths) | `internal/resources/networkpolicies.go` (drop the `Enabled` gate) | re-points existing NetworkPolicy IT coverage; new IT asserts policies exist with no CR-level toggle |
 
 ---
 
@@ -380,15 +395,16 @@ Same pattern for `SignalProcessingSpec.Policy`.
 | Conversion webhook is new, untested infrastructure for this repo | Singleton constraint bounds testing surface to one object; IT-CRD-V2-002 exercises both `ConvertTo`/`ConvertFrom` directions explicitly with the lossy-field cases from the migration table above |
 | D2-D4 is a multi-week effort touching nearly every resource builder | Phased roadmap (D2 scaffold -> D3 migrate builders component-by-component -> D4 implement #235/#227/#277 -> D5 deprecate) keeps the pyramid invariant (UT+IT per component group) intact throughout rather than one big-bang PR |
 | F3's NetworkPolicies field list is deliberately not fully enumerated here | Re-verified against Helm's `values.schema.json` at D2/D3 kickoff, not frozen at ADR sign-off time, to avoid the target silently drifting from upstream between now and implementation |
+| Removing `networkPolicies.enabled` changes runtime behavior for any existing v1alpha1 CR with `enabled: false` (today's default) -- NetworkPolicies will start being created where they weren't before | This is an intentional, security-positive change (matches Helm's always-on behavior and the Red Hat 2027-02 mandate), not an accidental regression. Mitigated by: (1) a non-silent `Warning` on conversion (same pattern as the AlignmentCheck LLM case), (2) explicit migration-guide callout, (3) precedent already established in-repo via issue #143's `NetworkPoliciesDisabled` warning event, so affected users have already been surfaced a signal today. Residual risk: a cluster whose CNI doesn't support `NetworkPolicy`, or that has conflicting third-party policies, could see new behavior on upgrade -- flagged for explicit sign-off below rather than silently deferred |
 | Lossy AlignmentCheck LLM conversion could silently drop config on downgrade | Conversion webhook returns a `Warning` (not silent) on `ConvertFrom` when the legacy shape had non-empty `provider`/`model`; migration guide (D5) documents the manual `llmProfileRef` step explicitly |
 
 ---
 
 ## Confidence Assessment
 
-**Confidence: 88%**
+**Confidence: 90%**
 
-**Justification**: The conversion strategy (Axis 1) is a standard, well-documented kubebuilder pattern significantly de-risked by the CRD's strict singleton constraint (92% confidence on its own). The structural alignment approach (Axis 2) generalizes a pattern (`ShutdownSpec`, `LoggingSpec` sharing) already proven in this exact codebase (90% confidence on its own). The required-field minimization mechanism (Axis 3) also follows an existing precedent (`llmProfileRef` fallback chain) but its policy-content dependency is explicitly deferred, not resolved (85% on the mechanism only). The combined 88% reflects two remaining risks that are structural to the *size* of this initiative rather than to any single decision: (1) F3's NetworkPolicies field list is intentionally left unfrozen pending D2/D3 re-verification against Helm, and (2) the multi-week D2-D5 execution surface (every resource builder, every validation function) has more opportunity for an individual builder migration to surface an unanticipated edge case than a single-PR change would, even though the phased roadmap is designed to catch those incrementally rather than in one big-bang cutover.
+**Justification**: The conversion strategy (Axis 1) is a standard, well-documented kubebuilder pattern significantly de-risked by the CRD's strict singleton constraint (92% confidence on its own). The structural alignment approach (Axis 2) generalizes a pattern (`ShutdownSpec`, `LoggingSpec` sharing) already proven in this exact codebase (90% confidence on its own). Axis 3 now requires *zero* new mechanism -- `policy`/`proactiveSignalMappings` stay required, matching Helm's verified behavior exactly (95% confidence on its own, up from 85% when it depended on unreviewed default policy content). F3's NetworkPolicies decision strengthened from "expand a bool" to "remove the opt-out, matching Helm's unconditional behavior and the Red Hat 2027-02 mandate" -- higher confidence in the *direction* (documented external requirement, not just a style preference), offset by a new, explicitly-flagged behavior-change risk for existing CRs with `enabled: false` (today's default). The combined 90% reflects two remaining risks structural to the *size* of this initiative rather than to any single decision: (1) F3's exact field list is intentionally left unfrozen pending D2/D3 re-verification against Helm, and (2) the multi-week D2-D5 execution surface (every resource builder, every validation function) has more opportunity for an individual builder migration to surface an unanticipated edge case than a single-PR change would, even though the phased roadmap is designed to catch those incrementally rather than in one big-bang cutover.
 
 **What would raise this to 95%+**: A completed D2 scaffold with the conversion webhook's IT-CRD-V2-002 passing end-to-end (validates Axis 1 empirically, not just on paper) before D3 migration begins in earnest.
 
@@ -400,6 +416,7 @@ Per `AGENTS.md` CHECKPOINT DD, this architectural change requires explicit user 
 
 1. **Axis 1** (conversion webhook, v1alpha2 hub / v1alpha1 spoke) -- proceed, or reconsider Alternative B/C?
 2. **Axis 2** (shared `FleetOverrideSpec`/`MonitoringSpec` types, deep structural mirror) -- proceed, or scope down to Alternative B (targeted fixes only)?
-3. **Axis 3** (bundled default Rego policies, mechanism only -- content deferred to D4) -- proceed?
-4. **F3's NetworkPolicies field list** left unfrozen until D2/D3 -- acceptable, or should it be fully enumerated in this ADR before sign-off?
-5. Any of F1-F9 you'd like pulled out of v1alpha2 scope entirely (deferred to a future v1alpha3), given the size of this initiative?
+3. **Axis 3** (keep `policy`/`proactiveSignalMappings` required, matching Helm exactly; no bundled defaults -- F9 retracted) -- proceed?
+4. **F3, revised** (remove `NetworkPoliciesSpec.Enabled` entirely -- NetworkPolicies become unconditional, matching Helm's actual behavior and the Red Hat 2027-02 mandate) -- proceed, including the explicitly-flagged behavior change for existing v1alpha1 CRs with `enabled: false` (today's default)?
+5. **F3's exact field list** left unfrozen until D2/D3 -- acceptable, or should it be fully enumerated in this ADR before sign-off?
+6. Any of F1-F8 you'd like pulled out of v1alpha2 scope entirely (deferred to a future v1alpha3), given the size of this initiative?
