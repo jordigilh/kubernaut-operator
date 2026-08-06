@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1alpha2
 
 import (
 	corev1 "k8s.io/api/core/v1"
@@ -24,6 +24,11 @@ import (
 // KubernautSpec defines the desired state of a Kubernaut deployment on OCP.
 // The operator deploys all Kubernaut services into the CR's namespace and
 // auto-derives OCP platform configuration (monitoring, service-ca, Routes).
+//
+// v1alpha2 is the storage version and conversion.Hub for this CRD; v1alpha1
+// converts to/from this shape via the conversion webhook. See
+// docs/design/ADR-CRD-001-v1alpha2-redesign.md for the full rationale
+// behind every diff from v1alpha1 (referenced as F1-F9 below).
 type KubernautSpec struct {
 	// Image pull policy, pull secrets, and optional per-component overrides.
 	// +optional
@@ -35,10 +40,6 @@ type KubernautSpec struct {
 
 	// BYO Valkey/Redis connection.
 	Valkey ValkeySpec `json:"valkey"`
-
-	// Optional AWX/AAP integration for Ansible-based remediation workflows.
-	// +optional
-	Ansible AnsibleSpec `json:"ansible,omitempty"`
 
 	// Notification controller settings.
 	// +optional
@@ -56,13 +57,23 @@ type KubernautSpec struct {
 	// +optional
 	RemediationOrchestrator RemediationOrchestratorSpec `json:"remediationOrchestrator,omitempty"`
 
-	// WorkflowExecution controller configuration.
+	// WorkflowExecution controller configuration. Also hosts the AWX/AAP
+	// Ansible integration (F4 -- relocated from top-level spec.ansible in
+	// v1alpha1, since WorkflowExecution is Ansible's only consumer).
 	// +optional
 	WorkflowExecution WorkflowExecutionSpec `json:"workflowExecution,omitempty"`
 
 	// EffectivenessMonitor controller configuration.
 	// +optional
 	EffectivenessMonitor EffectivenessMonitorSpec `json:"effectivenessMonitor,omitempty"`
+
+	// Monitoring configures the Prometheus/AlertManager endpoint used by
+	// EffectivenessMonitor and API Frontend severity-triage (F2 -- new in
+	// v1alpha2). Unset (the default) preserves v1alpha1's only behavior:
+	// OCP's built-in Thanos Querier at a well-known in-cluster URL,
+	// auto-detected, no user action needed.
+	// +optional
+	Monitoring MonitoringSpec `json:"monitoring,omitempty"`
 
 	// Named LLM provider profiles, keyed by an arbitrary user-chosen name
 	// (e.g. "primary", "lightweight"). Components reference a profile by
@@ -86,8 +97,14 @@ type KubernautSpec struct {
 	// +optional
 	DataStorage DataStorageSpec `json:"dataStorage,omitempty"`
 
-	// NetworkPolicies controls the creation of Kubernetes NetworkPolicy
-	// resources that enforce a default-deny posture with explicit allow rules.
+	// NetworkPolicies tunes the always-on Kubernetes NetworkPolicy resources
+	// the operator creates for every component (F3 -- v1alpha1's
+	// networkPolicies.enabled opt-out is removed in v1alpha2; NetworkPolicies
+	// are unconditional, matching the upstream Helm chart's actual behavior
+	// and Red Hat's OpenShift Hardening requirements). A default-deny
+	// posture is applied with explicit allow rules matching the upstream
+	// Helm chart's traffic matrix; every field below only tunes that
+	// already-created policy set.
 	// +optional
 	NetworkPolicies NetworkPoliciesSpec `json:"networkPolicies,omitempty"`
 
@@ -152,7 +169,9 @@ type PostgreSQLSpec struct {
 	// +optional
 	Port int32 `json:"port,omitempty"`
 
-	// PostgreSQL SSL mode (disable, require, verify-ca, verify-full).
+	// PostgreSQL SSL mode (require, verify-ca, verify-full). "disable" is
+	// intentionally not accepted: these are production deployments and TLS
+	// to the database is not optional.
 	// +kubebuilder:default="verify-full"
 	// +kubebuilder:validation:Enum=require;verify-ca;verify-full
 	// +optional
@@ -203,6 +222,27 @@ type ValkeyTLSSpec struct {
 // ValkeyTLSEnabled returns true when Valkey TLS is configured and enabled.
 func (v *ValkeySpec) ValkeyTLSEnabled() bool {
 	return v.TLS != nil && v.TLS.Enabled
+}
+
+// FleetOverrideSpec overrides spec.fleet's shared OAuth2 credentials and/or
+// MCP Gateway namespace scope for a single component (F1). Every field
+// falls back to the corresponding spec.fleet.* value when unset. Replaces
+// v1alpha1's flat, per-component FleetOAuth2CredentialsSecretRef/
+// MCPGatewayNamespace fields with one shared, embeddable type mirroring
+// Helm's <component>.fleet.{oauth2.credentialsSecretRef,namespace} nesting.
+type FleetOverrideSpec struct {
+	// Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
+	// Use when this component must authenticate to the MCP Gateway as a
+	// different OAuth2 client than other fleet-aware components (e.g. a
+	// federated Keycloak issuing distinct per-service client registrations
+	// against the same shared spec.fleet.oauth2.tokenURL).
+	// +optional
+	OAuth2CredentialsSecretRef string `json:"oauth2CredentialsSecretRef,omitempty"`
+
+	// Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
+	// Gateway CRD watch scope.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // FleetSpec configures federated scope-checking for Gateway and
@@ -267,13 +307,8 @@ type FleetSpec struct {
 	// MCPGatewayNamespace restricts every fleet-aware component's MCP
 	// Gateway CRD watch (Backend for Envoy AI Gateway,
 	// MCPServerRegistration for Kuadrant) to a single namespace. Empty means
-	// cluster-wide (all namespaces). Serves as the fallback for
-	// SignalProcessing and FleetMetadataCache's own per-component overrides
-	// (spec.signalProcessing.mcpGatewayNamespace,
-	// spec.fleetMetadataCache.mcpGatewayNamespace); APIFrontend and
-	// EffectivenessMonitor have no override and no namespace-scoped RBAC
-	// path yet — their ClusterRegistry construction has no namespace knob
-	// upstream (tracked separately for v1.6).
+	// cluster-wide (all namespaces). Serves as the fallback for every
+	// component's own spec.<component>.fleet.namespace override (F1).
 	// +optional
 	MCPGatewayNamespace string `json:"mcpGatewayNamespace,omitempty"`
 }
@@ -292,25 +327,13 @@ type FleetMetadataCacheSpec struct {
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// Namespace to scope FMC's informer watch for MCP Gateway CRDs
-	// (Backend for Envoy AI Gateway, MCPServerRegistration for Kuadrant)
-	// representing managed clusters. Falls back to
-	// spec.fleet.mcpGatewayNamespace when unset. Empty (after fallback)
-	// means cluster-wide (all namespaces), granting a cluster-scoped
-	// ClusterRole. When non-empty, the operator grants a namespace-scoped
-	// Role/RoleBinding in that namespace instead (least privilege).
+	// Fleet overrides for FMC's own MCP Gateway CRD watch namespace and/or
+	// OAuth2 client credentials (F1 -- collapses v1alpha1's bespoke
+	// MCPGatewayNamespace/FleetOAuth2CredentialsSecretRef pair into the
+	// shared FleetOverrideSpec type used by every other fleet-aware
+	// component). Every field falls back to spec.fleet.* when unset.
 	// +optional
-	MCPGatewayNamespace string `json:"mcpGatewayNamespace,omitempty"`
-
-	// FleetOAuth2CredentialsSecretRef overrides
-	// spec.fleet.oauth2.credentialsSecretRef for FMC only. Use when FMC
-	// must authenticate to the MCP Gateway as a different OAuth2 client
-	// than Gateway/RemediationOrchestrator (e.g. a federated Keycloak
-	// issuing distinct per-service client registrations against the same
-	// shared spec.fleet.oauth2.tokenURL). Falls back to
-	// spec.fleet.oauth2.credentialsSecretRef when unset.
-	// +optional
-	FleetOAuth2CredentialsSecretRef string `json:"fleetOAuth2CredentialsSecretRef,omitempty"`
+	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 
 	// How often FMC polls managed clusters for resource metadata. Must be
 	// a valid Go duration string.
@@ -345,15 +368,12 @@ func (s *KubernautSpec) FleetEnabled() bool {
 	return s.Fleet.Enabled != nil && *s.Fleet.Enabled
 }
 
-// AnsibleSpec configures the optional AWX/AAP integration.
-// The rule guards "enabled" with has(): the v1alpha1<->v1alpha2 conversion
-// webhook (api/v1alpha1/kubernaut_conversion.go, ADR-CRD-001 F4) re-derives
-// this struct from the stored v1alpha2 object on every status/spec patch to
-// an existing CR, and Enabled's `omitempty` json tag drops the key entirely
-// from the webhook's JSON response when false -- an unguarded self.enabled
-// then fails CEL evaluation with "no such key" instead of treating it as
-// unset/false. See https://kubernetes.io/docs/reference/using-api/cel/#has.
-// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || has(self.apiURL)",message="ansible.apiURL is required when ansible.enabled is true"
+// AnsibleSpec configures the optional AWX/AAP integration. Lives under
+// spec.workflowExecution.ansible in v1alpha2 (F4 -- relocated from
+// v1alpha1's top-level spec.ansible, matching Ansible's actual single
+// consumer and the upstream Helm chart's workflowexecution.config.ansible
+// scoping). The type itself is unchanged.
+// +kubebuilder:validation:XValidation:rule="!self.enabled || has(self.apiURL)",message="ansible.apiURL is required when ansible.enabled is true"
 type AnsibleSpec struct {
 	// Whether AWX/AAP integration is enabled.
 	// +kubebuilder:default=false
@@ -446,7 +466,11 @@ type PolicyConfigMapRef struct {
 	ConfigMapName string `json:"configMapName"`
 }
 
-// AIAnalysisSpec configures the AIAnalysis controller.
+// AIAnalysisSpec configures the AIAnalysis controller. Policy stays
+// required in v1alpha2 (F9 -- retracted; the upstream Helm chart enforces
+// the identical requirement, failing `helm install` when neither
+// policies.content nor policies.existingConfigMap is set, so there was no
+// alignment gap to close here).
 type AIAnalysisSpec struct {
 	// Policy ConfigMap reference. Required.
 	// The ConfigMap must contain key "approval.rego".
@@ -465,7 +489,8 @@ type AIAnalysisSpec struct {
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
-// SignalProcessingSpec configures the SignalProcessing controller.
+// SignalProcessingSpec configures the SignalProcessing controller. Policy
+// stays required in v1alpha2 (F9 -- retracted, see AIAnalysisSpec doc).
 type SignalProcessingSpec struct {
 	// Policy ConfigMap reference. Required.
 	// The ConfigMap must contain key "policy.rego".
@@ -483,22 +508,14 @@ type SignalProcessingSpec struct {
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
-	// MCPGatewayNamespace overrides spec.fleet.mcpGatewayNamespace for
-	// SignalProcessing's own ClusterRegistry watch (used for cluster
-	// classification labels, BR-FLEET-003). Falls back to
-	// spec.fleet.mcpGatewayNamespace when unset.
+	// Fleet overrides spec.fleet.mcpGatewayNamespace/oauth2.credentialsSecretRef
+	// for SignalProcessing's own ClusterRegistry watch (used for cluster
+	// classification labels, BR-FLEET-003) and MCP Gateway authentication
+	// (F1 -- collapses v1alpha1's separate MCPGatewayNamespace/
+	// FleetOAuth2CredentialsSecretRef fields into the shared
+	// FleetOverrideSpec type used by every other fleet-aware component).
 	// +optional
-	MCPGatewayNamespace string `json:"mcpGatewayNamespace,omitempty"`
-
-	// FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
-	// for SignalProcessing only. Use when SignalProcessing must authenticate
-	// to the MCP Gateway as a different OAuth2 client than other fleet-aware
-	// components (e.g. a federated Keycloak issuing distinct per-service
-	// client registrations against the same shared
-	// spec.fleet.oauth2.tokenURL). Falls back to
-	// spec.fleet.oauth2.credentialsSecretRef when unset.
-	// +optional
-	FleetOAuth2CredentialsSecretRef string `json:"fleetOAuth2CredentialsSecretRef,omitempty"`
+	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 }
 
 // RemediationOrchestratorSpec configures the RemediationOrchestrator controller.
@@ -548,15 +565,13 @@ type RemediationOrchestratorSpec struct {
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
-	// FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
-	// for RemediationOrchestrator only. Use when RemediationOrchestrator must
-	// authenticate to the MCP Gateway as a different OAuth2 client than other
-	// fleet-aware components (e.g. a federated Keycloak issuing distinct
-	// per-service client registrations against the same shared
-	// spec.fleet.oauth2.tokenURL). Falls back to
-	// spec.fleet.oauth2.credentialsSecretRef when unset.
+	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for
+	// RemediationOrchestrator only (F1). Use when RemediationOrchestrator
+	// must authenticate to the MCP Gateway as a different OAuth2 client
+	// than other fleet-aware components. Falls back to spec.fleet.* when
+	// unset.
 	// +optional
-	FleetOAuth2CredentialsSecretRef string `json:"fleetOAuth2CredentialsSecretRef,omitempty"`
+	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 }
 
 // ROTimeoutsSpec defines phase-level timeouts for the RemediationOrchestrator.
@@ -674,6 +689,20 @@ type WorkflowExecutionSpec struct {
 	// +optional
 	Tekton TektonSpec `json:"tekton,omitempty"`
 
+	// Optional AWX/AAP integration for Ansible-based remediation workflows
+	// (F4 -- relocated here from v1alpha1's top-level spec.ansible; this is
+	// Ansible's only consumer, matching the upstream Helm chart's scoping).
+	// +optional
+	Ansible AnsibleSpec `json:"ansible,omitempty"`
+
+	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef/mcpGatewayNamespace
+	// for WorkflowExecution's own fleet-aware operations (F1 -- entirely new
+	// in v1alpha2; v1alpha1 had no Fleet field on WorkflowExecutionSpec at
+	// all, which blocked #235/BR-FLEET-054). Falls back to spec.fleet.*
+	// when unset.
+	// +optional
+	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
+
 	// +optional
 	Logging LoggingSpec `json:"logging,omitempty"`
 
@@ -702,15 +731,12 @@ type EffectivenessMonitorSpec struct {
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
-	// FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
-	// for EffectivenessMonitor only. Use when EffectivenessMonitor must
-	// authenticate to the MCP Gateway as a different OAuth2 client than
-	// other fleet-aware components (e.g. a federated Keycloak issuing
-	// distinct per-service client registrations against the same shared
-	// spec.fleet.oauth2.tokenURL). Falls back to
-	// spec.fleet.oauth2.credentialsSecretRef when unset.
+	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef/mcpGatewayNamespace
+	// for EffectivenessMonitor only (F1 -- also adds the Namespace override
+	// EM was missing in v1alpha1; only OAuth2CredentialsSecretRef existed
+	// there). Falls back to spec.fleet.* when unset.
 	// +optional
-	FleetOAuth2CredentialsSecretRef string `json:"fleetOAuth2CredentialsSecretRef,omitempty"`
+	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 }
 
 // EMAssessmentSpec defines effectiveness assessment windows.
@@ -800,15 +826,13 @@ type KubernautAgentSpec struct {
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
-	// FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
-	// for the Kubernaut Agent only. Use when KA must authenticate to the
-	// MCP Gateway (for fleet tool discovery, ADR-068 decision #11) as a
-	// different OAuth2 client than other fleet-aware components (e.g. a
-	// federated Keycloak issuing distinct per-service client registrations
-	// against the same shared spec.fleet.oauth2.tokenURL). Falls back to
-	// spec.fleet.oauth2.credentialsSecretRef when unset.
+	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for the
+	// Kubernaut Agent only (F1). Use when KA must authenticate to the MCP
+	// Gateway (for fleet tool discovery, ADR-068 decision #11) as a
+	// different OAuth2 client than other fleet-aware components. Falls
+	// back to spec.fleet.* when unset.
 	// +optional
-	FleetOAuth2CredentialsSecretRef string `json:"fleetOAuth2CredentialsSecretRef,omitempty"`
+	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 }
 
 // KARateLimitSpec configures request rate limiting for the Kubernaut Agent server.
@@ -884,12 +908,14 @@ type JWTProviderSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	IssuerURL string `json:"issuerURL"`
 
-	// JWKS endpoint URL for token signature verification. When empty,
-	// derived from IssuerURL. Must use HTTPS unless the parent's
-	// allowInsecureJWKS/allowInsecureIssuers flag is true.
+	// JWKS endpoint URL for token signature verification (F6 -- required in
+	// v1alpha2, matching the upstream Helm chart's jwtProviders[].jwksURL,
+	// which has always been required there; v1alpha1 allowed omitting it
+	// and deriving it from IssuerURL at runtime). Must use HTTPS unless the
+	// parent's allowInsecureJWKS/allowInsecureIssuers flag is true.
+	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=2048
-	// +optional
-	JWKSURL string `json:"jwksURL,omitempty"`
+	JWKSURL string `json:"jwksURL"`
 
 	// Expected audience claim values for session authenticity (FedRAMP SC-23).
 	// +kubebuilder:validation:MinItems=1
@@ -950,23 +976,14 @@ type AlignmentCheckSpec struct {
 	// +optional
 	MaxStepTokens int `json:"maxStepTokens,omitempty"`
 
-	// Optional dedicated LLM for alignment checks.
+	// Reference to a named profile in spec.llmProfiles used for alignment
+	// check calls (F5 -- replaces v1alpha1's AlignmentCheckLLMSpec{Provider,
+	// Model,Endpoint}, which never had a working credentials path, same bug
+	// class as #237). Matches every other LLM consumer in the CRD
+	// (KubernautAgent, APIFrontend, severity-triage) and the upstream Helm
+	// chart's alignmentCheck.llmProfileRef.
 	// +optional
-	LLM *AlignmentCheckLLMSpec `json:"llm,omitempty"`
-}
-
-// AlignmentCheckLLMSpec configures a dedicated LLM for the alignment check
-// shadow agent. Credentials are resolved the same way as the main
-// KubernautAgent LLM: via provider-named env vars (ANTHROPIC_API_KEY,
-// OPENAI_API_KEY, etc.) injected from Secrets, never from a plaintext CR
-// field (#237).
-type AlignmentCheckLLMSpec struct {
-	// +optional
-	Provider string `json:"provider,omitempty"`
-	// +optional
-	Model string `json:"model,omitempty"`
-	// +optional
-	Endpoint string `json:"endpoint,omitempty"`
+	LLMProfileRef string `json:"llmProfileRef,omitempty"`
 }
 
 // SummarizerSpec configures tool output summarization thresholds.
@@ -1179,14 +1196,12 @@ type GatewaySpec struct {
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
-	// FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
-	// for Gateway only. Use when Gateway must authenticate to the MCP Gateway
-	// as a different OAuth2 client than other fleet-aware components (e.g. a
-	// federated Keycloak issuing distinct per-service client registrations
-	// against the same shared spec.fleet.oauth2.tokenURL). Falls back to
-	// spec.fleet.oauth2.credentialsSecretRef when unset.
+	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for Gateway
+	// only (F1). Use when Gateway must authenticate to the MCP Gateway as
+	// a different OAuth2 client than other fleet-aware components. Falls
+	// back to spec.fleet.* when unset.
 	// +optional
-	FleetOAuth2CredentialsSecretRef string `json:"fleetOAuth2CredentialsSecretRef,omitempty"`
+	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 }
 
 // ConsoleSpec configures the standalone web console (A2A chat UI).
@@ -1442,15 +1457,12 @@ type APIFrontendSpec struct {
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
-	// FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
-	// for APIFrontend only. Use when APIFrontend must authenticate to the
-	// MCP Gateway as a different OAuth2 client than other fleet-aware
-	// components (e.g. a federated Keycloak issuing distinct per-service
-	// client registrations against the same shared
-	// spec.fleet.oauth2.tokenURL). Falls back to
-	// spec.fleet.oauth2.credentialsSecretRef when unset.
+	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for
+	// APIFrontend only (F1 -- also adds the Namespace override APIFrontend
+	// was missing in v1alpha1; only OAuth2CredentialsSecretRef existed
+	// there). Falls back to spec.fleet.* when unset.
 	// +optional
-	FleetOAuth2CredentialsSecretRef string `json:"fleetOAuth2CredentialsSecretRef,omitempty"`
+	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 }
 
 // APIFrontendRBACSpec configures SAR-based tool authorization for the API Frontend.
@@ -1547,24 +1559,28 @@ type APIFrontendAuthSpec struct {
 }
 
 // APIFrontendRateLimitSpec configures request rate limiting for the API Frontend.
+// Defaults match the upstream Helm chart's tuned values exactly (F7 --
+// v1alpha1's defaults were 5-10x more restrictive than Helm's for identical
+// intent: ipRequestsPerSec 50->10000, userRequestsPerSec 20->100,
+// maxConcurrentSessions 100->50, toolCallsPerMinute 60->600).
 type APIFrontendRateLimitSpec struct {
 	// Per-IP requests per second.
-	// +kubebuilder:default=50
+	// +kubebuilder:default=10000
 	// +optional
 	IPRequestsPerSec *int `json:"ipRequestsPerSec,omitempty"`
 
 	// Per-user requests per second.
-	// +kubebuilder:default=20
+	// +kubebuilder:default=100
 	// +optional
 	UserRequestsPerSec *int `json:"userRequestsPerSec,omitempty"`
 
 	// Maximum concurrent MCP/A2A sessions.
-	// +kubebuilder:default=100
+	// +kubebuilder:default=50
 	// +optional
 	MaxConcurrentSessions *int `json:"maxConcurrentSessions,omitempty"`
 
 	// Tool calls per minute per user.
-	// +kubebuilder:default=60
+	// +kubebuilder:default=600
 	// +optional
 	ToolCallsPerMinute *int `json:"toolCallsPerMinute,omitempty"`
 }
@@ -1579,12 +1595,7 @@ type APIFrontendSeverityTriageSpec struct {
 	// today's behavior. May reference a profile with a different provider
 	// and/or credentialsSecretName than API Frontend's own resolved
 	// profile; the operator provisions a dedicated Secret volume for
-	// triage's credentials when they differ. The one exception is
-	// vertex_ai: when both triage's and API Frontend's own resolved
-	// profile use vertex_ai, they must still share a credentialsSecretName,
-	// since API Frontend's Vertex AI client relies on ambient Application
-	// Default Credentials rather than per-profile credentials
-	// (kubernaut#1731).
+	// triage's credentials when they differ.
 	// +optional
 	LLMProfileRef string `json:"llmProfileRef,omitempty"`
 
@@ -1710,27 +1721,171 @@ type RetentionSpec struct {
 
 // LoggingSpec configures the log level for a service.
 type LoggingSpec struct {
-	// Log level. One of: DEBUG, INFO, WARN, ERROR.
-	// +kubebuilder:default="info"
-	// +kubebuilder:validation:Enum=DEBUG;INFO;WARN;ERROR;debug;info;warn;error
+	// Log level. One of: DEBUG, INFO, WARN, ERROR (F8 -- narrowed to
+	// uppercase-only in v1alpha2, matching upstream ADR-030; v1alpha1
+	// accepted both cases). The conversion webhook uppercases any
+	// lowercase v1alpha1 value on ConvertFrom rather than rejecting it.
+	// +kubebuilder:default="INFO"
+	// +kubebuilder:validation:Enum=DEBUG;INFO;WARN;ERROR
 	// +optional
 	Level string `json:"level,omitempty"`
 }
 
-// NetworkPoliciesSpec controls creation of Kubernetes NetworkPolicy resources.
-type NetworkPoliciesSpec struct {
-	// Whether the operator creates NetworkPolicy resources.
-	// When true, a default-deny posture is applied with explicit allow rules
-	// matching the upstream Helm chart traffic matrix. Monitoring namespace,
-	// ingress namespaces, and API server egress are auto-detected.
-	// +kubebuilder:default=false
+// MonitoringSpec configures the Prometheus endpoint used by
+// EffectivenessMonitor and API Frontend severity-triage (F2 -- new in
+// v1alpha2). Unset (the default) preserves v1alpha1's only behavior: OCP's
+// built-in Thanos Querier at a well-known in-cluster URL, auto-detected, no
+// user action needed.
+type MonitoringSpec struct {
 	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
+	Prometheus PrometheusSpec `json:"prometheus,omitempty"`
 }
 
-// NetworkPoliciesEnabled returns true when NP creation is active (default: false).
-func (s *NetworkPoliciesSpec) NetworkPoliciesEnabled() bool {
-	return s.Enabled != nil && *s.Enabled
+// PrometheusSpec configures the Prometheus/Thanos Querier endpoint.
+type PrometheusSpec struct {
+	// Whether Prometheus-backed features (EM assessment, AF severity-triage)
+	// are active. Defaults to true (auto-detected OCP monitoring stack).
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Prometheus/Thanos Querier URL. Defaults to the OCP Thanos Querier
+	// route when empty.
+	// +optional
+	URL string `json:"url,omitempty"`
+
+	// Path to a CA certificate file for TLS to the Prometheus endpoint.
+	// +optional
+	TLSCaFile string `json:"tlsCaFile,omitempty"`
+}
+
+// PrometheusEnabled returns true when Prometheus-backed features should be
+// active. Defaults to true (nil Enabled) -- auto-detected OCP monitoring.
+func (s *PrometheusSpec) PrometheusEnabled() bool {
+	return s.Enabled == nil || *s.Enabled
+}
+
+// NetworkPoliciesSpec configures the always-on NetworkPolicies the operator
+// creates for every component (F3 -- v1alpha1's Enabled *bool opt-out is
+// removed; NetworkPolicies are unconditional in v1alpha2, matching the
+// upstream Helm chart's actual behavior -- it has no enable/disable toggle
+// at all -- and Red Hat's OpenShift Hardening requirements. See
+// docs/design/ADR-CRD-001-v1alpha2-redesign.md F3 for the full rationale
+// and field-by-field mapping to values.schema.json's networkPolicies.*
+// tree). Every field below tunes an already-created default-deny +
+// explicit-allow policy set; none of them gate existence.
+type NetworkPoliciesSpec struct {
+	// Primary K8s API server backend CIDR, for environments where default
+	// detection doesn't resolve correctly.
+	// +optional
+	APIServerCIDR string `json:"apiServerCIDR,omitempty"`
+
+	// Additional API server backend endpoint IPs as /32 CIDRs, for HA
+	// clusters with multiple control-plane nodes. Merged with APIServerCIDR.
+	// +optional
+	APIServerCIDRs []string `json:"apiServerCIDRs,omitempty"`
+
+	// +optional
+	APIServerPort int32 `json:"apiServerPort,omitempty"`
+
+	// +optional
+	Monitoring NetworkPolicyMonitoringOverride `json:"monitoring,omitempty"`
+
+	// +optional
+	ExternalWebhooks NetworkPolicyEgressOverride `json:"externalWebhooks,omitempty"`
+
+	// +optional
+	ExternalRegistry NetworkPolicyEgressOverride `json:"externalRegistry,omitempty"`
+
+	// +optional
+	IdP NetworkPolicyIdPEgressOverride `json:"idp,omitempty"`
+
+	// +optional
+	LLM NetworkPolicyEgressOverride `json:"llm,omitempty"`
+
+	// +optional
+	MCPGateway NetworkPolicyEgressOverride `json:"mcpGateway,omitempty"`
+
+	// +optional
+	Prometheus NetworkPolicyEgressOverride `json:"prometheus,omitempty"`
+
+	// Gateway also exposes a simple ingressNamespaces name-list, matching
+	// Helm's networkPolicies.gateway.*.
+	// +optional
+	Gateway NetworkPolicyNamedIngressOverride `json:"gateway,omitempty"`
+
+	// +optional
+	APIFrontend NetworkPolicyNamedIngressOverride `json:"apifrontend,omitempty"`
+
+	// +optional
+	Console NetworkPolicyNamedIngressOverride `json:"console,omitempty"`
+
+	// Helm exposes only CIDR/selector overrides here (no ingressNamespaces).
+	// +optional
+	DataStorage NetworkPolicyIngressOverride `json:"datastorage,omitempty"`
+
+	// +optional
+	KubernautAgent NetworkPolicyIngressOverride `json:"kubernautAgent,omitempty"`
+}
+
+// NetworkPolicyIngressOverride adds allowed ingress sources beyond the
+// operator's default same-namespace/component allow rules. CIDRs cover
+// traffic not associated with any pod/namespace (e.g. NodePort-sourced
+// host traffic, a hostNetwork-mode ingress controller); selectors cover
+// cases the simple namespace-name list (NetworkPolicyNamedIngressOverride)
+// cannot express.
+type NetworkPolicyIngressOverride struct {
+	// +optional
+	IngressCIDRs []string `json:"ingressCIDRs,omitempty"`
+
+	// +optional
+	IngressNamespaceSelectors []metav1.LabelSelector `json:"ingressNamespaceSelectors,omitempty"`
+}
+
+// NetworkPolicyNamedIngressOverride extends NetworkPolicyIngressOverride
+// with a namespace-name allowlist, mirroring the subset of components
+// (Gateway, APIFrontend, Console) the upstream Helm chart exposes this
+// simpler option on.
+type NetworkPolicyNamedIngressOverride struct {
+	NetworkPolicyIngressOverride `json:",inline"`
+
+	// +optional
+	IngressNamespaces []string `json:"ingressNamespaces,omitempty"`
+}
+
+// NetworkPolicyEgressOverride overrides a single egress allow rule's target.
+type NetworkPolicyEgressOverride struct {
+	// +kubebuilder:default="0.0.0.0/0"
+	// +optional
+	CIDR string `json:"cidr,omitempty"`
+
+	// +optional
+	Port int32 `json:"port,omitempty"`
+}
+
+// NetworkPolicyIdPEgressOverride is NetworkPolicyEgressOverride plus a
+// second port, for deployments where a service must reach two IdPs on two
+// different ports.
+type NetworkPolicyIdPEgressOverride struct {
+	NetworkPolicyEgressOverride `json:",inline"`
+
+	// +optional
+	ExtraPorts []int32 `json:"extraPorts,omitempty"`
+}
+
+// NetworkPolicyMonitoringOverride overrides where/how the monitoring-stack
+// ingress/egress rules (Prometheus scrape, AlertManager webhook) are shaped.
+type NetworkPolicyMonitoringOverride struct {
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+
+	// +kubebuilder:default=9090
+	// +optional
+	PrometheusPort int32 `json:"prometheusPort,omitempty"`
+
+	// +kubebuilder:default=9093
+	// +optional
+	AlertManagerPort int32 `json:"alertManagerPort,omitempty"`
 }
 
 // ---------- Status ----------
@@ -1821,32 +1976,24 @@ const (
 const FinalizerName = "kubernaut.ai/cleanup"
 
 // SingletonName is the only accepted CR name; the reconciler rejects others.
-// Cluster-wide uniqueness (at most one Kubernaut CR named "kubernaut" across
-// the entire cluster, regardless of namespace) is enforced by the
-// SingletonValidator validating admission webhook (see
-// internal/webhook/singleton_webhook.go), not by this API package.
+// NOTE: The singleton guard operates at the namespace level. Two namespaces
+// could each contain a CR named "kubernaut", and both controllers would
+// compete over the same cluster-scoped resources (ClusterRoles, CRBs,
+// webhook configurations). A validating admission webhook that enforces
+// cluster-wide uniqueness is planned for a future release. Until then,
+// only one Kubernaut CR should exist per cluster.
 const SingletonName = "kubernaut"
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:storageversion
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
-// +kubebuilder:deprecatedversion:warning="kubernaut.ai/v1alpha1 Kubernaut is deprecated and will be removed in v1.7; migrate to v1alpha2 (see docs/design/ADR-CRD-001-v1alpha2-redesign.md). v1alpha1 keeps working via an automatic conversion webhook during the transition."
 
-// Kubernaut is the Schema for the kubernauts API.
+// Kubernaut is the Schema for the kubernauts API. v1alpha2 is the storage
+// version and conversion.Hub; v1alpha1 converts to/from this shape via the
+// conversion webhook (see api/v1alpha1/kubernaut_conversion.go).
 // It declares a single Kubernaut deployment within the namespace it is created in.
-//
-// This is the v1alpha1 shape, superseded by v1alpha2 (the storage version
-// and conversion.Hub as of v1.6) -- see the
-// +kubebuilder:deprecatedversion marker above for the CRD-level
-// deprecation surfaced to kubectl, and
-// docs/design/ADR-CRD-001-v1alpha2-redesign.md for the full rationale.
-// Deliberately NOT a Go "Deprecated:" doc comment: internal/resources,
-// internal/controller, and internal/webhook all still operate on this Go
-// type as their working representation (see the migrate-builders-v1alpha2
-// follow-up); a "Deprecated:" comment would make staticcheck (SA1019) flag
-// every one of those call sites, which are not what this CRD-version
-// deprecation is about.
 type Kubernaut struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
