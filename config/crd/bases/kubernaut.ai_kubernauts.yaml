@@ -2043,8 +2043,10 @@ spec:
                     type: string
                   sslMode:
                     default: verify-full
-                    description: PostgreSQL SSL mode (disable, require, verify-ca,
-                      verify-full).
+                    description: |-
+                      PostgreSQL SSL mode (require, verify-ca, verify-full). "disable" is
+                      intentionally not accepted: these are production deployments and TLS
+                      to the database is not optional.
                     enum:
                     - require
                     - verify-ca
