@@ -1,9 +1,9 @@
 # ADR-CRD-001: `kubernaut.ai/v1alpha2` CRD Redesign and v1alpha1 Deprecation
 
-**Status**: Proposed -- awaiting sign-off (CHECKPOINT DD)
+**Status**: Accepted (CHECKPOINT DD sign-off obtained 2026-08-06)
 **Decision Date**: 2026-08-06
-**Version**: 1.1
-**Confidence**: 90%
+**Version**: 1.2
+**Confidence**: 92%
 **Deciders**: Kubernaut Operator Team
 **Applies To**: `api/v1alpha1` -> `api/v1alpha2` CRD migration, conversion webhook, all `internal/resources/*.go` builders, `internal/controller/`, OLM bundle
 
@@ -28,6 +28,7 @@
 |---------|------|--------|---------|
 | 1.0 | 2026-08-06 | Operator Team | Initial design spike for sign-off |
 | 1.1 | 2026-08-06 | Operator Team | Reviewer feedback: (1) Axis 3/F9 premise retracted -- Helm's `aianalysis.yaml`/`signalprocessing.yaml` templates `fail` the install when policy content is unset, so `policy`/`proactiveSignalMappings` stay required in v1alpha2, matching Helm exactly, no bundled defaults. (2) F3 strengthened -- Helm has no `networkPolicies.enabled` toggle at all (unconditional render); `NetworkPoliciesSpec.Enabled *bool` is removed in v1alpha2, NetworkPolicies become unconditional, reinforced by Red Hat's OpenShift Hardening mandate (ship NetworkPolicies from 2027-02) and the already-satisfied Conforma RBAC check (`olm.required_network_policy_rbac_for_operands`, effective 2026-08-08). |
+| 1.2 | 2026-08-06 | Operator Team | Reviewer confirmed Helm's `networkPolicies.*` schema is stable; F3's field list frozen and fully enumerated (was previously deferred to D2/D3) as `NetworkPoliciesSpec` + 5 shared sub-types (`NetworkPolicyIngressOverride`, `NetworkPolicyNamedIngressOverride`, `NetworkPolicyEgressOverride`, `NetworkPolicyIdPEgressOverride`, `NetworkPolicyMonitoringOverride`), mirroring `values.schema.json` exactly. Removes the "field list may drift before D2/D3" risk; confidence 90% -> 92%. |
 
 ---
 
@@ -303,7 +304,109 @@ type PrometheusSpec struct {
 
 This is also no longer just an alignment nice-to-have: Red Hat's OpenShift Hardening requirements mandate that operators actually *ship* NetworkPolicies (not just declare RBAC permission to manage them) beginning 2027-02, and the nearer-term Conforma check `olm.required_network_policy_rbac_for_operands` (RBAC-only, effective 2026-08-08) is already satisfied by this operator's existing `ClusterRole` (`config/rbac/role.yaml:152-163` already grants full CRUD on `networking.k8s.io/networkpolicies` -- no gap on the RBAC side).
 
-**Decision**: `NetworkPoliciesSpec.Enabled *bool` is removed entirely in v1alpha2. NetworkPolicies are created unconditionally for every component, matching Helm's actual behavior and the Red Hat 2027-02 trajectory. The remaining ~10 Helm override groups (API server CIDRs, per-component ingress/egress toggles, monitoring namespace override, IdP/LLM/MCP Gateway egress overrides) become tuning knobs for *how* the always-on policies are shaped, not gates for *whether* they exist. Exact field list is a D2/D3 implementation detail against the Helm schema at implementation time (not fully enumerated here to avoid the target drifting from Helm's schema between sign-off and D2).
+**Decision**: `NetworkPoliciesSpec.Enabled *bool` is removed entirely in v1alpha2. NetworkPolicies are created unconditionally for every component, matching Helm's actual behavior and the Red Hat 2027-02 trajectory. The remaining Helm override groups (API server CIDRs, per-component ingress/egress, monitoring namespace override, IdP/LLM/MCP Gateway egress overrides) become tuning knobs for *how* the always-on policies are shaped, not gates for *whether* they exist.
+
+**Field list -- frozen at sign-off** (Helm's `networkPolicies.*` schema for this area is stable; enumerated directly against `charts/kubernaut/values.schema.json`, not deferred to D2/D3):
+
+```go
+// NetworkPoliciesSpec configures the always-on NetworkPolicies the operator
+// creates for every component (F3 -- Enabled is removed; NetworkPolicies are
+// unconditional, matching Helm). Every field below tunes an already-created
+// default-deny + explicit-allow policy set; none of them gate existence.
+type NetworkPoliciesSpec struct {
+    // Primary K8s API server backend CIDR, for environments where
+    // default detection doesn't resolve correctly.
+    // +optional
+    APIServerCIDR string `json:"apiServerCIDR,omitempty"`
+    // Additional API server backend endpoint IPs as /32 CIDRs, for HA
+    // clusters with multiple control-plane nodes. Merged with APIServerCIDR.
+    // +optional
+    APIServerCIDRs []string `json:"apiServerCIDRs,omitempty"`
+    // +optional
+    APIServerPort int32 `json:"apiServerPort,omitempty"`
+
+    // +optional
+    Monitoring NetworkPolicyMonitoringOverride `json:"monitoring,omitempty"`
+    // +optional
+    ExternalWebhooks NetworkPolicyEgressOverride `json:"externalWebhooks,omitempty"`
+    // +optional
+    ExternalRegistry NetworkPolicyEgressOverride `json:"externalRegistry,omitempty"`
+    // +optional
+    IdP NetworkPolicyIdPEgressOverride `json:"idp,omitempty"`
+    // +optional
+    LLM NetworkPolicyEgressOverride `json:"llm,omitempty"`
+    // +optional
+    MCPGateway NetworkPolicyEgressOverride `json:"mcpGateway,omitempty"`
+    // +optional
+    Prometheus NetworkPolicyEgressOverride `json:"prometheus,omitempty"`
+
+    // Helm also exposes a simple ingressNamespaces name-list here.
+    // +optional
+    Gateway NetworkPolicyNamedIngressOverride `json:"gateway,omitempty"`
+    // +optional
+    APIFrontend NetworkPolicyNamedIngressOverride `json:"apifrontend,omitempty"`
+    // +optional
+    Console NetworkPolicyNamedIngressOverride `json:"console,omitempty"`
+    // Helm exposes only CIDR/selector overrides here (no ingressNamespaces).
+    // +optional
+    DataStorage NetworkPolicyIngressOverride `json:"datastorage,omitempty"`
+    // +optional
+    KubernautAgent NetworkPolicyIngressOverride `json:"kubernautAgent,omitempty"`
+}
+
+// NetworkPolicyIngressOverride adds allowed ingress sources beyond the
+// operator's default same-namespace/component allow rules. CIDRs cover
+// traffic not associated with any pod/namespace (e.g. NodePort-sourced host
+// traffic, a hostNetwork-mode ingress controller); selectors cover cases the
+// simple namespace-name list (below) cannot express.
+type NetworkPolicyIngressOverride struct {
+    // +optional
+    IngressCIDRs []string `json:"ingressCIDRs,omitempty"`
+    // +optional
+    IngressNamespaceSelectors []metav1.LabelSelector `json:"ingressNamespaceSelectors,omitempty"`
+}
+
+// NetworkPolicyNamedIngressOverride extends NetworkPolicyIngressOverride with
+// a namespace-name allowlist, mirroring the subset of components (Gateway,
+// APIFrontend, Console) Helm exposes this simpler option on.
+type NetworkPolicyNamedIngressOverride struct {
+    NetworkPolicyIngressOverride `json:",inline"`
+    // +optional
+    IngressNamespaces []string `json:"ingressNamespaces,omitempty"`
+}
+
+// NetworkPolicyEgressOverride overrides a single egress allow rule's target.
+type NetworkPolicyEgressOverride struct {
+    // +optional
+    // +kubebuilder:default="0.0.0.0/0"
+    CIDR string `json:"cidr,omitempty"`
+    // +optional
+    Port int32 `json:"port,omitempty"`
+}
+
+// NetworkPolicyIdPEgressOverride is NetworkPolicyEgressOverride plus a second
+// port, for deployments where a service must reach two IdPs on two ports.
+type NetworkPolicyIdPEgressOverride struct {
+    NetworkPolicyEgressOverride `json:",inline"`
+    // +optional
+    ExtraPorts []int32 `json:"extraPorts,omitempty"`
+}
+
+// NetworkPolicyMonitoringOverride overrides where/how the monitoring-stack
+// ingress/egress rules (Prometheus scrape, AlertManager webhook) are shaped.
+type NetworkPolicyMonitoringOverride struct {
+    // +optional
+    Namespace string `json:"namespace,omitempty"`
+    // +optional
+    // +kubebuilder:default=9090
+    PrometheusPort int32 `json:"prometheusPort,omitempty"`
+    // +optional
+    // +kubebuilder:default=9093
+    AlertManagerPort int32 `json:"alertManagerPort,omitempty"`
+}
+```
+
+Grouped into shared sub-types (`NetworkPolicyIngressOverride`/`NetworkPolicyEgressOverride`/etc.) per Axis 2's shared-type philosophy, rather than 14 bespoke structs -- each sub-type is reused across every component that exposes the same shape in Helm. `metav1.LabelSelector` is the standard `k8s.io/apimachinery` type, matching Helm's underlying `k8sLabelSelector` JSON-schema definition exactly.
 
 **Precedent already in this codebase**: issue #143 (closed) added a reconciler `Warning` event (`NetworkPoliciesDisabled`) when `spec.networkPolicies.enabled: false`, flagging FedRAMP SC-7 non-compliance without blocking it. v1alpha2 formalizes that warning into a hard requirement.
 
@@ -394,7 +497,6 @@ type JWTProviderSpec struct {
 |---|---|
 | Conversion webhook is new, untested infrastructure for this repo | Singleton constraint bounds testing surface to one object; IT-CRD-V2-002 exercises both `ConvertTo`/`ConvertFrom` directions explicitly with the lossy-field cases from the migration table above |
 | D2-D4 is a multi-week effort touching nearly every resource builder | Phased roadmap (D2 scaffold -> D3 migrate builders component-by-component -> D4 implement #235/#227/#277 -> D5 deprecate) keeps the pyramid invariant (UT+IT per component group) intact throughout rather than one big-bang PR |
-| F3's NetworkPolicies field list is deliberately not fully enumerated here | Re-verified against Helm's `values.schema.json` at D2/D3 kickoff, not frozen at ADR sign-off time, to avoid the target silently drifting from upstream between now and implementation |
 | Removing `networkPolicies.enabled` changes runtime behavior for any existing v1alpha1 CR with `enabled: false` (today's default) -- NetworkPolicies will start being created where they weren't before | This is an intentional, security-positive change (matches Helm's always-on behavior and the Red Hat 2027-02 mandate), not an accidental regression. Mitigated by: (1) a non-silent `Warning` on conversion (same pattern as the AlignmentCheck LLM case), (2) explicit migration-guide callout, (3) precedent already established in-repo via issue #143's `NetworkPoliciesDisabled` warning event, so affected users have already been surfaced a signal today. Residual risk: a cluster whose CNI doesn't support `NetworkPolicy`, or that has conflicting third-party policies, could see new behavior on upgrade -- flagged for explicit sign-off below rather than silently deferred |
 | Lossy AlignmentCheck LLM conversion could silently drop config on downgrade | Conversion webhook returns a `Warning` (not silent) on `ConvertFrom` when the legacy shape had non-empty `provider`/`model`; migration guide (D5) documents the manual `llmProfileRef` step explicitly |
 
@@ -402,9 +504,9 @@ type JWTProviderSpec struct {
 
 ## Confidence Assessment
 
-**Confidence: 90%**
+**Confidence: 92%**
 
-**Justification**: The conversion strategy (Axis 1) is a standard, well-documented kubebuilder pattern significantly de-risked by the CRD's strict singleton constraint (92% confidence on its own). The structural alignment approach (Axis 2) generalizes a pattern (`ShutdownSpec`, `LoggingSpec` sharing) already proven in this exact codebase (90% confidence on its own). Axis 3 now requires *zero* new mechanism -- `policy`/`proactiveSignalMappings` stay required, matching Helm's verified behavior exactly (95% confidence on its own, up from 85% when it depended on unreviewed default policy content). F3's NetworkPolicies decision strengthened from "expand a bool" to "remove the opt-out, matching Helm's unconditional behavior and the Red Hat 2027-02 mandate" -- higher confidence in the *direction* (documented external requirement, not just a style preference), offset by a new, explicitly-flagged behavior-change risk for existing CRs with `enabled: false` (today's default). The combined 90% reflects two remaining risks structural to the *size* of this initiative rather than to any single decision: (1) F3's exact field list is intentionally left unfrozen pending D2/D3 re-verification against Helm, and (2) the multi-week D2-D5 execution surface (every resource builder, every validation function) has more opportunity for an individual builder migration to surface an unanticipated edge case than a single-PR change would, even though the phased roadmap is designed to catch those incrementally rather than in one big-bang cutover.
+**Justification**: The conversion strategy (Axis 1) is a standard, well-documented kubebuilder pattern significantly de-risked by the CRD's strict singleton constraint (92% confidence on its own). The structural alignment approach (Axis 2) generalizes a pattern (`ShutdownSpec`, `LoggingSpec` sharing) already proven in this exact codebase (90% confidence on its own). Axis 3 now requires *zero* new mechanism -- `policy`/`proactiveSignalMappings` stay required, matching Helm's verified behavior exactly (95% confidence on its own, up from 85% when it depended on unreviewed default policy content). F3's NetworkPolicies decision strengthened from "expand a bool" to "remove the opt-out, matching Helm's unconditional behavior and the Red Hat 2027-02 mandate," and its full field list is now frozen and enumerated above (Helm's `networkPolicies.*` schema confirmed stable, removing the "drift before D2/D3" risk from v1.1 of this ADR) -- offset only by the explicitly-flagged behavior-change risk for existing CRs with `enabled: false` (today's default). The combined 92% now reflects one remaining risk structural to the *size* of this initiative rather than to any single decision: the multi-week D2-D5 execution surface (every resource builder, every validation function) has more opportunity for an individual builder migration to surface an unanticipated edge case than a single-PR change would, even though the phased roadmap is designed to catch those incrementally rather than in one big-bang cutover.
 
 **What would raise this to 95%+**: A completed D2 scaffold with the conversion webhook's IT-CRD-V2-002 passing end-to-end (validates Axis 1 empirically, not just on paper) before D3 migration begins in earnest.
 
@@ -417,6 +519,7 @@ Per `AGENTS.md` CHECKPOINT DD, this architectural change requires explicit user 
 1. **Axis 1** (conversion webhook, v1alpha2 hub / v1alpha1 spoke) -- proceed, or reconsider Alternative B/C?
 2. **Axis 2** (shared `FleetOverrideSpec`/`MonitoringSpec` types, deep structural mirror) -- proceed, or scope down to Alternative B (targeted fixes only)?
 3. **Axis 3** (keep `policy`/`proactiveSignalMappings` required, matching Helm exactly; no bundled defaults -- F9 retracted) -- proceed?
-4. **F3, revised** (remove `NetworkPoliciesSpec.Enabled` entirely -- NetworkPolicies become unconditional, matching Helm's actual behavior and the Red Hat 2027-02 mandate) -- proceed, including the explicitly-flagged behavior change for existing v1alpha1 CRs with `enabled: false` (today's default)?
-5. **F3's exact field list** left unfrozen until D2/D3 -- acceptable, or should it be fully enumerated in this ADR before sign-off?
-6. Any of F1-F8 you'd like pulled out of v1alpha2 scope entirely (deferred to a future v1alpha3), given the size of this initiative?
+4. **F3, revised and frozen** (remove `NetworkPoliciesSpec.Enabled` entirely -- NetworkPolicies become unconditional, matching Helm's actual behavior and the Red Hat 2027-02 mandate; full field list now enumerated above as `NetworkPoliciesSpec` + 5 shared sub-types) -- proceed, including the explicitly-flagged behavior change for existing v1alpha1 CRs with `enabled: false` (today's default)?
+5. Any of F1-F8 you'd like pulled out of v1alpha2 scope entirely (deferred to a future v1alpha3), given the size of this initiative?
+
+**Status: all 5 points above approved** (Axis 1, Axis 2, Axis 3, F3, and no scope trim -- confirmed in review). D2 scaffolding may begin.
