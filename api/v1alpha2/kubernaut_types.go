@@ -273,7 +273,7 @@ type FleetOverrideSpec struct {
 // AnsibleSpec's own conditional-requirement rule) to preserve this type's
 // pre-staging contract: the other fields stay inert, unvalidated, until
 // Enabled is true.
-// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || !has(self.mcpGatewayEndpoint) || self.mcpGatewayEndpoint == ” || (has(self.oauth2) && has(self.oauth2.enabled) && self.oauth2.enabled)",message="fleet.oauth2.enabled must be true when fleet.enabled is true and fleet.mcpGatewayEndpoint is set -- there is no unauthenticated mode for the MCP Gateway (mirrors FleetMetadataCache's existing unconditional requirement)"
+// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || !has(self.mcpGatewayEndpoint) || size(self.mcpGatewayEndpoint) == 0 || (has(self.oauth2) && has(self.oauth2.enabled) && self.oauth2.enabled)",message="fleet.oauth2.enabled must be true when fleet.enabled is true and fleet.mcpGatewayEndpoint is set -- there is no unauthenticated mode for the MCP Gateway (mirrors FleetMetadataCache's existing unconditional requirement)"
 type FleetSpec struct {
 	// Whether federated scope-checking is enabled for Gateway and
 	// RemediationOrchestrator.

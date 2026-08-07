@@ -3754,8 +3754,8 @@ spec:
                     mode for the MCP Gateway (mirrors FleetMetadataCache's existing
                     unconditional requirement)
                   rule: '!has(self.enabled) || !self.enabled || !has(self.mcpGatewayEndpoint)
-                    || self.mcpGatewayEndpoint == '''' || (has(self.oauth2) && has(self.oauth2.enabled)
-                    && self.oauth2.enabled)'
+                    || size(self.mcpGatewayEndpoint) == 0 || (has(self.oauth2) &&
+                    has(self.oauth2.enabled) && self.oauth2.enabled)'
               fleetMetadataCache:
                 description: |-
                   FleetMetadataCache configures the operator-managed Fleet Metadata
