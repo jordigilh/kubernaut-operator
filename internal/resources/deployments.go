@@ -496,7 +496,7 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 // kubernautagent-tls (provisioned by OCP service-ca). Health and metrics
 // are on dedicated plain HTTP ports 8081 and 9090.
 func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
-	kaProfile, _ := ResolveLLMProfile(kn, kn.Spec.KubernautAgent.LLMProfileRef)
+	kaProfile, _ := ResolveLLMProfile(kn, EffectiveKALLMProfileRef(kn))
 	if kaProfile.CredentialsSecretName == "" {
 		return nil, fmt.Errorf("spec.kubernautAgent.llmProfileRef's profile must have a non-empty credentialsSecretName")
 	}

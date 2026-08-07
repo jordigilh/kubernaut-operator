@@ -94,6 +94,11 @@ spec:
   # must still share a credentialsSecretName (API Frontend's Vertex AI
   # client relies on ambient Application Default Credentials rather than
   # per-profile credentials, kubernaut#1731).
+  #
+  # v1alpha2/F10: when this map defines exactly one profile,
+  # kubernautAgent.llmProfileRef below may be omitted entirely -- the
+  # operator infers the sole profile. Two profiles are defined here
+  # (primary, lightweight), so llmProfileRef stays required in this sample.
   llmProfiles:
     primary:
       provider: vertex_ai

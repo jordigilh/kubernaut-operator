@@ -86,6 +86,11 @@ type KubernautSpec struct {
 	// (e.g. "primary", "lightweight"). Components reference a profile by
 	// name via their own llmProfileRef field instead of embedding LLM
 	// configuration directly, decoupling KA and API Frontend's LLM identity.
+	// When this map defines exactly one profile, spec.kubernautAgent.llmProfileRef
+	// (and every other llmProfileRef field that falls back to it) may be
+	// omitted -- the operator infers the sole profile rather than relying
+	// on a conventional key name. Any other count requires an explicit
+	// llmProfileRef wherever one is needed.
 	// +kubebuilder:validation:MinProperties=1
 	LLMProfiles map[string]LLMProfileSpec `json:"llmProfiles"`
 
@@ -761,9 +766,16 @@ type EMAssessmentSpec struct {
 // KubernautAgentSpec configures the Kubernaut Agent (KA) LLM integration service.
 type KubernautAgentSpec struct {
 	// Reference to a named profile in spec.llmProfiles used for KA's
-	// investigator LLM calls.
+	// investigator LLM calls. Optional when spec.llmProfiles defines
+	// exactly one profile -- the operator infers that sole profile
+	// automatically (see EffectiveKALLMProfileRef in
+	// internal/resources/common.go), so a single-provider CR never needs
+	// to name it explicitly here. Required (and must match a key in
+	// spec.llmProfiles) whenever spec.llmProfiles defines more than one
+	// profile, since the choice is then ambiguous.
 	// +kubebuilder:validation:MinLength=1
-	LLMProfileRef string `json:"llmProfileRef"`
+	// +optional
+	LLMProfileRef string `json:"llmProfileRef,omitempty"`
 
 	// Name of a pre-existing ConfigMap for the LLM runtime configuration.
 	// When set, the operator skips generating kubernaut-agent-llm-runtime
@@ -1411,8 +1423,9 @@ type APIFrontendSpec struct {
 	Shutdown APIFrontendShutdownSpec `json:"shutdown,omitempty"`
 
 	// Reference to a named profile in spec.llmProfiles used for API
-	// Frontend's own LLM calls. When empty, defaults to the same profile
-	// referenced by spec.kubernautAgent.llmProfileRef.
+	// Frontend's own LLM calls. When empty, defaults to
+	// spec.kubernautAgent.llmProfileRef's *effective* profile -- including
+	// that field's own single-profile inference, so AF need not repeat it.
 	// +optional
 	LLMProfileRef string `json:"llmProfileRef,omitempty"`
 

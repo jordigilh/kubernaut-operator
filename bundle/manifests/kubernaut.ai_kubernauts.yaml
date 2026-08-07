@@ -2717,7 +2717,16 @@ spec:
               behind every diff from v1alpha1 (referenced as F1-F9 below).
             properties:
               aiAnalysis:
-                description: AIAnalysis controller configuration.
+                description: |-
+                  AIAnalysis controller configuration. Required (not just AIAnalysisSpec.Policy
+                  nested within it): a Go struct field with omitempty is skipped entirely by
+                  structural-schema "required" checks when the whole key is absent from the
+                  request, so nesting alone let a CR omit aiAnalysis altogether and bypass
+                  Policy's own required-ness -- discovered via a live-cluster CRD spike
+                  (spec.aiAnalysis absent was admitted with no error). Dropping omitempty
+                  here closes that loophole; see docs/design/ADR-CRD-001-v1alpha2-redesign.md
+                  Decision Axis 3 / F9 for why the Rego policy itself must stay mandatory
+                  (Helm's chart fails `helm install` under the equivalent condition).
                 properties:
                   confidenceThreshold:
                     description: |-
@@ -2961,8 +2970,9 @@ spec:
                   llmProfileRef:
                     description: |-
                       Reference to a named profile in spec.llmProfiles used for API
-                      Frontend's own LLM calls. When empty, defaults to the same profile
-                      referenced by spec.kubernautAgent.llmProfileRef.
+                      Frontend's own LLM calls. When empty, defaults to
+                      spec.kubernautAgent.llmProfileRef's *effective* profile -- including
+                      that field's own single-profile inference, so AF need not repeat it.
                     type: string
                   logging:
                     description: LoggingSpec configures the log level for a service.
@@ -4221,7 +4231,13 @@ spec:
                   llmProfileRef:
                     description: |-
                       Reference to a named profile in spec.llmProfiles used for KA's
-                      investigator LLM calls.
+                      investigator LLM calls. Optional when spec.llmProfiles defines
+                      exactly one profile -- the operator infers that sole profile
+                      automatically (see EffectiveKALLMProfileRef in
+                      internal/resources/common.go), so a single-provider CR never needs
+                      to name it explicitly here. Required (and must match a key in
+                      spec.llmProfiles) whenever spec.llmProfiles defines more than one
+                      profile, since the choice is then ambiguous.
                     minLength: 1
                     type: string
                   logging:
@@ -4408,8 +4424,6 @@ spec:
                         description: Token threshold above which tool output is summarized.
                         type: integer
                     type: object
-                required:
-                - llmProfileRef
                 type: object
               llmProfiles:
                 additionalProperties:
@@ -4559,6 +4573,11 @@ spec:
                   (e.g. "primary", "lightweight"). Components reference a profile by
                   name via their own llmProfileRef field instead of embedding LLM
                   configuration directly, decoupling KA and API Frontend's LLM identity.
+                  When this map defines exactly one profile, spec.kubernautAgent.llmProfileRef
+                  (and every other llmProfileRef field that falls back to it) may be
+                  omitted -- the operator infers the sole profile rather than relying
+                  on a conventional key name. Any other count requires an explicit
+                  llmProfileRef wherever one is needed.
                 minProperties: 1
                 type: object
               monitoring:
@@ -5386,7 +5405,9 @@ spec:
                     type: object
                 type: object
               signalProcessing:
-                description: SignalProcessing controller configuration.
+                description: |-
+                  SignalProcessing controller configuration. Required for the same reason
+                  as AIAnalysis above -- see that field's doc comment.
                 properties:
                   fleet:
                     description: |-
@@ -5734,9 +5755,11 @@ spec:
                     type: string
                 type: object
             required:
+            - aiAnalysis
             - kubernautAgent
             - llmProfiles
             - postgresql
+            - signalProcessing
             - valkey
             type: object
           status:
