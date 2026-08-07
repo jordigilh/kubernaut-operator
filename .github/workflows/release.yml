@@ -62,6 +62,9 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      image: ${{ steps.digest.outputs.image }}
+      digest: ${{ steps.digest.outputs.digest }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -94,6 +97,21 @@ jobs:
           IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-amd64"
           echo "Pushing ${IMAGE}..."
           podman push "${IMAGE}"
+
+      # #93: pushed digest, required as input to the SLSA3 provenance
+      # generator job below -- re-pulling to inspect (rather than parsing
+      # `podman push` output) matches the digest-resolution approach the
+      # pre-#93 provenance job already used successfully.
+      - name: Resolve pushed digest
+        id: digest
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}"
+          podman pull "${IMAGE}:${VERSION}-amd64"
+          DIGEST=$(podman inspect --format='{{.Digest}}' "${IMAGE}:${VERSION}-amd64")
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
   # ========================================
   # SBOM (amd64 image) + Cosign SBOM attestation
@@ -160,6 +178,9 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      image: ${{ steps.digest.outputs.image }}
+      digest: ${{ steps.digest.outputs.digest }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -205,6 +226,19 @@ jobs:
           IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-arm64"
           echo "Pushing ${IMAGE}..."
           podman push "${IMAGE}"
+
+      # #93: see the matching step in build-amd64 for why this re-pulls
+      # rather than parsing `podman push` output.
+      - name: Resolve pushed digest
+        id: digest
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}"
+          podman pull "${IMAGE}:${VERSION}-arm64"
+          DIGEST=$(podman inspect --format='{{.Digest}}' "${IMAGE}:${VERSION}-arm64")
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
   # ========================================
   # STAGE 2: MULTI-ARCH MANIFESTS
@@ -296,66 +330,68 @@ jobs:
             "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
 
   # ========================================
-  # SLSA build provenance (per-arch digest)
+  # SLSA Build Level 3 provenance (per-arch digest)
+  #
+  # #93: upgraded from actions/attest-build-provenance (SLSA Build L1-2)
+  # to slsa-framework/slsa-github-generator's container workflow (SLSA
+  # Build L3). The difference is the trust boundary, not the build steps
+  # themselves (this generator attests an already-built/pushed digest;
+  # it does not build the image -- only slsa-github-generator's
+  # ecosystem-specific *builders*, e.g. its Go builder, do that):
+  #
+  # - Before: the "Attest amd64/arm64 provenance" steps ran as part of
+  #   *this* repo's own workflow, so the provenance's builder identity
+  #   was self-asserted (release.yml attesting to its own build).
+  # - After: the provenance job below is a *reusable workflow call*
+  #   (`uses:`, not a step), so GitHub mints its OIDC token against the
+  #   *generator's* job, not ours. The resulting provenance's builder.id
+  #   is slsa-github-generator's own pinned identity
+  #   (.../generator_container_slsa3.yml@refs/tags/v2.1.0) -- this repo
+  #   can only supply `image`/`digest` as inputs, it cannot forge or
+  #   influence the attestation's builder identity or signing material.
+  #
+  # Must be pinned by an exact release tag (@vX.Y.Z); referencing it by a
+  # shorter tag or by commit hash fails at run time -- an open upstream
+  # limitation, not a mistake here: GitHub's OIDC token for a reusable
+  # workflow call only reliably reports the ref it was invoked at, so
+  # slsa-verifier can't yet confirm an arbitrary hash maps to a trusted
+  # release (see https://github.com/slsa-framework/slsa-verifier/issues/12).
+  #
+  # `packages: write` is required even though we push to Quay, not
+  # ghcr.io -- an acknowledged upstream quirk of how the generator's
+  # reusable-workflow permissions and Cosign credential resolution
+  # interact (see slsa-github-generator#1257).
   # ========================================
 
-  provenance:
-    name: Attest build provenance
-    needs: [prepare, build-amd64, build-arm64]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+  provenance-amd64:
+    name: SLSA3 provenance (amd64)
+    needs: build-amd64
     permissions:
-      contents: read
+      actions: read
       id-token: write
-      attestations: write
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
+      packages: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
+    with:
+      image: ${{ needs.build-amd64.outputs.image }}
+      digest: ${{ needs.build-amd64.outputs.digest }}
+    secrets:
+      registry-username: ${{ secrets.QUAY_ROBOT_USERNAME }}
+      registry-password: ${{ secrets.QUAY_ROBOT_TOKEN }}
 
-      - name: Login to Quay.io (podman)
-        run: |
-          podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
-                       -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
-                       quay.io
-
-      - name: Login to Quay.io (docker credentials)
-        uses: docker/login-action@v4
-        with:
-          registry: quay.io
-          username: ${{ secrets.QUAY_ROBOT_USERNAME }}
-          password: ${{ secrets.QUAY_ROBOT_TOKEN }}
-
-      - name: Pull amd64 image and get digest
-        id: amd64-digest
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          podman pull "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-amd64"
-          DIGEST=$(podman inspect --format='{{.Digest}}' "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-amd64")
-          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
-
-      - name: Attest amd64 provenance
-        uses: actions/attest-build-provenance@v4
-        with:
-          subject-name: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.amd64-digest.outputs.digest }}
-          push-to-registry: true
-
-      - name: Pull arm64 image and get digest
-        id: arm64-digest
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          podman pull "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-arm64"
-          DIGEST=$(podman inspect --format='{{.Digest}}' "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-arm64")
-          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
-
-      - name: Attest arm64 provenance
-        uses: actions/attest-build-provenance@v4
-        with:
-          subject-name: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.arm64-digest.outputs.digest }}
-          push-to-registry: true
+  provenance-arm64:
+    name: SLSA3 provenance (arm64)
+    needs: build-arm64
+    permissions:
+      actions: read
+      id-token: write
+      packages: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
+    with:
+      image: ${{ needs.build-arm64.outputs.image }}
+      digest: ${{ needs.build-arm64.outputs.digest }}
+    secrets:
+      registry-username: ${{ secrets.QUAY_ROBOT_USERNAME }}
+      registry-password: ${{ secrets.QUAY_ROBOT_TOKEN }}
 
   # ========================================
   # STAGE 3: OLM BUNDLE IMAGE
@@ -444,7 +480,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [prepare, create-manifests, bundle, catalog, sbom, sign, provenance]
+    needs: [prepare, create-manifests, bundle, catalog, sbom, sign, provenance-amd64, provenance-arm64]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
