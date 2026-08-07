@@ -13,11 +13,10 @@ kind: ImageSetConfiguration
 apiVersion: mirror.openshift.io/v2alpha1
 mirror:
   additionalImages:
-    # Operator (tag-based pending the v1.5.8-rc1 tag build; a follow-up PR
-    # will pin this to a digest once published)
-    - name: quay.io/kubernaut-ai/kubernaut-operator:1.5.8-rc1
-    # Operator bundle (tag-based, see note above)
-    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle:v1.5.8-rc1
+    # Operator
+    - name: quay.io/kubernaut-ai/kubernaut-operator@sha256:7139af2444d2c14577561ced82b8da410f5c0f9cd5e8b4aaf8139e14af81ca70
+    # Operator bundle
+    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle@sha256:b6b2353c9be3783288dee9e814339d7b1e176a7d911017df5402aca38868a33e
     # Operand and infrastructure images
     - name: quay.io/kubernaut-ai/aianalysis@sha256:491bc5d582ccc87e3d146db18037bdcc59c0cd1a99041fb583916d7302cc4431
     - name: quay.io/kubernaut-ai/apifrontend@sha256:793fc3f0bd4e4c20e87da7c49b0dcf6ddf062312db1beab23005965fc2690788
