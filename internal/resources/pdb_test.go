@@ -24,13 +24,13 @@ import (
 var _ = Describe("PodDisruptionBudgets", func() {
 	It("returns PDBs only for active components", func() {
 		kn := testKubernaut()
-		pdbs := PodDisruptionBudgets(kn)
-		Expect(pdbs).To(HaveLen(len(ActiveComponents(kn))))
+		pdbs := PodDisruptionBudgets(kn, testKnV2(kn))
+		Expect(pdbs).To(HaveLen(len(ActiveComponents(kn, testKnV2(kn)))))
 	})
 
 	It("sets MaxUnavailable=1 on all components", func() {
 		kn := testKubernaut()
-		for _, pdb := range PodDisruptionBudgets(kn) {
+		for _, pdb := range PodDisruptionBudgets(kn, testKnV2(kn)) {
 			Expect(pdb.Spec.MaxUnavailable).NotTo(BeNil(), "PDB %q should have MaxUnavailable set", pdb.Name)
 			Expect(pdb.Spec.MaxUnavailable.IntValue()).To(Equal(1), "PDB %q MaxUnavailable = %d, want 1", pdb.Name, pdb.Spec.MaxUnavailable.IntValue())
 			Expect(pdb.Spec.MinAvailable).To(BeNil(), "PDB %q should not have MinAvailable set (causes PodDisruptionBudgetAtLimit with 1 replica)", pdb.Name)
@@ -39,8 +39,8 @@ var _ = Describe("PodDisruptionBudgets", func() {
 
 	It("aligns selectors with component selector labels by index", func() {
 		kn := testKubernaut()
-		components := ActiveComponents(kn)
-		pdbs := PodDisruptionBudgets(kn)
+		components := ActiveComponents(kn, testKnV2(kn))
+		pdbs := PodDisruptionBudgets(kn, testKnV2(kn))
 		Expect(pdbs).To(HaveLen(len(components)), "PDB count = %d, component count = %d", len(pdbs), len(components))
 		for i, pdb := range pdbs {
 			component := components[i]
@@ -57,22 +57,22 @@ var _ = Describe("PodDisruptionBudgets", func() {
 
 	It("labels every PDB with managed-by kubernaut-operator", func() {
 		kn := testKubernaut()
-		for _, pdb := range PodDisruptionBudgets(kn) {
+		for _, pdb := range PodDisruptionBudgets(kn, testKnV2(kn)) {
 			Expect(pdb.Labels["app.kubernetes.io/managed-by"]).To(Equal("kubernaut-operator"), "PDB %q labels missing app.kubernetes.io/managed-by=kubernaut-operator, got %#v", pdb.Name, pdb.Labels)
 		}
 	})
 
 	It("places every PDB in the system namespace", func() {
 		kn := testKubernaut()
-		for _, pdb := range PodDisruptionBudgets(kn) {
+		for _, pdb := range PodDisruptionBudgets(kn, testKnV2(kn)) {
 			Expect(pdb.Namespace).To(Equal(testSystemNamespace), "PDB %q namespace = %q, want %q", pdb.Name, pdb.Namespace, testSystemNamespace)
 		}
 	})
 
 	It("names PDBs after components without a -pdb suffix", func() {
 		kn := testKubernaut()
-		pdbs := PodDisruptionBudgets(kn)
-		components := ActiveComponents(kn)
+		pdbs := PodDisruptionBudgets(kn, testKnV2(kn))
+		components := ActiveComponents(kn, testKnV2(kn))
 		Expect(pdbs).To(HaveLen(len(components)), "PDB count = %d, component count = %d", len(pdbs), len(components))
 		for i, pdb := range pdbs {
 			Expect(pdb.Name).To(Equal(components[i]), "PDB[%d] name = %q, want %q (no -pdb suffix)", i, pdb.Name, components[i])

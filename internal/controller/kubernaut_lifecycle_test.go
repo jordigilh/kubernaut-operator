@@ -47,6 +47,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
@@ -154,6 +155,24 @@ func setDeploymentReady(ctx context.Context, name string) {
 	Expect(k8sClient.Status().Update(ctx, dep)).To(Succeed())
 }
 
+// fetchKnV2 fetches the singleton Kubernaut CR as its v1alpha2 storage
+// representation, for use alongside a v1alpha1 fetch when a test needs both
+// views (e.g. to call resources functions that take knV2).
+func fetchKnV2(ctx context.Context) *kubernautv1alpha2.Kubernaut {
+	knV2 := &kubernautv1alpha2.Kubernaut{}
+	Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())
+	return knV2
+}
+
+// testKnV2 derives a v1alpha2.Kubernaut from an in-memory (not
+// API-server-backed) v1alpha1 fixture, reusing the real conversion webhook
+// logic so test fixtures don't need to be duplicated in both API versions.
+func testKnV2(kn *kubernautv1alpha1.Kubernaut) *kubernautv1alpha2.Kubernaut {
+	knV2 := &kubernautv1alpha2.Kubernaut{}
+	Expect(kn.ConvertTo(knV2)).To(Succeed())
+	return knV2
+}
+
 // setAllDeploymentsReady marks every active service Deployment as ready.
 // Uses ActiveComponents rather than AllComponents: opt-in components
 // (Gateway, APIFrontend, FleetMetadataCache) don't get a Deployment at all
@@ -162,7 +181,7 @@ func setDeploymentReady(ctx context.Context, name string) {
 func setAllDeploymentsReady(ctx context.Context) {
 	kn := &kubernautv1alpha1.Kubernaut{}
 	Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-	for _, c := range resources.ActiveComponents(kn) {
+	for _, c := range resources.ActiveComponents(kn, fetchKnV2(ctx)) {
 		setDeploymentReady(ctx, resources.DeploymentName(c))
 	}
 }
@@ -468,7 +487,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			By("marking all except gateway as ready")
 			kn := &kubernautv1alpha1.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			for _, c := range resources.ActiveComponents(kn) {
+			for _, c := range resources.ActiveComponents(kn, fetchKnV2(ctx)) {
 				if c != resources.ComponentGateway {
 					setDeploymentReady(ctx, resources.DeploymentName(c))
 				}
@@ -498,7 +517,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			By("driving to degraded")
 			kn := &kubernautv1alpha1.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			for _, c := range resources.ActiveComponents(kn) {
+			for _, c := range resources.ActiveComponents(kn, fetchKnV2(ctx)) {
 				if c != resources.ComponentGateway {
 					setDeploymentReady(ctx, resources.DeploymentName(c))
 				}
@@ -1381,7 +1400,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				"gateway": "custom.io/gw:v2@sha256:abc123",
 			}
 
-			dep, err := resources.GatewayDeployment(cr)
+			dep, err := resources.GatewayDeployment(cr, testKnV2(cr))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dep.Spec.Template.Spec.Containers[0].Image).To(Equal("custom.io/gw:v2@sha256:abc123"))
 		})
@@ -1392,7 +1411,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				{Name: "my-pull-secret"},
 			}
 
-			dep, err := resources.GatewayDeployment(cr)
+			dep, err := resources.GatewayDeployment(cr, testKnV2(cr))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dep.Spec.Template.Spec.ImagePullSecrets).To(HaveLen(1))
 			Expect(dep.Spec.Template.Spec.ImagePullSecrets[0].Name).To(Equal("my-pull-secret"))
@@ -1410,7 +1429,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				Expect(rb.Namespace).To(Equal("custom-wf"))
 			}
 
-			crbs := resources.ClusterRoleBindings(cr)
+			crbs := resources.ClusterRoleBindings(cr, testKnV2(cr))
 			found := false
 			for _, crb := range crbs {
 				if crb.Name == cr.Namespace+"-workflow-runner-binding" {
@@ -1423,20 +1442,31 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should produce valid resources with minimal required fields", func() {
 			cr := newMinimalCR()
+			knV2 := testKnV2(cr)
 
-			for _, build := range []func(*kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error){
+			for _, build := range []func(*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error){
 				resources.GatewayDeployment,
-				resources.DataStorageDeployment,
-				resources.AIAnalysisDeployment,
+				func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return resources.DataStorageDeployment(kn)
+				},
+				func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return resources.AIAnalysisDeployment(kn)
+				},
 				resources.SignalProcessingDeployment,
 				resources.RemediationOrchestratorDeployment,
-				resources.WorkflowExecutionDeployment,
+				func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return resources.WorkflowExecutionDeployment(kn)
+				},
 				resources.EffectivenessMonitorDeployment,
-				resources.NotificationDeployment,
+				func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return resources.NotificationDeployment(kn)
+				},
 				resources.KubernautAgentDeployment,
-				resources.AuthWebhookDeployment,
+				func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return resources.AuthWebhookDeployment(kn)
+				},
 			} {
-				dep, err := build(cr)
+				dep, err := build(cr, knV2)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(dep.Name).NotTo(BeEmpty())
 				Expect(dep.Spec.Template.Spec.Containers).NotTo(BeEmpty())
@@ -1446,7 +1476,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should resolve image from RELATED_IMAGE env var", func() {
 			cr := newMinimalCR()
-			dep, err := resources.GatewayDeployment(cr)
+			dep, err := resources.GatewayDeployment(cr, testKnV2(cr))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dep.Spec.Template.Spec.Containers[0].Image).To(Equal("quay.io/kubernaut-ai/gateway:test"))
 		})

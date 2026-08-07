@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 // FMC (Fleet Metadata Cache, ADR-068, #200) ports and paths. These mirror
@@ -86,12 +87,14 @@ type fleetMetadataCacheConfigYAML struct {
 
 // FleetMetadataCacheConfigMap builds the fleetmetadatacache-config ConfigMap.
 // Only called when spec.fleetMetadataCache.enabled is true (validated by
-// validateFleetMetadataCache at admission), so
+// ValidateFleet at admission), so
 // spec.fleet.mcpGatewayEndpoint/mcpGatewayType and spec.fleet.oauth2.tokenURL
-// are guaranteed non-empty.
-func FleetMetadataCacheConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
-	fleet := &kn.Spec.Fleet
-	fmc := &kn.Spec.FleetMetadataCache
+// are guaranteed non-empty. Fleet's entire CRD surface lives in v1alpha2
+// (Fleet v1alpha2 migration); kn is still needed for object metadata/labels
+// and non-Fleet fields (Valkey).
+func FleetMetadataCacheConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+	fleet := &knV2.Spec.Fleet
+	fmc := &knV2.Spec.FleetMetadataCache
 
 	cfg := fleetMetadataCacheConfigYAML{
 		Server: fleetMetadataCacheServerYAML{
@@ -101,7 +104,7 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Confi
 		MCPGateway: fleetMetadataCacheMCPGatewayYAML{
 			Endpoint:    fleet.MCPGatewayEndpoint,
 			GatewayType: fleet.MCPGatewayType,
-			Namespace:   effectiveFleetMetadataCacheMCPGatewayNamespace(kn),
+			Namespace:   effectiveFleetMetadataCacheMCPGatewayNamespace(knV2),
 		},
 		Valkey: fleetMetadataCacheValkeyYAML{
 			Addr: ValkeyAddr(&kn.Spec.Valkey),
@@ -129,19 +132,20 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Confi
 // --- Deployment ---
 
 // fleetMetadataCacheEffectiveOAuth2SecretRef resolves the Secret FMC mounts
-// for its OAuth2 client credentials: its own override, falling back to the
-// shared spec.fleet.oauth2.credentialsSecretRef. Guaranteed non-empty when
-// FMC is enabled (validateFleetMetadataCache).
-func fleetMetadataCacheEffectiveOAuth2SecretRef(kn *kubernautv1alpha1.Kubernaut) string {
-	return withDefault(kn.Spec.FleetMetadataCache.FleetOAuth2CredentialsSecretRef, kn.Spec.Fleet.OAuth2.CredentialsSecretRef)
+// for its OAuth2 client credentials: its own override (F1 --
+// FleetMetadataCacheSpec.Fleet in v1alpha2), falling back to the shared
+// spec.fleet.oauth2.credentialsSecretRef. Guaranteed non-empty when FMC is
+// enabled (ValidateFleet).
+func fleetMetadataCacheEffectiveOAuth2SecretRef(knV2 *kubernautv1alpha2.Kubernaut) string {
+	return effectiveFleetOAuth2SecretRef(knV2.Spec.FleetMetadataCache.Fleet, knV2.Spec.Fleet.OAuth2.CredentialsSecretRef)
 }
 
 // FleetMetadataCacheDeployment builds the FMC Deployment. FMC's OAuth2
 // credentials mount is independent of spec.fleet.enabled/appendFleetSecretMounts
 // (which gate Gateway/RemediationOrchestrator's own scope-check consumption)
-// -- FMC always requires it, enforced by validateFleetMetadataCache.
-func FleetMetadataCacheDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
-	credRef := fleetMetadataCacheEffectiveOAuth2SecretRef(kn)
+// -- FMC always requires it, enforced by ValidateFleet.
+func FleetMetadataCacheDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+	credRef := fleetMetadataCacheEffectiveOAuth2SecretRef(knV2)
 
 	volumes := []corev1.Volume{
 		configMapVolume("config", fleetMetadataCacheConfigMapName),
@@ -154,7 +158,7 @@ func FleetMetadataCacheDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Depl
 
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentFleetMetadataCache, ImageName: "fleetmetadatacache",
-		Resources: kn.Spec.FleetMetadataCache.Resources, VolumeMounts: mounts, Volumes: volumes,
+		Resources: knV2.Spec.FleetMetadataCache.Resources, VolumeMounts: mounts, Volumes: volumes,
 		Args: []string{"-config=/etc/fleetmetadatacache/config.yaml"},
 		Ports: []corev1.ContainerPort{
 			{Name: "api", ContainerPort: fleetMetadataCacheAPIPort, Protocol: corev1.ProtocolTCP},
@@ -198,10 +202,10 @@ func FleetMetadataCacheService(kn *kubernautv1alpha1.Kubernaut) *corev1.Service 
 // because FMC's own binary already supports Namespace-scoped watches
 // (cmd/fleetmetadatacache/main.go passes cfg.MCPGateway.Namespace straight
 // into registry.RegistryConfig{Namespace: ...}).
-func fleetMetadataCacheClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
+func fleetMetadataCacheClusterRole(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	var rules []rbacv1.PolicyRule
-	if effectiveFleetMetadataCacheMCPGatewayNamespace(kn) == "" {
-		rules = mcpGatewayCRDPolicyRules(kn.Spec.Fleet.MCPGatewayType)
+	if effectiveFleetMetadataCacheMCPGatewayNamespace(knV2) == "" {
+		rules = mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGatewayType)
 	}
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{
@@ -213,19 +217,19 @@ func fleetMetadataCacheClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[s
 }
 
 // effectiveFleetMetadataCacheMCPGatewayNamespace resolves FMC's own
-// mcpGatewayNamespace override, falling back to the shared
-// spec.fleet.mcpGatewayNamespace -- mirroring SignalProcessing's precedent
-// (resolveSignalProcessingFleetConfig).
-func effectiveFleetMetadataCacheMCPGatewayNamespace(kn *kubernautv1alpha1.Kubernaut) string {
-	return withDefault(kn.Spec.FleetMetadataCache.MCPGatewayNamespace, kn.Spec.Fleet.MCPGatewayNamespace)
+// mcpGatewayNamespace override (F1 -- FleetMetadataCacheSpec.Fleet in
+// v1alpha2), falling back to the shared spec.fleet.mcpGatewayNamespace --
+// mirroring SignalProcessing's precedent (resolveSignalProcessingFleetConfig).
+func effectiveFleetMetadataCacheMCPGatewayNamespace(knV2 *kubernautv1alpha2.Kubernaut) string {
+	return effectiveFleetNamespace(knV2.Spec.FleetMetadataCache.Fleet, knV2.Spec.Fleet.MCPGatewayNamespace)
 }
 
 // EffectiveFleetMetadataCacheMCPGatewayNamespace is the exported form of
 // effectiveFleetMetadataCacheMCPGatewayNamespace, used by the controller
 // package to detect the ClusterRole-to-namespace-Role transition and clean
 // up FMC's now-stale cluster-scoped ClusterRole/ClusterRoleBinding (#224).
-func EffectiveFleetMetadataCacheMCPGatewayNamespace(kn *kubernautv1alpha1.Kubernaut) string {
-	return effectiveFleetMetadataCacheMCPGatewayNamespace(kn)
+func EffectiveFleetMetadataCacheMCPGatewayNamespace(knV2 *kubernautv1alpha2.Kubernaut) string {
+	return effectiveFleetMetadataCacheMCPGatewayNamespace(knV2)
 }
 
 // FleetMetadataCacheClusterRoleBinding binds FMC's SA to its ClusterRole.

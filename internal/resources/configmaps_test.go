@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 const injectCABundleAnnotationValue = "true"
@@ -36,7 +37,7 @@ var _ = Describe("ConfigMaps", func() {
 	Describe("Gateway ConfigMap", func() {
 		It("contains DataStorage URL and expected keys", func() {
 			kn := testKubernaut()
-			cm, err := GatewayConfigMap(kn)
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(cm.Name).To(Equal("gateway-config"))
@@ -49,7 +50,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("includes TLS certDir for inter-service encryption", func() {
 			kn := testKubernaut()
-			cm, err := GatewayConfigMap(kn)
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("tls:"))
@@ -59,7 +60,7 @@ var _ = Describe("ConfigMaps", func() {
 		It("respects custom K8s request timeout", func() {
 			kn := testKubernaut()
 			kn.Spec.Gateway.Config.K8sRequestTimeout = "30s"
-			cm, err := GatewayConfigMap(kn)
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("k8sRequestTimeout: 30s"))
@@ -68,7 +69,7 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders v1.4 processing and related fields", func() {
 			kn := testKubernaut()
 			kn.Spec.Gateway.Logging.Level = "debug"
-			cm, err := GatewayConfigMap(kn)
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			for _, want := range []string{
@@ -95,7 +96,7 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders custom trusted proxy CIDRs", func() {
 			kn := testKubernaut()
 			kn.Spec.Gateway.Config.TrustedProxyCIDRs = []string{"10.0.0.0/8"}
-			cm, err := GatewayConfigMap(kn)
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(strings.Contains(data, "trustedProxyCIDRs") && strings.Contains(data, "10.0.0.0/8")).To(BeTrue(), "gateway config should contain trustedProxyCIDRs with 10.0.0.0/8, got:\n%s", data)
@@ -104,7 +105,7 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders custom deduplication cooldown", func() {
 			kn := testKubernaut()
 			kn.Spec.Gateway.Config.DeduplicationCooldown = "10m" //nolint:goconst // test value
-			cm, err := GatewayConfigMap(kn)
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("cooldownPeriod: 10m"), "gateway config should contain cooldownPeriod 10m, got:\n%s", data)
@@ -112,7 +113,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("renders default CORS config", func() {
 			kn := testKubernaut()
-			cm, err := GatewayConfigMap(kn)
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("cors:"))
@@ -126,7 +127,7 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders custom CORS origins", func() {
 			kn := testKubernaut()
 			kn.Spec.Gateway.Config.CORS.AllowedOrigins = []string{"https://dashboard.example.com", "https://admin.example.com"}
-			cm, err := GatewayConfigMap(kn)
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("https://dashboard.example.com"))
@@ -138,7 +139,7 @@ var _ = Describe("ConfigMaps", func() {
 			kn := testKubernaut()
 			kn.Spec.Gateway.Config.CORS.AllowCredentials = ptr.To(true)
 			kn.Spec.Gateway.Config.CORS.MaxAge = ptr.To(600)
-			cm, err := GatewayConfigMap(kn)
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("allowCredentials: true"))
@@ -147,7 +148,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("omits the fleet block when fleet is disabled", func() {
 			kn := testKubernaut()
-			cm, err := GatewayConfigMap(kn)
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).NotTo(ContainSubstring("fleet:"), "gateway config should omit fleet block when disabled, got:\n%s", data)
@@ -156,10 +157,11 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders the fleet block with backend and endpoint when enabled", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 			}
-			cm, err := GatewayConfigMap(kn)
+			cm, err := GatewayConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			for _, want := range []string{
@@ -175,11 +177,12 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders tlsCAFile and tokenPath when the corresponding secrets are set", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
 				CASecretName: "fmc-ca-bundle", TokenSecretName: "acm-search-token",
 			}
-			cm, err := GatewayConfigMap(kn)
+			cm, err := GatewayConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("tlsCAFile: /etc/fleet-tls/ca/ca.crt"), "gateway config should render tlsCAFile mount path, got:\n%s", data)
@@ -191,11 +194,12 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders mcpGatewayEndpoint and mcpGatewayType when set", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
 			}
-			cm, err := GatewayConfigMap(kn)
+			cm, err := GatewayConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("mcpGatewayEndpoint: https://mcp-gateway.example.com/sse"), "gateway config should render mcpGatewayEndpoint, got:\n%s", data)
@@ -205,11 +209,12 @@ var _ = Describe("ConfigMaps", func() {
 		It("omits the oauth2 block when fleet oauth2 is disabled", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
 			}
-			cm, err := GatewayConfigMap(kn)
+			cm, err := GatewayConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).NotTo(ContainSubstring("oauth2:"), "gateway config should omit fleet oauth2 block when disabled, got:\n%s", data)
@@ -218,15 +223,16 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders the fleet oauth2 block when enabled", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-				OAuth2: kubernautv1alpha1.OAuth2Spec{
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
 					Enabled: true, TokenURL: "https://keycloak.example.com/token",
 					CredentialsSecretRef: "fleet-oauth2-creds", Scopes: []string{"openid", "groups"},
 				},
 			}
-			cm, err := GatewayConfigMap(kn)
+			cm, err := GatewayConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			for _, want := range []string{
@@ -247,15 +253,16 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders oauth2.tlsCAFile defaulting to the inter-service CA path when oauth2 is enabled", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-				OAuth2: kubernautv1alpha1.OAuth2Spec{
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
 					Enabled: true, TokenURL: "https://keycloak.example.com/token",
 					CredentialsSecretRef: "fleet-oauth2-creds",
 				},
 			}
-			cm, err := GatewayConfigMap(kn)
+			cm, err := GatewayConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("tlsCAFile: "+InterServiceTLSCAFile), "gateway oauth2 block should default tlsCAFile to the inter-service CA path, got:\n%s", data)
@@ -264,16 +271,17 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders gateway.fleetOAuth2CredentialsSecretRef instead of the shared credentialsSecretRef when set", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-				OAuth2: kubernautv1alpha1.OAuth2Spec{
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
 					Enabled: true, TokenURL: "https://keycloak.example.com/token",
 					CredentialsSecretRef: "fleet-oauth2-creds",
 				},
 			}
-			kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef = testGatewayFleetOAuth2SecretRef
-			cm, err := GatewayConfigMap(kn)
+			knV2.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
+			cm, err := GatewayConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("credentialsSecretRef: gateway-oauth2-creds"), "gateway config should use its own oauth2 client override, got:\n%s", data)
@@ -351,7 +359,7 @@ var _ = Describe("ConfigMaps", func() {
 	Describe("SignalProcessing ConfigMap", func() {
 		It("contains DataStorage URL and classifier section", func() {
 			kn := testKubernaut()
-			cm, err := SignalProcessingConfigMap(kn)
+			cm, err := SignalProcessingConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			data := cm.Data["config.yaml"]
@@ -365,7 +373,7 @@ var _ = Describe("ConfigMaps", func() {
 		// pkg/signalprocessing/config.FleetConfig.Endpoint).
 		It("omits the fleet block when fleet is disabled", func() {
 			kn := testKubernaut()
-			cm, err := SignalProcessingConfigMap(kn)
+			cm, err := SignalProcessingConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).NotTo(ContainSubstring("fleet:"), "signalprocessing config should omit fleet block when disabled, got:\n%s", data)
@@ -374,11 +382,12 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders fleet.endpoint (not mcpGatewayEndpoint) from spec.fleet.mcpGatewayEndpoint", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
 			}
-			cm, err := SignalProcessingConfigMap(kn)
+			cm, err := SignalProcessingConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("fleet:"), "signalprocessing config should contain fleet block when enabled, got:\n%s", data)
@@ -390,13 +399,14 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders fleet.namespace from spec.signalProcessing.mcpGatewayNamespace, overriding the shared spec.fleet.mcpGatewayNamespace", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
 				MCPGatewayNamespace: testSharedMCPGatewayNamespace,
 			}
-			kn.Spec.SignalProcessing.MCPGatewayNamespace = testSPMCPGatewayNamespace
-			cm, err := SignalProcessingConfigMap(kn)
+			knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testSPMCPGatewayNamespace}
+			cm, err := SignalProcessingConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("namespace: sp-ns"), "signalprocessing fleet.namespace should use its own override, got:\n%s", data)
@@ -405,12 +415,13 @@ var _ = Describe("ConfigMaps", func() {
 		It("falls back to the shared spec.fleet.mcpGatewayNamespace when signalProcessing has no override", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
 				MCPGatewayNamespace: testSharedMCPGatewayNamespace,
 			}
-			cm, err := SignalProcessingConfigMap(kn)
+			cm, err := SignalProcessingConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("namespace: shared-ns"), "signalprocessing fleet.namespace should fall back to the shared value, got:\n%s", data)
@@ -419,15 +430,16 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders fleet.oauth2.tlsCAFile defaulting to the inter-service CA path when oauth2 is enabled", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-				OAuth2: kubernautv1alpha1.OAuth2Spec{
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
 					Enabled: true, TokenURL: "https://keycloak.example.com/token",
 					CredentialsSecretRef: "fleet-oauth2-creds",
 				},
 			}
-			cm, err := SignalProcessingConfigMap(kn)
+			cm, err := SignalProcessingConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("credentialsSecretRef: fleet-oauth2-creds"), "signalprocessing fleet.oauth2 should render the shared credentialsSecretRef, got:\n%s", data)
@@ -437,16 +449,17 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders signalProcessing.fleetOAuth2CredentialsSecretRef instead of the shared credentialsSecretRef when set", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-				OAuth2: kubernautv1alpha1.OAuth2Spec{
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
 					Enabled: true, TokenURL: "https://keycloak.example.com/token",
 					CredentialsSecretRef: "fleet-oauth2-creds",
 				},
 			}
-			kn.Spec.SignalProcessing.FleetOAuth2CredentialsSecretRef = testSPFleetOAuth2SecretRef
-			cm, err := SignalProcessingConfigMap(kn)
+			knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testSPFleetOAuth2SecretRef}
+			cm, err := SignalProcessingConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("credentialsSecretRef: sp-oauth2-creds"), "signalprocessing config should use its own oauth2 client override, got:\n%s", data)
@@ -457,7 +470,7 @@ var _ = Describe("ConfigMaps", func() {
 	Describe("RemediationOrchestrator ConfigMap", func() {
 		It("includes default timeout and threshold strings", func() {
 			kn := testKubernaut()
-			cm, err := RemediationOrchestratorConfigMap(kn)
+			cm, err := RemediationOrchestratorConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			data := cm.Data["remediationorchestrator.yaml"]
@@ -473,7 +486,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("uses nested structure for controller, datastorage, and timeouts", func() {
 			kn := testKubernaut()
-			cm, err := RemediationOrchestratorConfigMap(kn)
+			cm, err := RemediationOrchestratorConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["remediationorchestrator.yaml"]
 
@@ -494,7 +507,7 @@ var _ = Describe("ConfigMaps", func() {
 			kn := testKubernaut()
 			kn.Spec.RemediationOrchestrator.Timeouts.Global = "2h"
 			kn.Spec.RemediationOrchestrator.Timeouts.Processing = "10m" //nolint:goconst // test value, not a meaningful constant
-			cm, err := RemediationOrchestratorConfigMap(kn)
+			cm, err := RemediationOrchestratorConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			data := cm.Data["remediationorchestrator.yaml"]
@@ -505,7 +518,7 @@ var _ = Describe("ConfigMaps", func() {
 		Context("BAC requirements", func() {
 			It("BAC-2: default CR renders explicit dryRun false", func() {
 				kn := testKubernaut()
-				cm, err := RemediationOrchestratorConfigMap(kn)
+				cm, err := RemediationOrchestratorConfigMap(kn, testKnV2(kn))
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["remediationorchestrator.yaml"]
 				Expect(data).To(ContainSubstring("dryRun: false"), "BAC-2: default CR must render explicit 'dryRun: false', got:\n%s", data)
@@ -513,7 +526,7 @@ var _ = Describe("ConfigMaps", func() {
 
 			It("BAC-3: default CR renders dryRunHoldPeriod 1h", func() {
 				kn := testKubernaut()
-				cm, err := RemediationOrchestratorConfigMap(kn)
+				cm, err := RemediationOrchestratorConfigMap(kn, testKnV2(kn))
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["remediationorchestrator.yaml"]
 				Expect(data).To(ContainSubstring("dryRunHoldPeriod: 1h"), "BAC-3: default CR must render 'dryRunHoldPeriod: 1h', got:\n%s", data)
@@ -522,7 +535,7 @@ var _ = Describe("ConfigMaps", func() {
 			It("BAC-1: DryRun true renders dryRun true in ConfigMap", func() {
 				kn := testKubernaut()
 				kn.Spec.RemediationOrchestrator.DryRun = true
-				cm, err := RemediationOrchestratorConfigMap(kn)
+				cm, err := RemediationOrchestratorConfigMap(kn, testKnV2(kn))
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["remediationorchestrator.yaml"]
 				Expect(data).To(ContainSubstring("dryRun: true"), "BAC-1: setting DryRun=true must render 'dryRun: true', got:\n%s", data)
@@ -532,7 +545,7 @@ var _ = Describe("ConfigMaps", func() {
 				kn := testKubernaut()
 				kn.Spec.RemediationOrchestrator.DryRun = true
 				kn.Spec.RemediationOrchestrator.DryRunHoldPeriod = "30m"
-				cm, err := RemediationOrchestratorConfigMap(kn)
+				cm, err := RemediationOrchestratorConfigMap(kn, testKnV2(kn))
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["remediationorchestrator.yaml"]
 				Expect(data).To(ContainSubstring("dryRunHoldPeriod: 30m"), "BAC-4: custom hold period must be rendered, got:\n%s", data)
@@ -542,7 +555,7 @@ var _ = Describe("ConfigMaps", func() {
 				kn := testKubernaut()
 				kn.Spec.RemediationOrchestrator.DryRun = true
 				kn.Spec.RemediationOrchestrator.DryRunHoldPeriod = "2h"
-				cm, err := RemediationOrchestratorConfigMap(kn)
+				cm, err := RemediationOrchestratorConfigMap(kn, testKnV2(kn))
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["remediationorchestrator.yaml"]
 				unchanged := []string{
@@ -557,7 +570,7 @@ var _ = Describe("ConfigMaps", func() {
 
 			It("BAC-7: default CR remains backward compatible", func() {
 				kn := testKubernaut()
-				cm, err := RemediationOrchestratorConfigMap(kn)
+				cm, err := RemediationOrchestratorConfigMap(kn, testKnV2(kn))
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["remediationorchestrator.yaml"]
 				required := []string{
@@ -587,7 +600,7 @@ var _ = Describe("ConfigMaps", func() {
 			delay := 48
 			kn.Spec.RemediationOrchestrator.Routing.NoActionRequiredDelayHours = &delay
 
-			cm, err := RemediationOrchestratorConfigMap(kn)
+			cm, err := RemediationOrchestratorConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["remediationorchestrator.yaml"]
 			for _, want := range []string{
@@ -613,7 +626,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("omits the fleet block when fleet is disabled", func() {
 			kn := testKubernaut()
-			cm, err := RemediationOrchestratorConfigMap(kn)
+			cm, err := RemediationOrchestratorConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["remediationorchestrator.yaml"]
 			Expect(data).NotTo(ContainSubstring("fleet:"), "RO config should omit fleet block when disabled, got:\n%s", data)
@@ -622,10 +635,11 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders the fleet block with backend and endpoint when enabled", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 			}
-			cm, err := RemediationOrchestratorConfigMap(kn)
+			cm, err := RemediationOrchestratorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["remediationorchestrator.yaml"]
 			for _, want := range []string{
@@ -643,11 +657,12 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders tlsCAFile and tokenPath when the corresponding secrets are set", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
 				CASecretName: "fmc-ca-bundle", TokenSecretName: "acm-search-token",
 			}
-			cm, err := RemediationOrchestratorConfigMap(kn)
+			cm, err := RemediationOrchestratorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["remediationorchestrator.yaml"]
 			Expect(data).To(ContainSubstring("tlsCAFile: /etc/fleet-tls/ca/ca.crt"), "RO config should render tlsCAFile mount path, got:\n%s", data)
@@ -659,11 +674,12 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders mcpGatewayEndpoint and mcpGatewayType when set", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
 			}
-			cm, err := RemediationOrchestratorConfigMap(kn)
+			cm, err := RemediationOrchestratorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["remediationorchestrator.yaml"]
 			Expect(data).To(ContainSubstring("mcpGatewayEndpoint: https://mcp-gateway.example.com/sse"), "RO config should render mcpGatewayEndpoint, got:\n%s", data)
@@ -673,15 +689,16 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders the fleet oauth2 block when enabled", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-				OAuth2: kubernautv1alpha1.OAuth2Spec{
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
 					Enabled: true, TokenURL: "https://keycloak.example.com/token",
 					CredentialsSecretRef: "fleet-oauth2-creds", Scopes: []string{"openid", "groups"},
 				},
 			}
-			cm, err := RemediationOrchestratorConfigMap(kn)
+			cm, err := RemediationOrchestratorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["remediationorchestrator.yaml"]
 			for _, want := range []string{
@@ -697,15 +714,16 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders oauth2.tlsCAFile defaulting to the inter-service CA path when oauth2 is enabled", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-				OAuth2: kubernautv1alpha1.OAuth2Spec{
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
 					Enabled: true, TokenURL: "https://keycloak.example.com/token",
 					CredentialsSecretRef: "fleet-oauth2-creds",
 				},
 			}
-			cm, err := RemediationOrchestratorConfigMap(kn)
+			cm, err := RemediationOrchestratorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["remediationorchestrator.yaml"]
 			Expect(data).To(ContainSubstring("tlsCAFile: "+InterServiceTLSCAFile), "RO oauth2 block should default tlsCAFile to the inter-service CA path, got:\n%s", data)
@@ -714,16 +732,17 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders remediationOrchestrator.fleetOAuth2CredentialsSecretRef instead of the shared credentialsSecretRef when set", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-				OAuth2: kubernautv1alpha1.OAuth2Spec{
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
 					Enabled: true, TokenURL: "https://keycloak.example.com/token",
 					CredentialsSecretRef: "fleet-oauth2-creds",
 				},
 			}
-			kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef = testROFleetOAuth2SecretRef
-			cm, err := RemediationOrchestratorConfigMap(kn)
+			knV2.Spec.RemediationOrchestrator.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testROFleetOAuth2SecretRef}
+			cm, err := RemediationOrchestratorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["remediationorchestrator.yaml"]
 			Expect(data).To(ContainSubstring("credentialsSecretRef: ro-oauth2-creds"), "RO config should use its own oauth2 client override, got:\n%s", data)
@@ -827,7 +846,7 @@ var _ = Describe("ConfigMaps", func() {
 	Describe("EffectivenessMonitor ConfigMap", func() {
 		It("includes default stabilization window", func() {
 			kn := testKubernaut()
-			cm, err := EffectivenessMonitorConfigMap(kn)
+			cm, err := EffectivenessMonitorConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			data := cm.Data["effectivenessmonitor.yaml"]
@@ -836,7 +855,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("includes monitoring URLs when monitoring is enabled", func() {
 			kn := testKubernaut()
-			cm, err := EffectivenessMonitorConfigMap(kn)
+			cm, err := EffectivenessMonitorConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["effectivenessmonitor.yaml"]
 
@@ -849,7 +868,7 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders v1.4 logging and datastorage buffer settings", func() {
 			kn := testKubernaut()
 			kn.Spec.EffectivenessMonitor.Logging.Level = "debug"
-			cm, err := EffectivenessMonitorConfigMap(kn)
+			cm, err := EffectivenessMonitorConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["effectivenessmonitor.yaml"]
 			for _, want := range []string{
@@ -873,7 +892,7 @@ var _ = Describe("ConfigMaps", func() {
 		// Backend/Endpoint scope-check adapter.
 		It("omits the fleet block when fleet is disabled", func() {
 			kn := testKubernaut()
-			cm, err := EffectivenessMonitorConfigMap(kn)
+			cm, err := EffectivenessMonitorConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["effectivenessmonitor.yaml"]
 			Expect(data).NotTo(ContainSubstring("fleet:"), "EM config should omit fleet block when disabled, got:\n%s", data)
@@ -882,12 +901,13 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders mcpGatewayEndpoint/mcpGatewayType but omits backend/endpoint/tokenPath even when spec.fleet.backend/endpoint are set", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
 				CASecretName: "fmc-ca-bundle", TokenSecretName: "acm-search-token",
 			}
-			cm, err := EffectivenessMonitorConfigMap(kn)
+			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["effectivenessmonitor.yaml"]
 			Expect(data).To(ContainSubstring("fleet:"), "EM config should contain fleet block when enabled, got:\n%s", data)
@@ -901,15 +921,16 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders fleet.oauth2.tlsCAFile defaulting to the inter-service CA path when oauth2 is enabled", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-				OAuth2: kubernautv1alpha1.OAuth2Spec{
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
 					Enabled: true, TokenURL: "https://keycloak.example.com/token",
 					CredentialsSecretRef: "fleet-oauth2-creds",
 				},
 			}
-			cm, err := EffectivenessMonitorConfigMap(kn)
+			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["effectivenessmonitor.yaml"]
 			Expect(data).To(ContainSubstring("tlsCAFile: "+InterServiceTLSCAFile), "EM fleet.oauth2 should default tlsCAFile to the inter-service CA path, got:\n%s", data)
@@ -918,16 +939,17 @@ var _ = Describe("ConfigMaps", func() {
 		It("renders effectivenessMonitor.fleetOAuth2CredentialsSecretRef instead of the shared credentialsSecretRef when set", func() {
 			kn := testKubernaut()
 			enabled := true
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-				OAuth2: kubernautv1alpha1.OAuth2Spec{
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
 					Enabled: true, TokenURL: "https://keycloak.example.com/token",
 					CredentialsSecretRef: "fleet-oauth2-creds",
 				},
 			}
-			kn.Spec.EffectivenessMonitor.FleetOAuth2CredentialsSecretRef = testEMFleetOAuth2SecretRef
-			cm, err := EffectivenessMonitorConfigMap(kn)
+			knV2.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testEMFleetOAuth2SecretRef}
+			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["effectivenessmonitor.yaml"]
 			Expect(data).To(ContainSubstring("credentialsSecretRef: em-oauth2-creds"), "EM config should use its own oauth2 client override, got:\n%s", data)
@@ -982,7 +1004,7 @@ var _ = Describe("ConfigMaps", func() {
 	Describe("KubernautAgent ConfigMap", func() {
 		It("includes monitoring and data storage integration when monitoring enabled", func() {
 			kn := testKubernaut()
-			cm, err := KubernautAgentConfigMap(kn)
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 
@@ -997,7 +1019,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("matches expected v1.4 structure and defaults", func() {
 			kn := testKubernaut()
-			cm, err := KubernautAgentConfigMap(kn)
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			var root struct {
 				Runtime struct {
@@ -1055,7 +1077,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("renders logging format as JSON", func() {
 			kn := testKubernaut()
-			cm, err := KubernautAgentConfigMap(kn)
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			var root struct {
 				Runtime struct {
@@ -1071,7 +1093,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("renders shutdown.drainSeconds with default 30", func() {
 			kn := testKubernaut()
-			cm, err := KubernautAgentConfigMap(kn)
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			var root struct {
 				Runtime struct {
@@ -1088,7 +1110,7 @@ var _ = Describe("ConfigMaps", func() {
 			kn := testKubernaut()
 			drain := 120
 			kn.Spec.KubernautAgent.Shutdown.DrainSeconds = &drain
-			cm, err := KubernautAgentConfigMap(kn)
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			var root struct {
 				Runtime struct {
@@ -1111,7 +1133,7 @@ var _ = Describe("ConfigMaps", func() {
 				Model:    "gpt-4o-mini",
 				Endpoint: "https://align.example/v1",
 			}
-			cm, err := KubernautAgentConfigMap(kn)
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			for _, want := range []string{
@@ -1131,7 +1153,7 @@ var _ = Describe("ConfigMaps", func() {
 		It("propagates custom LLM TLS CA file", func() {
 			kn := testKubernaut()
 			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.TLSCaFile = "/etc/custom-ca/llm.pem" })
-			cm, err := KubernautAgentConfigMap(kn)
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			var root struct {
 				AI struct {
@@ -1149,7 +1171,7 @@ var _ = Describe("ConfigMaps", func() {
 			kn := testKubernaut()
 			kn.Spec.KubernautAgent.Summarizer.Threshold = 5000
 			kn.Spec.KubernautAgent.Summarizer.MaxToolOutputSize = 50000
-			cm, err := KubernautAgentConfigMap(kn)
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			var root struct {
 				AI struct {
@@ -1170,7 +1192,7 @@ var _ = Describe("ConfigMaps", func() {
 			kn := testKubernaut()
 			maxPer := 5
 			kn.Spec.KubernautAgent.Safety.Anomaly.MaxToolCallsPerTool = &maxPer
-			cm, err := KubernautAgentConfigMap(kn)
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			var root struct {
 				AI struct {
@@ -1191,7 +1213,7 @@ var _ = Describe("ConfigMaps", func() {
 			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Enabled = true })
 			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.TokenURL = "https://idp.example/oauth/token" })
 			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Scopes = []string{"openid", "api.read"} })
-			cm, err := KubernautAgentConfigMap(kn)
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			var root struct {
 				AI struct {
@@ -1214,7 +1236,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("LR-010 [CM-6]: KA does not spend extra reasoning/thinking tokens unless the administrator explicitly opts in", func() {
 			kn := testKubernaut()
-			cm, err := KubernautAgentConfigMap(kn)
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).NotTo(ContainSubstring("reasoning:"), "CM-6: extended reasoning has real cost/latency impact and must stay off by default (ai.llm.reasoning omitted), got:\n%s", data)
@@ -1231,7 +1253,7 @@ var _ = Describe("ConfigMaps", func() {
 					CapabilityOverride: "force_on",
 				}
 			})
-			cm, err := KubernautAgentConfigMap(kn)
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			var root struct {
 				AI struct {
@@ -1551,16 +1573,16 @@ var _ = Describe("ConfigMaps", func() {
 		Context("Fleet Gateway Discovery (#204)", func() {
 			It("KFG-010 [CM-6]: omits integrations.fleet entirely when spec.fleet is disabled — KA registers no fleet discovery tools by default", func() {
 				kn := testKubernaut()
-				cm, err := KubernautAgentConfigMap(kn)
+				cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["config.yaml"]
 				Expect(data).NotTo(ContainSubstring("fleet:"), "KA config should omit integrations.fleet when spec.fleet.enabled is false, got:\n%s", data)
 			})
 
 			It("KFG-011 [CM-6]: renders integrations.fleet.endpoint/gatewayType verbatim from spec.fleet when enabled (kuadrant)", func() {
-				kn := testKubernautWithFleetMCP()
-				kn.Spec.Fleet.MCPGatewayType = mcpGatewayTypeKuadrant
-				cm, err := KubernautAgentConfigMap(kn)
+				kn, knV2 := testKubernautWithFleetMCP()
+				knV2.Spec.Fleet.MCPGatewayType = mcpGatewayTypeKuadrant
+				cm, err := KubernautAgentConfigMap(kn, knV2)
 				Expect(err).NotTo(HaveOccurred())
 				var root struct {
 					Integrations struct {
@@ -1572,34 +1594,34 @@ var _ = Describe("ConfigMaps", func() {
 				}
 				Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
 				Expect(root.Integrations.Fleet).NotTo(BeNil(), "integrations.fleet should be present when spec.fleet.enabled is true")
-				Expect(root.Integrations.Fleet.Endpoint).To(Equal(kn.Spec.Fleet.MCPGatewayEndpoint), "integrations.fleet.endpoint = %q, want %q", root.Integrations.Fleet.Endpoint, kn.Spec.Fleet.MCPGatewayEndpoint)
+				Expect(root.Integrations.Fleet.Endpoint).To(Equal(knV2.Spec.Fleet.MCPGatewayEndpoint), "integrations.fleet.endpoint = %q, want %q", root.Integrations.Fleet.Endpoint, knV2.Spec.Fleet.MCPGatewayEndpoint)
 				Expect(root.Integrations.Fleet.GatewayType).To(Equal(mcpGatewayTypeKuadrant), "integrations.fleet.gatewayType = %q, want %q", root.Integrations.Fleet.GatewayType, mcpGatewayTypeKuadrant)
 			})
 
 			It("KFG-011b [CM-6]: renders integrations.fleet.gatewayType verbatim for eaigw too", func() {
-				kn := testKubernautWithFleetMCP()
-				cm, err := KubernautAgentConfigMap(kn)
+				kn, knV2 := testKubernautWithFleetMCP()
+				cm, err := KubernautAgentConfigMap(kn, knV2)
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["config.yaml"]
 				Expect(data).To(ContainSubstring("gatewayType: eaigw"), "KA config should render gatewayType: eaigw, got:\n%s", data)
 			})
 
 			It("KFG-012 [CM-6]: omits integrations.fleet.oauth2 when spec.fleet.oauth2.enabled is false, even though fleet itself is enabled", func() {
-				kn := testKubernautWithFleetMCP()
-				cm, err := KubernautAgentConfigMap(kn)
+				kn, knV2 := testKubernautWithFleetMCP()
+				cm, err := KubernautAgentConfigMap(kn, knV2)
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["config.yaml"]
 				Expect(data).NotTo(ContainSubstring("oauth2:"), "KA should not send fleet OAuth2 credentials it wasn't configured with, got:\n%s", data)
 			})
 
 			It("KFG-013 [CM-6]: integrations.fleet.oauth2.credentialsSecretRef uses KA's own override when set, so KA can authenticate as a distinct OAuth2 client from other fleet-aware components", func() {
-				kn := testKubernautWithFleetMCP()
-				kn.Spec.Fleet.OAuth2 = kubernautv1alpha1.OAuth2Spec{
+				kn, knV2 := testKubernautWithFleetMCP()
+				knV2.Spec.Fleet.OAuth2 = kubernautv1alpha2.OAuth2Spec{
 					Enabled: true, TokenURL: "https://keycloak.example.com/token",
 					CredentialsSecretRef: "shared-fleet-oauth2-creds",
 				}
-				kn.Spec.KubernautAgent.FleetOAuth2CredentialsSecretRef = "ka-oauth2-creds"
-				cm, err := KubernautAgentConfigMap(kn)
+				knV2.Spec.KubernautAgent.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: "ka-oauth2-creds"}
+				cm, err := KubernautAgentConfigMap(kn, knV2)
 				Expect(err).NotTo(HaveOccurred())
 				var root struct {
 					Integrations struct {
@@ -1616,25 +1638,25 @@ var _ = Describe("ConfigMaps", func() {
 			})
 
 			It("KFG-013b [CM-6]: integrations.fleet.oauth2.credentialsSecretRef falls back to spec.fleet.oauth2.credentialsSecretRef when KA has no override", func() {
-				kn := testKubernautWithFleetMCP()
-				kn.Spec.Fleet.OAuth2 = kubernautv1alpha1.OAuth2Spec{
+				kn, knV2 := testKubernautWithFleetMCP()
+				knV2.Spec.Fleet.OAuth2 = kubernautv1alpha2.OAuth2Spec{
 					Enabled: true, TokenURL: "https://keycloak.example.com/token",
 					CredentialsSecretRef: "shared-fleet-oauth2-creds",
 				}
-				cm, err := KubernautAgentConfigMap(kn)
+				cm, err := KubernautAgentConfigMap(kn, knV2)
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["config.yaml"]
 				Expect(data).To(ContainSubstring("credentialsSecretRef: shared-fleet-oauth2-creds"), "KA should fall back to the shared spec.fleet.oauth2.credentialsSecretRef, got:\n%s", data)
 			})
 
 			It("KFG-014 [CM-6]: renders integrations.fleet.oauth2.tokenURL/scopes verbatim from spec.fleet.oauth2", func() {
-				kn := testKubernautWithFleetMCP()
-				kn.Spec.Fleet.OAuth2 = kubernautv1alpha1.OAuth2Spec{
+				kn, knV2 := testKubernautWithFleetMCP()
+				knV2.Spec.Fleet.OAuth2 = kubernautv1alpha2.OAuth2Spec{
 					Enabled: true, TokenURL: "https://keycloak.example.com/token",
 					CredentialsSecretRef: "fleet-oauth2-creds",
 					Scopes:               []string{"fleet:read"},
 				}
-				cm, err := KubernautAgentConfigMap(kn)
+				cm, err := KubernautAgentConfigMap(kn, knV2)
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["config.yaml"]
 				Expect(data).To(ContainSubstring("tokenURL: https://keycloak.example.com/token"), "KA config should contain fleet oauth2 tokenURL, got:\n%s", data)
@@ -1712,15 +1734,15 @@ var _ = Describe("ConfigMaps", func() {
 				fn   func() (*corev1.ConfigMap, error)
 			}
 			builders := []builder{
-				{"gateway", func() (*corev1.ConfigMap, error) { return GatewayConfigMap(kn) }},
+				{"gateway", func() (*corev1.ConfigMap, error) { return GatewayConfigMap(kn, testKnV2(kn)) }},
 				{"datastorage", func() (*corev1.ConfigMap, error) { return DataStorageConfigMap(kn, "db", "user") }},
 				{"aianalysis", func() (*corev1.ConfigMap, error) { return AIAnalysisConfigMap(kn) }},
-				{"signalprocessing", func() (*corev1.ConfigMap, error) { return SignalProcessingConfigMap(kn) }},
-				{"remediationorchestrator", func() (*corev1.ConfigMap, error) { return RemediationOrchestratorConfigMap(kn) }},
+				{"signalprocessing", func() (*corev1.ConfigMap, error) { return SignalProcessingConfigMap(kn, testKnV2(kn)) }},
+				{"remediationorchestrator", func() (*corev1.ConfigMap, error) { return RemediationOrchestratorConfigMap(kn, testKnV2(kn)) }},
 				{"workflowexecution", func() (*corev1.ConfigMap, error) { return WorkflowExecutionConfigMap(kn) }},
-				{"effectivenessmonitor", func() (*corev1.ConfigMap, error) { return EffectivenessMonitorConfigMap(kn) }},
+				{"effectivenessmonitor", func() (*corev1.ConfigMap, error) { return EffectivenessMonitorConfigMap(kn, testKnV2(kn)) }},
 				{"notification-controller", func() (*corev1.ConfigMap, error) { return NotificationControllerConfigMap(kn) }},
-				{"kubernaut-agent", func() (*corev1.ConfigMap, error) { return KubernautAgentConfigMap(kn) }},
+				{"kubernaut-agent", func() (*corev1.ConfigMap, error) { return KubernautAgentConfigMap(kn, testKnV2(kn)) }},
 				{"authwebhook", func() (*corev1.ConfigMap, error) { return AuthWebhookConfigMap(kn) }},
 			}
 			for _, b := range builders {
@@ -1746,7 +1768,9 @@ var _ = Describe("ConfigMaps", func() {
 					kn.Spec.Gateway.Logging.Level = loggingLevelAllServicesTestLevel
 				},
 				"config.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) { return GatewayConfigMap(kn) },
+				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+					return GatewayConfigMap(kn, testKnV2(kn))
+				},
 			),
 			Entry("datastorage",
 				func(kn *kubernautv1alpha1.Kubernaut) {
@@ -1770,7 +1794,7 @@ var _ = Describe("ConfigMaps", func() {
 				},
 				"config.yaml",
 				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
-					return SignalProcessingConfigMap(kn)
+					return SignalProcessingConfigMap(kn, testKnV2(kn))
 				},
 			),
 			Entry("remediationorchestrator",
@@ -1779,7 +1803,7 @@ var _ = Describe("ConfigMaps", func() {
 				},
 				"remediationorchestrator.yaml",
 				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
-					return RemediationOrchestratorConfigMap(kn)
+					return RemediationOrchestratorConfigMap(kn, testKnV2(kn))
 				},
 			),
 			Entry("workflowexecution",
@@ -1797,7 +1821,7 @@ var _ = Describe("ConfigMaps", func() {
 				},
 				"effectivenessmonitor.yaml",
 				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
-					return EffectivenessMonitorConfigMap(kn)
+					return EffectivenessMonitorConfigMap(kn, testKnV2(kn))
 				},
 			),
 			Entry("notification-controller",
@@ -1814,7 +1838,9 @@ var _ = Describe("ConfigMaps", func() {
 					kn.Spec.KubernautAgent.Logging.Level = loggingLevelAllServicesTestLevel
 				},
 				"config.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) { return KubernautAgentConfigMap(kn) },
+				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+					return KubernautAgentConfigMap(kn, testKnV2(kn))
+				},
 			),
 			Entry("authwebhook",
 				func(kn *kubernautv1alpha1.Kubernaut) {
@@ -1830,7 +1856,7 @@ var _ = Describe("ConfigMaps", func() {
 var _ = Describe("APIFrontendConfigMap", func() {
 	It("generates a valid config.yaml", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cm.Name).To(Equal("apifrontend-config"))
 		data, ok := cm.Data["config.yaml"]
@@ -1844,7 +1870,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	It("renders config with empty issuerURL when auth is not configured", func() {
 		kn := testKubernaut()
 		kn.Spec.APIFrontend.Auth.IssuerURL = ""
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("port: 8443"))
@@ -1853,7 +1879,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("uses OCP service-ca for severity triage when monitoring is enabled", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("prometheusTlsCaFile: /etc/ssl/af/service-ca.crt"))
@@ -1861,7 +1887,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("renders auth issuerURL and audience from spec", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("https://login.kubernaut.ai/realms/kubernaut"))
@@ -1870,7 +1896,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("hardcodes agent card name to Kubernaut Agent", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("name: Kubernaut Agent"))
@@ -1878,7 +1904,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("sets session.namespace to the CR namespace for prompt context", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("namespace: kubernaut-system"),
@@ -1888,7 +1914,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	It("keeps server.port at 8443 for authbridge sidecar (kagenti 0.3.x)", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarAuthbridge, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarAuthbridge, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("port: 8443"),
@@ -1898,7 +1924,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	It("keeps server.port at 8443 for envoy sidecar (kagenti 0.2.x)", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarEnvoy, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarEnvoy, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("port: 8443"),
@@ -1908,7 +1934,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	It("disables AF TLS for authbridge sidecar", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarAuthbridge, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarAuthbridge, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("certDir: \"\""))
@@ -1918,7 +1944,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	It("disables AF TLS for envoy sidecar", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.SPIRE.Enabled = boolPtr(true)
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarEnvoy, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarEnvoy, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("certDir: \"\""))
@@ -1927,7 +1953,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("enables AF TLS when no sidecar is active", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("certDir: /etc/apifrontend/tls"))
@@ -1936,7 +1962,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("renders rate limit defaults", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("ipRequestsPerSec: 50"))
@@ -1945,7 +1971,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("renders resilience circuit breaker config", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("cbFailureThreshold:"))
@@ -1956,7 +1982,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.Valkey.SecretName = "my-valkey-secret"
 		kn.Spec.Valkey.Host = "valkey.kubernaut-system.svc.cluster.local"
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("replayCache:"))
@@ -1968,7 +1994,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	It("omits replayCache when Valkey secret is empty", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.Valkey.SecretName = ""
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).NotTo(ContainSubstring("replayCache:"))
@@ -1976,7 +2002,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("renders nested agent.llm config section", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 
@@ -1999,7 +2025,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("does not emit flat llmEndpoint or llmModel fields", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).NotTo(ContainSubstring("llmEndpoint:"), "flat llmEndpoint field should not be emitted")
@@ -2012,7 +2038,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Model = "gemini-2.5-pro" })
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexProject = "my-project" })
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexLocation = testVertexLocation })
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 
@@ -2041,7 +2067,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		kn := testKubernautWithAF()
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
 			Agent struct {
@@ -2059,7 +2085,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		kn := testKubernautWithAF()
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
 			Agent struct {
@@ -2077,7 +2103,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		kn := testKubernautWithAF()
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint + "/v1" })
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
 			Agent struct {
@@ -2095,7 +2121,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		kn := testKubernautWithAF()
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint + "/" })
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
 			Agent struct {
@@ -2131,7 +2157,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderVertexAI })
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexProject = "my-project" })
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexLocation = testVertexLocation })
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
 			Agent struct {
@@ -2149,7 +2175,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		kn := testKubernautWithAF()
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
 			Agent struct {
@@ -2168,7 +2194,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Enabled = true })
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.TokenURL = "https://idp.example/oauth/token" })
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Scopes = []string{"openid", "llm.invoke"} })
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 
@@ -2194,7 +2220,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("omits OAuth2 block when not enabled", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).NotTo(ContainSubstring("oauth2:"))
@@ -2202,7 +2228,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("LR-030 [CM-6]: AF does not spend extra reasoning/thinking tokens unless the administrator explicitly opts in", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).NotTo(ContainSubstring("reasoning:"), "CM-6: extended reasoning has real cost/latency impact and must stay off by default (agent.llm.reasoning omitted), got:\n%s", data)
@@ -2213,7 +2239,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
 			p.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "medium", CapabilityOverride: "force_off"}
 		})
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
 			Agent struct {
@@ -2243,7 +2269,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			CredentialsSecretName: "af-llm-creds",
 		}
 		kn.Spec.APIFrontend.LLMProfileRef = testAFOnlyProfile
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
 			Agent struct {
@@ -2264,7 +2290,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.LLMProfileRef = ""
 		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Model = "gpt-4o-mini" })
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
 			Agent struct {
@@ -2279,7 +2305,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("severityTriage.llm is omitted by default, inheriting AF's agent.llm connection", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
 			SeverityTriage struct {
@@ -2294,7 +2320,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		kn := testKubernautWithAF()
 		disabled := false
 		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMEnabled: &disabled}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("llm:"), "llmEnabled=false must still render a present llm key (non-nil, empty) to force upstream's Noop triager")
@@ -2319,7 +2345,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			CredentialsSecretName: "llm-creds",
 		}
 		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-profile"}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
 			Agent struct {
@@ -2354,7 +2380,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			Reasoning:             &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "minimal"},
 		}
 		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-profile"}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
 			Agent struct {
@@ -2389,7 +2415,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			CredentialsSecretName: "different-secret",
 		}
 		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-other-creds"}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
 			SeverityTriage struct {
@@ -2414,7 +2440,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			VertexLocation:        "us-central1",
 		}
 		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-vertex"}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
 			SeverityTriage struct {
@@ -2442,7 +2468,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			CredentialsSecretName: "llm-creds", // same as testKubernaut()'s "primary" profile
 		}
 		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-shared-creds"}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
 			SeverityTriage struct {
@@ -2464,7 +2490,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	// FleetConfig.Validate()'s own doc comment.
 	It("omits the fleet block when fleet is disabled", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).NotTo(ContainSubstring("fleet:"), "apifrontend config should omit fleet block when disabled, got:\n%s", data)
@@ -2473,12 +2499,13 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	It("renders mcpGatewayEndpoint/mcpGatewayType but omits backend/endpoint/tokenPath even when spec.fleet.backend/endpoint are set", func() {
 		kn := testKubernautWithAF()
 		enabled := true
-		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+		knV2 := testKnV2(kn)
+		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
 			CASecretName: "fmc-ca-bundle", TokenSecretName: "acm-search-token",
 		}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("fleet:"), "apifrontend config should contain fleet block when enabled, got:\n%s", data)
@@ -2495,15 +2522,16 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	It("renders fleet.oauth2 with tlsCAFile defaulting to AF's own inter-service CA path", func() {
 		kn := testKubernautWithAF()
 		enabled := true
-		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+		knV2 := testKnV2(kn)
+		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-			OAuth2: kubernautv1alpha1.OAuth2Spec{
+			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
 			},
 		}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("credentialsSecretRef: fleet-oauth2-creds"), "apifrontend fleet.oauth2 should render the shared credentialsSecretRef, got:\n%s", data)
@@ -2513,16 +2541,17 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	It("renders apiFrontend.fleetOAuth2CredentialsSecretRef instead of the shared credentialsSecretRef when set", func() {
 		kn := testKubernautWithAF()
 		enabled := true
-		kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+		knV2 := testKnV2(kn)
+		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-			OAuth2: kubernautv1alpha1.OAuth2Spec{
+			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
 			},
 		}
-		kn.Spec.APIFrontend.FleetOAuth2CredentialsSecretRef = testAFFleetOAuth2SecretRef
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		knV2.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testAFFleetOAuth2SecretRef}
+		cm, err := APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("credentialsSecretRef: af-oauth2-creds"), "apifrontend config should use its own oauth2 client override, got:\n%s", data)
@@ -2534,7 +2563,7 @@ var _ = Describe("APIFrontendConfigMap OIDC", func() {
 	It("IA-5: propagates jwksURL to AF config for explicit JWKS endpoint trust", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.JWKSURL = "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/certs"
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("jwksURL: https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/certs"),
@@ -2544,7 +2573,7 @@ var _ = Describe("APIFrontendConfigMap OIDC", func() {
 	It("IA-5: propagates oidcCaFile to AF config for OIDC CA verification", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.OIDCCAFile = "/etc/pki/tls/certs/oidc-ca.crt"
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("oidcCaFile: /etc/pki/tls/certs/oidc-ca.crt"),
@@ -2553,7 +2582,7 @@ var _ = Describe("APIFrontendConfigMap OIDC", func() {
 
 	It("IA-5: omits allowInsecureIssuers by default (secure-by-default)", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).NotTo(ContainSubstring("allowInsecureIssuers: true"),
@@ -2563,7 +2592,7 @@ var _ = Describe("APIFrontendConfigMap OIDC", func() {
 	It("SC-8: propagates allowInsecureIssuers when explicitly enabled", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.AllowInsecureIssuers = true
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("allowInsecureIssuers: true"),
@@ -2573,7 +2602,7 @@ var _ = Describe("APIFrontendConfigMap OIDC", func() {
 	It("SC-23: propagates audience claim for token binding validation", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.Audience = "custom-audience"
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("audience: custom-audience"),
@@ -2590,7 +2619,7 @@ var _ = Describe("APIFrontendConfigMap kagenti OIDC auto-detection", func() {
 			JWKSURL:              "http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/certs",
 			AllowInsecureIssuers: true,
 		}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarAuthbridge, oidc)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarAuthbridge, oidc)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("issuerURL: https://keycloak.example.com/realms/kagenti"),
@@ -2609,7 +2638,7 @@ var _ = Describe("APIFrontendConfigMap kagenti OIDC auto-detection", func() {
 			JWKSURL:              "http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/certs",
 			AllowInsecureIssuers: true,
 		}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarAuthbridge, oidc)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarAuthbridge, oidc)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("issuerURL: https://custom-idp.example.com/realms/custom"),
@@ -2624,7 +2653,7 @@ var _ = Describe("APIFrontendConfigMap kagenti OIDC auto-detection", func() {
 			IssuerURL: "https://keycloak.example.com/realms/kagenti",
 			JWKSURL:   "http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/certs",
 		}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarAuthbridge, oidc)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarAuthbridge, oidc)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("jwksURL: https://custom-jwks.example.com/certs"),
@@ -2638,7 +2667,7 @@ var _ = Describe("APIFrontendConfigMap kagenti OIDC auto-detection", func() {
 			IssuerURL:            "https://keycloak.example.com/realms/kagenti",
 			AllowInsecureIssuers: false,
 		}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarAuthbridge, oidc)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarAuthbridge, oidc)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("allowInsecureIssuers: true"),
@@ -2647,7 +2676,7 @@ var _ = Describe("APIFrontendConfigMap kagenti OIDC auto-detection", func() {
 
 	It("IA-2: nil OIDC defaults produce unchanged behavior", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("issuerURL: https://login.kubernaut.ai/realms/kubernaut"),
@@ -2662,7 +2691,7 @@ var _ = Describe("APIFrontendConfigMap kagenti OIDC auto-detection", func() {
 		oidc := &KagentiOIDCDefaults{
 			IssuerURL: "https://keycloak.example.com/realms/kagenti",
 		}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarEnvoy, oidc)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarEnvoy, oidc)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("issuerURL: https://keycloak.example.com/realms/kagenti"),
@@ -2686,7 +2715,7 @@ var _ = Describe("IA-2: AF multi-provider JWT config emission", func() {
 				Audiences: []string{"kubernaut-workload"},
 			},
 		}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 
@@ -2708,7 +2737,7 @@ var _ = Describe("IA-2: AF multi-provider JWT config emission", func() {
 
 	It("IA-2: omits jwtProviders when single-provider legacy path is used", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).NotTo(ContainSubstring("jwtProviders:"),
@@ -2730,7 +2759,7 @@ var _ = Describe("AC-6: claim-based authorization config", func() {
 				},
 			},
 		}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("username: preferred_username"),
@@ -2748,7 +2777,7 @@ var _ = Describe("AC-6: claim-based authorization config", func() {
 				Audiences: []string{"kubernaut-workload"},
 			},
 		}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).NotTo(ContainSubstring("claimMappings:"),
@@ -2766,7 +2795,7 @@ var _ = Describe("SC-23: per-provider audience config", func() {
 				Audiences: []string{"kubernaut-console", "kubernaut-api"},
 			},
 		}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("kubernaut-console"),
@@ -2779,7 +2808,7 @@ var _ = Describe("SC-23: per-provider audience config", func() {
 var _ = Describe("APIFrontendConfigMap SAR", func() {
 	It("includes rbac.sarCacheTTL with default 30s", func() {
 		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("sarCacheTTL: 30s"),
@@ -2791,7 +2820,7 @@ var _ = Describe("APIFrontendConfigMap SAR", func() {
 		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
 			SARCacheTTL: "2m",
 		}
-		cm, err := APIFrontendConfigMap(kn, KagentiSidecarNone, nil)
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("sarCacheTTL: 2m"),

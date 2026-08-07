@@ -23,6 +23,7 @@ import (
 	"time"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 const maxJWKSURLLength = 2048
@@ -40,8 +41,17 @@ func ValidateKubernaut(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMo
 	errs = append(errs, validateAlignmentCheck(kn)...)
 	errs = append(errs, validateDryRun(kn)...)
 	errs = append(errs, validateInteractive(kn)...)
-	errs = append(errs, validateFleetConfig(kn)...)
-	errs = append(errs, validateFleetMetadataCache(kn)...)
+	return errs
+}
+
+// ValidateFleet runs Fleet-specific validations against the v1alpha2 view of
+// the CR. Fleet's entire CRD surface lives in v1alpha2 (Fleet v1alpha2
+// migration) -- called alongside, not merged into, ValidateKubernaut so the
+// latter's v1alpha1-only signature stays stable for its other callers.
+func ValidateFleet(knV2 *kubernautv1alpha2.Kubernaut) []error {
+	errs := make([]error, 0, 2)
+	errs = append(errs, validateFleetConfig(knV2)...)
+	errs = append(errs, validateFleetMetadataCache(knV2)...)
 	return errs
 }
 
@@ -510,8 +520,8 @@ var validFleetBackends = map[string]bool{
 // validateFleetConfig validates spec.fleet. When Enabled is false or
 // omitted, the other fields are inert and left unvalidated so users can
 // pre-stage configuration ahead of enabling it.
-func validateFleetConfig(kn *kubernautv1alpha1.Kubernaut) []error {
-	fleet := &kn.Spec.Fleet
+func validateFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) []error {
+	fleet := &knV2.Spec.Fleet
 	if fleet.Enabled == nil || !*fleet.Enabled {
 		return nil
 	}
@@ -530,7 +540,7 @@ func validateFleetConfig(kn *kubernautv1alpha1.Kubernaut) []error {
 	// fleetMetadataCache.enabled=true) -- the user doesn't need to also
 	// wire up FMC's in-cluster URL by hand. BYO FMC and backend=acm still
 	// require an explicit endpoint.
-	fmcManaged := fleet.Backend == "fleetmetadatacache" && kn.Spec.FleetMetadataCacheEnabled()
+	fmcManaged := fleet.Backend == "fleetmetadatacache" && knV2.Spec.FleetMetadataCacheEnabled()
 	if fleet.Endpoint == "" && !fmcManaged {
 		errs = append(errs, fmt.Errorf("%s.endpoint: must be set when fleet.enabled is true (unless backend=fleetmetadatacache and fleetMetadataCache.enabled=true, which auto-derives the operator-managed FMC's in-cluster URL)", base))
 	}
@@ -557,7 +567,7 @@ func validateFleetConfig(kn *kubernautv1alpha1.Kubernaut) []error {
 		errs = append(errs, fmt.Errorf("%s.mcpGatewayType: invalid value %q — must be one of: eaigw, kuadrant", base, fleet.MCPGatewayType))
 	}
 
-	errs = append(errs, validateFleetOAuth2(kn, fleet)...)
+	errs = append(errs, validateFleetOAuth2(knV2, fleet)...)
 
 	return errs
 }
@@ -566,11 +576,22 @@ func validateFleetConfig(kn *kubernautv1alpha1.Kubernaut) []error {
 // FleetConfig.Validate()'s pairing check: oauth2.enabled=true without both
 // fields silently sends unauthenticated requests to the MCP Gateway instead
 // of failing closed at startup.
-func validateFleetOAuth2(kn *kubernautv1alpha1.Kubernaut, fleet *kubernautv1alpha1.FleetSpec) []error {
+//
+// Fix (Fleet v1alpha2 migration, defense-in-depth alongside ADR-CRD-001
+// F12's CEL rule): oauth2.enabled=false is no longer a silent early return
+// when fleet.enabled=true and mcpGatewayEndpoint is set -- there is no
+// unauthenticated mode for the MCP Gateway
+// (kubernaut#1991/kubernaut#1992). The v1alpha2 CEL rule already blocks
+// this at admission; this check is the reconcile-time backstop for the
+// same invariant (e.g. a v1alpha2 CR created before the CEL rule shipped).
+func validateFleetOAuth2(knV2 *kubernautv1alpha2.Kubernaut, fleet *kubernautv1alpha2.FleetSpec) []error {
+	const base = "spec.fleet"
 	if !fleet.OAuth2.Enabled {
+		if fleet.MCPGatewayEndpoint != "" {
+			return []error{fmt.Errorf("%s.oauth2.enabled: must be true when fleet.enabled is true and fleet.mcpGatewayEndpoint is set — there is no unauthenticated mode for the MCP Gateway", base)}
+		}
 		return nil
 	}
-	const base = "spec.fleet"
 
 	var errs []error
 	if fleet.OAuth2.TokenURL == "" {
@@ -589,26 +610,28 @@ func validateFleetOAuth2(kn *kubernautv1alpha1.Kubernaut, fleet *kubernautv1alph
 	//
 	// #224: generalized from a 2-way Gateway/RemediationOrchestrator
 	// switch to a loop over all five fleet-aware components (SP/AF/EM
-	// gained their own FleetOAuth2CredentialsSecretRef override fields)
-	// -- see Finding 7.
+	// gained their own Fleet override fields) -- see Finding 7.
 	//
 	// #204: extended to a sixth component -- KA authenticates its own
 	// list_clusters/list_tools_for_cluster GatewayDiscoverer calls to
 	// the MCP Gateway and needs the same effective-value guarantee.
+	//
+	// F1 (v1alpha2): each component's bespoke FleetOAuth2CredentialsSecretRef
+	// field collapsed into a shared *FleetOverrideSpec.
 	components := []struct {
 		specPath string
-		override string
+		override *kubernautv1alpha2.FleetOverrideSpec
 	}{
-		{"spec.gateway.fleetOAuth2CredentialsSecretRef", kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef},
-		{"spec.remediationOrchestrator.fleetOAuth2CredentialsSecretRef", kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef},
-		{"spec.signalProcessing.fleetOAuth2CredentialsSecretRef", kn.Spec.SignalProcessing.FleetOAuth2CredentialsSecretRef},
-		{"spec.apiFrontend.fleetOAuth2CredentialsSecretRef", kn.Spec.APIFrontend.FleetOAuth2CredentialsSecretRef},
-		{"spec.effectivenessMonitor.fleetOAuth2CredentialsSecretRef", kn.Spec.EffectivenessMonitor.FleetOAuth2CredentialsSecretRef},
-		{"spec.kubernautAgent.fleetOAuth2CredentialsSecretRef", kn.Spec.KubernautAgent.FleetOAuth2CredentialsSecretRef},
+		{"spec.gateway.fleet.oauth2CredentialsSecretRef", knV2.Spec.Gateway.Fleet},
+		{"spec.remediationOrchestrator.fleet.oauth2CredentialsSecretRef", knV2.Spec.RemediationOrchestrator.Fleet},
+		{"spec.signalProcessing.fleet.oauth2CredentialsSecretRef", knV2.Spec.SignalProcessing.Fleet},
+		{"spec.apiFrontend.fleet.oauth2CredentialsSecretRef", knV2.Spec.APIFrontend.Fleet},
+		{"spec.effectivenessMonitor.fleet.oauth2CredentialsSecretRef", knV2.Spec.EffectivenessMonitor.Fleet},
+		{"spec.kubernautAgent.fleet.oauth2CredentialsSecretRef", knV2.Spec.KubernautAgent.Fleet},
 	}
 	var missing []string
 	for _, c := range components {
-		if withDefault(c.override, fleet.OAuth2.CredentialsSecretRef) == "" {
+		if effectiveFleetOAuth2SecretRef(c.override, fleet.OAuth2.CredentialsSecretRef) == "" {
 			missing = append(missing, c.specPath)
 		}
 	}
@@ -631,14 +654,14 @@ func validateFleetOAuth2(kn *kubernautv1alpha1.Kubernaut, fleet *kubernautv1alph
 // own scope-check consumption, but FMC needs the MCP Gateway address and
 // credentials to poll managed clusters regardless of whether any consumer
 // is configured to query it.
-func validateFleetMetadataCache(kn *kubernautv1alpha1.Kubernaut) []error {
-	if !kn.Spec.FleetMetadataCacheEnabled() {
+func validateFleetMetadataCache(knV2 *kubernautv1alpha2.Kubernaut) []error {
+	if !knV2.Spec.FleetMetadataCacheEnabled() {
 		return nil
 	}
 
 	var errs []error
 	const base = "spec.fleetMetadataCache"
-	fleet := &kn.Spec.Fleet
+	fleet := &knV2.Spec.Fleet
 
 	// Mirrors upstream's own Helm chart guard (fleetmetadatacache.yaml's
 	// "fail" checks): FMC's entire purpose is polling remote clusters via
@@ -662,8 +685,8 @@ func validateFleetMetadataCache(kn *kubernautv1alpha1.Kubernaut) []error {
 		if fleet.OAuth2.TokenURL == "" {
 			errs = append(errs, fmt.Errorf("%s: spec.fleet.oauth2.tokenURL must be set when fleetMetadataCache.enabled is true", base))
 		}
-		if withDefault(kn.Spec.FleetMetadataCache.FleetOAuth2CredentialsSecretRef, fleet.OAuth2.CredentialsSecretRef) == "" {
-			errs = append(errs, fmt.Errorf("%s.fleetOAuth2CredentialsSecretRef: must be set, or spec.fleet.oauth2.credentialsSecretRef must be set, when fleetMetadataCache.enabled is true", base))
+		if effectiveFleetOAuth2SecretRef(knV2.Spec.FleetMetadataCache.Fleet, fleet.OAuth2.CredentialsSecretRef) == "" {
+			errs = append(errs, fmt.Errorf("%s.fleet.oauth2CredentialsSecretRef: must be set, or spec.fleet.oauth2.credentialsSecretRef must be set, when fleetMetadataCache.enabled is true", base))
 		}
 	}
 
