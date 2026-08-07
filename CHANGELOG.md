@@ -5,6 +5,48 @@ All notable changes to the Kubernaut Operator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.8-rc1] - 2026-08-06
+
+### Added
+- **RBAC**: Operator now provisions the `kubernaut.ai/console` "use" SubjectAccessReview
+  RBAC support needed by kubernaut's new coarse-grained console-access
+  authorization gate (kubernaut #1919/#1941), so clusters with a custom
+  persona-group mapping no longer 403 every console session after
+  upgrading (#289, #291)
+- **RBAC**: `sre` persona now includes `kubernaut_get_approval_request` so
+  the approval gate is usable end-to-end instead of silently failing for
+  that persona (#278, #281)
+- **NetworkPolicy**: API Frontend now has egress to the Thanos Querier
+  (port 9091) for `severityTriage` Prometheus calls (#271, #275)
+
+### Fixed
+- **CR**: Removed the dead `spec.kubernautAgent.alignmentCheck.llm.apiKey`
+  field — the Kubernaut Agent binary only ever read `apiKeyFile`, so the
+  field had no effect and was misleading (#237, #295)
+- **Route**: Added the missing HAProxy SSE timeout annotation on
+  `ConsoleRoute`, which was dropping long investigations mid-stream with a
+  "context canceled" error (#268, #293)
+- **Docs**: Corrected a misleading `gemini-2.5-pro` example in
+  `spec.kubernautAgent.llm.model`'s documentation (backport, #270)
+- **Docs**: Fixed the PostgreSQL TLS certificate path for the `rhel10`
+  init-container image in the install docs (#266)
+
+### Security
+- **Go toolchain**: Pinned the `go` directive to `1.26.5` on
+  `release/v1.5` to close 23 stdlib CVEs (#264)
+- **Dependencies**: Bumped `ubi10/go-toolset` and other `all-docker`-group
+  base images (#284, #250), and the `all-go-deps` dependency group across
+  two Dependabot batches, 9 updates then 4 (#255, #286)
+
+### Changed
+- **Images**: Bumped all 13 `RELATED_IMAGE_*` env vars (12 kubernaut
+  services + console), the bundle CSV, the airgap imageset, and
+  `dist/install.yaml` to reference the freshly-built upstream kubernaut
+  `v1.5.6-rc2` images. Bumped `VERSION` to `1.5.8-rc1`. The operator's own
+  image and bundle references remain tag-based (`1.5.8-rc1`) pending the
+  tag build; a follow-up PR will pin them to digests once published,
+  matching the pattern used for v1.5.6/v1.5.7.
+
 ## [1.5.0] - 2026-06-01
 
 ### Added
