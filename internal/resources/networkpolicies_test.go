@@ -38,12 +38,12 @@ var _ = Describe("NetworkPolicies", func() {
 			kn := testKubernaut()
 			disabled := false
 			kn.Spec.NetworkPolicies.Enabled = &disabled
-			Expect(NetworkPolicies(kn, KagentiSidecarNone)).To(BeNil(), "NetworkPolicies() = %#v, want nil when enabled=false", NetworkPolicies(kn, KagentiSidecarNone))
+			Expect(NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone)).To(BeNil(), "NetworkPolicies() = %#v, want nil when enabled=false", NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone))
 		})
 
 		It("returns nil when enabled is unset", func() {
 			kn := testKubernaut()
-			Expect(NetworkPolicies(kn, KagentiSidecarNone)).To(BeNil(), "NetworkPolicies() = %#v, want nil when enabled is not set (default false)", NetworkPolicies(kn, KagentiSidecarNone))
+			Expect(NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone)).To(BeNil(), "NetworkPolicies() = %#v, want nil when enabled is not set (default false)", NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone))
 		})
 	})
 
@@ -57,14 +57,14 @@ var _ = Describe("NetworkPolicies", func() {
 		})
 
 		It("returns eleven policies for all components", func() {
-			nps := NetworkPolicies(kn, KagentiSidecarNone)
+			nps := NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone)
 			Expect(nps).To(HaveLen(11), "len(NetworkPolicies()) = %d, want 11", len(nps))
 		})
 
 		It("names match component netpol names for always-on components", func() {
-			nps := NetworkPolicies(kn, KagentiSidecarNone)
+			nps := NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone)
 			wantNames := make(map[string]bool)
-			for _, c := range ActiveComponents(kn) {
+			for _, c := range ActiveComponents(kn, testKnV2(kn)) {
 				wantNames[c+"-netpol"] = true
 			}
 			for _, np := range nps {
@@ -81,7 +81,7 @@ var _ = Describe("NetworkPolicies", func() {
 		It("excludes gateway NetworkPolicy when Gateway is disabled", func() {
 			disabled := false
 			kn.Spec.Gateway.Enabled = &disabled
-			nps := NetworkPolicies(kn, KagentiSidecarNone)
+			nps := NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone)
 			for _, np := range nps {
 				Expect(np.Name).NotTo(Equal(ComponentGateway+"-netpol"),
 					"gateway NetworkPolicy should not be present when Gateway is disabled")
@@ -93,7 +93,7 @@ var _ = Describe("NetworkPolicies", func() {
 			disabled := false
 			kn.Spec.Gateway.Enabled = &disabled
 			var dsNP *networkingv1.NetworkPolicy
-			for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
+			for _, np := range NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone) {
 				if np.Name == ComponentDataStorage+"-netpol" {
 					dsNP = np
 					break
@@ -112,7 +112,7 @@ var _ = Describe("NetworkPolicies", func() {
 
 		It("auto-adds gateway ingress from openshift-ingress and openshift-monitoring", func() {
 			var gatewayNP *networkingv1.NetworkPolicy
-			for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
+			for _, np := range NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone) {
 				if np.Name == ComponentGateway+"-netpol" {
 					gatewayNP = np
 					break
@@ -127,7 +127,7 @@ var _ = Describe("NetworkPolicies", func() {
 
 		It("gives kubernaut-agent ingress and egress with monitoring auto-detected", func() {
 			var agentNP *networkingv1.NetworkPolicy
-			for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
+			for _, np := range NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone) {
 				if np.Name == ComponentKubernautAgent+"-netpol" {
 					agentNP = np
 					break
@@ -153,7 +153,7 @@ var _ = Describe("NetworkPolicies", func() {
 
 		It("allows data-storage ingress from all client components", func() {
 			var dsNP *networkingv1.NetworkPolicy
-			for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
+			for _, np := range NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone) {
 				if np.Name == ComponentDataStorage+"-netpol" {
 					dsNP = np
 					break
@@ -192,7 +192,7 @@ var _ = Describe("NetworkPolicies", func() {
 
 		It("allows metrics scrape ingress from openshift-monitoring", func() {
 			var dsNP *networkingv1.NetworkPolicy
-			for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
+			for _, np := range NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone) {
 				if np.Name == ComponentDataStorage+"-netpol" {
 					dsNP = np
 					break
@@ -236,7 +236,7 @@ var _ = Describe("NetworkPolicies", func() {
 		kn := testKubernaut()
 		enabled := true
 		kn.Spec.NetworkPolicies.Enabled = &enabled
-		nps := NetworkPolicies(kn, KagentiSidecarNone)
+		nps := NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone)
 		wantCIDR := testAPIServerHost + "/32"
 		proto := corev1.ProtocolTCP
 		found := false
@@ -282,7 +282,7 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 	It("is included when AF is enabled", func() {
 		kn := testKubernautWithAF()
 		enableNP(kn)
-		nps := NetworkPolicies(kn, KagentiSidecarNone)
+		nps := NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone)
 		found := false
 		for _, np := range nps {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
@@ -297,7 +297,7 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 		kn := testKubernautWithAF()
 		enableNP(kn)
 		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
+		for _, np := range NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone) {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
 				afNP = np
 				break
@@ -323,7 +323,7 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 		kn := testKubernautWithAF()
 		enableNP(kn)
 		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
+		for _, np := range NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone) {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
 				afNP = np
 				break
@@ -339,7 +339,7 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 		afRouteEnabled := true
 		kn.Spec.APIFrontend.Route.Enabled = &afRouteEnabled
 		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
+		for _, np := range NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone) {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
 				afNP = np
 				break
@@ -364,7 +364,7 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 		kn := testKubernautWithAF()
 		enableNP(kn)
 		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
+		for _, np := range NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone) {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
 				afNP = np
 				break
@@ -397,7 +397,7 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 		kn := testKubernautWithAF()
 		enableNP(kn)
 		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
+		for _, np := range NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone) {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
 				afNP = np
 				break
@@ -429,7 +429,7 @@ var _ = Describe("KubernautAgent NetworkPolicy with AF", func() {
 		kn := testKubernautWithAF()
 		enabled := true
 		kn.Spec.NetworkPolicies.Enabled = &enabled
-		nps := NetworkPolicies(kn, KagentiSidecarNone)
+		nps := NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone)
 		var kaNP *networkingv1.NetworkPolicy
 		for _, np := range nps {
 			if np.Name == ComponentKubernautAgent+"-netpol" {
@@ -460,7 +460,7 @@ var _ = Describe("APIFrontend NetworkPolicy OIDC egress", func() {
 		enabled := true
 		kn.Spec.NetworkPolicies.Enabled = &enabled
 		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
+		for _, np := range NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone) {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
 				afNP = np
 				break
@@ -485,7 +485,7 @@ var _ = Describe("APIFrontend NetworkPolicy OIDC egress", func() {
 		enabled := true
 		kn.Spec.NetworkPolicies.Enabled = &enabled
 		var afNP *networkingv1.NetworkPolicy
-		for _, np := range NetworkPolicies(kn, KagentiSidecarNone) {
+		for _, np := range NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone) {
 			if np.Name == ComponentAPIFrontend+"-netpol" {
 				afNP = np
 				break
@@ -507,7 +507,7 @@ var _ = Describe("APIFrontend NetworkPolicy OIDC egress", func() {
 // inline in fleetMetadataCacheNetworkPolicy) for reuse across components.
 var _ = Describe("fleetDestinationsEgressRule", func() {
 	It("matches FleetMetadataCache's pre-existing fleet egress rule exactly (extracted helper, no behavior change)", func() {
-		kn := testKubernautWithFMC()
+		kn, _ := testKubernautWithFMC()
 		fmcNP := fleetMetadataCacheNetworkPolicy(kn)
 		want := fleetDestinationsEgressRule()
 		Expect(fmcNP.Spec.Egress).To(ContainElement(want))
@@ -536,64 +536,64 @@ func hasFleetEgressRule(np *networkingv1.NetworkPolicy) bool {
 var _ = Describe("Gateway/RemediationOrchestrator/SignalProcessing/APIFrontend/EffectivenessMonitor fleet NetworkPolicy egress", func() {
 	It("gateway omits fleet egress when fleet disabled", func() {
 		kn := testKubernaut()
-		Expect(hasFleetEgressRule(gatewayNetworkPolicy(kn))).To(BeFalse())
+		Expect(hasFleetEgressRule(gatewayNetworkPolicy(kn, testKnV2(kn)))).To(BeFalse())
 	})
 
 	It("gateway gains fleet egress when fleet enabled", func() {
-		kn := testKubernautWithFleetMCP()
-		Expect(hasFleetEgressRule(gatewayNetworkPolicy(kn))).To(BeTrue())
+		kn, knV2 := testKubernautWithFleetMCP()
+		Expect(hasFleetEgressRule(gatewayNetworkPolicy(kn, knV2))).To(BeTrue())
 	})
 
 	It("remediationorchestrator omits fleet egress when fleet disabled", func() {
 		kn := testKubernaut()
-		Expect(hasFleetEgressRule(remediationOrchestratorNetworkPolicy(kn))).To(BeFalse())
+		Expect(hasFleetEgressRule(remediationOrchestratorNetworkPolicy(kn, testKnV2(kn)))).To(BeFalse())
 	})
 
 	It("remediationorchestrator gains fleet egress when fleet enabled", func() {
-		kn := testKubernautWithFleetMCP()
-		Expect(hasFleetEgressRule(remediationOrchestratorNetworkPolicy(kn))).To(BeTrue())
+		kn, knV2 := testKubernautWithFleetMCP()
+		Expect(hasFleetEgressRule(remediationOrchestratorNetworkPolicy(kn, knV2))).To(BeTrue())
 	})
 
 	It("signalprocessing omits fleet egress when fleet disabled", func() {
 		kn := testKubernaut()
-		Expect(hasFleetEgressRule(signalProcessingNetworkPolicy(kn))).To(BeFalse())
+		Expect(hasFleetEgressRule(signalProcessingNetworkPolicy(kn, testKnV2(kn)))).To(BeFalse())
 	})
 
 	It("signalprocessing gains fleet egress when fleet enabled", func() {
-		kn := testKubernautWithFleetMCP()
-		Expect(hasFleetEgressRule(signalProcessingNetworkPolicy(kn))).To(BeTrue())
+		kn, knV2 := testKubernautWithFleetMCP()
+		Expect(hasFleetEgressRule(signalProcessingNetworkPolicy(kn, knV2))).To(BeTrue())
 	})
 
 	It("apifrontend omits fleet egress when fleet disabled", func() {
 		kn := testKubernautWithAF()
-		Expect(hasFleetEgressRule(apifrontendNetworkPolicy(kn, KagentiSidecarNone))).To(BeFalse())
+		Expect(hasFleetEgressRule(apifrontendNetworkPolicy(kn, testKnV2(kn), KagentiSidecarNone))).To(BeFalse())
 	})
 
 	It("apifrontend gains fleet egress when fleet enabled", func() {
-		kn := testKubernautWithFleetMCP()
+		kn, knV2 := testKubernautWithFleetMCP()
 		kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
 			Auth: kubernautv1alpha1.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
-		Expect(hasFleetEgressRule(apifrontendNetworkPolicy(kn, KagentiSidecarNone))).To(BeTrue())
+		Expect(hasFleetEgressRule(apifrontendNetworkPolicy(kn, knV2, KagentiSidecarNone))).To(BeTrue())
 	})
 
 	It("effectivenessmonitor omits fleet egress when fleet disabled", func() {
 		kn := testKubernaut()
-		Expect(hasFleetEgressRule(effectivenessMonitorNetworkPolicy(kn))).To(BeFalse())
+		Expect(hasFleetEgressRule(effectivenessMonitorNetworkPolicy(kn, testKnV2(kn)))).To(BeFalse())
 	})
 
 	It("effectivenessmonitor gains fleet egress when fleet enabled", func() {
-		kn := testKubernautWithFleetMCP()
-		Expect(hasFleetEgressRule(effectivenessMonitorNetworkPolicy(kn))).To(BeTrue())
+		kn, knV2 := testKubernautWithFleetMCP()
+		Expect(hasFleetEgressRule(effectivenessMonitorNetworkPolicy(kn, knV2))).To(BeTrue())
 	})
 
 	It("KFG-030 [AC-4]: kubernautagent omits fleet egress when fleet disabled", func() {
 		kn := testKubernaut()
-		Expect(hasFleetEgressRule(kubernautAgentNetworkPolicy(kn))).To(BeFalse())
+		Expect(hasFleetEgressRule(kubernautAgentNetworkPolicy(kn, testKnV2(kn)))).To(BeFalse())
 	})
 
 	It("KFG-031 [AC-4]: kubernautagent gains fleet egress when fleet enabled, so KA can reach the MCP Gateway for GatewayDiscoverer tool calls", func() {
-		kn := testKubernautWithFleetMCP()
-		Expect(hasFleetEgressRule(kubernautAgentNetworkPolicy(kn))).To(BeTrue())
+		kn, knV2 := testKubernautWithFleetMCP()
+		Expect(hasFleetEgressRule(kubernautAgentNetworkPolicy(kn, knV2))).To(BeTrue())
 	})
 })

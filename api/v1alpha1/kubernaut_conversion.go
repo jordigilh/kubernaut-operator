@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"sigs.k8s.io/controller-runtime/pkg/conversion"
@@ -91,8 +92,8 @@ func (src *Kubernaut) ConvertTo(dstRaw conversion.Hub) error {
 		NetworkPolicies:         convertNetworkPoliciesSpecToV2(src.Spec.NetworkPolicies),
 		APIFrontend:             convertAPIFrontendSpecToV2(src.Spec.APIFrontend),
 		Console:                 convertConsoleSpecToV2(src.Spec.Console),
-		Fleet:                   convertFleetSpecToV2(src.Spec.Fleet),
-		FleetMetadataCache:      convertFleetMetadataCacheSpecToV2(src.Spec.FleetMetadataCache),
+		Fleet:                   v1alpha2.FleetSpec{},              // F1: no v1alpha1 source (Fleet moved to v1alpha2-only)
+		FleetMetadataCache:      v1alpha2.FleetMetadataCacheSpec{}, // F1: no v1alpha1 source (Fleet moved to v1alpha2-only)
 	}
 
 	dst.Status = convertStatusToV2(src.Status)
@@ -110,6 +111,8 @@ func (dst *Kubernaut) ConvertFrom(srcRaw conversion.Hub) error {
 	}
 
 	dst.ObjectMeta = src.ObjectMeta
+
+	logLossyFleetDowngrade(src.Spec)
 
 	dst.Spec = KubernautSpec{
 		Image:                   convertImageSpecToV1(src.Spec.Image),
@@ -130,8 +133,6 @@ func (dst *Kubernaut) ConvertFrom(srcRaw conversion.Hub) error {
 		NetworkPolicies:         convertNetworkPoliciesSpecToV1(src.Spec.NetworkPolicies, src.Name, src.Namespace),
 		APIFrontend:             convertAPIFrontendSpecToV1(src.Spec.APIFrontend),
 		Console:                 convertConsoleSpecToV1(src.Spec.Console),
-		Fleet:                   convertFleetSpecToV1(src.Spec.Fleet),
-		FleetMetadataCache:      convertFleetMetadataCacheSpecToV1(src.Spec.FleetMetadataCache),
 	}
 
 	dst.Status = convertStatusToV1(src.Status)
@@ -139,37 +140,45 @@ func (dst *Kubernaut) ConvertFrom(srcRaw conversion.Hub) error {
 	return nil
 }
 
-// ---------- F1: FleetOverrideSpec <-> flat per-component fields ----------
+// ---------- Fleet: v1alpha2-only, no v1alpha1 source or destination ----------
+//
+// Fleet migrated from v1alpha1 (FleetSpec/FleetMetadataCacheSpec top-level
+// fields, plus a FleetOAuth2CredentialsSecretRef/MCPGatewayNamespace
+// override field on each of the 6 fleet-aware component specs) to
+// v1alpha2-only, following the same "no v1alpha1 source" pattern already
+// used for workflowExecution.fleet (F1). ConvertTo always leaves the v1alpha2
+// Fleet fields at their zero value; ConvertFrom drops any non-empty v1alpha2
+// Fleet configuration, logging once per downgrade so operators moving a CR
+// back to v1alpha1 notice the loss (the same structured-log pattern used
+// elsewhere in this file, e.g. convertNetworkPoliciesSpecToV2).
 
-// fleetOverrideOAuth2ToV1 extracts the OAuth2CredentialsSecretRef half of a
-// v1alpha2 FleetOverrideSpec for the 5 v1alpha1 components that only ever
-// had FleetOAuth2CredentialsSecretRef (no namespace override): Gateway,
-// RemediationOrchestrator, EffectivenessMonitor, KubernautAgent, APIFrontend.
-func fleetOverrideOAuth2ToV1(f *v1alpha2.FleetOverrideSpec) string {
-	if f == nil {
-		return ""
+// logLossyFleetDowngrade logs a single structured warning summarizing which
+// parts of a v1alpha2 spec's Fleet configuration have no v1alpha1
+// equivalent and will be dropped by ConvertFrom.
+func logLossyFleetDowngrade(s v1alpha2.KubernautSpec) {
+	fleetOverrides := map[string]bool{
+		"gateway":                 s.Gateway.Fleet != nil,
+		"remediationOrchestrator": s.RemediationOrchestrator.Fleet != nil,
+		"signalProcessing":        s.SignalProcessing.Fleet != nil,
+		"apiFrontend":             s.APIFrontend.Fleet != nil,
+		"effectivenessMonitor":    s.EffectivenessMonitor.Fleet != nil,
+		"kubernautAgent":          s.KubernautAgent.Fleet != nil,
 	}
-	return f.OAuth2CredentialsSecretRef
-}
-
-// fleetOverrideFromOAuth2 builds a v1alpha2 FleetOverrideSpec from a v1alpha1
-// flat FleetOAuth2CredentialsSecretRef, or nil when empty (no override).
-func fleetOverrideFromOAuth2(oauth2SecretRef string) *v1alpha2.FleetOverrideSpec {
-	if oauth2SecretRef == "" {
-		return nil
+	fleetEnabled := s.Fleet.Enabled != nil && *s.Fleet.Enabled
+	fmcEnabled := s.FleetMetadataCache.Enabled != nil && *s.FleetMetadataCache.Enabled
+	var overridden []string
+	for component, hasOverride := range fleetOverrides {
+		if hasOverride {
+			overridden = append(overridden, component)
+		}
 	}
-	return &v1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: oauth2SecretRef}
-}
-
-// fleetOverrideFromOAuth2AndNamespace builds a v1alpha2 FleetOverrideSpec
-// from v1alpha1's SignalProcessing/FleetMetadataCache pair of separate
-// FleetOAuth2CredentialsSecretRef and MCPGatewayNamespace fields, or nil when
-// both are empty.
-func fleetOverrideFromOAuth2AndNamespace(oauth2SecretRef, namespace string) *v1alpha2.FleetOverrideSpec {
-	if oauth2SecretRef == "" && namespace == "" {
-		return nil
+	if !fleetEnabled && !fmcEnabled && len(overridden) == 0 {
+		return
 	}
-	return &v1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: oauth2SecretRef, Namespace: namespace}
+	sort.Strings(overridden)
+	conversionLog.Info("dropping spec.fleet/spec.fleetMetadataCache on downgrade to v1alpha1: "+
+		"Fleet has no v1alpha1 equivalent as of the v1alpha2 migration -- see docs/design/ADR-CRD-001-v1alpha2-redesign.md",
+		"fleetEnabled", fleetEnabled, "fleetMetadataCacheEnabled", fmcEnabled, "componentsWithOverride", overridden)
 }
 
 // ---------- F8: LoggingSpec case normalization ----------
@@ -309,22 +318,17 @@ func convertSignalProcessingSpecToV2(s SignalProcessingSpec) v1alpha2.SignalProc
 		ProactiveSignalMappings: convertConfigMapRefToV2(s.ProactiveSignalMappings),
 		Logging:                 convertLoggingSpecToV2(s.Logging),
 		Resources:               s.Resources,
-		Fleet:                   fleetOverrideFromOAuth2AndNamespace(s.FleetOAuth2CredentialsSecretRef, s.MCPGatewayNamespace),
+		Fleet:                   nil, // F1: no v1alpha1 source (Fleet moved to v1alpha2-only)
 	}
 }
 
 func convertSignalProcessingSpecToV1(s v1alpha2.SignalProcessingSpec) SignalProcessingSpec {
-	out := SignalProcessingSpec{
+	return SignalProcessingSpec{
 		Policy:                  PolicyConfigMapRef{ConfigMapName: s.Policy.ConfigMapName},
 		ProactiveSignalMappings: convertConfigMapRefToV1(s.ProactiveSignalMappings),
 		Logging:                 convertLoggingSpecToV1(s.Logging),
 		Resources:               s.Resources,
 	}
-	if s.Fleet != nil {
-		out.FleetOAuth2CredentialsSecretRef = s.Fleet.OAuth2CredentialsSecretRef
-		out.MCPGatewayNamespace = s.Fleet.Namespace
-	}
-	return out
 }
 
 // ---------- RemediationOrchestrator and its unchanged nested types ----------
@@ -380,12 +384,12 @@ func convertRemediationOrchestratorSpecToV2(s RemediationOrchestratorSpec) v1alp
 		Retention:        v1alpha2.RORetentionSpec{Period: s.Retention.Period},
 		Logging:          convertLoggingSpecToV2(s.Logging),
 		Resources:        s.Resources,
-		Fleet:            fleetOverrideFromOAuth2(s.FleetOAuth2CredentialsSecretRef),
+		Fleet:            nil, // F1: no v1alpha1 source (Fleet moved to v1alpha2-only)
 	}
 }
 
 func convertRemediationOrchestratorSpecToV1(s v1alpha2.RemediationOrchestratorSpec) RemediationOrchestratorSpec {
-	out := RemediationOrchestratorSpec{
+	return RemediationOrchestratorSpec{
 		Timeouts:                convertROTimeoutsSpecToV1(s.Timeouts),
 		Routing:                 convertRORoutingSpecToV1(s.Routing),
 		EffectivenessAssessment: ROEffectivenessSpec{StabilizationWindow: s.EffectivenessAssessment.StabilizationWindow},
@@ -400,8 +404,6 @@ func convertRemediationOrchestratorSpecToV1(s v1alpha2.RemediationOrchestratorSp
 		Logging:          convertLoggingSpecToV1(s.Logging),
 		Resources:        s.Resources,
 	}
-	out.FleetOAuth2CredentialsSecretRef = fleetOverrideOAuth2ToV1(s.Fleet)
-	return out
 }
 
 // ---------- F1 + F4: WorkflowExecutionSpec (Fleet added, Ansible relocated) ----------
@@ -479,19 +481,15 @@ func convertEffectivenessMonitorSpecToV2(s EffectivenessMonitorSpec) v1alpha2.Ef
 		Assessment: v1alpha2.EMAssessmentSpec{StabilizationWindow: s.Assessment.StabilizationWindow, ValidityWindow: s.Assessment.ValidityWindow},
 		Logging:    convertLoggingSpecToV2(s.Logging),
 		Resources:  s.Resources,
-		Fleet:      fleetOverrideFromOAuth2(s.FleetOAuth2CredentialsSecretRef),
+		Fleet:      nil, // F1: no v1alpha1 source (Fleet moved to v1alpha2-only)
 	}
 }
 
 func convertEffectivenessMonitorSpecToV1(s v1alpha2.EffectivenessMonitorSpec) EffectivenessMonitorSpec {
-	if s.Fleet != nil && s.Fleet.Namespace != "" {
-		conversionLog.Info("dropping effectivenessMonitor.fleet.namespace on downgrade to v1alpha1: field has no v1alpha1 equivalent")
-	}
 	return EffectivenessMonitorSpec{
-		Assessment:                      EMAssessmentSpec{StabilizationWindow: s.Assessment.StabilizationWindow, ValidityWindow: s.Assessment.ValidityWindow},
-		Logging:                         convertLoggingSpecToV1(s.Logging),
-		Resources:                       s.Resources,
-		FleetOAuth2CredentialsSecretRef: fleetOverrideOAuth2ToV1(s.Fleet),
+		Assessment: EMAssessmentSpec{StabilizationWindow: s.Assessment.StabilizationWindow, ValidityWindow: s.Assessment.ValidityWindow},
+		Logging:    convertLoggingSpecToV1(s.Logging),
+		Resources:  s.Resources,
 	}
 }
 
@@ -637,28 +635,27 @@ func convertKubernautAgentSpecToV2(s KubernautAgentSpec, _ map[string]LLMProfile
 		Shutdown:                      v1alpha2.ShutdownSpec{DrainSeconds: s.Shutdown.DrainSeconds},
 		Logging:                       convertLoggingSpecToV2(s.Logging),
 		Resources:                     s.Resources,
-		Fleet:                         fleetOverrideFromOAuth2(s.FleetOAuth2CredentialsSecretRef),
+		Fleet:                         nil, // F1: no v1alpha1 source (Fleet moved to v1alpha2-only)
 	}
 }
 
 func convertKubernautAgentSpecToV1(s v1alpha2.KubernautAgentSpec, profiles map[string]v1alpha2.LLMProfileSpec) KubernautAgentSpec {
 	return KubernautAgentSpec{
-		LLMProfileRef:                   s.LLMProfileRef,
-		RuntimeConfigMapName:            s.RuntimeConfigMapName,
-		PhaseModels:                     s.PhaseModels,
-		MaxTurns:                        s.MaxTurns,
-		Session:                         SessionSpec{TTL: s.Session.TTL},
-		Audit:                           AuditSpec{Enabled: s.Audit.Enabled},
-		AlignmentCheck:                  convertAlignmentCheckSpecToV1(s.AlignmentCheck, profiles),
-		Summarizer:                      SummarizerSpec{Threshold: s.Summarizer.Threshold, MaxToolOutputSize: s.Summarizer.MaxToolOutputSize},
-		Safety:                          convertSafetySpecToV1(s.Safety),
-		Interactive:                     convertInteractiveSpecToV1(s.Interactive),
-		AdditionalClusterRoleBindings:   s.AdditionalClusterRoleBindings,
-		ServerRateLimit:                 (*KARateLimitSpec)(s.ServerRateLimit),
-		Shutdown:                        ShutdownSpec{DrainSeconds: s.Shutdown.DrainSeconds},
-		Logging:                         convertLoggingSpecToV1(s.Logging),
-		Resources:                       s.Resources,
-		FleetOAuth2CredentialsSecretRef: fleetOverrideOAuth2ToV1(s.Fleet),
+		LLMProfileRef:                 s.LLMProfileRef,
+		RuntimeConfigMapName:          s.RuntimeConfigMapName,
+		PhaseModels:                   s.PhaseModels,
+		MaxTurns:                      s.MaxTurns,
+		Session:                       SessionSpec{TTL: s.Session.TTL},
+		Audit:                         AuditSpec{Enabled: s.Audit.Enabled},
+		AlignmentCheck:                convertAlignmentCheckSpecToV1(s.AlignmentCheck, profiles),
+		Summarizer:                    SummarizerSpec{Threshold: s.Summarizer.Threshold, MaxToolOutputSize: s.Summarizer.MaxToolOutputSize},
+		Safety:                        convertSafetySpecToV1(s.Safety),
+		Interactive:                   convertInteractiveSpecToV1(s.Interactive),
+		AdditionalClusterRoleBindings: s.AdditionalClusterRoleBindings,
+		ServerRateLimit:               (*KARateLimitSpec)(s.ServerRateLimit),
+		Shutdown:                      ShutdownSpec{DrainSeconds: s.Shutdown.DrainSeconds},
+		Logging:                       convertLoggingSpecToV1(s.Logging),
+		Resources:                     s.Resources,
 	}
 }
 
@@ -746,7 +743,7 @@ func convertGatewaySpecToV2(s GatewaySpec) v1alpha2.GatewaySpec {
 		},
 		Logging:   convertLoggingSpecToV2(s.Logging),
 		Resources: s.Resources,
-		Fleet:     fleetOverrideFromOAuth2(s.FleetOAuth2CredentialsSecretRef),
+		Fleet:     nil, // F1: no v1alpha1 source (Fleet moved to v1alpha2-only)
 	}
 }
 
@@ -762,9 +759,8 @@ func convertGatewaySpecToV1(s v1alpha2.GatewaySpec) GatewaySpec {
 			},
 			DeduplicationCooldown: s.Config.DeduplicationCooldown,
 		},
-		Logging:                         convertLoggingSpecToV1(s.Logging),
-		Resources:                       s.Resources,
-		FleetOAuth2CredentialsSecretRef: fleetOverrideOAuth2ToV1(s.Fleet),
+		Logging:   convertLoggingSpecToV1(s.Logging),
+		Resources: s.Resources,
 	}
 }
 
@@ -816,52 +812,6 @@ func convertConsoleSpecToV1(s v1alpha2.ConsoleSpec) ConsoleSpec {
 	}
 }
 
-func convertFleetSpecToV2(s FleetSpec) v1alpha2.FleetSpec {
-	return v1alpha2.FleetSpec{
-		Enabled: s.Enabled, Backend: s.Backend, Endpoint: s.Endpoint, CASecretName: s.CASecretName,
-		TokenSecretName: s.TokenSecretName, MCPGatewayEndpoint: s.MCPGatewayEndpoint, MCPGatewayType: s.MCPGatewayType,
-		OAuth2:              v1alpha2.OAuth2Spec{Enabled: s.OAuth2.Enabled, TokenURL: s.OAuth2.TokenURL, Scopes: s.OAuth2.Scopes, CredentialsSecretRef: s.OAuth2.CredentialsSecretRef},
-		MCPGatewayNamespace: s.MCPGatewayNamespace,
-	}
-}
-
-func convertFleetSpecToV1(s v1alpha2.FleetSpec) FleetSpec {
-	return FleetSpec{
-		Enabled: s.Enabled, Backend: s.Backend, Endpoint: s.Endpoint, CASecretName: s.CASecretName,
-		TokenSecretName: s.TokenSecretName, MCPGatewayEndpoint: s.MCPGatewayEndpoint, MCPGatewayType: s.MCPGatewayType,
-		OAuth2:              OAuth2Spec{Enabled: s.OAuth2.Enabled, TokenURL: s.OAuth2.TokenURL, Scopes: s.OAuth2.Scopes, CredentialsSecretRef: s.OAuth2.CredentialsSecretRef},
-		MCPGatewayNamespace: s.MCPGatewayNamespace,
-	}
-}
-
-// ---------- F1: FleetMetadataCacheSpec ----------
-
-func convertFleetMetadataCacheSpecToV2(s FleetMetadataCacheSpec) v1alpha2.FleetMetadataCacheSpec {
-	return v1alpha2.FleetMetadataCacheSpec{
-		Enabled:      s.Enabled,
-		Fleet:        fleetOverrideFromOAuth2AndNamespace(s.FleetOAuth2CredentialsSecretRef, s.MCPGatewayNamespace),
-		SyncInterval: s.SyncInterval,
-		KeyTTL:       s.KeyTTL,
-		Logging:      convertLoggingSpecToV2(s.Logging),
-		Resources:    s.Resources,
-	}
-}
-
-func convertFleetMetadataCacheSpecToV1(s v1alpha2.FleetMetadataCacheSpec) FleetMetadataCacheSpec {
-	out := FleetMetadataCacheSpec{
-		Enabled:      s.Enabled,
-		SyncInterval: s.SyncInterval,
-		KeyTTL:       s.KeyTTL,
-		Logging:      convertLoggingSpecToV1(s.Logging),
-		Resources:    s.Resources,
-	}
-	if s.Fleet != nil {
-		out.FleetOAuth2CredentialsSecretRef = s.Fleet.OAuth2CredentialsSecretRef
-		out.MCPGatewayNamespace = s.Fleet.Namespace
-	}
-	return out
-}
-
 // ---------- F1 + F6: APIFrontendSpec ----------
 
 func convertAPIFrontendSpecToV2(s APIFrontendSpec) v1alpha2.APIFrontendSpec {
@@ -881,31 +831,27 @@ func convertAPIFrontendSpecToV2(s APIFrontendSpec) v1alpha2.APIFrontendSpec {
 		MetricsPort:           s.MetricsPort,
 		HealthPort:            s.HealthPort,
 		Resources:             s.Resources,
-		Fleet:                 fleetOverrideFromOAuth2(s.FleetOAuth2CredentialsSecretRef),
+		Fleet:                 nil, // F1: no v1alpha1 source (Fleet moved to v1alpha2-only)
 	}
 }
 
 func convertAPIFrontendSpecToV1(s v1alpha2.APIFrontendSpec) APIFrontendSpec {
-	if s.Fleet != nil && s.Fleet.Namespace != "" {
-		conversionLog.Info("dropping apiFrontend.fleet.namespace on downgrade to v1alpha1: field has no v1alpha1 equivalent")
-	}
 	return APIFrontendSpec{
-		Enabled:                         s.Enabled,
-		Route:                           APIFrontendRouteSpec{Enabled: s.Route.Enabled, Hostname: s.Route.Hostname},
-		SPIRE:                           APIFrontendSPIRESpec{Enabled: s.SPIRE.Enabled, ClassName: s.SPIRE.ClassName, TrustDomain: s.SPIRE.TrustDomain},
-		Auth:                            convertAPIFrontendAuthSpecToV1(s.Auth),
-		RateLimit:                       APIFrontendRateLimitSpec(s.RateLimit),
-		Shutdown:                        APIFrontendShutdownSpec{DrainSeconds: s.Shutdown.DrainSeconds},
-		LLMProfileRef:                   s.LLMProfileRef,
-		SeverityTriage:                  convertSeverityTriageSpecToV1(s.SeverityTriage),
-		AgentCardURL:                    s.AgentCardURL,
-		RBACRolesConfigMapRef:           convertConfigMapRefToV1(s.RBACRolesConfigMapRef), //nolint:staticcheck // round-trip conversion must preserve the deprecated field, not migrate off it
-		RBAC:                            convertAPIFrontendRBACSpecToV1(s.RBAC),
-		Logging:                         convertLoggingSpecToV1(s.Logging),
-		MetricsPort:                     s.MetricsPort,
-		HealthPort:                      s.HealthPort,
-		Resources:                       s.Resources,
-		FleetOAuth2CredentialsSecretRef: fleetOverrideOAuth2ToV1(s.Fleet),
+		Enabled:               s.Enabled,
+		Route:                 APIFrontendRouteSpec{Enabled: s.Route.Enabled, Hostname: s.Route.Hostname},
+		SPIRE:                 APIFrontendSPIRESpec{Enabled: s.SPIRE.Enabled, ClassName: s.SPIRE.ClassName, TrustDomain: s.SPIRE.TrustDomain},
+		Auth:                  convertAPIFrontendAuthSpecToV1(s.Auth),
+		RateLimit:             APIFrontendRateLimitSpec(s.RateLimit),
+		Shutdown:              APIFrontendShutdownSpec{DrainSeconds: s.Shutdown.DrainSeconds},
+		LLMProfileRef:         s.LLMProfileRef,
+		SeverityTriage:        convertSeverityTriageSpecToV1(s.SeverityTriage),
+		AgentCardURL:          s.AgentCardURL,
+		RBACRolesConfigMapRef: convertConfigMapRefToV1(s.RBACRolesConfigMapRef), //nolint:staticcheck // round-trip conversion must preserve the deprecated field, not migrate off it
+		RBAC:                  convertAPIFrontendRBACSpecToV1(s.RBAC),
+		Logging:               convertLoggingSpecToV1(s.Logging),
+		MetricsPort:           s.MetricsPort,
+		HealthPort:            s.HealthPort,
+		Resources:             s.Resources,
 	}
 }
 

@@ -23,13 +23,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 var _ = Describe("FleetMetadataCacheConfigMap", func() {
 	It("renders server, mcpGateway, valkey, sync, and oauth2 sections", func() {
-		kn := testKubernautWithFMC()
-		cm, err := FleetMetadataCacheConfigMap(kn)
+		kn, knV2 := testKubernautWithFMC()
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cm.Name).To(Equal("fleetmetadatacache-config"))
 
@@ -46,25 +46,25 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 	})
 
 	It("renders the mcpGateway namespace when set", func() {
-		kn := testKubernautWithFMC()
-		kn.Spec.FleetMetadataCache.MCPGatewayNamespace = "managed-clusters"
-		cm, err := FleetMetadataCacheConfigMap(kn)
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: "managed-clusters"}
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cm.Data["config.yaml"]).To(ContainSubstring("namespace: managed-clusters"))
 	})
 
 	It("omits the mcpGateway namespace key when unset", func() {
-		kn := testKubernautWithFMC()
-		cm, err := FleetMetadataCacheConfigMap(kn)
+		kn, knV2 := testKubernautWithFMC()
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("namespace:"))
 	})
 
 	It("applies custom syncInterval and keyTTL overrides", func() {
-		kn := testKubernautWithFMC()
-		kn.Spec.FleetMetadataCache.SyncInterval = "1m"
-		kn.Spec.FleetMetadataCache.KeyTTL = "90s"
-		cm, err := FleetMetadataCacheConfigMap(kn)
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.FleetMetadataCache.SyncInterval = "1m"
+		knV2.Spec.FleetMetadataCache.KeyTTL = "90s"
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("interval: 1m"))
@@ -72,10 +72,10 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 	})
 
 	It("reuses the shared spec.valkey address", func() {
-		kn := testKubernautWithFMC()
+		kn, knV2 := testKubernautWithFMC()
 		kn.Spec.Valkey.Host = "valkey.kubernaut.svc"
 		kn.Spec.Valkey.Port = 6380
-		cm, err := FleetMetadataCacheConfigMap(kn)
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cm.Data["config.yaml"]).To(ContainSubstring(ValkeyAddr(&kn.Spec.Valkey)))
 	})
@@ -83,15 +83,15 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 
 var _ = Describe("FleetMetadataCacheDeployment", func() {
 	It("builds successfully with FMC enabled", func() {
-		kn := testKubernautWithFMC()
-		dep, err := FleetMetadataCacheDeployment(kn)
+		kn, knV2 := testKubernautWithFMC()
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		expectDeploymentBasics(dep, "fleetmetadatacache")
 	})
 
 	It("exposes api (8080) and metrics (8081) ports", func() {
-		kn := testKubernautWithFMC()
-		dep, err := FleetMetadataCacheDeployment(kn)
+		kn, knV2 := testKubernautWithFMC()
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		container := dep.Spec.Template.Spec.Containers[0]
 		portMap := map[string]int32{}
@@ -103,8 +103,8 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 	})
 
 	It("mounts config and fleet-oauth2 volumes", func() {
-		kn := testKubernautWithFMC()
-		dep, err := FleetMetadataCacheDeployment(kn)
+		kn, knV2 := testKubernautWithFMC()
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		expectHasVolume(dep, "config")
 		expectHasVolume(dep, "fleet-oauth2")
@@ -114,8 +114,8 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 	})
 
 	It("mounts the shared fleet.oauth2.credentialsSecretRef when FMC has no override", func() {
-		kn := testKubernautWithFMC()
-		dep, err := FleetMetadataCacheDeployment(kn)
+		kn, knV2 := testKubernautWithFMC()
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		found := false
 		for _, v := range dep.Spec.Template.Spec.Volumes {
@@ -129,9 +129,9 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 	})
 
 	It("mounts FMC's own credentialsSecretRef override when set, ignoring the shared fallback", func() {
-		kn := testKubernautWithFMC()
-		kn.Spec.FleetMetadataCache.FleetOAuth2CredentialsSecretRef = "fmc-own-oauth2-creds"
-		dep, err := FleetMetadataCacheDeployment(kn)
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: "fmc-own-oauth2-creds"}
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		found := false
 		for _, v := range dep.Spec.Template.Spec.Volumes {
@@ -144,18 +144,18 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 	})
 
 	It("passes the -config flag pointing at the mounted config file", func() {
-		kn := testKubernautWithFMC()
-		dep, err := FleetMetadataCacheDeployment(kn)
+		kn, knV2 := testKubernautWithFMC()
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(dep.Spec.Template.Spec.Containers[0].Args).To(ContainElement("-config=/etc/fleetmetadatacache/config.yaml"))
 	})
 
 	It("applies spec.fleetMetadataCache.resources", func() {
-		kn := testKubernautWithFMC()
-		kn.Spec.FleetMetadataCache.Resources = corev1.ResourceRequirements{
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.FleetMetadataCache.Resources = corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("50m")},
 		}
-		dep, err := FleetMetadataCacheDeployment(kn)
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(dep.Spec.Template.Spec.Containers[0].Resources.Requests).NotTo(BeEmpty())
 	})
@@ -163,7 +163,7 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 
 var _ = Describe("FleetMetadataCacheService", func() {
 	It("selects the fleetmetadatacache component and exposes api+metrics ports", func() {
-		kn := testKubernautWithFMC()
+		kn, _ := testKubernautWithFMC()
 		svc := FleetMetadataCacheService(kn)
 		Expect(svc.Name).To(Equal("fleetmetadatacache-service"))
 		Expect(svc.Spec.Selector).To(Equal(SelectorLabels(ComponentFleetMetadataCache)))
@@ -177,8 +177,8 @@ var _ = Describe("FleetMetadataCacheService", func() {
 	})
 
 	It("is included in Services() when fleetMetadataCache.enabled is true", func() {
-		kn := testKubernautWithFMC()
-		svcs := Services(kn, KagentiSidecarNone)
+		kn, knV2 := testKubernautWithFMC()
+		svcs := Services(kn, knV2, KagentiSidecarNone)
 		names := make([]string, 0, len(svcs))
 		for _, s := range svcs {
 			names = append(names, s.Name)
@@ -188,7 +188,7 @@ var _ = Describe("FleetMetadataCacheService", func() {
 
 	It("is excluded from Services() when fleetMetadataCache.enabled is false", func() {
 		kn := testKubernaut()
-		svcs := Services(kn, KagentiSidecarNone)
+		svcs := Services(kn, testKnV2(kn), KagentiSidecarNone)
 		names := make([]string, 0, len(svcs))
 		for _, s := range svcs {
 			names = append(names, s.Name)
@@ -199,9 +199,9 @@ var _ = Describe("FleetMetadataCacheService", func() {
 
 var _ = Describe("FleetMetadataCache RBAC", func() {
 	It("grants Envoy AI Gateway CRD watch access when mcpGatewayType=eaigw", func() {
-		kn := testKubernautWithFMC()
+		kn, knV2 := testKubernautWithFMC()
 		labels := CommonLabels(kn)
-		cr := fleetMetadataCacheClusterRole(kn, labels)
+		cr := fleetMetadataCacheClusterRole(kn, knV2, labels)
 		Expect(cr.Name).To(Equal(kn.Namespace + "-fleetmetadatacache"))
 
 		apiGroups := make([]string, 0, len(cr.Rules))
@@ -213,10 +213,10 @@ var _ = Describe("FleetMetadataCache RBAC", func() {
 	})
 
 	It("grants Kuadrant CRD watch access when mcpGatewayType=kuadrant", func() {
-		kn := testKubernautWithFMC()
-		kn.Spec.Fleet.MCPGatewayType = mcpGatewayTypeKuadrant
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.Fleet.MCPGatewayType = mcpGatewayTypeKuadrant
 		labels := CommonLabels(kn)
-		cr := fleetMetadataCacheClusterRole(kn, labels)
+		cr := fleetMetadataCacheClusterRole(kn, knV2, labels)
 
 		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
@@ -227,9 +227,9 @@ var _ = Describe("FleetMetadataCache RBAC", func() {
 	})
 
 	It("is included in ClusterRoles()/ClusterRoleBindings() only when fleetMetadataCache.enabled is true", func() {
-		enabledKn := testKubernautWithFMC()
+		enabledKn, enabledKnV2 := testKubernautWithFMC()
 		found := false
-		for _, cr := range ClusterRoles(enabledKn) {
+		for _, cr := range ClusterRoles(enabledKn, enabledKnV2) {
 			if cr.Name == enabledKn.Namespace+"-fleetmetadatacache" {
 				found = true
 			}
@@ -237,7 +237,7 @@ var _ = Describe("FleetMetadataCache RBAC", func() {
 		Expect(found).To(BeTrue())
 
 		foundBinding := false
-		for _, crb := range ClusterRoleBindings(enabledKn) {
+		for _, crb := range ClusterRoleBindings(enabledKn, enabledKnV2) {
 			if crb.Name == enabledKn.Namespace+"-fleetmetadatacache-binding" {
 				foundBinding = true
 			}
@@ -245,7 +245,7 @@ var _ = Describe("FleetMetadataCache RBAC", func() {
 		Expect(foundBinding).To(BeTrue())
 
 		disabledKn := testKubernaut()
-		for _, cr := range ClusterRoles(disabledKn) {
+		for _, cr := range ClusterRoles(disabledKn, testKnV2(disabledKn)) {
 			Expect(cr.Name).NotTo(Equal(disabledKn.Namespace + "-fleetmetadatacache"))
 		}
 	})
@@ -253,7 +253,7 @@ var _ = Describe("FleetMetadataCache RBAC", func() {
 
 var _ = Describe("fleetMetadataCacheNetworkPolicy", func() {
 	It("allows ingress from gateway and remediationorchestrator on the api port", func() {
-		kn := testKubernautWithFMC()
+		kn, _ := testKubernautWithFMC()
 		np := fleetMetadataCacheNetworkPolicy(kn)
 		Expect(np.Spec.Ingress).NotTo(BeEmpty())
 
@@ -268,16 +268,16 @@ var _ = Describe("fleetMetadataCacheNetworkPolicy", func() {
 	})
 
 	It("adds a metrics ingress rule", func() {
-		kn := testKubernautWithFMC()
+		kn, _ := testKubernautWithFMC()
 		np := fleetMetadataCacheNetworkPolicy(kn)
 		Expect(len(np.Spec.Ingress)).To(BeNumerically(">=", 2))
 	})
 
 	It("is included in NetworkPolicies() only when fleetMetadataCache.enabled is true", func() {
-		kn := testKubernautWithFMC()
+		kn, knV2 := testKubernautWithFMC()
 		npEnabled := true
 		kn.Spec.NetworkPolicies.Enabled = &npEnabled
-		nps := NetworkPolicies(kn, KagentiSidecarNone)
+		nps := NetworkPolicies(kn, knV2, KagentiSidecarNone)
 		found := false
 		for _, np := range nps {
 			if np.Name == ComponentFleetMetadataCache+"-netpol" {
@@ -288,7 +288,7 @@ var _ = Describe("fleetMetadataCacheNetworkPolicy", func() {
 
 		disabledKn := testKubernaut()
 		disabledKn.Spec.NetworkPolicies.Enabled = &npEnabled
-		for _, np := range NetworkPolicies(disabledKn, KagentiSidecarNone) {
+		for _, np := range NetworkPolicies(disabledKn, testKnV2(disabledKn), KagentiSidecarNone) {
 			Expect(np.Name).NotTo(Equal(ComponentFleetMetadataCache + "-netpol"))
 		}
 	})
@@ -303,24 +303,24 @@ var _ = Describe("FleetMetadataCacheURL", func() {
 var _ = Describe("FleetMetadataCacheEnabled helper", func() {
 	It("defaults to false", func() {
 		kn := testKubernaut()
-		Expect(kn.Spec.FleetMetadataCacheEnabled()).To(BeFalse())
+		Expect(testKnV2(kn).Spec.FleetMetadataCacheEnabled()).To(BeFalse())
 	})
 
 	It("returns true when explicitly enabled", func() {
-		kn := testKubernautWithFMC()
-		Expect(kn.Spec.FleetMetadataCacheEnabled()).To(BeTrue())
+		_, knV2 := testKubernautWithFMC()
+		Expect(knV2.Spec.FleetMetadataCacheEnabled()).To(BeTrue())
 	})
 })
 
 var _ = Describe("isComponentActive for FleetMetadataCache", func() {
 	It("is inactive by default", func() {
 		kn := testKubernaut()
-		Expect(ActiveComponents(kn)).NotTo(ContainElement(ComponentFleetMetadataCache))
+		Expect(ActiveComponents(kn, testKnV2(kn))).NotTo(ContainElement(ComponentFleetMetadataCache))
 	})
 
 	It("is active when spec.fleetMetadataCache.enabled is true", func() {
-		kn := testKubernautWithFMC()
-		Expect(ActiveComponents(kn)).To(ContainElement(ComponentFleetMetadataCache))
+		kn, knV2 := testKubernautWithFMC()
+		Expect(ActiveComponents(kn, knV2)).To(ContainElement(ComponentFleetMetadataCache))
 	})
 })
 
@@ -329,29 +329,29 @@ var _ = Describe("isComponentActive for FleetMetadataCache", func() {
 // FMC's own service URL to spec.fleet.endpoint auto-derivation.
 var _ = Describe("resolveFleetEndpoint", func() {
 	It("auto-derives the in-cluster FMC URL when backend=fleetmetadatacache and FMC is operator-managed", func() {
-		kn := testKubernautWithFMC()
-		kn.Spec.Fleet.Endpoint = ""
-		Expect(resolveFleetEndpoint(kn)).To(Equal(FleetMetadataCacheURL(kn.Namespace)))
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.Fleet.Endpoint = ""
+		Expect(resolveFleetEndpoint(knV2)).To(Equal(FleetMetadataCacheURL(kn.Namespace)))
 	})
 
 	It("leaves an explicit endpoint untouched", func() {
-		kn := testKubernautWithFMC()
-		kn.Spec.Fleet.Endpoint = "https://byo-fmc.example.com"
-		Expect(resolveFleetEndpoint(kn)).To(Equal("https://byo-fmc.example.com"))
+		_, knV2 := testKubernautWithFMC()
+		knV2.Spec.Fleet.Endpoint = "https://byo-fmc.example.com"
+		Expect(resolveFleetEndpoint(knV2)).To(Equal("https://byo-fmc.example.com"))
 	})
 
 	It("does not auto-derive when FMC is not operator-managed (BYO)", func() {
-		kn := testKubernautWithFMC()
-		kn.Spec.Fleet.Endpoint = ""
-		kn.Spec.FleetMetadataCache.Enabled = nil
-		Expect(resolveFleetEndpoint(kn)).To(Equal(""))
+		_, knV2 := testKubernautWithFMC()
+		knV2.Spec.Fleet.Endpoint = ""
+		knV2.Spec.FleetMetadataCache.Enabled = nil
+		Expect(resolveFleetEndpoint(knV2)).To(Equal(""))
 	})
 
 	It("does not auto-derive when backend=acm even if FMC is enabled", func() {
-		kn := testKubernautWithFMC()
-		kn.Spec.Fleet.Backend = "acm"
-		kn.Spec.Fleet.Endpoint = ""
-		Expect(resolveFleetEndpoint(kn)).To(Equal(""))
+		_, knV2 := testKubernautWithFMC()
+		knV2.Spec.Fleet.Backend = "acm"
+		knV2.Spec.Fleet.Endpoint = ""
+		Expect(resolveFleetEndpoint(knV2)).To(Equal(""))
 	})
 })
 
@@ -360,15 +360,15 @@ var _ = Describe("cleanupDisabledFleetMetadataCache resource names", func() {
 	// silent drift from the builders here, since the controller (a
 	// different package) can't reference these unexported constants.
 	It("matches the ConfigMap, Service, and ClusterRole names this file produces", func() {
-		kn := testKubernautWithFMC()
-		cm, err := FleetMetadataCacheConfigMap(kn)
+		kn, knV2 := testKubernautWithFMC()
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cm.Name).To(Equal("fleetmetadatacache-config"))
 
 		svc := FleetMetadataCacheService(kn)
 		Expect(svc.Name).To(Equal("fleetmetadatacache-service"))
 
-		cr := fleetMetadataCacheClusterRole(kn, CommonLabels(kn))
+		cr := fleetMetadataCacheClusterRole(kn, knV2, CommonLabels(kn))
 		Expect(cr.Name).To(Equal(kn.Namespace + "-fleetmetadatacache"))
 
 		crb := fleetMetadataCacheClusterRoleBinding(kn, CommonLabels(kn))
@@ -392,9 +392,9 @@ var _ = Describe("AllComponents includes fleetmetadatacache", func() {
 
 var _ = Describe("PodDisruptionBudgets for FleetMetadataCache", func() {
 	It("includes a PDB only when enabled", func() {
-		kn := testKubernautWithFMC()
+		kn, knV2 := testKubernautWithFMC()
 		found := false
-		for _, pdb := range PodDisruptionBudgets(kn) {
+		for _, pdb := range PodDisruptionBudgets(kn, knV2) {
 			if pdb.Name == ComponentFleetMetadataCache {
 				found = true
 			}
@@ -402,7 +402,7 @@ var _ = Describe("PodDisruptionBudgets for FleetMetadataCache", func() {
 		Expect(found).To(BeTrue())
 
 		disabledKn := testKubernaut()
-		for _, pdb := range PodDisruptionBudgets(disabledKn) {
+		for _, pdb := range PodDisruptionBudgets(disabledKn, testKnV2(disabledKn)) {
 			Expect(pdb.Name).NotTo(Equal(ComponentFleetMetadataCache))
 		}
 	})
@@ -416,4 +416,4 @@ var _ = Describe("ServiceAccount for FleetMetadataCache", func() {
 
 // Compile-time sanity: FleetMetadataCacheSpec fields referenced by builders
 // above must exist with the expected types.
-var _ kubernautv1alpha1.FleetMetadataCacheSpec
+var _ kubernautv1alpha2.FleetMetadataCacheSpec

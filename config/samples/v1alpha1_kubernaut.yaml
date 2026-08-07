@@ -21,55 +21,14 @@ spec:
     port: 6379
     secretName: valkey-secret
 
-  # Federated scope-checking (Gateway/RemediationOrchestrator) and
-  # multi-cluster reads (SignalProcessing/APIFrontend/EffectivenessMonitor)
-  # against a shared fleet backend (ADR-068). Disabled by default; all
-  # fields below are inert (no validation, no rendering) until enabled:
-  # true is set.
-  #
-  # mcpGatewayEndpoint/mcpGatewayType are REQUIRED alongside backend/endpoint:
-  # Gateway and RemediationOrchestrator fail closed at startup without them
-  # (upstream Fleet.ValidateFullFederation); SignalProcessing/APIFrontend/
-  # EffectivenessMonitor only need mcpGatewayEndpoint+mcpGatewayType (they
-  # never call the Backend/Endpoint scope-check adapter, so backend/endpoint
-  # are irrelevant to them and omitted from their rendered config).
-  fleet:
-    enabled: false
-    backend: fleetmetadatacache
-    endpoint: "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443"
-    # caSecretName: fmc-ca-bundle   # Secret key: ca.crt (optional; verifies the endpoint's TLS cert)
-    # tokenSecretName: acm-search-token   # Secret key: token (typically required for backend: acm)
-    mcpGatewayEndpoint: "https://mcp-gateway.example.com/sse"
-    mcpGatewayType: eaigw   # or "kuadrant"
-    # mcpGatewayNamespace: managed-clusters   # optional shared fallback; scopes the MCP Gateway CRD watch (and its RBAC) to one namespace for FleetMetadataCache and SignalProcessing instead of cluster-wide. APIFrontend/EffectivenessMonitor always watch cluster-wide (their upstream ClusterRegistry construction has no namespace knob yet) and ignore this field; override per-component with fleetMetadataCache.mcpGatewayNamespace / signalProcessing.mcpGatewayNamespace below.
-    # oauth2:
-    #   enabled: true
-    #   tokenURL: "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token"
-    #   credentialsSecretRef: fleet-oauth2-creds   # Secret keys: client-id, client-secret
-    #   scopes: ["openid", "groups"]
-    #
-    # A federated IdP (e.g. Keycloak) can issue distinct per-service OAuth2
-    # client registrations against the same tokenURL above. Override
-    # credentialsSecretRef per component with gateway.fleetOAuth2CredentialsSecretRef
-    # / remediationOrchestrator.fleetOAuth2CredentialsSecretRef /
-    # signalProcessing.fleetOAuth2CredentialsSecretRef /
-    # apiFrontend.fleetOAuth2CredentialsSecretRef /
-    # effectivenessMonitor.fleetOAuth2CredentialsSecretRef /
-    # kubernautAgent.fleetOAuth2CredentialsSecretRef (see below) —
-    # each falls back to the shared fleet.oauth2.credentialsSecretRef when unset.
-
-  # Operator-managed Fleet Metadata Cache (FMC) service (ADR-068), optional.
-  # Most deployments that enable spec.fleet above use backend: acm (an
-  # existing RHACM Search installation) instead of standing up FMC — only
-  # enable this when backend: fleetmetadatacache above and you want the
-  # operator to run FMC itself. When enabled with fleet.endpoint left unset,
-  # the operator auto-derives FMC's in-cluster URL.
-  # fleetMetadataCache:
-  #   enabled: false
-  #   mcpGatewayNamespace: managed-clusters   # optional; overrides fleet.mcpGatewayNamespace for FMC only. When it (or the shared fallback above) resolves non-empty, the operator grants a namespace-scoped Role/RoleBinding instead of a cluster-scoped ClusterRole (least privilege).
-  #   fleetOAuth2CredentialsSecretRef: fmc-oauth2-creds   # optional; overrides fleet.oauth2.credentialsSecretRef for FMC only
-  #   syncInterval: "30s"
-  #   keyTTL: "45s"
+  # Fleet federation (multi-cluster reads via MCP Gateway, and the
+  # optional operator-managed Fleet Metadata Cache service, ADR-068) moved
+  # to v1alpha2-only as of the v1alpha2 migration -- see
+  # docs/design/ADR-CRD-001-v1alpha2-redesign.md. spec.fleet /
+  # spec.fleetMetadataCache / the per-component fleetOAuth2CredentialsSecretRef
+  # and mcpGatewayNamespace overrides that used to live here have no
+  # v1alpha1 equivalent; configure Fleet via
+  # config/samples/v1alpha2_kubernaut.yaml instead.
 
   # Named LLM profiles, referenced by name from kubernautAgent.llmProfileRef,
   # apiFrontend.llmProfileRef, apiFrontend.severityTriage.llmProfileRef, and
@@ -149,7 +108,6 @@ spec:
       burst: 100
     shutdown:
       drainSeconds: 15
-    # fleetOAuth2CredentialsSecretRef: ka-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for KubernautAgent only (used only when fleet.enabled: true, for its list_clusters/list_tools_for_cluster MCP tools, ADR-068 decision #11)
 
   apiFrontend:
     enabled: true
@@ -187,7 +145,6 @@ spec:
           groups: ["platform-engineering"]
         - role: remediation-approver
           groups: ["platform-engineering"]
-    # fleetOAuth2CredentialsSecretRef: af-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for APIFrontend only (used only when fleet.enabled: true, for its list_clusters MCP tool)
 
   gateway:
     enabled: false
@@ -201,7 +158,6 @@ spec:
       cors:
         allowCredentials: false
         maxAge: 300
-    # fleetOAuth2CredentialsSecretRef: gateway-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for Gateway only
 
   dataStorage:
     endpointPropagationDelay: 10s
@@ -219,8 +175,6 @@ spec:
       level: info
     policy:
       configMapName: signalprocessing-policy
-    # mcpGatewayNamespace: managed-clusters   # optional; overrides fleet.mcpGatewayNamespace for SignalProcessing only (used only when fleet.enabled: true, for cluster-label classification via the MCP Gateway CRD)
-    # fleetOAuth2CredentialsSecretRef: sp-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for SignalProcessing only
 
   remediationOrchestrator:
     dryRun: false
@@ -257,7 +211,6 @@ spec:
       gitOpsSyncDelay: 10s
       operatorReconcileDelay: 1m
       proactiveAlertDelay: 5m
-    # fleetOAuth2CredentialsSecretRef: ro-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for RemediationOrchestrator only
 
   workflowExecution:
     cooldownPeriod: 1m
@@ -271,7 +224,6 @@ spec:
     assessment:
       stabilizationWindow: 30s
       validityWindow: 300s
-    # fleetOAuth2CredentialsSecretRef: em-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for EffectivenessMonitor only (used only when fleet.enabled: true, for remote-cluster effectiveness reads)
 
   notification:
     logging:
