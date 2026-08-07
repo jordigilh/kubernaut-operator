@@ -138,43 +138,24 @@ var validPhaseModelKeys = map[string]bool{
 	"validation":         true,
 }
 
-// lookupProfileRef looks up ref in profiles for the field at fieldPath, and
-// produces the standard "undefined profile" error shared by every
-// llmProfileRef/phaseModels field when ref doesn't match any key -- so the
+// lookupProfileRef checks that ref matches a key in profiles for the field
+// at fieldPath, and produces the standard "undefined profile" error shared
+// by every llmProfileRef/phaseModels field when it doesn't -- so the
 // message stays consistent without re-deriving it at each call site.
 //
 // allowEmpty controls how an empty ref is treated: fields like
 // apiFrontend.llmProfileRef fall back to another profile when empty (not an
-// error; ok=false, err=nil), while phaseModels values name no profile at all
-// when empty and are rejected the same as any other non-matching name.
-func lookupProfileRef(profiles map[string]kubernautv1alpha1.LLMProfileSpec, ref, fieldPath string, allowEmpty bool) (profile kubernautv1alpha1.LLMProfileSpec, ok bool, err error) {
+// error), while phaseModels values name no profile at all when empty and
+// are rejected the same as any other non-matching name.
+func lookupProfileRef(profiles map[string]kubernautv1alpha1.LLMProfileSpec, ref, fieldPath string, allowEmpty bool) error {
 	if ref == "" && allowEmpty {
-		return kubernautv1alpha1.LLMProfileSpec{}, false, nil
+		return nil
 	}
-	profile, ok = profiles[ref]
-	if !ok {
-		return kubernautv1alpha1.LLMProfileSpec{}, false, fmt.Errorf(
+	if _, ok := profiles[ref]; !ok {
+		return fmt.Errorf(
 			"%s: references undefined profile %q — must match a key in spec.llmProfiles", fieldPath, ref)
 	}
-	return profile, true, nil
-}
-
-// vertexADCCredentialsSecretErr builds the error for a severity-triage
-// profile that resolves to a different credentialsSecretName than API
-// Frontend's own resolved profile when both use vertex_ai. Unlike every
-// other provider, AF's Vertex AI client construction
-// (cmd/apifrontend/backend_deps.go's newGenAITriagerForVertex and
-// newAnthropicTriagerForVertex) never reads a profile's own APIKey/
-// APIKeyFile — it relies solely on ambient Application Default Credentials,
-// shared process-wide (kubernaut#1731). Two vertex_ai profiles with
-// different credentialsSecretName would silently both authenticate with
-// whichever ADC happens to be ambient rather than each with its own Secret,
-// so this specific combination stays blocked until kubernaut#1731 lands.
-func vertexADCCredentialsSecretErr(fieldPath, ref, gotSecret, baseFieldPath, baseRef, wantSecret string) error {
-	return fmt.Errorf(
-		"%s: profile %q has credentialsSecretName %q, which must match %s's profile %q credentialsSecretName %q when both use vertex_ai — "+
-			"API Frontend's Vertex AI client relies on ambient Application Default Credentials rather than per-profile credentials (kubernaut#1731), so cross-credential vertex_ai overrides are not yet supported",
-		fieldPath, ref, gotSecret, baseFieldPath, baseRef, wantSecret)
+	return nil
 }
 
 // validateLLMProfileRefs validates that every llmProfileRef (KA, AF,
@@ -201,7 +182,7 @@ func validateLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut) []error {
 	if kaRef == "" {
 		errs = append(errs, fmt.Errorf("%s: required — reference a profile defined in spec.llmProfiles", kaBase))
 	}
-	if _, _, err := lookupProfileRef(profiles, kaRef, kaBase, true); err != nil {
+	if err := lookupProfileRef(profiles, kaRef, kaBase, true); err != nil {
 		errs = append(errs, err)
 	}
 
@@ -211,7 +192,7 @@ func validateLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut) []error {
 			errs = append(errs, fmt.Errorf("%s: invalid phase key %q — must be one of: rca, workflow_discovery, validation", phaseBase, phase))
 			continue
 		}
-		if _, _, err := lookupProfileRef(profiles, ref, phaseBase, false); err != nil {
+		if err := lookupProfileRef(profiles, ref, phaseBase, false); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -223,49 +204,33 @@ func validateLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut) []error {
 	return errs
 }
 
-// validateAFLLMProfileRefs validates both of API Frontend's own llmProfileRef
-// fields: its main agent connection (apiFrontend.llmProfileRef) and its
-// independent severity-triage override (apiFrontend.severityTriage.llmProfileRef).
+// validateAFLLMProfileRefs validates that both of API Frontend's own
+// llmProfileRef fields resolve to defined profiles: its main agent
+// connection (apiFrontend.llmProfileRef) and its independent
+// severity-triage override (apiFrontend.severityTriage.llmProfileRef).
 //
-// #234: cross-credential severity-triage overrides are accepted for every
-// provider except vertex_ai-vs-vertex_ai. AF resolves severityTriage.llm
-// independently of agent.llm (resolveLLMKey() in
-// pkg/apifrontend/config/config.go), so non-vertex overrides with a
-// different credentialsSecretName are already safe today. vertex_ai is the
-// one exception: AF's Vertex AI client construction never reads a
-// profile's own APIKey/APIKeyFile and relies solely on ambient Application
-// Default Credentials (kubernaut#1731), so when both severityTriage's
-// resolved profile and AF's own resolved profile are vertex_ai, they must
-// still share a credentialsSecretName to avoid silently misauthenticating.
+// #234 unblocked cross-credential severity-triage overrides for every
+// provider except vertex_ai-vs-vertex_ai, because AF's Vertex AI client
+// construction relied solely on ambient Application Default Credentials
+// rather than a profile's own APIKey/APIKeyFile (kubernaut#1731). #279
+// removes that restriction now that kubernaut#1731 is fixed upstream and
+// afAgentLLMConfig/afSeverityTriageConfig (configmaps.go) render an
+// explicit apiKeyFile for vertex_ai profiles too, mirroring every other
+// provider -- cross-credential vertex_ai-vs-vertex_ai overrides are safe
+// like any other combination.
 func validateAFLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut, profiles map[string]kubernautv1alpha1.LLMProfileSpec) []error {
 	var errs []error
 
-	if _, _, err := lookupProfileRef(profiles, kn.Spec.APIFrontend.LLMProfileRef, "spec.apiFrontend.llmProfileRef", true); err != nil {
+	if err := lookupProfileRef(profiles, kn.Spec.APIFrontend.LLMProfileRef, "spec.apiFrontend.llmProfileRef", true); err != nil {
 		errs = append(errs, err)
 	}
 
-	st := kn.Spec.APIFrontend.SeverityTriage
-	if st == nil {
-		return errs
+	if st := kn.Spec.APIFrontend.SeverityTriage; st != nil {
+		if err := lookupProfileRef(profiles, st.LLMProfileRef, "spec.apiFrontend.severityTriage.llmProfileRef", true); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
-	const stBase = "spec.apiFrontend.severityTriage.llmProfileRef"
-	stProfile, stOK, err := lookupProfileRef(profiles, st.LLMProfileRef, stBase, true)
-	if err != nil {
-		return append(errs, err)
-	}
-	if !stOK {
-		return errs // empty severityTriage.llmProfileRef: inherits AF's resolved profile, nothing further to check.
-	}
-
-	effectiveAFRef := AFLLMProfileRef(kn)
-	afProfile, afOK := profiles[effectiveAFRef]
-	sameCreds := afOK && stProfile.CredentialsSecretName == afProfile.CredentialsSecretName
-	bothVertex := afOK && stProfile.Provider == LLMProviderVertexAI && afProfile.Provider == LLMProviderVertexAI
-	if afOK && !sameCreds && bothVertex {
-		errs = append(errs, vertexADCCredentialsSecretErr(
-			stBase, st.LLMProfileRef, stProfile.CredentialsSecretName, "API Frontend's resolved profile", effectiveAFRef, afProfile.CredentialsSecretName))
-	}
 	return errs
 }
 
