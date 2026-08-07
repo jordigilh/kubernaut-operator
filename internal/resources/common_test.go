@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 const (
@@ -123,32 +124,37 @@ var testFMCEnabled = true
 // pointer) can point at a stable true value across test helpers.
 var testFleetEnabled = true
 
-// testKubernautWithFleetMCP returns a Kubernaut with spec.fleet enabled for
-// MCP Gateway remote reads only (mcpGatewayEndpoint/mcpGatewayType set, no
-// backend/endpoint) -- the shape SP/AF/EM care about (#224), as opposed to
-// testKubernautWithFMC's GW/RO/FMC-oriented backend+endpoint shape.
-func testKubernautWithFleetMCP() *kubernautv1alpha1.Kubernaut {
+// testKubernautWithFleetMCP returns a Kubernaut plus its v1alpha2 view with
+// spec.fleet enabled for MCP Gateway remote reads only (mcpGatewayEndpoint/
+// mcpGatewayType set, no backend/endpoint) -- the shape SP/AF/EM care about
+// (#224), as opposed to testKubernautWithFMC's GW/RO/FMC-oriented
+// backend+endpoint shape. Fleet moved to v1alpha2-only (fleet-branch-remove-
+// v1alpha1), so callers needing Fleet config must use the returned knV2
+// (kn itself carries no Fleet data) wherever a resource builder takes both.
+func testKubernautWithFleetMCP() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
 	kn := testKubernaut()
-	kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+	knV2 := testKnV2(kn)
+	knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 		Enabled:            &testFleetEnabled,
 		MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse",
 		MCPGatewayType:     "eaigw",
 	}
-	return kn
+	return kn, knV2
 }
 
-func testKubernautWithFMC() *kubernautv1alpha1.Kubernaut {
+func testKubernautWithFMC() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
 	kn := testKubernaut()
-	kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+	knV2 := testKnV2(kn)
+	knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 		Enabled: &testFMCEnabled, Backend: "fleetmetadatacache",
 		MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-		OAuth2: kubernautv1alpha1.OAuth2Spec{
+		OAuth2: kubernautv1alpha2.OAuth2Spec{
 			Enabled: true, TokenURL: "https://keycloak.example.com/token",
 			CredentialsSecretRef: "fleet-oauth2-creds",
 		},
 	}
-	kn.Spec.FleetMetadataCache = kubernautv1alpha1.FleetMetadataCacheSpec{Enabled: &testFMCEnabled}
-	return kn
+	knV2.Spec.FleetMetadataCache = kubernautv1alpha2.FleetMetadataCacheSpec{Enabled: &testFMCEnabled}
+	return kn, knV2
 }
 
 // testPrimaryProfile is the profile name testKubernaut()/testKubernautWithAF()
@@ -170,6 +176,18 @@ func mutateLLMProfile(kn *kubernautv1alpha1.Kubernaut, fn func(*kubernautv1alpha
 	p := kn.Spec.LLMProfiles[testPrimaryProfile]
 	fn(&p)
 	kn.Spec.LLMProfiles[testPrimaryProfile] = p
+}
+
+// testKnV2 derives the v1alpha2 view of kn via the real conversion webhook
+// logic, so test fixtures for non-Fleet fields don't need a hand-maintained
+// parallel v1alpha2 fixture. Fleet/FleetMetadataCache no longer exist on
+// v1alpha1 (moved to v1alpha2-only), so callers needing Fleet config must
+// set it directly on the returned knV2, exactly as the controller's
+// Reconcile does in production.
+func testKnV2(kn *kubernautv1alpha1.Kubernaut) *kubernautv1alpha2.Kubernaut {
+	knV2 := &kubernautv1alpha2.Kubernaut{}
+	ExpectWithOffset(1, kn.ConvertTo(knV2)).To(Succeed())
+	return knV2
 }
 
 func testKubernautWithValkeyTLS() *kubernautv1alpha1.Kubernaut {
@@ -285,26 +303,26 @@ var _ = Describe("URL helpers", func() {
 var _ = Describe("ActiveComponents", func() {
 	It("includes gateway when enabled by default", func() {
 		kn := testKubernaut()
-		Expect(ActiveComponents(kn)).To(ContainElement(ComponentGateway))
+		Expect(ActiveComponents(kn, testKnV2(kn))).To(ContainElement(ComponentGateway))
 	})
 
 	It("excludes gateway when disabled", func() {
 		kn := testKubernaut()
 		disabled := false
 		kn.Spec.Gateway.Enabled = &disabled
-		Expect(ActiveComponents(kn)).NotTo(ContainElement(ComponentGateway))
+		Expect(ActiveComponents(kn, testKnV2(kn))).NotTo(ContainElement(ComponentGateway))
 	})
 
 	It("includes apifrontend when enabled by default", func() {
 		kn := testKubernautWithAF()
-		Expect(ActiveComponents(kn)).To(ContainElement(ComponentAPIFrontend))
+		Expect(ActiveComponents(kn, testKnV2(kn))).To(ContainElement(ComponentAPIFrontend))
 	})
 
 	It("excludes apifrontend when disabled", func() {
 		kn := testKubernautWithAF()
 		disabled := false
 		kn.Spec.APIFrontend.Enabled = &disabled
-		Expect(ActiveComponents(kn)).NotTo(ContainElement(ComponentAPIFrontend))
+		Expect(ActiveComponents(kn, testKnV2(kn))).NotTo(ContainElement(ComponentAPIFrontend))
 	})
 })
 

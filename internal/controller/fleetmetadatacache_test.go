@@ -30,25 +30,54 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
 // newCRWithFMCEnabled returns a minimal CR (route disabled) with
 // spec.fleet and spec.fleetMetadataCache configured and enabled -- the
-// minimum needed to pass validateFleetMetadataCache (#200).
+// minimum needed to pass validateFleetMetadataCache (#200). Fleet moved to
+// v1alpha2-only (fleet-branch-remove-v1alpha1): the returned CR itself
+// carries no Fleet data (v1alpha1 has no field for it); callers must create
+// it via k8sClient and then apply enableFleetMetadataCache to configure
+// Fleet on the v1alpha2 storage view.
 func newCRWithFMCEnabled() *kubernautv1alpha1.Kubernaut {
-	cr := newCRWithRouteDisabled()
+	return newCRWithRouteDisabled()
+}
+
+// defaultFMCFleetSpec is the spec.fleet configuration newCRWithFMCEnabled()
+// configured before Fleet moved to v1alpha2-only (backend=fleetmetadatacache,
+// the consuming configuration).
+func defaultFMCFleetSpec() kubernautv1alpha2.FleetSpec {
 	t := true
-	cr.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+	return kubernautv1alpha2.FleetSpec{
 		Enabled: &t, Backend: "fleetmetadatacache",
 		MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-		OAuth2: kubernautv1alpha1.OAuth2Spec{
+		OAuth2: kubernautv1alpha2.OAuth2Spec{
 			Enabled: true, TokenURL: "https://keycloak.example.com/token",
 			CredentialsSecretRef: "fleet-oauth2-creds",
 		},
 	}
-	cr.Spec.FleetMetadataCache = kubernautv1alpha1.FleetMetadataCacheSpec{Enabled: &t}
-	return cr
+}
+
+// enableFleetMetadataCache fetches the singleton's v1alpha2 storage view
+// and configures spec.fleet/spec.fleetMetadataCache for FMC, matching what
+// newCRWithFMCEnabled() configured before Fleet moved to v1alpha2-only.
+func enableFleetMetadataCache(ctx context.Context) {
+	enableFleetMetadataCacheWithFleet(ctx, defaultFMCFleetSpec())
+}
+
+// enableFleetMetadataCacheWithFleet is like enableFleetMetadataCache but
+// lets the caller override spec.fleet (e.g. to test a missing
+// mcpGatewayEndpoint or a non-fleetmetadatacache backend) while still
+// enabling spec.fleetMetadataCache.
+func enableFleetMetadataCacheWithFleet(ctx context.Context, fleet kubernautv1alpha2.FleetSpec) {
+	t := true
+	knV2 := &kubernautv1alpha2.Kubernaut{}
+	Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())
+	knV2.Spec.Fleet = fleet
+	knV2.Spec.FleetMetadataCache = kubernautv1alpha2.FleetMetadataCacheSpec{Enabled: &t}
+	Expect(k8sClient.Update(ctx, knV2)).To(Succeed())
 }
 
 var _ = Describe("Kubernaut Lifecycle", func() {
@@ -66,6 +95,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("creates FMC Deployment, Service, ConfigMap, ClusterRole, and CRB when enabled", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
+			enableFleetMetadataCache(ctx)
 			reconcileToRunning(ctx)
 
 			dep := &appsv1.Deployment{}
@@ -139,6 +169,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("includes fleetmetadatacache in per-service status when reaching Running", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
+			enableFleetMetadataCache(ctx)
 			reconcileToRunning(ctx)
 
 			kn := &kubernautv1alpha1.Kubernaut{}
@@ -159,6 +190,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithFMCEnabled()
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			enableFleetMetadataCache(ctx)
 			reconcileToRunning(ctx)
 
 			dep := &appsv1.Deployment{}
@@ -167,7 +199,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}, dep)).To(Succeed(), "sanity: FMC Deployment should exist before disabling")
 
 			By("disabling fleetMetadataCache")
-			existing := &kubernautv1alpha1.Kubernaut{}
+			existing := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), existing)).To(Succeed())
 			f := false
 			existing.Spec.FleetMetadataCache.Enabled = &f
@@ -217,8 +249,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("rejects the CR when fleetMetadataCache is enabled but spec.fleet.mcpGatewayEndpoint is missing", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithFMCEnabled()
-			cr.Spec.Fleet.MCPGatewayEndpoint = ""
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			fleet := defaultFMCFleetSpec()
+			fleet.MCPGatewayEndpoint = ""
+			enableFleetMetadataCacheWithFleet(ctx, fleet)
 
 			r := newReconciler()
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -234,10 +268,12 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("emits a FleetMetadataCacheUnused warning event when enabled but spec.fleet.backend is not fleetmetadatacache", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithFMCEnabled()
-			cr.Spec.Fleet.Backend = "acm"
-			cr.Spec.Fleet.Endpoint = "https://search-search-api.example.com:4010"
-			cr.Spec.Fleet.TokenSecretName = "acm-search-token"
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			fleet := defaultFMCFleetSpec()
+			fleet.Backend = "acm"
+			fleet.Endpoint = "https://search-search-api.example.com:4010"
+			fleet.TokenSecretName = "acm-search-token"
+			enableFleetMetadataCacheWithFleet(ctx, fleet)
 
 			r := reconcileToRunning(ctx)
 
@@ -259,6 +295,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("does not emit FleetMetadataCacheUnused when backend=fleetmetadatacache (the consuming configuration)", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
+			enableFleetMetadataCache(ctx)
 
 			r := reconcileToRunning(ctx)
 

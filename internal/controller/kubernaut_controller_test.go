@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
@@ -501,14 +502,25 @@ var _ = Describe("Kubernaut Controller", func() {
 		It("KFG-060 [CM-6]: a Kubernaut CR with spec.fleet.enabled and mcpGatewayType=kuadrant reconciles successfully and KA's rendered ConfigMap carries the gatewayType through", func() {
 			createBYOSecrets(ctx)
 			kn := newCRWithRouteDisabled()
-			kn.Spec.Fleet = kubernautv1alpha1.FleetSpec{
+			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
+
+			// Fleet moved to v1alpha2-only (fleet-branch-remove-v1alpha1):
+			// set it via the v1alpha2 storage view rather than the
+			// v1alpha1 create payload.
+			knV2 := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:            &enabled,
 				Backend:            "fleetmetadatacache",
 				Endpoint:           "https://fmc.kubernaut.svc:8443",
 				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse",
 				MCPGatewayType:     "kuadrant",
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
+					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+					CredentialsSecretRef: "fleet-oauth2-creds",
+				},
 			}
-			Expect(k8sClient.Create(ctx, kn)).To(Succeed(),
+			Expect(k8sClient.Update(ctx, knV2)).To(Succeed(),
 				"CM-6: a legitimate spec.fleet configuration must be accepted end-to-end")
 
 			reconcileToDeployPhase(ctx)

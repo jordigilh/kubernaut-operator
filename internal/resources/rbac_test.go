@@ -25,6 +25,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 const (
@@ -37,13 +38,13 @@ const (
 var _ = Describe("ClusterRoles", func() {
 	It("returns exactly 17 roles (14 base + 2 monitoring + 1 console-access)", func() {
 		kn := testKubernaut()
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		Expect(roles).To(HaveLen(17), "ClusterRoles() should return exactly 17 roles (14 base + 2 monitoring + 1 console-access, #289), got %d", len(roles))
 	})
 
 	It("contains expected role names", func() {
 		kn := testKubernaut()
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		names := make(map[string]bool, len(roles))
 		for _, r := range roles {
 			names[r.Name] = true
@@ -75,7 +76,7 @@ var _ = Describe("ClusterRoles", func() {
 
 	It("include common managed-by labels", func() {
 		kn := testKubernaut()
-		for _, cr := range ClusterRoles(kn) {
+		for _, cr := range ClusterRoles(kn, testKnV2(kn)) {
 			Expect(cr.Labels["app.kubernetes.io/managed-by"]).To(Equal(testOperatorManagedByValue),
 				"ClusterRole %q missing managed-by label", cr.Name)
 		}
@@ -84,7 +85,7 @@ var _ = Describe("ClusterRoles", func() {
 	Describe("GatewayClusterRole", func() {
 		It("has PVC and HPA rules", func() {
 			kn := testKubernaut()
-			roles := ClusterRoles(kn)
+			roles := ClusterRoles(kn, testKnV2(kn))
 			var gw *rbacv1.ClusterRole
 			for _, r := range roles {
 				if r.Name == kn.Namespace+"-gateway-role" {
@@ -123,7 +124,7 @@ var _ = Describe("ClusterRoles", func() {
 
 		It("has owner-chain resolution rules", func() {
 			kn := testKubernaut()
-			roles := ClusterRoles(kn)
+			roles := ClusterRoles(kn, testKnV2(kn))
 			var gw *rbacv1.ClusterRole
 			for _, r := range roles {
 				if r.Name == kn.Namespace+"-gateway-role" {
@@ -159,7 +160,7 @@ var _ = Describe("ClusterRoles", func() {
 	Describe("KubernautAgent investigator", func() {
 		It("has service mesh and GitOps rules", func() {
 			kn := testKubernaut()
-			roles := ClusterRoles(kn)
+			roles := ClusterRoles(kn, testKnV2(kn))
 			var investigator *rbacv1.ClusterRole
 			for _, r := range roles {
 				if r.Name == kn.Namespace+"-kubernaut-agent-investigator" {
@@ -192,7 +193,7 @@ var _ = Describe("ClusterRoles", func() {
 
 		It("has OCP and core Kubernetes rules", func() {
 			kn := testKubernaut()
-			roles := ClusterRoles(kn)
+			roles := ClusterRoles(kn, testKnV2(kn))
 			var investigator *rbacv1.ClusterRole
 			for _, r := range roles {
 				if r.Name == kn.Namespace+"-kubernaut-agent-investigator" {
@@ -232,7 +233,7 @@ var _ = Describe("ClusterRoles", func() {
 
 		It("has events with create and patch verbs", func() {
 			kn := testKubernaut()
-			roles := ClusterRoles(kn)
+			roles := ClusterRoles(kn, testKnV2(kn))
 			var investigator *rbacv1.ClusterRole
 			for _, r := range roles {
 				if r.Name == kn.Namespace+"-kubernaut-agent-investigator" {
@@ -258,7 +259,7 @@ var _ = Describe("ClusterRoles", func() {
 
 		It("has get permission on nodes/proxy for kubelet proxy API access", func() {
 			kn := testKubernaut()
-			roles := ClusterRoles(kn)
+			roles := ClusterRoles(kn, testKnV2(kn))
 			var investigator *rbacv1.ClusterRole
 			for _, r := range roles {
 				if r.Name == kn.Namespace+"-kubernaut-agent-investigator" {
@@ -286,7 +287,7 @@ var _ = Describe("ClusterRoles", func() {
 	Describe("Workflow runner", func() {
 		It("has mesh and GitOps rules", func() {
 			kn := testKubernaut()
-			roles := ClusterRoles(kn)
+			roles := ClusterRoles(kn, testKnV2(kn))
 			var runner *rbacv1.ClusterRole
 			for _, r := range roles {
 				if r.Name == kn.Namespace+"-workflow-runner" {
@@ -318,7 +319,7 @@ var _ = Describe("ClusterRoles", func() {
 	Describe("EffectivenessMonitor controller", func() {
 		It("has owner-chain resolution rules", func() {
 			kn := testKubernaut()
-			roles := ClusterRoles(kn)
+			roles := ClusterRoles(kn, testKnV2(kn))
 			var em *rbacv1.ClusterRole
 			for _, r := range roles {
 				if r.Name == kn.Namespace+"-effectivenessmonitor-controller" {
@@ -354,7 +355,7 @@ var _ = Describe("ClusterRoles", func() {
 	Describe("Data storage client", func() {
 		It("has expanded verbs", func() {
 			kn := testKubernaut()
-			roles := ClusterRoles(kn)
+			roles := ClusterRoles(kn, testKnV2(kn))
 			var dsClient *rbacv1.ClusterRole
 			for _, r := range roles {
 				if r.Name == kn.Namespace+"-data-storage-client" {
@@ -380,7 +381,7 @@ var _ = Describe("ClusterRoles", func() {
 var _ = Describe("ClusterRoleBindings", func() {
 	It("restricts subject namespaces", func() {
 		kn := testKubernaut()
-		crbs := ClusterRoleBindings(kn)
+		crbs := ClusterRoleBindings(kn, testKnV2(kn))
 
 		allowedNamespaces := map[string]bool{
 			kn.Namespace:             true,
@@ -400,7 +401,7 @@ var _ = Describe("ClusterRoleBindings", func() {
 
 	It("binds workflow runner to the workflow namespace", func() {
 		kn := testKubernaut()
-		crbs := ClusterRoleBindings(kn)
+		crbs := ClusterRoleBindings(kn, testKnV2(kn))
 		ns := kn.Namespace
 
 		wantName := ns + "-workflow-runner-binding"
@@ -428,7 +429,7 @@ var _ = Describe("ClusterRoleBindings", func() {
 
 		BeforeEach(func() {
 			kn := testKubernaut()
-			crbs := ClusterRoleBindings(kn)
+			crbs := ClusterRoleBindings(kn, testKnV2(kn))
 			ns = kn.Namespace
 			crbMap = make(map[string]*rbacv1.ClusterRoleBinding, len(crbs))
 			for _, crb := range crbs {
@@ -496,7 +497,7 @@ var _ = Describe("DataStorageClientRoleBindings", func() {
 var _ = Describe("NamespaceRoles", func() {
 	It("all grant secrets and configmaps access", func() {
 		kn := testKubernaut()
-		roles := NamespaceRoles(kn)
+		roles := NamespaceRoles(kn, testKnV2(kn))
 
 		Expect(roles).To(HaveLen(11), "NamespaceRoles() should return 11, got %d", len(roles))
 
@@ -521,8 +522,8 @@ var _ = Describe("NamespaceRoles", func() {
 var _ = Describe("NamespaceRoleBindings", func() {
 	It("match NamespaceRoles by name", func() {
 		kn := testKubernaut()
-		roles := NamespaceRoles(kn)
-		rbs := NamespaceRoleBindings(kn)
+		roles := NamespaceRoles(kn, testKnV2(kn))
+		rbs := NamespaceRoleBindings(kn, testKnV2(kn))
 
 		Expect(rbs).To(HaveLen(len(roles)),
 			"NamespaceRoleBindings count %d != NamespaceRoles count %d", len(rbs), len(roles))
@@ -1112,7 +1113,7 @@ var _ = Describe("ConsoleAccessClusterRoleBinding", func() {
 var _ = Describe("APIFrontend ClusterRole", func() {
 	It("is included when AF is enabled", func() {
 		kn := testKubernautWithAF()
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		found := false
 		for _, r := range roles {
 			if r.Name == clusterRoleName(kn, "apifrontend-role") {
@@ -1125,7 +1126,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 
 	It("grants InvestigationSession CRUD under kubernaut.ai API group", func() {
 		kn := testKubernautWithAF()
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		var afRole *rbacv1.ClusterRole
 		for _, r := range roles {
 			if r.Name == clusterRoleName(kn, "apifrontend-role") {
@@ -1155,7 +1156,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 
 	It("grants expanded remediationrequests and remediationapprovalrequests permissions", func() {
 		kn := testKubernautWithAF()
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		var afRole *rbacv1.ClusterRole
 		for _, r := range roles {
 			if r.Name == clusterRoleName(kn, "apifrontend-role") {
@@ -1185,7 +1186,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 
 	It("grants core resource read access for kubectl_get/kubectl_list tools", func() {
 		kn := testKubernautWithAF()
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		var afRole *rbacv1.ClusterRole
 		for _, r := range roles {
 			if r.Name == clusterRoleName(kn, "apifrontend-role") {
@@ -1223,7 +1224,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 
 	It("has a matching ClusterRoleBinding when AF is enabled", func() {
 		kn := testKubernautWithAF()
-		bindings := ClusterRoleBindings(kn)
+		bindings := ClusterRoleBindings(kn, testKnV2(kn))
 		roleName := clusterRoleName(kn, "apifrontend-role")
 		found := false
 		for _, crb := range bindings {
@@ -1241,12 +1242,12 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		kn := testKubernautWithAF()
 		disabled := false
 		kn.Spec.APIFrontend.Enabled = &disabled
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		for _, r := range roles {
 			Expect(r.Name).NotTo(Equal(clusterRoleName(kn, "apifrontend-role")),
 				"apifrontend ClusterRole should not be present when AF is disabled")
 		}
-		bindings := ClusterRoleBindings(kn)
+		bindings := ClusterRoleBindings(kn, testKnV2(kn))
 		for _, crb := range bindings {
 			Expect(crb.RoleRef.Name).NotTo(Equal(clusterRoleName(kn, "apifrontend-role")),
 				"apifrontend CRB should not be present when AF is disabled")
@@ -1257,12 +1258,12 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		kn := testKubernautWithAF()
 		disabled := false
 		kn.Spec.Gateway.Enabled = &disabled
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		for _, r := range roles {
 			Expect(r.Name).NotTo(Equal(clusterRoleName(kn, "gateway-role")),
 				"gateway ClusterRole should not be present when Gateway is disabled")
 		}
-		bindings := ClusterRoleBindings(kn)
+		bindings := ClusterRoleBindings(kn, testKnV2(kn))
 		for _, crb := range bindings {
 			Expect(crb.RoleRef.Name).NotTo(Equal(clusterRoleName(kn, "gateway-role")),
 				"gateway CRB should not be present when Gateway is disabled")
@@ -1271,14 +1272,14 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 
 	It("includes gateway ClusterRole and CRB when Gateway is enabled by default", func() {
 		kn := testKubernautWithAF()
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		roleNames := make([]string, 0, len(roles))
 		for _, r := range roles {
 			roleNames = append(roleNames, r.Name)
 		}
 		Expect(roleNames).To(ContainElement(clusterRoleName(kn, "gateway-role")))
 
-		bindings := ClusterRoleBindings(kn)
+		bindings := ClusterRoleBindings(kn, testKnV2(kn))
 		crbRoleRefs := make([]string, 0, len(bindings))
 		for _, crb := range bindings {
 			crbRoleRefs = append(crbRoleRefs, crb.RoleRef.Name)
@@ -1299,7 +1300,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 
 	It("includes subjectaccessreviews/create permission", func() {
 		kn := testKubernautWithAF()
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		var afRole *rbacv1.ClusterRole
 		for _, r := range roles {
 			if r.Name == clusterRoleName(kn, "apifrontend-role") {
@@ -1328,7 +1329,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 
 	It("grants remediationrequests/status get+update+patch for cancel flow", func() {
 		kn := testKubernautWithAF()
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		var afRole *rbacv1.ClusterRole
 		for _, r := range roles {
 			if r.Name == clusterRoleName(kn, "apifrontend-role") {
@@ -1354,7 +1355,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 
 	It("does not grant patch on investigationsessions (AC-6 least privilege)", func() {
 		kn := testKubernautWithAF()
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		var afRole *rbacv1.ClusterRole
 		for _, r := range roles {
 			if r.Name == clusterRoleName(kn, "apifrontend-role") {
@@ -1378,7 +1379,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 
 	It("includes remediationrequests with full CRUD+watch verbs", func() {
 		kn := testKubernautWithAF()
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		var afRole *rbacv1.ClusterRole
 		for _, r := range roles {
 			if r.Name == clusterRoleName(kn, "apifrontend-role") {
@@ -1407,7 +1408,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 
 	It("includes aianalyses read-only access for kubernaut_await_session", func() {
 		kn := testKubernautWithAF()
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		var afRole *rbacv1.ClusterRole
 		for _, r := range roles {
 			if r.Name == clusterRoleName(kn, "apifrontend-role") {
@@ -1433,7 +1434,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 
 	It("includes effectivenessassessments read-only access for status/subscribe EA streaming (#176)", func() {
 		kn := testKubernautWithAF()
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		var afRole *rbacv1.ClusterRole
 		for _, r := range roles {
 			if r.Name == clusterRoleName(kn, "apifrontend-role") {
@@ -1459,7 +1460,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 
 	It("includes tokenreviews create for TokenReview auth", func() {
 		kn := testKubernautWithAF()
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		var afRole *rbacv1.ClusterRole
 		for _, r := range roles {
 			if r.Name == clusterRoleName(kn, "apifrontend-role") {
@@ -1485,7 +1486,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 
 	It("grants KubeVirt and CDI read access for VM triage", func() {
 		kn := testKubernautWithAF()
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		var afRole *rbacv1.ClusterRole
 		for _, r := range roles {
 			if r.Name == clusterRoleName(kn, "apifrontend-role") {
@@ -1507,7 +1508,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 
 	It("includes services/kubernaut-agent create for KA SAR gate (#137)", func() {
 		kn := testKubernautWithAF()
-		roles := ClusterRoles(kn)
+		roles := ClusterRoles(kn, testKnV2(kn))
 		var afRole *rbacv1.ClusterRole
 		for _, r := range roles {
 			if r.Name == clusterRoleName(kn, "apifrontend-role") {
@@ -1558,18 +1559,18 @@ var _ = Describe("mcpGatewayCRDPolicyRules", func() {
 	})
 
 	It("matches FleetMetadataCache's pre-existing rule sets exactly (extracted helper, no behavior change)", func() {
-		kn := testKubernautWithFMC()
-		Expect(fleetMetadataCacheClusterRole(kn, CommonLabels(kn)).Rules).To(Equal(mcpGatewayCRDPolicyRules("eaigw")))
+		kn, knV2 := testKubernautWithFMC()
+		Expect(fleetMetadataCacheClusterRole(kn, knV2, CommonLabels(kn)).Rules).To(Equal(mcpGatewayCRDPolicyRules("eaigw")))
 
-		kn.Spec.Fleet.MCPGatewayType = mcpGatewayTypeKuadrant
-		Expect(fleetMetadataCacheClusterRole(kn, CommonLabels(kn)).Rules).To(Equal(mcpGatewayCRDPolicyRules(mcpGatewayTypeKuadrant)))
+		knV2.Spec.Fleet.MCPGatewayType = mcpGatewayTypeKuadrant
+		Expect(fleetMetadataCacheClusterRole(kn, knV2, CommonLabels(kn)).Rules).To(Equal(mcpGatewayCRDPolicyRules(mcpGatewayTypeKuadrant)))
 	})
 })
 
 var _ = Describe("SignalProcessing fleet RBAC", func() {
 	It("omits MCP Gateway CRD rules when fleet is disabled", func() {
 		kn := testKubernaut()
-		cr := signalprocessingClusterRole(kn, CommonLabels(kn))
+		cr := signalprocessingClusterRole(kn, testKnV2(kn), CommonLabels(kn))
 		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
@@ -1578,8 +1579,8 @@ var _ = Describe("SignalProcessing fleet RBAC", func() {
 	})
 
 	It("gains MCP Gateway CRD rules when fleet enabled with mcpGatewayEndpoint set and no namespace override", func() {
-		kn := testKubernautWithFleetMCP()
-		cr := signalprocessingClusterRole(kn, CommonLabels(kn))
+		kn, knV2 := testKubernautWithFleetMCP()
+		cr := signalprocessingClusterRole(kn, knV2, CommonLabels(kn))
 		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
@@ -1589,9 +1590,9 @@ var _ = Describe("SignalProcessing fleet RBAC", func() {
 	})
 
 	It("omits MCP Gateway CRD rules from the ClusterRole when its effective mcpGatewayNamespace resolves non-empty (moved to a namespace-scoped Role instead)", func() {
-		kn := testKubernautWithFleetMCP()
-		kn.Spec.SignalProcessing.MCPGatewayNamespace = testSPMCPGatewayNamespace
-		cr := signalprocessingClusterRole(kn, CommonLabels(kn))
+		kn, knV2 := testKubernautWithFleetMCP()
+		knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testSPMCPGatewayNamespace}
+		cr := signalprocessingClusterRole(kn, knV2, CommonLabels(kn))
 		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
@@ -1600,9 +1601,9 @@ var _ = Describe("SignalProcessing fleet RBAC", func() {
 	})
 
 	It("falls back to the shared spec.fleet.mcpGatewayNamespace when signalProcessing has no override", func() {
-		kn := testKubernautWithFleetMCP()
-		kn.Spec.Fleet.MCPGatewayNamespace = testSharedMCPGatewayNamespace
-		cr := signalprocessingClusterRole(kn, CommonLabels(kn))
+		kn, knV2 := testKubernautWithFleetMCP()
+		knV2.Spec.Fleet.MCPGatewayNamespace = testSharedMCPGatewayNamespace
+		cr := signalprocessingClusterRole(kn, knV2, CommonLabels(kn))
 		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
@@ -1617,11 +1618,11 @@ var _ = Describe("SignalProcessing fleet RBAC", func() {
 // (which they don't even have a field for). Tracked upstream separately.
 var _ = Describe("APIFrontend/EffectivenessMonitor fleet RBAC", func() {
 	It("apifrontendClusterRole gains MCP Gateway CRD rules when fleet enabled with mcpGatewayEndpoint set", func() {
-		kn := testKubernautWithFleetMCP()
+		kn, knV2 := testKubernautWithFleetMCP()
 		kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
 			Auth: kubernautv1alpha1.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
-		cr := apifrontendClusterRole(kn, CommonLabels(kn))
+		cr := apifrontendClusterRole(kn, knV2, CommonLabels(kn))
 		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
@@ -1631,7 +1632,7 @@ var _ = Describe("APIFrontend/EffectivenessMonitor fleet RBAC", func() {
 
 	It("apifrontendClusterRole omits MCP Gateway CRD rules when fleet is disabled", func() {
 		kn := testKubernautWithAF()
-		cr := apifrontendClusterRole(kn, CommonLabels(kn))
+		cr := apifrontendClusterRole(kn, testKnV2(kn), CommonLabels(kn))
 		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
@@ -1640,8 +1641,8 @@ var _ = Describe("APIFrontend/EffectivenessMonitor fleet RBAC", func() {
 	})
 
 	It("effectivenessMonitorControllerClusterRole gains MCP Gateway CRD rules when fleet enabled with mcpGatewayEndpoint set", func() {
-		kn := testKubernautWithFleetMCP()
-		cr := effectivenessMonitorControllerClusterRole(kn, CommonLabels(kn))
+		kn, knV2 := testKubernautWithFleetMCP()
+		cr := effectivenessMonitorControllerClusterRole(kn, knV2, CommonLabels(kn))
 		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
@@ -1651,7 +1652,7 @@ var _ = Describe("APIFrontend/EffectivenessMonitor fleet RBAC", func() {
 
 	It("effectivenessMonitorControllerClusterRole omits MCP Gateway CRD rules when fleet is disabled", func() {
 		kn := testKubernaut()
-		cr := effectivenessMonitorControllerClusterRole(kn, CommonLabels(kn))
+		cr := effectivenessMonitorControllerClusterRole(kn, testKnV2(kn), CommonLabels(kn))
 		apiGroups := make([]string, 0, len(cr.Rules))
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
@@ -1662,16 +1663,16 @@ var _ = Describe("APIFrontend/EffectivenessMonitor fleet RBAC", func() {
 
 var _ = Describe("MCPGatewayNamespaceRBAC", func() {
 	It("returns nothing for either FMC or SignalProcessing when their effective namespace is empty", func() {
-		kn := testKubernautWithFleetMCP()
-		roles, rbs := MCPGatewayNamespaceRBAC(kn)
+		kn, knV2 := testKubernautWithFleetMCP()
+		roles, rbs := MCPGatewayNamespaceRBAC(kn, knV2)
 		Expect(roles).To(BeEmpty())
 		Expect(rbs).To(BeEmpty())
 	})
 
 	It("returns a Role/RoleBinding pair for SignalProcessing when its effective namespace resolves", func() {
-		kn := testKubernautWithFleetMCP()
-		kn.Spec.SignalProcessing.MCPGatewayNamespace = testSPMCPGatewayNamespace
-		roles, rbs := MCPGatewayNamespaceRBAC(kn)
+		kn, knV2 := testKubernautWithFleetMCP()
+		knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testSPMCPGatewayNamespace}
+		roles, rbs := MCPGatewayNamespaceRBAC(kn, knV2)
 		Expect(roles).To(HaveLen(1))
 		Expect(roles[0].Namespace).To(Equal(testSPMCPGatewayNamespace))
 		apiGroups := make([]string, 0, len(roles[0].Rules))
@@ -1685,9 +1686,9 @@ var _ = Describe("MCPGatewayNamespaceRBAC", func() {
 	})
 
 	It("returns a Role/RoleBinding pair for FleetMetadataCache when its effective namespace resolves", func() {
-		kn := testKubernautWithFMC()
-		kn.Spec.FleetMetadataCache.MCPGatewayNamespace = testFMCMCPGatewayNamespace
-		roles, rbs := MCPGatewayNamespaceRBAC(kn)
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testFMCMCPGatewayNamespace}
+		roles, rbs := MCPGatewayNamespaceRBAC(kn, knV2)
 		Expect(roles).To(HaveLen(1))
 		Expect(roles[0].Namespace).To(Equal(testFMCMCPGatewayNamespace))
 		Expect(rbs).To(HaveLen(1))
@@ -1695,9 +1696,9 @@ var _ = Describe("MCPGatewayNamespaceRBAC", func() {
 	})
 
 	It("FleetMetadataCache falls back to the shared spec.fleet.mcpGatewayNamespace when it has no override", func() {
-		kn := testKubernautWithFMC()
-		kn.Spec.Fleet.MCPGatewayNamespace = testSharedMCPGatewayNamespace
-		roles, _ := MCPGatewayNamespaceRBAC(kn)
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.Fleet.MCPGatewayNamespace = testSharedMCPGatewayNamespace
+		roles, _ := MCPGatewayNamespaceRBAC(kn, knV2)
 		// SP also falls back to the same shared namespace here since
 		// testKubernautWithFMC() already satisfies mcpGatewayRemoteReadsEnabled
 		// (fleet.enabled + mcpGatewayEndpoint) -- SP's cluster classification
@@ -1712,12 +1713,12 @@ var _ = Describe("MCPGatewayNamespaceRBAC", func() {
 	})
 
 	It("returns both when both FMC and SignalProcessing resolve to (possibly different) namespaces", func() {
-		kn := testKubernautWithFMC()
-		kn.Spec.FleetMetadataCache.MCPGatewayNamespace = testFMCMCPGatewayNamespace
-		kn.Spec.Fleet.MCPGatewayEndpoint = "https://mcp-gateway.example.com/sse"
-		kn.Spec.Fleet.MCPGatewayType = "eaigw"
-		kn.Spec.SignalProcessing.MCPGatewayNamespace = testSPMCPGatewayNamespace
-		roles, rbs := MCPGatewayNamespaceRBAC(kn)
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testFMCMCPGatewayNamespace}
+		knV2.Spec.Fleet.MCPGatewayEndpoint = "https://mcp-gateway.example.com/sse"
+		knV2.Spec.Fleet.MCPGatewayType = "eaigw"
+		knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testSPMCPGatewayNamespace}
+		roles, rbs := MCPGatewayNamespaceRBAC(kn, knV2)
 		Expect(roles).To(HaveLen(2))
 		Expect(rbs).To(HaveLen(2))
 	})
@@ -1725,22 +1726,22 @@ var _ = Describe("MCPGatewayNamespaceRBAC", func() {
 
 var _ = Describe("FleetMetadataCache RBAC namespace retrofit", func() {
 	It("fleetMetadataCacheClusterRole/Binding are excluded from ClusterRoles()/ClusterRoleBindings() once FMC's effective namespace resolves", func() {
-		kn := testKubernautWithFMC()
-		kn.Spec.FleetMetadataCache.MCPGatewayNamespace = testFMCMCPGatewayNamespace
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testFMCMCPGatewayNamespace}
 
-		for _, cr := range ClusterRoles(kn) {
+		for _, cr := range ClusterRoles(kn, knV2) {
 			Expect(cr.Name).NotTo(Equal(clusterRoleName(kn, "fleetmetadatacache")),
 				"FMC's ClusterRole should be superseded by MCPGatewayNamespaceRBAC's namespace-scoped Role once a namespace resolves")
 		}
-		for _, crb := range ClusterRoleBindings(kn) {
+		for _, crb := range ClusterRoleBindings(kn, knV2) {
 			Expect(crb.Name).NotTo(Equal(clusterRoleName(kn, "fleetmetadatacache-binding")))
 		}
 	})
 
 	It("still includes fleetMetadataCacheClusterRole/Binding when FMC has no effective namespace (regression)", func() {
-		kn := testKubernautWithFMC()
+		kn, knV2 := testKubernautWithFMC()
 		found := false
-		for _, cr := range ClusterRoles(kn) {
+		for _, cr := range ClusterRoles(kn, knV2) {
 			if cr.Name == clusterRoleName(kn, "fleetmetadatacache") {
 				found = true
 			}

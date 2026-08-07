@@ -22,17 +22,18 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 // PodDisruptionBudgets builds PDBs for all active Kubernaut components.
 // Each PDB allows at most 1 unavailable pod, matching the Helm chart.
 // Opt-in components (e.g. APIFrontend) are skipped when not configured.
-func PodDisruptionBudgets(kn *kubernautv1alpha1.Kubernaut) []*policyv1.PodDisruptionBudget {
+func PodDisruptionBudgets(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []*policyv1.PodDisruptionBudget {
 	maxUnavailable := intstr.FromInt32(PDBMaxUnavailable)
 	pdbs := make([]*policyv1.PodDisruptionBudget, 0, len(AllComponents()))
 
 	for _, component := range AllComponents() {
-		if !isComponentActive(kn, component) {
+		if !isComponentActive(kn, knV2, component) {
 			continue
 		}
 		pdb := &policyv1.PodDisruptionBudget{
