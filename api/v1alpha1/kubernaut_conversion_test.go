@@ -62,8 +62,6 @@ func fullV1alpha1Kubernaut() *Kubernaut {
 			},
 			KubernautAgent: KubernautAgentSpec{
 				LLMProfileRef: "primary",
-				// F1: flat Fleet override field on this component.
-				FleetOAuth2CredentialsSecretRef: "ka-fleet-oauth2",
 				AlignmentCheck: AlignmentCheckSpec{
 					Enabled: true,
 					// F5: inline LLM block with no working credentials path in v1alpha1.
@@ -71,21 +69,16 @@ func fullV1alpha1Kubernaut() *Kubernaut {
 				},
 				ServerRateLimit: &KARateLimitSpec{RequestsPerSecond: &rps},
 			},
-			Gateway: GatewaySpec{Enabled: ptr.To(true), FleetOAuth2CredentialsSecretRef: "gw-fleet-oauth2"},
+			Gateway: GatewaySpec{Enabled: ptr.To(true)},
 			SignalProcessing: SignalProcessingSpec{
 				Policy: PolicyConfigMapRef{ConfigMapName: "sp-policy"},
-				// F1: SignalProcessing/FleetMetadataCache pair OAuth2 with a
-				// separate namespace override field.
-				FleetOAuth2CredentialsSecretRef: "sp-fleet-oauth2",
-				MCPGatewayNamespace:             "mcp-ns",
 			},
-			RemediationOrchestrator: RemediationOrchestratorSpec{FleetOAuth2CredentialsSecretRef: "ro-fleet-oauth2"},
+			RemediationOrchestrator: RemediationOrchestratorSpec{},
 			WorkflowExecution:       WorkflowExecutionSpec{WorkflowNamespace: "workflows"},
-			EffectivenessMonitor:    EffectivenessMonitorSpec{FleetOAuth2CredentialsSecretRef: "em-fleet-oauth2"},
+			EffectivenessMonitor:    EffectivenessMonitorSpec{},
 			AIAnalysis:              AIAnalysisSpec{Policy: PolicyConfigMapRef{ConfigMapName: "aa-policy"}},
 			APIFrontend: APIFrontendSpec{
-				Enabled:                         ptr.To(true),
-				FleetOAuth2CredentialsSecretRef: "af-fleet-oauth2",
+				Enabled: ptr.To(true),
 				Auth: APIFrontendAuthSpec{
 					IssuerURL: "https://idp.example.com/realms/kubernaut",
 					// F6 applies to JWTProviderSpec.JWKSURL (each jwtProviders[]
@@ -97,11 +90,6 @@ func fullV1alpha1Kubernaut() *Kubernaut {
 						{Name: "rhbk", IssuerURL: "https://idp.example.com/realms/kubernaut"}, // JWKSURL left empty
 					},
 				},
-			},
-			FleetMetadataCache: FleetMetadataCacheSpec{
-				Enabled:                         ptr.To(true),
-				FleetOAuth2CredentialsSecretRef: "fmc-fleet-oauth2",
-				MCPGatewayNamespace:             "fmc-mcp-ns",
 			},
 			// F3: NetworkPolicies explicitly disabled -- today's default.
 			NetworkPolicies: NetworkPoliciesSpec{Enabled: ptr.To(false)},
@@ -213,50 +201,29 @@ var _ = Describe("Kubernaut v1alpha1 <-> v1alpha2 conversion webhook", func() {
 			Expect(dst.Spec.SignalProcessing.Policy.ConfigMapName).To(Equal("sp-policy"))
 		})
 
-		DescribeTable("F1: flat FleetOAuth2CredentialsSecretRef becomes a nested Fleet override",
-			func(getV2Fleet func(*v1alpha2.Kubernaut) *v1alpha2.FleetOverrideSpec, wantSecretRef string) {
+		DescribeTable("Fleet migration: v1alpha2's per-component Fleet override is always nil (no v1alpha1 source)",
+			func(getV2Fleet func(*v1alpha2.Kubernaut) *v1alpha2.FleetOverrideSpec) {
 				src := fullV1alpha1Kubernaut()
 				dst := &v1alpha2.Kubernaut{}
 				Expect(src.ConvertTo(dst)).To(Succeed())
 
-				fleet := getV2Fleet(dst)
-				Expect(fleet).NotTo(BeNil())
-				Expect(fleet.OAuth2CredentialsSecretRef).To(Equal(wantSecretRef))
+				Expect(getV2Fleet(dst)).To(BeNil())
 			},
-			Entry("KubernautAgent", func(k *v1alpha2.Kubernaut) *v1alpha2.FleetOverrideSpec { return k.Spec.KubernautAgent.Fleet }, "ka-fleet-oauth2"),
-			Entry("Gateway", func(k *v1alpha2.Kubernaut) *v1alpha2.FleetOverrideSpec { return k.Spec.Gateway.Fleet }, "gw-fleet-oauth2"),
-			Entry("RemediationOrchestrator", func(k *v1alpha2.Kubernaut) *v1alpha2.FleetOverrideSpec { return k.Spec.RemediationOrchestrator.Fleet }, "ro-fleet-oauth2"),
-			Entry("EffectivenessMonitor", func(k *v1alpha2.Kubernaut) *v1alpha2.FleetOverrideSpec { return k.Spec.EffectivenessMonitor.Fleet }, "em-fleet-oauth2"),
-			Entry("APIFrontend", func(k *v1alpha2.Kubernaut) *v1alpha2.FleetOverrideSpec { return k.Spec.APIFrontend.Fleet }, "af-fleet-oauth2"),
+			Entry("KubernautAgent", func(k *v1alpha2.Kubernaut) *v1alpha2.FleetOverrideSpec { return k.Spec.KubernautAgent.Fleet }),
+			Entry("Gateway", func(k *v1alpha2.Kubernaut) *v1alpha2.FleetOverrideSpec { return k.Spec.Gateway.Fleet }),
+			Entry("RemediationOrchestrator", func(k *v1alpha2.Kubernaut) *v1alpha2.FleetOverrideSpec { return k.Spec.RemediationOrchestrator.Fleet }),
+			Entry("EffectivenessMonitor", func(k *v1alpha2.Kubernaut) *v1alpha2.FleetOverrideSpec { return k.Spec.EffectivenessMonitor.Fleet }),
+			Entry("APIFrontend", func(k *v1alpha2.Kubernaut) *v1alpha2.FleetOverrideSpec { return k.Spec.APIFrontend.Fleet }),
+			Entry("SignalProcessing", func(k *v1alpha2.Kubernaut) *v1alpha2.FleetOverrideSpec { return k.Spec.SignalProcessing.Fleet }),
 		)
 
-		It("F1: SignalProcessing's Fleet override carries both OAuth2SecretRef and Namespace", func() {
+		It("Fleet migration: spec.fleet and spec.fleetMetadataCache are always zero-valued (no v1alpha1 source)", func() {
 			src := fullV1alpha1Kubernaut()
 			dst := &v1alpha2.Kubernaut{}
 			Expect(src.ConvertTo(dst)).To(Succeed())
 
-			Expect(dst.Spec.SignalProcessing.Fleet).NotTo(BeNil())
-			Expect(dst.Spec.SignalProcessing.Fleet.OAuth2CredentialsSecretRef).To(Equal("sp-fleet-oauth2"))
-			Expect(dst.Spec.SignalProcessing.Fleet.Namespace).To(Equal("mcp-ns"))
-		})
-
-		It("F1: FleetMetadataCache's Fleet override carries both OAuth2SecretRef and Namespace", func() {
-			src := fullV1alpha1Kubernaut()
-			dst := &v1alpha2.Kubernaut{}
-			Expect(src.ConvertTo(dst)).To(Succeed())
-
-			Expect(dst.Spec.FleetMetadataCache.Fleet).NotTo(BeNil())
-			Expect(dst.Spec.FleetMetadataCache.Fleet.OAuth2CredentialsSecretRef).To(Equal("fmc-fleet-oauth2"))
-			Expect(dst.Spec.FleetMetadataCache.Fleet.Namespace).To(Equal("fmc-mcp-ns"))
-		})
-
-		It("F1: leaves the Fleet override nil when the v1alpha1 field was empty (no spurious override)", func() {
-			src := fullV1alpha1Kubernaut()
-			src.Spec.Gateway.FleetOAuth2CredentialsSecretRef = ""
-			dst := &v1alpha2.Kubernaut{}
-			Expect(src.ConvertTo(dst)).To(Succeed())
-
-			Expect(dst.Spec.Gateway.Fleet).To(BeNil())
+			Expect(dst.Spec.Fleet).To(Equal(v1alpha2.FleetSpec{}))
+			Expect(dst.Spec.FleetMetadataCache).To(Equal(v1alpha2.FleetMetadataCacheSpec{}))
 		})
 
 		It("F2: leaves the new top-level Monitoring field unset (no v1alpha1 source)", func() {
@@ -348,14 +315,17 @@ var _ = Describe("Kubernaut v1alpha1 <-> v1alpha2 conversion webhook", func() {
 			Expect(dst.Spec.KubernautAgent.AlignmentCheck.LLM).To(BeNil())
 		})
 
-		It("F1: unpacks a Fleet override back into the flat FleetOAuth2CredentialsSecretRef field", func() {
+		It("Fleet migration: drops a fully-configured spec.fleet/fleetMetadataCache without erroring (no v1alpha1 destination)", func() {
 			hub := &v1alpha2.Kubernaut{Spec: v1alpha2.KubernautSpec{
-				Gateway: v1alpha2.GatewaySpec{Fleet: &v1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: "gw-secret"}},
+				Fleet: v1alpha2.FleetSpec{
+					Enabled: ptr.To(true), Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+					MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+				},
+				FleetMetadataCache: v1alpha2.FleetMetadataCacheSpec{Enabled: ptr.To(true)},
+				Gateway:            v1alpha2.GatewaySpec{Fleet: &v1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: "gw-secret"}},
 			}}
 			dst := &Kubernaut{}
-			Expect(dst.ConvertFrom(hub)).To(Succeed())
-
-			Expect(dst.Spec.Gateway.FleetOAuth2CredentialsSecretRef).To(Equal("gw-secret"))
+			Expect(dst.ConvertFrom(hub)).To(Succeed(), "downgrading a CR with Fleet configured must not error -- Fleet is simply dropped, logged as lossy")
 		})
 	})
 
