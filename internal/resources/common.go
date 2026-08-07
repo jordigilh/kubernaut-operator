@@ -471,12 +471,17 @@ func ResolveWorkflowNamespace(kn *kubernautv1alpha1.Kubernaut) string {
 }
 
 // AIAnalysisPolicyName returns the AI analysis policy ConfigMap name,
-// defaulting to "aianalysis-policies" when not overridden.
+// defaulting to "aianalysis-policy" when not overridden. Singular,
+// matching SignalProcessingPolicyName below: the ConfigMap holds exactly
+// one Rego file (key "approval.rego") in both cases, so there's no
+// multiplicity to justify a plural name (was "aianalysis-policies" before
+// this rename; see ADR-CRD-001 F11 for the upstream Helm chart's identical
+// inconsistency and the corresponding proposal filed there).
 func AIAnalysisPolicyName(kn *kubernautv1alpha1.Kubernaut) string {
 	if kn.Spec.AIAnalysis.Policy.ConfigMapName != "" {
 		return kn.Spec.AIAnalysis.Policy.ConfigMapName
 	}
-	return "aianalysis-policies"
+	return "aianalysis-policy"
 }
 
 // SignalProcessingPolicyName returns the signal processing policy ConfigMap name,

@@ -212,7 +212,7 @@ spec:
     logging:
       level: info
     policy:
-      configMapName: aianalysis-policies
+      configMapName: aianalysis-policy
 
   signalProcessing:
     logging:

@@ -1490,12 +1490,12 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(kaCA.Annotations).To(HaveKeyWithValue(
 				"service.beta.openshift.io/inject-cabundle", "true"))
 
-			By("verifying operator does NOT create aianalysis-policies (user-provided prerequisite)")
+			By("verifying operator does NOT create aianalysis-policy (user-provided prerequisite)")
 			aiPolicyCM := &corev1.ConfigMap{}
 			err := k8sClient.Get(ctx, types.NamespacedName{
-				Name: "aianalysis-policies", Namespace: testNamespace,
+				Name: "aianalysis-policy", Namespace: testNamespace,
 			}, aiPolicyCM)
-			Expect(errors.IsNotFound(err)).To(BeTrue(), "operator must not create default aianalysis-policies CM")
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "operator must not create default aianalysis-policy CM")
 
 			By("verifying operator does NOT create signalprocessing-policy (user-provided prerequisite)")
 			spPolicyCM := &corev1.ConfigMap{}

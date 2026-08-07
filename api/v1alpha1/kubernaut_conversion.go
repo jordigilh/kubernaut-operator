@@ -57,7 +57,7 @@ const keycloakJWKSSuffix = "/protocol/openid-connect/certs"
 // existing v1alpha1 CR that used the pre-v1alpha2 fallback would fail to convert
 // to a schema-valid v1alpha2 object once v1alpha2 becomes the storage version.
 const (
-	defaultAIAnalysisPolicyConfigMapName       = "aianalysis-policies"
+	defaultAIAnalysisPolicyConfigMapName       = "aianalysis-policy"
 	defaultSignalProcessingPolicyConfigMapName = "signalprocessing-policy"
 )
 

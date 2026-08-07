@@ -194,7 +194,7 @@ var _ = Describe("Deployments", func() {
 
 			expectDeploymentBasics(dep, "aianalysis")
 			expectHasVolume(dep, "rego-policies")
-			expectVolumeSourceConfigMap(dep, "rego-policies", "aianalysis-policies")
+			expectVolumeSourceConfigMap(dep, "rego-policies", "aianalysis-policy")
 			expectHasVolumeMount(dep, "rego-policies", "/etc/aianalysis/policies")
 		})
 	})

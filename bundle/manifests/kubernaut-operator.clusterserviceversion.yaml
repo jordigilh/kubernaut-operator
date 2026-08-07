@@ -4,8 +4,8 @@ metadata:
   annotations:
     alm-examples: "[\n  {\n    \"apiVersion\": \"kubernaut.ai/v1alpha1\",\n    \"kind\": \"Kubernaut\",\n    \"metadata\": {\n      \"labels\": {\n        \"app.kubernetes.io/managed-by\": \"kustomize\"\
       ,\n        \"app.kubernetes.io/name\": \"kubernaut-operator\"\n      },\n      \"name\": \"kubernaut\",\n      \"namespace\": \"kubernaut-system\"\n    },\n    \"spec\": {\n      \"aiAnalysis\": {\n\
-      \        \"logging\": {\n          \"level\": \"info\"\n        },\n        \"policy\": {\n          \"configMapName\": \"aianalysis-policies\"\n        }\n      },\n      \"ansible\": {\n       \
-      \ \"enabled\": false\n      },\n      \"apiFrontend\": {\n        \"auth\": {\n          \"allowInsecureIssuers\": true,\n          \"audience\": \"https://keycloak-keycloak.apps.dev.redhat-internal.com/realms/kagenti\"\
+      \        \"logging\": {\n          \"level\": \"info\"\n        },\n        \"policy\": {\n          \"configMapName\": \"aianalysis-policy\"\n        }\n      },\n      \"ansible\": {\n        \"\
+      enabled\": false\n      },\n      \"apiFrontend\": {\n        \"auth\": {\n          \"allowInsecureIssuers\": true,\n          \"audience\": \"https://keycloak-keycloak.apps.dev.redhat-internal.com/realms/kagenti\"\
       ,\n          \"issuerURL\": \"https://keycloak-keycloak.apps.dev.redhat-internal.com/realms/kagenti\",\n          \"jwksURL\": \"http://keycloak-service.keycloak:8080/realms/kagenti/protocol/openid-connect/certs\"\
       \n        },\n        \"enabled\": true,\n        \"logging\": {\n          \"level\": \"debug\"\n        },\n        \"rateLimit\": {\n          \"ipRequestsPerSec\": 50,\n          \"maxConcurrentSessions\"\
       : 100,\n          \"toolCallsPerMinute\": 60,\n          \"userRequestsPerSec\": 20\n        },\n        \"rbac\": {\n          \"roleBindings\": [\n            {\n              \"groups\": [\n  \
@@ -48,7 +48,7 @@ metadata:
       : {\n        \"cooldownPeriod\": \"1m\",\n        \"logging\": {\n          \"level\": \"info\"\n        },\n        \"workflowNamespace\": \"kubernaut-workflows\"\n      }\n    }\n  },\n  {\n   \
       \ \"apiVersion\": \"kubernaut.ai/v1alpha2\",\n    \"kind\": \"Kubernaut\",\n    \"metadata\": {\n      \"labels\": {\n        \"app.kubernetes.io/managed-by\": \"kustomize\",\n        \"app.kubernetes.io/name\"\
       : \"kubernaut-operator\"\n      },\n      \"name\": \"kubernaut\",\n      \"namespace\": \"kubernaut-system\"\n    },\n    \"spec\": {\n      \"aiAnalysis\": {\n        \"logging\": {\n          \"\
-      level\": \"INFO\"\n        },\n        \"policy\": {\n          \"configMapName\": \"aianalysis-policies\"\n        }\n      },\n      \"apiFrontend\": {\n        \"auth\": {\n          \"allowInsecureIssuers\"\
+      level\": \"INFO\"\n        },\n        \"policy\": {\n          \"configMapName\": \"aianalysis-policy\"\n        }\n      },\n      \"apiFrontend\": {\n        \"auth\": {\n          \"allowInsecureIssuers\"\
       : true,\n          \"audience\": \"https://keycloak-keycloak.apps.dev.redhat-internal.com/realms/kagenti\",\n          \"issuerURL\": \"https://keycloak-keycloak.apps.dev.redhat-internal.com/realms/kagenti\"\
       ,\n          \"jwksURL\": \"http://keycloak-service.keycloak:8080/realms/kagenti/protocol/openid-connect/certs\"\n        },\n        \"enabled\": true,\n        \"logging\": {\n          \"level\"\
       : \"DEBUG\"\n        },\n        \"rateLimit\": {\n          \"ipRequestsPerSec\": 50,\n          \"maxConcurrentSessions\": 100,\n          \"toolCallsPerMinute\": 60,\n          \"userRequestsPerSec\"\
