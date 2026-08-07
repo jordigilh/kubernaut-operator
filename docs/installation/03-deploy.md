@@ -115,7 +115,7 @@ spec:
   # --- Policies (from Step 2: Configure Services) ---
   aiAnalysis:
     policy:
-      configMapName: aianalysis-policies
+      configMapName: aianalysis-policy
 
   signalProcessing:
     policy:

@@ -194,7 +194,7 @@ var _ = Describe("Deployments", func() {
 
 			expectDeploymentBasics(dep, "aianalysis")
 			expectHasVolume(dep, "rego-policies")
-			expectVolumeSourceConfigMap(dep, "rego-policies", "aianalysis-policies")
+			expectVolumeSourceConfigMap(dep, "rego-policies", "aianalysis-policy")
 			expectHasVolumeMount(dep, "rego-policies", "/etc/aianalysis/policies")
 		})
 	})
@@ -309,6 +309,25 @@ var _ = Describe("Deployments", func() {
 			expectDeploymentBasics(dep, "kubernautagent")
 			expectHasVolume(dep, "llm-credentials")
 			expectHasVolumeMount(dep, "llm-credentials", "/etc/kubernaut-agent/credentials")
+		})
+
+		It("infers the sole spec.llmProfiles entry when kubernautAgent.llmProfileRef is empty", func() {
+			kn := testKubernaut() // exactly one profile ("primary")
+			kn.Spec.KubernautAgent.LLMProfileRef = ""
+			dep, err := KubernautAgentDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectHasVolume(dep, "llm-credentials")
+			found := false
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == "llm-credentials" {
+					found = true
+					Expect(v.Secret).NotTo(BeNil())
+					Expect(v.Secret.SecretName).To(Equal("llm-creds"),
+						"the sole profile's credentialsSecretName must be used, matching testKubernaut()'s \"primary\" profile")
+				}
+			}
+			Expect(found).To(BeTrue(), "llm-credentials volume not found")
 		})
 
 		It("KFG-022 [IA-5]: mounts a dedicated phase-credentials Secret volume when a phase's profile has a different credentialsSecretName than KA's (#233)", func() {

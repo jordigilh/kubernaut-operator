@@ -21,12 +21,27 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    deprecated: true
+    deprecationWarning: kubernaut.ai/v1alpha1 Kubernaut is deprecated and will be
+      removed in v1.7; migrate to v1alpha2 (see docs/design/ADR-CRD-001-v1alpha2-redesign.md).
+      v1alpha1 keeps working via an automatic conversion webhook during the transition.
     name: v1alpha1
     schema:
       openAPIV3Schema:
         description: |-
           Kubernaut is the Schema for the kubernauts API.
           It declares a single Kubernaut deployment within the namespace it is created in.
+
+          This is the v1alpha1 shape, superseded by v1alpha2 (the storage version
+          and conversion.Hub as of v1.6) -- see the
+          deprecation surfaced to kubectl, and
+          docs/design/ADR-CRD-001-v1alpha2-redesign.md for the full rationale.
+          Deliberately NOT a Go "Deprecated:" doc comment: internal/resources,
+          internal/controller, and internal/webhook all still operate on this Go
+          type as their working representation (see the migrate-builders-v1alpha2
+          follow-up); a "Deprecated:" comment would make staticcheck (SA1019) flag
+          every one of those call sites, which are not what this CRD-version
+          deprecation is about.
         properties:
           apiVersion:
             description: |-
@@ -198,7 +213,7 @@ spec:
                 type: object
                 x-kubernetes-validations:
                 - message: ansible.apiURL is required when ansible.enabled is true
-                  rule: '!self.enabled || has(self.apiURL)'
+                  rule: '!has(self.enabled) || !self.enabled || has(self.apiURL)'
               apiFrontend:
                 description: APIFrontend configures the API Frontend (MCP/A2A gateway)
                   service.
@@ -2525,6 +2540,3238 @@ spec:
             - kubernautAgent
             - llmProfiles
             - postgresql
+            - valkey
+            type: object
+          status:
+            description: KubernautStatus defines the observed state of a Kubernaut
+              deployment.
+            properties:
+              boundAdditionalClusterRoles:
+                description: |-
+                  ClusterRole names for which the operator has created additional
+                  agent ClusterRoleBindings. Used for stale-pruning on spec changes
+                  and finalizer cleanup.
+                items:
+                  type: string
+                type: array
+              boundToolRoleBindings:
+                description: |-
+                  BoundToolRoleBindings tracks the set of tool role binding CRB names
+                  currently managed by the operator for stale-pruning and finalizer cleanup.
+                items:
+                  type: string
+                type: array
+              conditions:
+                description: Standard conditions following the metav1.Condition contract.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              lastMigrationHash:
+                description: |-
+                  Hash of the last successfully completed migration Job spec.
+                  Used to skip re-running migration when the Job has been deleted
+                  (e.g. TTL cleanup, manual deletion) but nothing has changed.
+                type: string
+              lastMigrationTime:
+                description: Timestamp of the last successfully completed migration.
+                format: date-time
+                type: string
+              phase:
+                description: Aggregate lifecycle phase.
+                enum:
+                - Validating
+                - Migrating
+                - Deploying
+                - Running
+                - Degraded
+                - Error
+                type: string
+              services:
+                description: Per-service readiness.
+                items:
+                  description: ServiceStatus reports the readiness of a single managed
+                    service.
+                  properties:
+                    desiredReplicas:
+                      description: Desired number of replicas.
+                      format: int32
+                      type: integer
+                    name:
+                      description: Service name (e.g. "gateway", "datastorage").
+                      type: string
+                    ready:
+                      description: Whether the service has all desired replicas ready.
+                      type: boolean
+                    readyReplicas:
+                      description: Number of ready replicas.
+                      format: int32
+                      type: integer
+                  required:
+                  - desiredReplicas
+                  - name
+                  - ready
+                  - readyReplicas
+                  type: object
+                type: array
+            type: object
+        type: object
+    served: true
+    storage: false
+    subresources:
+      status: {}
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha2
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Kubernaut is the Schema for the kubernauts API. v1alpha2 is the storage
+          version and conversion.Hub; v1alpha1 converts to/from this shape via the
+          conversion webhook (see api/v1alpha1/kubernaut_conversion.go).
+          It declares a single Kubernaut deployment within the namespace it is created in.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              KubernautSpec defines the desired state of a Kubernaut deployment on OCP.
+              The operator deploys all Kubernaut services into the CR's namespace and
+              auto-derives OCP platform configuration (monitoring, service-ca, Routes).
+
+              v1alpha2 is the storage version and conversion.Hub for this CRD; v1alpha1
+              converts to/from this shape via the conversion webhook. See
+              docs/design/ADR-CRD-001-v1alpha2-redesign.md for the full rationale
+              behind every diff from v1alpha1 (referenced as F1-F9 below).
+            properties:
+              aiAnalysis:
+                description: |-
+                  AIAnalysis controller configuration. Required (not just AIAnalysisSpec.Policy
+                  nested within it): a Go struct field with omitempty is skipped entirely by
+                  structural-schema "required" checks when the whole key is absent from the
+                  request, so nesting alone let a CR omit aiAnalysis altogether and bypass
+                  Policy's own required-ness -- discovered via a live-cluster CRD spike
+                  (spec.aiAnalysis absent was admitted with no error). Dropping omitempty
+                  here closes that loophole; see docs/design/ADR-CRD-001-v1alpha2-redesign.md
+                  Decision Axis 3 / F9 for why the Rego policy itself must stay mandatory
+                  (Helm's chart fails `helm install` under the equivalent condition).
+                properties:
+                  confidenceThreshold:
+                    description: |-
+                      Optional confidence threshold override for the Rego policy.
+                      Expressed as a decimal string, e.g. "0.85".
+                    type: string
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: INFO
+                        description: |-
+                          Log level. One of: DEBUG, INFO, WARN, ERROR (F8 -- narrowed to
+                          uppercase-only in v1alpha2, matching upstream ADR-030; v1alpha1
+                          accepted both cases). The conversion webhook uppercases any
+                          lowercase v1alpha1 value on ConvertFrom rather than rejecting it.
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        type: string
+                    type: object
+                  policy:
+                    description: |-
+                      Policy ConfigMap reference. Required.
+                      The ConfigMap must contain key "approval.rego".
+                    properties:
+                      configMapName:
+                        description: Name of the ConfigMap.
+                        type: string
+                    required:
+                    - configMapName
+                    type: object
+                  resources:
+                    description: Resource requirements.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                required:
+                - policy
+                type: object
+              apiFrontend:
+                description: APIFrontend configures the API Frontend (MCP/A2A gateway)
+                  service.
+                properties:
+                  agentCardURL:
+                    description: |-
+                      Display name for the A2A agent card (/.well-known/agent-card.json).
+                      External URL for the A2A agent card discovery endpoint.
+                      When empty, auto-derived from the in-cluster service FQDN.
+                      Must be a valid HTTPS URL when set.
+                    pattern: ^$|^https?://
+                    type: string
+                  auth:
+                    description: OIDC authentication configuration.
+                    properties:
+                      allowInsecureIssuers:
+                        description: |-
+                          Allow HTTP (non-TLS) JWKS URLs. Must remain false in production
+                          (FedRAMP SC-8: transmission confidentiality). Intended for dev/test only.
+                        type: boolean
+                      audience:
+                        default: kubernaut-apifrontend
+                        description: 'Expected JWT audience claim (FedRAMP SC-23:
+                          session authenticity).'
+                        type: string
+                      issuerURL:
+                        description: |-
+                          OIDC issuer URL (e.g. "https://login.kubernaut.ai/realms/kubernaut").
+                          Used for single-provider auth or kagenti auto-detection fallback.
+                          When jwtProviders is non-empty, multi-provider config takes precedence.
+                        type: string
+                      jwksURL:
+                        description: |-
+                          Explicit JWKS endpoint URL for token signature verification
+                          (FedRAMP IA-5: authenticator management). When empty, derived from
+                          issuerURL + "/protocol/openid-connect/certs".
+                        type: string
+                      jwtProviders:
+                        description: |-
+                          Multi-provider JWT configuration (FedRAMP IA-2: multi-source auth).
+                          When non-empty, the AF validates tokens against all configured
+                          providers concurrently. Takes precedence over the single-provider
+                          issuerURL/audience/jwksURL fields above.
+                        items:
+                          description: |-
+                            JWTProviderSpec configures a single OIDC JWT provider for multi-issuer
+                            authentication. Shared by KA interactive and API Frontend auth.
+                          properties:
+                            audiences:
+                              description: Expected audience claim values for session
+                                authenticity (FedRAMP SC-23).
+                              items:
+                                type: string
+                              minItems: 1
+                              type: array
+                            claimMappings:
+                              description: Claim mappings for username and group extraction
+                                (FedRAMP AC-6).
+                              properties:
+                                groups:
+                                  description: JWT claim name for group membership
+                                    extraction.
+                                  type: string
+                                username:
+                                  description: JWT claim name for username extraction.
+                                  type: string
+                              type: object
+                            issuerURL:
+                              description: OIDC issuer URL for token validation.
+                              minLength: 1
+                              type: string
+                            jwksURL:
+                              description: |-
+                                JWKS endpoint URL for token signature verification (F6 -- required in
+                                v1alpha2, matching the upstream Helm chart's jwtProviders[].jwksURL,
+                                which has always been required there; v1alpha1 allowed omitting it
+                                and deriving it from IssuerURL at runtime). Must use HTTPS unless the
+                                parent's allowInsecureJWKS/allowInsecureIssuers flag is true.
+                              maxLength: 2048
+                              minLength: 1
+                              type: string
+                            name:
+                              description: Human-readable name for this provider (e.g.
+                                "rhbk", "spire").
+                              maxLength: 63
+                              minLength: 1
+                              type: string
+                          required:
+                          - audiences
+                          - issuerURL
+                          - jwksURL
+                          - name
+                          type: object
+                        maxItems: 8
+                        type: array
+                      oidcCaFile:
+                        description: |-
+                          Path to CA bundle for OIDC/JWKS TLS trust (FedRAMP IA-5). When set,
+                          AF uses this CA to verify the OIDC provider's certificate chain.
+                        type: string
+                      tokenReviewAudience:
+                        description: |-
+                          TokenReview audience for Kubernetes ServiceAccount token validation.
+                          When set, the API Frontend passes this audience to the TokenReview API
+                          so only tokens issued for this specific audience are accepted
+                          (FedRAMP IA-5: authenticator management).
+                        type: string
+                    type: object
+                  enabled:
+                    default: true
+                    description: |-
+                      Whether the API Frontend component is deployed. Defaults to true.
+                      Set to false to skip all AF resources (Deployment, Service, RBAC, etc.).
+                    type: boolean
+                  fleet:
+                    description: |-
+                      Fleet overrides spec.fleet.oauth2.credentialsSecretRef for
+                      APIFrontend only (F1 -- also adds the Namespace override APIFrontend
+                      was missing in v1alpha1; only OAuth2CredentialsSecretRef existed
+                      there). Falls back to spec.fleet.* when unset.
+                    properties:
+                      namespace:
+                        description: |-
+                          Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
+                          Gateway CRD watch scope.
+                        type: string
+                      oauth2CredentialsSecretRef:
+                        description: |-
+                          Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
+                          Use when this component must authenticate to the MCP Gateway as a
+                          different OAuth2 client than other fleet-aware components (e.g. a
+                          federated Keycloak issuing distinct per-service client registrations
+                          against the same shared spec.fleet.oauth2.tokenURL).
+                        type: string
+                    type: object
+                  healthPort:
+                    description: |-
+                      Override for the AF health probe port. Defaults to 8081 (or 8082 when
+                      kagenti sidecar port shifting is active). Use when cluster policies
+                      restrict port ranges.
+                    format: int32
+                    maximum: 65535
+                    minimum: 1024
+                    type: integer
+                  llmProfileRef:
+                    description: |-
+                      Reference to a named profile in spec.llmProfiles used for API
+                      Frontend's own LLM calls. When empty, defaults to
+                      spec.kubernautAgent.llmProfileRef's *effective* profile -- including
+                      that field's own single-profile inference, so AF need not repeat it.
+                    type: string
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: INFO
+                        description: |-
+                          Log level. One of: DEBUG, INFO, WARN, ERROR (F8 -- narrowed to
+                          uppercase-only in v1alpha2, matching upstream ADR-030; v1alpha1
+                          accepted both cases). The conversion webhook uppercases any
+                          lowercase v1alpha1 value on ConvertFrom rather than rejecting it.
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        type: string
+                    type: object
+                  metricsPort:
+                    description: |-
+                      Override for the AF metrics port. Defaults to 9090 (or 9092 when
+                      kagenti sidecar port shifting is active). Use when cluster policies
+                      restrict port ranges.
+                    format: int32
+                    maximum: 65535
+                    minimum: 1024
+                    type: integer
+                  rateLimit:
+                    description: Request rate limiting configuration.
+                    properties:
+                      ipRequestsPerSec:
+                        default: 10000
+                        description: Per-IP requests per second.
+                        type: integer
+                      maxConcurrentSessions:
+                        default: 50
+                        description: Maximum concurrent MCP/A2A sessions.
+                        type: integer
+                      toolCallsPerMinute:
+                        default: 600
+                        description: Tool calls per minute per user.
+                        type: integer
+                      userRequestsPerSec:
+                        default: 100
+                        description: Per-user requests per second.
+                        type: integer
+                    type: object
+                  rbac:
+                    description: |-
+                      SAR-based RBAC configuration for tool authorization.
+                      When set, the operator provisions persona-based tool ClusterRoles
+                      and group-to-role ClusterRoleBindings instead of file-based RBAC.
+                    properties:
+                      consoleAccessGroups:
+                        description: |-
+                          ConsoleAccessGroups are the OIDC groups granted the coarse-grained
+                          kubernaut-console-access ClusterRole (kubernaut.ai/console, verb=use) --
+                          a separate, independently-auditable grant from the per-tool RoleBindings
+                          above (kubernaut#1919). When unset (nil), defaults to the deduplicated
+                          union of all groups already present in RoleBindings, so upgrading to an
+                          AF version enforcing this gate does not silently deny existing
+                          deployments' tool calls (kubernaut-operator#289). Set to an explicit
+                          empty list to opt out (grant console access to nobody). Set to a
+                          non-empty list for independent, narrower control.
+                        items:
+                          type: string
+                        type: array
+                      roleBindings:
+                        description: RoleBindings maps persona-based tool roles to
+                          OIDC groups.
+                        items:
+                          description: |-
+                            ToolRoleBinding binds a tool role to one or more OIDC groups.
+                            Exactly one of Role or ClusterRoleName must be set.
+                          properties:
+                            clusterRoleName:
+                              description: |-
+                                ClusterRoleName references a user-managed ClusterRole for custom tool authorization.
+                                The operator creates only the ClusterRoleBinding; the ClusterRole itself must be
+                                pre-created by the user with rules granting verb "use" on resource "tools" in
+                                apiGroup "kubernaut.ai".
+                                Mutually exclusive with Role.
+                              type: string
+                            groups:
+                              description: Groups are the OIDC group names to bind
+                                to this role.
+                              items:
+                                type: string
+                              minItems: 1
+                              type: array
+                            role:
+                              description: |-
+                                Role is a built-in persona name. Must be one of: sre, ai-orchestrator, cicd,
+                                observability, l3-audit, remediation-approver.
+                                Mutually exclusive with ClusterRoleName.
+                              enum:
+                              - sre
+                              - ai-orchestrator
+                              - cicd
+                              - observability
+                              - l3-audit
+                              - remediation-approver
+                              type: string
+                          required:
+                          - groups
+                          type: object
+                        type: array
+                      sarCacheTTL:
+                        default: 30s
+                        description: |-
+                          SARCacheTTL is the cache duration for SubjectAccessReview results.
+                          Must be a valid Go duration string (e.g. "30s", "2m").
+                        type: string
+                    type: object
+                  rbacRolesConfigMapRef:
+                    description: |-
+                      Reference to a pre-existing ConfigMap containing RBAC role-to-tool
+                      mappings (key: "rbac_roles.yaml"). When empty, the operator generates
+                      a default RBAC roles ConfigMap.
+
+                      Deprecated: replaced by RBAC field with SAR-based tool authorization.
+                    properties:
+                      configMapName:
+                        description: Name of the ConfigMap.
+                        type: string
+                    required:
+                    - configMapName
+                    type: object
+                  resources:
+                    description: Resource requirements.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  route:
+                    description: |-
+                      Route configuration for OCP external access (FedRAMP SC-8).
+                      Disabled by default; set route.enabled=true to expose AF via an
+                      OpenShift Route with reencrypt TLS termination.
+                    properties:
+                      enabled:
+                        default: false
+                        description: Whether to create an OCP Route for the API Frontend.
+                        type: boolean
+                      hostname:
+                        description: Hostname override. When empty, the OCP router
+                          auto-generates a hostname.
+                        type: string
+                    type: object
+                  severityTriage:
+                    description: |-
+                      Independent LLM configuration for severity-triage's LLM fallback
+                      tiers, distinct from API Frontend's main llmProfileRef connection.
+                    properties:
+                      llmEnabled:
+                        default: true
+                        description: |-
+                          Whether LLM-based triage tiers are active. When false, the operator
+                          renders a present-but-empty severityTriage.llm block, forcing
+                          upstream's rule-based-only fallback -- independent of whether
+                          severity triage as a whole is enabled via monitoring.
+                        type: boolean
+                      llmProfileRef:
+                        description: |-
+                          Reference to a named profile in spec.llmProfiles for severity-triage
+                          LLM calls. When empty, triage inherits API Frontend's own resolved
+                          profile (llmProfileRef, or KA's when that is also empty) -- matching
+                          today's behavior. May reference a profile with a different provider
+                          and/or credentialsSecretName than API Frontend's own resolved
+                          profile; the operator provisions a dedicated Secret volume for
+                          triage's credentials when they differ.
+                        type: string
+                    type: object
+                  shutdown:
+                    description: Graceful shutdown configuration.
+                    properties:
+                      drainSeconds:
+                        default: 15
+                        description: Seconds to wait for in-flight requests to drain
+                          during shutdown.
+                        maximum: 300
+                        minimum: 0
+                        type: integer
+                    type: object
+                  spire:
+                    description: |-
+                      SPIRE mTLS identity configuration for kagenti agent card discovery
+                      (FedRAMP SC-8, IA-5). When enabled, a ClusterSPIFFEID is created and
+                      a SPIRE-aware mTLS sidecar is injected into the AF deployment so the
+                      kagenti-operator can perform verified fetch with identity binding.
+                    properties:
+                      className:
+                        description: |-
+                          SPIRE class name for the ClusterSPIFFEID (e.g. "zero-trust-workload-identity-manager-spire").
+                          When empty, the className field is omitted from the ClusterSPIFFEID spec.
+                        type: string
+                      enabled:
+                        description: |-
+                          Whether SPIRE mTLS sidecar injection is enabled.
+                          Defaults to true when omitted. Set explicitly to false for OCP 4.18
+                          environments without SPIRE or when running without kagenti authbridge.
+                        type: boolean
+                      trustDomain:
+                        description: |-
+                          TrustDomain overrides the SPIFFE ID trust domain. When empty (default),
+                          the operator uses SPIRE's {{ .TrustDomain }} template variable, which
+                          resolves to the cluster's configured trust domain at SVID registration
+                          time. Set this only if you need a fixed trust domain that differs from
+                          the SPIRE server's.
+                        type: string
+                    type: object
+                type: object
+              authWebhook:
+                description: AuthWebhook admission controller settings.
+                properties:
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: INFO
+                        description: |-
+                          Log level. One of: DEBUG, INFO, WARN, ERROR (F8 -- narrowed to
+                          uppercase-only in v1alpha2, matching upstream ADR-030; v1alpha1
+                          accepted both cases). The conversion webhook uppercases any
+                          lowercase v1alpha1 value on ConvertFrom rather than rejecting it.
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        type: string
+                    type: object
+                  resources:
+                    description: Resource requirements.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                type: object
+              console:
+                description: Console configures the standalone web console (A2A chat
+                  UI).
+                properties:
+                  auth:
+                    description: OIDC authentication configuration for the console
+                      oauth2-proxy.
+                    properties:
+                      secretName:
+                        description: |-
+                          Name of the pre-existing Secret containing OIDC credentials.
+                          Required keys: client-id, client-secret, cookie-secret.
+                        minLength: 1
+                        type: string
+                    type: object
+                  enabled:
+                    default: false
+                    description: Whether the Console component is deployed. Defaults
+                      to false (opt-in).
+                    type: boolean
+                  resources:
+                    description: Resource requirements for the console container.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  route:
+                    description: OCP Route configuration for external access.
+                    properties:
+                      enabled:
+                        default: true
+                        description: Whether to create an OCP Route. Defaults to true
+                          on OpenShift.
+                        type: boolean
+                      host:
+                        description: Explicit hostname. Empty = auto-derived from
+                          namespace.
+                        type: string
+                    type: object
+                type: object
+              dataStorage:
+                description: DataStorage service settings.
+                properties:
+                  endpointPropagationDelay:
+                    default: 10s
+                    description: |-
+                      EndpointPropagationDelay is the delay before newly created endpoints
+                      are considered ready. Prevents traffic routing to pods that haven't
+                      finished warming up. Must be a valid Go duration string.
+                    type: string
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: INFO
+                        description: |-
+                          Log level. One of: DEBUG, INFO, WARN, ERROR (F8 -- narrowed to
+                          uppercase-only in v1alpha2, matching upstream ADR-030; v1alpha1
+                          accepted both cases). The conversion webhook uppercases any
+                          lowercase v1alpha1 value on ConvertFrom rather than rejecting it.
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        type: string
+                    type: object
+                  resources:
+                    description: Resource requirements.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  retention:
+                    description: Retention configures periodic purge of expired audit
+                      events (FedRAMP AU-11).
+                    properties:
+                      batchSize:
+                        default: 1000
+                        description: Maximum number of rows deleted per batch.
+                        minimum: 1
+                        type: integer
+                      defaultDays:
+                        default: 2555
+                        description: |-
+                          Number of days to retain audit events before purge.
+                          Clamped to a maximum of 2555 (≈7 years per ADR-034 / SOC 2 / ISO 27001).
+                        maximum: 2555
+                        minimum: 1
+                        type: integer
+                      enabled:
+                        description: |-
+                          Whether the retention purge worker is active.
+                          Defaults to false (safe default — no data is deleted without opt-in).
+                        type: boolean
+                      interval:
+                        default: 24h
+                        description: How often the purge worker runs. Must be a valid
+                          Go duration string.
+                        type: string
+                    type: object
+                  signingCert:
+                    description: |-
+                      SigningCert configures the audit export signing certificate (FedRAMP AU-9).
+                      When set, the named Secret is mounted into the DS pod at /etc/certs.
+                    properties:
+                      mountPath:
+                        default: /etc/certs
+                        description: Mount path inside the container. Defaults to
+                          /etc/certs.
+                        type: string
+                      secretName:
+                        description: Name of the Kubernetes Secret containing the
+                          signing cert (tls.crt, tls.key).
+                        type: string
+                    required:
+                    - secretName
+                    type: object
+                type: object
+              effectivenessMonitor:
+                description: EffectivenessMonitor controller configuration.
+                properties:
+                  assessment:
+                    description: Assessment windows for remediation effectiveness
+                      evaluation.
+                    properties:
+                      stabilizationWindow:
+                        default: 30s
+                        type: string
+                      validityWindow:
+                        default: 300s
+                        type: string
+                    type: object
+                  fleet:
+                    description: |-
+                      Fleet overrides spec.fleet.oauth2.credentialsSecretRef/mcpGatewayNamespace
+                      for EffectivenessMonitor only (F1 -- also adds the Namespace override
+                      EM was missing in v1alpha1; only OAuth2CredentialsSecretRef existed
+                      there). Falls back to spec.fleet.* when unset.
+                    properties:
+                      namespace:
+                        description: |-
+                          Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
+                          Gateway CRD watch scope.
+                        type: string
+                      oauth2CredentialsSecretRef:
+                        description: |-
+                          Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
+                          Use when this component must authenticate to the MCP Gateway as a
+                          different OAuth2 client than other fleet-aware components (e.g. a
+                          federated Keycloak issuing distinct per-service client registrations
+                          against the same shared spec.fleet.oauth2.tokenURL).
+                        type: string
+                    type: object
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: INFO
+                        description: |-
+                          Log level. One of: DEBUG, INFO, WARN, ERROR (F8 -- narrowed to
+                          uppercase-only in v1alpha2, matching upstream ADR-030; v1alpha1
+                          accepted both cases). The conversion webhook uppercases any
+                          lowercase v1alpha1 value on ConvertFrom rather than rejecting it.
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        type: string
+                    type: object
+                  resources:
+                    description: Resource requirements.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                type: object
+              fleet:
+                description: |-
+                  Fleet configures federated scope-checking for Gateway and
+                  RemediationOrchestrator against a shared fleet backend (ADR-068).
+                properties:
+                  backend:
+                    description: |-
+                      Fleet backend to query for scope information. Required when Enabled
+                      is true. "fleetmetadatacache" targets the Fleet Metadata Cache (FMC)
+                      service's HTTP API; "acm" targets Red Hat Advanced Cluster Management
+                      Search's GraphQL API.
+                    enum:
+                    - fleetmetadatacache
+                    - acm
+                    type: string
+                  caSecretName:
+                    description: |-
+                      Name of a Secret containing a CA bundle (key: ca.crt) to verify the
+                      backend endpoint's TLS certificate. Optional.
+                    type: string
+                  enabled:
+                    default: false
+                    description: |-
+                      Whether federated scope-checking is enabled for Gateway and
+                      RemediationOrchestrator.
+                    type: boolean
+                  endpoint:
+                    description: HTTP(S) endpoint of the fleet backend. Required when
+                      Enabled is true.
+                    type: string
+                  mcpGatewayEndpoint:
+                    description: |-
+                      MCPGatewayEndpoint is the fleet-wide MCP Gateway (Envoy AI Gateway or
+                      Kuadrant) SSE endpoint used for remote-cluster K8s reads. Required
+                      (enforced at admission) when Enabled is true: Gateway and
+                      RemediationOrchestrator both fail closed at startup without it
+                      (upstream Fleet.ValidateFullFederation) — see #222. This field is not
+                      specific to any one backend; it is shared config used independently
+                      of Backend/Endpoint.
+                    type: string
+                  mcpGatewayNamespace:
+                    description: |-
+                      MCPGatewayNamespace restricts every fleet-aware component's MCP
+                      Gateway CRD watch (Backend for Envoy AI Gateway,
+                      MCPServerRegistration for Kuadrant) to a single namespace. Empty means
+                      cluster-wide (all namespaces). Serves as the fallback for every
+                      component's own spec.<component>.fleet.namespace override (F1).
+                    type: string
+                  mcpGatewayType:
+                    description: |-
+                      MCPGatewayType selects the MCP Gateway implementation backing
+                      MCPGatewayEndpoint. Required (enforced at admission) when Enabled is
+                      true.
+                    enum:
+                    - eaigw
+                    - kuadrant
+                    type: string
+                  oauth2:
+                    description: |-
+                      OAuth2 credentials for authenticating to the MCP Gateway. Shared by
+                      every fleet-aware component. Required (enforced at admission via the
+                      FleetSpec-level CEL rule, ADR-CRD-001 F12) when MCPGatewayEndpoint is
+                      set: there is no unauthenticated mode for the MCP Gateway, and every
+                      fleet-aware component fails closed at startup without it.
+                    properties:
+                      credentialsSecretRef:
+                        description: |-
+                          Name of the Secret containing OAuth2 client credentials
+                          (keys: "client-id", "client-secret").
+                        type: string
+                      enabled:
+                        default: false
+                        description: Whether OAuth2 authentication is enabled.
+                        type: boolean
+                      scopes:
+                        description: OAuth2 scopes.
+                        items:
+                          type: string
+                        type: array
+                      tokenURL:
+                        description: Token endpoint URL.
+                        type: string
+                    type: object
+                  tokenSecretName:
+                    description: |-
+                      Name of a Secret containing a bearer token (key: token) for ACM
+                      Search GraphQL authentication. Optional when backend=fleetmetadatacache;
+                      required (enforced at admission, FedRAMP IA-5) when backend=acm, since
+                      ACM Search's GraphQL API has no unauthenticated mode.
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - message: fleet.oauth2.enabled must be true when fleet.enabled is
+                    true and fleet.mcpGatewayEndpoint is set -- there is no unauthenticated
+                    mode for the MCP Gateway (mirrors FleetMetadataCache's existing
+                    unconditional requirement)
+                  rule: '!has(self.enabled) || !self.enabled || !has(self.mcpGatewayEndpoint)
+                    || size(self.mcpGatewayEndpoint) == 0 || (has(self.oauth2) &&
+                    has(self.oauth2.enabled) && self.oauth2.enabled)'
+              fleetMetadataCache:
+                description: |-
+                  FleetMetadataCache configures the operator-managed Fleet Metadata
+                  Cache (FMC) service (ADR-068). Disabled by default -- most
+                  deployments that enable spec.fleet use backend=acm (an existing RHACM
+                  Search installation) instead of standing up FMC.
+                properties:
+                  enabled:
+                    default: false
+                    description: Whether the operator deploys the FMC service.
+                    type: boolean
+                  fleet:
+                    description: |-
+                      Fleet overrides for FMC's own MCP Gateway CRD watch namespace and/or
+                      OAuth2 client credentials (F1 -- collapses v1alpha1's bespoke
+                      MCPGatewayNamespace/FleetOAuth2CredentialsSecretRef pair into the
+                      shared FleetOverrideSpec type used by every other fleet-aware
+                      component). Every field falls back to spec.fleet.* when unset.
+                    properties:
+                      namespace:
+                        description: |-
+                          Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
+                          Gateway CRD watch scope.
+                        type: string
+                      oauth2CredentialsSecretRef:
+                        description: |-
+                          Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
+                          Use when this component must authenticate to the MCP Gateway as a
+                          different OAuth2 client than other fleet-aware components (e.g. a
+                          federated Keycloak issuing distinct per-service client registrations
+                          against the same shared spec.fleet.oauth2.tokenURL).
+                        type: string
+                    type: object
+                  keyTTL:
+                    default: 45s
+                    description: |-
+                      TTL for cached resource metadata entries in Valkey. Must be a valid
+                      Go duration string.
+                    type: string
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: INFO
+                        description: |-
+                          Log level. One of: DEBUG, INFO, WARN, ERROR (F8 -- narrowed to
+                          uppercase-only in v1alpha2, matching upstream ADR-030; v1alpha1
+                          accepted both cases). The conversion webhook uppercases any
+                          lowercase v1alpha1 value on ConvertFrom rather than rejecting it.
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        type: string
+                    type: object
+                  resources:
+                    description: Resource requirements.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  syncInterval:
+                    default: 30s
+                    description: |-
+                      How often FMC polls managed clusters for resource metadata. Must be
+                      a valid Go duration string.
+                    type: string
+                type: object
+              gateway:
+                description: Gateway service settings.
+                properties:
+                  config:
+                    description: Gateway server and middleware configuration.
+                    properties:
+                      cors:
+                        description: |-
+                          CORS configuration. Gateway is an M2M webhook API, not a browser
+                          target, so the defaults block all cross-origin requests.
+                        properties:
+                          allowCredentials:
+                            default: false
+                            description: Whether cross-origin requests may include
+                              credentials.
+                            type: boolean
+                          allowedMethods:
+                            description: |-
+                              HTTP methods allowed for cross-origin requests.
+                              Default: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"].
+                            items:
+                              type: string
+                            type: array
+                          allowedOrigins:
+                            description: |-
+                              Allowed origins for CORS requests.
+                              Default: ["https://no-browser-clients.invalid"] (blocks all browser clients).
+                            items:
+                              type: string
+                            type: array
+                          maxAge:
+                            default: 300
+                            description: Preflight cache duration in seconds.
+                            type: integer
+                        type: object
+                      deduplicationCooldown:
+                        default: 5m
+                        description: Deduplication cooldown period for alert processing.
+                        type: string
+                      k8sRequestTimeout:
+                        default: 15s
+                        description: 'Timeout for outbound K8s API requests. Default:
+                          "15s".'
+                        type: string
+                      trustedProxyCIDRs:
+                        description: |-
+                          Trusted proxy CIDRs for X-Forwarded-For / RealIP extraction.
+                          Empty = fail-closed (proxy headers never trusted).
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                  enabled:
+                    default: true
+                    description: |-
+                      Whether the Gateway component is deployed. Defaults to true.
+                      Set to false to skip all Gateway resources (Deployment, Service, RBAC, etc.).
+                    type: boolean
+                  fleet:
+                    description: |-
+                      Fleet overrides spec.fleet.oauth2.credentialsSecretRef for Gateway
+                      only (F1). Use when Gateway must authenticate to the MCP Gateway as
+                      a different OAuth2 client than other fleet-aware components. Falls
+                      back to spec.fleet.* when unset.
+                    properties:
+                      namespace:
+                        description: |-
+                          Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
+                          Gateway CRD watch scope.
+                        type: string
+                      oauth2CredentialsSecretRef:
+                        description: |-
+                          Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
+                          Use when this component must authenticate to the MCP Gateway as a
+                          different OAuth2 client than other fleet-aware components (e.g. a
+                          federated Keycloak issuing distinct per-service client registrations
+                          against the same shared spec.fleet.oauth2.tokenURL).
+                        type: string
+                    type: object
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: INFO
+                        description: |-
+                          Log level. One of: DEBUG, INFO, WARN, ERROR (F8 -- narrowed to
+                          uppercase-only in v1alpha2, matching upstream ADR-030; v1alpha1
+                          accepted both cases). The conversion webhook uppercases any
+                          lowercase v1alpha1 value on ConvertFrom rather than rejecting it.
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        type: string
+                    type: object
+                  resources:
+                    description: Resource requirements.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  route:
+                    description: Route configuration for OCP external access.
+                    properties:
+                      enabled:
+                        default: true
+                        description: Whether to create an OCP Route for the Gateway.
+                        type: boolean
+                      hostname:
+                        description: Hostname override. When empty, the OCP router
+                          auto-generates a hostname.
+                        type: string
+                    type: object
+                type: object
+              image:
+                description: Image pull policy, pull secrets, and optional per-component
+                  overrides.
+                properties:
+                  overrides:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Per-component image overrides. Keys are component names
+                      (e.g. "gateway", "datastorage", "kubernautagent"), values are full
+                      image references (e.g. "myregistry.example.com/gateway:v1.4.0").
+                      When set, overrides the RELATED_IMAGE env var for that component.
+                    type: object
+                  pullPolicy:
+                    default: IfNotPresent
+                    description: Pull policy for all containers.
+                    type: string
+                  pullSecrets:
+                    description: Pull secrets for private registries.
+                    items:
+                      description: |-
+                        LocalObjectReference contains enough information to let you locate the
+                        referenced object inside the same namespace.
+                      properties:
+                        name:
+                          default: ""
+                          description: |-
+                            Name of the referent.
+                            This field is effectively required, but due to backwards compatibility is
+                            allowed to be empty. Instances of this type with an empty value here are
+                            almost certainly wrong.
+                            More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                          type: string
+                      type: object
+                      x-kubernetes-map-type: atomic
+                    type: array
+                type: object
+              kubernautAgent:
+                description: Kubernaut Agent (KA) -- LLM-powered investigation and
+                  analysis service.
+                properties:
+                  additionalClusterRoleBindings:
+                    description: |-
+                      AdditionalClusterRoleBindings is an optional list of pre-existing
+                      ClusterRole names to bind to the Kubernaut Agent ServiceAccount.
+                    items:
+                      type: string
+                    maxItems: 64
+                    type: array
+                    x-kubernetes-list-type: set
+                  alignmentCheck:
+                    description: Alignment check (shadow agent) configuration.
+                    properties:
+                      enabled:
+                        default: false
+                        description: Whether alignment check is enabled.
+                        type: boolean
+                      llmProfileRef:
+                        description: |-
+                          Reference to a named profile in spec.llmProfiles used for alignment
+                          check calls (F5 -- replaces v1alpha1's AlignmentCheckLLMSpec{Provider,
+                          Model,Endpoint}, which never had a working credentials path, same bug
+                          class as #237). Matches every other LLM consumer in the CRD
+                          (KubernautAgent, APIFrontend, severity-triage) and the upstream Helm
+                          chart's alignmentCheck.llmProfileRef.
+                        type: string
+                      maxStepTokens:
+                        default: 500
+                        description: Maximum tokens per alignment step.
+                        type: integer
+                      timeout:
+                        default: 10s
+                        description: Timeout for alignment check requests.
+                        type: string
+                    type: object
+                  audit:
+                    description: Audit logging configuration.
+                    properties:
+                      enabled:
+                        default: true
+                        description: Whether audit logging is enabled.
+                        type: boolean
+                    type: object
+                  fleet:
+                    description: |-
+                      Fleet overrides spec.fleet.oauth2.credentialsSecretRef for the
+                      Kubernaut Agent only (F1). Use when KA must authenticate to the MCP
+                      Gateway (for fleet tool discovery, ADR-068 decision #11) as a
+                      different OAuth2 client than other fleet-aware components. Falls
+                      back to spec.fleet.* when unset.
+                    properties:
+                      namespace:
+                        description: |-
+                          Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
+                          Gateway CRD watch scope.
+                        type: string
+                      oauth2CredentialsSecretRef:
+                        description: |-
+                          Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
+                          Use when this component must authenticate to the MCP Gateway as a
+                          different OAuth2 client than other fleet-aware components (e.g. a
+                          federated Keycloak issuing distinct per-service client registrations
+                          against the same shared spec.fleet.oauth2.tokenURL).
+                        type: string
+                    type: object
+                  interactive:
+                    description: Interactive mode JWT identity delegation configuration.
+                    properties:
+                      allowInsecureJWKS:
+                        description: |-
+                          AllowInsecureJWKS permits HTTP (non-TLS) JWKS URLs for dev/test.
+                          Production deployments MUST leave this false.
+                        type: boolean
+                      enabled:
+                        description: |-
+                          Whether MCP interactive mode endpoint and Lease-based session
+                          management are enabled. When true, KA exposes a Streamable HTTP
+                          MCP endpoint at POST /api/v1/mcp.
+                        type: boolean
+                      inactivityTimeout:
+                        description: |-
+                          Session timeout after last operator activity.
+                          Must be a valid Go duration string (e.g. "10m").
+                        type: string
+                      jwtProviders:
+                        description: JWT providers for OIDC-based identity delegation.
+                        items:
+                          description: |-
+                            JWTProviderSpec configures a single OIDC JWT provider for multi-issuer
+                            authentication. Shared by KA interactive and API Frontend auth.
+                          properties:
+                            audiences:
+                              description: Expected audience claim values for session
+                                authenticity (FedRAMP SC-23).
+                              items:
+                                type: string
+                              minItems: 1
+                              type: array
+                            claimMappings:
+                              description: Claim mappings for username and group extraction
+                                (FedRAMP AC-6).
+                              properties:
+                                groups:
+                                  description: JWT claim name for group membership
+                                    extraction.
+                                  type: string
+                                username:
+                                  description: JWT claim name for username extraction.
+                                  type: string
+                              type: object
+                            issuerURL:
+                              description: OIDC issuer URL for token validation.
+                              minLength: 1
+                              type: string
+                            jwksURL:
+                              description: |-
+                                JWKS endpoint URL for token signature verification (F6 -- required in
+                                v1alpha2, matching the upstream Helm chart's jwtProviders[].jwksURL,
+                                which has always been required there; v1alpha1 allowed omitting it
+                                and deriving it from IssuerURL at runtime). Must use HTTPS unless the
+                                parent's allowInsecureJWKS/allowInsecureIssuers flag is true.
+                              maxLength: 2048
+                              minLength: 1
+                              type: string
+                            name:
+                              description: Human-readable name for this provider (e.g.
+                                "rhbk", "spire").
+                              maxLength: 63
+                              minLength: 1
+                              type: string
+                          required:
+                          - audiences
+                          - issuerURL
+                          - jwksURL
+                          - name
+                          type: object
+                        maxItems: 8
+                        type: array
+                      maxConcurrentSessions:
+                        description: Maximum concurrent interactive sessions per agent
+                          replica.
+                        minimum: 1
+                        type: integer
+                      rateLimitPerUser:
+                        description: Maximum MCP requests per second per authenticated
+                          user.
+                        minimum: 1
+                        type: integer
+                      sessionTTL:
+                        description: |-
+                          Maximum duration for an interactive session before auto-release.
+                          Must be a valid Go duration string (e.g. "30m").
+                        type: string
+                    type: object
+                  llmProfileRef:
+                    description: |-
+                      Reference to a named profile in spec.llmProfiles used for KA's
+                      investigator LLM calls. Optional when spec.llmProfiles defines
+                      exactly one profile -- the operator infers that sole profile
+                      automatically (see EffectiveKALLMProfileRef in
+                      internal/resources/common.go), so a single-provider CR never needs
+                      to name it explicitly here. Required (and must match a key in
+                      spec.llmProfiles) whenever spec.llmProfiles defines more than one
+                      profile, since the choice is then ambiguous.
+                    minLength: 1
+                    type: string
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: INFO
+                        description: |-
+                          Log level. One of: DEBUG, INFO, WARN, ERROR (F8 -- narrowed to
+                          uppercase-only in v1alpha2, matching upstream ADR-030; v1alpha1
+                          accepted both cases). The conversion webhook uppercases any
+                          lowercase v1alpha1 value on ConvertFrom rather than rejecting it.
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        type: string
+                    type: object
+                  maxTurns:
+                    default: 40
+                    description: |-
+                      MaxTurns is the maximum number of LLM conversation turns the
+                      investigator may execute per analysis session.
+                    minimum: 1
+                    type: integer
+                  phaseModels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Per-phase LLM profile overrides. Keys are agent phase names
+                      (rca, workflow_discovery, validation); values are profile names in
+                      spec.llmProfiles. Each referenced profile may use its own provider
+                      and credentialsSecretName, independent of llmProfileRef's profile —
+                      the operator mounts a dedicated Secret volume for any phase profile
+                      whose credentialsSecretName differs from llmProfileRef's. When
+                      absent, all phases use llmProfileRef's profile.
+                    type: object
+                    x-kubernetes-validations:
+                    - message: 'phaseModels keys must be one of: rca, workflow_discovery,
+                        validation'
+                      rule: self.all(k, k in ['rca','workflow_discovery','validation'])
+                  resources:
+                    description: Resource requirements.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  runtimeConfigMapName:
+                    description: |-
+                      Name of a pre-existing ConfigMap for the LLM runtime configuration.
+                      When set, the operator skips generating kubernaut-agent-llm-runtime
+                      and mounts this ConfigMap instead. Must contain key "llm-runtime.yaml".
+                    type: string
+                  safety:
+                    description: Safety guardrails for LLM interactions.
+                    properties:
+                      anomaly:
+                        description: Anomaly detection thresholds.
+                        properties:
+                          maxRepeatedFailures:
+                            default: 3
+                            description: Max repeated failures before circuit-breaker.
+                            type: integer
+                          maxToolCallsPerTool:
+                            default: 10
+                            description: Max tool calls per individual tool.
+                            type: integer
+                          maxTotalToolCalls:
+                            default: 40
+                            description: Max total tool calls across all tools.
+                            type: integer
+                        type: object
+                      sanitization:
+                        description: Input sanitization rules.
+                        properties:
+                          credentialScrubEnabled:
+                            default: true
+                            description: Whether credential scrubbing is enabled.
+                            type: boolean
+                          injectionPatternsEnabled:
+                            default: true
+                            description: Whether prompt injection pattern detection
+                              is enabled.
+                            type: boolean
+                        type: object
+                    type: object
+                  serverRateLimit:
+                    description: Server-level rate limiting for the KA HTTP endpoint.
+                    properties:
+                      burst:
+                        default: 100
+                        description: Burst size (max concurrent requests above the
+                          steady-state rate).
+                        minimum: 1
+                        type: integer
+                      requestsPerSecond:
+                        default: 50
+                        description: Requests per second allowed.
+                        minimum: 1
+                        type: integer
+                    type: object
+                  session:
+                    description: Session configuration.
+                    properties:
+                      ttl:
+                        default: 30m
+                        description: Session time-to-live.
+                        type: string
+                    type: object
+                  shutdown:
+                    description: Graceful shutdown configuration.
+                    properties:
+                      drainSeconds:
+                        default: 15
+                        description: Seconds to wait for in-flight requests to drain
+                          during shutdown.
+                        maximum: 300
+                        minimum: 0
+                        type: integer
+                    type: object
+                  summarizer:
+                    description: Summarizer configuration for tool output compression.
+                    properties:
+                      maxToolOutputSize:
+                        default: 100000
+                        description: Maximum tool output size in bytes before truncation.
+                        type: integer
+                      threshold:
+                        default: 8000
+                        description: Token threshold above which tool output is summarized.
+                        type: integer
+                    type: object
+                type: object
+              llmProfiles:
+                additionalProperties:
+                  description: |-
+                    LLMProfileSpec defines a single, named LLM provider configuration.
+                    Profiles live in spec.llmProfiles and are referenced by name (llmProfileRef)
+                    from KA, API Frontend, and API Frontend's severity-triage configuration,
+                    decoupling each component's LLM identity from a single shared config.
+                  properties:
+                    azureApiVersion:
+                      description: Azure OpenAI API version.
+                      type: string
+                    bedrockRegion:
+                      description: AWS Bedrock region.
+                      type: string
+                    credentialsSecretName:
+                      description: Name of the Secret containing LLM API credentials.
+                      minLength: 1
+                      type: string
+                    endpoint:
+                      description: LLM API endpoint override. When empty, uses the
+                        provider default.
+                      type: string
+                    maxRetries:
+                      default: 3
+                      description: Maximum number of retries for LLM API calls.
+                      type: integer
+                    model:
+                      description: |-
+                        LLM model name (e.g. "gpt-4o" for provider "openai", "claude-sonnet-5"
+                        for provider "vertexai"/"anthropic"). Note: as of kubernaut v1.5/main,
+                        there is no native Gemini/Google-GenAI client — "vertexai" always
+                        builds an Anthropic-family client regardless of the configured model,
+                        so Gemini model names are not currently functional (see
+                        jordigilh/kubernaut#1778).
+                      minLength: 1
+                      type: string
+                    oauth2:
+                      description: OAuth2 configuration for LLM authentication.
+                      properties:
+                        credentialsSecretRef:
+                          description: |-
+                            Name of the Secret containing OAuth2 client credentials
+                            (keys: "client-id", "client-secret").
+                          type: string
+                        enabled:
+                          default: false
+                          description: Whether OAuth2 authentication is enabled.
+                          type: boolean
+                        scopes:
+                          description: OAuth2 scopes.
+                          items:
+                            type: string
+                          type: array
+                        tokenURL:
+                          description: Token endpoint URL.
+                          type: string
+                      type: object
+                    provider:
+                      description: LLM provider name (e.g. "openai", "vertexai", "bedrock",
+                        "azure").
+                      minLength: 1
+                      type: string
+                    reasoning:
+                      description: Reasoning/thinking-token configuration. Disabled
+                        by default.
+                      properties:
+                        budgetTokens:
+                          description: |-
+                            Exact-value thinking-token budget. When set, this always takes
+                            precedence over Effort for Anthropic (native and Vertex-hosted
+                            Claude); providers with no effort-dial concept at all ignore it.
+                          type: integer
+                        capabilityOverride:
+                          default: auto
+                          description: |-
+                            Capability override for self-hosted/custom models that cannot be
+                            identified by vendor enum. One of "auto" (default), "force_on",
+                            "force_off".
+                          enum:
+                          - auto
+                          - force_on
+                          - force_off
+                          type: string
+                        effort:
+                          description: |-
+                            Unified, provider-agnostic reasoning-depth knob (kubernaut#1604).
+                            One of "" (unset -- vendor default), "none", "minimal", "low",
+                            "medium", "high", "xhigh". Same value means the same thing across
+                            providers; each client maps it into its own wire dialect.
+                          enum:
+                          - none
+                          - minimal
+                          - low
+                          - medium
+                          - high
+                          - xhigh
+                          type: string
+                        enabled:
+                          default: false
+                          description: Enable reasoning/thinking token requests where
+                            the model supports it.
+                          type: boolean
+                      type: object
+                    temperature:
+                      description: |-
+                        Sampling temperature for LLM responses (e.g. "0.7").
+                        Serialized as string to avoid CRD float portability issues.
+                      type: string
+                    timeoutSeconds:
+                      default: 120
+                      description: Timeout in seconds for LLM API calls.
+                      type: integer
+                    tlsCaFile:
+                      description: Path to a CA certificate file for TLS to the LLM
+                        endpoint.
+                      type: string
+                    tlsCertFile:
+                      description: |-
+                        Path to a client certificate file for mTLS to the LLM endpoint.
+                        Must be set together with TLSKeyFile.
+                      type: string
+                    tlsClientSecretRef:
+                      description: |-
+                        Name of the Secret containing the TLS client certificate and key
+                        for mTLS to the LLM endpoint. The Secret must contain tls.crt and
+                        tls.key entries. Required when TLSCertFile and TLSKeyFile are set.
+                      type: string
+                    tlsKeyFile:
+                      description: |-
+                        Path to a client key file for mTLS to the LLM endpoint.
+                        Must be set together with TLSCertFile.
+                      type: string
+                    vertexLocation:
+                      description: GCP Vertex AI location (e.g. "us-central1").
+                      type: string
+                    vertexProject:
+                      description: GCP Vertex AI project ID.
+                      type: string
+                  required:
+                  - credentialsSecretName
+                  - model
+                  - provider
+                  type: object
+                description: |-
+                  Named LLM provider profiles, keyed by an arbitrary user-chosen name
+                  (e.g. "primary", "lightweight"). Components reference a profile by
+                  name via their own llmProfileRef field instead of embedding LLM
+                  configuration directly, decoupling KA and API Frontend's LLM identity.
+                  When this map defines exactly one profile, spec.kubernautAgent.llmProfileRef
+                  (and every other llmProfileRef field that falls back to it) may be
+                  omitted -- the operator infers the sole profile rather than relying
+                  on a conventional key name. Any other count requires an explicit
+                  llmProfileRef wherever one is needed.
+                minProperties: 1
+                type: object
+              monitoring:
+                description: |-
+                  Monitoring configures the Prometheus/AlertManager endpoint used by
+                  EffectivenessMonitor and API Frontend severity-triage (F2 -- new in
+                  v1alpha2). Unset (the default) preserves v1alpha1's only behavior:
+                  OCP's built-in Thanos Querier at a well-known in-cluster URL,
+                  auto-detected, no user action needed.
+                properties:
+                  prometheus:
+                    description: PrometheusSpec configures the Prometheus/Thanos Querier
+                      endpoint.
+                    properties:
+                      enabled:
+                        default: true
+                        description: |-
+                          Whether Prometheus-backed features (EM assessment, AF severity-triage)
+                          are active. Defaults to true (auto-detected OCP monitoring stack).
+                        type: boolean
+                      tlsCaFile:
+                        description: Path to a CA certificate file for TLS to the
+                          Prometheus endpoint.
+                        type: string
+                      url:
+                        description: |-
+                          Prometheus/Thanos Querier URL. Defaults to the OCP Thanos Querier
+                          route when empty.
+                        type: string
+                    type: object
+                type: object
+              networkPolicies:
+                description: |-
+                  NetworkPolicies tunes the always-on Kubernetes NetworkPolicy resources
+                  the operator creates for every component (F3 -- v1alpha1's
+                  networkPolicies.enabled opt-out is removed in v1alpha2; NetworkPolicies
+                  are unconditional, matching the upstream Helm chart's actual behavior
+                  and Red Hat's OpenShift Hardening requirements). A default-deny
+                  posture is applied with explicit allow rules matching the upstream
+                  Helm chart's traffic matrix; every field below only tunes that
+                  already-created policy set.
+                properties:
+                  apiServerCIDR:
+                    description: |-
+                      Primary K8s API server backend CIDR, for environments where default
+                      detection doesn't resolve correctly.
+                    type: string
+                  apiServerCIDRs:
+                    description: |-
+                      Additional API server backend endpoint IPs as /32 CIDRs, for HA
+                      clusters with multiple control-plane nodes. Merged with APIServerCIDR.
+                    items:
+                      type: string
+                    type: array
+                  apiServerPort:
+                    format: int32
+                    type: integer
+                  apifrontend:
+                    description: |-
+                      NetworkPolicyNamedIngressOverride extends NetworkPolicyIngressOverride
+                      with a namespace-name allowlist, mirroring the subset of components
+                      (Gateway, APIFrontend, Console) the upstream Helm chart exposes this
+                      simpler option on.
+                    properties:
+                      ingressCIDRs:
+                        items:
+                          type: string
+                        type: array
+                      ingressNamespaceSelectors:
+                        items:
+                          description: |-
+                            A label selector is a label query over a set of resources. The result of matchLabels and
+                            matchExpressions are ANDed. An empty label selector matches all objects. A null
+                            label selector matches no objects.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        type: array
+                      ingressNamespaces:
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                  console:
+                    description: |-
+                      NetworkPolicyNamedIngressOverride extends NetworkPolicyIngressOverride
+                      with a namespace-name allowlist, mirroring the subset of components
+                      (Gateway, APIFrontend, Console) the upstream Helm chart exposes this
+                      simpler option on.
+                    properties:
+                      ingressCIDRs:
+                        items:
+                          type: string
+                        type: array
+                      ingressNamespaceSelectors:
+                        items:
+                          description: |-
+                            A label selector is a label query over a set of resources. The result of matchLabels and
+                            matchExpressions are ANDed. An empty label selector matches all objects. A null
+                            label selector matches no objects.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        type: array
+                      ingressNamespaces:
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                  datastorage:
+                    description: Helm exposes only CIDR/selector overrides here (no
+                      ingressNamespaces).
+                    properties:
+                      ingressCIDRs:
+                        items:
+                          type: string
+                        type: array
+                      ingressNamespaceSelectors:
+                        items:
+                          description: |-
+                            A label selector is a label query over a set of resources. The result of matchLabels and
+                            matchExpressions are ANDed. An empty label selector matches all objects. A null
+                            label selector matches no objects.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        type: array
+                    type: object
+                  externalRegistry:
+                    description: NetworkPolicyEgressOverride overrides a single egress
+                      allow rule's target.
+                    properties:
+                      cidr:
+                        default: 0.0.0.0/0
+                        type: string
+                      port:
+                        format: int32
+                        type: integer
+                    type: object
+                  externalWebhooks:
+                    description: NetworkPolicyEgressOverride overrides a single egress
+                      allow rule's target.
+                    properties:
+                      cidr:
+                        default: 0.0.0.0/0
+                        type: string
+                      port:
+                        format: int32
+                        type: integer
+                    type: object
+                  gateway:
+                    description: |-
+                      Gateway also exposes a simple ingressNamespaces name-list, matching
+                      Helm's networkPolicies.gateway.*.
+                    properties:
+                      ingressCIDRs:
+                        items:
+                          type: string
+                        type: array
+                      ingressNamespaceSelectors:
+                        items:
+                          description: |-
+                            A label selector is a label query over a set of resources. The result of matchLabels and
+                            matchExpressions are ANDed. An empty label selector matches all objects. A null
+                            label selector matches no objects.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        type: array
+                      ingressNamespaces:
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                  idp:
+                    description: |-
+                      NetworkPolicyIdPEgressOverride is NetworkPolicyEgressOverride plus a
+                      second port, for deployments where a service must reach two IdPs on two
+                      different ports.
+                    properties:
+                      cidr:
+                        default: 0.0.0.0/0
+                        type: string
+                      extraPorts:
+                        items:
+                          format: int32
+                          type: integer
+                        type: array
+                      port:
+                        format: int32
+                        type: integer
+                    type: object
+                  kubernautAgent:
+                    description: |-
+                      NetworkPolicyIngressOverride adds allowed ingress sources beyond the
+                      operator's default same-namespace/component allow rules. CIDRs cover
+                      traffic not associated with any pod/namespace (e.g. NodePort-sourced
+                      host traffic, a hostNetwork-mode ingress controller); selectors cover
+                      cases the simple namespace-name list (NetworkPolicyNamedIngressOverride)
+                      cannot express.
+                    properties:
+                      ingressCIDRs:
+                        items:
+                          type: string
+                        type: array
+                      ingressNamespaceSelectors:
+                        items:
+                          description: |-
+                            A label selector is a label query over a set of resources. The result of matchLabels and
+                            matchExpressions are ANDed. An empty label selector matches all objects. A null
+                            label selector matches no objects.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        type: array
+                    type: object
+                  llm:
+                    description: NetworkPolicyEgressOverride overrides a single egress
+                      allow rule's target.
+                    properties:
+                      cidr:
+                        default: 0.0.0.0/0
+                        type: string
+                      port:
+                        format: int32
+                        type: integer
+                    type: object
+                  mcpGateway:
+                    description: NetworkPolicyEgressOverride overrides a single egress
+                      allow rule's target.
+                    properties:
+                      cidr:
+                        default: 0.0.0.0/0
+                        type: string
+                      port:
+                        format: int32
+                        type: integer
+                    type: object
+                  monitoring:
+                    description: |-
+                      NetworkPolicyMonitoringOverride overrides where/how the monitoring-stack
+                      ingress/egress rules (Prometheus scrape, AlertManager webhook) are shaped.
+                    properties:
+                      alertManagerPort:
+                        default: 9093
+                        format: int32
+                        type: integer
+                      namespace:
+                        type: string
+                      prometheusPort:
+                        default: 9090
+                        format: int32
+                        type: integer
+                    type: object
+                  prometheus:
+                    description: NetworkPolicyEgressOverride overrides a single egress
+                      allow rule's target.
+                    properties:
+                      cidr:
+                        default: 0.0.0.0/0
+                        type: string
+                      port:
+                        format: int32
+                        type: integer
+                    type: object
+                type: object
+              notification:
+                description: Notification controller settings.
+                properties:
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: INFO
+                        description: |-
+                          Log level. One of: DEBUG, INFO, WARN, ERROR (F8 -- narrowed to
+                          uppercase-only in v1alpha2, matching upstream ADR-030; v1alpha1
+                          accepted both cases). The conversion webhook uppercases any
+                          lowercase v1alpha1 value on ConvertFrom rather than rejecting it.
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        type: string
+                    type: object
+                  resources:
+                    description: Resource requirements for the notification controller.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  routing:
+                    description: |-
+                      Optional routing ConfigMap reference for advanced notification routing.
+                      Must contain key "routing.yaml" with Alertmanager-style routing rules.
+                    properties:
+                      configMapName:
+                        description: Name of the ConfigMap.
+                        type: string
+                    required:
+                    - configMapName
+                    type: object
+                  slack:
+                    description: Slack quickstart shortcut.
+                    properties:
+                      channel:
+                        default: '#kubernaut-alerts'
+                        description: Slack channel for notifications.
+                        type: string
+                      secretName:
+                        description: |-
+                          Name of the Secret containing the Slack webhook URL (key: "webhook-url").
+                          Empty = no Slack, console-only delivery.
+                        type: string
+                    type: object
+                type: object
+              postgresql:
+                description: |-
+                  BYO PostgreSQL connection. The operator validates the secret and derives
+                  the DataStorage db-secrets.yaml Secret automatically.
+                properties:
+                  host:
+                    description: PostgreSQL hostname or service DNS.
+                    minLength: 1
+                    type: string
+                  port:
+                    default: 5432
+                    description: PostgreSQL port.
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  secretName:
+                    description: |-
+                      Name of the Secret containing PostgreSQL credentials.
+                      Required keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB.
+                    minLength: 1
+                    type: string
+                  sslMode:
+                    default: verify-full
+                    description: |-
+                      PostgreSQL SSL mode (require, verify-ca, verify-full). "disable" is
+                      intentionally not accepted: these are production deployments and TLS
+                      to the database is not optional.
+                    enum:
+                    - require
+                    - verify-ca
+                    - verify-full
+                    type: string
+                required:
+                - host
+                - secretName
+                type: object
+              remediationOrchestrator:
+                description: RemediationOrchestrator controller configuration.
+                properties:
+                  asyncPropagation:
+                    description: Async propagation delay configuration.
+                    properties:
+                      gitOpsSyncDelay:
+                        default: 3m
+                        type: string
+                      operatorReconcileDelay:
+                        default: 1m
+                        type: string
+                      proactiveAlertDelay:
+                        default: 5m
+                        type: string
+                    type: object
+                  dryRun:
+                    default: false
+                    description: |-
+                      DryRun enables dry-run mode: the pipeline stops after AI analysis
+                      without executing remediation workflows. Operators use this to
+                      build confidence before enabling fully autonomous remediation.
+                    type: boolean
+                  dryRunHoldPeriod:
+                    default: 1h
+                    description: |-
+                      DryRunHoldPeriod suppresses re-triggering of the same signal after
+                      a dry-run completion. Must be a valid Go duration string.
+                      Only effective when DryRun is true.
+                    type: string
+                  effectivenessAssessment:
+                    description: Effectiveness assessment configuration.
+                    properties:
+                      stabilizationWindow:
+                        default: 5m
+                        type: string
+                    type: object
+                  fleet:
+                    description: |-
+                      Fleet overrides spec.fleet.oauth2.credentialsSecretRef for
+                      RemediationOrchestrator only (F1). Use when RemediationOrchestrator
+                      must authenticate to the MCP Gateway as a different OAuth2 client
+                      than other fleet-aware components. Falls back to spec.fleet.* when
+                      unset.
+                    properties:
+                      namespace:
+                        description: |-
+                          Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
+                          Gateway CRD watch scope.
+                        type: string
+                      oauth2CredentialsSecretRef:
+                        description: |-
+                          Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
+                          Use when this component must authenticate to the MCP Gateway as a
+                          different OAuth2 client than other fleet-aware components (e.g. a
+                          federated Keycloak issuing distinct per-service client registrations
+                          against the same shared spec.fleet.oauth2.tokenURL).
+                        type: string
+                    type: object
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: INFO
+                        description: |-
+                          Log level. One of: DEBUG, INFO, WARN, ERROR (F8 -- narrowed to
+                          uppercase-only in v1alpha2, matching upstream ADR-030; v1alpha1
+                          accepted both cases). The conversion webhook uppercases any
+                          lowercase v1alpha1 value on ConvertFrom rather than rejecting it.
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        type: string
+                    type: object
+                  notifications:
+                    description: Notification behaviour for remediation events.
+                    properties:
+                      notifySelfResolved:
+                        default: false
+                        description: Whether to notify on self-resolved remediations.
+                        type: boolean
+                    type: object
+                  resources:
+                    description: Resource requirements.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  retention:
+                    description: Retention policy for completed remediation records.
+                    properties:
+                      period:
+                        default: 24h
+                        description: How long to retain completed remediation records.
+                        type: string
+                    type: object
+                  routing:
+                    description: Routing thresholds for failure detection and cooldowns.
+                    properties:
+                      consecutiveFailureCooldown:
+                        default: 1h
+                        type: string
+                      consecutiveFailureThreshold:
+                        default: 3
+                        type: integer
+                      exponentialBackoffBase:
+                        default: 1m
+                        type: string
+                      exponentialBackoffMax:
+                        default: 10m
+                        type: string
+                      exponentialBackoffMaxExponent:
+                        default: 4
+                        type: integer
+                      ineffectiveChainThreshold:
+                        default: 3
+                        type: integer
+                      ineffectiveTimeWindow:
+                        default: 4h
+                        type: string
+                      noActionRequiredDelayHours:
+                        default: 24
+                        type: integer
+                      recentlyRemediatedCooldown:
+                        default: 5m
+                        type: string
+                      recurrenceCountThreshold:
+                        default: 5
+                        type: integer
+                      scopeBackoffBase:
+                        default: 5s
+                        type: string
+                      scopeBackoffMax:
+                        default: 5m
+                        type: string
+                    type: object
+                  timeouts:
+                    description: Timeout configuration for remediation phases.
+                    properties:
+                      analyzing:
+                        default: 10m
+                        type: string
+                      awaitingApproval:
+                        default: 15m
+                        type: string
+                      executing:
+                        default: 30m
+                        type: string
+                      global:
+                        default: 1h
+                        type: string
+                      processing:
+                        default: 5m
+                        type: string
+                      verifying:
+                        default: 30m
+                        type: string
+                    type: object
+                type: object
+              signalProcessing:
+                description: |-
+                  SignalProcessing controller configuration. Required for the same reason
+                  as AIAnalysis above -- see that field's doc comment.
+                properties:
+                  fleet:
+                    description: |-
+                      Fleet overrides spec.fleet.mcpGatewayNamespace/oauth2.credentialsSecretRef
+                      for SignalProcessing's own ClusterRegistry watch (used for cluster
+                      classification labels, BR-FLEET-003) and MCP Gateway authentication
+                      (F1 -- collapses v1alpha1's separate MCPGatewayNamespace/
+                      FleetOAuth2CredentialsSecretRef fields into the shared
+                      FleetOverrideSpec type used by every other fleet-aware component).
+                    properties:
+                      namespace:
+                        description: |-
+                          Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
+                          Gateway CRD watch scope.
+                        type: string
+                      oauth2CredentialsSecretRef:
+                        description: |-
+                          Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
+                          Use when this component must authenticate to the MCP Gateway as a
+                          different OAuth2 client than other fleet-aware components (e.g. a
+                          federated Keycloak issuing distinct per-service client registrations
+                          against the same shared spec.fleet.oauth2.tokenURL).
+                        type: string
+                    type: object
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: INFO
+                        description: |-
+                          Log level. One of: DEBUG, INFO, WARN, ERROR (F8 -- narrowed to
+                          uppercase-only in v1alpha2, matching upstream ADR-030; v1alpha1
+                          accepted both cases). The conversion webhook uppercases any
+                          lowercase v1alpha1 value on ConvertFrom rather than rejecting it.
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        type: string
+                    type: object
+                  policy:
+                    description: |-
+                      Policy ConfigMap reference. Required.
+                      The ConfigMap must contain key "policy.rego".
+                    properties:
+                      configMapName:
+                        description: Name of the ConfigMap.
+                        type: string
+                    required:
+                    - configMapName
+                    type: object
+                  proactiveSignalMappings:
+                    description: |-
+                      Optional proactive signal mappings ConfigMap reference.
+                      Must contain key "proactive-signal-mappings.yaml".
+                    properties:
+                      configMapName:
+                        description: Name of the ConfigMap.
+                        type: string
+                    required:
+                    - configMapName
+                    type: object
+                  resources:
+                    description: Resource requirements.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                required:
+                - policy
+                type: object
+              valkey:
+                description: BYO Valkey/Redis connection.
+                properties:
+                  host:
+                    description: Valkey hostname or service DNS.
+                    minLength: 1
+                    type: string
+                  port:
+                    default: 6379
+                    description: Valkey port.
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  secretName:
+                    description: |-
+                      Name of the Secret containing Valkey credentials.
+                      Required key: valkey-secrets.yaml (YAML content: "password: <value>").
+                    minLength: 1
+                    type: string
+                  tls:
+                    description: |-
+                      TLS configures client-side TLS for the Valkey/Redis connection.
+                      Server-side TLS provisioning is the platform admin's responsibility
+                      (Valkey is BYO).
+                    properties:
+                      caSecretName:
+                        description: |-
+                          Name of the Secret containing the CA certificate to verify the server.
+                          Required key: ca.crt
+                        type: string
+                      clientCertSecretName:
+                        description: |-
+                          Name of the Secret containing client certificate and key for mTLS.
+                          Required keys: tls.crt, tls.key
+                        type: string
+                      enabled:
+                        description: Whether TLS is enabled for the Valkey/Redis connection.
+                        type: boolean
+                    required:
+                    - enabled
+                    type: object
+                required:
+                - host
+                - secretName
+                type: object
+              workflowExecution:
+                description: |-
+                  WorkflowExecution controller configuration. Also hosts the AWX/AAP
+                  Ansible integration (F4 -- relocated from top-level spec.ansible in
+                  v1alpha1, since WorkflowExecution is Ansible's only consumer).
+                properties:
+                  ansible:
+                    description: |-
+                      Optional AWX/AAP integration for Ansible-based remediation workflows
+                      (F4 -- relocated here from v1alpha1's top-level spec.ansible; this is
+                      Ansible's only consumer, matching the upstream Helm chart's scoping).
+                    properties:
+                      apiURL:
+                        description: AWX/AAP API URL. Required when Enabled is true.
+                        type: string
+                      caCertSecretRef:
+                        description: |-
+                          CACertSecretRef references a Secret containing the PEM-encoded CA
+                          certificate for the AAP/AWX API endpoint. Use this when the AAP uses
+                          a self-signed certificate or a private CA. If omitted, the system
+                          trust store is used.
+                        properties:
+                          key:
+                            default: ca.crt
+                            description: Key within the Secret containing the CA PEM.
+                            type: string
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      enabled:
+                        default: false
+                        description: Whether AWX/AAP integration is enabled.
+                        type: boolean
+                      organizationID:
+                        default: 1
+                        description: AWX organization ID.
+                        minimum: 1
+                        type: integer
+                      tokenSecretRef:
+                        description: Reference to the Secret containing the AWX API
+                          token.
+                        properties:
+                          key:
+                            default: token
+                            description: 'Key within the Secret. Default: "token".'
+                            type: string
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    type: object
+                    x-kubernetes-validations:
+                    - message: ansible.apiURL is required when ansible.enabled is
+                        true
+                      rule: '!self.enabled || has(self.apiURL)'
+                  cooldownPeriod:
+                    default: 1m
+                    description: Cooldown period between workflow executions.
+                    type: string
+                  fleet:
+                    description: |-
+                      Fleet overrides spec.fleet.oauth2.credentialsSecretRef/mcpGatewayNamespace
+                      for WorkflowExecution's own fleet-aware operations (F1 -- entirely new
+                      in v1alpha2; v1alpha1 had no Fleet field on WorkflowExecutionSpec at
+                      all, which blocked #235/BR-FLEET-054). Falls back to spec.fleet.*
+                      when unset.
+                    properties:
+                      namespace:
+                        description: |-
+                          Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
+                          Gateway CRD watch scope.
+                        type: string
+                      oauth2CredentialsSecretRef:
+                        description: |-
+                          Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
+                          Use when this component must authenticate to the MCP Gateway as a
+                          different OAuth2 client than other fleet-aware components (e.g. a
+                          federated Keycloak issuing distinct per-service client registrations
+                          against the same shared spec.fleet.oauth2.tokenURL).
+                        type: string
+                    type: object
+                  logging:
+                    description: LoggingSpec configures the log level for a service.
+                    properties:
+                      level:
+                        default: INFO
+                        description: |-
+                          Log level. One of: DEBUG, INFO, WARN, ERROR (F8 -- narrowed to
+                          uppercase-only in v1alpha2, matching upstream ADR-030; v1alpha1
+                          accepted both cases). The conversion webhook uppercases any
+                          lowercase v1alpha1 value on ConvertFrom rather than rejecting it.
+                        enum:
+                        - DEBUG
+                        - INFO
+                        - WARN
+                        - ERROR
+                        type: string
+                    type: object
+                  resources:
+                    description: Resource requirements.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  tekton:
+                    description: Tekton integration configuration.
+                    properties:
+                      enabled:
+                        description: Whether Tekton integration is enabled. When nil,
+                          auto-detected.
+                        type: boolean
+                    type: object
+                  workflowNamespace:
+                    default: kubernaut-workflows
+                    description: Namespace for workflow Job/PipelineRun execution.
+                    type: string
+                type: object
+            required:
+            - aiAnalysis
+            - kubernautAgent
+            - llmProfiles
+            - postgresql
+            - signalProcessing
             - valkey
             type: object
           status:

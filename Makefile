@@ -109,7 +109,9 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 # Unit-test packages that do NOT need envtest (fast, no API server).
-UT_PKGS := ./internal/resources/... ./internal/webhook/...
+# api/... covers the v1alpha1<->v1alpha2 conversion webhook logic
+# (api/v1alpha1/kubernaut_conversion.go); pure Go, no API server needed.
+UT_PKGS := ./internal/resources/... ./internal/webhook/... ./api/...
 
 .PHONY: test-unit
 test-unit: fmt vet ## Run unit tests (no envtest, no API server).

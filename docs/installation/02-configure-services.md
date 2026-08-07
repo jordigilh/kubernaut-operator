@@ -279,7 +279,7 @@ oc apply -f - <<EOF
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: aianalysis-policies
+  name: aianalysis-policy
   namespace: kubernaut-system
 data:
   approval.rego: |
@@ -421,7 +421,7 @@ kubernaut-ocp/
     llm-credentials.yaml
   configmaps/
     signalprocessing-policy.yaml
-    aianalysis-policies.yaml
+    aianalysis-policy.yaml
     custom-llm-runtime.yaml          # if using BYO LLM runtime config
   kubernaut-cr.yaml
 ```
@@ -461,7 +461,7 @@ Confirm all required prerequisite ConfigMaps exist before applying the Kubernaut
 ```bash
 oc get configmap -n kubernaut-system \
   signalprocessing-policy \
-  aianalysis-policies
+  aianalysis-policy
 ```
 
 > **Note**: The operator validates that `spec.signalProcessing.policy.configMapName` and `spec.aiAnalysis.policy.configMapName` are set. If either is missing, reconciliation will fail with a clear validation error on the CR status.

@@ -33,8 +33,28 @@ spec:
   customresourcedefinitions:
     owned:
     - description: |-
+        Kubernaut is the Schema for the kubernauts API. v1alpha2 is the storage
+        version and conversion.Hub; v1alpha1 converts to/from this shape via the
+        conversion webhook (see api/v1alpha1/kubernaut_conversion.go).
+        It declares a single Kubernaut deployment within the namespace it is created in.
+      displayName: Kubernaut
+      kind: Kubernaut
+      name: kubernauts.kubernaut.ai
+      version: v1alpha2
+    - description: |-
         Kubernaut is the Schema for the kubernauts API.
         It declares a single Kubernaut deployment within the namespace it is created in.
+
+        This is the v1alpha1 shape, superseded by v1alpha2 (the storage version
+        and conversion.Hub as of v1.6) -- see the
+        deprecation surfaced to kubectl, and
+        docs/design/ADR-CRD-001-v1alpha2-redesign.md for the full rationale.
+        Deliberately NOT a Go "Deprecated:" doc comment: internal/resources,
+        internal/controller, and internal/webhook all still operate on this Go
+        type as their working representation (see the migrate-builders-v1alpha2
+        follow-up); a "Deprecated:" comment would make staticcheck (SA1019) flag
+        every one of those call sites, which are not what this CRD-version
+        deprecation is about.
       displayName: Kubernaut
       kind: Kubernaut
       name: kubernauts.kubernaut.ai
@@ -81,13 +101,13 @@ spec:
       deployments: null
     strategy: ""
   installModes:
-  - supported: true
+  - supported: false
     type: OwnNamespace
-  - supported: true
+  - supported: false
     type: SingleNamespace
   - supported: false
     type: MultiNamespace
-  - supported: false
+  - supported: true
     type: AllNamespaces
   keywords:
   - kubernaut

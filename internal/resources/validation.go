@@ -196,10 +196,20 @@ func validateLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut) []error {
 	var errs []error
 	profiles := kn.Spec.LLMProfiles
 
-	kaRef := kn.Spec.KubernautAgent.LLMProfileRef
+	kaRef := EffectiveKALLMProfileRef(kn)
 	const kaBase = "spec.kubernautAgent.llmProfileRef"
 	if kaRef == "" {
-		errs = append(errs, fmt.Errorf("%s: required — reference a profile defined in spec.llmProfiles", kaBase))
+		// EffectiveKALLMProfileRef only returns "" when the raw field is
+		// empty AND spec.llmProfiles doesn't have exactly one entry to
+		// infer from -- an explicit ref is unambiguous with any other
+		// count, so the two counts get distinct messages.
+		if len(profiles) == 0 {
+			errs = append(errs, fmt.Errorf("%s: required — spec.llmProfiles defines no profiles to infer from", kaBase))
+		} else {
+			errs = append(errs, fmt.Errorf(
+				"%s: required — spec.llmProfiles defines %d profiles, so the profile is ambiguous without an explicit reference (auto-inferred only when exactly one profile is defined)",
+				kaBase, len(profiles)))
+		}
 	}
 	if _, _, err := lookupProfileRef(profiles, kaRef, kaBase, true); err != nil {
 		errs = append(errs, err)

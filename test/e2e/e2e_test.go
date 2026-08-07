@@ -358,7 +358,7 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 
 		It("should NOT create default policy ConfigMaps (user-provided prerequisite)", func() {
 			for _, name := range []string{
-				"aianalysis-policies",
+				"aianalysis-policy",
 				"signalprocessing-policy",
 			} {
 				cmd := exec.Command("kubectl", "get", "configmap", name,
