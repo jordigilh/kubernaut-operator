@@ -262,6 +262,18 @@ type FleetOverrideSpec struct {
 // components render the same resolved fleet config; there is no per-component
 // override. When Enabled is false or omitted, the other fields are inert
 // (no validation, no rendering) so users can pre-stage configuration.
+//
+// ADR-CRD-001 F12: there is no unauthenticated mode for the MCP Gateway --
+// upstream Fleet.ValidateFullFederation rejects a missing/disabled OAuth2
+// client at startup for every fleet-aware component except FleetMetadataCache
+// (which already enforces this unconditionally, independent of Enabled
+// below). The CEL rule closes that gap at admission time instead of a
+// startup crash-loop, once Fleet itself is enabled; see kubernaut#1991/#1992
+// for the equivalent upstream Helm chart fix. Gated on Enabled (like
+// AnsibleSpec's own conditional-requirement rule) to preserve this type's
+// pre-staging contract: the other fields stay inert, unvalidated, until
+// Enabled is true.
+// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || !has(self.mcpGatewayEndpoint) || self.mcpGatewayEndpoint == ” || (has(self.oauth2) && has(self.oauth2.enabled) && self.oauth2.enabled)",message="fleet.oauth2.enabled must be true when fleet.enabled is true and fleet.mcpGatewayEndpoint is set -- there is no unauthenticated mode for the MCP Gateway (mirrors FleetMetadataCache's existing unconditional requirement)"
 type FleetSpec struct {
 	// Whether federated scope-checking is enabled for Gateway and
 	// RemediationOrchestrator.
@@ -311,8 +323,10 @@ type FleetSpec struct {
 	MCPGatewayType string `json:"mcpGatewayType,omitempty"`
 
 	// OAuth2 credentials for authenticating to the MCP Gateway. Shared by
-	// every fleet-aware component. Optional — some MCP Gateway deployments
-	// do not require authentication.
+	// every fleet-aware component. Required (enforced at admission via the
+	// FleetSpec-level CEL rule, ADR-CRD-001 F12) when MCPGatewayEndpoint is
+	// set: there is no unauthenticated mode for the MCP Gateway, and every
+	// fleet-aware component fails closed at startup without it.
 	// +optional
 	OAuth2 OAuth2Spec `json:"oauth2,omitempty"`
 

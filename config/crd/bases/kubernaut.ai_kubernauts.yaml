@@ -3717,8 +3717,10 @@ spec:
                   oauth2:
                     description: |-
                       OAuth2 credentials for authenticating to the MCP Gateway. Shared by
-                      every fleet-aware component. Optional — some MCP Gateway deployments
-                      do not require authentication.
+                      every fleet-aware component. Required (enforced at admission via the
+                      FleetSpec-level CEL rule, ADR-CRD-001 F12) when MCPGatewayEndpoint is
+                      set: there is no unauthenticated mode for the MCP Gateway, and every
+                      fleet-aware component fails closed at startup without it.
                     properties:
                       credentialsSecretRef:
                         description: |-
@@ -3746,6 +3748,14 @@ spec:
                       ACM Search's GraphQL API has no unauthenticated mode.
                     type: string
                 type: object
+                x-kubernetes-validations:
+                - message: fleet.oauth2.enabled must be true when fleet.enabled is
+                    true and fleet.mcpGatewayEndpoint is set -- there is no unauthenticated
+                    mode for the MCP Gateway (mirrors FleetMetadataCache's existing
+                    unconditional requirement)
+                  rule: '!has(self.enabled) || !self.enabled || !has(self.mcpGatewayEndpoint)
+                    || self.mcpGatewayEndpoint == '''' || (has(self.oauth2) && has(self.oauth2.enabled)
+                    && self.oauth2.enabled)'
               fleetMetadataCache:
                 description: |-
                   FleetMetadataCache configures the operator-managed Fleet Metadata
