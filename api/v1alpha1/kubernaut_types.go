@@ -152,7 +152,9 @@ type PostgreSQLSpec struct {
 	// +optional
 	Port int32 `json:"port,omitempty"`
 
-	// PostgreSQL SSL mode (disable, require, verify-ca, verify-full).
+	// PostgreSQL SSL mode (require, verify-ca, verify-full). "disable" is
+	// intentionally not accepted: these are production deployments and TLS
+	// to the database is not optional.
 	// +kubebuilder:default="verify-full"
 	// +kubebuilder:validation:Enum=require;verify-ca;verify-full
 	// +optional
