@@ -2,7 +2,7 @@
 
 **Status**: Accepted (CHECKPOINT DD sign-off obtained 2026-08-06)
 **Decision Date**: 2026-08-06
-**Version**: 1.2
+**Version**: 1.3
 **Confidence**: 92%
 **Deciders**: Kubernaut Operator Team
 **Applies To**: `api/v1alpha1` -> `api/v1alpha2` CRD migration, conversion webhook, all `internal/resources/*.go` builders, `internal/controller/`, OLM bundle
@@ -29,6 +29,7 @@
 | 1.0 | 2026-08-06 | Operator Team | Initial design spike for sign-off |
 | 1.1 | 2026-08-06 | Operator Team | Reviewer feedback: (1) Axis 3/F9 premise retracted -- Helm's `aianalysis.yaml`/`signalprocessing.yaml` templates `fail` the install when policy content is unset, so `policy`/`proactiveSignalMappings` stay required in v1alpha2, matching Helm exactly, no bundled defaults. (2) F3 strengthened -- Helm has no `networkPolicies.enabled` toggle at all (unconditional render); `NetworkPoliciesSpec.Enabled *bool` is removed in v1alpha2, NetworkPolicies become unconditional, reinforced by Red Hat's OpenShift Hardening mandate (ship NetworkPolicies from 2027-02) and the already-satisfied Conforma RBAC check (`olm.required_network_policy_rbac_for_operands`, effective 2026-08-08). |
 | 1.2 | 2026-08-06 | Operator Team | Reviewer confirmed Helm's `networkPolicies.*` schema is stable; F3's field list frozen and fully enumerated (was previously deferred to D2/D3) as `NetworkPoliciesSpec` + 5 shared sub-types (`NetworkPolicyIngressOverride`, `NetworkPolicyNamedIngressOverride`, `NetworkPolicyEgressOverride`, `NetworkPolicyIdPEgressOverride`, `NetworkPolicyMonitoringOverride`), mirroring `values.schema.json` exactly. Removes the "field list may drift before D2/D3" risk; confidence 90% -> 92%. |
+| 1.3 | 2026-08-06 | Operator Team | F9 refinement, found during a post-scaffold live-cluster CRD spike (D2): "policy stays required" was implemented as F9 originally specified (only `AIAnalysisSpec.Policy`/`SignalProcessingSpec.Policy` marked required), but that alone doesn't close the gap -- `KubernautSpec.AIAnalysis`/`SignalProcessing` themselves were still `omitempty`, and Kubernetes' structural schema only checks a nested `required` list when the parent object is present in the request. A CR omitting `spec.aiAnalysis`/`spec.signalProcessing` entirely was admitted with no error, verified directly against a live OCP cluster. Fixed by also dropping `omitempty` on the two parent fields (`api/v1alpha2/kubernaut_types.go`) and backfilling `policy.configMapName` in the v1alpha1->v1alpha2 conversion webhook with the same default names `internal/resources/common.go` already falls back to, so existing v1alpha1 CRs relying on that convention don't fail to convert once v1alpha2 becomes the storage version. See F9 section below. Also filed [jordigilh/kubernaut#1984](https://github.com/jordigilh/kubernaut/issues/1984) upstream: Helm's `values.schema.json` has the same class of gap chart-wide (conditional mandatory-ness enforced only by template `fail` guards, never expressed in the schema itself) -- 27 occurrences across 13 templates, not just these two policy blocks. |
 
 ---
 
@@ -453,9 +454,21 @@ type JWTProviderSpec struct {
 
 `LoggingSpec.Level` enum narrows to uppercase-only (`DEBUG;INFO;WARN;ERROR`), matching upstream ADR-030. Console/Route default posture is explicitly decided per-field at D2 implementation time against the current Helm default for that specific install profile (not a single global flip -- flagged here so it isn't silently forgotten, not resolved in this ADR).
 
-### F9 -- Retracted: no change
+### F9 -- Retracted: no change to `Policy`, but a follow-on fix to its parent fields (v1.3 addendum)
 
-`aiAnalysis.policy`/`signalProcessing.policy` stay required, unchanged from v1alpha1, per the corrected Decision Axis 3 above. Listed here only so the target-shape section's F1-F9 numbering stays traceable to the findings table; there is no diff to show.
+`aiAnalysis.policy`/`signalProcessing.policy` stay required, unchanged from v1alpha1, per the corrected Decision Axis 3 above.
+
+**Addendum (found during the D2 live-cluster CRD spike, after initial sign-off)**: "stays required" was correctly implemented at the `AIAnalysisSpec.Policy`/`SignalProcessingSpec.Policy` level (no `omitempty` there, matching v1alpha1), but `KubernautSpec.AIAnalysis`/`KubernautSpec.SignalProcessing` -- the *parent* fields -- were still `omitempty`. Kubernetes' structural-schema validator only evaluates a nested `required` list when the parent object is present in the submitted payload; if the parent key is absent entirely, there's nothing to check nested required-ness against. A minimal CR omitting `spec.aiAnalysis`/`spec.signalProcessing` altogether was admitted with no error when applied directly to a live OCP cluster -- the exact case F9 intended to forbid slipped through one level up.
+
+Helm structurally cannot hit this same loophole: `values.yaml` always carries `aianalysis`/`signalprocessing` keys (with empty-string defaults), so its template-level `fail` guard always evaluates. The CRD's optional-parent-object mechanic has no equivalent "always present" concept, which is what let this diverge.
+
+**Fix**: dropped `omitempty` on `KubernautSpec.AIAnalysis`/`SignalProcessing` too (`api/v1alpha2/kubernaut_types.go`), so both are now top-level required in the generated schema (`config/crd/bases/kubernaut.ai_kubernauts.yaml`'s `spec.required` includes `aiAnalysis`/`signalProcessing`). Re-verified against a live OCP cluster: the old loophole CR is now rejected (`spec.aiAnalysis: Required value`), a corrected CR with both policy refs admits cleanly.
+
+This closes the loophole for *new* v1alpha2 CRs, but by itself would break *existing* v1alpha1 CRs that relied on the resource builders' implicit fallback (`internal/resources/common.go`'s `AIAnalysisPolicyName`/`SignalProcessingPolicyName` default to `"aianalysis-policies"`/`"signalprocessing-policy"` when `ConfigMapName` is empty) once v1alpha2 becomes the storage version -- the conversion webhook would otherwise hand the API server a `v1alpha2.Kubernaut` with an empty required field. Mitigated the same way F6's JWKSURL derivation works: `api/v1alpha1/kubernaut_conversion.go`'s `ConvertTo` now backfills `Policy.ConfigMapName` with the identical default name when empty in the v1alpha1 source, logged via `conversionLog.Info`.
+
+Also considered and rejected as the primary fix: a `+kubebuilder:validation:XValidation` (CEL) rule at the `KubernautSpec` level instead of dropping `omitempty`. CEL would have been the closer structural match to Helm's *own* enforcement mechanism (Helm's `values.schema.json` has zero `required` declarations anywhere for this -- confirmed directly against a fresh clone -- the `fail` guard is a custom runtime check, not a schema constraint), but top-level `required` was chosen instead: simpler, self-documenting in schema-introspection tooling (`kubectl explain`, IDE YAML validation), and consistent with this codebase's existing convention of expressing required-ness via the OpenAPI `required` array rather than CEL for plain presence checks.
+
+**Upstream, filed under the `v1.6` milestone**: [jordigilh/kubernaut#1984](https://github.com/jordigilh/kubernaut/issues/1984) proposes Helm adopt the equivalent fix chart-wide. An audit of `charts/kubernaut/templates/**/*.yaml` found this same template-only-`fail`-guard pattern in 27 places across 13 files -- not just the two policy blocks -- covering Fleet OAuth2 conditional requirements (8 components), MCP Gateway endpoint requirements, Console's OIDC/ingress/secret requirements, and several cross-component enable dependencies. Most of these are expressible via `anyOf`/`if`-`then`-`else` in `values.schema.json` (standard JSON Schema draft-07, which Helm already validates fully-merged values against pre-render); a few depend on live-cluster auto-discovery (TLS issuer, monitoring URLs, `apiServerCIDR`) and are reasonably left as template-level guards since the schema only sees `--set`/`values.yaml` input, not cluster state.
 
 ---
 
