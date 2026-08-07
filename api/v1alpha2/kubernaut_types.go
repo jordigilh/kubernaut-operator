@@ -45,13 +45,20 @@ type KubernautSpec struct {
 	// +optional
 	Notification NotificationSpec `json:"notification,omitempty"`
 
-	// AIAnalysis controller configuration.
-	// +optional
-	AIAnalysis AIAnalysisSpec `json:"aiAnalysis,omitempty"`
+	// AIAnalysis controller configuration. Required (not just AIAnalysisSpec.Policy
+	// nested within it): a Go struct field with omitempty is skipped entirely by
+	// structural-schema "required" checks when the whole key is absent from the
+	// request, so nesting alone let a CR omit aiAnalysis altogether and bypass
+	// Policy's own required-ness -- discovered via a live-cluster CRD spike
+	// (spec.aiAnalysis absent was admitted with no error). Dropping omitempty
+	// here closes that loophole; see docs/design/ADR-CRD-001-v1alpha2-redesign.md
+	// Decision Axis 3 / F9 for why the Rego policy itself must stay mandatory
+	// (Helm's chart fails `helm install` under the equivalent condition).
+	AIAnalysis AIAnalysisSpec `json:"aiAnalysis"`
 
-	// SignalProcessing controller configuration.
-	// +optional
-	SignalProcessing SignalProcessingSpec `json:"signalProcessing,omitempty"`
+	// SignalProcessing controller configuration. Required for the same reason
+	// as AIAnalysis above -- see that field's doc comment.
+	SignalProcessing SignalProcessingSpec `json:"signalProcessing"`
 
 	// RemediationOrchestrator controller configuration.
 	// +optional
@@ -470,7 +477,9 @@ type PolicyConfigMapRef struct {
 // required in v1alpha2 (F9 -- retracted; the upstream Helm chart enforces
 // the identical requirement, failing `helm install` when neither
 // policies.content nor policies.existingConfigMap is set, so there was no
-// alignment gap to close here).
+// alignment gap to close here). KubernautSpec.AIAnalysis itself is also
+// required (not omitempty) so this struct's own Policy requirement cannot
+// be bypassed by omitting the parent field entirely.
 type AIAnalysisSpec struct {
 	// Policy ConfigMap reference. Required.
 	// The ConfigMap must contain key "approval.rego".

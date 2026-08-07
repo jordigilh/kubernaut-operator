@@ -183,6 +183,36 @@ var _ = Describe("Kubernaut v1alpha1 <-> v1alpha2 conversion webhook", func() {
 			Expect(dst.Spec.NetworkPolicies).To(Equal(v1alpha2.NetworkPoliciesSpec{}))
 		})
 
+		DescribeTable("backfills policy.configMapName with the resource-builder default when a v1alpha1 CR omitted it "+
+			"(v1alpha2 makes aiAnalysis/signalProcessing themselves required, closing the loophole where omitting "+
+			"the whole block bypassed Policy's own required-ness -- see KubernautSpec.AIAnalysis doc comment)",
+			func(clearPolicy func(*Kubernaut), getV2ConfigMapName func(*v1alpha2.Kubernaut) string, wantDefault string) {
+				src := fullV1alpha1Kubernaut()
+				clearPolicy(src)
+				dst := &v1alpha2.Kubernaut{}
+				Expect(src.ConvertTo(dst)).To(Succeed())
+
+				Expect(getV2ConfigMapName(dst)).To(Equal(wantDefault))
+			},
+			Entry("AIAnalysis",
+				func(k *Kubernaut) { k.Spec.AIAnalysis.Policy.ConfigMapName = "" },
+				func(k *v1alpha2.Kubernaut) string { return k.Spec.AIAnalysis.Policy.ConfigMapName },
+				defaultAIAnalysisPolicyConfigMapName),
+			Entry("SignalProcessing",
+				func(k *Kubernaut) { k.Spec.SignalProcessing.Policy.ConfigMapName = "" },
+				func(k *v1alpha2.Kubernaut) string { return k.Spec.SignalProcessing.Policy.ConfigMapName },
+				defaultSignalProcessingPolicyConfigMapName),
+		)
+
+		It("preserves an explicitly-set aiAnalysis/signalProcessing policy.configMapName without backfilling it", func() {
+			src := fullV1alpha1Kubernaut()
+			dst := &v1alpha2.Kubernaut{}
+			Expect(src.ConvertTo(dst)).To(Succeed())
+
+			Expect(dst.Spec.AIAnalysis.Policy.ConfigMapName).To(Equal("aa-policy"))
+			Expect(dst.Spec.SignalProcessing.Policy.ConfigMapName).To(Equal("sp-policy"))
+		})
+
 		DescribeTable("F1: flat FleetOAuth2CredentialsSecretRef becomes a nested Fleet override",
 			func(getV2Fleet func(*v1alpha2.Kubernaut) *v1alpha2.FleetOverrideSpec, wantSecretRef string) {
 				src := fullV1alpha1Kubernaut()

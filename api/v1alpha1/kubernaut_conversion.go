@@ -46,6 +46,21 @@ var conversionLog = logf.Log.WithName("kubernaut-conversion-webhook")
 // whose IdP uses a different JWKS path must set jwksURL explicitly.
 const keycloakJWKSSuffix = "/protocol/openid-connect/certs"
 
+// defaultAIAnalysisPolicyConfigMapName and defaultSignalProcessingPolicyConfigMapName
+// mirror the fallback names internal/resources/common.go's AIAnalysisPolicyName /
+// SignalProcessingPolicyName apply when a v1alpha1 CR leaves policy.configMapName
+// empty (relying on a conventionally-named, user-provided ConfigMap). v1alpha2
+// makes spec.aiAnalysis/spec.signalProcessing themselves required (not just the
+// nested Policy field), closing a structural-schema loophole where omitting the
+// whole block bypassed Policy's own required-ness (see KubernautSpec.AIAnalysis
+// doc comment in api/v1alpha2/kubernaut_types.go). Without this backfill, an
+// existing v1alpha1 CR that used the pre-v1alpha2 fallback would fail to convert
+// to a schema-valid v1alpha2 object once v1alpha2 becomes the storage version.
+const (
+	defaultAIAnalysisPolicyConfigMapName       = "aianalysis-policies"
+	defaultSignalProcessingPolicyConfigMapName = "signalprocessing-policy"
+)
+
 // ConvertTo converts this v1alpha1 Kubernaut to the v1alpha2 hub version.
 // See docs/design/ADR-CRD-001-v1alpha2-redesign.md for the full field
 // mapping and rationale (F1-F9).
@@ -249,9 +264,26 @@ func convertNotificationSpecToV1(s v1alpha2.NotificationSpec) NotificationSpec {
 	}
 }
 
+// derivePolicyConfigMapName backfills a v1alpha1 CR's policy.configMapName
+// with defaultName when empty, matching the resource-builder fallback
+// (internal/resources/common.go's AIAnalysisPolicyName/SignalProcessingPolicyName)
+// so pre-v1alpha2 CRs that relied on that implicit convention still produce a
+// schema-valid v1alpha2 object now that the field is required. See the
+// default*PolicyConfigMapName const doc above.
+func derivePolicyConfigMapName(fieldPath, configMapName, defaultName string) string {
+	if configMapName != "" {
+		return configMapName
+	}
+	conversionLog.Info("backfilled empty policy.configMapName for v1alpha2 (relied on resource-builder default in v1alpha1)",
+		"field", fieldPath, "defaultConfigMapName", defaultName)
+	return defaultName
+}
+
 func convertAIAnalysisSpecToV2(s AIAnalysisSpec) v1alpha2.AIAnalysisSpec {
 	return v1alpha2.AIAnalysisSpec{
-		Policy:              v1alpha2.PolicyConfigMapRef{ConfigMapName: s.Policy.ConfigMapName},
+		Policy: v1alpha2.PolicyConfigMapRef{
+			ConfigMapName: derivePolicyConfigMapName("spec.aiAnalysis.policy.configMapName", s.Policy.ConfigMapName, defaultAIAnalysisPolicyConfigMapName),
+		},
 		ConfidenceThreshold: s.ConfidenceThreshold,
 		Logging:             convertLoggingSpecToV2(s.Logging),
 		Resources:           s.Resources,
@@ -271,7 +303,9 @@ func convertAIAnalysisSpecToV1(s v1alpha2.AIAnalysisSpec) AIAnalysisSpec {
 
 func convertSignalProcessingSpecToV2(s SignalProcessingSpec) v1alpha2.SignalProcessingSpec {
 	return v1alpha2.SignalProcessingSpec{
-		Policy:                  v1alpha2.PolicyConfigMapRef{ConfigMapName: s.Policy.ConfigMapName},
+		Policy: v1alpha2.PolicyConfigMapRef{
+			ConfigMapName: derivePolicyConfigMapName("spec.signalProcessing.policy.configMapName", s.Policy.ConfigMapName, defaultSignalProcessingPolicyConfigMapName),
+		},
 		ProactiveSignalMappings: convertConfigMapRefToV2(s.ProactiveSignalMappings),
 		Logging:                 convertLoggingSpecToV2(s.Logging),
 		Resources:               s.Resources,
