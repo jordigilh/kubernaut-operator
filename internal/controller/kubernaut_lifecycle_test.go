@@ -817,7 +817,17 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				"NetworkPolicies should be created when networkPolicies.enabled is true")
 		})
 
-		It("[SC-7] should delete NetworkPolicies when networkPolicies.enabled is toggled off", func() {
+		It("[SC-7] ADR-CRD-001 F3: networkPolicies.enabled=false no longer deletes NetworkPolicies (mandatory, matches Helm/OLM)", func() {
+			// v1alpha2 is the storage version and dropped NetworkPoliciesSpec.Enabled
+			// entirely (ADR-CRD-001 F3: NetworkPolicies became unconditional, matching
+			// the Helm chart -- which has no enabled toggle -- and Red Hat OLM
+			// certification's olm.required_network_policy_rbac_for_operands policy).
+			// The v1alpha1<->v1alpha2 conversion webhook (api/v1alpha1/kubernaut_conversion.go)
+			// preserves round-trip *shape* for v1alpha1 clients by always reporting
+			// Enabled=true on ConvertFrom, so toggling it to false is silently a no-op
+			// once the object round-trips through v1alpha2 storage -- this replaces the
+			// pre-v1alpha2 "toggle off deletes NetworkPolicies" test, which asserted
+			// behavior the ADR deliberately retired.
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
 			t := true
@@ -832,22 +842,27 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			})).To(Succeed())
 			Expect(npList.Items).NotTo(BeEmpty(), "NPs should exist before toggle")
 
-			By("disabling networkPolicies")
+			By("attempting to disable networkPolicies")
 			kn := &kubernautv1alpha1.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			f := false
 			kn.Spec.NetworkPolicies.Enabled = &f
 			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
 
-			By("reconciling after toggle")
+			By("verifying the CR reads back with Enabled coerced to true post round-trip")
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(kn.Spec.NetworkPolicies.Enabled).To(HaveValue(BeTrue()),
+				"conversion webhook must always report NetworkPolicies as enabled to v1alpha1 clients (F3)")
+
+			By("reconciling after the no-op toggle")
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(k8sClient.List(ctx, npList, client.InNamespace(testNamespace), client.MatchingLabels{
 				"app.kubernetes.io/managed-by": "kubernaut-operator",
 			})).To(Succeed())
-			Expect(npList.Items).To(BeEmpty(),
-				"NetworkPolicies should be deleted when networkPolicies.enabled is false")
+			Expect(npList.Items).NotTo(BeEmpty(),
+				"NetworkPolicies must remain -- they are mandatory as of v1alpha2 (ADR-CRD-001 F3)")
 		})
 	})
 
@@ -1475,12 +1490,12 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(kaCA.Annotations).To(HaveKeyWithValue(
 				"service.beta.openshift.io/inject-cabundle", "true"))
 
-			By("verifying operator does NOT create aianalysis-policies (user-provided prerequisite)")
+			By("verifying operator does NOT create aianalysis-policy (user-provided prerequisite)")
 			aiPolicyCM := &corev1.ConfigMap{}
 			err := k8sClient.Get(ctx, types.NamespacedName{
-				Name: "aianalysis-policies", Namespace: testNamespace,
+				Name: "aianalysis-policy", Namespace: testNamespace,
 			}, aiPolicyCM)
-			Expect(errors.IsNotFound(err)).To(BeTrue(), "operator must not create default aianalysis-policies CM")
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "operator must not create default aianalysis-policy CM")
 
 			By("verifying operator does NOT create signalprocessing-policy (user-provided prerequisite)")
 			spPolicyCM := &corev1.ConfigMap{}

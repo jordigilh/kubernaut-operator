@@ -479,12 +479,17 @@ func ResolveWorkflowNamespace(kn *kubernautv1alpha1.Kubernaut) string {
 }
 
 // AIAnalysisPolicyName returns the AI analysis policy ConfigMap name,
-// defaulting to "aianalysis-policies" when not overridden.
+// defaulting to "aianalysis-policy" when not overridden. Singular,
+// matching SignalProcessingPolicyName below: the ConfigMap holds exactly
+// one Rego file (key "approval.rego") in both cases, so there's no
+// multiplicity to justify a plural name (was "aianalysis-policies" before
+// this rename; see ADR-CRD-001 F11 for the upstream Helm chart's identical
+// inconsistency and the corresponding proposal filed there).
 func AIAnalysisPolicyName(kn *kubernautv1alpha1.Kubernaut) string {
 	if kn.Spec.AIAnalysis.Policy.ConfigMapName != "" {
 		return kn.Spec.AIAnalysis.Policy.ConfigMapName
 	}
-	return "aianalysis-policies"
+	return "aianalysis-policy"
 }
 
 // SignalProcessingPolicyName returns the signal processing policy ConfigMap name,
@@ -517,6 +522,35 @@ func ResolveLLMProfile(kn *kubernautv1alpha1.Kubernaut, ref string) (kubernautv1
 	return p, ok
 }
 
+// EffectiveKALLMProfileRef returns the profile name KA's investigator LLM
+// calls resolve to: spec.kubernautAgent.llmProfileRef when explicitly set,
+// otherwise the sole entry in spec.llmProfiles when it defines exactly one
+// profile. This is the root of the whole llmProfileRef fallback chain
+// (AFLLMProfileRef falls back to this; severity-triage/alignmentCheck fall
+// back to AF's), so inferring it here alone lowers the barrier for the
+// common single-provider case everywhere a component would otherwise share
+// KA's identity, without requiring every downstream field to repeat the
+// same cardinality check.
+//
+// Deliberately a count of map entries, not a fixed conventional key name
+// (e.g. a profile literally named "primary"): a naming convention is an
+// implicit contract a user has to already know, whereas "there was only
+// one, so it's unambiguous" requires no naming convention. Returns "" when
+// llmProfiles has zero or 2+ entries and no explicit ref was given —
+// validateLLMProfileRefs turns that into a descriptive error rather than
+// silently guessing.
+func EffectiveKALLMProfileRef(kn *kubernautv1alpha1.Kubernaut) string {
+	if kn.Spec.KubernautAgent.LLMProfileRef != "" {
+		return kn.Spec.KubernautAgent.LLMProfileRef
+	}
+	if len(kn.Spec.LLMProfiles) == 1 {
+		for name := range kn.Spec.LLMProfiles {
+			return name
+		}
+	}
+	return ""
+}
+
 // phaseCredentialsVolumeName returns the Volume/VolumeMount name for the
 // dedicated Secret mount of a spec.kubernautAgent.phaseModels override
 // whose profile has a different credentialsSecretName than KA's own
@@ -536,14 +570,15 @@ func phaseCredentialsMountPath(phase string) string {
 
 // AFLLMProfileRef returns the name of the profile API Frontend's own LLM
 // connection resolves to: its own spec.apiFrontend.llmProfileRef when set,
-// defaulting to spec.kubernautAgent.llmProfileRef otherwise. This gives AF
-// an independent LLM identity while preserving today's default behavior of
-// implicitly sharing KA's profile when AF doesn't specify its own.
+// defaulting to KA's effective ref (EffectiveKALLMProfileRef) otherwise.
+// This gives AF an independent LLM identity while preserving today's
+// default behavior of implicitly sharing KA's profile -- including KA's own
+// single-profile inference -- when AF doesn't specify its own.
 func AFLLMProfileRef(kn *kubernautv1alpha1.Kubernaut) string {
 	if kn.Spec.APIFrontend.LLMProfileRef != "" {
 		return kn.Spec.APIFrontend.LLMProfileRef
 	}
-	return kn.Spec.KubernautAgent.LLMProfileRef
+	return EffectiveKALLMProfileRef(kn)
 }
 
 // severityTriageCredentialsVolumeName is the Volume/VolumeMount name for

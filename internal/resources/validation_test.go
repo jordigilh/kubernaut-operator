@@ -936,8 +936,36 @@ var _ = Describe("LLM Profile Content Validation", func() {
 })
 
 var _ = Describe("LLM Profile Referential Integrity", func() {
-	It("rejects a missing kubernautAgent.llmProfileRef", func() {
+	It("accepts a missing kubernautAgent.llmProfileRef when spec.llmProfiles defines exactly one profile (auto-inferred)", func() {
+		kn := testKubernaut() // testKubernaut() defines exactly one profile ("primary")
+		kn.Spec.KubernautAgent.LLMProfileRef = ""
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).To(BeEmpty())
+		Expect(EffectiveKALLMProfileRef(kn)).To(Equal("primary"),
+			"the sole entry in spec.llmProfiles must be inferred, not a fixed conventional name")
+	})
+
+	It("rejects a missing kubernautAgent.llmProfileRef when spec.llmProfiles defines more than one profile (ambiguous)", func() {
 		kn := testKubernaut()
+		kn.Spec.LLMProfiles["secondary"] = kubernautv1alpha1.LLMProfileSpec{
+			Provider: LLMProviderOpenAI, Model: "gpt-4o-mini", CredentialsSecretName: "llm-creds-2",
+		}
+		kn.Spec.KubernautAgent.LLMProfileRef = ""
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		found := false
+		for _, e := range errs {
+			if strings.Contains(e.Error(), "kubernautAgent.llmProfileRef") &&
+				strings.Contains(e.Error(), "required") && strings.Contains(e.Error(), "ambiguous") {
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue())
+		Expect(EffectiveKALLMProfileRef(kn)).To(BeEmpty())
+	})
+
+	It("rejects a missing kubernautAgent.llmProfileRef when spec.llmProfiles is empty", func() {
+		kn := testKubernaut()
+		kn.Spec.LLMProfiles = map[string]kubernautv1alpha1.LLMProfileSpec{}
 		kn.Spec.KubernautAgent.LLMProfileRef = ""
 		errs := ValidateKubernaut(kn, KagentiSidecarNone)
 		found := false

@@ -1,4 +1,4 @@
-apiVersion: kubernaut.ai/v1alpha1
+apiVersion: kubernaut.ai/v1alpha2
 kind: Kubernaut
 metadata:
   labels:
@@ -41,7 +41,7 @@ spec:
     # tokenSecretName: acm-search-token   # Secret key: token (typically required for backend: acm)
     mcpGatewayEndpoint: "https://mcp-gateway.example.com/sse"
     mcpGatewayType: eaigw   # or "kuadrant"
-    # mcpGatewayNamespace: managed-clusters   # optional shared fallback; scopes the MCP Gateway CRD watch (and its RBAC) to one namespace for FleetMetadataCache and SignalProcessing instead of cluster-wide. APIFrontend/EffectivenessMonitor always watch cluster-wide (their upstream ClusterRegistry construction has no namespace knob yet) and ignore this field; override per-component with fleetMetadataCache.mcpGatewayNamespace / signalProcessing.mcpGatewayNamespace below.
+    # mcpGatewayNamespace: managed-clusters   # optional shared fallback; scopes the MCP Gateway CRD watch (and its RBAC) to one namespace for FleetMetadataCache and SignalProcessing instead of cluster-wide. APIFrontend/EffectivenessMonitor always watch cluster-wide (their upstream ClusterRegistry construction has no namespace knob yet) and ignore this field; override per-component with gateway.fleet.namespace / signalProcessing.fleet.namespace below.
     # oauth2:
     #   enabled: true
     #   tokenURL: "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token"
@@ -50,26 +50,39 @@ spec:
     #
     # A federated IdP (e.g. Keycloak) can issue distinct per-service OAuth2
     # client registrations against the same tokenURL above. Override
-    # credentialsSecretRef per component with gateway.fleetOAuth2CredentialsSecretRef
-    # / remediationOrchestrator.fleetOAuth2CredentialsSecretRef /
-    # signalProcessing.fleetOAuth2CredentialsSecretRef /
-    # apiFrontend.fleetOAuth2CredentialsSecretRef /
-    # effectivenessMonitor.fleetOAuth2CredentialsSecretRef /
-    # kubernautAgent.fleetOAuth2CredentialsSecretRef (see below) —
+    # credentialsSecretRef per component with gateway.fleet.oauth2CredentialsSecretRef
+    # / remediationOrchestrator.fleet.oauth2CredentialsSecretRef /
+    # signalProcessing.fleet.oauth2CredentialsSecretRef /
+    # apiFrontend.fleet.oauth2CredentialsSecretRef /
+    # effectivenessMonitor.fleet.oauth2CredentialsSecretRef /
+    # kubernautAgent.fleet.oauth2CredentialsSecretRef (see below) --
     # each falls back to the shared fleet.oauth2.credentialsSecretRef when unset.
+    # (v1alpha2/F1: these are all nested `fleet:` override blocks now, replacing
+    # v1alpha1's flat per-component fleetOAuth2CredentialsSecretRef fields.)
 
   # Operator-managed Fleet Metadata Cache (FMC) service (ADR-068), optional.
   # Most deployments that enable spec.fleet above use backend: acm (an
-  # existing RHACM Search installation) instead of standing up FMC — only
+  # existing RHACM Search installation) instead of standing up FMC -- only
   # enable this when backend: fleetmetadatacache above and you want the
   # operator to run FMC itself. When enabled with fleet.endpoint left unset,
   # the operator auto-derives FMC's in-cluster URL.
   # fleetMetadataCache:
   #   enabled: false
-  #   mcpGatewayNamespace: managed-clusters   # optional; overrides fleet.mcpGatewayNamespace for FMC only. When it (or the shared fallback above) resolves non-empty, the operator grants a namespace-scoped Role/RoleBinding instead of a cluster-scoped ClusterRole (least privilege).
-  #   fleetOAuth2CredentialsSecretRef: fmc-oauth2-creds   # optional; overrides fleet.oauth2.credentialsSecretRef for FMC only
+  #   fleet:
+  #     namespace: managed-clusters   # optional; overrides fleet.mcpGatewayNamespace for FMC only. When it (or the shared fallback above) resolves non-empty, the operator grants a namespace-scoped Role/RoleBinding instead of a cluster-scoped ClusterRole (least privilege).
+  #     oauth2CredentialsSecretRef: fmc-oauth2-creds   # optional; overrides fleet.oauth2.credentialsSecretRef for FMC only
   #   syncInterval: "30s"
   #   keyTTL: "45s"
+
+  # Monitoring configures the Prometheus/Thanos Querier endpoint used by
+  # EffectivenessMonitor and API Frontend severity-triage (F2 -- new in
+  # v1alpha2). Left unset here: this preserves v1alpha1's only behavior --
+  # OCP's built-in Thanos Querier at a well-known in-cluster URL,
+  # auto-detected, no user action needed.
+  # monitoring:
+  #   prometheus:
+  #     enabled: true
+  #     url: "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091"
 
   # Named LLM profiles, referenced by name from kubernautAgent.llmProfileRef,
   # apiFrontend.llmProfileRef, apiFrontend.severityTriage.llmProfileRef, and
@@ -81,6 +94,11 @@ spec:
   # must still share a credentialsSecretName (API Frontend's Vertex AI
   # client relies on ambient Application Default Credentials rather than
   # per-profile credentials, kubernaut#1731).
+  #
+  # v1alpha2/F10: when this map defines exactly one profile,
+  # kubernautAgent.llmProfileRef below may be omitted entirely -- the
+  # operator infers the sole profile. Two profiles are defined here
+  # (primary, lightweight), so llmProfileRef stays required in this sample.
   llmProfiles:
     primary:
       provider: vertex_ai
@@ -94,7 +112,7 @@ spec:
       # per profile). BudgetTokens always wins over effort for Anthropic
       # (native or Vertex-hosted Claude, as here) when both are set.
       # effort: "none" combined with enabled: true is rejected for
-      # Anthropic-family providers — Anthropic has no "thinking enabled,
+      # Anthropic-family providers -- Anthropic has no "thinking enabled,
       # zero effort" wire state; use enabled: false to disable instead.
       # reasoning:
       #   enabled: true
@@ -117,7 +135,7 @@ spec:
     phaseModels:
       workflow_discovery: lightweight
     logging:
-      level: debug
+      level: DEBUG
     maxTurns: 40
     audit:
       enabled: true
@@ -142,6 +160,7 @@ spec:
       enabled: false
       maxStepTokens: 500
       timeout: 10s
+      # llmProfileRef: primary   # v1alpha2/F5: references a named profile instead of v1alpha1's inline {provider,model,endpoint} block (which never had a working credentials path, see #237)
     session:
       ttl: 30m
     serverRateLimit:
@@ -149,7 +168,8 @@ spec:
       burst: 100
     shutdown:
       drainSeconds: 15
-    # fleetOAuth2CredentialsSecretRef: ka-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for KubernautAgent only (used only when fleet.enabled: true, for its list_clusters/list_tools_for_cluster MCP tools, ADR-068 decision #11)
+    # fleet:
+    #   oauth2CredentialsSecretRef: ka-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for KubernautAgent only (used only when fleet.enabled: true, for its list_clusters/list_tools_for_cluster MCP tools, ADR-068 decision #11)
 
   apiFrontend:
     enabled: true
@@ -159,7 +179,7 @@ spec:
       jwksURL: "http://keycloak-service.keycloak:8080/realms/kagenti/protocol/openid-connect/certs"
       allowInsecureIssuers: true
     logging:
-      level: debug
+      level: DEBUG
     rateLimit:
       ipRequestsPerSec: 50
       userRequestsPerSec: 20
@@ -187,12 +207,13 @@ spec:
           groups: ["platform-engineering"]
         - role: remediation-approver
           groups: ["platform-engineering"]
-    # fleetOAuth2CredentialsSecretRef: af-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for APIFrontend only (used only when fleet.enabled: true, for its list_clusters MCP tool)
+    # fleet:
+    #   oauth2CredentialsSecretRef: af-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for APIFrontend only (used only when fleet.enabled: true, for its list_clusters MCP tool)
 
   gateway:
     enabled: false
     logging:
-      level: info
+      level: INFO
     route:
       enabled: false
     config:
@@ -201,32 +222,34 @@ spec:
       cors:
         allowCredentials: false
         maxAge: 300
-    # fleetOAuth2CredentialsSecretRef: gateway-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for Gateway only
+    # fleet:
+    #   oauth2CredentialsSecretRef: gateway-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for Gateway only
 
   dataStorage:
     endpointPropagationDelay: 10s
     logging:
-      level: info
+      level: INFO
 
   aiAnalysis:
     logging:
-      level: info
+      level: INFO
     policy:
       configMapName: aianalysis-policy
 
   signalProcessing:
     logging:
-      level: info
+      level: INFO
     policy:
       configMapName: signalprocessing-policy
-    # mcpGatewayNamespace: managed-clusters   # optional; overrides fleet.mcpGatewayNamespace for SignalProcessing only (used only when fleet.enabled: true, for cluster-label classification via the MCP Gateway CRD)
-    # fleetOAuth2CredentialsSecretRef: sp-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for SignalProcessing only
+    # fleet:
+    #   namespace: managed-clusters   # optional; overrides fleet.mcpGatewayNamespace for SignalProcessing only (used only when fleet.enabled: true, for cluster-label classification via the MCP Gateway CRD)
+    #   oauth2CredentialsSecretRef: sp-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for SignalProcessing only
 
   remediationOrchestrator:
     dryRun: false
     dryRunHoldPeriod: 1h
     logging:
-      level: info
+      level: INFO
     retention:
       period: 24h
     effectivenessAssessment:
@@ -257,35 +280,47 @@ spec:
       gitOpsSyncDelay: 10s
       operatorReconcileDelay: 1m
       proactiveAlertDelay: 5m
-    # fleetOAuth2CredentialsSecretRef: ro-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for RemediationOrchestrator only
+    # fleet:
+    #   oauth2CredentialsSecretRef: ro-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for RemediationOrchestrator only
 
+  # workflowExecution.ansible replaces v1alpha1's top-level spec.ansible
+  # (v1alpha2/F4 -- relocated since WorkflowExecution is Ansible's only consumer).
   workflowExecution:
     cooldownPeriod: 1m
     logging:
-      level: info
+      level: INFO
     workflowNamespace: kubernaut-workflows
+    ansible:
+      enabled: false
+    # fleet: {}   # new in v1alpha2 (F1); no v1alpha1 equivalent
 
   effectivenessMonitor:
     logging:
-      level: info
+      level: INFO
     assessment:
       stabilizationWindow: 30s
       validityWindow: 300s
-    # fleetOAuth2CredentialsSecretRef: em-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for EffectivenessMonitor only (used only when fleet.enabled: true, for remote-cluster effectiveness reads)
+    # fleet:
+    #   oauth2CredentialsSecretRef: em-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for EffectivenessMonitor only (used only when fleet.enabled: true, for remote-cluster effectiveness reads)
 
   notification:
     logging:
-      level: info
+      level: INFO
     slack:
       channel: "#kubernaut-alerts"
       secretName: slack-webhook
 
   authWebhook:
     logging:
-      level: info
+      level: INFO
 
-  networkPolicies:
-    enabled: false
+  # v1alpha2/F3: networkPolicies has no enabled toggle -- NetworkPolicies are
+  # always created (matching the upstream Helm chart's actual behavior and
+  # Red Hat's OpenShift Hardening requirements). Every field below only
+  # tunes the already-created policy set; leave the whole block out entirely
+  # to accept the defaults.
+  # networkPolicies:
+  #   apiServerCIDR: "10.0.0.1/32"
 
   console:
     enabled: true
@@ -293,6 +328,3 @@ spec:
       secretName: kubernaut-console-oidc
     route:
       enabled: true
-
-  ansible:
-    enabled: false

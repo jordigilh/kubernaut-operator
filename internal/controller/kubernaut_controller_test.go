@@ -87,7 +87,7 @@ func newMinimalCR() *kubernautv1alpha1.Kubernaut {
 				LLMProfileRef: "primary",
 			},
 			AIAnalysis: kubernautv1alpha1.AIAnalysisSpec{
-				Policy: kubernautv1alpha1.PolicyConfigMapRef{ConfigMapName: "aianalysis-policies"},
+				Policy: kubernautv1alpha1.PolicyConfigMapRef{ConfigMapName: "aianalysis-policy"},
 			},
 			SignalProcessing: kubernautv1alpha1.SignalProcessingSpec{
 				Policy: kubernautv1alpha1.PolicyConfigMapRef{ConfigMapName: "signalprocessing-policy"},

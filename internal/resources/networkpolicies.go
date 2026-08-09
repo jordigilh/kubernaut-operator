@@ -302,7 +302,7 @@ func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.
 
 	egress := baseEgress(3)
 	egress = append(egress, datastorageEgressRule(), monitoringStackEgressRule(OCPMonitoringNamespace))
-	kaProfile, _ := ResolveLLMProfile(kn, kn.Spec.KubernautAgent.LLMProfileRef)
+	kaProfile, _ := ResolveLLMProfile(kn, EffectiveKALLMProfileRef(kn))
 	if kaProfile.Provider != "" {
 		p443 := intstr.FromInt32(443)
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{

@@ -19,4 +19,11 @@ resources:
   kind: Kubernaut
   path: github.com/jordigilh/kubernaut-operator/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  domain: kubernaut.ai
+  kind: Kubernaut
+  path: github.com/jordigilh/kubernaut-operator/api/v1alpha2
+  version: v1alpha2
 version: "3"

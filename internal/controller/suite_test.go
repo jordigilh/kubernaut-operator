@@ -18,11 +18,15 @@ package controller
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -37,8 +41,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/conversion"
 
 	kubernautaiv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautaiv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -88,6 +95,8 @@ var _ = BeforeSuite(func() {
 	var err error
 	err = kubernautaiv1alpha1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
+	err = kubernautaiv1alpha2.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
 	err = apiextensionsv1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(configv1.Install(scheme.Scheme)).To(Succeed())
@@ -110,6 +119,21 @@ var _ = BeforeSuite(func() {
 					"0000_10_config-operator_01_ingresses.crd.yaml"),
 			},
 		},
+		// The Kubernaut CRD is multi-version (v1alpha1 served, v1alpha2
+		// served+storage) with v1alpha1 implementing conversion.Convertible
+		// against the v1alpha2 hub (see api/v1alpha1/kubernaut_conversion.go
+		// and ADR-CRD-001). A non-nil WebhookInstallOptions here isn't just
+		// for admission webhooks: envtest's CRD installer
+		// (modifyConversionWebhooks in pkg/envtest/crd.go) inspects it to
+		// decide whether to point spec.conversion.strategy at a real,
+		// locally-served webhook -- without it, envtest leaves the CRD's
+		// conversion strategy as "None", and etcd storage would silently
+		// prune any v1alpha1 field with no identically-named v1alpha2 JSON
+		// key (e.g. spec.ansible, spec.networkPolicies.enabled) on every
+		// write, corrupting every Reconcile() test that touches those
+		// fields. Starting the webhook server itself happens below, once
+		// testEnv.Start() has allocated LocalServingHost/Port/CertDir.
+		WebhookInstallOptions: envtest.WebhookInstallOptions{},
 	}
 
 	// Retrieve the first found binary directory to allow running tests from IDEs
@@ -125,7 +149,42 @@ var _ = BeforeSuite(func() {
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
+
+	startConversionWebhookServer(ctx, &testEnv.WebhookInstallOptions)
 })
+
+// startConversionWebhookServer serves the same conversion.NewWebhookHandler
+// cmd/main.go registers at /convert (see registerConversionWebhook) on the
+// local host/port/certs envtest.WebhookInstallOptions allocated during
+// testEnv.Start(), so the real apiserver can call it when converting
+// Kubernaut objects between v1alpha1 and v1alpha2 for storage.
+func startConversionWebhookServer(ctx context.Context, whOpts *envtest.WebhookInstallOptions) {
+	srv := webhook.NewServer(webhook.Options{
+		Host:    whOpts.LocalServingHost,
+		Port:    whOpts.LocalServingPort,
+		CertDir: whOpts.LocalServingCertDir,
+	})
+	srv.Register("/convert", conversion.NewWebhookHandler(scheme.Scheme, conversion.NewRegistry()))
+
+	go func() {
+		defer GinkgoRecover()
+		Expect(srv.Start(ctx)).To(Or(Succeed(), MatchError(context.Canceled)))
+	}()
+
+	By("waiting for the conversion webhook server to be reachable")
+	dialer := &tls.Dialer{
+		NetDialer: &net.Dialer{Timeout: time.Second},
+		Config:    &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // test-only, envtest-generated local cert
+	}
+	addr := fmt.Sprintf("%s:%d", whOpts.LocalServingHost, whOpts.LocalServingPort)
+	Eventually(func() error {
+		conn, err := dialer.DialContext(ctx, "tcp", addr)
+		if err != nil {
+			return err
+		}
+		return conn.Close()
+	}).Should(Succeed())
+}
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")

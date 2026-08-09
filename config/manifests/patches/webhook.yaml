@@ -18,3 +18,22 @@ webhookdefinitions:
   sideEffects: None
   targetPort: 9443
   webhookPath: /validate-kubernaut-singleton
+# Conversion webhook for the v1alpha1 <-> v1alpha2 hub-and-spoke migration
+# (see ADR-CRD-001, docs/design/ADR-CRD-001-v1alpha2-redesign.md, and
+# api/v1alpha1/kubernaut_conversion.go). OLM requires a CSV with a
+# ConversionWebhook entry to support only the AllNamespaces install mode
+# (see installModes in config/manifests/bases/), and injects
+# spec.conversion into the named CRD(s) directly, so no cert-manager/
+# kustomize config/webhook overlay is needed -- same OLM cert-injection
+# model already used for the ValidatingAdmissionWebhook above.
+- type: ConversionWebhook
+  admissionReviewVersions:
+  - v1
+  containerPort: 443
+  deploymentName: kubernaut-operator-controller-manager
+  generateName: convert.kubernaut.ai
+  sideEffects: None
+  targetPort: 9443
+  webhookPath: /convert
+  conversionCRDs:
+  - kubernauts.kubernaut.ai
