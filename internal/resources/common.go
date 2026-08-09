@@ -143,9 +143,17 @@ func (m KagentiSidecarMode) ShiftsPorts() bool {
 // PDB constant.
 const PDBMaxUnavailable = 1
 
-// LLMProviderVertexAI identifies the Vertex AI LLM provider, which uses
-// Application Default Credentials (ADC) instead of a flat API key file.
+// LLMProviderVertexAI identifies the Vertex AI LLM provider.
 const LLMProviderVertexAI = "vertex_ai"
+
+// llmCredentialsFileAPIKey and llmCredentialsFileVertexJSON are the two
+// filenames a resolved LLM profile's apiKeyFile may point to within its
+// credentials mount: a flat API key for every provider except vertex_ai,
+// whose client instead expects GCP service-account JSON bytes (#233, #279).
+const (
+	llmCredentialsFileAPIKey     = "api_key"
+	llmCredentialsFileVertexJSON = "credentials.json"
+)
 
 // LLMProviderOpenAI is the canonical provider name users set in the CR.
 // KA consumes this as-is; the operator translates it for AF.
@@ -589,22 +597,6 @@ func severityTriageCredentialsVolumeName() string {
 // severityTriage.llmProfileRef's dedicated credentials Secret (#234).
 func severityTriageCredentialsMountPath() string {
 	return "/etc/apifrontend/severity-triage-credentials"
-}
-
-// upsertEnvVar sets name=value in env, replacing an existing entry with the
-// same name in place (rather than appending a duplicate, which would leave
-// two ambiguous entries for the same variable in the rendered container
-// spec). Used by #234's severityTriage credentials wiring to redirect
-// GOOGLE_APPLICATION_CREDENTIALS to a dedicated mount when it differs from
-// API Frontend's own resolved profile's mount.
-func upsertEnvVar(env []corev1.EnvVar, name, value string) []corev1.EnvVar {
-	for i := range env {
-		if env[i].Name == name {
-			env[i] = corev1.EnvVar{Name: name, Value: value}
-			return env
-		}
-	}
-	return append(env, corev1.EnvVar{Name: name, Value: value})
 }
 
 // ValkeyAddr returns the Valkey address in host:port format.
