@@ -1,0 +1,31 @@
+name: Slash Command Dispatch
+
+# ChatOps entry point. Parses PR comments for slash commands and fires a
+# repository_dispatch event (type "<command>-command") for a handler
+# workflow to process. This keeps the dispatcher generic: to add a new
+# command, add it to `commands:` below and create a workflow triggered by
+# `repository_dispatch: types: [<command>-command]`.
+#
+# Requires a `repo`-scoped (or `public_repo`-scoped, since this repo is
+# public) Personal Access Token in the SLASH_COMMAND_DISPATCH_PAT secret --
+# GITHUB_TOKEN cannot create dispatch events for other workflows.
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  dispatch:
+    name: Dispatch slash command
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Slash Command Dispatch
+        uses: peter-evans/slash-command-dispatch@v5
+        with:
+          token: ${{ secrets.SLASH_COMMAND_DISPATCH_PAT }}
+          reaction-token: ${{ secrets.GITHUB_TOKEN }}
+          issue-type: pull-request
+          permission: write
+          commands: |
+            retest

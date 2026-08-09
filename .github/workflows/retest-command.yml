@@ -1,17 +1,13 @@
-name: Retest
+name: Retest Command
 
-# ChatOps: comment "/retest" on a PR to re-run its CI checks (Go Lint,
-# Unit & Integration Tests, PR Image Build) against the current head commit
-# -- no empty commit or manual Actions-UI click needed.
-#
-# issue_comment always runs in the base-repo context (even for fork PRs), so
-# GITHUB_TOKEN gets the elevated permissions below regardless of who opened
-# the PR. Restricted to repo collaborators (author_association) since this
-# is a public repo and unrestricted access would let anyone burn CI minutes.
+# Handles the "/retest" slash command dispatched by slash-command-dispatch.yml.
+# Re-runs the PR's CI checks (Go Lint, Unit & Integration Tests, PR Image
+# Build) against the current head commit -- no empty commit or manual
+# Actions-UI click needed.
 
 on:
-  issue_comment:
-    types: [created]
+  repository_dispatch:
+    types: [retest-command]
 
 permissions:
   actions: write
@@ -20,31 +16,19 @@ permissions:
 
 jobs:
   retest:
-    name: Handle /retest
+    name: Re-run CI checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: |
-      github.event.issue.pull_request != null &&
-      startsWith(github.event.comment.body, '/retest') &&
-      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
     steps:
-      - name: Acknowledge comment
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-        run: |
-          gh api "repos/${REPO}/issues/comments/${{ github.event.comment.id }}/reactions" \
-            -f content='+1' >/dev/null
-
       - name: Re-run CI workflows for the PR head commit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.issue.number }}
+          PR_NUMBER: ${{ github.event.client_payload.pull_request.number }}
+          HEAD_SHA: ${{ github.event.client_payload.pull_request.head.sha }}
         run: |
           set -euo pipefail
 
-          HEAD_SHA=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid -q .headRefOid)
           echo "PR #${PR_NUMBER} head commit: ${HEAD_SHA}"
 
           rerun_any=false
@@ -54,7 +38,7 @@ jobs:
               -q "[.[] | select(.headSha == \"${HEAD_SHA}\")][0].databaseId")
 
             if [ -n "$run_id" ] && [ "$run_id" != "null" ]; then
-              echo "Re-running ${wf} (run ${run_id}) for ${HEAD_SHA}"
+              echo "Re-running ${wf} (run ${run_id})"
               gh run rerun "$run_id" --repo "$REPO" || echo "::warning::rerun failed for ${wf} run ${run_id}"
               rerun_any=true
             else
@@ -70,7 +54,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.issue.number }}
+          PR_NUMBER: ${{ github.event.client_payload.pull_request.number }}
         run: |
           gh pr comment "$PR_NUMBER" --repo "$REPO" \
             --body "🔄 Re-running CI checks (Go Lint, Unit & Integration Tests, PR Image Build) for the latest commit."
