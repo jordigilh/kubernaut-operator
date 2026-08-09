@@ -237,9 +237,21 @@ REFACTOR: Clean up
 
 ### Detection Commands
 
-**Preference hierarchy**: gopls MCP > gopls CLI > grep
+**Preference hierarchy**: MCP tools (gopls / cocoindex_search) > gopls CLI > grep
 
-#### gopls (preferred -- type-safe, import-aware)
+Use the right tool for the question:
+
+- **gopls** -- precise, type-safe answers about Go code: symbol references, callers,
+  definitions, "does this have a controller caller". Use when you know (or can guess) the
+  exact identifier.
+- **cocoindex_search** -- semantic code search across the whole repo. Use when you don't know
+  the exact symbol name, or are exploring how a reconciliation phase/resource builder works
+  conceptually. More effective than grep for this because it ranks by meaning, not literal
+  text.
+- **grep/rg** -- fallback only: literal string/regex matching MCP tools can't do, or when the
+  MCP servers above are unavailable/misconfigured for this workspace.
+
+#### gopls (preferred for precise Go lookups -- type-safe, import-aware)
 
 gopls provides precise reference lookups using the Go type system. Results are identical
 regardless of interface; MCP is preferred for AI agents because it avoids shell parsing.
@@ -268,7 +280,21 @@ gopls symbols -query="NewComponent"
 Verify that each new exported function/type has at least one caller in production code
 (`cmd/` or `internal/controller/` paths, excluding `_test.go`).
 
-#### grep (fallback -- when gopls is unavailable)
+#### cocoindex_search (preferred for semantic/conceptual exploration)
+
+cocoindex_search performs semantic code search over the whole repository. Use it instead of
+grep when you don't know the exact symbol name, or want to understand how a reconciliation
+phase or resource builder works before modifying it.
+
+**MCP usage** (AI agents):
+```
+cocoindex_search(query="how does the Kubernaut CRD reconciliation phase machine work", limit=10)
+cocoindex_search(query="where are RBAC resources generated", limit=10)
+```
+
+Pre-configured in Cursor as `cocoindex-code`.
+
+#### grep (fallback -- when MCP tools are unavailable or don't apply)
 
 ```bash
 grep -r "NewComponent\|BuildDeployment\|BuildService" cmd/ internal/controller/ --include="*.go" | grep -v "_test.go"
