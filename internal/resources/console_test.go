@@ -18,6 +18,7 @@ package resources
 
 import (
 	"os"
+	"strings"
 
 	routev1 "github.com/openshift/api/route/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -207,6 +208,45 @@ var _ = Describe("Console Resources", func() {
 			serverConf := cm.Data["server.conf"]
 			Expect(serverConf).NotTo(ContainSubstring("proxy_pass http://"),
 				"plaintext HTTP proxy_pass to AF must not appear")
+		})
+	})
+
+	Context("ConsoleNginxConfigMap runtime-config.js (#313)", func() {
+		It("UT-CN-313-001 [CM-6, CC8.1]: serves runtime-config.js with raw-thinking disabled for the release/v1.5 backend", func() {
+			kn := testKubernautWithConsole()
+			cm := ConsoleNginxConfigMap(kn)
+			serverConf := cm.Data["server.conf"]
+
+			Expect(serverConf).To(ContainSubstring("location = /runtime-config.js"),
+				"must serve /runtime-config.js as an exact-match location so the console's unconditional script tag load resolves")
+			Expect(serverConf).To(ContainSubstring("window.__KUBERNAUT_CONFIG__ = { enableRawThinking: false };"),
+				"release/v1.5's AF backend never emits reasoning_content, so raw-thinking must be disabled for every v1.5 deployment (#313)")
+		})
+
+		It("UT-CN-313-002 [SC-8]: serves runtime-config.js with a JavaScript content type", func() {
+			kn := testKubernautWithConsole()
+			cm := ConsoleNginxConfigMap(kn)
+			serverConf := cm.Data["server.conf"]
+
+			idx := strings.Index(serverConf, "location = /runtime-config.js")
+			Expect(idx).To(BeNumerically(">=", 0), "precondition: runtime-config.js location must exist")
+			block := serverConf[idx:]
+
+			Expect(block).To(ContainSubstring("default_type application/javascript;"),
+				"browsers must receive a JS content type for the runtime-config.js script tag")
+		})
+
+		It("UT-CN-313-003 [CM-6]: serves runtime-config.js with no-cache so the flag is never served stale", func() {
+			kn := testKubernautWithConsole()
+			cm := ConsoleNginxConfigMap(kn)
+			serverConf := cm.Data["server.conf"]
+
+			idx := strings.Index(serverConf, "location = /runtime-config.js")
+			Expect(idx).To(BeNumerically(">=", 0), "precondition: runtime-config.js location must exist")
+			block := serverConf[idx:]
+
+			Expect(block).To(ContainSubstring(`Cache-Control "no-cache, must-revalidate"`),
+				"the flag is loaded unconditionally on every page load and must never be served from a stale cache")
 		})
 	})
 

@@ -281,6 +281,19 @@ location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?|ttf|eot)$ {
   try_files $uri =404;
 }
 
+# #313: the console loads this same-origin script unconditionally on every
+# page load to source window.__KUBERNAUT_CONFIG__. release/v1.5's AF backend
+# never emits reasoning_content, so there is nothing for the raw-thinking
+# panel to render yet; hardcode it disabled for every v1.5 deployment rather
+# than exposing a spec.console.enableRawThinking toggle with only one valid
+# value. The v1.6 backend does emit these events, so the per-deployment CRD
+# toggle is deferred there (kubernaut-operator#314, #315).
+location = /runtime-config.js {
+  default_type application/javascript;
+  add_header Cache-Control "no-cache, must-revalidate" always;
+  return 200 "window.__KUBERNAUT_CONFIG__ = { enableRawThinking: false };\n";
+}
+
 location / {
   add_header Cache-Control "no-cache, must-revalidate";
   try_files $uri $uri/ /index.html;

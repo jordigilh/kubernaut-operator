@@ -769,6 +769,11 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				Name: string(resources.ComponentConsole) + "-nginx", Namespace: testNamespace,
 			}, cm)).To(Succeed())
 			Expect(cm.Data).To(HaveKey("server.conf"))
+			// #313: release/v1.5's AF backend never emits reasoning_content,
+			// so the reconciled nginx config must disable the console's
+			// raw-thinking panel unconditionally via runtime-config.js.
+			Expect(cm.Data["server.conf"]).To(ContainSubstring(
+				"window.__KUBERNAUT_CONFIG__ = { enableRawThinking: false };"))
 		})
 
 		It("IT-CL-03 [SC-7, CC6.1]: console redirect URL uses cluster ingress domain", func() {
