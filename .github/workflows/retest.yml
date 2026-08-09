@@ -1,0 +1,76 @@
+name: Retest
+
+# ChatOps: comment "/retest" on a PR to re-run its CI checks (Go Lint,
+# Unit & Integration Tests, PR Image Build) against the current head commit
+# -- no empty commit or manual Actions-UI click needed.
+#
+# issue_comment always runs in the base-repo context (even for fork PRs), so
+# GITHUB_TOKEN gets the elevated permissions below regardless of who opened
+# the PR. Restricted to repo collaborators (author_association) since this
+# is a public repo and unrestricted access would let anyone burn CI minutes.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write
+  pull-requests: write
+  contents: read
+
+jobs:
+  retest:
+    name: Handle /retest
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: |
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, '/retest') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    steps:
+      - name: Acknowledge comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/${REPO}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content='+1' >/dev/null
+
+      - name: Re-run CI workflows for the PR head commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+
+          HEAD_SHA=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid -q .headRefOid)
+          echo "PR #${PR_NUMBER} head commit: ${HEAD_SHA}"
+
+          rerun_any=false
+          for wf in lint.yml test.yml pr-image.yml; do
+            run_id=$(gh run list --repo "$REPO" --workflow "$wf" --limit 20 \
+              --json databaseId,headSha \
+              -q "[.[] | select(.headSha == \"${HEAD_SHA}\")][0].databaseId")
+
+            if [ -n "$run_id" ] && [ "$run_id" != "null" ]; then
+              echo "Re-running ${wf} (run ${run_id}) for ${HEAD_SHA}"
+              gh run rerun "$run_id" --repo "$REPO" || echo "::warning::rerun failed for ${wf} run ${run_id}"
+              rerun_any=true
+            else
+              echo "No existing run of ${wf} for ${HEAD_SHA}; skipping"
+            fi
+          done
+
+          if [ "$rerun_any" != "true" ]; then
+            echo "::warning::No CI runs found to re-run for ${HEAD_SHA}"
+          fi
+
+      - name: Comment acknowledgment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh pr comment "$PR_NUMBER" --repo "$REPO" \
+            --body "🔄 Re-running CI checks (Go Lint, Unit & Integration Tests, PR Image Build) for the latest commit."
