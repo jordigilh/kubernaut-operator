@@ -5,6 +5,25 @@ All notable changes to the Kubernaut Operator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.8-rc2] - 2026-08-10
+
+### Fixed
+- **Console**: Disabled the raw-thinking panel unconditionally for
+  `release/v1.5` by serving a fixed `enableRawThinking: false` from
+  `ConsoleNginxConfigMap`'s `/runtime-config.js` — the v1.5 AF backend never
+  emits `reasoning_content` events, so the panel had nothing to render on
+  any v1.5 deployment. A real per-deployment CRD toggle is deferred to v1.6,
+  where AF does emit these events (#313, #316)
+
+### Changed
+- **Images**: Bumped all 13 `RELATED_IMAGE_*` env vars (12 kubernaut
+  services + console), the bundle CSV, the airgap imageset, and
+  `dist/install.yaml` to reference the freshly-built upstream kubernaut
+  `v1.5.6-rc3` images. Bumped `VERSION` to `1.5.8-rc2`. The operator's own
+  image and bundle references remain tag-based (`1.5.8-rc2`) pending the tag
+  build; a follow-up PR will pin them to digests once published, matching
+  the pattern used for v1.5.6/v1.5.7/v1.5.8-rc1.
+
 ## [1.5.8-rc1] - 2026-08-06
 
 ### Added

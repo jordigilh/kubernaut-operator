@@ -8,29 +8,29 @@
 #   oc-mirror --config hack/airgap/imageset-config.yaml \
 #     docker://<mirror-registry>
 #
-# Version: v1.5.8-rc1
+# Version: v1.5.8-rc2
 kind: ImageSetConfiguration
 apiVersion: mirror.openshift.io/v2alpha1
 mirror:
   additionalImages:
     # Operator
-    - name: quay.io/kubernaut-ai/kubernaut-operator@sha256:7139af2444d2c14577561ced82b8da410f5c0f9cd5e8b4aaf8139e14af81ca70
+    - name: quay.io/kubernaut-ai/kubernaut-operator:1.5.8-rc2
     # Operator bundle
-    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle@sha256:b6b2353c9be3783288dee9e814339d7b1e176a7d911017df5402aca38868a33e
+    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle:1.5.8-rc2
     # Operand and infrastructure images
-    - name: quay.io/kubernaut-ai/aianalysis@sha256:491bc5d582ccc87e3d146db18037bdcc59c0cd1a99041fb583916d7302cc4431
-    - name: quay.io/kubernaut-ai/apifrontend@sha256:793fc3f0bd4e4c20e87da7c49b0dcf6ddf062312db1beab23005965fc2690788
-    - name: quay.io/kubernaut-ai/authwebhook@sha256:837b634afdca2da3b101677386f632d3e1260e0769e5e794619557a20638bb56
-    - name: quay.io/kubernaut-ai/datastorage@sha256:29219f7bcf116f9800934131b2d04817794cae647d887f7986ac4256a72a0674
-    - name: quay.io/kubernaut-ai/db-migrate@sha256:7d137cb6348e7fa0a9a7109087af2a895737c3fd5b7a12d74579df6d460f89cd
-    - name: quay.io/kubernaut-ai/effectivenessmonitor@sha256:befe379f6023c98f2f567314ee2f259a5a7e0a1ce90e9c9ff30e9c8da24143fb
-    - name: quay.io/kubernaut-ai/gateway@sha256:004f064217b8fb85df0a6168f9c0fb51ca92905e5fff59420d90cdfd1a3550fc
-    - name: quay.io/kubernaut-ai/kubernaut-console@sha256:7eeccf7323e8233cba93982452042844adac022450bcc83cf28bcbb8c9ca07b3
-    - name: quay.io/kubernaut-ai/kubernautagent@sha256:64dc9fcbb81e2d9f04a3f4a9e96facc3e08fed25cc6173f293e07eeab6256a73
-    - name: quay.io/kubernaut-ai/notification@sha256:2fb7e6a93dfd201a75253eceb8fb7c5663299084447d9ec23fb72ba4b8983ba2
-    - name: quay.io/kubernaut-ai/remediationorchestrator@sha256:e52e8e6f10ebd850c57e1ce6dfbb5d7105ce4242f2e008dcc685eebbb5a505fd
-    - name: quay.io/kubernaut-ai/signalprocessing@sha256:acfd011ac3ca7590f7a5f48ecd15873bb59dabb62566eb7a4b312c4cc710f5ac
-    - name: quay.io/kubernaut-ai/workflowexecution@sha256:4ca98376181f7e526343b8ac082c5ca5308cca642bb5f894b4dff26acbaa3a2c
+    - name: quay.io/kubernaut-ai/aianalysis@sha256:92df47b1ded8d5210d04656d78c2148e7515935e40cb24eb6763f0927eb7bd1c
+    - name: quay.io/kubernaut-ai/apifrontend@sha256:8ae0f6e61a58a2df66cfa7775bb77c21332913931597c3273ff886de8a4ed73e
+    - name: quay.io/kubernaut-ai/authwebhook@sha256:4fe774e9e81d0b72f532563ef3e7368a2626ae7af546a3704758c1738345c9e2
+    - name: quay.io/kubernaut-ai/datastorage@sha256:319d6b450275074c76f7e3134eb5da31865df8b9d24c300a383f1dbd7717be7b
+    - name: quay.io/kubernaut-ai/db-migrate@sha256:83e824a5d27cc882cfce7c70cbd0a981fd3edbe13eb8583c6aa30ca74fe97ea9
+    - name: quay.io/kubernaut-ai/effectivenessmonitor@sha256:1e760936d3595bd1e0162100912363e75d35cb095a30dfa1ba7e1027939f7ccf
+    - name: quay.io/kubernaut-ai/gateway@sha256:3aafb1c943894b9a02b70e049c01fc8ef29633c4688b29990834045dc3963a0b
+    - name: quay.io/kubernaut-ai/kubernaut-console@sha256:13b19d16a564d9bfa7724c49df878d560ae24ff11456cce02c0d3b8528c3b99f
+    - name: quay.io/kubernaut-ai/kubernautagent@sha256:2fd4660fc38757ff8f90a580a13ea366118898d9c5a4989bbc0dd777a665da85
+    - name: quay.io/kubernaut-ai/notification@sha256:76272d7abcdf75fbccd4d89834ea2894f37c3678ab315693e89396d2c747276e
+    - name: quay.io/kubernaut-ai/remediationorchestrator@sha256:3c915639bedc61232f4db5f318659fcdf3d056bdd6536fa8695e9cd3abde34a6
+    - name: quay.io/kubernaut-ai/signalprocessing@sha256:d119b60e980284a8a6c7b1ac03958dd0ae7e21a6cac614d3d0019baf8254f367
+    - name: quay.io/kubernaut-ai/workflowexecution@sha256:e86c48f0550bb14c8ccffa34db4de4d7eaefc19700d53906cf4b9aa89b3d6eff
     # Console oauth2-proxy sidecar
     - name: quay.io/oauth2-proxy/oauth2-proxy@sha256:37c1570c0427e02fc7c947ef2c04e8995b8347b7abc9fcf1dbb4e376a4b221a7
     # Infrastructure dependencies (PostgreSQL, Valkey)
