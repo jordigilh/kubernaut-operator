@@ -20,9 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   services + console), the bundle CSV, the airgap imageset, and
   `dist/install.yaml` to reference the freshly-built upstream kubernaut
   `v1.5.6-rc3` images. Bumped `VERSION` to `1.5.8-rc2`. The operator's own
-  image and bundle references remain tag-based (`1.5.8-rc2`) pending the tag
-  build; a follow-up PR will pin them to digests once published, matching
-  the pattern used for v1.5.6/v1.5.7/v1.5.8-rc1.
+  image and bundle references were pinned to their published digests in
+  `dist/install.yaml` and the airgap imageset once the `v1.5.8-rc2` tag
+  build completed, matching the pattern used for v1.5.6/v1.5.7/v1.5.8-rc1.
 
 ## [1.5.8-rc1] - 2026-08-06
 
