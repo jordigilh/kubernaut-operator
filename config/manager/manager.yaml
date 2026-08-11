@@ -58,31 +58,31 @@ spec:
         name: manager
         env:
         - name: RELATED_IMAGE_GATEWAY
-          value: quay.io/kubernaut-ai/gateway@sha256:3aafb1c943894b9a02b70e049c01fc8ef29633c4688b29990834045dc3963a0b
+          value: quay.io/kubernaut-ai/gateway@sha256:938c2338cdeec7a5859c3bab2ce62d7a3fd8101680dbf8f9e7eb5de6e39cd39d
         - name: RELATED_IMAGE_DATA_STORAGE
-          value: quay.io/kubernaut-ai/datastorage@sha256:319d6b450275074c76f7e3134eb5da31865df8b9d24c300a383f1dbd7717be7b
+          value: quay.io/kubernaut-ai/datastorage@sha256:89d6b17b77711d413f6f2050e4ef1c8add81f8a88dc8d705605130cb149f2388
         - name: RELATED_IMAGE_AIANALYSIS
-          value: quay.io/kubernaut-ai/aianalysis@sha256:92df47b1ded8d5210d04656d78c2148e7515935e40cb24eb6763f0927eb7bd1c
+          value: quay.io/kubernaut-ai/aianalysis@sha256:a664271f740ae5d5e869830dc27d49c80054da2f9e14506553466807bc9c91b1
         - name: RELATED_IMAGE_SIGNALPROCESSING
-          value: quay.io/kubernaut-ai/signalprocessing@sha256:d119b60e980284a8a6c7b1ac03958dd0ae7e21a6cac614d3d0019baf8254f367
+          value: quay.io/kubernaut-ai/signalprocessing@sha256:f643a2a3d67d7593df58fb1d3dc38cf28f796a2e8a67033b4bc0759933e2fb65
         - name: RELATED_IMAGE_REMEDIATIONORCHESTRATOR
-          value: quay.io/kubernaut-ai/remediationorchestrator@sha256:3c915639bedc61232f4db5f318659fcdf3d056bdd6536fa8695e9cd3abde34a6
+          value: quay.io/kubernaut-ai/remediationorchestrator@sha256:466e0347c008bb94db4828b44f096e65a96723514b70705a890ecbfa219c74f0
         - name: RELATED_IMAGE_WORKFLOWEXECUTION
-          value: quay.io/kubernaut-ai/workflowexecution@sha256:e86c48f0550bb14c8ccffa34db4de4d7eaefc19700d53906cf4b9aa89b3d6eff
+          value: quay.io/kubernaut-ai/workflowexecution@sha256:3ef2ce7df71b8535cbe7feac51b008e706c94e60a6848adfba66ec6e22fd0b2b
         - name: RELATED_IMAGE_EFFECTIVENESSMONITOR
-          value: quay.io/kubernaut-ai/effectivenessmonitor@sha256:1e760936d3595bd1e0162100912363e75d35cb095a30dfa1ba7e1027939f7ccf
+          value: quay.io/kubernaut-ai/effectivenessmonitor@sha256:e43be9d8e04b082c906c8b77d1260e96771405912c4128352a0ec123f5521fdb
         - name: RELATED_IMAGE_NOTIFICATION
-          value: quay.io/kubernaut-ai/notification@sha256:76272d7abcdf75fbccd4d89834ea2894f37c3678ab315693e89396d2c747276e
+          value: quay.io/kubernaut-ai/notification@sha256:0719cd877f652ea33447f194fdce7ef785e265bb4adb355822a157f05404fe55
         - name: RELATED_IMAGE_KUBERNAUT_AGENT
-          value: quay.io/kubernaut-ai/kubernautagent@sha256:2fd4660fc38757ff8f90a580a13ea366118898d9c5a4989bbc0dd777a665da85
+          value: quay.io/kubernaut-ai/kubernautagent@sha256:3c3cc102a742780f013443416fd70f5a5a408f9aaf0f56b6c15f446713394380
         - name: RELATED_IMAGE_AUTHWEBHOOK
-          value: quay.io/kubernaut-ai/authwebhook@sha256:4fe774e9e81d0b72f532563ef3e7368a2626ae7af546a3704758c1738345c9e2
+          value: quay.io/kubernaut-ai/authwebhook@sha256:de8bf9e0306bf33c51e4a3b2f217c57c87475be06f69de3fc4ff1ffa04a81915
         - name: RELATED_IMAGE_API_FRONTEND
-          value: quay.io/kubernaut-ai/apifrontend@sha256:8ae0f6e61a58a2df66cfa7775bb77c21332913931597c3273ff886de8a4ed73e
+          value: quay.io/kubernaut-ai/apifrontend@sha256:ebe6342214dfb37cf2f3609b420e4acfebff05c9ac15843daba49a39937b9f17
         - name: RELATED_IMAGE_DB_MIGRATE
-          value: quay.io/kubernaut-ai/db-migrate@sha256:83e824a5d27cc882cfce7c70cbd0a981fd3edbe13eb8583c6aa30ca74fe97ea9
+          value: quay.io/kubernaut-ai/db-migrate@sha256:fcb5024b638574e1b10e2aa5a3ebc1768cfa989a210240f9d6d29276a6306a5b
         - name: RELATED_IMAGE_CONSOLE
-          value: quay.io/kubernaut-ai/kubernaut-console@sha256:13b19d16a564d9bfa7724c49df878d560ae24ff11456cce02c0d3b8528c3b99f
+          value: quay.io/kubernaut-ai/kubernaut-console@sha256:db0762d30849b080633c1b8dacc67c45338cd2233a9634697c8bc564611927e5
         - name: RELATED_IMAGE_OAUTH2_PROXY
           value: quay.io/oauth2-proxy/oauth2-proxy@sha256:37c1570c0427e02fc7c947ef2c04e8995b8347b7abc9fcf1dbb4e376a4b221a7
         - name: RELATED_IMAGE_INIT_POSTGRES

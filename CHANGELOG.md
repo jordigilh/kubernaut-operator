@@ -5,6 +5,21 @@ All notable changes to the Kubernaut Operator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.8-rc4] - 2026-08-11
+
+### Changed
+- **Images**: Bumped all 13 `RELATED_IMAGE_*` env vars (12 kubernaut
+  services + console), the bundle CSV, the airgap imageset, and
+  `dist/install.yaml` to reference the freshly-built upstream kubernaut
+  `v1.5.6-rc4` and console `v1.5.6-rc4` images — the fixes for #2086,
+  #2089, #2092, #2094, #2098, #2100, and #2103 validated in the dev
+  environment over the last two days, and expected to be the last RC
+  before upstream cuts `v1.5.6` GA. Bumped `VERSION` to `1.5.8-rc4`. The
+  operator's own image and bundle references were pinned to their
+  published digests in `dist/install.yaml` and the airgap imageset once
+  the `v1.5.8-rc4` tag build completed, matching the pattern used for
+  v1.5.6/v1.5.7/v1.5.8-rc1/v1.5.8-rc2.
+
 ## [1.5.8-rc2] - 2026-08-10
 
 ### Fixed
