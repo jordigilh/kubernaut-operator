@@ -1,0 +1,62 @@
+name: Sync Release Assets
+
+# The Release workflow (release.yml) is tag-triggered, so it can only publish
+# dist/install.yaml and hack/airgap/imageset-config.yaml as they exist at the
+# exact commit that gets tagged -- before the operator's own image digest is
+# known and pinned. The follow-up "pin-digest" PR that resolves the real
+# digest always lands on the release branch *after* the tag/release already
+# exist, so the tagged commit's tree (what airgap users would get by
+# `git checkout vX.Y.Z`) never reflects the pinned digest.
+#
+# This workflow re-publishes both files as release assets (which are mutable
+# and independent of the tag) whenever they change on a release branch, so
+# `gh release download` / the Releases page always serves the current,
+# correctly-pinned version -- without touching the tag or rebuilding images.
+
+on:
+  push:
+    branches:
+      - 'release/v*'
+      - main
+    paths:
+      - 'dist/install.yaml'
+      - 'hack/airgap/imageset-config.yaml'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: Sync install.yaml / imageset-config.yaml to matching release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Resolve version and check for matching release
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(grep '^VERSION' Makefile | head -1 | awk '{print $NF}')
+          TAG="v${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+          if gh release view "${TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "No GitHub Release found for ${TAG} yet -- nothing to sync (this is normal for an in-progress version bump before the tag is cut)."
+          fi
+
+      - name: Upload updated assets to existing release
+        if: steps.resolve.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          gh release upload "${TAG}" dist/install.yaml hack/airgap/imageset-config.yaml \
+            --repo "${{ github.repository }}" --clobber
+          echo "Synced dist/install.yaml and hack/airgap/imageset-config.yaml to release ${TAG}"
