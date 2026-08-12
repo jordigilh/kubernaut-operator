@@ -5,6 +5,15 @@ All notable changes to the Kubernaut Operator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.10] - 2026-08-12
+
+### Fixed
+- **OLM bundle (`bundle/manifests/`) and `dist/install.yaml` were shipping a stale `Kubernaut` CRD schema** — missing the `apiFrontend.rbac.toolPersonaConfig.consoleAccessGroups` field (added by #289/#291) and still carrying the dead `kubernautAgent.alignmentCheck.llm.apiKey` field (removed by #296). Both `bundle/` and `dist/install.yaml` embed their own copy of the CRD rendered at release-prep time; the several digest-only patch releases since `rc4` (`rc4`–`rc6`, `v1.5.8`, `v1.5.9`) hand-edited image references via `sed` instead of running the full `make manifests generate bundle` / `make build-installer` regeneration, so `config/crd/bases/` (the source of truth, kept in sync by #289/#291's and #296's own PRs) never got re-propagated into the bundle/installer copies. `config/crd/bases/` itself was never wrong — this only affected the OLM/`dist/install.yaml` install paths, not `make install`. Regenerated both from source; no manual edits.
+- **`config/manager/kustomization.yaml` was never updated to pin the operator's own image digest for `v1.5.9`** — the `v1.5.9` pin-digest follow-up (#330) patched `dist/install.yaml` and the airgap imageset directly but missed the kustomize source, so `make bundle`/`make build-installer` would have kept regenerating a tag reference (`:1.5.9`) for the operator's own image, silently reverting #330's fix on the next regeneration. Fixed at the source for `v1.5.10`.
+
+### Changed
+- Bumped `VERSION` to `1.5.10`. No operand (`kubernaut`/`kubernaut-console`) digest changes — this is a bundle/manifest-hygiene-only patch. A follow-up PR will pin the operator's own image and bundle to their published `v1.5.10` digests once the tag image is built, per the usual pattern.
+
 ## [1.5.9] - 2026-08-12
 
 ### Changed (follow-up)

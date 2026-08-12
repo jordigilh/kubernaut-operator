@@ -370,6 +370,20 @@ spec:
                       When set, the operator provisions persona-based tool ClusterRoles
                       and group-to-role ClusterRoleBindings instead of file-based RBAC.
                     properties:
+                      consoleAccessGroups:
+                        description: |-
+                          ConsoleAccessGroups are the OIDC groups granted the coarse-grained
+                          kubernaut-console-access ClusterRole (kubernaut.ai/console, verb=use) --
+                          a separate, independently-auditable grant from the per-tool RoleBindings
+                          above (kubernaut#1919). When unset (nil), defaults to the deduplicated
+                          union of all groups already present in RoleBindings, so upgrading to an
+                          AF version enforcing this gate does not silently deny existing
+                          deployments' tool calls (kubernaut-operator#289). Set to an explicit
+                          empty list to opt out (grant console access to nobody). Set to a
+                          non-empty list for independent, narrower control.
+                        items:
+                          type: string
+                        type: array
                       roleBindings:
                         description: RoleBindings maps persona-based tool roles to
                           OIDC groups.
@@ -1146,8 +1160,6 @@ spec:
                       llm:
                         description: Optional dedicated LLM for alignment checks.
                         properties:
-                          apiKey:
-                            type: string
                           endpoint:
                             type: string
                           model:
