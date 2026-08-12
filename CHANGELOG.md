@@ -5,6 +5,23 @@ All notable changes to the Kubernaut Operator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.8-rc5] - 2026-08-11
+
+### Changed
+- **Images**: Bumped the 12 kubernaut-service `RELATED_IMAGE_*` env vars,
+  the bundle CSV, the airgap imageset, and `dist/install.yaml` to
+  reference the freshly-built upstream kubernaut `v1.5.6-rc5` image —
+  QE found that `v1.5.6-rc4` crashed every `kubernaut_present_decision`
+  call with grounded RCA content (kubernaut #2110: a2a-go's task-manager
+  deep-copy fan-out couldn't gob-encode the `*tools.RCAData` pointer
+  smuggled into `args["rca"]`), breaking the entire interactive
+  approve/decline/dismiss flow. `RELATED_IMAGE_CONSOLE` is unchanged —
+  console stays on `v1.5.6-rc4`. Bumped `VERSION` to `1.5.8-rc5`. The
+  operator's own image and bundle references were pinned to their
+  published digests in `dist/install.yaml` and the airgap imageset once
+  the `v1.5.8-rc5` tag build completed, matching the pattern used for
+  v1.5.6/v1.5.7/v1.5.8-rc1/v1.5.8-rc2/v1.5.8-rc4.
+
 ## [1.5.8-rc4] - 2026-08-11
 
 ### Changed
