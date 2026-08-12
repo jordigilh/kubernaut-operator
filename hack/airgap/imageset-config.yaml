@@ -8,15 +8,15 @@
 #   oc-mirror --config hack/airgap/imageset-config.yaml \
 #     docker://<mirror-registry>
 #
-# Version: v1.5.8
+# Version: v1.5.9
 kind: ImageSetConfiguration
 apiVersion: mirror.openshift.io/v2alpha1
 mirror:
   additionalImages:
     # Operator
-    - name: quay.io/kubernaut-ai/kubernaut-operator@sha256:1a8a058040580b235d954e4f7bda86616a97f345cc35ddafa72cfa1ef6b5f48f
+    - name: quay.io/kubernaut-ai/kubernaut-operator:1.5.9
     # Operator bundle
-    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle@sha256:f8b1ae455b5ba34af1161d155f2ea9e9bdd898425886b420745adf42b7994d9b
+    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle:1.5.9
     # Operand and infrastructure images
     - name: quay.io/kubernaut-ai/aianalysis@sha256:dc7643a7c39bd451f7e83ca1f853a15eaf6beb942a79867e2ad37e88276edd05
     - name: quay.io/kubernaut-ai/apifrontend@sha256:3dc9059c26ed65c88d98b422baf544a36630cdcc4068abd6f8cefd05fa0bbf53
@@ -25,7 +25,7 @@ mirror:
     - name: quay.io/kubernaut-ai/db-migrate@sha256:86cdd9c8d1269046e2eee9a9c09b7919ac6e4e91c29a48b525ae07870ef93215
     - name: quay.io/kubernaut-ai/effectivenessmonitor@sha256:87e263681209b115e61a2a4d3948a0e20367ac9ae0be1f4da9e967a240d90d8b
     - name: quay.io/kubernaut-ai/gateway@sha256:1694c28ad2ef118ffaeba1fd9652234f8998fdfd06da2d412cc92bcf111c01d2
-    - name: quay.io/kubernaut-ai/kubernaut-console@sha256:db0762d30849b080633c1b8dacc67c45338cd2233a9634697c8bc564611927e5
+    - name: quay.io/kubernaut-ai/kubernaut-console@sha256:44fb41010769a26d9c8820758c3bb0f2d979c5c98738b67b0c269405733f66b0
     - name: quay.io/kubernaut-ai/kubernautagent@sha256:e722d66d97d5fd2b74850b78cc11c175674490cc3df2ef2abea6a3afb190ec19
     - name: quay.io/kubernaut-ai/notification@sha256:098b8e2a8e32693f043957562c7236a7f7f741386cb74ab1ffb63fa8e71dfb87
     - name: quay.io/kubernaut-ai/remediationorchestrator@sha256:6dd491a467b412b2ad8492c074d15f4ba7306c3a097b543c1f24b117d0169567

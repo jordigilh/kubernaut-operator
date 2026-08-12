@@ -5,6 +5,17 @@ All notable changes to the Kubernaut Operator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.9] - 2026-08-12
+
+### Fixed
+- **`dist/install.yaml` and the airgap imageset were pinning the operator's own image and bundle to their `v1.5.8-rc6` digests instead of `v1.5.8` GA's** — the `v1.5.8` GA version bump only rewrote tag-style references (`kubernaut-operator:1.5.8-rc6` → `:1.5.8`) and missed the two files where the prior `rc6`-pin-digest follow-up had already replaced the tag with a hardcoded digest, so those two files silently kept shipping the `rc6` build under the `v1.5.8` tag. Reset both back to tag references (`:1.5.9`) here; a follow-up PR will pin them to the real `v1.5.9` digest once the tag image is built, per the usual pattern.
+
+### Changed
+- **Images**: Re-points `RELATED_IMAGE_CONSOLE` to `kubernaut-console v1.5.6` GA (was pinned to a stale, no-longer-tagged digest left over from the `rc4` validation cycle — see below). This closes the GA-to-GA provenance gap where the fully-GA `v1.5.8` operator bundle attested to a console artifact whose own SBOM/build-provenance said "prerelease". Bumped `VERSION` to `1.5.9`. No operator code or CRD changes.
+
+### Context
+- `kubernaut-console`'s `release/v1.5` branch ref had regressed to a stale, divergent commit (missing 29 commits of validated `v1.5.6` work — the real `CHANGELOG.md` stamp, the approval-card fix, the `a2a`-disconnect fix, CI credential fixes, etc.) sometime after `v1.5.6-rc4` was tagged. The branch was reset back to the `rc4` commit and a proper `v1.5.6` GA tag was cut from it before this release; see `kubernaut-console`'s own history for detail. The two commits dropped from the branch tip (a session-fix backport and a test-coverage backport) are both redundant with fixes already present in the real `v1.5.6` line.
+
 ## [1.5.8] - 2026-08-12
 
 ### Changed
