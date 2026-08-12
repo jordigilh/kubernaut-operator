@@ -5,6 +5,12 @@ All notable changes to the Kubernaut Operator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.8] - 2026-08-12
+
+### Changed
+- **GA promotion**: Promotes `v1.5.8-rc6` to GA, now that upstream `kubernaut v1.5.6` GA is available. QE approved `v1.5.8-rc6` (validated against `kubernaut v1.5.6-rc6` + `kubernaut-console v1.5.6-rc4`) for release. The 12 kubernaut-service `RELATED_IMAGE_*` env vars, the bundle CSV, the airgap imageset, and `dist/install.yaml` now reference the final `kubernaut v1.5.6` GA images (content-identical to the validated `rc6` images — same commit, freshly tagged). `RELATED_IMAGE_CONSOLE` remains on `kubernaut-console v1.5.6-rc4` (console GA is tracked independently). Bumped `VERSION` to `1.5.8`.
+- Summarizes the `v1.5.8-rc1` → `rc6` journey: RBAC visibility fix for tool-sre approval tools (#278), and successive upstream digest bumps tracking `kubernaut v1.5.6-rc2` → `rc6` (workflow-discovery/interactive-session hardening, gob-safety boundary hardening, RCA confidence and gate-retry fixes — see `kubernaut`'s own `CHANGELOG.md` for the full fix list). No operator code or CRD changes across the entire `v1.5.8` cycle.
+
 ## [1.5.8-rc6] - 2026-08-12
 
 ### Changed
