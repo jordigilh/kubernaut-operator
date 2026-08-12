@@ -14,9 +14,9 @@ apiVersion: mirror.openshift.io/v2alpha1
 mirror:
   additionalImages:
     # Operator
-    - name: quay.io/kubernaut-ai/kubernaut-operator:1.5.9
+    - name: quay.io/kubernaut-ai/kubernaut-operator@sha256:95e81bf5bd59bd33e282629f23d45f8d2270ae7aa662fba8791bb1769568d6f9
     # Operator bundle
-    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle:1.5.9
+    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle@sha256:787a9720ae467709ec300d984427f72c1102f0c31827387a76b15ee9b58bd17f
     # Operand and infrastructure images
     - name: quay.io/kubernaut-ai/aianalysis@sha256:dc7643a7c39bd451f7e83ca1f853a15eaf6beb942a79867e2ad37e88276edd05
     - name: quay.io/kubernaut-ai/apifrontend@sha256:3dc9059c26ed65c88d98b422baf544a36630cdcc4068abd6f8cefd05fa0bbf53

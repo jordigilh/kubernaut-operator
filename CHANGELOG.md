@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.9] - 2026-08-12
 
+### Changed (follow-up)
+- Pinned the operator's own image and bundle references in `dist/install.yaml` and the airgap imageset to their published `v1.5.9` digests, matching the pattern used for every prior release.
+
 ### Fixed
 - **`dist/install.yaml` and the airgap imageset were pinning the operator's own image and bundle to their `v1.5.8-rc6` digests instead of `v1.5.8` GA's** — the `v1.5.8` GA version bump only rewrote tag-style references (`kubernaut-operator:1.5.8-rc6` → `:1.5.8`) and missed the two files where the prior `rc6`-pin-digest follow-up had already replaced the tag with a hardcoded digest, so those two files silently kept shipping the `rc6` build under the `v1.5.8` tag. Reset both back to tag references (`:1.5.9`) here; a follow-up PR will pin them to the real `v1.5.9` digest once the tag image is built, per the usual pattern.
 
