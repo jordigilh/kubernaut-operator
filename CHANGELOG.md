@@ -5,6 +5,25 @@ All notable changes to the Kubernaut Operator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.8-rc6] - 2026-08-12
+
+### Changed
+- **Images**: Bumped the 12 kubernaut-service `RELATED_IMAGE_*` env vars,
+  the bundle CSV, the airgap imageset, and `dist/install.yaml` to
+  reference the freshly-built upstream kubernaut `v1.5.6-rc6` image,
+  which bundles three additional fixes: kubernaut #2111 (gob-safety
+  boundary hardening at `EventBridge.EmitArtifact`, closing the class of
+  bug behind #2110 rather than just its one call site), #2118 (same-kind
+  gate retry could silently zero a previously-validated RCA confidence),
+  and #2120 (same-kind/API-version gate retry now recovers from an
+  undeclared LLM tool call, and fixes dead `retry_outcome` audit
+  persistence). `RELATED_IMAGE_CONSOLE` is unchanged — console stays on
+  `v1.5.6-rc4`. Bumped `VERSION` to `1.5.8-rc6`. The operator's own image
+  and bundle references were pinned to their published digests in
+  `dist/install.yaml` and the airgap imageset once the `v1.5.8-rc6` tag
+  build completed, matching the pattern used for
+  v1.5.6/v1.5.7/v1.5.8-rc1/v1.5.8-rc2/v1.5.8-rc4/v1.5.8-rc5.
+
 ## [1.5.8-rc5] - 2026-08-11
 
 ### Changed
