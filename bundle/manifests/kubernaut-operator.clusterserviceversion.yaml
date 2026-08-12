@@ -47,8 +47,8 @@ metadata:
     capabilities: Full Lifecycle
     categories: AI/Machine Learning,Monitoring
     com.redhat.openshift.versions: v4.18
-    containerImage: quay.io/kubernaut-ai/kubernaut-operator:1.5.9
-    createdAt: '2026-08-12T21:49:19Z'
+    containerImage: quay.io/kubernaut-ai/kubernaut-operator:1.5.10
+    createdAt: '2026-08-12T22:18:33Z'
     description: "Automated Kubernetes remediation powered by AI \u2014 detects issues, analyzes root causes, and executes verified fixes."
     documentation: https://jordigilh.github.io/kubernaut-docs/latest/
     features.operators.openshift.io/cnf: 'false'
@@ -386,7 +386,7 @@ spec:
                   value: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
                 - name: RELATED_IMAGE_INIT_UBI_MINIMAL
                   value: registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c
-                image: quay.io/kubernaut-ai/kubernaut-operator:1.5.10
+                image: quay.io/kubernaut-ai/kubernaut-operator@sha256:d93d632ce5d66f0d9e5ba79e14f6754252452a8b6833f6d8778db10f330ef692
                 livenessProbe:
                   httpGet:
                     path: /healthz
