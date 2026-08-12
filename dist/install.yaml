@@ -378,6 +378,20 @@ spec:
                       When set, the operator provisions persona-based tool ClusterRoles
                       and group-to-role ClusterRoleBindings instead of file-based RBAC.
                     properties:
+                      consoleAccessGroups:
+                        description: |-
+                          ConsoleAccessGroups are the OIDC groups granted the coarse-grained
+                          kubernaut-console-access ClusterRole (kubernaut.ai/console, verb=use) --
+                          a separate, independently-auditable grant from the per-tool RoleBindings
+                          above (kubernaut#1919). When unset (nil), defaults to the deduplicated
+                          union of all groups already present in RoleBindings, so upgrading to an
+                          AF version enforcing this gate does not silently deny existing
+                          deployments' tool calls (kubernaut-operator#289). Set to an explicit
+                          empty list to opt out (grant console access to nobody). Set to a
+                          non-empty list for independent, narrower control.
+                        items:
+                          type: string
+                        type: array
                       roleBindings:
                         description: RoleBindings maps persona-based tool roles to
                           OIDC groups.
@@ -1154,8 +1168,6 @@ spec:
                       llm:
                         description: Optional dedicated LLM for alignment checks.
                         properties:
-                          apiKey:
-                            type: string
                           endpoint:
                             type: string
                           model:
@@ -2825,7 +2837,7 @@ spec:
           value: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
         - name: RELATED_IMAGE_INIT_UBI_MINIMAL
           value: registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c
-        image: quay.io/kubernaut-ai/kubernaut-operator@sha256:95e81bf5bd59bd33e282629f23d45f8d2270ae7aa662fba8791bb1769568d6f9
+        image: quay.io/kubernaut-ai/kubernaut-operator:1.5.10
         livenessProbe:
           httpGet:
             path: /healthz
