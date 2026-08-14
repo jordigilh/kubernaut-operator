@@ -299,11 +299,23 @@ location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?|ttf|eot)$ {
   try_files $uri =404;
 }
 
+# #314: the console loads this same-origin script unconditionally on every
+# page load to source window.__KUBERNAUT_CONFIG__.enableRawThinking, which
+# hides the "Hide/Show raw thinking" header button when disabled. Default
+# true matches the console's own fallback; deployments targeting a backend
+# that never emits reasoning_content events (e.g. release/v1.5) should set
+# spec.console.enableRawThinking=false.
+location = /runtime-config.js {
+  default_type application/javascript;
+  add_header Cache-Control "no-cache, must-revalidate" always;
+  return 200 "window.__KUBERNAUT_CONFIG__ = { enableRawThinking: %t };\n";
+}
+
 location / {
   add_header Cache-Control "no-cache, must-revalidate";
   try_files $uri $uri/ /index.html;
 }
-`, afURL, afURL, afURL)
+`, afURL, afURL, afURL, kn.Spec.Console.EnableRawThinkingValue())
 
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, ComponentConsole+"-nginx", ComponentConsole),
