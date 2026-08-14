@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"fmt"
 	"os"
 
 	routev1 "github.com/openshift/api/route/v1"
@@ -244,6 +245,49 @@ var _ = Describe("Console Resources", func() {
 			}
 			Expect(found).To(BeTrue(),
 				"tls-ca volume must source from the inter-service-ca ConfigMap")
+		})
+	})
+
+	Context("ConsoleDeployment oauth2-proxy TLS (#309)", func() {
+		const tlsCAMountPath = "/etc/tls-ca"
+
+		It("UT-CD-309-001 [SC-8, CC6.1]: does not disable TLS verification on the oauth2-proxy sidecar", func() {
+			kn := testKubernautWithConsole()
+			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			Expect(err).NotTo(HaveOccurred())
+
+			oauth2 := dep.Spec.Template.Spec.Containers[0]
+			Expect(oauth2.Name).To(Equal("oauth2-proxy"))
+			for _, arg := range oauth2.Args {
+				Expect(arg).NotTo(Equal("--ssl-insecure-skip-verify=true"),
+					"oauth2-proxy must verify the OIDC issuer's TLS certificate rather than skip verification")
+			}
+		})
+
+		It("UT-CD-309-002 [SC-8, CC6.1]: points oauth2-proxy at the mounted CA bundle for issuer TLS verification", func() {
+			kn := testKubernautWithConsole()
+			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			Expect(err).NotTo(HaveOccurred())
+
+			oauth2 := dep.Spec.Template.Spec.Containers[0]
+			Expect(oauth2.Args).To(ContainElement(fmt.Sprintf("--provider-ca-file=%s/service-ca.crt", tlsCAMountPath)),
+				"oauth2-proxy must trust the cluster's service-ca bundle when the OIDC issuer uses a self-signed/internal cert")
+		})
+
+		It("UT-CD-309-003 [SC-8]: oauth2-proxy container mounts tls-ca volume at /etc/tls-ca", func() {
+			kn := testKubernautWithConsole()
+			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			Expect(err).NotTo(HaveOccurred())
+
+			oauth2 := dep.Spec.Template.Spec.Containers[0]
+			found := false
+			for _, m := range oauth2.VolumeMounts {
+				if m.Name == testVolumeTLSCA && m.MountPath == tlsCAMountPath && m.ReadOnly {
+					found = true
+				}
+			}
+			Expect(found).To(BeTrue(),
+				"oauth2-proxy container must mount tls-ca at %s to back --provider-ca-file", tlsCAMountPath)
 		})
 	})
 

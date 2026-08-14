@@ -75,7 +75,10 @@ func ConsoleDeployment(kn *kubernautv1alpha1.Kubernaut, ingressDomain string) (*
 		"--scope=openid email profile",
 		"--skip-jwt-bearer-tokens=true",
 		"--cookie-refresh=25m",
-		"--ssl-insecure-skip-verify=true",
+		// #309: verify the OIDC issuer's TLS certificate rather than skip
+		// verification; trust the cluster's service-ca bundle (mounted
+		// below) so internal/self-signed issuers still validate.
+		"--provider-ca-file=/etc/tls-ca/service-ca.crt",
 		"--ping-path=/oauth2/ping",
 	}
 
@@ -124,6 +127,9 @@ func consoleOAuth2ProxyContainer(image string, args []string, secretName string)
 		Name:  "oauth2-proxy",
 		Image: image,
 		Args:  args,
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
+		},
 		Env: []corev1.EnvVar{
 			{Name: "OAUTH2_PROXY_CLIENT_ID", ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
