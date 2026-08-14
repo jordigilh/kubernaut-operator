@@ -400,6 +400,66 @@ oc get configmap -n kubernaut-system \
   proactive-signal-mappings
 ```
 
+## Additional RBAC for API Frontend
+
+Required whenever `spec.apiFrontend.enabled: true` and any human or agent
+actually calls AF's `/mcp`, `/a2a/invoke`, or Console endpoints (skip if AF
+is enabled only for internal Gateway wiring with no external callers).
+
+AF enforces two independent, OIDC-group-based SubjectAccessReview (SAR)
+checks, both configured through `spec.apiFrontend.rbac`:
+
+1. **Per-tool authorization** — one ClusterRole per persona (`sre`,
+   `ai-orchestrator`, `cicd`, `observability`, `l3-audit`,
+   `remediation-approver`), granting `use` on specific tool
+   `resourceNames`. Enforced on every `/mcp`/`/a2a/invoke` call.
+2. **Console access** — a single coarse-grained gate
+   (`kubernaut.ai/console`, verb `use`) that the Console's `/a2a/access`
+   pre-flight check must pass before it will even render its UI,
+   independent of (1) (kubernaut#1919, kubernaut-operator#289/#290).
+
+```yaml
+spec:
+  apiFrontend:
+    rbac:
+      sarCacheTTL: "30s"
+      roleBindings:
+        - role: sre
+          groups: ["platform-engineering"]
+        - role: observability
+          groups: ["platform-engineering"]
+        - role: remediation-approver
+          groups: ["platform-engineering"]
+```
+
+Each entry maps a built-in persona (`role`) — or a pre-created custom
+ClusterRole (`clusterRoleName`, mutually exclusive with `role`) — to one or
+more OIDC groups. Those groups must appear in the `groups` claim of the JWT
+AF receives; if your IdP doesn't emit that claim by default (Keycloak, for
+example, requires an explicit "Group Membership" protocol mapper on the
+client), every tool call and the Console itself will be denied regardless
+of this config.
+
+**Console access is derived automatically — leave `consoleAccessGroups`
+unset.** `spec.apiFrontend.rbac.consoleAccessGroups` controls gate (2)
+above. By default (unset), the operator derives it as the deduplicated
+union of every group already listed in `roleBindings`, so Console access
+tracks your existing tool-persona grants with zero extra configuration.
+Only set it explicitly if Console access should be scoped narrower/wider
+than tool access, or to `[]` to disable Console access entirely while
+keeping tool access intact.
+
+> **If `spec.apiFrontend.rbac` is left entirely unset** (no `roleBindings`
+> either), both gates default to deny-all — every user sees "Access
+> Denied" on the Console and every tool call is rejected, even for
+> `cluster-admin`. This is fail-closed by design (least-privilege); at
+> least one `roleBindings` entry is required for anyone to use AF at all.
+
+If users see "Access Denied" on the Console despite `roleBindings` looking
+correct, see [Troubleshooting](03-deploy.md#troubleshooting) or the
+detailed writeup: [Kubernaut Console: troubleshooting "Access
+Denied"](https://gist.github.com/jordigilh/5984f65c88da042f2207825a9e57df62).
+
 ## Additional RBAC for Kubernaut Agent
 
 By default, the operator creates a `kubernaut-agent-investigator` ClusterRole
