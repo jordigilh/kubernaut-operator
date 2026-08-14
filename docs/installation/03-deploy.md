@@ -140,6 +140,16 @@ spec:
     auth:
       issuerURL: "https://keycloak.apps.example.com/realms/kubernaut"
       audience: "kubernaut-apifrontend"     # must match the OIDC client
+    # REQUIRED whenever AF is enabled (default) -- there is no working
+    # fallback if rbac/roleBindings is left unset: every user, including
+    # cluster-admin, sees "Access Denied" on the Console and every tool
+    # call is rejected. Replace the group name with a real OIDC group your
+    # users actually belong to (see docs/installation/02-configure-services.md
+    # #additional-rbac-for-api-frontend).
+    rbac:
+      roleBindings:
+        - role: sre
+          groups: ["platform-engineering"]
     # fleetOAuth2CredentialsSecretRef: af-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for APIFrontend only -- used when fleet.enabled: true, for its list_clusters MCP tool
 
   # --- Gateway tuning (optional) ---

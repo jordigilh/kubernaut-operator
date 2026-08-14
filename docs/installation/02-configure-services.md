@@ -476,6 +476,15 @@ oc get configmap -n kubernaut-system \
 
 ## Additional RBAC for API Frontend
 
+> **Hard requirement, not optional:** whenever `spec.apiFrontend.enabled`
+> is true (the default), `spec.apiFrontend.rbac.roleBindings` **must** list
+> at least one OIDC group your users actually belong to, before you apply
+> the CR. There is no permissive fallback if it's left unset — every user,
+> including `cluster-admin`, gets "Access Denied" on the Console and every
+> tool call rejected. This is fail-closed by design (least-privilege), with
+> no dev-mode bypass; skip this section only if you set
+> `spec.apiFrontend.enabled: false`.
+
 Required whenever `spec.apiFrontend.enabled: true` and any human or agent
 actually calls AF's `/mcp`, `/a2a/invoke`, or Console endpoints (skip if AF
 is enabled only for internal Gateway wiring with no external callers).
@@ -522,12 +531,6 @@ tracks your existing tool-persona grants with zero extra configuration.
 Only set it explicitly if Console access should be scoped narrower/wider
 than tool access, or to `[]` to disable Console access entirely while
 keeping tool access intact.
-
-> **If `spec.apiFrontend.rbac` is left entirely unset** (no `roleBindings`
-> either), both gates default to deny-all — every user sees "Access
-> Denied" on the Console and every tool call is rejected, even for
-> `cluster-admin`. This is fail-closed by design (least-privilege); at
-> least one `roleBindings` entry is required for anyone to use AF at all.
 
 If users see "Access Denied" on the Console despite `roleBindings` looking
 correct, see [Troubleshooting](03-deploy.md#troubleshooting) or the
