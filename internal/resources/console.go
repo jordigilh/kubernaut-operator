@@ -236,7 +236,19 @@ func ConsoleService(kn *kubernautv1alpha1.Kubernaut) *corev1.Service {
 func ConsoleNginxConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
 	afURL := fmt.Sprintf("https://%s.%s.svc:%d", ComponentAPIFrontend, kn.Namespace, PortHTTPS)
 
-	httpConf := `limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
+	return &corev1.ConfigMap{
+		ObjectMeta: ObjectMeta(kn, ComponentConsole+"-nginx", ComponentConsole),
+		Data: map[string]string{
+			"http.conf":   consoleNginxHTTPConf(),
+			"server.conf": consoleNginxServerConf(afURL, kn.Spec.Console.EnableRawThinkingValue()),
+		},
+	}
+}
+
+// consoleNginxHTTPConf returns the http-level nginx directives (rate-limit
+// zones, gzip) shared by every Console deployment.
+func consoleNginxHTTPConf() string {
+	return `limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
 limit_req_zone $binary_remote_addr zone=mcp:10m rate=10r/s;
 
 gzip on;
@@ -244,8 +256,14 @@ gzip_types text/plain text/css application/json application/javascript text/xml 
 gzip_min_length 256;
 gzip_vary on;
 `
+}
 
-	serverConf := fmt.Sprintf(`add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; connect-src 'self'; font-src 'self' https://fonts.gstatic.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+// consoleNginxServerConf returns the server-level nginx directives: security
+// headers, TLS trust for the AF upstream, and the location blocks proxying
+// /a2a/, /mcp, /.well-known/, static assets, /runtime-config.js (#314), and
+// the SPA fallback.
+func consoleNginxServerConf(afURL string, enableRawThinking bool) string {
+	return fmt.Sprintf(`add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; connect-src 'self'; font-src 'self' https://fonts.gstatic.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
 add_header X-Content-Type-Options "nosniff" always;
 add_header X-Frame-Options "DENY" always;
 add_header Referrer-Policy "strict-origin-when-cross-origin" always;
@@ -315,15 +333,7 @@ location / {
   add_header Cache-Control "no-cache, must-revalidate";
   try_files $uri $uri/ /index.html;
 }
-`, afURL, afURL, afURL, kn.Spec.Console.EnableRawThinkingValue())
-
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, ComponentConsole+"-nginx", ComponentConsole),
-		Data: map[string]string{
-			"http.conf":   httpConf,
-			"server.conf": serverConf,
-		},
-	}
+`, afURL, afURL, afURL, enableRawThinking)
 }
 
 // ConsoleRoute builds the OCP Route for external access to the console.
