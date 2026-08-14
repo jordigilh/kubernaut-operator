@@ -28,12 +28,14 @@ import (
 	"k8s.io/client-go/rest"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 // NetworkPolicies returns NetworkPolicy resources matching the upstream
 // kubernaut v1.4.0 traffic matrix. Returns nil when NetworkPolicies are
-// disabled on the CR.
-func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) []*networkingv1.NetworkPolicy {
+// disabled on the CR. knV2 supplies Fleet's egress gating (Fleet's entire
+// CRD surface lives in v1alpha2, Fleet v1alpha2 migration).
+func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode) []*networkingv1.NetworkPolicy {
 	spec := kn.Spec.NetworkPolicies
 	if !spec.NetworkPoliciesEnabled() {
 		return nil
@@ -41,27 +43,27 @@ func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode
 	nps := []*networkingv1.NetworkPolicy{
 		dataStorageNetworkPolicy(kn),
 		aiAnalysisNetworkPolicy(kn),
-		signalProcessingNetworkPolicy(kn),
-		remediationOrchestratorNetworkPolicy(kn),
+		signalProcessingNetworkPolicy(kn, knV2),
+		remediationOrchestratorNetworkPolicy(kn, knV2),
 		workflowExecutionNetworkPolicy(kn),
 		notificationNetworkPolicy(kn),
-		effectivenessMonitorNetworkPolicy(kn),
+		effectivenessMonitorNetworkPolicy(kn, knV2),
 		authWebhookNetworkPolicy(kn),
-		kubernautAgentNetworkPolicy(kn),
+		kubernautAgentNetworkPolicy(kn, knV2),
 	}
 	if kn.Spec.GatewayEnabled() {
-		nps = append(nps, gatewayNetworkPolicy(kn))
+		nps = append(nps, gatewayNetworkPolicy(kn, knV2))
 	}
 	if kn.Spec.APIFrontendEnabled() {
-		nps = append(nps, apifrontendNetworkPolicy(kn, sidecar))
+		nps = append(nps, apifrontendNetworkPolicy(kn, knV2, sidecar))
 	}
-	if kn.Spec.FleetMetadataCacheEnabled() {
+	if knV2.Spec.FleetMetadataCacheEnabled() {
 		nps = append(nps, fleetMetadataCacheNetworkPolicy(kn))
 	}
 	return nps
 }
 
-func gatewayNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
+func gatewayNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
 	protoTCP := corev1.ProtocolTCP
 	p8443 := intstr.FromInt32(PortHTTPS)
 
@@ -81,7 +83,7 @@ func gatewayNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Network
 
 	egress := baseEgress(2)
 	egress = append(egress, datastorageEgressRule())
-	if kn.Spec.FleetEnabled() {
+	if knV2.Spec.FleetEnabled() {
 		egress = append(egress, fleetDestinationsEgressRule())
 	}
 
@@ -168,17 +170,17 @@ func aiAnalysisNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Netw
 	return controllerWithDataStorageAndAgentEgress(kn, ComponentAIAnalysis, metricsOnlyIngress())
 }
 
-func signalProcessingNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
+func signalProcessingNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
 	np := controllerWithDataStorageEgressOnly(kn, ComponentSignalProcessing, metricsOnlyIngress())
-	if kn.Spec.FleetEnabled() {
+	if knV2.Spec.FleetEnabled() {
 		np.Spec.Egress = append(np.Spec.Egress, fleetDestinationsEgressRule())
 	}
 	return np
 }
 
-func remediationOrchestratorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
+func remediationOrchestratorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
 	np := controllerWithDataStorageEgressOnly(kn, ComponentRemediationOrchestrator, metricsOnlyIngress())
-	if kn.Spec.FleetEnabled() {
+	if knV2.Spec.FleetEnabled() {
 		np.Spec.Egress = append(np.Spec.Egress, fleetDestinationsEgressRule())
 	}
 	return np
@@ -218,7 +220,7 @@ func notificationNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Ne
 	}
 }
 
-func effectivenessMonitorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
+func effectivenessMonitorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
 	protoTCP := corev1.ProtocolTCP
 	p9090 := intstr.FromInt32(PortMetrics)
 	p9093 := intstr.FromInt32(9093)
@@ -232,7 +234,7 @@ func effectivenessMonitorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *network
 			{Protocol: &protoTCP, Port: &p9093},
 		},
 	})
-	if kn.Spec.FleetEnabled() {
+	if knV2.Spec.FleetEnabled() {
 		egress = append(egress, fleetDestinationsEgressRule())
 	}
 
@@ -279,7 +281,7 @@ func authWebhookNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 	}
 }
 
-func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
+func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
 	protoTCP := corev1.ProtocolTCP
 	p8443 := intstr.FromInt32(PortHTTPS)
 
@@ -312,7 +314,7 @@ func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.
 			},
 		})
 	}
-	if kn.Spec.FleetEnabled() {
+	if knV2.Spec.FleetEnabled() {
 		egress = append(egress, fleetDestinationsEgressRule())
 	}
 
@@ -570,7 +572,7 @@ func monitoringStackEgressRule(monitoringNS string) networkingv1.NetworkPolicyEg
 	}
 }
 
-func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) *networkingv1.NetworkPolicy {
+func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode) *networkingv1.NetworkPolicy {
 	healthPort, metricsPort := apifrontendHealthAndMetricsPorts(kn, sidecar)
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: ObjectMeta(kn, ComponentAPIFrontend+"-netpol", ComponentAPIFrontend),
@@ -581,7 +583,7 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSi
 				networkingv1.PolicyTypeEgress,
 			},
 			Ingress: apifrontendIngressRules(kn, healthPort, metricsPort),
-			Egress:  apifrontendEgressRules(kn),
+			Egress:  apifrontendEgressRules(kn, knV2),
 		},
 	}
 }
@@ -656,7 +658,7 @@ func apifrontendIngressRules(kn *kubernautv1alpha1.Kubernaut, healthPort, metric
 // apifrontendEgressRules builds AF's egress rules: the shared base egress
 // (DNS/API server), intra-kubernaut HTTPS, monitoring/Valkey/OIDC/Fleet
 // destinations gated on their respective spec fields.
-func apifrontendEgressRules(kn *kubernautv1alpha1.Kubernaut) []networkingv1.NetworkPolicyEgressRule {
+func apifrontendEgressRules(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []networkingv1.NetworkPolicyEgressRule {
 	protoTCP := corev1.ProtocolTCP
 	p8443 := intstr.FromInt32(PortHTTPS)
 
@@ -705,7 +707,7 @@ func apifrontendEgressRules(kn *kubernautv1alpha1.Kubernaut) []networkingv1.Netw
 		})
 	}
 
-	if kn.Spec.FleetEnabled() {
+	if knV2.Spec.FleetEnabled() {
 		egress = append(egress, fleetDestinationsEgressRule())
 	}
 	return egress

@@ -324,16 +324,6 @@ spec:
                       Whether the API Frontend component is deployed. Defaults to true.
                       Set to false to skip all AF resources (Deployment, Service, RBAC, etc.).
                     type: boolean
-                  fleetOAuth2CredentialsSecretRef:
-                    description: |-
-                      FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
-                      for APIFrontend only. Use when APIFrontend must authenticate to the
-                      MCP Gateway as a different OAuth2 client than other fleet-aware
-                      components (e.g. a federated Keycloak issuing distinct per-service
-                      client registrations against the same shared
-                      spec.fleet.oauth2.tokenURL). Falls back to
-                      spec.fleet.oauth2.credentialsSecretRef when unset.
-                    type: string
                   healthPort:
                     description: |-
                       Override for the AF health probe port. Defaults to 8081 (or 8082 when
@@ -937,16 +927,6 @@ spec:
                         default: 300s
                         type: string
                     type: object
-                  fleetOAuth2CredentialsSecretRef:
-                    description: |-
-                      FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
-                      for EffectivenessMonitor only. Use when EffectivenessMonitor must
-                      authenticate to the MCP Gateway as a different OAuth2 client than
-                      other fleet-aware components (e.g. a federated Keycloak issuing
-                      distinct per-service client registrations against the same shared
-                      spec.fleet.oauth2.tokenURL). Falls back to
-                      spec.fleet.oauth2.credentialsSecretRef when unset.
-                    type: string
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -1023,220 +1003,6 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
-                type: object
-              fleet:
-                description: |-
-                  Fleet configures federated scope-checking for Gateway and
-                  RemediationOrchestrator against a shared fleet backend (ADR-068).
-                properties:
-                  backend:
-                    description: |-
-                      Fleet backend to query for scope information. Required when Enabled
-                      is true. "fleetmetadatacache" targets the Fleet Metadata Cache (FMC)
-                      service's HTTP API; "acm" targets Red Hat Advanced Cluster Management
-                      Search's GraphQL API.
-                    enum:
-                    - fleetmetadatacache
-                    - acm
-                    type: string
-                  caSecretName:
-                    description: |-
-                      Name of a Secret containing a CA bundle (key: ca.crt) to verify the
-                      backend endpoint's TLS certificate. Optional.
-                    type: string
-                  enabled:
-                    default: false
-                    description: |-
-                      Whether federated scope-checking is enabled for Gateway and
-                      RemediationOrchestrator.
-                    type: boolean
-                  endpoint:
-                    description: HTTP(S) endpoint of the fleet backend. Required when
-                      Enabled is true.
-                    type: string
-                  mcpGatewayEndpoint:
-                    description: |-
-                      MCPGatewayEndpoint is the fleet-wide MCP Gateway (Envoy AI Gateway or
-                      Kuadrant) SSE endpoint used for remote-cluster K8s reads. Required
-                      (enforced at admission) when Enabled is true: Gateway and
-                      RemediationOrchestrator both fail closed at startup without it
-                      (upstream Fleet.ValidateFullFederation) — see #222. This field is not
-                      specific to any one backend; it is shared config used independently
-                      of Backend/Endpoint.
-                    type: string
-                  mcpGatewayNamespace:
-                    description: |-
-                      MCPGatewayNamespace restricts every fleet-aware component's MCP
-                      Gateway CRD watch (Backend for Envoy AI Gateway,
-                      MCPServerRegistration for Kuadrant) to a single namespace. Empty means
-                      cluster-wide (all namespaces). Serves as the fallback for
-                      SignalProcessing and FleetMetadataCache's own per-component overrides
-                      (spec.signalProcessing.mcpGatewayNamespace,
-                      spec.fleetMetadataCache.mcpGatewayNamespace); APIFrontend and
-                      EffectivenessMonitor have no override and no namespace-scoped RBAC
-                      path yet — their ClusterRegistry construction has no namespace knob
-                      upstream (tracked separately for v1.6).
-                    type: string
-                  mcpGatewayType:
-                    description: |-
-                      MCPGatewayType selects the MCP Gateway implementation backing
-                      MCPGatewayEndpoint. Required (enforced at admission) when Enabled is
-                      true.
-                    enum:
-                    - eaigw
-                    - kuadrant
-                    type: string
-                  oauth2:
-                    description: |-
-                      OAuth2 credentials for authenticating to the MCP Gateway. Shared by
-                      every fleet-aware component. Optional — some MCP Gateway deployments
-                      do not require authentication.
-                    properties:
-                      credentialsSecretRef:
-                        description: |-
-                          Name of the Secret containing OAuth2 client credentials
-                          (keys: "client-id", "client-secret").
-                        type: string
-                      enabled:
-                        default: false
-                        description: Whether OAuth2 authentication is enabled.
-                        type: boolean
-                      scopes:
-                        description: OAuth2 scopes.
-                        items:
-                          type: string
-                        type: array
-                      tokenURL:
-                        description: Token endpoint URL.
-                        type: string
-                    type: object
-                  tokenSecretName:
-                    description: |-
-                      Name of a Secret containing a bearer token (key: token) for ACM
-                      Search GraphQL authentication. Optional when backend=fleetmetadatacache;
-                      required (enforced at admission, FedRAMP IA-5) when backend=acm, since
-                      ACM Search's GraphQL API has no unauthenticated mode.
-                    type: string
-                type: object
-              fleetMetadataCache:
-                description: |-
-                  FleetMetadataCache configures the operator-managed Fleet Metadata
-                  Cache (FMC) service (ADR-068). Disabled by default -- most
-                  deployments that enable spec.fleet use backend=acm (an existing RHACM
-                  Search installation) instead of standing up FMC.
-                properties:
-                  enabled:
-                    default: false
-                    description: Whether the operator deploys the FMC service.
-                    type: boolean
-                  fleetOAuth2CredentialsSecretRef:
-                    description: |-
-                      FleetOAuth2CredentialsSecretRef overrides
-                      spec.fleet.oauth2.credentialsSecretRef for FMC only. Use when FMC
-                      must authenticate to the MCP Gateway as a different OAuth2 client
-                      than Gateway/RemediationOrchestrator (e.g. a federated Keycloak
-                      issuing distinct per-service client registrations against the same
-                      shared spec.fleet.oauth2.tokenURL). Falls back to
-                      spec.fleet.oauth2.credentialsSecretRef when unset.
-                    type: string
-                  keyTTL:
-                    default: 45s
-                    description: |-
-                      TTL for cached resource metadata entries in Valkey. Must be a valid
-                      Go duration string.
-                    type: string
-                  logging:
-                    description: LoggingSpec configures the log level for a service.
-                    properties:
-                      level:
-                        default: info
-                        description: 'Log level. One of: DEBUG, INFO, WARN, ERROR.'
-                        enum:
-                        - DEBUG
-                        - INFO
-                        - WARN
-                        - ERROR
-                        - debug
-                        - info
-                        - warn
-                        - error
-                        type: string
-                    type: object
-                  mcpGatewayNamespace:
-                    description: |-
-                      Namespace to scope FMC's informer watch for MCP Gateway CRDs
-                      (Backend for Envoy AI Gateway, MCPServerRegistration for Kuadrant)
-                      representing managed clusters. Falls back to
-                      spec.fleet.mcpGatewayNamespace when unset. Empty (after fallback)
-                      means cluster-wide (all namespaces), granting a cluster-scoped
-                      ClusterRole. When non-empty, the operator grants a namespace-scoped
-                      Role/RoleBinding in that namespace instead (least privilege).
-                    type: string
-                  resources:
-                    description: Resource requirements.
-                    properties:
-                      claims:
-                        description: |-
-                          Claims lists the names of resources, defined in spec.resourceClaims,
-                          that are used by this container.
-
-                          This field depends on the
-                          DynamicResourceAllocation feature gate.
-
-                          This field is immutable. It can only be set for containers.
-                        items:
-                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
-                          properties:
-                            name:
-                              description: |-
-                                Name must match the name of one entry in pod.spec.resourceClaims of
-                                the Pod where this field is used. It makes that resource available
-                                inside a container.
-                              type: string
-                            request:
-                              description: |-
-                                Request is the name chosen for a request in the referenced claim.
-                                If empty, everything from the claim is made available, otherwise
-                                only the result of this request.
-                              type: string
-                          required:
-                          - name
-                          type: object
-                        type: array
-                        x-kubernetes-list-map-keys:
-                        - name
-                        x-kubernetes-list-type: map
-                      limits:
-                        additionalProperties:
-                          anyOf:
-                          - type: integer
-                          - type: string
-                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                          x-kubernetes-int-or-string: true
-                        description: |-
-                          Limits describes the maximum amount of compute resources allowed.
-                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
-                        type: object
-                      requests:
-                        additionalProperties:
-                          anyOf:
-                          - type: integer
-                          - type: string
-                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                          x-kubernetes-int-or-string: true
-                        description: |-
-                          Requests describes the minimum amount of compute resources required.
-                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
-                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
-                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
-                        type: object
-                    type: object
-                  syncInterval:
-                    default: 30s
-                    description: |-
-                      How often FMC polls managed clusters for resource metadata. Must be
-                      a valid Go duration string.
-                    type: string
                 type: object
               gateway:
                 description: Gateway service settings.
@@ -1296,15 +1062,6 @@ spec:
                       Whether the Gateway component is deployed. Defaults to true.
                       Set to false to skip all Gateway resources (Deployment, Service, RBAC, etc.).
                     type: boolean
-                  fleetOAuth2CredentialsSecretRef:
-                    description: |-
-                      FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
-                      for Gateway only. Use when Gateway must authenticate to the MCP Gateway
-                      as a different OAuth2 client than other fleet-aware components (e.g. a
-                      federated Keycloak issuing distinct per-service client registrations
-                      against the same shared spec.fleet.oauth2.tokenURL). Falls back to
-                      spec.fleet.oauth2.credentialsSecretRef when unset.
-                    type: string
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -1478,16 +1235,6 @@ spec:
                         description: Whether audit logging is enabled.
                         type: boolean
                     type: object
-                  fleetOAuth2CredentialsSecretRef:
-                    description: |-
-                      FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
-                      for the Kubernaut Agent only. Use when KA must authenticate to the
-                      MCP Gateway (for fleet tool discovery, ADR-068 decision #11) as a
-                      different OAuth2 client than other fleet-aware components (e.g. a
-                      federated Keycloak issuing distinct per-service client registrations
-                      against the same shared spec.fleet.oauth2.tokenURL). Falls back to
-                      spec.fleet.oauth2.credentialsSecretRef when unset.
-                    type: string
                   interactive:
                     description: Interactive mode JWT identity delegation configuration.
                     properties:
@@ -2108,16 +1855,6 @@ spec:
                         default: 5m
                         type: string
                     type: object
-                  fleetOAuth2CredentialsSecretRef:
-                    description: |-
-                      FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
-                      for RemediationOrchestrator only. Use when RemediationOrchestrator must
-                      authenticate to the MCP Gateway as a different OAuth2 client than other
-                      fleet-aware components (e.g. a federated Keycloak issuing distinct
-                      per-service client registrations against the same shared
-                      spec.fleet.oauth2.tokenURL). Falls back to
-                      spec.fleet.oauth2.credentialsSecretRef when unset.
-                    type: string
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -2276,16 +2013,6 @@ spec:
               signalProcessing:
                 description: SignalProcessing controller configuration.
                 properties:
-                  fleetOAuth2CredentialsSecretRef:
-                    description: |-
-                      FleetOAuth2CredentialsSecretRef overrides spec.fleet.oauth2.credentialsSecretRef
-                      for SignalProcessing only. Use when SignalProcessing must authenticate
-                      to the MCP Gateway as a different OAuth2 client than other fleet-aware
-                      components (e.g. a federated Keycloak issuing distinct per-service
-                      client registrations against the same shared
-                      spec.fleet.oauth2.tokenURL). Falls back to
-                      spec.fleet.oauth2.credentialsSecretRef when unset.
-                    type: string
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -2303,13 +2030,6 @@ spec:
                         - error
                         type: string
                     type: object
-                  mcpGatewayNamespace:
-                    description: |-
-                      MCPGatewayNamespace overrides spec.fleet.mcpGatewayNamespace for
-                      SignalProcessing's own ClusterRegistry watch (used for cluster
-                      classification labels, BR-FLEET-003). Falls back to
-                      spec.fleet.mcpGatewayNamespace when unset.
-                    type: string
                   policy:
                     description: |-
                       Policy ConfigMap reference. Required.

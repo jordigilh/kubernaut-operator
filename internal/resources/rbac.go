@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 const (
@@ -45,18 +46,20 @@ func clusterRoleName(kn *kubernautv1alpha1.Kubernaut, base string) string {
 }
 
 // ClusterRoles builds all ClusterRoles needed by the Kubernaut deployment,
-// matching the Helm chart definitions with namespace-prefixed names.
-func ClusterRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRole {
+// matching the Helm chart definitions with namespace-prefixed names. knV2
+// supplies Fleet-gated rules (Fleet's entire CRD surface lives in v1alpha2,
+// Fleet v1alpha2 migration).
+func ClusterRoles(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []*rbacv1.ClusterRole {
 	labels := CommonLabels(kn)
 	roles := []*rbacv1.ClusterRole{
 		aianalysisControllerClusterRole(kn, labels),
 		kubernautAgentClientClusterRole(kn, labels),
 		kubernautAgentInvestigatorClusterRole(kn, labels),
-		signalprocessingClusterRole(kn, labels),
+		signalprocessingClusterRole(kn, knV2, labels),
 		remediationOrchestratorClusterRole(kn, labels),
 		workflowExecutionControllerClusterRole(kn, labels),
 		workflowRunnerClusterRole(kn, labels),
-		effectivenessMonitorControllerClusterRole(kn, labels),
+		effectivenessMonitorControllerClusterRole(kn, knV2, labels),
 		notificationControllerClusterRole(kn, labels),
 		dataStorageAuthMiddlewareClusterRole(kn, labels),
 		dataStorageClientClusterRole(kn, labels),
@@ -73,7 +76,7 @@ func ClusterRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRole {
 	}
 
 	if kn.Spec.APIFrontendEnabled() {
-		roles = append(roles, apifrontendClusterRole(kn, labels))
+		roles = append(roles, apifrontendClusterRole(kn, knV2, labels))
 		roles = append(roles, ConsoleAccessClusterRole(kn))
 	}
 
@@ -82,16 +85,17 @@ func ClusterRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRole {
 	// (see MCPGatewayNamespaceRBAC) -- the cluster-scoped ClusterRole
 	// would otherwise be a permission-less no-op, so it's omitted
 	// entirely rather than left behind as dead weight.
-	if kn.Spec.FleetMetadataCacheEnabled() && effectiveFleetMetadataCacheMCPGatewayNamespace(kn) == "" {
-		roles = append(roles, fleetMetadataCacheClusterRole(kn, labels))
+	if knV2.Spec.FleetMetadataCacheEnabled() && effectiveFleetMetadataCacheMCPGatewayNamespace(knV2) == "" {
+		roles = append(roles, fleetMetadataCacheClusterRole(kn, knV2, labels))
 	}
 
 	return roles
 }
 
 // ClusterRoleBindings builds all CRBs, binding SAs in the CR namespace.
-// All names are namespace-prefixed for multi-instance safety.
-func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleBinding {
+// All names are namespace-prefixed for multi-instance safety. knV2 supplies
+// FleetMetadataCache's gating (Fleet v1alpha2 migration).
+func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []*rbacv1.ClusterRoleBinding {
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
 	p := func(base string) string { return clusterRoleName(kn, base) }
@@ -149,7 +153,7 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 		)
 	}
 
-	if kn.Spec.FleetMetadataCacheEnabled() && effectiveFleetMetadataCacheMCPGatewayNamespace(kn) == "" {
+	if knV2.Spec.FleetMetadataCacheEnabled() && effectiveFleetMetadataCacheMCPGatewayNamespace(knV2) == "" {
 		crbs = append(crbs, fleetMetadataCacheClusterRoleBinding(kn, labels))
 	}
 
@@ -258,11 +262,11 @@ func KubernautAgentClientAPIfrontendRoleBinding(kn *kubernautv1alpha1.Kubernaut)
 // secrets/configmaps in the operator namespace rather than per-resource names
 // because the namespace is dedicated to operator workloads and components
 // dynamically reference each other's ConfigMaps.
-func NamespaceRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Role {
+func NamespaceRoles(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []*rbacv1.Role {
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
 
-	active := ActiveComponents(kn)
+	active := ActiveComponents(kn, knV2)
 	roles := make([]*rbacv1.Role, 0, len(active))
 	for _, c := range active {
 		roles = append(roles, &rbacv1.Role{
@@ -282,11 +286,11 @@ func NamespaceRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.Role {
 }
 
 // NamespaceRoleBindings builds the matching RoleBindings for NamespaceRoles.
-func NamespaceRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.RoleBinding {
+func NamespaceRoleBindings(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []*rbacv1.RoleBinding {
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
 
-	active := ActiveComponents(kn)
+	active := ActiveComponents(kn, knV2)
 	rbs := make([]*rbacv1.RoleBinding, 0, len(active))
 	for _, c := range active {
 		rbs = append(rbs, &rbacv1.RoleBinding{
@@ -382,10 +386,10 @@ func WorkflowNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut) ([]*rbacv1.Role, []*
 // cmd/apifrontend/backend_deps.go and cmd/effectivenessmonitor/main.go
 // (Finding 4) -- granting them a namespace-scoped Role today would make
 // the apiserver reject their LIST/WATCH with 403 Forbidden.
-func MCPGatewayNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut) ([]*rbacv1.Role, []*rbacv1.RoleBinding) {
+func MCPGatewayNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) ([]*rbacv1.Role, []*rbacv1.RoleBinding) {
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
-	rules := mcpGatewayCRDPolicyRules(kn.Spec.Fleet.MCPGatewayType)
+	rules := mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGatewayType)
 
 	// One code path shared by FMC and SP -- both grant the same rules,
 	// differing only in whether they're active, their effective namespace,
@@ -396,8 +400,8 @@ func MCPGatewayNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut) ([]*rbacv1.Role, [
 		roleBase  string
 		component string
 	}{
-		{kn.Spec.FleetMetadataCacheEnabled(), effectiveFleetMetadataCacheMCPGatewayNamespace(kn), "fleetmetadatacache-mcpgateway", ComponentFleetMetadataCache},
-		{mcpGatewayRemoteReadsEnabled(kn), effectiveSignalProcessingMCPGatewayNamespace(kn), "signalprocessing-mcpgateway", ComponentSignalProcessing},
+		{knV2.Spec.FleetMetadataCacheEnabled(), effectiveFleetMetadataCacheMCPGatewayNamespace(knV2), "fleetmetadatacache-mcpgateway", ComponentFleetMetadataCache},
+		{mcpGatewayRemoteReadsEnabled(knV2), effectiveSignalProcessingMCPGatewayNamespace(knV2), "signalprocessing-mcpgateway", ComponentSignalProcessing},
 	}
 
 	var roles []*rbacv1.Role
@@ -997,19 +1001,19 @@ func mcpGatewayCRDPolicyRules(gatewayType string) []rbacv1.PolicyRule {
 // configured. Shared gating condition confirmed against
 // cmd/signalprocessing/main.go, cmd/apifrontend/backend_deps.go, and
 // cmd/effectivenessmonitor/main.go (preflight Finding 4).
-func mcpGatewayRemoteReadsEnabled(kn *kubernautv1alpha1.Kubernaut) bool {
-	fleet := &kn.Spec.Fleet
+func mcpGatewayRemoteReadsEnabled(knV2 *kubernautv1alpha2.Kubernaut) bool {
+	fleet := &knV2.Spec.Fleet
 	return fleet.Enabled != nil && *fleet.Enabled && fleet.MCPGatewayEndpoint != ""
 }
 
 // effectiveSignalProcessingMCPGatewayNamespace resolves SP's own
-// mcpGatewayNamespace override, falling back to the shared
-// spec.fleet.mcpGatewayNamespace.
-func effectiveSignalProcessingMCPGatewayNamespace(kn *kubernautv1alpha1.Kubernaut) string {
-	return withDefault(kn.Spec.SignalProcessing.MCPGatewayNamespace, kn.Spec.Fleet.MCPGatewayNamespace)
+// mcpGatewayNamespace override (F1 -- SignalProcessingSpec.Fleet in
+// v1alpha2), falling back to the shared spec.fleet.mcpGatewayNamespace.
+func effectiveSignalProcessingMCPGatewayNamespace(knV2 *kubernautv1alpha2.Kubernaut) string {
+	return effectiveFleetNamespace(knV2.Spec.SignalProcessing.Fleet, knV2.Spec.Fleet.MCPGatewayNamespace)
 }
 
-func signalprocessingClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
+func signalprocessingClusterRole(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	rules := []rbacv1.PolicyRule{
 		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings", "remediationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings/status", "signalprocessings/finalizers"}, Verbs: []string{"get", "update", "patch"}},
@@ -1024,8 +1028,8 @@ func signalprocessingClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[str
 	// #224: grant MCP Gateway CRD read access here only when SP's effective
 	// namespace is empty; a resolved namespace moves these rules to a
 	// namespace-scoped Role instead (see MCPGatewayNamespaceRBAC).
-	if mcpGatewayRemoteReadsEnabled(kn) && effectiveSignalProcessingMCPGatewayNamespace(kn) == "" {
-		rules = append(rules, mcpGatewayCRDPolicyRules(kn.Spec.Fleet.MCPGatewayType)...)
+	if mcpGatewayRemoteReadsEnabled(knV2) && effectiveSignalProcessingMCPGatewayNamespace(knV2) == "" {
+		rules = append(rules, mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGatewayType)...)
 	}
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "signalprocessing-controller"), Labels: labels},
@@ -1104,7 +1108,7 @@ func workflowRunnerClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[strin
 	}
 }
 
-func effectivenessMonitorControllerClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
+func effectivenessMonitorControllerClusterRole(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	ocr := ownerChainResolutionRules()
 	rules := make([]rbacv1.PolicyRule, 0, 9+len(ocr)) //nolint:mnd
 	rules = append(rules, []rbacv1.PolicyRule{
@@ -1123,8 +1127,8 @@ func effectivenessMonitorControllerClusterRole(kn *kubernautv1alpha1.Kubernaut, 
 	// (cluster-wide watch) because its config schema has no Namespace field,
 	// unlike SP/FMC. Tracked upstream (kubernaut#1686 follow-up) before this
 	// can safely move to a namespace-scoped Role.
-	if mcpGatewayRemoteReadsEnabled(kn) {
-		rules = append(rules, mcpGatewayCRDPolicyRules(kn.Spec.Fleet.MCPGatewayType)...)
+	if mcpGatewayRemoteReadsEnabled(knV2) {
+		rules = append(rules, mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGatewayType)...)
 	}
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "effectivenessmonitor-controller"), Labels: labels},
@@ -1194,7 +1198,7 @@ func gatewaySignalSourceClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[
 	}
 }
 
-func apifrontendClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
+func apifrontendClusterRole(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	rules := []rbacv1.PolicyRule{
 		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch", "create", "update", "delete"}},
 		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update"}},
@@ -1228,8 +1232,8 @@ func apifrontendClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]s
 	// (cluster-wide watch) because its config schema has no Namespace field,
 	// unlike SP/FMC. Tracked upstream (kubernaut#1686 follow-up) before this
 	// can safely move to a namespace-scoped Role.
-	if mcpGatewayRemoteReadsEnabled(kn) {
-		rules = append(rules, mcpGatewayCRDPolicyRules(kn.Spec.Fleet.MCPGatewayType)...)
+	if mcpGatewayRemoteReadsEnabled(knV2) {
+		rules = append(rules, mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGatewayType)...)
 	}
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "apifrontend-role"), Labels: labels},

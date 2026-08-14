@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 // controllerConfig holds controller-runtime style settings shared by the
@@ -175,15 +176,15 @@ const apifrontendTLSCAFile = "/etc/apifrontend/tls-ca/ca.crt"
 // registrations against one shared token endpoint (confirmed against
 // upstream's own Helm chart: kubernaut.fleet.oauth2 helper), so Gateway and
 // RemediationOrchestrator must be able to authenticate as different clients.
-func resolveFleetConfig(kn *kubernautv1alpha1.Kubernaut, credentialsSecretRefOverride, defaultOAuth2CAFile string) *fleetConfigYAML {
-	fleet := &kn.Spec.Fleet
+func resolveFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefOverride, defaultOAuth2CAFile string) *fleetConfigYAML {
+	fleet := &knV2.Spec.Fleet
 	if fleet.Enabled == nil || !*fleet.Enabled {
 		return nil
 	}
 	cfg := &fleetConfigYAML{
 		Enabled:            true,
 		Backend:            fleet.Backend,
-		Endpoint:           resolveFleetEndpoint(kn),
+		Endpoint:           resolveFleetEndpoint(knV2),
 		MCPGatewayEndpoint: fleet.MCPGatewayEndpoint,
 		MCPGatewayType:     fleet.MCPGatewayType,
 	}
@@ -212,8 +213,8 @@ func resolveFleetConfig(kn *kubernautv1alpha1.Kubernaut, credentialsSecretRefOve
 // Backend/Endpoint scope-check adapter"). Reuses resolveFleetConfig's
 // marshaling and TLSCAFile defaulting, then strips the backend/endpoint/
 // tokenPath fields those services neither need nor read.
-func resolveMCPGatewayOnlyFleetConfig(kn *kubernautv1alpha1.Kubernaut, credentialsSecretRefOverride, defaultOAuth2CAFile string) *fleetConfigYAML {
-	cfg := resolveFleetConfig(kn, credentialsSecretRefOverride, defaultOAuth2CAFile)
+func resolveMCPGatewayOnlyFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefOverride, defaultOAuth2CAFile string) *fleetConfigYAML {
+	cfg := resolveFleetConfig(knV2, credentialsSecretRefOverride, defaultOAuth2CAFile)
 	if cfg == nil {
 		return nil
 	}
@@ -387,23 +388,25 @@ type signalProcessingFleetYAML struct {
 // tolerates an all-zero-value fleet: block -- BR-INTEGRATION-054, "when
 // Endpoint is empty, SP operates in local-only mode" -- but omitting the
 // key keeps non-fleet deployments' rendered YAML unchanged).
-// spec.signalProcessing.mcpGatewayNamespace overrides the shared
-// spec.fleet.mcpGatewayNamespace, mirroring FleetMetadataCache's precedent.
-func resolveSignalProcessingFleetConfig(kn *kubernautv1alpha1.Kubernaut) *signalProcessingFleetYAML {
-	fleet := &kn.Spec.Fleet
+// spec.signalProcessing.fleet.namespace overrides the shared
+// spec.fleet.mcpGatewayNamespace (F1), mirroring FleetMetadataCache's
+// precedent.
+func resolveSignalProcessingFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) *signalProcessingFleetYAML {
+	fleet := &knV2.Spec.Fleet
 	if fleet.Enabled == nil || !*fleet.Enabled {
 		return nil
 	}
+	override := knV2.Spec.SignalProcessing.Fleet
 	cfg := &signalProcessingFleetYAML{
 		Endpoint:       fleet.MCPGatewayEndpoint,
 		MCPGatewayType: fleet.MCPGatewayType,
-		Namespace:      withDefault(kn.Spec.SignalProcessing.MCPGatewayNamespace, fleet.MCPGatewayNamespace),
+		Namespace:      effectiveFleetNamespace(override, fleet.MCPGatewayNamespace),
 	}
 	if fleet.OAuth2.Enabled {
 		cfg.OAuth2 = &fleetOAuth2YAML{
 			Enabled:              true,
 			TokenURL:             fleet.OAuth2.TokenURL,
-			CredentialsSecretRef: withDefault(kn.Spec.SignalProcessing.FleetOAuth2CredentialsSecretRef, fleet.OAuth2.CredentialsSecretRef),
+			CredentialsSecretRef: effectiveFleetOAuth2SecretRef(override, fleet.OAuth2.CredentialsSecretRef),
 			Scopes:               fleet.OAuth2.Scopes,
 			TLSCAFile:            InterServiceTLSCAFile,
 		}
@@ -809,8 +812,8 @@ type kaFleetOAuth2YAML struct {
 // when spec.fleet is disabled, so KA registers no GatewayDiscoverer tools
 // by default (#204 "default behavior unchanged" acceptance criterion,
 // matching upstream's own "empty gatewayType = fleet disabled" contract).
-func resolveKAFleetConfig(kn *kubernautv1alpha1.Kubernaut) *kaFleetYAML {
-	fleet := &kn.Spec.Fleet
+func resolveKAFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) *kaFleetYAML {
+	fleet := &knV2.Spec.Fleet
 	if fleet.Enabled == nil || !*fleet.Enabled {
 		return nil
 	}
@@ -822,7 +825,7 @@ func resolveKAFleetConfig(kn *kubernautv1alpha1.Kubernaut) *kaFleetYAML {
 		cfg.OAuth2 = &kaFleetOAuth2YAML{
 			Enabled:              true,
 			TokenURL:             fleet.OAuth2.TokenURL,
-			CredentialsSecretRef: withDefault(kn.Spec.KubernautAgent.FleetOAuth2CredentialsSecretRef, fleet.OAuth2.CredentialsSecretRef),
+			CredentialsSecretRef: effectiveFleetOAuth2SecretRef(knV2.Spec.KubernautAgent.Fleet, fleet.OAuth2.CredentialsSecretRef),
 			Scopes:               fleet.OAuth2.Scopes,
 		}
 	}
@@ -958,7 +961,7 @@ func marshalYAML(v any) (string, error) {
 }
 
 // GatewayConfigMap builds the gateway-config ConfigMap.
-func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ns := kn.Namespace
 	gwCfg := &kn.Spec.Gateway.Config
@@ -1021,7 +1024,7 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) 
 			Timeout: "10s",
 			Buffer:  dataStorageBufferYAML{BufferSize: 10000, BatchSize: 100, FlushInterval: "1s", MaxRetries: 3},
 		},
-		Fleet: resolveFleetConfig(kn, kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef, InterServiceTLSCAFile),
+		Fleet: resolveFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.Gateway.Fleet, ""), InterServiceTLSCAFile),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1188,7 +1191,7 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOptio
 }
 
 // SignalProcessingConfigMap builds the signalprocessing-config ConfigMap.
-func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ns := kn.Namespace
 	buf := signalProcessingBufferYAML{
@@ -1215,7 +1218,7 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMa
 			Timeout: "10s",
 			Buffer:  buf,
 		},
-		Fleet: resolveSignalProcessingFleetConfig(kn),
+		Fleet: resolveSignalProcessingFleetConfig(knV2),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1248,7 +1251,7 @@ func ProactiveSignalMappingsConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.C
 }
 
 // RemediationOrchestratorConfigMap builds the remediationorchestrator-config ConfigMap.
-func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ro := &kn.Spec.RemediationOrchestrator
 	ns := kn.Namespace
@@ -1304,7 +1307,7 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...C
 		},
 		DryRun:           ro.DryRun,
 		DryRunHoldPeriod: withDefault(ro.DryRunHoldPeriod, "1h"),
-		Fleet:            resolveFleetConfig(kn, kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef, InterServiceTLSCAFile),
+		Fleet:            resolveFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.RemediationOrchestrator.Fleet, ""), InterServiceTLSCAFile),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1377,7 +1380,7 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigM
 }
 
 // EffectivenessMonitorConfigMap builds the effectivenessmonitor-config ConfigMap.
-func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	em := &kn.Spec.EffectivenessMonitor
 	cfg := effectivenessMonitorConfigYAML{
@@ -1398,7 +1401,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...Conf
 				MaxRetries:    3,
 			},
 		},
-		Fleet: resolveMCPGatewayOnlyFleetConfig(kn, em.FleetOAuth2CredentialsSecretRef, InterServiceTLSCAFile),
+		Fleet: resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.EffectivenessMonitor.Fleet, ""), InterServiceTLSCAFile),
 	}
 	cfg.External = &emExternalYAML{
 		PrometheusURL:       OCPPrometheusURL,
@@ -1640,7 +1643,7 @@ func kaToolsConfig() *kaIntegrationsToolsYAML {
 	}
 }
 
-func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ns := kn.Namespace
 	ka := &kn.Spec.KubernautAgent
@@ -1704,7 +1707,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapO
 
 	cfg.AI.Safety = kaSafetyConfig(ka.Safety)
 	cfg.Integrations.Tools = kaToolsConfig()
-	cfg.Integrations.Fleet = resolveKAFleetConfig(kn)
+	cfg.Integrations.Fleet = resolveKAFleetConfig(knV2)
 
 	cfg.Interactive = kaInteractiveConfig(ka.Interactive)
 
@@ -2163,7 +2166,7 @@ func afResilienceConfig() afResilienceYAML {
 	}
 }
 
-func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode, oidc *KagentiOIDCDefaults) (*corev1.ConfigMap, error) {
+func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode, oidc *KagentiOIDCDefaults) (*corev1.ConfigMap, error) {
 	af := kn.Spec.APIFrontend
 	ns := kn.Namespace
 	afProfile, _ := ResolveLLMProfile(kn, AFLLMProfileRef(kn))
@@ -2220,7 +2223,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSideca
 			DisconnectTTL: "10m",
 			RetentionTTL:  "720h",
 		},
-		Fleet:      resolveMCPGatewayOnlyFleetConfig(kn, af.FleetOAuth2CredentialsSecretRef, apifrontendTLSCAFile),
+		Fleet:      resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""), apifrontendTLSCAFile),
 		Resilience: afResilienceConfig(),
 	}
 

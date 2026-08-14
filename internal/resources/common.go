@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 // Service names match the Helm chart's naming conventions.
@@ -255,7 +256,9 @@ func AllComponents() []string {
 
 // isComponentActive returns whether a component should be deployed.
 // Always-on components return true; opt-in components check their spec gate.
-func isComponentActive(kn *kubernautv1alpha1.Kubernaut, component string) bool {
+// knV2 is only consulted for FleetMetadataCache -- Fleet's CRD surface lives
+// exclusively in v1alpha2 (Fleet v1alpha2 migration).
+func isComponentActive(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, component string) bool {
 	switch component {
 	case ComponentAPIFrontend:
 		return kn.Spec.APIFrontendEnabled()
@@ -264,7 +267,7 @@ func isComponentActive(kn *kubernautv1alpha1.Kubernaut, component string) bool {
 	case ComponentConsole:
 		return kn.Spec.ConsoleEnabled()
 	case ComponentFleetMetadataCache:
-		return kn.Spec.FleetMetadataCacheEnabled()
+		return knV2.Spec.FleetMetadataCacheEnabled()
 	default:
 		return true
 	}
@@ -272,10 +275,10 @@ func isComponentActive(kn *kubernautv1alpha1.Kubernaut, component string) bool {
 
 // ActiveComponents returns the list of components that should be deployed
 // for the given CR spec.
-func ActiveComponents(kn *kubernautv1alpha1.Kubernaut) []string {
+func ActiveComponents(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []string {
 	var active []string
 	for _, c := range AllComponents() {
-		if isComponentActive(kn, c) {
+		if isComponentActive(kn, knV2, c) {
 			active = append(active, c)
 		}
 	}
@@ -453,13 +456,36 @@ func FleetMetadataCacheURL(namespace string) string {
 // the in-cluster FMC service URL is auto-derived -- the whole point of the
 // operator deploying FMC is that Gateway/RemediationOrchestrator don't need
 // the user to separately wire up its address. BYO FMC (or backend=acm)
-// still requires an explicit endpoint (enforced in validation.go).
-func resolveFleetEndpoint(kn *kubernautv1alpha1.Kubernaut) string {
-	fleet := &kn.Spec.Fleet
-	if fleet.Endpoint == "" && fleet.Backend == "fleetmetadatacache" && kn.Spec.FleetMetadataCacheEnabled() {
-		return FleetMetadataCacheURL(kn.Namespace)
+// still requires an explicit endpoint (enforced in validation.go). Fleet's
+// entire CRD surface lives in v1alpha2 (Fleet v1alpha2 migration), so this
+// takes knV2 only.
+func resolveFleetEndpoint(knV2 *kubernautv1alpha2.Kubernaut) string {
+	fleet := &knV2.Spec.Fleet
+	if fleet.Endpoint == "" && fleet.Backend == "fleetmetadatacache" && knV2.Spec.FleetMetadataCacheEnabled() {
+		return FleetMetadataCacheURL(knV2.Namespace)
 	}
 	return fleet.Endpoint
+}
+
+// effectiveFleetOAuth2SecretRef resolves a component's nilable Fleet
+// override (F1 -- api/v1alpha2 collapsed every component's bespoke
+// FleetOAuth2CredentialsSecretRef field into a shared *FleetOverrideSpec),
+// falling back to the shared spec.fleet.oauth2.credentialsSecretRef when
+// the override is nil or its own field is empty.
+func effectiveFleetOAuth2SecretRef(override *kubernautv1alpha2.FleetOverrideSpec, fleetDefault string) string {
+	if override == nil {
+		return fleetDefault
+	}
+	return withDefault(override.OAuth2CredentialsSecretRef, fleetDefault)
+}
+
+// effectiveFleetNamespace resolves a component's nilable Fleet override (F1)
+// Namespace field, falling back to the shared spec.fleet.mcpGatewayNamespace.
+func effectiveFleetNamespace(override *kubernautv1alpha2.FleetOverrideSpec, fleetDefault string) string {
+	if override == nil {
+		return fleetDefault
+	}
+	return withDefault(override.Namespace, fleetDefault)
 }
 
 // PostgreSQLPort returns the effective PostgreSQL port, defaulting to 5432.

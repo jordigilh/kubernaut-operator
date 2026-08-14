@@ -57,6 +57,7 @@ import (
 	sigsyaml "sigs.k8s.io/yaml"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
@@ -141,12 +142,22 @@ type KubernautReconciler struct {
 func (r *KubernautReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	kn := &kubernautv1alpha1.Kubernaut{}
-	if err := r.Get(ctx, req.NamespacedName, kn); err != nil {
+	// Fleet v1alpha2 migration: fetch the v1alpha2 hub/storage version once,
+	// then derive the v1alpha1 view in-memory via the same ConvertFrom logic
+	// the conversion webhook uses (already unit-tested) instead of a second
+	// network round-trip. knV2 is threaded alongside kn wherever Fleet's
+	// spec fields are needed -- Fleet's entire CRD surface lives in
+	// v1alpha2.
+	knV2 := &kubernautv1alpha2.Kubernaut{}
+	if err := r.Get(ctx, req.NamespacedName, knV2); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
+	}
+	kn := &kubernautv1alpha1.Kubernaut{}
+	if err := kn.ConvertFrom(knV2); err != nil {
+		return ctrl.Result{}, fmt.Errorf("deriving v1alpha1 view from v1alpha2: %w", err)
 	}
 
 	if kn.Name != kubernautv1alpha1.SingletonName {
@@ -155,24 +166,33 @@ func (r *KubernautReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	if !kn.DeletionTimestamp.IsZero() {
-		return r.reconcileDelete(ctx, kn)
+		return r.reconcileDelete(ctx, kn, knV2)
 	}
 
 	if !controllerutil.ContainsFinalizer(kn, kubernautv1alpha1.FinalizerName) {
-		controllerutil.AddFinalizer(kn, kubernautv1alpha1.FinalizerName)
-		return ctrl.Result{}, r.Update(ctx, kn)
+		// Fleet v1alpha2 migration: a full (non-status-subresource) Update
+		// must go through knV2, not kn. The conversion webhook's ConvertTo
+		// (v1alpha1 -> v1alpha2) has no v1alpha1 source for Fleet/
+		// FleetMetadataCache, so it necessarily zeroes them; updating via
+		// the v1alpha1 view would silently wipe any Fleet config already
+		// stored in v1alpha2. Writing via knV2 (the hub/storage version)
+		// round-trips losslessly.
+		controllerutil.AddFinalizer(knV2, kubernautv1alpha1.FinalizerName)
+		return ctrl.Result{}, r.Update(ctx, knV2)
 	}
 
-	return r.reconcilePhases(ctx, kn)
+	return r.reconcilePhases(ctx, kn, knV2)
 }
 
-func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (ctrl.Result, error) {
+func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 	log.Info("reconciling phases", "currentPhase", kn.Status.Phase)
 
 	// Validate and migrate always run (cheap: secret checks + Job status).
 	for _, phase := range []func(context.Context, *kubernautv1alpha1.Kubernaut) (ctrl.Result, error){
-		r.phaseValidate,
+		func(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (ctrl.Result, error) {
+			return r.phaseValidate(ctx, kn, knV2)
+		},
 		r.phaseMigrate,
 	} {
 		result, err := phase(ctx, kn)
@@ -186,19 +206,19 @@ func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernaut
 
 	// Always run phaseDeploy — the spec-hash check inside ensureResource
 	// short-circuits API writes when no drift is detected, making this cheap.
-	if err := r.phaseDeploy(ctx, kn); err != nil {
+	if err := r.phaseDeploy(ctx, kn, knV2); err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(kn), kn); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	return r.phaseRunning(ctx, kn)
+	return r.phaseRunning(ctx, kn, knV2)
 }
 
 // ---------- Phase: Validate ----------
 
-func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (ctrl.Result, error) {
+func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	if err := resources.ValidateHostname(kn.Spec.PostgreSQL.Host); err != nil {
@@ -223,7 +243,9 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 	}
 
 	sidecar := r.detectKagentiSidecarMode(ctx, kn)
-	if validationErrs := resources.ValidateKubernaut(kn, sidecar); len(validationErrs) > 0 {
+	validationErrs := resources.ValidateKubernaut(kn, sidecar)
+	validationErrs = append(validationErrs, resources.ValidateFleet(knV2)...)
+	if len(validationErrs) > 0 {
 		msgs := make([]string, len(validationErrs))
 		for i, e := range validationErrs {
 			msgs[i] = e.Error()
@@ -433,14 +455,14 @@ func setCRDsReady(kn *kubernautv1alpha1.Kubernaut) {
 
 // ---------- Phase: Deploy ----------
 
-func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
+func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
 	if err := r.deployWorkflowNamespace(ctx, kn); err != nil {
 		return err
 	}
 	if err := r.deployServiceAccounts(ctx, kn); err != nil {
 		return err
 	}
-	if err := r.deployRBAC(ctx, kn); err != nil {
+	if err := r.deployRBAC(ctx, kn, knV2); err != nil {
 		return r.handleRBACDeployError(ctx, kn, err)
 	}
 
@@ -460,7 +482,7 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		return r.handleOIDCDetectionError(ctx, kn, err)
 	}
 
-	cmHashes, err := r.deployConfigMaps(ctx, kn, dbName, dbUser, tlsProfile, sidecar, oidcDefaults)
+	cmHashes, err := r.deployConfigMaps(ctx, kn, knV2, dbName, dbUser, tlsProfile, sidecar, oidcDefaults)
 	if err != nil {
 		return err
 	}
@@ -479,7 +501,7 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 	if err := r.ensureAuthbridgeClientID(ctx, kn, sidecar); err != nil {
 		return err
 	}
-	hasRoute, err := r.deployWorkloads(ctx, kn, cmHashes, sidecar)
+	hasRoute, err := r.deployWorkloads(ctx, kn, knV2, cmHashes, sidecar)
 	if err != nil {
 		return err
 	}
@@ -602,8 +624,8 @@ func (r *KubernautReconciler) deployServiceAccounts(ctx context.Context, kn *kub
 	return nil
 }
 
-func (r *KubernautReconciler) deployRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
-	if err := r.deployCoreRBAC(ctx, kn); err != nil {
+func (r *KubernautReconciler) deployRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
+	if err := r.deployCoreRBAC(ctx, kn, knV2); err != nil {
 		return err
 	}
 	if err := r.deployWorkflowRBAC(ctx, kn); err != nil {
@@ -643,23 +665,23 @@ func (r *KubernautReconciler) deployConsoleAccessRBAC(ctx context.Context, kn *k
 
 // deployCoreRBAC provisions ClusterRoles, ClusterRoleBindings, namespace-scoped
 // Roles/RoleBindings, DataStorage client bindings, and the Kubernaut Agent client binding.
-func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
-	for _, cr := range resources.ClusterRoles(kn) {
+func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
+	for _, cr := range resources.ClusterRoles(kn, knV2) {
 		if err := r.ensureUnowned(ctx, cr); err != nil {
 			return fmt.Errorf("ensuring ClusterRole %s: %w", cr.Name, err)
 		}
 	}
-	for _, crb := range resources.ClusterRoleBindings(kn) {
+	for _, crb := range resources.ClusterRoleBindings(kn, knV2) {
 		if err := r.ensureUnowned(ctx, crb); err != nil {
 			return fmt.Errorf("ensuring CRB %s: %w", crb.Name, err)
 		}
 	}
-	for _, role := range resources.NamespaceRoles(kn) {
+	for _, role := range resources.NamespaceRoles(kn, knV2) {
 		if err := r.ensureNamespaced(ctx, kn, role); err != nil {
 			return fmt.Errorf("ensuring ns role %s: %w", role.Name, err)
 		}
 	}
-	for _, rb := range resources.NamespaceRoleBindings(kn) {
+	for _, rb := range resources.NamespaceRoleBindings(kn, knV2) {
 		if err := r.ensureNamespaced(ctx, kn, rb); err != nil {
 			return fmt.Errorf("ensuring ns rolebinding %s: %w", rb.Name, err)
 		}
@@ -677,7 +699,7 @@ func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv
 			return err
 		}
 	}
-	if err := r.deployMCPGatewayNamespaceRBAC(ctx, kn); err != nil {
+	if err := r.deployMCPGatewayNamespaceRBAC(ctx, kn, knV2); err != nil {
 		return err
 	}
 	return r.deployAdditionalAgentRBAC(ctx, kn)
@@ -693,8 +715,8 @@ func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv
 // entire ClusterRole is MCP-Gateway-only and ClusterRoles()/
 // ClusterRoleBindings() stop returning it entirely, which would otherwise
 // leave a stale, over-privileged ClusterRole behind.
-func (r *KubernautReconciler) deployMCPGatewayNamespaceRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
-	roles, rbs := resources.MCPGatewayNamespaceRBAC(kn)
+func (r *KubernautReconciler) deployMCPGatewayNamespaceRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
+	roles, rbs := resources.MCPGatewayNamespaceRBAC(kn, knV2)
 	for _, role := range roles {
 		if err := r.ensureUnowned(ctx, role); err != nil {
 			return fmt.Errorf("ensuring mcp gateway namespace role %s/%s: %w", role.Namespace, role.Name, err)
@@ -706,7 +728,7 @@ func (r *KubernautReconciler) deployMCPGatewayNamespaceRBAC(ctx context.Context,
 		}
 	}
 
-	if kn.Spec.FleetMetadataCacheEnabled() && resources.EffectiveFleetMetadataCacheMCPGatewayNamespace(kn) != "" {
+	if knV2.Spec.FleetMetadataCacheEnabled() && resources.EffectiveFleetMetadataCacheMCPGatewayNamespace(knV2) != "" {
 		cr := &rbacv1.ClusterRole{}
 		cr.Name = kn.Namespace + "-fleetmetadatacache"
 		if err := r.deleteIfExists(ctx, cr); err != nil {
@@ -1133,13 +1155,13 @@ func (r *KubernautReconciler) cleanupDisabledFleetMetadataCache(ctx context.Cont
 // ahead of cutting Gateway/RemediationOrchestrator over from backend=acm is
 // a legitimate use of this combination, just one worth flagging rather than
 // leaving silent.
-func (r *KubernautReconciler) warnIfFleetMetadataCacheUnused(kn *kubernautv1alpha1.Kubernaut) {
-	fleet := &kn.Spec.Fleet
+func (r *KubernautReconciler) warnIfFleetMetadataCacheUnused(knV2 *kubernautv1alpha2.Kubernaut) {
+	fleet := &knV2.Spec.Fleet
 	fleetEnabled := fleet.Enabled != nil && *fleet.Enabled
 	if fleetEnabled && fleet.Backend == "fleetmetadatacache" {
 		return
 	}
-	r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "FleetMetadataCacheUnused", "Reconcile",
+	r.Recorder.Eventf(knV2, nil, corev1.EventTypeWarning, "FleetMetadataCacheUnused", "Reconcile",
 		"spec.fleetMetadataCache.enabled is true but spec.fleet.enabled=%v and spec.fleet.backend=%q -- FMC is deployed and syncing but not queried by any component (only fleet.enabled=true with backend=fleetmetadatacache routes to it)",
 		fleetEnabled, fleet.Backend)
 }
@@ -1147,7 +1169,7 @@ func (r *KubernautReconciler) warnIfFleetMetadataCacheUnused(kn *kubernautv1alph
 // deployConfigMaps builds and ensures all service ConfigMaps. Returns a map
 // of component name to SHA-256 hash of the ConfigMap data, used to stamp pod
 // template annotations and force rolling restarts when config content changes.
-func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, dbName, dbUser, tlsProfile string, sidecar resources.KagentiSidecarMode, oidc *resources.KagentiOIDCDefaults) (map[string]string, error) {
+func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, dbName, dbUser, tlsProfile string, sidecar resources.KagentiSidecarMode, oidc *resources.KagentiOIDCDefaults) (map[string]string, error) {
 	tlsOpt := resources.WithTLSProfile(tlsProfile)
 
 	// buildCoreConfigMaps transitively calls resolveHostToIP (via
@@ -1156,12 +1178,12 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	// including a cancelled context, falls back to the configured hostname,
 	// so threading ctx through the builder-table plumbing would not change
 	// behavior. See the inline nolint on the datastorage builder entry.
-	configMaps, cmHashes, err := buildCoreConfigMaps(kn, tlsOpt, dbName, dbUser) //nolint:contextcheck
+	configMaps, cmHashes, err := buildCoreConfigMaps(kn, knV2, tlsOpt, dbName, dbUser) //nolint:contextcheck
 	if err != nil {
 		return nil, err
 	}
 
-	configMaps, err = r.appendOptionalComponentConfigMaps(kn, sidecar, oidc, tlsOpt, configMaps, cmHashes)
+	configMaps, err = r.appendOptionalComponentConfigMaps(kn, knV2, sidecar, oidc, tlsOpt, configMaps, cmHashes)
 	if err != nil {
 		return nil, err
 	}
@@ -1183,7 +1205,7 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 // the accumulated ConfigMap list and their name->hash map, used to stamp pod
 // template annotations and force rolling restarts when config content changes.
 func buildCoreConfigMaps(
-	kn *kubernautv1alpha1.Kubernaut, tlsOpt resources.ConfigMapOption, dbName, dbUser string,
+	kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, tlsOpt resources.ConfigMapOption, dbName, dbUser string,
 ) ([]*corev1.ConfigMap, map[string]string, error) {
 	type cmBuilder struct {
 		name string
@@ -1196,10 +1218,10 @@ func buildCoreConfigMaps(
 		// to the configured hostname, so propagating ctx would not change behavior.
 		{"datastorage", func() (*corev1.ConfigMap, error) { return resources.DataStorageConfigMap(kn, dbName, dbUser, tlsOpt) }}, //nolint:contextcheck
 		{"aianalysis", func() (*corev1.ConfigMap, error) { return resources.AIAnalysisConfigMap(kn, tlsOpt) }},
-		{"signalprocessing", func() (*corev1.ConfigMap, error) { return resources.SignalProcessingConfigMap(kn, tlsOpt) }},
-		{"remediationorchestrator", func() (*corev1.ConfigMap, error) { return resources.RemediationOrchestratorConfigMap(kn, tlsOpt) }},
+		{"signalprocessing", func() (*corev1.ConfigMap, error) { return resources.SignalProcessingConfigMap(kn, knV2, tlsOpt) }},
+		{"remediationorchestrator", func() (*corev1.ConfigMap, error) { return resources.RemediationOrchestratorConfigMap(kn, knV2, tlsOpt) }},
 		{"workflowexecution", func() (*corev1.ConfigMap, error) { return resources.WorkflowExecutionConfigMap(kn, tlsOpt) }},
-		{"effectivenessmonitor", func() (*corev1.ConfigMap, error) { return resources.EffectivenessMonitorConfigMap(kn, tlsOpt) }},
+		{"effectivenessmonitor", func() (*corev1.ConfigMap, error) { return resources.EffectivenessMonitorConfigMap(kn, knV2, tlsOpt) }},
 		{"notification-controller", func() (*corev1.ConfigMap, error) { return resources.NotificationControllerConfigMap(kn, tlsOpt) }},
 		{"notification-routing", func() (*corev1.ConfigMap, error) {
 			if kn.Spec.Notification.Routing != nil && kn.Spec.Notification.Routing.ConfigMapName != "" {
@@ -1210,7 +1232,7 @@ func buildCoreConfigMaps(
 			}
 			return resources.NotificationRoutingConfigMap(kn)
 		}},
-		{"kubernaut-agent", func() (*corev1.ConfigMap, error) { return resources.KubernautAgentConfigMap(kn, tlsOpt) }},
+		{"kubernaut-agent", func() (*corev1.ConfigMap, error) { return resources.KubernautAgentConfigMap(kn, knV2, tlsOpt) }},
 		{"authwebhook", func() (*corev1.ConfigMap, error) { return resources.AuthWebhookConfigMap(kn, tlsOpt) }},
 	}
 
@@ -1252,11 +1274,11 @@ func buildCoreConfigMaps(
 // components that are toggled on/off via the CR spec (gateway, apifrontend,
 // fleetmetadatacache), recording each one's content hash in cmHashes.
 func (r *KubernautReconciler) appendOptionalComponentConfigMaps(
-	kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode, oidc *resources.KagentiOIDCDefaults,
+	kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar resources.KagentiSidecarMode, oidc *resources.KagentiOIDCDefaults,
 	tlsOpt resources.ConfigMapOption, configMaps []*corev1.ConfigMap, cmHashes map[string]string,
 ) ([]*corev1.ConfigMap, error) {
 	if kn.Spec.GatewayEnabled() {
-		gwCM, err := resources.GatewayConfigMap(kn, tlsOpt)
+		gwCM, err := resources.GatewayConfigMap(kn, knV2, tlsOpt)
 		if err != nil {
 			return nil, fmt.Errorf("building gateway ConfigMap: %w", err)
 		}
@@ -1264,16 +1286,16 @@ func (r *KubernautReconciler) appendOptionalComponentConfigMaps(
 		cmHashes["gateway"] = resources.ConfigMapDataHash(gwCM.Data)
 	}
 	if kn.Spec.APIFrontendEnabled() {
-		afCM, err := resources.APIFrontendConfigMap(kn, sidecar, oidc)
+		afCM, err := resources.APIFrontendConfigMap(kn, knV2, sidecar, oidc)
 		if err != nil {
 			return nil, fmt.Errorf("building apifrontend ConfigMap: %w", err)
 		}
 		configMaps = append(configMaps, afCM)
 		cmHashes["apifrontend"] = resources.ConfigMapDataHash(afCM.Data)
 	}
-	if kn.Spec.FleetMetadataCacheEnabled() {
-		r.warnIfFleetMetadataCacheUnused(kn)
-		fmcCM, err := resources.FleetMetadataCacheConfigMap(kn)
+	if knV2.Spec.FleetMetadataCacheEnabled() {
+		r.warnIfFleetMetadataCacheUnused(knV2)
+		fmcCM, err := resources.FleetMetadataCacheConfigMap(kn, knV2)
 		if err != nil {
 			return nil, fmt.Errorf("building fleetmetadatacache ConfigMap: %w", err)
 		}
@@ -1336,25 +1358,38 @@ var componentCMHashKey = map[string]string{
 // deploymentBuilderFunc constructs a component Deployment from the
 // Kubernaut CR. Used to assemble the list of builders to run in
 // deployWorkloads, which varies by which optional components are enabled.
-type deploymentBuilderFunc func(*kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error)
+// knV2 supplies Fleet-gated fields for the builders that need them (Fleet's
+// entire CRD surface lives in v1alpha2, Fleet v1alpha2 migration); builders
+// unrelated to Fleet simply ignore it.
+type deploymentBuilderFunc func(*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error)
 
 // enabledDeploymentBuilders returns the deployment builder functions for all
 // always-on components plus any toggled-on optional components (gateway,
 // apifrontend, console, fleetmetadatacache). When an optional component is
 // disabled instead, its namespaced resources are cleaned up here.
 func (r *KubernautReconciler) enabledDeploymentBuilders(
-	ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode,
+	ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar resources.KagentiSidecarMode,
 ) ([]deploymentBuilderFunc, error) {
 	depBuilders := []deploymentBuilderFunc{
-		resources.DataStorageDeployment,
-		resources.AIAnalysisDeployment,
+		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+			return resources.DataStorageDeployment(kn)
+		},
+		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+			return resources.AIAnalysisDeployment(kn)
+		},
 		resources.SignalProcessingDeployment,
 		resources.RemediationOrchestratorDeployment,
-		resources.WorkflowExecutionDeployment,
+		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+			return resources.WorkflowExecutionDeployment(kn)
+		},
 		resources.EffectivenessMonitorDeployment,
-		resources.NotificationDeployment,
+		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+			return resources.NotificationDeployment(kn)
+		},
 		resources.KubernautAgentDeployment,
-		resources.AuthWebhookDeployment,
+		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+			return resources.AuthWebhookDeployment(kn)
+		},
 	}
 	if kn.Spec.GatewayEnabled() {
 		depBuilders = append(depBuilders, resources.GatewayDeployment)
@@ -1362,17 +1397,17 @@ func (r *KubernautReconciler) enabledDeploymentBuilders(
 		return nil, fmt.Errorf("cleaning up disabled gateway: %w", err)
 	}
 	if kn.Spec.APIFrontendEnabled() {
-		depBuilders = append(depBuilders, func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
-			return resources.APIFrontendDeployment(kn, sidecar)
+		depBuilders = append(depBuilders, func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+			return resources.APIFrontendDeployment(kn, knV2, sidecar)
 		})
 	}
 	if kn.Spec.ConsoleEnabled() {
 		ingressDomain := r.clusterIngressDomain(ctx)
-		depBuilders = append(depBuilders, func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+		depBuilders = append(depBuilders, func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 			return resources.ConsoleDeployment(kn, ingressDomain)
 		})
 	}
-	if kn.Spec.FleetMetadataCacheEnabled() {
+	if knV2.Spec.FleetMetadataCacheEnabled() {
 		depBuilders = append(depBuilders, resources.FleetMetadataCacheDeployment)
 	} else if err := r.cleanupDisabledFleetMetadataCache(ctx, kn); err != nil {
 		return nil, fmt.Errorf("cleaning up disabled fleetmetadatacache: %w", err)
@@ -1384,10 +1419,10 @@ func (r *KubernautReconciler) enabledDeploymentBuilders(
 // builders, stamping ConfigMap-hash pod-template annotations from cmHashes
 // so configuration changes trigger rolling restarts.
 func (r *KubernautReconciler) ensureDeployments(
-	ctx context.Context, kn *kubernautv1alpha1.Kubernaut, builders []deploymentBuilderFunc, cmHashes map[string]string,
+	ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, builders []deploymentBuilderFunc, cmHashes map[string]string,
 ) error {
 	for _, build := range builders {
-		dep, err := build(kn)
+		dep, err := build(kn, knV2)
 		if err != nil {
 			return fmt.Errorf("building deployment: %w", err)
 		}
@@ -1399,26 +1434,26 @@ func (r *KubernautReconciler) ensureDeployments(
 	return nil
 }
 
-func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, cmHashes map[string]string, sidecar resources.KagentiSidecarMode) (hasRoute bool, _ error) {
-	depBuilders, err := r.enabledDeploymentBuilders(ctx, kn, sidecar)
+func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, cmHashes map[string]string, sidecar resources.KagentiSidecarMode) (hasRoute bool, _ error) {
+	depBuilders, err := r.enabledDeploymentBuilders(ctx, kn, knV2, sidecar)
 	if err != nil {
 		return false, err
 	}
-	if err := r.ensureDeployments(ctx, kn, depBuilders, cmHashes); err != nil {
+	if err := r.ensureDeployments(ctx, kn, knV2, depBuilders, cmHashes); err != nil {
 		return false, err
 	}
 
-	if err := r.ensureServices(ctx, kn, sidecar); err != nil {
+	if err := r.ensureServices(ctx, kn, knV2, sidecar); err != nil {
 		return false, err
 	}
 
-	for _, pdb := range resources.PodDisruptionBudgets(kn) {
+	for _, pdb := range resources.PodDisruptionBudgets(kn, knV2) {
 		if err := r.ensureNamespaced(ctx, kn, pdb); err != nil {
 			return false, fmt.Errorf("ensuring PDB %s: %w", pdb.Name, err)
 		}
 	}
 
-	if err := r.reconcileNetworkPolicies(ctx, kn, sidecar); err != nil {
+	if err := r.reconcileNetworkPolicies(ctx, kn, knV2, sidecar); err != nil {
 		return false, err
 	}
 
@@ -1440,8 +1475,8 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 	return r.reconcileRoutes(ctx, kn)
 }
 
-func (r *KubernautReconciler) ensureServices(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode) error {
-	for _, svc := range resources.Services(kn, sidecar) {
+func (r *KubernautReconciler) ensureServices(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar resources.KagentiSidecarMode) error {
+	for _, svc := range resources.Services(kn, knV2, sidecar) {
 		if err := r.ensureNamespaced(ctx, kn, svc); err != nil {
 			return fmt.Errorf("ensuring Service %s: %w", svc.Name, err)
 		}
@@ -1465,13 +1500,13 @@ func (r *KubernautReconciler) ensureServices(ctx context.Context, kn *kubernautv
 	return nil
 }
 
-func (r *KubernautReconciler) reconcileNetworkPolicies(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, sidecar resources.KagentiSidecarMode) error {
+func (r *KubernautReconciler) reconcileNetworkPolicies(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar resources.KagentiSidecarMode) error {
 	if kn.Spec.NetworkPolicies.NetworkPoliciesEnabled() {
 		// NetworkPolicies transitively calls resolveAPIServerIPs, a best-effort
 		// API-server-IP discovery that deliberately uses context.Background()
 		// (see its doc comment) rather than threading ctx through all ~14
 		// NetworkPolicy builder functions in networkpolicies.go.
-		for _, np := range resources.NetworkPolicies(kn, sidecar) { //nolint:contextcheck
+		for _, np := range resources.NetworkPolicies(kn, knV2, sidecar) { //nolint:contextcheck
 			if err := r.ensureNamespaced(ctx, kn, np); err != nil {
 				return fmt.Errorf("ensuring NetworkPolicy %s: %w", np.Name, err)
 			}
@@ -1989,13 +2024,13 @@ func (r *KubernautReconciler) ensureAPIFrontendSPIFFEID(ctx context.Context, kn 
 
 // ---------- Phase: Running ----------
 
-func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (ctrl.Result, error) {
+func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	// Update per-service status from Deployment readiness.
 	var serviceStatuses []kubernautv1alpha1.ServiceStatus
 	allReady := true
-	for _, component := range resources.ActiveComponents(kn) {
+	for _, component := range resources.ActiveComponents(kn, knV2) {
 		dep := &appsv1.Deployment{}
 		err := r.Get(ctx, types.NamespacedName{
 			Name:      resources.DeploymentName(component),
@@ -2058,11 +2093,11 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 
 // ---------- Deletion ----------
 
-func (r *KubernautReconciler) reconcileDelete(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (ctrl.Result, error) {
+func (r *KubernautReconciler) reconcileDelete(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
 	logf.FromContext(ctx).Info("reconciling deletion")
 
 	if controllerutil.ContainsFinalizer(kn, kubernautv1alpha1.FinalizerName) {
-		if result, err, retry := r.runFinalizerCleanup(ctx, kn); retry {
+		if result, err, retry := r.runFinalizerCleanup(ctx, kn, knV2); retry {
 			return result, err
 		}
 	}
@@ -2075,10 +2110,10 @@ func (r *KubernautReconciler) reconcileDelete(ctx context.Context, kn *kubernaut
 // maxFinalizerAttempts, it force-removes the finalizer instead of blocking
 // deletion forever. retry is true when the caller should return immediately
 // with (result, err) to requeue and try again later.
-func (r *KubernautReconciler) runFinalizerCleanup(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) (result ctrl.Result, err error, retry bool) {
+func (r *KubernautReconciler) runFinalizerCleanup(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (result ctrl.Result, err error, retry bool) {
 	log := logf.FromContext(ctx)
 
-	if err := r.deleteClusterScopedResources(ctx, kn); err != nil {
+	if err := r.deleteClusterScopedResources(ctx, kn, knV2); err != nil {
 		deletionAge := r.now().Sub(kn.DeletionTimestamp.Time)
 		if deletionAge <= time.Duration(maxFinalizerAttempts)*requeueError {
 			return ctrl.Result{RequeueAfter: requeueError}, err, true
@@ -2089,8 +2124,11 @@ func (r *KubernautReconciler) runFinalizerCleanup(ctx context.Context, kn *kuber
 	}
 	r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "CleanupComplete", "Reconcile", "Cluster-scoped resources cleaned up")
 
-	controllerutil.RemoveFinalizer(kn, kubernautv1alpha1.FinalizerName)
-	if err := r.Update(ctx, kn); err != nil {
+	// Write via knV2 (the hub/storage version), not kn: a full Update through
+	// the v1alpha1 view would round-trip through ConvertTo, which has no
+	// v1alpha1 source for Fleet/FleetMetadataCache and would zero them.
+	controllerutil.RemoveFinalizer(knV2, kubernautv1alpha1.FinalizerName)
+	if err := r.Update(ctx, knV2); err != nil {
 		return ctrl.Result{}, err, true
 	}
 	return ctrl.Result{}, nil, false
@@ -2099,10 +2137,10 @@ func (r *KubernautReconciler) runFinalizerCleanup(ctx context.Context, kn *kuber
 // NOTE: CRDs installed during migration are intentionally NOT deleted here.
 // They are cluster-scoped and potentially shared across namespaces; removing
 // them would destroy all CRs of those types cluster-wide.
-func (r *KubernautReconciler) deleteClusterScopedResources(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
+func (r *KubernautReconciler) deleteClusterScopedResources(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
 	log := logf.FromContext(ctx)
 	errs := make([]error, 0, 4)
-	errs = append(errs, r.deleteRBACResources(ctx, kn)...)
+	errs = append(errs, r.deleteRBACResources(ctx, kn, knV2)...)
 	errs = append(errs, r.deleteWebhookResources(ctx, kn)...)
 	errs = append(errs, r.deleteWorkflowResources(ctx, kn)...)
 	errs = append(errs, r.deleteSPIREResources(ctx, kn)...)
@@ -2149,27 +2187,27 @@ func (r *KubernautReconciler) deleteAgentRuntimeCR(ctx context.Context, kn *kube
 // deleteRBACResources removes all cluster-scoped RBAC: ClusterRoles, CRBs,
 // AWX RBAC, and monitoring RBAC. Always attempts all resources regardless
 // of current feature-flag state.
-func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
+func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []error {
 	errs := make([]error, 0, 6)
-	errs = append(errs, r.deleteCoreClusterRBAC(ctx, kn)...)
+	errs = append(errs, r.deleteCoreClusterRBAC(ctx, kn, knV2)...)
 	errs = append(errs, r.deleteAnsibleClusterRBAC(ctx, kn)...)
 	errs = append(errs, r.deleteMonitoringClusterRBAC(ctx, kn)...)
 	errs = append(errs, r.deleteAdditionalAgentAndToolRBAC(ctx, kn)...)
 	errs = append(errs, r.deleteFleetMetadataCacheClusterRBAC(ctx, kn)...)
-	errs = append(errs, r.deleteMCPGatewayNamespaceRBAC(ctx, kn)...)
+	errs = append(errs, r.deleteMCPGatewayNamespaceRBAC(ctx, kn, knV2)...)
 	return errs
 }
 
 // deleteCoreClusterRBAC removes the always-present cluster-scoped
 // ClusterRoles and ClusterRoleBindings built from the current spec.
-func (r *KubernautReconciler) deleteCoreClusterRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
+func (r *KubernautReconciler) deleteCoreClusterRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []error {
 	var errs []error
-	for _, cr := range resources.ClusterRoles(kn) {
+	for _, cr := range resources.ClusterRoles(kn, knV2) {
 		if err := r.deleteIfExists(ctx, cr); err != nil {
 			errs = append(errs, fmt.Errorf("deleting ClusterRole %s: %w", cr.Name, err))
 		}
 	}
-	for _, crb := range resources.ClusterRoleBindings(kn) {
+	for _, crb := range resources.ClusterRoleBindings(kn, knV2) {
 		if err := r.deleteIfExists(ctx, crb); err != nil {
 			errs = append(errs, fmt.Errorf("deleting CRB %s: %w", crb.Name, err))
 		}
@@ -2293,9 +2331,9 @@ func (r *KubernautReconciler) deleteFleetMetadataCacheClusterRBAC(ctx context.Co
 
 // deleteMCPGatewayNamespaceRBAC removes the namespaced Roles/RoleBindings
 // used for MCP Gateway authorization.
-func (r *KubernautReconciler) deleteMCPGatewayNamespaceRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
+func (r *KubernautReconciler) deleteMCPGatewayNamespaceRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []error {
 	var errs []error
-	mgRoles, mgRBs := resources.MCPGatewayNamespaceRBAC(kn)
+	mgRoles, mgRBs := resources.MCPGatewayNamespaceRBAC(kn, knV2)
 	for _, role := range mgRoles {
 		if err := r.deleteIfExists(ctx, role); err != nil {
 			errs = append(errs, fmt.Errorf("deleting mcp gateway namespace role %s/%s: %w", role.Namespace, role.Name, err))
@@ -2408,10 +2446,34 @@ func (r *KubernautReconciler) setPhase(kn *kubernautv1alpha1.Kubernaut, phase ku
 // Mutations are applied to a copy so that kn's in-memory state is only
 // updated when the API call succeeds; a failed Patch does not leave kn
 // in a divergent state.
+//
+// Fleet v1alpha2 migration: the patch is submitted against knV2 (the
+// hub/storage version), not kn. Status().Patch on a CRD with a conversion
+// webhook still round-trips the whole object through the requested
+// apiVersion's Convert{To,From} -- submitting via kn (v1alpha1) would force
+// ConvertTo to reconstruct spec.fleet with no v1alpha1 source, silently
+// zeroing it. Status converts losslessly both ways (convertStatusToV1/V2),
+// so re-deriving it from the mutated kn and layering it onto a freshly
+// fetched knV2 keeps spec.fleet untouched while still patching only the
+// changed status fields.
 func (r *KubernautReconciler) patchStatus(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, mutate func()) error {
 	patched := kn.DeepCopy()
 	mutate()
-	if err := r.Status().Patch(ctx, kn, client.MergeFrom(patched)); err != nil {
+
+	knV2 := &kubernautv1alpha2.Kubernaut{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(kn), knV2); err != nil {
+		*kn = *patched
+		return err
+	}
+	patchedV2 := knV2.DeepCopy()
+	scratch := &kubernautv1alpha2.Kubernaut{}
+	if err := kn.ConvertTo(scratch); err != nil {
+		*kn = *patched
+		return fmt.Errorf("deriving v1alpha2 status from v1alpha1 view: %w", err)
+	}
+	knV2.Status = scratch.Status
+
+	if err := r.Status().Patch(ctx, knV2, client.MergeFrom(patchedV2)); err != nil {
 		*kn = *patched
 		return err
 	}

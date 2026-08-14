@@ -31,12 +31,13 @@ import (
 	"k8s.io/utils/ptr"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 // GatewayDeployment builds the gateway Deployment.
 // Issue #126: Gateway serves TLS on 8443 using the OCP service-ca provisioned
 // gateway-tls Secret (FedRAMP SC-8 — encryption in transit for inter-service traffic).
-func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	env := []corev1.EnvVar{
 		{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
@@ -57,7 +58,7 @@ func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, err
 		{Name: "tls-certs", MountPath: InterServiceTLSCertDir, ReadOnly: true},
 		{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
 	}
-	volumes, mounts = appendFleetSecretMounts(volumes, mounts, kn, "/etc/gateway", kn.Spec.Gateway.FleetOAuth2CredentialsSecretRef)
+	volumes, mounts = appendFleetSecretMounts(volumes, mounts, knV2, "/etc/gateway", effectiveFleetOAuth2SecretRef(knV2.Spec.Gateway.Fleet, ""))
 
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentGateway, ImageName: "gateway",
@@ -246,7 +247,7 @@ func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, 
 }
 
 // SignalProcessingDeployment builds the signalprocessing Deployment.
-func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	policyName := SignalProcessingPolicyName(kn)
 	volumes := make([]corev1.Volume, 0, 3)
 	volumes = append(volumes,
@@ -270,7 +271,7 @@ func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deploy
 
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
-	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, kn, "/etc/signalprocessing", kn.Spec.SignalProcessing.FleetOAuth2CredentialsSecretRef)
+	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, knV2, "/etc/signalprocessing", effectiveFleetOAuth2SecretRef(knV2.Spec.SignalProcessing.Fleet, ""))
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentSignalProcessing, ImageName: "signalprocessing",
 		Resources: kn.Spec.SignalProcessing.Resources, VolumeMounts: mounts, Volumes: volumes,
@@ -284,12 +285,12 @@ func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deploy
 }
 
 // RemediationOrchestratorDeployment builds the remediationorchestrator Deployment.
-func RemediationOrchestratorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+func RemediationOrchestratorDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	volumes := []corev1.Volume{configMapVolume("config", "remediationorchestrator-config")}
 	mounts := []corev1.VolumeMount{{Name: "config", MountPath: "/etc/config", ReadOnly: true}}
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
-	volumes, mounts = appendFleetSecretMounts(volumes, mounts, kn, "/etc/remediationorchestrator", kn.Spec.RemediationOrchestrator.FleetOAuth2CredentialsSecretRef)
+	volumes, mounts = appendFleetSecretMounts(volumes, mounts, knV2, "/etc/remediationorchestrator", effectiveFleetOAuth2SecretRef(knV2.Spec.RemediationOrchestrator.Fleet, ""))
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentRemediationOrchestrator, ImageName: "remediationorchestrator",
 		Resources: kn.Spec.RemediationOrchestrator.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
@@ -372,7 +373,7 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deplo
 // included to block startup until the service-CA ConfigMap is populated,
 // preventing CrashLoopBackOff on fresh installs where the CA injection is
 // asynchronous.
-func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	volumes := []corev1.Volume{
 		configMapVolume("config", "effectivenessmonitor-config"),
 		configMapVolume("service-ca", "effectivenessmonitor-service-ca"),
@@ -412,7 +413,7 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.De
 
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
-	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, kn, "/etc/effectivenessmonitor", kn.Spec.EffectivenessMonitor.FleetOAuth2CredentialsSecretRef)
+	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, knV2, "/etc/effectivenessmonitor", effectiveFleetOAuth2SecretRef(knV2.Spec.EffectivenessMonitor.Fleet, ""))
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentEffectivenessMonitor, ImageName: "effectivenessmonitor",
 		Resources: kn.Spec.EffectivenessMonitor.Resources, VolumeMounts: mounts, Volumes: volumes,
@@ -495,7 +496,7 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 // kubernaut-agent serves TLS on port 8443 with certs from
 // kubernautagent-tls (provisioned by OCP service-ca). Health and metrics
 // are on dedicated plain HTTP ports 8081 and 9090.
-func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	kaProfile, _ := ResolveLLMProfile(kn, EffectiveKALLMProfileRef(kn))
 	if kaProfile.CredentialsSecretName == "" {
 		return nil, fmt.Errorf("spec.kubernautAgent.llmProfileRef's profile must have a non-empty credentialsSecretName")
@@ -510,7 +511,7 @@ func KubernautAgentDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployme
 	// credentials lookup to "/etc/kubernautagent/<credentialsSecretRef>"
 	// literally -- it is not derived from KA's -config flag directory, so
 	// the mount path here must match that hardcoded string exactly.
-	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, kn, "/etc/kubernautagent", kn.Spec.KubernautAgent.FleetOAuth2CredentialsSecretRef)
+	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, knV2, "/etc/kubernautagent", effectiveFleetOAuth2SecretRef(knV2.Spec.KubernautAgent.Fleet, ""))
 
 	initContainers, err := kaInitContainers(kn)
 	if err != nil {
@@ -916,9 +917,9 @@ func apifrontendPorts(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMod
 	return listenPort, metricsPort, healthPort
 }
 
-func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) (*appsv1.Deployment, error) {
+func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode) (*appsv1.Deployment, error) {
 	volumes, mounts, env := apifrontendVolumesMountsEnv(kn, sidecar)
-	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, kn, "/etc/apifrontend", kn.Spec.APIFrontend.FleetOAuth2CredentialsSecretRef)
+	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, knV2, "/etc/apifrontend", effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""))
 
 	drainSec := int64(15)
 	if kn.Spec.APIFrontend.Shutdown.DrainSeconds != nil {
@@ -1152,8 +1153,8 @@ func appendInterServiceTLSCA(volumes []corev1.Volume, mounts []corev1.VolumeMoun
 // component only — see resolveFleetConfig for why (per-service OAuth2 client
 // registrations against a shared token endpoint). Used by GW/RO, the only
 // components that read the Backend/Endpoint scope-check adapter.
-func appendFleetSecretMounts(volumes []corev1.Volume, mounts []corev1.VolumeMount, kn *kubernautv1alpha1.Kubernaut, componentEtcDir, credentialsSecretRefOverride string) ([]corev1.Volume, []corev1.VolumeMount) {
-	return appendFleetSecretMountsVariant(volumes, mounts, kn, componentEtcDir, credentialsSecretRefOverride, true)
+func appendFleetSecretMounts(volumes []corev1.Volume, mounts []corev1.VolumeMount, knV2 *kubernautv1alpha2.Kubernaut, componentEtcDir, credentialsSecretRefOverride string) ([]corev1.Volume, []corev1.VolumeMount) {
+	return appendFleetSecretMountsVariant(volumes, mounts, knV2, componentEtcDir, credentialsSecretRefOverride, true)
 }
 
 // appendMCPGatewayOnlyFleetSecretMount mounts only the fleet-oauth2
@@ -1164,12 +1165,12 @@ func appendFleetSecretMounts(volumes []corev1.Volume, mounts []corev1.VolumeMoun
 // token at all (see resolveMCPGatewayOnlyFleetConfig /
 // resolveSignalProcessingFleetConfig), so mounting those Secrets would be
 // dead weight.
-func appendMCPGatewayOnlyFleetSecretMount(volumes []corev1.Volume, mounts []corev1.VolumeMount, kn *kubernautv1alpha1.Kubernaut, componentEtcDir, credentialsSecretRefOverride string) ([]corev1.Volume, []corev1.VolumeMount) {
-	return appendFleetSecretMountsVariant(volumes, mounts, kn, componentEtcDir, credentialsSecretRefOverride, false)
+func appendMCPGatewayOnlyFleetSecretMount(volumes []corev1.Volume, mounts []corev1.VolumeMount, knV2 *kubernautv1alpha2.Kubernaut, componentEtcDir, credentialsSecretRefOverride string) ([]corev1.Volume, []corev1.VolumeMount) {
+	return appendFleetSecretMountsVariant(volumes, mounts, knV2, componentEtcDir, credentialsSecretRefOverride, false)
 }
 
-func appendFleetSecretMountsVariant(volumes []corev1.Volume, mounts []corev1.VolumeMount, kn *kubernautv1alpha1.Kubernaut, componentEtcDir, credentialsSecretRefOverride string, includeBackend bool) ([]corev1.Volume, []corev1.VolumeMount) {
-	fleet := &kn.Spec.Fleet
+func appendFleetSecretMountsVariant(volumes []corev1.Volume, mounts []corev1.VolumeMount, knV2 *kubernautv1alpha2.Kubernaut, componentEtcDir, credentialsSecretRefOverride string, includeBackend bool) ([]corev1.Volume, []corev1.VolumeMount) {
+	fleet := &knV2.Spec.Fleet
 	if fleet.Enabled == nil || !*fleet.Enabled {
 		return volumes, mounts
 	}

@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 // serviceDefinition maps a component to its Kubernetes Service name, ports,
@@ -73,7 +74,7 @@ const (
 
 // Services builds all API Services for the Kubernaut deployment.
 // Annotations for OCP service-ca TLS provisioning are set per-service.
-func Services(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) []*corev1.Service {
+func Services(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode) []*corev1.Service {
 	services := make([]*corev1.Service, 0, len(apiServices)+2)
 	for _, def := range apiServices {
 		if def.Component == ComponentGateway && !kn.Spec.GatewayEnabled() {
@@ -130,7 +131,7 @@ func Services(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) []*co
 		}))
 	}
 
-	if kn.Spec.FleetMetadataCacheEnabled() {
+	if knV2.Spec.FleetMetadataCacheEnabled() {
 		services = append(services, FleetMetadataCacheService(kn))
 	}
 
