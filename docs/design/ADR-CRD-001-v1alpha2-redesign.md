@@ -14,7 +14,8 @@
 **Related Issues / Milestones**:
 - `kubernaut-operator` milestone `v1alpha2` (tracking issues filed for every finding below)
 - [#235](https://github.com/jordigilh/kubernaut-operator/issues/235), [#227](https://github.com/jordigilh/kubernaut-operator/issues/227), [#277](https://github.com/jordigilh/kubernaut-operator/issues/277) -- implemented directly against v1alpha2 (D4)
-- [#288](https://github.com/jordigilh/kubernaut-operator/issues/288), [#139](https://github.com/jordigilh/kubernaut-operator/issues/139) -- blocked upstream (`kubernaut#1900`); `tokenReviewAudience` -> `tokenReviewAudiences []string` captured as a v1alpha2 design input below so it is correct-by-construction once unblocked
+- [#288](https://github.com/jordigilh/kubernaut-operator/issues/288) -- resolved by removing `tokenReviewAudience` outright rather than renaming it. `kubernaut#1900`'s [2026-08-04 maintainer comment](https://github.com/jordigilh/kubernaut/issues/1900#issuecomment-5180682188) revealed PR #1909 implemented and then reverted audience-bound `TokenReview` for both AF and KA before merging: AF's check worked but was shelved as unclear incremental value over its existing `SubjectAccessReview` gate; KA's is architecturally incompatible with the shared `/api/v1/mcp` authenticator (`DD-AUTH-MCP-001`) and would need an endpoint redesign, not config wiring. No `tokenReviewAudience(s)` field exists in AF's real `AuthConfig` today and none is in flight, so the CRD field was dead code with no viable replacement; [#139](https://github.com/jordigilh/kubernaut-operator/issues/139) remains blocked pending that upstream redesign
+- [#139](https://github.com/jordigilh/kubernaut-operator/issues/139) -- still blocked upstream (`kubernaut#1900`); revisit once AF's audience check (if resurrected) and/or a KA `/api/v1/mcp` authenticator redesign land
 
 **Upstream References**:
 - `jordigilh/kubernaut` `charts/kubernaut/values.schema.json` / `values.yaml` (comparative baseline)

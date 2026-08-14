@@ -310,13 +310,6 @@ spec:
                           Path to CA bundle for OIDC/JWKS TLS trust (FedRAMP IA-5). When set,
                           AF uses this CA to verify the OIDC provider's certificate chain.
                         type: string
-                      tokenReviewAudience:
-                        description: |-
-                          TokenReview audience for Kubernetes ServiceAccount token validation.
-                          When set, the API Frontend passes this audience to the TokenReview API
-                          so only tokens issued for this specific audience are accepted
-                          (FedRAMP IA-5: authenticator management).
-                        type: string
                     type: object
                   enabled:
                     default: true
@@ -2653,13 +2646,6 @@ spec:
                         description: |-
                           Path to CA bundle for OIDC/JWKS TLS trust (FedRAMP IA-5). When set,
                           AF uses this CA to verify the OIDC provider's certificate chain.
-                        type: string
-                      tokenReviewAudience:
-                        description: |-
-                          TokenReview audience for Kubernetes ServiceAccount token validation.
-                          When set, the API Frontend passes this audience to the TokenReview API
-                          so only tokens issued for this specific audience are accepted
-                          (FedRAMP IA-5: authenticator management).
                         type: string
                     type: object
                   enabled:

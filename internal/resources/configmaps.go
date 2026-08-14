@@ -2021,15 +2021,13 @@ type afAgentCardYAML struct {
 }
 
 type afAuthYAML struct {
-	IssuerURL             string              `json:"issuerURL" yaml:"issuerURL"`
-	Audience              string              `json:"audience" yaml:"audience"`
-	TokenReviewAudience   string              `json:"tokenReviewAudience,omitempty" yaml:"tokenReviewAudience,omitempty"`
-	JWKSURL               string              `json:"jwksURL,omitempty" yaml:"jwksURL,omitempty"`
-	OIDCCAFile            string              `json:"oidcCaFile,omitempty" yaml:"oidcCaFile,omitempty"`
-	AllowInsecureIssuers  bool                `json:"allowInsecureIssuers,omitempty" yaml:"allowInsecureIssuers,omitempty"`
-	KubernetesAuthEnabled bool                `json:"kubernetesAuthEnabled,omitempty" yaml:"kubernetesAuthEnabled,omitempty"`
-	ReplayCache           *afReplayCacheYAML  `json:"replayCache,omitempty" yaml:"replayCache,omitempty"`
-	JWTProviders          []afJWTProviderYAML `json:"jwtProviders,omitempty" yaml:"jwtProviders,omitempty"`
+	IssuerURL            string              `json:"issuerURL" yaml:"issuerURL"`
+	Audience             string              `json:"audience" yaml:"audience"`
+	JWKSURL              string              `json:"jwksURL,omitempty" yaml:"jwksURL,omitempty"`
+	OIDCCAFile           string              `json:"oidcCaFile,omitempty" yaml:"oidcCaFile,omitempty"`
+	AllowInsecureIssuers bool                `json:"allowInsecureIssuers,omitempty" yaml:"allowInsecureIssuers,omitempty"`
+	ReplayCache          *afReplayCacheYAML  `json:"replayCache,omitempty" yaml:"replayCache,omitempty"`
+	JWTProviders         []afJWTProviderYAML `json:"jwtProviders,omitempty" yaml:"jwtProviders,omitempty"`
 }
 
 type afJWTProviderYAML struct {
@@ -2379,13 +2377,11 @@ func afAuthConfig(kn *kubernautv1alpha1.Kubernaut, oidc *KagentiOIDCDefaults) af
 	}
 
 	auth := afAuthYAML{
-		IssuerURL:             issuer,
-		Audience:              withDefault(af.Auth.Audience, "kubernaut-apifrontend"),
-		TokenReviewAudience:   af.Auth.TokenReviewAudience,
-		JWKSURL:               jwks,
-		OIDCCAFile:            af.Auth.OIDCCAFile,
-		AllowInsecureIssuers:  insecure,
-		KubernetesAuthEnabled: true,
+		IssuerURL:            issuer,
+		Audience:             withDefault(af.Auth.Audience, "kubernaut-apifrontend"),
+		JWKSURL:              jwks,
+		OIDCCAFile:           af.Auth.OIDCCAFile,
+		AllowInsecureIssuers: insecure,
 	}
 
 	if len(af.Auth.JWTProviders) > 0 {

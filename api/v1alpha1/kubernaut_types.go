@@ -1313,13 +1313,6 @@ type APIFrontendAuthSpec struct {
 	// +optional
 	Audience string `json:"audience,omitempty"`
 
-	// TokenReview audience for Kubernetes ServiceAccount token validation.
-	// When set, the API Frontend passes this audience to the TokenReview API
-	// so only tokens issued for this specific audience are accepted
-	// (FedRAMP IA-5: authenticator management).
-	// +optional
-	TokenReviewAudience string `json:"tokenReviewAudience,omitempty"`
-
 	// Explicit JWKS endpoint URL for token signature verification
 	// (FedRAMP IA-5: authenticator management). When empty, derived from
 	// issuerURL + "/protocol/openid-connect/certs".
