@@ -2826,6 +2826,42 @@ var _ = Describe("APIFrontendConfigMap SAR", func() {
 		Expect(data).To(ContainSubstring("sarCacheTTL: 2m"),
 			"AF config should render custom sarCacheTTL, got:\n%s", data)
 	})
+
+	It("UT-2148-001: sets consoleAccessAuthOnly true when spec.apiFrontend.rbac is entirely unset", func() {
+		kn := testKubernautWithAF()
+		Expect(kn.Spec.APIFrontend.RBAC).To(BeNil(), "precondition: rbac must be untouched")
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("consoleAccessAuthOnly: true"),
+			"AF should run the console gate in auth-only mode when rbac was never configured, got:\n%s", data)
+	})
+
+	It("UT-2148-002: leaves consoleAccessAuthOnly false when roleBindings are configured", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+				{Role: "sre", Groups: []string{"platform-engineering"}},
+			},
+		}
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).NotTo(ContainSubstring("consoleAccessAuthOnly: true"),
+			"a deployment with roleBindings configured must keep the full SAR-enforced console gate, got:\n%s", data)
+	})
+
+	It("UT-2148-003: leaves consoleAccessAuthOnly false when rbac is present but empty (explicit opt-out, not unconfigured)", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+			ConsoleAccessGroups: []string{},
+		}
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).NotTo(ContainSubstring("consoleAccessAuthOnly: true"),
+			"an explicitly-present (even if empty) rbac block signals deliberate configuration, not the unconfigured case, got:\n%s", data)
+	})
 })
 
 var _ = Describe("APIFrontendRBACRolesConfigMap", func() {

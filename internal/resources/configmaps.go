@@ -1951,6 +1951,13 @@ type afSessionYAML struct {
 
 type afRBACYAML struct {
 	SARCacheTTL string `json:"sarCacheTTL" yaml:"sarCacheTTL"`
+
+	// ConsoleAccessAuthOnly mirrors kubernaut's RBACConfig.ConsoleAccessAuthOnly
+	// (kubernaut#2148): omitted (false) unless spec.apiFrontend.rbac is
+	// entirely unset, in which case AF runs its coarse-grained console gate
+	// in authentication-only mode instead of the default fail-closed SAR
+	// check. Per-tool RBAC is never affected either way.
+	ConsoleAccessAuthOnly bool `json:"consoleAccessAuthOnly,omitempty" yaml:"consoleAccessAuthOnly,omitempty"`
 }
 
 type afServerYAML struct {
@@ -2441,12 +2448,21 @@ func injectConsoleAudience(providers []afJWTProviderYAML) {
 	}
 }
 
+// afRBACConfig renders AF's rbac config block. ConsoleAccessAuthOnly is set
+// only when spec.apiFrontend.rbac is entirely nil -- i.e. the CR has never
+// touched RBAC config at all (kubernaut-operator#289/kubernaut#2148). Any
+// CR with even one roleBindings entry, or an explicit consoleAccessGroups
+// (including an explicit empty list opting out), is a deliberate
+// configuration and keeps AF's default fail-closed console gate.
 func afRBACConfig(kn *kubernautv1alpha1.Kubernaut) afRBACYAML {
 	ttl := "30s"
 	if kn.Spec.APIFrontend.RBAC != nil && kn.Spec.APIFrontend.RBAC.SARCacheTTL != "" {
 		ttl = kn.Spec.APIFrontend.RBAC.SARCacheTTL
 	}
-	return afRBACYAML{SARCacheTTL: ttl}
+	return afRBACYAML{
+		SARCacheTTL:           ttl,
+		ConsoleAccessAuthOnly: kn.Spec.APIFrontend.RBAC == nil,
+	}
 }
 
 // APIFrontendRBACRolesConfigMap generates the default RBAC roles mapping
