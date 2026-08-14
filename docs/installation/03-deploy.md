@@ -428,6 +428,12 @@ spec:
     enabled: false
 ```
 
+**Console shows "Access Denied — You don't have permission to use Kubernaut":**
+
+This is a separate, coarse-grained authorization gate from per-tool RBAC (AF v1.5.6+ / operator v1.5.8+): the Console's pre-flight check calls `GET /a2a/access` on AF, which runs a SubjectAccessReview against a synthetic `kubernaut.ai/console` resource. See [Additional RBAC for API Frontend](02-configure-services.md#additional-rbac-for-api-frontend) for how this is configured, and this dedicated writeup for full diagnosis (Keycloak group-claim verification, AF debug-log inspection): [Kubernaut Console: troubleshooting "Access Denied"](https://gist.github.com/jordigilh/5984f65c88da042f2207825a9e57df62).
+
+Quick check: if `spec.apiFrontend.rbac.roleBindings` already lists groups, the operator auto-derives console access from them and the CR is very likely already correct — the more common cause at that point is the denied user's JWT not actually carrying the expected `groups` claim.
+
 **API Frontend `proxy-init` crash-looping with `can't initialize iptables table 'mangle': Permission denied`:**
 
 When Kagenti is installed, the `proxy-init` init container sets up iptables rules
