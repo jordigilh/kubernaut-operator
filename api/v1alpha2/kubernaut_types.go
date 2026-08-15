@@ -1759,14 +1759,28 @@ type LoggingSpec struct {
 	Level string `json:"level,omitempty"`
 }
 
-// MonitoringSpec configures the Prometheus endpoint used by
-// EffectivenessMonitor and API Frontend severity-triage (F2 -- new in
-// v1alpha2). Unset (the default) preserves v1alpha1's only behavior: OCP's
-// built-in Thanos Querier at a well-known in-cluster URL, auto-detected, no
-// user action needed.
+// MonitoringSpec configures the Prometheus and AlertManager endpoints used
+// by EffectivenessMonitor, KubernautAgent, and API Frontend severity-triage
+// (F2 -- new in v1alpha2; AlertManager added #298). Unset (the default)
+// preserves v1alpha1's only behavior: OCP's built-in Thanos Querier and
+// AlertManager routes at well-known in-cluster URLs, auto-detected, no user
+// action needed.
+//
+// When overriding either URL to point outside the cluster's own
+// openshift-monitoring namespace, remember that the operator's own
+// NetworkPolicy egress rule can only scope itself automatically when the
+// URL resolves to an in-cluster Service host
+// (<service>.<namespace>.svc[.cluster.local]) -- for any other host
+// (external DNS, load balancer, etc.), the operator omits its own egress
+// rule for that destination, and the platform operator must supply a
+// supplemental NetworkPolicy to permit that traffic. See the operator's
+// NetworkPolicy documentation for the corresponding pod selectors.
 type MonitoringSpec struct {
 	// +optional
 	Prometheus PrometheusSpec `json:"prometheus,omitempty"`
+
+	// +optional
+	AlertManager AlertManagerSpec `json:"alertManager,omitempty"`
 }
 
 // PrometheusSpec configures the Prometheus/Thanos Querier endpoint.
@@ -1790,6 +1804,32 @@ type PrometheusSpec struct {
 // PrometheusEnabled returns true when Prometheus-backed features should be
 // active. Defaults to true (nil Enabled) -- auto-detected OCP monitoring.
 func (s *PrometheusSpec) PrometheusEnabled() bool {
+	return s.Enabled == nil || *s.Enabled
+}
+
+// AlertManagerSpec configures the AlertManager endpoint used by
+// EffectivenessMonitor and KubernautAgent alert correlation (#298 --
+// mirrors PrometheusSpec's shape and defaults for a consistent DX).
+type AlertManagerSpec struct {
+	// Whether AlertManager-backed features (EM assessment, KA alert
+	// correlation) are active. Defaults to true (auto-detected OCP
+	// monitoring stack).
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// AlertManager URL. Defaults to the OCP AlertManager route when empty.
+	// +optional
+	URL string `json:"url,omitempty"`
+
+	// Path to a CA certificate file for TLS to the AlertManager endpoint.
+	// +optional
+	TLSCaFile string `json:"tlsCaFile,omitempty"`
+}
+
+// AlertManagerEnabled returns true when AlertManager-backed features should
+// be active. Defaults to true (nil Enabled) -- auto-detected OCP monitoring.
+func (s *AlertManagerSpec) AlertManagerEnabled() bool {
 	return s.Enabled == nil || *s.Enabled
 }
 

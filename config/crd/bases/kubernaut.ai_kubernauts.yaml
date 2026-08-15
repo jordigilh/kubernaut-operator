@@ -4219,6 +4219,28 @@ spec:
                   OCP's built-in Thanos Querier at a well-known in-cluster URL,
                   auto-detected, no user action needed.
                 properties:
+                  alertManager:
+                    description: |-
+                      AlertManagerSpec configures the AlertManager endpoint used by
+                      EffectivenessMonitor and KubernautAgent alert correlation (#298 --
+                      mirrors PrometheusSpec's shape and defaults for a consistent DX).
+                    properties:
+                      enabled:
+                        default: true
+                        description: |-
+                          Whether AlertManager-backed features (EM assessment, KA alert
+                          correlation) are active. Defaults to true (auto-detected OCP
+                          monitoring stack).
+                        type: boolean
+                      tlsCaFile:
+                        description: Path to a CA certificate file for TLS to the
+                          AlertManager endpoint.
+                        type: string
+                      url:
+                        description: AlertManager URL. Defaults to the OCP AlertManager
+                          route when empty.
+                        type: string
+                    type: object
                   prometheus:
                     description: PrometheusSpec configures the Prometheus/Thanos Querier
                       endpoint.

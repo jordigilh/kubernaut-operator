@@ -865,6 +865,44 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("tlsCaFile: /etc/ssl/em/service-ca.crt"), "EM config should contain external.tlsCaFile when monitoring enabled, got:\n%s", data)
 		})
 
+		// #298: spec.monitoring.prometheus.url/spec.monitoring.alertManager.url
+		// were CRD fields with zero non-test references anywhere in the
+		// codebase -- setting them had no effect on the rendered config. This
+		// asserts the override actually takes effect instead of the hardcoded
+		// OCP default.
+		It("overrides Prometheus and AlertManager URLs from spec.monitoring (#298)", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			knV2.Spec.Monitoring.Prometheus.URL = testCustomPrometheusURL
+			knV2.Spec.Monitoring.AlertManager.URL = "https://custom-alertmanager.custom-monitoring.svc:9094"
+			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["effectivenessmonitor.yaml"]
+
+			Expect(data).To(ContainSubstring(testCustomPrometheusURL), "EM config should use spec.monitoring.prometheus.url override, got:\n%s", data)
+			Expect(data).To(ContainSubstring("https://custom-alertmanager.custom-monitoring.svc:9094"), "EM config should use spec.monitoring.alertManager.url override, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring(OCPPrometheusURL), "EM config should not fall back to the OCP default once overridden, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring(OCPAlertManagerURL), "EM config should not fall back to the OCP default once overridden, got:\n%s", data)
+		})
+
+		// #298: emExternalYAML.PrometheusEnabled/AlertManagerEnabled were
+		// hardcoded `true` regardless of spec.monitoring.prometheus.enabled/
+		// spec.monitoring.alertManager.enabled -- the CRD's opt-out had no
+		// effect.
+		It("reflects spec.monitoring.prometheus.enabled=false and alertManager.enabled=false (#298)", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			disabled := false
+			knV2.Spec.Monitoring.Prometheus.Enabled = &disabled
+			knV2.Spec.Monitoring.AlertManager.Enabled = &disabled
+			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["effectivenessmonitor.yaml"]
+
+			Expect(data).To(ContainSubstring("prometheusEnabled: false"), "EM config should reflect spec.monitoring.prometheus.enabled=false, got:\n%s", data)
+			Expect(data).To(ContainSubstring("alertManagerEnabled: false"), "EM config should reflect spec.monitoring.alertManager.enabled=false, got:\n%s", data)
+		})
+
 		It("renders v1.4 logging and datastorage buffer settings", func() {
 			kn := testKubernaut()
 			kn.Spec.EffectivenessMonitor.Logging.Level = "debug"
@@ -1015,6 +1053,21 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(strings.Contains(data, "tools:") && strings.Contains(data, "prometheus:")).To(BeTrue(), "KA config should contain upstream tools.prometheus section when monitoring enabled, got:\n%s", data)
 			Expect(data).To(ContainSubstring("alertmanager:"), "KA config should contain upstream tools.alertmanager section when monitoring enabled (#205), got:\n%s", data)
 			Expect(data).To(ContainSubstring(OCPAlertManagerURL), "KA config should contain AlertManager URL when monitoring enabled (#205), got:\n%s", data)
+		})
+
+		// #298: kaToolsConfig() hardcoded OCPPrometheusURL/OCPAlertManagerURL,
+		// ignoring spec.monitoring entirely.
+		It("overrides Prometheus and AlertManager URLs from spec.monitoring (#298)", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			knV2.Spec.Monitoring.Prometheus.URL = testCustomPrometheusURL
+			knV2.Spec.Monitoring.AlertManager.URL = "https://custom-alertmanager.custom-monitoring.svc:9094"
+			cm, err := KubernautAgentConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+
+			Expect(data).To(ContainSubstring(testCustomPrometheusURL), "KA config should use spec.monitoring.prometheus.url override, got:\n%s", data)
+			Expect(data).To(ContainSubstring("https://custom-alertmanager.custom-monitoring.svc:9094"), "KA config should use spec.monitoring.alertManager.url override, got:\n%s", data)
 		})
 
 		It("matches expected v1.4 structure and defaults", func() {
@@ -2301,6 +2354,24 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		}
 		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
 		Expect(root.Agent.LLM.Model).To(Equal("gpt-4o-mini"), "empty apiFrontend.llmProfileRef must default to KA's resolved profile")
+	})
+
+	// #298: afSeverityTriageConfig hardcoded OCPPrometheusURL, ignoring
+	// spec.monitoring.prometheus.url entirely.
+	It("overrides severityTriage.prometheusURL from spec.monitoring.prometheus.url (#298)", func() {
+		kn := testKubernautWithAF()
+		knV2 := testKnV2(kn)
+		knV2.Spec.Monitoring.Prometheus.URL = testCustomPrometheusURL
+		cm, err := APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		var root struct {
+			SeverityTriage struct {
+				PrometheusURL string `yaml:"prometheusURL"`
+			} `yaml:"severityTriage"`
+		}
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.SeverityTriage.PrometheusURL).To(Equal(testCustomPrometheusURL),
+			"AF severityTriage.prometheusURL should use spec.monitoring.prometheus.url override, got %q", root.SeverityTriage.PrometheusURL)
 	})
 
 	It("severityTriage.llm is omitted by default, inheriting AF's agent.llm connection", func() {
