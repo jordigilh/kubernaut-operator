@@ -140,6 +140,16 @@ spec:
     auth:
       issuerURL: "https://keycloak.apps.example.com/realms/kubernaut"
       audience: "kubernaut-apifrontend"     # must match the OIDC client
+    # REQUIRED whenever AF is enabled (default) -- there is no working
+    # fallback if rbac/roleBindings is left unset: every user, including
+    # cluster-admin, sees "Access Denied" on the Console and every tool
+    # call is rejected. Replace the group name with a real OIDC group your
+    # users actually belong to (see docs/installation/02-configure-services.md
+    # #additional-rbac-for-api-frontend).
+    rbac:
+      roleBindings:
+        - role: sre
+          groups: ["platform-engineering"]
     # fleetOAuth2CredentialsSecretRef: af-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for APIFrontend only -- used when fleet.enabled: true, for its list_clusters MCP tool
 
   # --- Gateway tuning (optional) ---
@@ -427,6 +437,12 @@ spec:
   apiFrontend:
     enabled: false
 ```
+
+**Console shows "Access Denied — You don't have permission to use Kubernaut":**
+
+This is a separate, coarse-grained authorization gate from per-tool RBAC (AF v1.5.6+ / operator v1.5.8+): the Console's pre-flight check calls `GET /a2a/access` on AF, which runs a SubjectAccessReview against a synthetic `kubernaut.ai/console` resource. See [Additional RBAC for API Frontend](02-configure-services.md#additional-rbac-for-api-frontend) for how this is configured, and this dedicated writeup for full diagnosis (Keycloak group-claim verification, AF debug-log inspection): [Kubernaut Console: troubleshooting "Access Denied"](https://gist.github.com/jordigilh/5984f65c88da042f2207825a9e57df62).
+
+Quick check: if `spec.apiFrontend.rbac.roleBindings` already lists groups, the operator auto-derives console access from them and the CR is very likely already correct — the more common cause at that point is the denied user's JWT not actually carrying the expected `groups` claim.
 
 **API Frontend `proxy-init` crash-looping with `can't initialize iptables table 'mangle': Permission denied`:**
 
