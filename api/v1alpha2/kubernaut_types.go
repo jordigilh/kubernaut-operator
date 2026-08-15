@@ -912,16 +912,6 @@ type InteractiveSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	RateLimitPerUser *int `json:"rateLimitPerUser,omitempty"`
-
-	// JWT providers for OIDC-based identity delegation.
-	// +optional
-	// +kubebuilder:validation:MaxItems=8
-	JWTProviders []JWTProviderSpec `json:"jwtProviders,omitempty"`
-
-	// AllowInsecureJWKS permits HTTP (non-TLS) JWKS URLs for dev/test.
-	// Production deployments MUST leave this false.
-	// +optional
-	AllowInsecureJWKS bool `json:"allowInsecureJWKS,omitempty"`
 }
 
 // InteractiveEnabled returns true when interactive mode is active.
@@ -932,7 +922,16 @@ func (s *InteractiveSpec) InteractiveEnabled() bool {
 }
 
 // JWTProviderSpec configures a single OIDC JWT provider for multi-issuer
-// authentication. Shared by KA interactive and API Frontend auth.
+// authentication used by API Frontend's own multi-provider auth
+// (spec.apiFrontend.auth.jwtProviders). KA's interactive-mode MCP endpoint
+// previously exposed an equivalent field (#302), but #1287 replaced KA's
+// AF-facing auth with an SA-bearer-token trusted-intermediary model (AF no
+// longer forwards JWTs), and this operator's KubernautAgent NetworkPolicy
+// (kubernautAgentNetworkPolicy) only ever admits AIAnalysis and
+// APIFrontend as ingress peers -- there is no supported path for any other
+// client to reach KA's MCP endpoint directly. That JWT-provider config
+// surface was therefore removed from InteractiveSpec as unreachable dead
+// configuration (v1.6 GA gap-closure).
 type JWTProviderSpec struct {
 	// Human-readable name for this provider (e.g. "rhbk", "spire").
 	// +kubebuilder:validation:MinLength=1

@@ -569,7 +569,6 @@ func convertInteractiveSpecToV2(s *InteractiveSpec) *v1alpha2.InteractiveSpec {
 	return &v1alpha2.InteractiveSpec{
 		Enabled: s.Enabled, SessionTTL: s.SessionTTL, InactivityTimeout: s.InactivityTimeout,
 		MaxConcurrentSessions: s.MaxConcurrentSessions, RateLimitPerUser: s.RateLimitPerUser,
-		JWTProviders: convertJWTProviderListToV2(s.JWTProviders), AllowInsecureJWKS: s.AllowInsecureJWKS,
 	}
 }
 
@@ -580,7 +579,6 @@ func convertInteractiveSpecToV1(s *v1alpha2.InteractiveSpec) *InteractiveSpec {
 	return &InteractiveSpec{
 		Enabled: s.Enabled, SessionTTL: s.SessionTTL, InactivityTimeout: s.InactivityTimeout,
 		MaxConcurrentSessions: s.MaxConcurrentSessions, RateLimitPerUser: s.RateLimitPerUser,
-		JWTProviders: convertJWTProviderListToV1(s.JWTProviders), AllowInsecureJWKS: s.AllowInsecureJWKS,
 	}
 }
 
