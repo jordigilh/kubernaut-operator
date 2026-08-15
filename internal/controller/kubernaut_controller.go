@@ -254,10 +254,6 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 			"SpecValidationFailed", fmt.Sprintf("CR validation failed: %s", strings.Join(msgs, "; ")))
 	}
 
-	if kn.Spec.APIFrontendEnabled() && kn.Spec.APIFrontend.Auth.TokenReviewAudience == "" {
-		log.Info("WARNING: spec.apiFrontend.auth.tokenReviewAudience is empty — K8s TokenReview will accept tokens issued for any audience (FedRAMP IA-5)")
-	}
-
 	log.Info("BYO secrets validated")
 	return ctrl.Result{}, r.patchStatus(ctx, kn, func() {
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{

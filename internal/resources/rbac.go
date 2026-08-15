@@ -89,6 +89,17 @@ func ClusterRoles(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kuber
 		roles = append(roles, fleetMetadataCacheClusterRole(kn, knV2, labels))
 	}
 
+	// #1993 (ADR-068 gap closure, IA-2/AC-3/AC-17): the GW/RO -> FMC
+	// scope-check REST API previously carried no application-level auth.
+	// Unconditional on FMC's mcpGatewayNamespace resolution (unlike the
+	// role above) since this is unrelated to MCP Gateway CRD access.
+	if knV2.Spec.FleetMetadataCacheEnabled() {
+		roles = append(roles,
+			fleetMetadataCacheAuthMiddlewareClusterRole(kn, labels),
+			fmcScopeCheckClientClusterRole(kn, labels),
+		)
+	}
+
 	return roles
 }
 
@@ -155,6 +166,27 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha
 
 	if knV2.Spec.FleetMetadataCacheEnabled() && effectiveFleetMetadataCacheMCPGatewayNamespace(knV2) == "" {
 		crbs = append(crbs, fleetMetadataCacheClusterRoleBinding(kn, labels))
+	}
+
+	// #1993: FMC's own auth-middleware binding, plus its two fixed,
+	// in-chart scope-check API callers (GW/RO -- mirrors upstream Helm's
+	// fmc-scope-check-client-rbac.yaml, which hardcodes these two rather
+	// than ranging over a configurable list).
+	if knV2.Spec.FleetMetadataCacheEnabled() {
+		crbs = append(crbs,
+			clusterRoleBinding(p("fleetmetadatacache-auth-middleware-binding"), p("fleetmetadatacache-auth-middleware"),
+				ServiceAccountName(ComponentFleetMetadataCache), ns, labels),
+		)
+		if kn.Spec.GatewayEnabled() {
+			crbs = append(crbs,
+				clusterRoleBinding(p("gateway-fmc-scope-check-client"), p("fmc-scope-check-client"),
+					ServiceAccountName(ComponentGateway), ns, labels),
+			)
+		}
+		crbs = append(crbs,
+			clusterRoleBinding(p("remediationorchestrator-fmc-scope-check-client"), p("fmc-scope-check-client"),
+				ServiceAccountName(ComponentRemediationOrchestrator), ns, labels),
+		)
 	}
 
 	return crbs
@@ -1163,6 +1195,33 @@ func dataStorageClientClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[st
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "data-storage-client"), Labels: labels},
 		Rules: []rbacv1.PolicyRule{
 			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{"data-storage-service"}, Verbs: []string{"create", "get", "list", "update", "delete"}},
+		},
+	}
+}
+
+// fleetMetadataCacheAuthMiddlewareClusterRole grants FMC's own SA the
+// TokenReview/SAR permissions its auth middleware needs to authenticate
+// GW/RO callers of its scope-check REST API (#1993, ADR-068 gap closure).
+// Mirrors dataStorageAuthMiddlewareClusterRole.
+func fleetMetadataCacheAuthMiddlewareClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
+	return &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "fleetmetadatacache-auth-middleware"), Labels: labels},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{"authentication.k8s.io"}, Resources: []string{"tokenreviews"}, Verbs: []string{"create"}},
+			{APIGroups: []string{"authorization.k8s.io"}, Resources: []string{"subjectaccessreviews"}, Verbs: []string{"create"}},
+		},
+	}
+}
+
+// fmcScopeCheckClientClusterRole grants a synthetic "get" permission on
+// FMC's Service, used purely as the SubjectAccessReview target FMC's auth
+// middleware checks against callers of its scope-check API (#1993).
+// Structurally mirrors dataStorageClientClusterRole/gatewaySignalSourceClusterRole.
+func fmcScopeCheckClientClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
+	return &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "fmc-scope-check-client"), Labels: labels},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{""}, Resources: []string{"services"}, ResourceNames: []string{fleetMetadataCacheServiceName}, Verbs: []string{"get"}},
 		},
 	}
 }

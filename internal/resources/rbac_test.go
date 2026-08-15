@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/utils/ptr"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
@@ -1658,6 +1659,118 @@ var _ = Describe("APIFrontend/EffectivenessMonitor fleet RBAC", func() {
 			apiGroups = append(apiGroups, r.APIGroups...)
 		}
 		Expect(apiGroups).NotTo(ContainElement("gateway.envoyproxy.io"))
+	})
+})
+
+var _ = Describe("FMC scope-check RBAC (#1993 gap)", func() {
+	Context("ClusterRoles", func() {
+		It("omits fleetmetadatacache-auth-middleware and fmc-scope-check-client when FMC is disabled", func() {
+			kn := testKubernaut()
+			roles := ClusterRoles(kn, testKnV2(kn))
+			for _, r := range roles {
+				Expect(r.Name).NotTo(Equal(clusterRoleName(kn, "fleetmetadatacache-auth-middleware")))
+				Expect(r.Name).NotTo(Equal(clusterRoleName(kn, "fmc-scope-check-client")))
+			}
+		})
+
+		It("grants fleetmetadatacache-auth-middleware TokenReview/SAR create when FMC is enabled", func() {
+			kn, knV2 := testKubernautWithFMC()
+			roles := ClusterRoles(kn, knV2)
+
+			var cr *rbacv1.ClusterRole
+			for _, r := range roles {
+				if r.Name == clusterRoleName(kn, "fleetmetadatacache-auth-middleware") {
+					cr = r
+				}
+			}
+			Expect(cr).NotTo(BeNil(), "fleetmetadatacache-auth-middleware ClusterRole not found")
+
+			var grantsTokenReview, grantsSAR bool
+			for _, rule := range cr.Rules {
+				for _, ag := range rule.APIGroups {
+					if ag == "authentication.k8s.io" {
+						grantsTokenReview = true
+					}
+					if ag == "authorization.k8s.io" {
+						grantsSAR = true
+					}
+				}
+			}
+			Expect(grantsTokenReview).To(BeTrue(), "must grant authentication.k8s.io tokenreviews create, mirroring data-storage-auth-middleware")
+			Expect(grantsSAR).To(BeTrue(), "must grant authorization.k8s.io subjectaccessreviews create, mirroring data-storage-auth-middleware")
+		})
+
+		It("grants fmc-scope-check-client get on the fleetmetadatacache-service by resource name when FMC is enabled", func() {
+			kn, knV2 := testKubernautWithFMC()
+			roles := ClusterRoles(kn, knV2)
+
+			var cr *rbacv1.ClusterRole
+			for _, r := range roles {
+				if r.Name == clusterRoleName(kn, "fmc-scope-check-client") {
+					cr = r
+				}
+			}
+			Expect(cr).NotTo(BeNil(), "fmc-scope-check-client ClusterRole not found")
+			Expect(cr.Rules).To(ContainElement(rbacv1.PolicyRule{
+				APIGroups:     []string{""},
+				Resources:     []string{"services"},
+				ResourceNames: []string{"fleetmetadatacache-service"},
+				Verbs:         []string{"get"},
+			}))
+		})
+	})
+
+	Context("ClusterRoleBindings", func() {
+		It("omits the FMC scope-check bindings when FMC is disabled", func() {
+			kn := testKubernaut()
+			crbs := ClusterRoleBindings(kn, testKnV2(kn))
+			for _, crb := range crbs {
+				Expect(crb.Name).NotTo(Equal(clusterRoleName(kn, "fleetmetadatacache-auth-middleware-binding")))
+				Expect(crb.Name).NotTo(Equal(clusterRoleName(kn, "gateway-fmc-scope-check-client")))
+				Expect(crb.Name).NotTo(Equal(clusterRoleName(kn, "remediationorchestrator-fmc-scope-check-client")))
+			}
+		})
+
+		It("binds FMC's own SA to fleetmetadatacache-auth-middleware when FMC is enabled", func() {
+			kn, knV2 := testKubernautWithFMC()
+			crbs := ClusterRoleBindings(kn, knV2)
+
+			var crb *rbacv1.ClusterRoleBinding
+			for _, c := range crbs {
+				if c.Name == clusterRoleName(kn, "fleetmetadatacache-auth-middleware-binding") {
+					crb = c
+				}
+			}
+			Expect(crb).NotTo(BeNil(), "fleetmetadatacache-auth-middleware-binding CRB not found")
+			Expect(crb.RoleRef.Name).To(Equal(clusterRoleName(kn, "fleetmetadatacache-auth-middleware")))
+			Expect(crb.Subjects).To(HaveLen(1))
+			Expect(crb.Subjects[0].Name).To(Equal(ServiceAccountName(ComponentFleetMetadataCache)))
+			Expect(crb.Subjects[0].Namespace).To(Equal(kn.Namespace))
+		})
+
+		It("binds Gateway and RemediationOrchestrator SAs to fmc-scope-check-client when FMC is enabled", func() {
+			kn, knV2 := testKubernautWithFMC()
+			crbs := ClusterRoleBindings(kn, knV2)
+
+			bound := map[string]string{}
+			for _, c := range crbs {
+				if c.RoleRef.Name == clusterRoleName(kn, "fmc-scope-check-client") {
+					Expect(c.Subjects).To(HaveLen(1))
+					bound[c.Name] = c.Subjects[0].Name
+				}
+			}
+			Expect(bound).To(HaveKeyWithValue(clusterRoleName(kn, "gateway-fmc-scope-check-client"), ServiceAccountName(ComponentGateway)))
+			Expect(bound).To(HaveKeyWithValue(clusterRoleName(kn, "remediationorchestrator-fmc-scope-check-client"), ServiceAccountName(ComponentRemediationOrchestrator)))
+		})
+
+		It("omits the Gateway fmc-scope-check-client binding when Gateway is disabled", func() {
+			kn, knV2 := testKubernautWithFMC()
+			kn.Spec.Gateway.Enabled = ptr.To(false)
+			crbs := ClusterRoleBindings(kn, knV2)
+			for _, crb := range crbs {
+				Expect(crb.Name).NotTo(Equal(clusterRoleName(kn, "gateway-fmc-scope-check-client")))
+			}
+		})
 	})
 })
 

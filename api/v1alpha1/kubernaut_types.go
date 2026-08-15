@@ -656,16 +656,6 @@ type InteractiveSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	RateLimitPerUser *int `json:"rateLimitPerUser,omitempty"`
-
-	// JWT providers for OIDC-based identity delegation.
-	// +optional
-	// +kubebuilder:validation:MaxItems=8
-	JWTProviders []JWTProviderSpec `json:"jwtProviders,omitempty"`
-
-	// AllowInsecureJWKS permits HTTP (non-TLS) JWKS URLs for dev/test.
-	// Production deployments MUST leave this false.
-	// +optional
-	AllowInsecureJWKS bool `json:"allowInsecureJWKS,omitempty"`
 }
 
 // InteractiveEnabled returns true when interactive mode is active.
@@ -676,7 +666,16 @@ func (s *InteractiveSpec) InteractiveEnabled() bool {
 }
 
 // JWTProviderSpec configures a single OIDC JWT provider for multi-issuer
-// authentication. Shared by KA interactive and API Frontend auth.
+// authentication used by API Frontend's own multi-provider auth
+// (spec.apiFrontend.auth.jwtProviders). KA's interactive-mode MCP endpoint
+// previously exposed an equivalent field (#302), but #1287 replaced KA's
+// AF-facing auth with an SA-bearer-token trusted-intermediary model (AF no
+// longer forwards JWTs), and this operator's KubernautAgent NetworkPolicy
+// (kubernautAgentNetworkPolicy) only ever admits AIAnalysis and
+// APIFrontend as ingress peers -- there is no supported path for any other
+// client to reach KA's MCP endpoint directly. That JWT-provider config
+// surface was therefore removed from InteractiveSpec as unreachable dead
+// configuration (v1.6 GA gap-closure).
 type JWTProviderSpec struct {
 	// Human-readable name for this provider (e.g. "rhbk", "spire").
 	// +kubebuilder:validation:MinLength=1
@@ -1003,6 +1002,21 @@ type ConsoleSpec struct {
 	// Resource requirements for the console container.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Whether the console's raw LLM extended-thinking panel and its
+	// "Hide/Show raw thinking" header button are enabled. Defaults to true
+	// to match the console's own default. Set to false for backends (e.g.
+	// release/v1.5) that never emit reasoning_content events, so the
+	// button isn't shown as a dead control.
+	// +kubebuilder:default=true
+	// +optional
+	EnableRawThinking *bool `json:"enableRawThinking,omitempty"`
+}
+
+// EnableRawThinkingValue returns whether the console's raw-thinking panel
+// should be enabled. Defaults to true when unset.
+func (s *ConsoleSpec) EnableRawThinkingValue() bool {
+	return s.EnableRawThinking == nil || *s.EnableRawThinking
 }
 
 // ConsoleAuthSpec configures authentication for the console oauth2-proxy.
@@ -1297,13 +1311,6 @@ type APIFrontendAuthSpec struct {
 	// +kubebuilder:default="kubernaut-apifrontend"
 	// +optional
 	Audience string `json:"audience,omitempty"`
-
-	// TokenReview audience for Kubernetes ServiceAccount token validation.
-	// When set, the API Frontend passes this audience to the TokenReview API
-	// so only tokens issued for this specific audience are accepted
-	// (FedRAMP IA-5: authenticator management).
-	// +optional
-	TokenReviewAudience string `json:"tokenReviewAudience,omitempty"`
 
 	// Explicit JWKS endpoint URL for token signature verification
 	// (FedRAMP IA-5: authenticator management). When empty, derived from

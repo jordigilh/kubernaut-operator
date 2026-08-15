@@ -569,7 +569,6 @@ func convertInteractiveSpecToV2(s *InteractiveSpec) *v1alpha2.InteractiveSpec {
 	return &v1alpha2.InteractiveSpec{
 		Enabled: s.Enabled, SessionTTL: s.SessionTTL, InactivityTimeout: s.InactivityTimeout,
 		MaxConcurrentSessions: s.MaxConcurrentSessions, RateLimitPerUser: s.RateLimitPerUser,
-		JWTProviders: convertJWTProviderListToV2(s.JWTProviders), AllowInsecureJWKS: s.AllowInsecureJWKS,
 	}
 }
 
@@ -580,7 +579,6 @@ func convertInteractiveSpecToV1(s *v1alpha2.InteractiveSpec) *InteractiveSpec {
 	return &InteractiveSpec{
 		Enabled: s.Enabled, SessionTTL: s.SessionTTL, InactivityTimeout: s.InactivityTimeout,
 		MaxConcurrentSessions: s.MaxConcurrentSessions, RateLimitPerUser: s.RateLimitPerUser,
-		JWTProviders: convertJWTProviderListToV1(s.JWTProviders), AllowInsecureJWKS: s.AllowInsecureJWKS,
 	}
 }
 
@@ -857,7 +855,7 @@ func convertAPIFrontendSpecToV1(s v1alpha2.APIFrontendSpec) APIFrontendSpec {
 
 func convertAPIFrontendAuthSpecToV2(s APIFrontendAuthSpec) v1alpha2.APIFrontendAuthSpec {
 	return v1alpha2.APIFrontendAuthSpec{
-		IssuerURL: s.IssuerURL, Audience: s.Audience, TokenReviewAudience: s.TokenReviewAudience,
+		IssuerURL: s.IssuerURL, Audience: s.Audience,
 		JWKSURL: s.JWKSURL, OIDCCAFile: s.OIDCCAFile, AllowInsecureIssuers: s.AllowInsecureIssuers,
 		JWTProviders: convertJWTProviderListToV2(s.JWTProviders),
 	}
@@ -865,7 +863,7 @@ func convertAPIFrontendAuthSpecToV2(s APIFrontendAuthSpec) v1alpha2.APIFrontendA
 
 func convertAPIFrontendAuthSpecToV1(s v1alpha2.APIFrontendAuthSpec) APIFrontendAuthSpec {
 	return APIFrontendAuthSpec{
-		IssuerURL: s.IssuerURL, Audience: s.Audience, TokenReviewAudience: s.TokenReviewAudience,
+		IssuerURL: s.IssuerURL, Audience: s.Audience,
 		JWKSURL: s.JWKSURL, OIDCCAFile: s.OIDCCAFile, AllowInsecureIssuers: s.AllowInsecureIssuers,
 		JWTProviders: convertJWTProviderListToV1(s.JWTProviders),
 	}

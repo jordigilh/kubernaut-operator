@@ -981,11 +981,12 @@ type DeploymentParams struct {
 	TerminationGracePeriodSeconds *int64
 }
 
-// buildDeploymentProbes derives the liveness/readiness probe port (from
-// ProbePort, defaulting to the first container port) and builds both
+// buildDeploymentProbes derives the liveness/readiness/startup probe port
+// (from ProbePort, defaulting to the first container port) and builds the
 // probes from the component's default probe config, overridden by any
-// LivenessPath/ReadinessPath set in p.
-func buildDeploymentProbes(p DeploymentParams, ports []corev1.ContainerPort) (liveness, readiness *corev1.Probe) {
+// LivenessPath/ReadinessPath set in p. startup is nil for components with
+// no StartupPath configured (see ProbeConfig).
+func buildDeploymentProbes(p DeploymentParams, ports []corev1.ContainerPort) (liveness, readiness, startup *corev1.Probe) {
 	probePort := p.ProbePort
 	if probePort == 0 {
 		probePort = ports[0].ContainerPort
@@ -1023,7 +1024,21 @@ func buildDeploymentProbes(p DeploymentParams, ports []corev1.ContainerPort) (li
 		TimeoutSeconds:      pc.ReadinessTimeout,
 		FailureThreshold:    pc.ReadinessFailureThreshold,
 	}
-	return liveness, readiness
+	if pc.StartupPath != "" {
+		startup = &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: pc.StartupPath,
+					Port: intstr.FromInt32(probePort),
+				},
+			},
+			InitialDelaySeconds: pc.StartupInitialDelay,
+			PeriodSeconds:       pc.StartupPeriod,
+			TimeoutSeconds:      pc.StartupTimeout,
+			FailureThreshold:    pc.StartupFailureThreshold,
+		}
+	}
+	return liveness, readiness, startup
 }
 
 func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*appsv1.Deployment, error) {
@@ -1036,7 +1051,7 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 	if len(ports) == 0 {
 		ports = []corev1.ContainerPort{{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP}}
 	}
-	liveness, readiness := buildDeploymentProbes(p, ports)
+	liveness, readiness, startup := buildDeploymentProbes(p, ports)
 
 	dep := &appsv1.Deployment{
 		ObjectMeta: ObjectMeta(kn, DeploymentName(p.Component), p.Component),
@@ -1066,6 +1081,7 @@ func buildDeployment(kn *kubernautv1alpha1.Kubernaut, p DeploymentParams) (*apps
 						VolumeMounts:    p.VolumeMounts,
 						LivenessProbe:   liveness,
 						ReadinessProbe:  readiness,
+						StartupProbe:    startup,
 					}},
 					Volumes:                       p.Volumes,
 					TerminationGracePeriodSeconds: p.TerminationGracePeriodSeconds,
@@ -1208,6 +1224,15 @@ func overrideTLSCAFile(env []corev1.EnvVar, path string) []corev1.EnvVar {
 // ProbeConfig holds per-component HTTP GET probe paths and timing, mirroring
 // the upstream kubernaut service defaults so that cold-start and
 // resource-constrained nodes don't see premature restarts.
+//
+// StartupPath is only set for the fleet-aware components (Gateway,
+// APIFrontend, EffectivenessMonitor, FleetMetadataCache,
+// SignalProcessing, RemediationOrchestrator, WorkflowExecution) --
+// see fleetAwareStartupProbe (#267, DD-PLATFORM-008). When empty, no
+// StartupProbe is set: these components build a registry.ClusterRegistry
+// against the fleet MCP Gateway synchronously at boot, which can
+// legitimately take minutes under node CPU contention, far exceeding the
+// existing liveness-probe grace period.
 type ProbeConfig struct {
 	LivenessPath              string
 	LivenessInitialDelay      int32
@@ -1219,6 +1244,20 @@ type ProbeConfig struct {
 	ReadinessPeriod           int32
 	ReadinessTimeout          int32
 	ReadinessFailureThreshold int32
+	StartupPath               string
+	StartupInitialDelay       int32
+	StartupPeriod             int32
+	StartupTimeout            int32
+	StartupFailureThreshold   int32
+}
+
+// fleetAwareStartupProbe returns the DD-PLATFORM-008 startupProbe
+// thresholds (5s initial delay + 60x5s period = 305s cold-start grace),
+// mirroring the chart's kubernaut.startupProbe named template exactly --
+// tuned against live evidence of cgroup v2 CPU throttling during
+// multi-pod fleet-aware cold starts (#267).
+func fleetAwareStartupProbe() (path string, initialDelay, period, timeout, failureThreshold int32) {
+	return "/healthz", 5, 5, 5, 60
 }
 
 // probeConfigForComponent returns the probe configuration for a given
@@ -1228,10 +1267,12 @@ type ProbeConfig struct {
 func probeConfigForComponent(component string) ProbeConfig {
 	switch component {
 	case ComponentGateway:
-		return ProbeConfig{
+		pc := ProbeConfig{
 			LivenessPath: "/healthz", LivenessInitialDelay: 10, LivenessPeriod: 10, LivenessTimeout: 5, LivenessFailureThreshold: 3,
 			ReadinessPath: "/readyz", ReadinessInitialDelay: 30, ReadinessPeriod: 5, ReadinessTimeout: 5, ReadinessFailureThreshold: 6,
 		}
+		pc.StartupPath, pc.StartupInitialDelay, pc.StartupPeriod, pc.StartupTimeout, pc.StartupFailureThreshold = fleetAwareStartupProbe()
+		return pc
 	case ComponentDataStorage:
 		return ProbeConfig{
 			LivenessPath: "/healthz", LivenessInitialDelay: 30, LivenessPeriod: 10, LivenessTimeout: 5, LivenessFailureThreshold: 3,
@@ -1248,10 +1289,12 @@ func probeConfigForComponent(component string) ProbeConfig {
 			ReadinessPath: "/readyz", ReadinessInitialDelay: 10, ReadinessPeriod: 10, ReadinessTimeout: 5, ReadinessFailureThreshold: 6,
 		}
 	case ComponentEffectivenessMonitor:
-		return ProbeConfig{
+		pc := ProbeConfig{
 			LivenessPath: "/healthz", LivenessInitialDelay: 10, LivenessPeriod: 10, LivenessTimeout: 5, LivenessFailureThreshold: 3,
 			ReadinessPath: "/readyz", ReadinessInitialDelay: 5, ReadinessPeriod: 5, ReadinessTimeout: 5, ReadinessFailureThreshold: 3,
 		}
+		pc.StartupPath, pc.StartupInitialDelay, pc.StartupPeriod, pc.StartupTimeout, pc.StartupFailureThreshold = fleetAwareStartupProbe()
+		return pc
 	case ComponentNotification:
 		return ProbeConfig{
 			LivenessPath: "/healthz", LivenessInitialDelay: 15, LivenessPeriod: 20, LivenessTimeout: 5, LivenessFailureThreshold: 3,
@@ -1263,20 +1306,26 @@ func probeConfigForComponent(component string) ProbeConfig {
 			ReadinessPath: "/readyz", ReadinessInitialDelay: 15, ReadinessPeriod: 10, ReadinessTimeout: 5, ReadinessFailureThreshold: 6,
 		}
 	case ComponentAPIFrontend:
-		return ProbeConfig{
+		pc := ProbeConfig{
 			LivenessPath: "/healthz", LivenessInitialDelay: 15, LivenessPeriod: 10, LivenessTimeout: 5, LivenessFailureThreshold: 3,
 			ReadinessPath: "/readyz", ReadinessInitialDelay: 5, ReadinessPeriod: 5, ReadinessTimeout: 3, ReadinessFailureThreshold: 3,
 		}
+		pc.StartupPath, pc.StartupInitialDelay, pc.StartupPeriod, pc.StartupTimeout, pc.StartupFailureThreshold = fleetAwareStartupProbe()
+		return pc
 	case ComponentFleetMetadataCache:
-		return ProbeConfig{
+		pc := ProbeConfig{
 			LivenessPath: "/healthz", LivenessInitialDelay: 5, LivenessPeriod: 10, LivenessTimeout: 5, LivenessFailureThreshold: 3,
 			ReadinessPath: "/readyz", ReadinessInitialDelay: 3, ReadinessPeriod: 5, ReadinessTimeout: 3, ReadinessFailureThreshold: 3,
 		}
+		pc.StartupPath, pc.StartupInitialDelay, pc.StartupPeriod, pc.StartupTimeout, pc.StartupFailureThreshold = fleetAwareStartupProbe()
+		return pc
 	default:
 		// SignalProcessing, RemediationOrchestrator, WorkflowExecution
-		return ProbeConfig{
+		pc := ProbeConfig{
 			LivenessPath: "/healthz", LivenessInitialDelay: 15, LivenessPeriod: 20, LivenessTimeout: 5, LivenessFailureThreshold: 3,
 			ReadinessPath: "/readyz", ReadinessInitialDelay: 5, ReadinessPeriod: 10, ReadinessTimeout: 5, ReadinessFailureThreshold: 6,
 		}
+		pc.StartupPath, pc.StartupInitialDelay, pc.StartupPeriod, pc.StartupTimeout, pc.StartupFailureThreshold = fleetAwareStartupProbe()
+		return pc
 	}
 }

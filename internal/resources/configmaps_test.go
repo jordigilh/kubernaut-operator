@@ -2608,6 +2608,23 @@ var _ = Describe("APIFrontendConfigMap OIDC", func() {
 		Expect(data).To(ContainSubstring("audience: custom-audience"),
 			"SC-23: audience claim must be propagated for token binding")
 	})
+
+	It("#288: never renders tokenReviewAudience/kubernetesAuthEnabled (dead keys AF's real config schema does not parse)", func() {
+		// kubernaut#1900: audience-bound TokenReview was implemented and reverted
+		// upstream for both AF and KA before merging (AF: unclear incremental value
+		// over existing SAR authorization; KA: architecturally incompatible with the
+		// shared /api/v1/mcp authenticator). AF's actual AuthConfig struct has no
+		// tokenReviewAudience(s) field, so rendering either key here is a no-op that
+		// upstream silently ignores.
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).NotTo(ContainSubstring("tokenReviewAudience"),
+			"#288: AF's real config schema has no tokenReviewAudience(s) field (kubernaut#1900 reverted upstream)")
+		Expect(data).NotTo(ContainSubstring("kubernetesAuthEnabled"),
+			"#288: AF's real config schema has no kubernetesAuthEnabled field")
+	})
 })
 
 var _ = Describe("APIFrontendConfigMap kagenti OIDC auto-detection", func() {

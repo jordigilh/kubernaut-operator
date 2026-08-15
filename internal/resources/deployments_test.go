@@ -882,6 +882,36 @@ var _ = Describe("Deployments", func() {
 			}
 		})
 
+		It("#267: sets startupProbe on fleet-aware components with DD-PLATFORM-008 thresholds (305s grace)", func() {
+			kn := testKubernaut()
+			fleetAware := map[string]bool{
+				ComponentGateway:                 true,
+				ComponentSignalProcessing:        true,
+				ComponentRemediationOrchestrator: true,
+				ComponentWorkflowExecution:       true,
+				ComponentEffectivenessMonitor:    true,
+			}
+
+			for _, dep := range getAllDeployments(kn) {
+				container := dep.Spec.Template.Spec.Containers[0]
+				component := dep.Spec.Template.Labels["app"]
+
+				if !fleetAware[component] {
+					Expect(container.StartupProbe).To(BeNil(), "Deployment %q is not fleet-aware and should not have a startupProbe", dep.Name)
+					continue
+				}
+
+				sp := container.StartupProbe
+				Expect(sp).NotTo(BeNil(), "Deployment %q is fleet-aware and needs a startupProbe (DD-PLATFORM-008 cold-start budget)", dep.Name)
+				Expect(sp.HTTPGet).NotTo(BeNil(), "Deployment %q startupProbe should use HTTPGet", dep.Name)
+				Expect(sp.HTTPGet.Path).To(Equal("/healthz"), "%s startupProbe path", dep.Name)
+				Expect(sp.InitialDelaySeconds).To(Equal(int32(5)), "%s startupProbe InitialDelaySeconds", dep.Name)
+				Expect(sp.PeriodSeconds).To(Equal(int32(5)), "%s startupProbe PeriodSeconds", dep.Name)
+				Expect(sp.TimeoutSeconds).To(Equal(int32(5)), "%s startupProbe TimeoutSeconds", dep.Name)
+				Expect(sp.FailureThreshold).To(Equal(int32(60)), "%s startupProbe FailureThreshold (60x5s=300s+5s initial=305s grace)", dep.Name)
+			}
+		})
+
 		It("expose metrics port on expected components", func() {
 			kn := testKubernaut()
 			withMetrics := map[string]bool{
@@ -1297,6 +1327,19 @@ var _ = Describe("APIFrontendDeployment", func() {
 		Expect(container.ReadinessProbe).NotTo(BeNil())
 		Expect(container.LivenessProbe.HTTPGet.Path).To(Equal("/healthz"))
 		Expect(container.ReadinessProbe.HTTPGet.Path).To(Equal("/readyz"))
+	})
+
+	It("#267: sets startupProbe with DD-PLATFORM-008 thresholds (fleet-aware, cold-start budget)", func() {
+		kn := testKubernautWithAF()
+		dep, err := APIFrontendDeployment(kn, testKnV2(kn), KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+		container := dep.Spec.Template.Spec.Containers[0]
+		Expect(container.StartupProbe).NotTo(BeNil())
+		Expect(container.StartupProbe.HTTPGet.Path).To(Equal("/healthz"))
+		Expect(container.StartupProbe.InitialDelaySeconds).To(Equal(int32(5)))
+		Expect(container.StartupProbe.PeriodSeconds).To(Equal(int32(5)))
+		Expect(container.StartupProbe.TimeoutSeconds).To(Equal(int32(5)))
+		Expect(container.StartupProbe.FailureThreshold).To(Equal(int32(60)))
 	})
 
 	It("includes Prometheus annotations", func() {

@@ -71,8 +71,10 @@ type fleetMetadataCacheSyncYAML struct {
 }
 
 type fleetMetadataCacheOAuth2YAML struct {
-	TokenURL       string `json:"tokenUrl" yaml:"tokenUrl"`
-	CredentialsDir string `json:"credentialsDir" yaml:"credentialsDir"`
+	TokenURL       string   `json:"tokenUrl" yaml:"tokenUrl"`
+	CredentialsDir string   `json:"credentialsDir" yaml:"credentialsDir"`
+	Scopes         []string `json:"scopes,omitempty" yaml:"scopes,omitempty"`
+	TLSCaFile      string   `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 }
 
 // fleetMetadataCacheConfigYAML mirrors upstream's
@@ -116,6 +118,8 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernau
 		OAuth2: fleetMetadataCacheOAuth2YAML{
 			TokenURL:       fleet.OAuth2.TokenURL,
 			CredentialsDir: fleetMetadataCacheOAuth2Dir,
+			Scopes:         fleet.OAuth2.Scopes,
+			TLSCaFile:      InterServiceTLSCAFile,
 		},
 	}
 
@@ -150,10 +154,12 @@ func FleetMetadataCacheDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kuberna
 	volumes := []corev1.Volume{
 		configMapVolume("config", fleetMetadataCacheConfigMapName),
 		secretVolume("fleet-oauth2", credRef),
+		optionalConfigMapVolume("tls-ca", InterServiceCAConfigMapName),
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: "config", MountPath: "/etc/fleetmetadatacache", ReadOnly: true},
 		{Name: "fleet-oauth2", MountPath: fleetMetadataCacheOAuth2Dir, ReadOnly: true},
+		{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
 	}
 
 	return buildDeployment(kn, DeploymentParams{

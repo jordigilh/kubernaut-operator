@@ -36,7 +36,6 @@ func ValidateKubernaut(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMo
 	errs = append(errs, validatePostgreSQLSSLMode(kn)...)
 	errs = append(errs, validatePolicyPrerequisites(kn)...)
 	errs = append(errs, validateLLMProfiles(kn)...)
-	errs = append(errs, validateJWKSProviders(kn)...)
 	errs = append(errs, validateAPIFrontend(kn, sidecar)...)
 	errs = append(errs, validateAlignmentCheck(kn)...)
 	errs = append(errs, validateDryRun(kn)...)
@@ -257,7 +256,7 @@ func validateAFLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut, profiles map[stri
 // validateJWTProviderList validates a slice of JWT providers, checking issuerURL,
 // audiences, name uniqueness, and JWKS URL validity. The insecureFlagPath
 // parameter is used in error messages to reference the correct parent flag
-// (e.g. "spec.kubernautAgent.interactive.allowInsecureJWKS").
+// (e.g. "spec.apiFrontend.auth.allowInsecureIssuers").
 func validateJWTProviderList(providers []kubernautv1alpha1.JWTProviderSpec, basePath string, allowInsecure bool, insecureFlagPath string) []error {
 	var errs []error
 	seen := make(map[string]bool, len(providers))
@@ -304,19 +303,6 @@ func validateJWTProviderList(providers []kubernautv1alpha1.JWTProviderSpec, base
 		}
 	}
 	return errs
-}
-
-func validateJWKSProviders(kn *kubernautv1alpha1.Kubernaut) []error {
-	interactive := kn.Spec.KubernautAgent.Interactive
-	if interactive == nil || len(interactive.JWTProviders) == 0 {
-		return nil
-	}
-	return validateJWTProviderList(
-		interactive.JWTProviders,
-		"spec.kubernautAgent.interactive",
-		interactive.AllowInsecureJWKS,
-		"spec.kubernautAgent.interactive.allowInsecureJWKS",
-	)
 }
 
 func validateAPIFrontend(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) []error {

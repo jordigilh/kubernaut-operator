@@ -79,6 +79,24 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cm.Data["config.yaml"]).To(ContainSubstring(ValkeyAddr(&kn.Spec.Valkey)))
 	})
+
+	It("#267: propagates spec.fleet.oauth2.scopes to oauth2.scopes (client-credentials providers reject the openid/groups default)", func() {
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.Fleet.OAuth2.Scopes = []string{"fleet.read", "fleet.write"}
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("scopes:"), "FMC config should render oauth2.scopes when set, got:\n%s", data)
+		Expect(data).To(ContainSubstring("fleet.read"))
+		Expect(data).To(ContainSubstring("fleet.write"))
+	})
+
+	It("#267: renders oauth2.tlsCaFile so FMC's token-source client trusts a self-signed IdP CA", func() {
+		kn, knV2 := testKubernautWithFMC()
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cm.Data["config.yaml"]).To(ContainSubstring("tlsCaFile: " + InterServiceTLSCAFile))
+	})
 })
 
 var _ = Describe("FleetMetadataCacheDeployment", func() {
@@ -111,6 +129,15 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 		expectHasVolumeMount(dep, "config", "/etc/fleetmetadatacache")
 		expectHasVolumeMount(dep, "fleet-oauth2", fleetMetadataCacheOAuth2Dir)
 		expectVolumeSourceConfigMap(dep, "config", "fleetmetadatacache-config")
+	})
+
+	It("#267: mounts tls-ca volume from inter-service-ca ConfigMap so the OAuth2 token-source client can trust a self-signed IdP CA", func() {
+		kn, knV2 := testKubernautWithFMC()
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(dep, "tls-ca")
+		expectHasVolumeMount(dep, "tls-ca", "/etc/tls-ca")
+		expectVolumeSourceConfigMap(dep, "tls-ca", InterServiceCAConfigMapName)
 	})
 
 	It("mounts the shared fleet.oauth2.credentialsSecretRef when FMC has no override", func() {
