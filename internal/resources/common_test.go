@@ -36,6 +36,11 @@ const (
 	testSystemNamespace = "kubernaut-system"
 	testIngressDomain   = "apps.test.example.com"
 
+	// testCustomPrometheusURL is an in-cluster *.svc override used across
+	// spec.monitoring (#298) RED/GREEN tests to verify the URL is actually
+	// rendered/scoped instead of falling back to OCPPrometheusURL.
+	testCustomPrometheusURL = "https://custom-prometheus.custom-monitoring.svc:9091"
+
 	// Per-component fleet OAuth2 credentialsSecretRef overrides (federated
 	// IdP scenario: each fleet-aware component authenticates as a distinct
 	// OAuth2 client against the same shared token endpoint).

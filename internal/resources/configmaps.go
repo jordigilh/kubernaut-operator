@@ -1404,10 +1404,10 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubern
 		Fleet: resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.EffectivenessMonitor.Fleet, ""), InterServiceTLSCAFile),
 	}
 	cfg.External = &emExternalYAML{
-		PrometheusURL:       OCPPrometheusURL,
-		PrometheusEnabled:   true,
-		AlertManagerURL:     OCPAlertManagerURL,
-		AlertManagerEnabled: true,
+		PrometheusURL:       effectivePrometheusURL(knV2),
+		PrometheusEnabled:   knV2.Spec.Monitoring.Prometheus.PrometheusEnabled(),
+		AlertManagerURL:     effectiveAlertManagerURL(knV2),
+		AlertManagerEnabled: knV2.Spec.Monitoring.AlertManager.AlertManagerEnabled(),
 		ConnectionTimeout:   "10s",
 		TLSCaFile:           "/etc/ssl/em/service-ca.crt",
 	}
@@ -1627,17 +1627,19 @@ func kaInteractiveConfig(interactive *kubernautv1alpha1.InteractiveSpec) *kaInte
 }
 
 // kaToolsConfig builds the Prometheus/Alertmanager tool-integration block.
-func kaToolsConfig() *kaIntegrationsToolsYAML {
+// URLs follow spec.monitoring.prometheus.url/alertManager.url (#298),
+// falling back to the built-in OCP routes when unset.
+func kaToolsConfig(knV2 *kubernautv1alpha2.Kubernaut) *kaIntegrationsToolsYAML {
 	return &kaIntegrationsToolsYAML{
 		Prometheus: kaIntegrationsPrometheusYAML{
-			URL:       OCPPrometheusURL,
+			URL:       effectivePrometheusURL(knV2),
 			TLSCaFile: "/etc/ssl/ka/service-ca.crt",
 		},
 		// Alertmanager tools (get_alerts, get_silences) added upstream in
 		// kubernaut#1508 (#205). Follows the same SA-bearer-auth-via-service-CA
 		// pattern as Prometheus.
 		Alertmanager: &kaIntegrationsAlertmanagerYAML{
-			URL:       OCPAlertManagerURL,
+			URL:       effectiveAlertManagerURL(knV2),
 			TLSCaFile: "/etc/ssl/ka/service-ca.crt",
 		},
 	}
@@ -1706,7 +1708,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1a
 	}
 
 	cfg.AI.Safety = kaSafetyConfig(ka.Safety)
-	cfg.Integrations.Tools = kaToolsConfig()
+	cfg.Integrations.Tools = kaToolsConfig(knV2)
 	cfg.Integrations.Fleet = resolveKAFleetConfig(knV2)
 
 	cfg.Interactive = kaInteractiveConfig(ka.Interactive)
@@ -2215,7 +2217,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 		Shutdown: afShutdownYAML{
 			DrainSeconds: intPtrDefault(af.Shutdown.DrainSeconds, 15),
 		},
-		SeverityTriage: afSeverityTriageConfig(kn),
+		SeverityTriage: afSeverityTriageConfig(kn, knV2),
 		Session: afSessionYAML{
 			Namespace:     ns,
 			DisconnectTTL: "10m",
@@ -2244,10 +2246,10 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 // (severityTriageCredentialsMountPath) whenever it names a different
 // credentialsSecretName than AF's own resolved profile, mirroring #233's
 // KA phaseModels pattern, including for vertex_ai.
-func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut) afSeverityTriageYAML {
+func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) afSeverityTriageYAML {
 	cfg := afSeverityTriageYAML{
 		Enabled:                   true,
-		PrometheusURL:             OCPPrometheusURL,
+		PrometheusURL:             effectivePrometheusURL(knV2),
 		PrometheusTLSCAFile:       "/etc/ssl/af/service-ca.crt",
 		PrometheusBearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
 		CacheTTLSeconds:           30,

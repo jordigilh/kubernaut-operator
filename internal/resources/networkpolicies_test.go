@@ -140,15 +140,22 @@ var _ = Describe("NetworkPolicies", func() {
 			}
 			Expect(slices.Equal(agentNP.Spec.PolicyTypes, wantTypes)).To(BeTrue(), "PolicyTypes = %v, want %v", agentNP.Spec.PolicyTypes, wantTypes)
 			Expect(agentNP.Spec.Ingress).ToNot(BeEmpty(), "kubernaut-agent ingress rule count = %d, want at least 1", len(agentNP.Spec.Ingress))
-			Expect(agentNP.Spec.Egress).To(HaveLen(5), "kubernaut-agent egress rule count = %d, want %d (dns + apiserver + ds + monitoring + LLM HTTPS)", len(agentNP.Spec.Egress), 5)
-			monRule := agentNP.Spec.Egress[3]
-			Expect(monRule.To).To(HaveLen(1), "monitoring egress peer count = %d, want 1", len(monRule.To))
-			ns := monRule.To[0].NamespaceSelector
-			Expect(ns != nil && ns.MatchLabels["kubernetes.io/metadata.name"] == OCPMonitoringNamespace).To(BeTrue(),
-				"monitoring egress namespace selector = %v, want %s", ns, OCPMonitoringNamespace)
-			Expect(monRule.Ports).To(HaveLen(2), "monitoring egress port count = %d, want 2", len(monRule.Ports))
-			Expect(monRule.Ports[0].Port.IntValue()).To(Equal(9091), "monitoring egress port[0] = %d, want 9091 (Thanos)", monRule.Ports[0].Port.IntValue())
-			Expect(monRule.Ports[1].Port.IntValue()).To(Equal(9094), "monitoring egress port[1] = %d, want 9094 (AlertManager)", monRule.Ports[1].Port.IntValue())
+			// #298: Prometheus and AlertManager are now separate egress rules
+			// (dns + apiserver + ds + prometheus + alertmanager + LLM HTTPS)
+			// since each destination's namespace is resolved independently.
+			Expect(agentNP.Spec.Egress).To(HaveLen(6), "kubernaut-agent egress rule count = %d, want %d (dns + apiserver + ds + prometheus + alertmanager + LLM HTTPS)", len(agentNP.Spec.Egress), 6)
+			promRule := agentNP.Spec.Egress[3]
+			Expect(promRule.To).To(HaveLen(1), "prometheus egress peer count = %d, want 1", len(promRule.To))
+			promNS := promRule.To[0].NamespaceSelector
+			Expect(promNS != nil && promNS.MatchLabels["kubernetes.io/metadata.name"] == OCPMonitoringNamespace).To(BeTrue(),
+				"prometheus egress namespace selector = %v, want %s", promNS, OCPMonitoringNamespace)
+			Expect(promRule.Ports).To(HaveLen(1), "prometheus egress port count = %d, want 1", len(promRule.Ports))
+			Expect(promRule.Ports[0].Port.IntValue()).To(Equal(9091), "prometheus egress port[0] = %d, want 9091 (Thanos)", promRule.Ports[0].Port.IntValue())
+
+			amRule := agentNP.Spec.Egress[4]
+			Expect(amRule.Ports).To(HaveLen(2), "alertmanager egress port count = %d, want 2", len(amRule.Ports))
+			Expect(amRule.Ports[0].Port.IntValue()).To(Equal(9094), "alertmanager egress port[0] = %d, want 9094 (documented Service port)", amRule.Ports[0].Port.IntValue())
+			Expect(amRule.Ports[1].Port.IntValue()).To(Equal(9095), "MON-002 [SC-7]: alertmanager egress port[1] = %d, want 9095 -- OCP's alertmanager-main Service DNATs its documented 'web' port (9094) to the kube-rbac-proxy-web sidecar's real container port (9095); OVN-Kubernetes evaluates egress NetworkPolicy ACLs after this DNAT (apply-after-lb=true, see dnsEgressRule), so omitting 9095 silently drops all AlertManager traffic on real OpenShift despite an otherwise-correct policy", amRule.Ports[1].Port.IntValue())
 		})
 
 		It("allows data-storage ingress from all client components", func() {
@@ -422,6 +429,33 @@ var _ = Describe("APIFrontend NetworkPolicy", func() {
 		Expect(found).To(BeTrue(), "AF egress should allow port 9091 (Thanos Querier) to %s for severity-triage Prometheus calls", OCPMonitoringNamespace)
 	})
 
+	// MON-001 [SC-7]: AF's severityTriage config has no AlertManager client
+	// (only afSeverityTriageConfig.PrometheusURL exists) -- granting it
+	// AlertManager egress (as the old shared monitoringStackEgressRule did)
+	// is unused, over-provisioned egress. Least-privilege: AF should never
+	// carry a rule for a destination it has no client for.
+	It("MON-001 [SC-7]: does not allow egress to AlertManager (9094/9095) -- AF has no AlertManager client", func() {
+		kn := testKubernautWithAF()
+		enableNP(kn)
+		var afNP *networkingv1.NetworkPolicy
+		for _, np := range NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone) {
+			if np.Name == ComponentAPIFrontend+"-netpol" {
+				afNP = np
+				break
+			}
+		}
+		Expect(afNP).NotTo(BeNil())
+
+		found := false
+		for _, rule := range afNP.Spec.Egress {
+			for _, port := range rule.Ports {
+				if port.Port != nil && (int32(port.Port.IntValue()) == 9094 || int32(port.Port.IntValue()) == 9095) {
+					found = true
+				}
+			}
+		}
+		Expect(found).To(BeFalse(), "AF egress should not allow AlertManager ports (9094/9095) -- AF never queries AlertManager")
+	})
 })
 
 var _ = Describe("KubernautAgent NetworkPolicy with AF", func() {
@@ -595,5 +629,146 @@ var _ = Describe("Gateway/RemediationOrchestrator/SignalProcessing/APIFrontend/E
 	It("KFG-031 [AC-4]: kubernautagent gains fleet egress when fleet enabled, so KA can reach the MCP Gateway for GatewayDiscoverer tool calls", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
 		Expect(hasFleetEgressRule(kubernautAgentNetworkPolicy(kn, knV2))).To(BeTrue())
+	})
+})
+
+// #298: EM's monitoring egress previously used ipWorldPeers() (all
+// destinations, 0.0.0.0/0 and ::/0) on ports 9090/9093 -- both wrong (EM's
+// actual calls go to Thanos Querier :9091 and AlertManager :9094/9095) and
+// over-broad (no namespace scoping at all). This left EM unable to reach
+// real monitoring endpoints on any cluster enforcing NetworkPolicy while
+// simultaneously granting it unscoped egress to the entire internet on the
+// (wrong) ports -- a defense-in-depth regression with no compensating
+// benefit. Confirmed on two independent CNIs (kind+Calico, live OCP 4.18
+// OVN-Kubernetes) via manual spike testing (not reproducible in envtest,
+// which has no CNI/NetworkPolicy enforcement).
+var _ = Describe("EffectivenessMonitor NetworkPolicy monitoring egress (#298)", func() {
+	It("MON-003 [SC-7]: allows egress to Prometheus (9091) and AlertManager (9094/9095) scoped to openshift-monitoring, not the whole internet", func() {
+		kn := testKubernaut()
+		np := effectivenessMonitorNetworkPolicy(kn, testKnV2(kn))
+
+		var promRule, amRule *networkingv1.NetworkPolicyEgressRule
+		for i := range np.Spec.Egress {
+			rule := &np.Spec.Egress[i]
+			for _, port := range rule.Ports {
+				if port.Port == nil {
+					continue
+				}
+				switch int32(port.Port.IntValue()) {
+				case 9091:
+					promRule = rule
+				case 9095:
+					amRule = rule
+				}
+			}
+		}
+		Expect(promRule).NotTo(BeNil(), "EM egress should allow port 9091 (Thanos Querier)")
+		Expect(amRule).NotTo(BeNil(), "EM egress should allow port 9095 (AlertManager real post-DNAT port)")
+
+		for _, rule := range []*networkingv1.NetworkPolicyEgressRule{promRule, amRule} {
+			Expect(rule.To).To(HaveLen(1), "monitoring egress peer count = %d, want 1 (namespace-scoped, not all-destination)", len(rule.To))
+			ns := rule.To[0].NamespaceSelector
+			Expect(ns != nil && ns.MatchLabels["kubernetes.io/metadata.name"] == OCPMonitoringNamespace).To(BeTrue(),
+				"monitoring egress should be scoped to %s, got %v", OCPMonitoringNamespace, ns)
+			Expect(rule.To[0].IPBlock).To(BeNil(), "monitoring egress must not use an all-destination IPBlock peer")
+		}
+	})
+
+	It("MON-004 [SC-7]: does not allow unrestricted (0.0.0.0/0) egress on the old wrong ports 9090/9093", func() {
+		kn := testKubernaut()
+		np := effectivenessMonitorNetworkPolicy(kn, testKnV2(kn))
+		for _, rule := range np.Spec.Egress {
+			for _, peer := range rule.To {
+				if peer.IPBlock == nil {
+					continue
+				}
+				for _, port := range rule.Ports {
+					if port.Port == nil {
+						continue
+					}
+					p := int32(port.Port.IntValue())
+					Expect(p).NotTo(Or(Equal(int32(9090)), Equal(int32(9093))),
+						"EM should not have all-destination egress on the old wrong ports 9090/9093")
+				}
+			}
+		}
+	})
+})
+
+// #298: three-tier URL/namespace resolution, shared by AF (Prometheus
+// only)/KA/EM (both destinations). Documented on MonitoringSpec.
+var _ = Describe("Monitoring egress URL resolution tiers (#298)", func() {
+	It("MON-005 [SC-7]: tier 2 -- parses the namespace from an in-cluster *.svc URL override and scopes egress to it", func() {
+		kn := testKubernaut()
+		knV2 := testKnV2(kn)
+		knV2.Spec.Monitoring.Prometheus.URL = testCustomPrometheusURL
+		np := effectivenessMonitorNetworkPolicy(kn, knV2)
+
+		found := false
+		for _, rule := range np.Spec.Egress {
+			for _, peer := range rule.To {
+				if peer.NamespaceSelector != nil && peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == "custom-monitoring" {
+					found = true
+				}
+			}
+		}
+		Expect(found).To(BeTrue(), "egress should be scoped to the 'custom-monitoring' namespace parsed from the *.svc override URL")
+	})
+
+	It("MON-005b [SC-7]: tier 2 -- also parses the namespace from a *.svc.cluster.local URL override", func() {
+		kn := testKubernaut()
+		knV2 := testKnV2(kn)
+		knV2.Spec.Monitoring.AlertManager.URL = "https://custom-alertmanager.custom-monitoring.svc.cluster.local:9094"
+		np := effectivenessMonitorNetworkPolicy(kn, knV2)
+
+		found := false
+		for _, rule := range np.Spec.Egress {
+			for _, peer := range rule.To {
+				if peer.NamespaceSelector != nil && peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == "custom-monitoring" {
+					found = true
+				}
+			}
+		}
+		Expect(found).To(BeTrue(), "egress should be scoped to the 'custom-monitoring' namespace parsed from the *.svc.cluster.local override URL")
+	})
+
+	// MON-006: tier 3. An external/unparseable URL means the operator
+	// cannot determine a namespace to scope egress to, so it omits its own
+	// rule for that destination entirely rather than guessing an
+	// overly-broad (or wrong) peer. The platform operator is expected to
+	// supply a supplemental NetworkPolicy for that destination (documented
+	// on MonitoringSpec) -- verified additive/non-conflicting on a live OCP
+	// 4.18 cluster during the #298 spike.
+	It("MON-006 [SC-7]: tier 3 -- omits the egress rule entirely for an external/unparseable URL override, rather than defaulting to openshift-monitoring or an all-destination peer", func() {
+		kn := testKubernaut()
+		knV2 := testKnV2(kn)
+		knV2.Spec.Monitoring.Prometheus.URL = "https://prometheus.example.com:9091"
+		np := effectivenessMonitorNetworkPolicy(kn, knV2)
+
+		// AlertManager is left unset (tier 1, openshift-monitoring) in this
+		// test, so only assert on the overridden destination's port (9091):
+		// no rule should grant it once its URL is external/unparseable.
+		for _, rule := range np.Spec.Egress {
+			for _, port := range rule.Ports {
+				if port.Port != nil && int32(port.Port.IntValue()) == 9091 {
+					Fail("no egress rule should grant port 9091 when the Prometheus URL is external/unparseable -- expected the operator to omit its own rule for this destination")
+				}
+			}
+		}
+	})
+
+	It("MON-007 [SC-7]: tier 1 -- an unset URL still resolves to the openshift-monitoring default (regression guard)", func() {
+		kn := testKubernaut()
+		np := effectivenessMonitorNetworkPolicy(kn, testKnV2(kn))
+
+		found := false
+		for _, rule := range np.Spec.Egress {
+			for _, peer := range rule.To {
+				if peer.NamespaceSelector != nil && peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == OCPMonitoringNamespace {
+					found = true
+				}
+			}
+		}
+		Expect(found).To(BeTrue(), "default (unset URL) should scope to openshift-monitoring")
 	})
 })

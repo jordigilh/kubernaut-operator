@@ -18,7 +18,9 @@ package resources
 
 import (
 	"context"
+	"net/url"
 	"os"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -221,19 +223,10 @@ func notificationNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Ne
 }
 
 func effectivenessMonitorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
-	protoTCP := corev1.ProtocolTCP
-	p9090 := intstr.FromInt32(PortMetrics)
-	p9093 := intstr.FromInt32(9093)
-
 	ingress := metricsOnlyIngress()
-	egress := baseEgress(3)
-	egress = append(egress, datastorageEgressRule(), networkingv1.NetworkPolicyEgressRule{
-		To: ipWorldPeers(),
-		Ports: []networkingv1.NetworkPolicyPort{
-			{Protocol: &protoTCP, Port: &p9090},
-			{Protocol: &protoTCP, Port: &p9093},
-		},
-	})
+	egress := baseEgress(4)
+	egress = append(egress, datastorageEgressRule())
+	egress = append(egress, monitoringEgressRules(knV2, true)...)
 	if knV2.Spec.FleetEnabled() {
 		egress = append(egress, fleetDestinationsEgressRule())
 	}
@@ -302,8 +295,9 @@ func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernau
 		*metricsIngressRule(OCPMonitoringNamespace),
 	}
 
-	egress := baseEgress(3)
-	egress = append(egress, datastorageEgressRule(), monitoringStackEgressRule(OCPMonitoringNamespace))
+	egress := baseEgress(4)
+	egress = append(egress, datastorageEgressRule())
+	egress = append(egress, monitoringEgressRules(knV2, true)...)
 	kaProfile, _ := ResolveLLMProfile(kn, EffectiveKALLMProfileRef(kn))
 	if kaProfile.Provider != "" {
 		p443 := intstr.FromInt32(443)
@@ -554,22 +548,95 @@ func metricsIngressRule(monitoringNS string) *networkingv1.NetworkPolicyIngressR
 	}
 }
 
-// monitoringStackEgressRule allows TCP 9091 (Thanos Querier) and TCP 9094
-// (AlertManager) to pods in the monitoring namespace. The agent uses these
-// for Prometheus metric queries and alert correlation.
-func monitoringStackEgressRule(monitoringNS string) networkingv1.NetworkPolicyEgressRule {
-	protoTCP := corev1.ProtocolTCP
-	p9091 := intstr.FromInt32(9091)
-	p9094 := intstr.FromInt32(9094)
-	return networkingv1.NetworkPolicyEgressRule{
-		To: []networkingv1.NetworkPolicyPeer{
-			{NamespaceSelector: namespaceNameSelector(monitoringNS)},
-		},
-		Ports: []networkingv1.NetworkPolicyPort{
-			{Protocol: &protoTCP, Port: &p9091},
-			{Protocol: &protoTCP, Port: &p9094},
-		},
+// prometheusEgressPorts is Thanos Querier's real endpoint port. OCP's
+// thanos-querier Service happens to expose the same port number (9091) its
+// kube-rbac-proxy-web sidecar container listens on, so no OVN
+// apply-after-lb DNAT quirk applies here (unlike AlertManager, below).
+var prometheusEgressPorts = []int32{9091}
+
+// alertManagerEgressPorts allows both AlertManager's documented Service
+// port (9094) and its real post-DNAT container port (9095). OCP's
+// alertmanager-main Service exposes "web" as 9094, but that DNATs to the
+// kube-rbac-proxy-web sidecar's actual container port 9095 (port 9094 on
+// the container itself is Alertmanager's own gossip-mesh port -- an
+// unrelated naming collision with the Service's port number).
+// OVN-Kubernetes evaluates egress NetworkPolicy ACLs after load-balancer
+// DNAT (apply-after-lb=true, see dnsEgressRule for the analogous DNS
+// quirk), so a rule matching only 9094 never matches real AlertManager
+// traffic -- confirmed via kube-rbac-proxy-web container port inspection
+// and live traffic testing on OCP 4.18/OVN-Kubernetes (#298 spike).
+var alertManagerEgressPorts = []int32{9094, 9095}
+
+// monitoringEgressRules returns the egress rules needed to reach the
+// resolved Prometheus and (when includeAlertManager) AlertManager
+// endpoints, driven by spec.monitoring (#298). Each destination is
+// resolved independently across three tiers (documented on
+// MonitoringSpec):
+//  1. URL unset: namespace-scoped to openshift-monitoring.
+//  2. URL set, host is an in-cluster Service
+//     (<service>.<namespace>.svc[.cluster.local]): namespace-scoped to the
+//     parsed namespace.
+//  3. URL set, host doesn't parse as an in-cluster Service (external DNS,
+//     load balancer, etc.): the operator omits its own egress rule for
+//     that destination entirely rather than guessing an overly broad (or
+//     wrong) peer -- SC-7 boundary protection then relies on a
+//     platform-operator-supplied supplemental NetworkPolicy.
+//
+// includeAlertManager is false for AF, which has no AlertManager client
+// (afSeverityTriageConfig only ever sets PrometheusURL) -- granting AF
+// that egress would be unused, over-provisioned access.
+func monitoringEgressRules(knV2 *kubernautv1alpha2.Kubernaut, includeAlertManager bool) []networkingv1.NetworkPolicyEgressRule {
+	var rules []networkingv1.NetworkPolicyEgressRule
+	if rule, ok := monitoringDestinationEgressRule(knV2.Spec.Monitoring.Prometheus.URL, prometheusEgressPorts); ok {
+		rules = append(rules, rule)
 	}
+	if includeAlertManager {
+		if rule, ok := monitoringDestinationEgressRule(knV2.Spec.Monitoring.AlertManager.URL, alertManagerEgressPorts); ok {
+			rules = append(rules, rule)
+		}
+	}
+	return rules
+}
+
+// monitoringDestinationEgressRule builds the namespace-scoped egress rule
+// for one monitoring destination, or ok=false when tier 3 (see
+// monitoringEgressRules) applies and the rule must be omitted.
+func monitoringDestinationEgressRule(rawURL string, ports []int32) (networkingv1.NetworkPolicyEgressRule, bool) {
+	ns := OCPMonitoringNamespace
+	if rawURL != "" {
+		parsedNS, ok := inClusterServiceNamespace(rawURL)
+		if !ok {
+			return networkingv1.NetworkPolicyEgressRule{}, false
+		}
+		ns = parsedNS
+	}
+	protoTCP := corev1.ProtocolTCP
+	npPorts := make([]networkingv1.NetworkPolicyPort, 0, len(ports))
+	for _, p := range ports {
+		port := intstr.FromInt32(p)
+		npPorts = append(npPorts, networkingv1.NetworkPolicyPort{Protocol: &protoTCP, Port: &port})
+	}
+	return networkingv1.NetworkPolicyEgressRule{
+		To:    []networkingv1.NetworkPolicyPeer{{NamespaceSelector: namespaceNameSelector(ns)}},
+		Ports: npPorts,
+	}, true
+}
+
+// inClusterServiceNamespace extracts the namespace from an in-cluster
+// Kubernetes Service hostname of the form <service>.<namespace>.svc or
+// <service>.<namespace>.svc.cluster.local. Returns ok=false for any other
+// hostname shape (external DNS, bare IP, etc.) so callers can fall back to
+// tier 3 rather than guess.
+func inClusterServiceNamespace(rawURL string) (string, bool) {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Hostname() == "" {
+		return "", false
+	}
+	labels := strings.Split(u.Hostname(), ".")
+	if len(labels) >= 3 && labels[2] == "svc" {
+		return labels[1], true
+	}
+	return "", false
 }
 
 func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode) *networkingv1.NetworkPolicy {
@@ -674,16 +741,17 @@ func apifrontendEgressRules(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1al
 		},
 	})
 	// #1839 (upstream, PR #1841): AF's severityTriage config wires
-	// PrometheusURL directly at OCPPrometheusURL (Thanos Querier, :9091)
-	// for GetAlerts/GetRules/InstantQuery. This previously granted only
-	// the metrics port (9090, the ingress/scrape direction) here instead,
-	// so every severity-triage call to Prometheus was silently dropped by
-	// this NetworkPolicy -- masked until upstream removed the ungrounded
-	// LLM fallback that had absorbed the resulting "no data" error
-	// identically to a genuinely alert-less resource. Monitoring
-	// integration can no longer be disabled (#273), so this egress is
-	// unconditional.
-	egress = append(egress, monitoringStackEgressRule(OCPMonitoringNamespace))
+	// PrometheusURL directly at effectivePrometheusURL() (Thanos Querier,
+	// :9091 by default) for GetAlerts/GetRules/InstantQuery. This
+	// previously granted only the metrics port (9090, the ingress/scrape
+	// direction) here instead, so every severity-triage call to Prometheus
+	// was silently dropped by this NetworkPolicy -- masked until upstream
+	// removed the ungrounded LLM fallback that had absorbed the resulting
+	// "no data" error identically to a genuinely alert-less resource.
+	// Monitoring integration can no longer be disabled (#273), so this
+	// egress is unconditional. AF has no AlertManager client, so
+	// includeAlertManager=false keeps this rule minimal (#298, SC-7).
+	egress = append(egress, monitoringEgressRules(knV2, false)...)
 
 	if kn.Spec.Valkey.SecretName != "" {
 		valkeyPort := kn.Spec.Valkey.Port

@@ -228,6 +228,24 @@ const (
 	OCPAlertManagerURL = "https://alertmanager-main.openshift-monitoring.svc:9094"
 )
 
+// effectivePrometheusURL returns spec.monitoring.prometheus.url when set,
+// falling back to the built-in OCP Thanos Querier route (#298).
+func effectivePrometheusURL(knV2 *kubernautv1alpha2.Kubernaut) string {
+	if u := knV2.Spec.Monitoring.Prometheus.URL; u != "" {
+		return u
+	}
+	return OCPPrometheusURL
+}
+
+// effectiveAlertManagerURL returns spec.monitoring.alertManager.url when
+// set, falling back to the built-in OCP AlertManager route (#298).
+func effectiveAlertManagerURL(knV2 *kubernautv1alpha2.Kubernaut) string {
+	if u := knV2.Spec.Monitoring.AlertManager.URL; u != "" {
+		return u
+	}
+	return OCPAlertManagerURL
+}
+
 // OCP well-known namespaces.
 const (
 	OCPDNSNamespace        = "openshift-dns"
