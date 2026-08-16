@@ -811,15 +811,16 @@ func (r *KubernautReconciler) pruneOrphanedCoreClusterRBAC(
 }
 
 // deployMCPGatewayNamespaceRBAC provisions the namespace-scoped Roles/
-// RoleBindings for FMC/SP's MCP Gateway CRD reads (#224 Finding 5). FMC's
-// cluster-scoped ClusterRole/ClusterRoleBinding naturally drop out of
+// RoleBindings for FMC/SP/AF/EM's MCP Gateway CRD reads (#224 Finding 5,
+// extended to AF/EM by #227). FMC's cluster-scoped ClusterRole/
+// ClusterRoleBinding naturally drop out of
 // resources.ClusterRoles()/ClusterRoleBindings() once its effective
 // mcpGatewayNamespace resolves (the entire ClusterRole is MCP-Gateway-only),
 // and deployCoreRBAC's generic prune (#341) removes the now-stale objects in
-// the same reconcile -- no dedicated delete is needed here. SP's ClusterRole
-// is always present (it carries unconditional core rules too), so
-// ensureUnowned naturally drops its MCP Gateway rules in place when SP's
-// namespace resolves.
+// the same reconcile -- no dedicated delete is needed here. SP/AF/EM's
+// ClusterRoles are always present (they carry unconditional core rules
+// too), so ensureUnowned naturally drops their MCP Gateway rules in place
+// once each component's effective namespace resolves.
 //
 // #341's name-only prune isn't sufficient for these namespace-scoped
 // objects: the same role name (e.g. "<instance>-fleetmetadatacache-

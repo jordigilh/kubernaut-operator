@@ -168,6 +168,14 @@ type fleetConfigYAML struct {
 	MCPGatewayEndpoint string           `json:"mcpGatewayEndpoint,omitempty" yaml:"mcpGatewayEndpoint,omitempty"`
 	MCPGatewayType     string           `json:"mcpGatewayType,omitempty" yaml:"mcpGatewayType,omitempty"`
 	OAuth2             *fleetOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+
+	// Namespace scopes AF/EM's ClusterRegistry to a single namespace's MCP
+	// Gateway CRDs (registry.RegistryConfig{Namespace: ...}, kubernaut#1720
+	// closing #224 Finding 4's #1686 blocker) instead of a cluster-wide
+	// watch. Only ever populated by resolveMCPGatewayOnlyFleetConfig (AF/EM,
+	// #227); GW/RO never read a ClusterRegistry, so resolveFleetConfig never
+	// sets it.
+	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 }
 
 // fleetOAuth2YAML mirrors upstream pkg/fleet.FleetOAuth2Config. CredentialsSecretRef
@@ -251,8 +259,14 @@ func resolveFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefO
 // FleetConfig.Validate()'s own doc comment: "AF and EM... never call the
 // Backend/Endpoint scope-check adapter"). Reuses resolveFleetConfig's
 // marshaling and TLSCAFile defaulting, then strips the backend/endpoint/
-// tokenPath fields those services neither need nor read.
-func resolveMCPGatewayOnlyFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefOverride, defaultOAuth2CAFile string) *fleetConfigYAML {
+// tokenPath fields those services neither need nor read. effectiveNamespace
+// (the caller's own mcpGatewayNamespace override, falling back to the
+// shared spec.fleet.mcpGatewayNamespace -- see
+// effectiveAPIFrontendMCPGatewayNamespace/
+// effectiveEffectivenessMonitorMCPGatewayNamespace) is rendered as
+// fleet.namespace so AF/EM's ClusterRegistry scopes its watch to a single
+// namespace instead of cluster-wide (#227).
+func resolveMCPGatewayOnlyFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefOverride, defaultOAuth2CAFile, effectiveNamespace string) *fleetConfigYAML {
 	cfg := resolveFleetConfig(knV2, credentialsSecretRefOverride, defaultOAuth2CAFile)
 	if cfg == nil {
 		return nil
@@ -261,6 +275,7 @@ func resolveMCPGatewayOnlyFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credent
 	cfg.Endpoint = ""
 	cfg.TLSCAFile = ""
 	cfg.TokenPath = ""
+	cfg.Namespace = effectiveNamespace
 	return cfg
 }
 
@@ -1444,7 +1459,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubern
 				MaxRetries:    3,
 			},
 		},
-		Fleet: resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.EffectivenessMonitor.Fleet, ""), InterServiceTLSCAFile),
+		Fleet: resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.EffectivenessMonitor.Fleet, ""), InterServiceTLSCAFile, effectiveEffectivenessMonitorMCPGatewayNamespace(knV2)),
 	}
 	cfg.External = &emExternalYAML{
 		PrometheusURL:       effectivePrometheusURL(knV2),
@@ -2283,7 +2298,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 			DisconnectTTL: "10m",
 			RetentionTTL:  "720h",
 		},
-		Fleet:      resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""), apifrontendTLSCAFile),
+		Fleet:      resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""), apifrontendTLSCAFile, effectiveAPIFrontendMCPGatewayNamespace(knV2)),
 		Resilience: afResilienceConfig(),
 	}
 

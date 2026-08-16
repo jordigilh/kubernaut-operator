@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"slices"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -1859,6 +1860,26 @@ var _ = Describe("MCPGatewayNamespaceRBAC", func() {
 		Expect(fmcRole).NotTo(BeNil())
 	})
 
+	It("returns a Role/RoleBinding pair for APIFrontend when its effective namespace resolves (#227)", func() {
+		kn, knV2 := testKubernautWithFleetMCP()
+		knV2.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testAFMCPGatewayNamespace}
+		roles, rbs := MCPGatewayNamespaceRBAC(kn, knV2)
+		Expect(roles).To(HaveLen(1))
+		Expect(roles[0].Namespace).To(Equal(testAFMCPGatewayNamespace))
+		Expect(rbs).To(HaveLen(1))
+		Expect(rbs[0].Subjects[0].Name).To(Equal(ServiceAccountName(ComponentAPIFrontend)))
+	})
+
+	It("returns a Role/RoleBinding pair for EffectivenessMonitor when its effective namespace resolves (#227)", func() {
+		kn, knV2 := testKubernautWithFleetMCP()
+		knV2.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testEMMCPGatewayNamespace}
+		roles, rbs := MCPGatewayNamespaceRBAC(kn, knV2)
+		Expect(roles).To(HaveLen(1))
+		Expect(roles[0].Namespace).To(Equal(testEMMCPGatewayNamespace))
+		Expect(rbs).To(HaveLen(1))
+		Expect(rbs[0].Subjects[0].Name).To(Equal(ServiceAccountName(ComponentEffectivenessMonitor)))
+	})
+
 	It("returns both when both FMC and SignalProcessing resolve to (possibly different) namespaces", func() {
 		kn, knV2 := testKubernautWithFMC()
 		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testFMCMCPGatewayNamespace}
@@ -1907,6 +1928,58 @@ var _ = Describe("FleetMetadataCache RBAC namespace retrofit", func() {
 		found := false
 		for _, cr := range ClusterRoles(kn, knV2) {
 			if cr.Name == clusterRoleName(kn, "fleetmetadatacache") {
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue())
+	})
+})
+
+var _ = Describe("AF/EM RBAC namespace retrofit (#227)", func() {
+	It("apifrontendClusterRole omits the MCP Gateway CRD rules once AF's effective namespace resolves", func() {
+		kn, knV2 := testKubernautWithFleetMCP()
+		knV2.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testAFMCPGatewayNamespace}
+		labels := CommonLabels(kn)
+		cr := apifrontendClusterRole(kn, knV2, labels)
+		for _, r := range cr.Rules {
+			for _, g := range r.APIGroups {
+				Expect(g).NotTo(Equal("gateway.envoyproxy.io"), "AF's cluster-scoped ClusterRole should omit MCP Gateway CRD rules once a namespace-scoped Role supersedes them")
+			}
+		}
+	})
+
+	It("apifrontendClusterRole still includes the MCP Gateway CRD rules when AF has no effective namespace (regression)", func() {
+		kn, knV2 := testKubernautWithFleetMCP()
+		labels := CommonLabels(kn)
+		cr := apifrontendClusterRole(kn, knV2, labels)
+		found := false
+		for _, r := range cr.Rules {
+			if slices.Contains(r.APIGroups, "gateway.envoyproxy.io") {
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue())
+	})
+
+	It("effectivenessMonitorControllerClusterRole omits the MCP Gateway CRD rules once EM's effective namespace resolves", func() {
+		kn, knV2 := testKubernautWithFleetMCP()
+		knV2.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testEMMCPGatewayNamespace}
+		labels := CommonLabels(kn)
+		cr := effectivenessMonitorControllerClusterRole(kn, knV2, labels)
+		for _, r := range cr.Rules {
+			for _, g := range r.APIGroups {
+				Expect(g).NotTo(Equal("gateway.envoyproxy.io"), "EM's cluster-scoped ClusterRole should omit MCP Gateway CRD rules once a namespace-scoped Role supersedes them")
+			}
+		}
+	})
+
+	It("effectivenessMonitorControllerClusterRole still includes the MCP Gateway CRD rules when EM has no effective namespace (regression)", func() {
+		kn, knV2 := testKubernautWithFleetMCP()
+		labels := CommonLabels(kn)
+		cr := effectivenessMonitorControllerClusterRole(kn, knV2, labels)
+		found := false
+		for _, r := range cr.Rules {
+			if slices.Contains(r.APIGroups, "gateway.envoyproxy.io") {
 				found = true
 			}
 		}
