@@ -146,6 +146,52 @@ source-controlled manifests to avoid confusion.
 This change is **not** backported to `release/v1.5` — see #271 for the
 separately-backported NetworkPolicy fix that applies to both lines.
 
+### `additionalClusterRoles` moves to the top level and now binds Gateway/EM too (#277)
+
+`spec.kubernautAgent.additionalClusterRoleBindings` is removed from the
+`v1alpha2` schema; the equivalent field is now the top-level
+`spec.additionalClusterRoles`. Unlike the previous two entries in this
+section, **this has an automated conversion** — `v1alpha1` still accepts
+`spec.kubernautAgent.additionalClusterRoleBindings` at its original location
+and the operator's conversion webhook maps it losslessly to `v1alpha2`'s
+`spec.additionalClusterRoles` on your behalf. If you author `v1alpha2`
+manifests directly, move the field yourself:
+
+```yaml
+# Before (1.5, or v1alpha1 on 1.6 -- still works, no change needed)
+spec:
+  kubernautAgent:
+    additionalClusterRoleBindings:
+      - strimzi-kafka-reader
+
+# After (v1alpha2)
+spec:
+  additionalClusterRoles:
+    - strimzi-kafka-reader
+```
+
+**The schema move is compatible, but the binding behavior is not identical**:
+pre-1.6, listed ClusterRoles bound only to Kubernaut Agent's ServiceAccount.
+As of 1.6, they bind to Kubernaut Agent's, EffectivenessMonitor's, and (while
+`spec.gateway.enabled=true`) Gateway's ServiceAccounts — three
+ClusterRoleBindings per listed role name instead of one. This is intentional
+(see
+[jordigilh/kubernaut-operator#277](https://github.com/jordigilh/kubernaut-operator/issues/277)):
+Gateway and EffectivenessMonitor perform the same ecosystem-CRD owner-chain
+resolution Kubernaut Agent does, and previously had no way to be granted the
+same access. Review the ClusterRoles you list for whether Gateway/EM holding
+them too is appropriate for your environment before upgrading.
+
+Separately, `internal/resources/rbac.go`'s built-in owner-chain-resolution
+rules for Gateway/EM (`ownerChainResolutionRules()`) were shrunk from a
+broad, ever-growing list covering OLM, Istio, Linkerd, cert-manager, ArgoCD,
+OpenShift Routes, and KubeVirt/CDI down to just PDB and core networking
+(`policy/poddisruptionbudgets`, `networking.k8s.io/{networkpolicies,
+ingresses}`). If your cluster runs one of the removed ecosystems and relies
+on Gateway/EM being able to traverse its CRDs during owner-chain resolution,
+grant it explicitly via `spec.additionalClusterRoles` after upgrading —
+Kubernaut Agent's own investigation ClusterRole is unaffected by this shrink.
+
 ## Migrating your CR
 
 ### Option A: migration script (recommended for the common case)

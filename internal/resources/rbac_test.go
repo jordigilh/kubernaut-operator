@@ -123,7 +123,13 @@ var _ = Describe("ClusterRoles", func() {
 			}
 		})
 
-		It("has owner-chain resolution rules", func() {
+		// #277: ownerChainResolutionRules() shrunk to only genuinely
+		// universal, non-ecosystem-specific kinds (PDB + networking.k8s.io).
+		// OLM/Istio/cert-manager/ArgoCD/Routes/KubeVirt are no longer
+		// unconditionally granted -- operators needing that ecosystem
+		// coverage supply their own ClusterRole via
+		// spec.additionalClusterRoles (least-privilege, SC-7/AC-6).
+		It("has only the universal owner-chain resolution rules, not ecosystem-specific ones", func() {
 			kn := testKubernaut()
 			roles := ClusterRoles(kn, testKnV2(kn))
 			var gw *rbacv1.ClusterRole
@@ -135,25 +141,27 @@ var _ = Describe("ClusterRoles", func() {
 			}
 			Expect(gw).NotTo(BeNil(), "gateway-role ClusterRole not found")
 
-			wantGroups := []string{
-				"operators.coreos.com",
-				"packages.operators.coreos.com",
-				"security.istio.io",
-				"networking.istio.io",
-				"cert-manager.io",
-				"argoproj.io",
-				"route.openshift.io",
-				"kubevirt.io",
-				"cdi.kubevirt.io",
-			}
 			foundGroups := make(map[string]bool)
 			for _, rule := range gw.Rules {
 				for _, g := range rule.APIGroups {
 					foundGroups[g] = true
 				}
 			}
+
+			wantGroups := []string{"policy", "networking.k8s.io"}
 			for _, g := range wantGroups {
-				Expect(foundGroups[g]).To(BeTrue(), "gateway-role missing owner-chain API group %q", g)
+				Expect(foundGroups[g]).To(BeTrue(), "gateway-role missing universal owner-chain API group %q", g)
+			}
+
+			droppedGroups := []string{
+				"operators.coreos.com", "packages.operators.coreos.com",
+				"security.istio.io", "networking.istio.io",
+				"cert-manager.io", "argoproj.io", "route.openshift.io",
+				"kubevirt.io", "cdi.kubevirt.io",
+			}
+			for _, g := range droppedGroups {
+				Expect(foundGroups[g]).To(BeFalse(),
+					"gateway-role should no longer unconditionally grant ecosystem-specific API group %q (#277 least-privilege shrink)", g)
 			}
 		})
 	})
@@ -318,7 +326,8 @@ var _ = Describe("ClusterRoles", func() {
 	})
 
 	Describe("EffectivenessMonitor controller", func() {
-		It("has owner-chain resolution rules", func() {
+		// #277: see the matching Gateway test above for rationale.
+		It("has only the universal owner-chain resolution rules, not ecosystem-specific ones", func() {
 			kn := testKubernaut()
 			roles := ClusterRoles(kn, testKnV2(kn))
 			var em *rbacv1.ClusterRole
@@ -330,25 +339,27 @@ var _ = Describe("ClusterRoles", func() {
 			}
 			Expect(em).NotTo(BeNil(), "effectivenessmonitor-controller ClusterRole not found")
 
-			wantGroups := []string{
-				"operators.coreos.com",
-				"packages.operators.coreos.com",
-				"security.istio.io",
-				"networking.istio.io",
-				"cert-manager.io",
-				"argoproj.io",
-				"route.openshift.io",
-				"kubevirt.io",
-				"cdi.kubevirt.io",
-			}
 			foundGroups := make(map[string]bool)
 			for _, rule := range em.Rules {
 				for _, g := range rule.APIGroups {
 					foundGroups[g] = true
 				}
 			}
+
+			wantGroups := []string{"policy", "networking.k8s.io"}
 			for _, g := range wantGroups {
-				Expect(foundGroups[g]).To(BeTrue(), "effectivenessmonitor-controller missing owner-chain API group %q", g)
+				Expect(foundGroups[g]).To(BeTrue(), "effectivenessmonitor-controller missing universal owner-chain API group %q", g)
+			}
+
+			droppedGroups := []string{
+				"operators.coreos.com", "packages.operators.coreos.com",
+				"security.istio.io", "networking.istio.io",
+				"cert-manager.io", "argoproj.io", "route.openshift.io",
+				"kubevirt.io", "cdi.kubevirt.io",
+			}
+			for _, g := range droppedGroups {
+				Expect(foundGroups[g]).To(BeFalse(),
+					"effectivenessmonitor-controller should no longer unconditionally grant ecosystem-specific API group %q (#277 least-privilege shrink)", g)
 			}
 		})
 	})
@@ -657,29 +668,47 @@ var _ = Describe("MonitoringClusterRoleNames", func() {
 	})
 })
 
-var _ = Describe("AdditionalAgentCRB", func() {
-	Describe("AdditionalAgentCRBName", func() {
-		It("returns the short form", func() {
+// AdditionalComponentCRB/CRBName (#277): generalized from KA-only to also
+// support Gateway and EffectivenessMonitor, since none of the three has a
+// legitimate reason to see a different set of ecosystem CRDs than the
+// others -- they all resolve the same owner-reference chains, driven by a
+// single shared spec.additionalClusterRoles list (BR-PLATFORM-005: the
+// operator only creates the binding, never the referenced ClusterRole,
+// keeping least-privilege in the administrator's hands).
+var _ = Describe("AdditionalComponentCRB", func() {
+	Describe("AdditionalComponentCRBName", func() {
+		It("returns the short form, scoped per component", func() {
 			kn := testKubernaut()
-			name := AdditionalAgentCRBName(kn, "my-kafka-reader")
+			name := AdditionalComponentCRBName(kn, ComponentKubernautAgent, "my-kafka-reader")
 			want := "kubernaut-system-kubernaut-agent-ext-my-kafka-reader"
 			Expect(name).To(Equal(want), "got %q, want %q", name, want)
 		})
 
+		It("produces distinct names for the same role name across components", func() {
+			kn := testKubernaut()
+			kaName := AdditionalComponentCRBName(kn, ComponentKubernautAgent, "shared-role")
+			gwName := AdditionalComponentCRBName(kn, ComponentGateway, "shared-role")
+			emName := AdditionalComponentCRBName(kn, ComponentEffectivenessMonitor, "shared-role")
+
+			Expect(kaName).NotTo(Equal(gwName), "KA and Gateway CRB names must differ for the same role name")
+			Expect(kaName).NotTo(Equal(emName), "KA and EM CRB names must differ for the same role name")
+			Expect(gwName).NotTo(Equal(emName), "Gateway and EM CRB names must differ for the same role name")
+		})
+
 		It("does not truncate when exactly at the limit", func() {
 			kn := testKubernaut()
-			prefix := kn.Namespace + "-kubernaut-agent-ext-"
+			prefix := kn.Namespace + "-" + ComponentKubernautAgent + "-ext-"
 			roleName := strings.Repeat("a", maxK8sNameLen-len(prefix))
-			name := AdditionalAgentCRBName(kn, roleName)
+			name := AdditionalComponentCRBName(kn, ComponentKubernautAgent, roleName)
 			Expect(name).To(HaveLen(maxK8sNameLen), "expected name length %d, got %d", maxK8sNameLen, len(name))
 			Expect(name).To(Equal(prefix+roleName), "name should not be truncated when exactly at limit")
 		})
 
 		It("truncates long names", func() {
 			kn := testKubernaut()
-			prefix := kn.Namespace + "-kubernaut-agent-ext-"
+			prefix := kn.Namespace + "-" + ComponentKubernautAgent + "-ext-"
 			roleName := strings.Repeat("x", maxK8sNameLen-len(prefix)+50)
-			name := AdditionalAgentCRBName(kn, roleName)
+			name := AdditionalComponentCRBName(kn, ComponentKubernautAgent, roleName)
 
 			Expect(len(name)).To(BeNumerically("<=", maxK8sNameLen), "name exceeds 253 chars: len=%d", len(name)) //nolint:ginkgolinter // dynamic length bound
 			Expect(strings.HasPrefix(name, prefix)).To(BeTrue(), "name should start with %q, got %q", prefix, name)
@@ -687,54 +716,59 @@ var _ = Describe("AdditionalAgentCRB", func() {
 
 		It("maps different long names to different hashes", func() {
 			kn := testKubernaut()
-			prefix := kn.Namespace + "-kubernaut-agent-ext-"
+			prefix := kn.Namespace + "-" + ComponentKubernautAgent + "-ext-"
 			base := strings.Repeat("a", maxK8sNameLen-len(prefix)+10)
 
-			name1 := AdditionalAgentCRBName(kn, base+"1")
-			name2 := AdditionalAgentCRBName(kn, base+"2")
+			name1 := AdditionalComponentCRBName(kn, ComponentKubernautAgent, base+"1")
+			name2 := AdditionalComponentCRBName(kn, ComponentKubernautAgent, base+"2")
 			Expect(name1).NotTo(Equal(name2), "different long role names should produce different CRB names")
 		})
 
 		It("is stable for the same role name", func() {
 			kn := testKubernaut()
-			name1 := AdditionalAgentCRBName(kn, "role-a")
-			name2 := AdditionalAgentCRBName(kn, "role-b")
+			name1 := AdditionalComponentCRBName(kn, ComponentKubernautAgent, "role-a")
+			name2 := AdditionalComponentCRBName(kn, ComponentKubernautAgent, "role-b")
 
-			name1Again := AdditionalAgentCRBName(kn, "role-a")
-			name2Again := AdditionalAgentCRBName(kn, "role-b")
+			name1Again := AdditionalComponentCRBName(kn, ComponentKubernautAgent, "role-a")
+			name2Again := AdditionalComponentCRBName(kn, ComponentKubernautAgent, "role-b")
 
 			Expect(name1 == name1Again && name2 == name2Again).To(BeTrue(),
 				"reordering should not change CRB names (names are per-role, not positional)")
 		})
 	})
 
-	It("has the expected structure", func() {
-		kn := testKubernaut()
-		crName := "strimzi-kafka-reader"
-		crb := AdditionalAgentCRB(kn, crName)
+	DescribeTable("has the expected structure for each component",
+		func(component string) {
+			kn := testKubernaut()
+			crName := "strimzi-kafka-reader"
+			saName := ServiceAccountName(component)
+			crb := AdditionalComponentCRB(kn, component, saName, crName)
 
-		Expect(crb.RoleRef.Kind).To(Equal(testClusterRoleKind), "RoleRef.Kind = %q, want ClusterRole", crb.RoleRef.Kind)
-		Expect(crb.RoleRef.Name).To(Equal(crName), "RoleRef.Name = %q, want %q", crb.RoleRef.Name, crName)
-		Expect(crb.Subjects).To(HaveLen(1), "expected 1 subject, got %d", len(crb.Subjects))
-		Expect(crb.Subjects[0].Name).To(Equal(ServiceAccountName(ComponentKubernautAgent)),
-			"subject SA = %q, want %q", crb.Subjects[0].Name, ServiceAccountName(ComponentKubernautAgent))
-		Expect(crb.Subjects[0].Namespace).To(Equal(kn.Namespace),
-			"subject namespace = %q, want %q", crb.Subjects[0].Namespace, kn.Namespace)
-	})
+			Expect(crb.RoleRef.Kind).To(Equal(testClusterRoleKind), "RoleRef.Kind = %q, want ClusterRole", crb.RoleRef.Kind)
+			Expect(crb.RoleRef.Name).To(Equal(crName), "RoleRef.Name = %q, want %q", crb.RoleRef.Name, crName)
+			Expect(crb.Subjects).To(HaveLen(1), "expected 1 subject, got %d", len(crb.Subjects))
+			Expect(crb.Subjects[0].Name).To(Equal(saName), "subject SA = %q, want %q", crb.Subjects[0].Name, saName)
+			Expect(crb.Subjects[0].Namespace).To(Equal(kn.Namespace),
+				"subject namespace = %q, want %q", crb.Subjects[0].Namespace, kn.Namespace)
+		},
+		Entry("kubernaut-agent", ComponentKubernautAgent),
+		Entry("gateway", ComponentGateway),
+		Entry("effectivenessmonitor", ComponentEffectivenessMonitor),
+	)
 
 	It("sets expected labels", func() {
 		kn := testKubernaut()
-		crb := AdditionalAgentCRB(kn, "test-role")
+		crb := AdditionalComponentCRB(kn, ComponentKubernautAgent, ServiceAccountName(ComponentKubernautAgent), "test-role")
 
 		Expect(crb.Labels["app.kubernetes.io/managed-by"]).To(Equal(testOperatorManagedByValue), "missing managed-by label")
 		Expect(crb.Labels["app.kubernetes.io/instance"]).To(Equal(kn.Name), "missing instance label")
-		Expect(crb.Labels[LabelAdditionalAgentRBAC]).To(Equal(LabelValueTrue), "missing additional-agent-rbac label")
+		Expect(crb.Labels[LabelAdditionalComponentRBAC]).To(Equal(LabelValueTrue), "missing additional-component-rbac label")
 	})
 
 	It("has no entries when the spec list is nil", func() {
-		kn := testKubernaut()
-		kn.Spec.KubernautAgent.AdditionalClusterRoleBindings = nil
-		Expect(kn.Spec.KubernautAgent.AdditionalClusterRoleBindings).To(BeEmpty(), "empty additional list should have length 0")
+		knV2 := testKnV2(testKubernaut())
+		knV2.Spec.AdditionalClusterRoles = nil
+		Expect(knV2.Spec.AdditionalClusterRoles).To(BeEmpty(), "empty additional list should have length 0")
 	})
 })
 

@@ -537,10 +537,11 @@ correct, see [Troubleshooting](03-deploy.md#troubleshooting) or the
 detailed writeup: [Kubernaut Console: troubleshooting "Access
 Denied"](https://gist.github.com/jordigilh/5984f65c88da042f2207825a9e57df62).
 
-## Additional RBAC for Kubernaut Agent
+## Additional ClusterRoles for ecosystem CRDs (KA, Gateway, EM)
 
 By default, the operator creates a `kubernaut-agent-investigator` ClusterRole
-with **read-only** access to:
+(bound only to the Kubernaut Agent ServiceAccount) with **read-only** access
+to:
 
 - **Core Kubernetes**: Pods, Deployments, StatefulSets, DaemonSets, Jobs, Services,
   Secrets, ConfigMaps, Events, Namespaces, Nodes, PersistentVolumes,
@@ -562,22 +563,38 @@ with **read-only** access to:
   cert-manager (Certificate, Issuer, ClusterIssuer), ArgoCD (Application,
   AppProject), Prometheus (ServiceMonitor, PodMonitor, PrometheusRule)
 
-If your environment includes custom CRDs that the KA agent should be able
-to investigate, use `spec.kubernautAgent.additionalClusterRoleBindings` to layer
-on pre-existing ClusterRoles:
+Gateway and EffectivenessMonitor (EM) carry their own, much smaller built-in
+owner-chain-resolution rules (PDB + `networking.k8s.io` only, as of #277) --
+they don't get the ecosystem-specific grants above, since neither has KA's
+investigation role and forcing every ecosystem's CRDs onto every cluster
+regardless of whether it runs that ecosystem violated least-privilege
+(SC-7/AC-6). If your environment includes ecosystem or custom CRDs that KA,
+Gateway, or EM's owner-chain resolution needs to traverse -- e.g. Gateway or
+EM correlating a signal's owner chain through a Knative Service or a
+Strimzi-managed Kafka topic -- use the top-level `spec.additionalClusterRoles`
+to layer on pre-existing ClusterRoles:
 
 ```yaml
 spec:
-  kubernautAgent:
-    additionalClusterRoleBindings:
-      - strimzi-kafka-reader        # Kafka topics, brokers
-      - knative-service-reader      # Knative Serving resources
-      - my-app-crds-viewer          # Your custom application CRDs
+  additionalClusterRoles:
+    - strimzi-kafka-reader        # Kafka topics, brokers
+    - knative-service-reader      # Knative Serving resources
+    - my-app-crds-viewer          # Your custom application CRDs
 ```
 
-The operator creates one ClusterRoleBinding per entry, binding the named
-ClusterRole to the `kubernaut-agent-sa` ServiceAccount. It does **not** create
-or manage the ClusterRoles themselves — you must create them separately.
+The operator creates one ClusterRoleBinding per (entry, component) pair,
+binding the named ClusterRole to KA's and EM's ServiceAccounts unconditionally,
+and to Gateway's ServiceAccount while `spec.gateway.enabled=true` -- e.g. two
+entries with Gateway enabled produce 6 ClusterRoleBindings, not 2. It does
+**not** create or manage the ClusterRoles themselves — you must create them
+separately.
+
+> **Migrating from v1alpha1 / pre-#277 operators**: the field was previously
+> `spec.kubernautAgent.additionalClusterRoleBindings` and only bound KA. The
+> v1alpha1 API still accepts it (converted losslessly to the new top-level
+> field on the v1alpha2 storage version), but the Gateway/EM binding is new
+> behavior on upgrade -- review the ClusterRoles you list for whether it's
+> appropriate for Gateway/EM to hold them too.
 
 The `AdditionalRBACBound` status condition reports whether all referenced
 ClusterRoles exist:
@@ -588,21 +605,22 @@ ClusterRoles exist:
 ### Security considerations
 
 Anyone with `update` permission on the `kubernauts.kubernaut.ai` CR can bind
-**any** ClusterRole to the KA ServiceAccount, including highly privileged roles
-like `cluster-admin`. RBAC on the Kubernaut CR itself is the access control
-boundary. Restrict who can edit the CR using standard Kubernetes RBAC.
+**any** ClusterRole to the KA/Gateway/EM ServiceAccounts, including highly
+privileged roles like `cluster-admin`. RBAC on the Kubernaut CR itself is the
+access control boundary. Restrict who can edit the CR using standard
+Kubernetes RBAC.
 
 ### Operational notes
 
 - The `AdditionalRBACBound` condition updates every reconcile cycle (~60s). If
   you create a referenced ClusterRole after the CR, the condition will reflect it
   within one minute.
-- Removing entries from the list automatically prunes the corresponding
-  ClusterRoleBindings.
+- Removing entries from the list, or disabling Gateway, automatically prunes
+  the corresponding ClusterRoleBindings for the affected component(s).
 - **Downgrade cleanup**: If downgrading to an operator version without this
   feature, remove orphaned CRBs manually:
   ```bash
-  kubectl delete clusterrolebinding -l kubernaut.ai/additional-agent-rbac=true
+  kubectl delete clusterrolebinding -l kubernaut.ai/additional-component-rbac=true
   ```
 
 ---

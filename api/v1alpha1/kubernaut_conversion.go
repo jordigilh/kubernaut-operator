@@ -94,6 +94,9 @@ func (src *Kubernaut) ConvertTo(dstRaw conversion.Hub) error {
 		Console:                 convertConsoleSpecToV2(src.Spec.Console),
 		Fleet:                   v1alpha2.FleetSpec{},              // F1: no v1alpha1 source (Fleet moved to v1alpha2-only)
 		FleetMetadataCache:      v1alpha2.FleetMetadataCacheSpec{}, // F1: no v1alpha1 source (Fleet moved to v1alpha2-only)
+		// #277: relocated from kubernautAgent.additionalClusterRoleBindings
+		// to top-level additionalClusterRoles (now shared by KA/Gateway/EM).
+		AdditionalClusterRoles: src.Spec.KubernautAgent.AdditionalClusterRoleBindings,
 	}
 
 	dst.Status = convertStatusToV2(src.Status)
@@ -126,13 +129,18 @@ func (dst *Kubernaut) ConvertFrom(srcRaw conversion.Hub) error {
 		WorkflowExecution:       convertWorkflowExecutionSpecToV1(src.Spec.WorkflowExecution),
 		EffectivenessMonitor:    convertEffectivenessMonitorSpecToV1(src.Spec.EffectivenessMonitor),
 		LLMProfiles:             convertLLMProfilesToV1(src.Spec.LLMProfiles),
-		KubernautAgent:          convertKubernautAgentSpecToV1(src.Spec.KubernautAgent, src.Spec.LLMProfiles),
-		Gateway:                 convertGatewaySpecToV1(src.Spec.Gateway),
-		AuthWebhook:             convertAuthWebhookSpecToV1(src.Spec.AuthWebhook),
-		DataStorage:             convertDataStorageSpecToV1(src.Spec.DataStorage),
-		NetworkPolicies:         convertNetworkPoliciesSpecToV1(src.Spec.NetworkPolicies, src.Name, src.Namespace),
-		APIFrontend:             convertAPIFrontendSpecToV1(src.Spec.APIFrontend),
-		Console:                 convertConsoleSpecToV1(src.Spec.Console),
+		// #277: v1alpha1 only supports binding additional ClusterRoles to
+		// KA (nested field); v1alpha2's top-level additionalClusterRoles
+		// also binds them to Gateway/EM, which has no v1alpha1
+		// representation -- the role *names* still round-trip losslessly,
+		// only the Gateway/EM binding scope is dropped on downgrade.
+		KubernautAgent:  convertKubernautAgentSpecToV1(src.Spec.KubernautAgent, src.Spec.LLMProfiles, src.Spec.AdditionalClusterRoles),
+		Gateway:         convertGatewaySpecToV1(src.Spec.Gateway),
+		AuthWebhook:     convertAuthWebhookSpecToV1(src.Spec.AuthWebhook),
+		DataStorage:     convertDataStorageSpecToV1(src.Spec.DataStorage),
+		NetworkPolicies: convertNetworkPoliciesSpecToV1(src.Spec.NetworkPolicies, src.Name, src.Namespace),
+		APIFrontend:     convertAPIFrontendSpecToV1(src.Spec.APIFrontend),
+		Console:         convertConsoleSpecToV1(src.Spec.Console),
 	}
 
 	dst.Status = convertStatusToV1(src.Status)
@@ -618,26 +626,31 @@ func convertAlignmentCheckSpecToV1(s v1alpha2.AlignmentCheckSpec, profiles map[s
 
 func convertKubernautAgentSpecToV2(s KubernautAgentSpec, _ map[string]LLMProfileSpec) v1alpha2.KubernautAgentSpec {
 	return v1alpha2.KubernautAgentSpec{
-		LLMProfileRef:                 s.LLMProfileRef,
-		RuntimeConfigMapName:          s.RuntimeConfigMapName,
-		PhaseModels:                   s.PhaseModels,
-		MaxTurns:                      s.MaxTurns,
-		Session:                       v1alpha2.SessionSpec{TTL: s.Session.TTL},
-		Audit:                         v1alpha2.AuditSpec{Enabled: s.Audit.Enabled},
-		AlignmentCheck:                convertAlignmentCheckSpecToV2(s.AlignmentCheck),
-		Summarizer:                    v1alpha2.SummarizerSpec{Threshold: s.Summarizer.Threshold, MaxToolOutputSize: s.Summarizer.MaxToolOutputSize},
-		Safety:                        convertSafetySpecToV2(s.Safety),
-		Interactive:                   convertInteractiveSpecToV2(s.Interactive),
-		AdditionalClusterRoleBindings: s.AdditionalClusterRoleBindings,
-		ServerRateLimit:               (*v1alpha2.KARateLimitSpec)(s.ServerRateLimit),
-		Shutdown:                      v1alpha2.ShutdownSpec{DrainSeconds: s.Shutdown.DrainSeconds},
-		Logging:                       convertLoggingSpecToV2(s.Logging),
-		Resources:                     s.Resources,
-		Fleet:                         nil, // F1: no v1alpha1 source (Fleet moved to v1alpha2-only)
+		LLMProfileRef:        s.LLMProfileRef,
+		RuntimeConfigMapName: s.RuntimeConfigMapName,
+		PhaseModels:          s.PhaseModels,
+		MaxTurns:             s.MaxTurns,
+		Session:              v1alpha2.SessionSpec{TTL: s.Session.TTL},
+		Audit:                v1alpha2.AuditSpec{Enabled: s.Audit.Enabled},
+		AlignmentCheck:       convertAlignmentCheckSpecToV2(s.AlignmentCheck),
+		Summarizer:           v1alpha2.SummarizerSpec{Threshold: s.Summarizer.Threshold, MaxToolOutputSize: s.Summarizer.MaxToolOutputSize},
+		Safety:               convertSafetySpecToV2(s.Safety),
+		Interactive:          convertInteractiveSpecToV2(s.Interactive),
+		// #277: AdditionalClusterRoleBindings relocated to top-level
+		// v1alpha2.KubernautSpec.AdditionalClusterRoles -- see ConvertTo.
+		ServerRateLimit: (*v1alpha2.KARateLimitSpec)(s.ServerRateLimit),
+		Shutdown:        v1alpha2.ShutdownSpec{DrainSeconds: s.Shutdown.DrainSeconds},
+		Logging:         convertLoggingSpecToV2(s.Logging),
+		Resources:       s.Resources,
+		Fleet:           nil, // F1: no v1alpha1 source (Fleet moved to v1alpha2-only)
 	}
 }
 
-func convertKubernautAgentSpecToV1(s v1alpha2.KubernautAgentSpec, profiles map[string]v1alpha2.LLMProfileSpec) KubernautAgentSpec {
+// convertKubernautAgentSpecToV1 converts a v1alpha2 KubernautAgentSpec back
+// to v1alpha1's shape. additionalClusterRoles is v1alpha2's top-level
+// spec.additionalClusterRoles (#277) threaded in from the caller since it no
+// longer lives on KubernautAgentSpec itself.
+func convertKubernautAgentSpecToV1(s v1alpha2.KubernautAgentSpec, profiles map[string]v1alpha2.LLMProfileSpec, additionalClusterRoles []string) KubernautAgentSpec {
 	return KubernautAgentSpec{
 		LLMProfileRef:                 s.LLMProfileRef,
 		RuntimeConfigMapName:          s.RuntimeConfigMapName,
@@ -649,7 +662,7 @@ func convertKubernautAgentSpecToV1(s v1alpha2.KubernautAgentSpec, profiles map[s
 		Summarizer:                    SummarizerSpec{Threshold: s.Summarizer.Threshold, MaxToolOutputSize: s.Summarizer.MaxToolOutputSize},
 		Safety:                        convertSafetySpecToV1(s.Safety),
 		Interactive:                   convertInteractiveSpecToV1(s.Interactive),
-		AdditionalClusterRoleBindings: s.AdditionalClusterRoleBindings,
+		AdditionalClusterRoleBindings: additionalClusterRoles,
 		ServerRateLimit:               (*KARateLimitSpec)(s.ServerRateLimit),
 		Shutdown:                      ShutdownSpec{DrainSeconds: s.Shutdown.DrainSeconds},
 		Logging:                       convertLoggingSpecToV1(s.Logging),

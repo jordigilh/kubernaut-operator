@@ -671,7 +671,7 @@ func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv
 	if err := r.deployMCPGatewayNamespaceRBAC(ctx, kn, knV2); err != nil {
 		return err
 	}
-	return r.deployAdditionalAgentRBAC(ctx, kn)
+	return r.deployAdditionalComponentRBAC(ctx, kn, knV2)
 }
 
 // deployClusterScopedCoreRBAC ensures the always-computed ClusterRoles/
@@ -725,6 +725,52 @@ func (r *KubernautReconciler) deployNamespacedCoreRBAC(ctx context.Context, kn *
 	return nil
 }
 
+// namesOf returns the Name of every object in objs as a lookup set, used to
+// build the "desired" side of a label-selector prune diff.
+func namesOf[T client.Object](objs []T) map[string]bool {
+	names := make(map[string]bool, len(objs))
+	for _, o := range objs {
+		names[o.GetName()] = true
+	}
+	return names
+}
+
+// pointersOf converts a value slice -- as returned by a
+// client.ObjectList's .Items field, e.g. rbacv1.ClusterRoleList.Items -- into
+// a slice of pointers, since only the pointer type implements client.Object.
+func pointersOf[T any](items []T) []*T {
+	out := make([]*T, len(items))
+	for i := range items {
+		out[i] = &items[i]
+	}
+	return out
+}
+
+// pruneUndesired deletes every element of live whose name is not present in
+// desiredNames, logging each successful deletion (object kind + name, per
+// AGENTS.md's operator audit-trace requirement -- deleteIfExists itself is
+// silent) and returning one wrapped error per failed deletion. kind is used
+// for both the log/error context and is expected to be a stable, human
+// -readable object-kind label (e.g. "ClusterRole"). Shared by
+// pruneOrphanedCoreClusterRBAC (#341) and
+// pruneOrphanedAdditionalComponentRBAC (#277) so the list-diff-delete shape
+// is defined once regardless of which RBAC object kind is being pruned.
+func pruneUndesired[T client.Object](r *KubernautReconciler, ctx context.Context, kind string, live []T, desiredNames map[string]bool) []error {
+	log := logf.FromContext(ctx)
+	var errs []error
+	for _, obj := range live {
+		if desiredNames[obj.GetName()] {
+			continue
+		}
+		if err := r.deleteIfExists(ctx, obj); err != nil {
+			errs = append(errs, fmt.Errorf("pruning orphaned %s %s: %w", kind, obj.GetName(), err))
+			continue
+		}
+		log.Info("pruned orphaned RBAC object", "kind", kind, "name", obj.GetName())
+	}
+	return errs
+}
+
 // pruneOrphanedCoreClusterRBAC deletes any ClusterRole/ClusterRoleBinding
 // carrying LabelCoreClusterRBAC for this instance that is not present in
 // desiredCRs/desiredCRBs (#341). It replaces a family of dedicated,
@@ -749,41 +795,17 @@ func (r *KubernautReconciler) pruneOrphanedCoreClusterRBAC(
 		"app.kubernetes.io/instance":   kn.Name,
 	}
 
-	desiredCRNames := make(map[string]bool, len(desiredCRs))
-	for _, cr := range desiredCRs {
-		desiredCRNames[cr.Name] = true
-	}
 	liveCRs := &rbacv1.ClusterRoleList{}
 	if err := r.List(ctx, liveCRs, selector); err != nil {
 		return append(errs, fmt.Errorf("listing core ClusterRoles for pruning: %w", err))
 	}
-	for i := range liveCRs.Items {
-		cr := &liveCRs.Items[i]
-		if desiredCRNames[cr.Name] {
-			continue
-		}
-		if err := r.deleteIfExists(ctx, cr); err != nil {
-			errs = append(errs, fmt.Errorf("pruning orphaned ClusterRole %s: %w", cr.Name, err))
-		}
-	}
+	errs = append(errs, pruneUndesired(r, ctx, "ClusterRole", pointersOf(liveCRs.Items), namesOf(desiredCRs))...)
 
-	desiredCRBNames := make(map[string]bool, len(desiredCRBs))
-	for _, crb := range desiredCRBs {
-		desiredCRBNames[crb.Name] = true
-	}
 	liveCRBs := &rbacv1.ClusterRoleBindingList{}
 	if err := r.List(ctx, liveCRBs, selector); err != nil {
 		return append(errs, fmt.Errorf("listing core ClusterRoleBindings for pruning: %w", err))
 	}
-	for i := range liveCRBs.Items {
-		crb := &liveCRBs.Items[i]
-		if desiredCRBNames[crb.Name] {
-			continue
-		}
-		if err := r.deleteIfExists(ctx, crb); err != nil {
-			errs = append(errs, fmt.Errorf("pruning orphaned ClusterRoleBinding %s: %w", crb.Name, err))
-		}
-	}
+	errs = append(errs, pruneUndesired(r, ctx, "ClusterRoleBinding", pointersOf(liveCRBs.Items), namesOf(desiredCRBs))...)
 
 	return errs
 }
@@ -814,37 +836,68 @@ func (r *KubernautReconciler) deployMCPGatewayNamespaceRBAC(ctx context.Context,
 	return nil
 }
 
-// deployAdditionalAgentRBAC ensures user-specified additional ClusterRoleBindings
-// for the Kubernaut Agent SA, prunes stale ones removed from the spec, validates
-// that referenced ClusterRoles exist, and updates status + conditions.
-func (r *KubernautReconciler) deployAdditionalAgentRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
-	desiredSet := deduplicate(kn.Spec.KubernautAgent.AdditionalClusterRoleBindings)
-	boundSet := kn.Status.BoundAdditionalClusterRoles
+// additionalRBACComponentSA pairs a component name with its ServiceAccount
+// name for spec.additionalClusterRoles binding (#277).
+type additionalRBACComponentSA struct {
+	name string
+	sa   string
+}
 
-	for _, crName := range desiredSet {
-		crb := resources.AdditionalAgentCRB(kn, crName)
-		if err := r.ensureUnowned(ctx, crb); err != nil {
-			return fmt.Errorf("ensuring additional agent CRB for %s: %w", crName, err)
+// additionalRBACComponents returns the components eligible for
+// spec.additionalClusterRoles bindings (#277): KA and EM are always
+// active; Gateway only when spec.gateway.enabled=true, since a disabled
+// Gateway has no ServiceAccount worth binding to.
+func additionalRBACComponents(knV2 *kubernautv1alpha2.Kubernaut) []additionalRBACComponentSA {
+	comps := []additionalRBACComponentSA{
+		{name: resources.ComponentKubernautAgent, sa: resources.ServiceAccountName(resources.ComponentKubernautAgent)},
+		{name: resources.ComponentEffectivenessMonitor, sa: resources.ServiceAccountName(resources.ComponentEffectivenessMonitor)},
+	}
+	if knV2.Spec.GatewayEnabled() {
+		comps = append(comps, additionalRBACComponentSA{name: resources.ComponentGateway, sa: resources.ServiceAccountName(resources.ComponentGateway)})
+	}
+	return comps
+}
+
+// deployAdditionalComponentRBAC ensures user-specified additional
+// ClusterRoleBindings (spec.additionalClusterRoles, #277) across every
+// applicable component's ServiceAccount (KA, EM, and Gateway when
+// enabled), prunes any that are no longer desired -- whether a role name
+// was removed from the spec or a component itself was disabled --
+// validates that referenced ClusterRoles exist, and updates status +
+// conditions.
+func (r *KubernautReconciler) deployAdditionalComponentRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
+	desiredNames := deduplicate(knV2.Spec.AdditionalClusterRoles)
+	boundSet := kn.Status.BoundAdditionalClusterRoles
+	components := additionalRBACComponents(knV2)
+
+	desiredCRBs := make([]*rbacv1.ClusterRoleBinding, 0, len(desiredNames)*len(components))
+	for _, comp := range components {
+		for _, crName := range desiredNames {
+			crb := resources.AdditionalComponentCRB(kn, comp.name, comp.sa, crName)
+			if err := r.ensureUnowned(ctx, crb); err != nil {
+				return fmt.Errorf("ensuring additional CRB for %s/%s: %w", comp.name, crName, err)
+			}
+			desiredCRBs = append(desiredCRBs, crb)
 		}
 	}
 
-	if err := r.pruneStaleAdditionalAgentCRBs(ctx, kn, desiredSet, boundSet); err != nil {
-		return err
+	if errs := r.pruneOrphanedAdditionalComponentRBAC(ctx, kn, desiredCRBs); len(errs) > 0 {
+		return fmt.Errorf("pruning orphaned additional component RBAC: %w", errors.Join(errs...))
 	}
-	r.recordAdditionalRBACBoundEvents(kn, desiredSet, boundSet)
+	r.recordAdditionalRBACBoundEvents(kn, desiredNames, boundSet, len(components))
 
-	missingRoles, err := r.detectMissingClusterRoles(ctx, desiredSet)
+	missingRoles, err := r.detectMissingClusterRoles(ctx, desiredNames)
 	if err != nil {
 		return err
 	}
 
 	if err := r.patchStatus(ctx, kn, func() {
-		kn.Status.BoundAdditionalClusterRoles = desiredSet
-		if len(desiredSet) == 0 {
+		kn.Status.BoundAdditionalClusterRoles = desiredNames
+		if len(desiredNames) == 0 {
 			meta.RemoveStatusCondition(&kn.Status.Conditions, kubernautv1alpha1.ConditionAdditionalRBACBound)
 			return
 		}
-		meta.SetStatusCondition(&kn.Status.Conditions, additionalRBACCondition(kn.Generation, desiredSet, missingRoles))
+		meta.SetStatusCondition(&kn.Status.Conditions, additionalRBACCondition(kn.Generation, desiredNames, missingRoles, len(components)))
 	}); err != nil {
 		return fmt.Errorf("patching additional RBAC status: %w", err)
 	}
@@ -857,40 +910,39 @@ func (r *KubernautReconciler) deployAdditionalAgentRBAC(ctx context.Context, kn 
 	return nil
 }
 
-// pruneStaleAdditionalAgentCRBs deletes additional-agent ClusterRoleBindings
-// that were bound in a previous reconcile but are no longer present in
-// desiredSet, emitting an "unbound" event for each pruned entry.
-func (r *KubernautReconciler) pruneStaleAdditionalAgentCRBs(
-	ctx context.Context, kn *kubernautv1alpha1.Kubernaut, desiredSet, boundSet []string,
-) error {
-	log := logf.FromContext(ctx)
-	desiredMap := make(map[string]struct{}, len(desiredSet))
-	for _, name := range desiredSet {
-		desiredMap[name] = struct{}{}
+// pruneOrphanedAdditionalComponentRBAC deletes any ClusterRoleBinding
+// carrying LabelAdditionalComponentRBAC for this instance that is not
+// present in desiredCRBs (#277 -- generalized from the KA-only,
+// status-diff-based pruneStaleAdditionalAgentCRBs, mirroring #341's
+// pruneOrphanedCoreClusterRBAC pattern). Listing live objects by label
+// instead of diffing against kn.Status.BoundAdditionalClusterRoles (which
+// only ever tracked role *names*, not which components they were bound to)
+// also closes a latent leak this generalization would otherwise introduce:
+// if Gateway is later disabled, its component's CRBs simply drop out of
+// desiredCRBs and are pruned in the same pass.
+//
+// Passing a nil/empty desiredCRBs (as the finalizer path does) prunes every
+// labeled object for this instance unconditionally.
+func (r *KubernautReconciler) pruneOrphanedAdditionalComponentRBAC(
+	ctx context.Context, kn *kubernautv1alpha1.Kubernaut, desiredCRBs []*rbacv1.ClusterRoleBinding,
+) []error {
+	liveCRBs := &rbacv1.ClusterRoleBindingList{}
+	if err := r.List(ctx, liveCRBs, client.MatchingLabels{
+		resources.LabelAdditionalComponentRBAC: resources.LabelValueTrue,
+		"app.kubernetes.io/instance":           kn.Name,
+	}); err != nil {
+		return []error{fmt.Errorf("listing additional component CRBs for pruning: %w", err)}
 	}
-	for _, name := range boundSet {
-		if _, ok := desiredMap[name]; ok {
-			continue
-		}
-		staleCRB := &rbacv1.ClusterRoleBinding{}
-		staleCRB.Name = resources.AdditionalAgentCRBName(kn, name)
-		if err := r.deleteIfExists(ctx, staleCRB); err != nil {
-			return fmt.Errorf("pruning stale additional agent CRB for %s: %w", name, err)
-		}
-		log.Info("pruned stale additional agent CRB", "clusterRole", name)
-		r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "AdditionalRBACUnbound", "Reconcile",
-			"Removed additional ClusterRoleBinding for %s", name)
-	}
-	return nil
+	return pruneUndesired(r, ctx, "additional component ClusterRoleBinding", pointersOf(liveCRBs.Items), namesOf(desiredCRBs))
 }
 
 // recordAdditionalRBACBoundEvents emits a "bound" event for every entry in
 // desiredSet that was not already present in boundSet from a prior reconcile.
-func (r *KubernautReconciler) recordAdditionalRBACBoundEvents(kn *kubernautv1alpha1.Kubernaut, desiredSet, boundSet []string) {
+func (r *KubernautReconciler) recordAdditionalRBACBoundEvents(kn *kubernautv1alpha1.Kubernaut, desiredSet, boundSet []string, componentCount int) {
 	for _, crName := range desiredSet {
 		if !contains(boundSet, crName) {
 			r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "AdditionalRBACBound", "Reconcile",
-				"Created additional ClusterRoleBinding for %s", crName)
+				"Bound ClusterRole %s to %d component(s)", crName, componentCount)
 		}
 	}
 }
@@ -912,9 +964,14 @@ func (r *KubernautReconciler) detectMissingClusterRoles(ctx context.Context, crN
 }
 
 // additionalRBACCondition builds the ConditionAdditionalRBACBound status
-// condition reflecting whether all desired additional ClusterRoleBindings
-// resolved to existing ClusterRoles.
-func additionalRBACCondition(generation int64, desiredSet, missingRoles []string) metav1.Condition {
+// condition reflecting whether all desired additional ClusterRoles resolved
+// to existing ClusterRoles. componentCount is the number of components
+// (KA, EM, and Gateway when enabled -- #277) each ClusterRole name is bound
+// to; the message spells it out explicitly since a single entry in
+// spec.additionalClusterRoles now produces componentCount ClusterRoleBindings,
+// not one, which would otherwise read as a discrepancy to an operator
+// cross-checking the message against `oc get clusterrolebindings`.
+func additionalRBACCondition(generation int64, desiredSet, missingRoles []string, componentCount int) metav1.Condition {
 	cond := metav1.Condition{
 		Type:               kubernautv1alpha1.ConditionAdditionalRBACBound,
 		ObservedGeneration: generation,
@@ -922,12 +979,13 @@ func additionalRBACCondition(generation int64, desiredSet, missingRoles []string
 	if len(missingRoles) > 0 {
 		cond.Status = metav1.ConditionFalse
 		cond.Reason = ReasonAdditionalRBACPartialBound
-		cond.Message = fmt.Sprintf("CRBs created but ClusterRoles not found: %v", missingRoles)
+		cond.Message = fmt.Sprintf("ClusterRoleBindings created but ClusterRoles not found: %v", missingRoles)
 		return cond
 	}
 	cond.Status = metav1.ConditionTrue
 	cond.Reason = ReasonAdditionalRBACFullyBound
-	cond.Message = fmt.Sprintf("%d additional ClusterRoleBindings active", len(desiredSet))
+	cond.Message = fmt.Sprintf("%d additional ClusterRole(s) bound across %d component(s) (%d ClusterRoleBindings)",
+		len(desiredSet), componentCount, len(desiredSet)*componentCount)
 	return cond
 }
 
@@ -2294,20 +2352,12 @@ func (r *KubernautReconciler) deleteMonitoringClusterRBAC(ctx context.Context, k
 	return errs
 }
 
-// deleteAdditionalAgentAndToolRBAC removes the additional-agent
-// ClusterRoleBindings recorded in status, all tool ClusterRoles and their
-// bound ClusterRoleBindings, and any additional-agent CRBs discovered via
-// label selector (covering entries the status field may have missed).
+// deleteAdditionalAgentAndToolRBAC removes every additional-component
+// ClusterRoleBinding (KA/Gateway/EM, #277) via the generic label-selector
+// prune, all tool ClusterRoles and their bound ClusterRoleBindings, and the
+// console-access CRB.
 func (r *KubernautReconciler) deleteAdditionalAgentAndToolRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
-	var errs []error
-
-	for _, name := range kn.Status.BoundAdditionalClusterRoles {
-		extCRB := &rbacv1.ClusterRoleBinding{}
-		extCRB.Name = resources.AdditionalAgentCRBName(kn, name)
-		if err := r.deleteIfExists(ctx, extCRB); err != nil {
-			errs = append(errs, fmt.Errorf("deleting additional agent CRB for %s: %w", name, err))
-		}
-	}
+	errs := r.pruneOrphanedAdditionalComponentRBAC(ctx, kn, nil)
 
 	for _, name := range resources.ToolClusterRoleNames(kn) {
 		toolCR := &rbacv1.ClusterRole{}
@@ -2333,21 +2383,6 @@ func (r *KubernautReconciler) deleteAdditionalAgentAndToolRBAC(ctx context.Conte
 		errs = append(errs, fmt.Errorf("deleting console-access CRB: %w", err))
 	}
 
-	extCRBList := &rbacv1.ClusterRoleBindingList{}
-	if err := r.List(ctx, extCRBList,
-		client.MatchingLabels{
-			resources.LabelAdditionalAgentRBAC: resources.LabelValueTrue,
-			"app.kubernetes.io/instance":       kn.Name,
-		},
-	); err != nil {
-		errs = append(errs, fmt.Errorf("listing additional agent CRBs: %w", err))
-		return errs
-	}
-	for i := range extCRBList.Items {
-		if err := r.deleteIfExists(ctx, &extCRBList.Items[i]); err != nil {
-			errs = append(errs, fmt.Errorf("deleting additional agent CRB %s: %w", extCRBList.Items[i].Name, err))
-		}
-	}
 	return errs
 }
 
