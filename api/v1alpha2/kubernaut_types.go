@@ -852,6 +852,10 @@ type KubernautAgentSpec struct {
 	// +optional
 	Summarizer SummarizerSpec `json:"summarizer,omitempty"`
 
+	// OpenTelemetry distributed-trace export configuration. Off by default.
+	// +optional
+	Telemetry TelemetrySpec `json:"telemetry,omitempty"`
+
 	// Safety guardrails for LLM interactions.
 	// +optional
 	Safety SafetySpec `json:"safety,omitempty"`
@@ -1000,11 +1004,78 @@ type AuditSpec struct {
 	// +kubebuilder:default=true
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
+
+	// How often buffered audit events are flushed to Data Storage, in
+	// seconds (e.g. "0.5" for 500ms). Serialized as string to avoid CRD
+	// float portability issues (see AlignmentCheckLLMSpec.Temperature).
+	// Lower values reduce the audit-visibility gap after a remediation
+	// action at the cost of more frequent Data Storage writes.
+	// +kubebuilder:default="1"
+	// +optional
+	FlushIntervalSeconds string `json:"flushIntervalSeconds,omitempty"`
+
+	// Size of the in-memory audit event buffer. Events are dropped once the
+	// buffer is full and Data Storage cannot keep up with the flush rate.
+	// +kubebuilder:default=10000
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	BufferSize *int `json:"bufferSize,omitempty"`
+
+	// Maximum number of audit events flushed to Data Storage per batch.
+	// +kubebuilder:default=50
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	BatchSize *int `json:"batchSize,omitempty"`
 }
 
 // AuditEnabled returns true when audit logging is active (default: true).
 func (s *AuditSpec) AuditEnabled() bool {
 	return s.Enabled == nil || *s.Enabled
+}
+
+// TelemetrySpec configures optional OpenTelemetry distributed-trace export
+// for this component (see ADR-068, DD-OTEL-001). Off by default (zero
+// overhead) -- tracing stays disabled while Endpoint is empty, regardless
+// of the other fields. Shared by Gateway, DataStorage, and Kubernaut Agent,
+// mirroring the upstream Helm chart's single top-level telemetry: block.
+type TelemetrySpec struct {
+	// OTLP collector endpoint (e.g. "otel-collector.observability.svc:4317").
+	// Tracing is disabled while this is empty.
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// Mirror trace spans into the component's structured log output in
+	// addition to exporting them via OTLP. Has no effect while Endpoint is
+	// empty.
+	// +kubebuilder:default=false
+	// +optional
+	LogSink *bool `json:"logSink,omitempty"`
+
+	// TLS configures the connection to the OTLP collector.
+	// +optional
+	TLS TelemetryTLSConfig `json:"tls,omitempty"`
+}
+
+// TelemetryTLSConfig configures TLS for the OTLP collector connection.
+type TelemetryTLSConfig struct {
+	// Use TLS when connecting to the OTLP collector. False (default) uses
+	// plain HTTP/gRPC, matching most in-cluster collector deployments.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// CA bundle path for a self-signed or private collector certificate.
+	// Empty trusts the system CA pool.
+	// +optional
+	CAFile string `json:"caFile,omitempty"`
+
+	// Optional mTLS client certificate path.
+	// +optional
+	CertFile string `json:"certFile,omitempty"`
+
+	// Optional mTLS client key path.
+	// +optional
+	KeyFile string `json:"keyFile,omitempty"`
 }
 
 // AlignmentCheckSpec configures the shadow agent alignment check.
@@ -1315,6 +1386,10 @@ type GatewayConfigSpec struct {
 	// +kubebuilder:default="5m"
 	// +optional
 	DeduplicationCooldown string `json:"deduplicationCooldown,omitempty"`
+
+	// OpenTelemetry distributed-trace export configuration. Off by default.
+	// +optional
+	Telemetry TelemetrySpec `json:"telemetry,omitempty"`
 }
 
 // GatewayCORSSpec configures CORS for the Gateway HTTP API.
@@ -1537,6 +1612,19 @@ type APIFrontendRBACSpec struct {
 	// non-empty list for independent, narrower control.
 	// +optional
 	ConsoleAccessGroups []string `json:"consoleAccessGroups"` // no omitempty: see rbac.go effectiveConsoleAccessGroups doc
+
+	// ConsoleAccessAuthorizationCheckEnabled turns on AF's coarse-grained
+	// kubernaut.ai/console authorization check (kubernaut#1919) -- the same
+	// enforcement RoleBindings/ConsoleAccessGroups above configure. Defaults
+	// to false: this is a security-hardening opt-in, not a mandatory setting,
+	// so a zero-config CR deploys successfully and console access is
+	// unrestricted until an administrator explicitly enables the check after
+	// populating personas/consoleAccessGroups -- enabling it by default would
+	// make every install responsible for RBAC configuration before console
+	// login works at all.
+	// +kubebuilder:default=false
+	// +optional
+	ConsoleAccessAuthorizationCheckEnabled *bool `json:"consoleAccessAuthorizationCheckEnabled,omitempty"`
 }
 
 // ToolRoleBinding binds a tool role to one or more OIDC groups.
@@ -1721,6 +1809,10 @@ type DataStorageSpec struct {
 	// When set, the named Secret is mounted into the DS pod at /etc/certs.
 	// +optional
 	SigningCert *SigningCertSpec `json:"signingCert,omitempty"`
+
+	// OpenTelemetry distributed-trace export configuration. Off by default.
+	// +optional
+	Telemetry TelemetrySpec `json:"telemetry,omitempty"`
 }
 
 // SigningCertSpec configures the audit export signing certificate.

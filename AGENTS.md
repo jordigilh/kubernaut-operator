@@ -371,6 +371,7 @@ Validated during the REFACTOR phase. Based on [100 Go Mistakes and How to Avoid 
 - **RELATED_IMAGE env vars**: Must be set in `BeforeSuite` before calling resource builders
 - **Fake client wrappers**: Use `deleteFailingClient`, `rbacCreateFailingClient` to inject specific errors for error-path testing
 - **envtest binary discovery**: `getFirstFoundEnvTestBinaryDir()` auto-discovers binaries in `bin/k8s/`
+- **Reuse production YAML structs in white-box tests, don't hand-copy their shape**: `internal/resources/*_test.go` files are `package resources` (white-box), so the production YAML structs (`kaAuditYAML`, `telemetryYAML`, `gatewayConfigYAML`, etc.) are already visible to tests. When a test needs to assert a struct's *full* rendered shape, `yaml.Unmarshal` into the actual production struct (or a thin wrapper embedding it), not a hand-written anonymous struct that duplicates its field names/tags. A hand-copied mirror struct doesn't fail to compile when the production type's YAML tag changes -- it just silently asserts the wrong thing, defeating the point of an independent check. No linter catches this (verified: `dupl`, the closest fit, only flags literal repeated blocks, not an anonymous struct that duplicates an existing *named* type elsewhere in-package) -- this is a code-review-enforced convention. Anonymous structs are still fine for narrow, partial-field probes (e.g. asserting only `Runtime.Logging.Format` out of a much larger config) where reusing the full production type would be overkill.
 
 ### Mock Strategy
 
