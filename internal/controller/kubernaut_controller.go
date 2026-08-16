@@ -581,15 +581,21 @@ func (r *KubernautReconciler) deployConsoleAccessRBAC(ctx context.Context, kn *k
 // deployCoreRBAC provisions ClusterRoles, ClusterRoleBindings, namespace-scoped
 // Roles/RoleBindings, DataStorage client bindings, and the Kubernaut Agent client binding.
 func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
-	for _, cr := range resources.ClusterRoles(kn) {
+	desiredCRs := resources.ClusterRoles(kn)
+	desiredCRBs := resources.ClusterRoleBindings(kn)
+
+	for _, cr := range desiredCRs {
 		if err := r.ensureUnowned(ctx, cr); err != nil {
 			return fmt.Errorf("ensuring ClusterRole %s: %w", cr.Name, err)
 		}
 	}
-	for _, crb := range resources.ClusterRoleBindings(kn) {
+	for _, crb := range desiredCRBs {
 		if err := r.ensureUnowned(ctx, crb); err != nil {
 			return fmt.Errorf("ensuring CRB %s: %w", crb.Name, err)
 		}
+	}
+	if errs := r.pruneOrphanedCoreClusterRBAC(ctx, kn, desiredCRs, desiredCRBs); len(errs) > 0 {
+		return fmt.Errorf("pruning orphaned core cluster RBAC: %w", errors.Join(errs...))
 	}
 	for _, role := range resources.NamespaceRoles(kn) {
 		if err := r.ensureNamespaced(ctx, kn, role); err != nil {
@@ -615,6 +621,70 @@ func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv
 		}
 	}
 	return r.deployAdditionalAgentRBAC(ctx, kn)
+}
+
+// pruneOrphanedCoreClusterRBAC deletes any ClusterRole/ClusterRoleBinding
+// labeled resources.LabelCoreClusterRBAC for this instance that is not
+// present in desiredCRs/desiredCRBs. resources.ClusterRoles/ClusterRoleBindings
+// conditionally omit entries based on feature toggles (gateway,
+// apiFrontend/console-access, monitoring); without this label-based diff, an
+// object built while a feature was enabled becomes an orphaned,
+// never-revoked cluster-scoped grant the moment the feature is disabled
+// (#341) -- least-privilege (AC-6) requires it to be removed, not just
+// unbound from new workloads.
+//
+// Pass nil for both desired slices to prune the entire labeled set
+// unconditionally. The finalizer's delete path does this rather than
+// recomputing the desired set from kn.Spec, because by the time deletion
+// runs, the spec may already have changed since some of these objects were
+// created -- recomputing would silently exclude exactly the objects that
+// need deleting, reproducing the same blind spot from the other direction.
+func (r *KubernautReconciler) pruneOrphanedCoreClusterRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, desiredCRs []*rbacv1.ClusterRole, desiredCRBs []*rbacv1.ClusterRoleBinding) []error {
+	var errs []error
+
+	wantCRs := make(map[string]struct{}, len(desiredCRs))
+	for _, cr := range desiredCRs {
+		wantCRs[cr.Name] = struct{}{}
+	}
+	wantCRBs := make(map[string]struct{}, len(desiredCRBs))
+	for _, crb := range desiredCRBs {
+		wantCRBs[crb.Name] = struct{}{}
+	}
+
+	matchLabels := client.MatchingLabels{
+		resources.LabelCoreClusterRBAC: resources.LabelValueTrue,
+		"app.kubernetes.io/instance":   kn.Name,
+	}
+
+	crList := &rbacv1.ClusterRoleList{}
+	if err := r.List(ctx, crList, matchLabels); err != nil {
+		return append(errs, fmt.Errorf("listing core ClusterRoles for prune: %w", err))
+	}
+	for i := range crList.Items {
+		cr := &crList.Items[i]
+		if _, ok := wantCRs[cr.Name]; ok {
+			continue
+		}
+		if err := r.deleteIfExists(ctx, cr); err != nil {
+			errs = append(errs, fmt.Errorf("pruning orphaned ClusterRole %s: %w", cr.Name, err))
+		}
+	}
+
+	crbList := &rbacv1.ClusterRoleBindingList{}
+	if err := r.List(ctx, crbList, matchLabels); err != nil {
+		return append(errs, fmt.Errorf("listing core ClusterRoleBindings for prune: %w", err))
+	}
+	for i := range crbList.Items {
+		crb := &crbList.Items[i]
+		if _, ok := wantCRBs[crb.Name]; ok {
+			continue
+		}
+		if err := r.deleteIfExists(ctx, crb); err != nil {
+			errs = append(errs, fmt.Errorf("pruning orphaned ClusterRoleBinding %s: %w", crb.Name, err))
+		}
+	}
+
+	return errs
 }
 
 // deployAdditionalAgentRBAC ensures user-specified additional ClusterRoleBindings
@@ -826,22 +896,14 @@ func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernau
 		}
 	}
 
+	// Gateway's and monitoring's cluster-scoped ClusterRoles/CRBs are pruned
+	// generically by deployCoreRBAC -> pruneOrphanedCoreClusterRBAC (#341):
+	// resources.ClusterRoles/ClusterRoleBindings already omit these entries
+	// once GatewayEnabled()/MonitoringEnabled() goes false, so the label-based
+	// diff removes them without a hand-maintained static-name list here. Only
+	// the namespaced, non-RBAC leftovers that those aggregators don't cover
+	// need explicit cleanup below.
 	if !kn.Spec.GatewayEnabled() {
-		p := func(base string) string { return kn.Namespace + "-" + base }
-		for _, name := range []string{p("gateway-role")} {
-			staleCR := &rbacv1.ClusterRole{}
-			staleCR.Name = name
-			if err := r.deleteIfExists(ctx, staleCR); err != nil {
-				errs = append(errs, fmt.Errorf("removing stale gateway ClusterRole %s: %w", name, err))
-			}
-		}
-		for _, name := range []string{p("gateway-role-binding"), p("alertmanager-gateway-signal-source")} {
-			staleCRB := &rbacv1.ClusterRoleBinding{}
-			staleCRB.Name = name
-			if err := r.deleteIfExists(ctx, staleCRB); err != nil {
-				errs = append(errs, fmt.Errorf("removing stale gateway CRB %s: %w", name, err))
-			}
-		}
 		staleRB := &rbacv1.RoleBinding{}
 		staleRB.Name = "data-storage-client-gateway"
 		staleRB.Namespace = kn.Namespace
@@ -851,20 +913,6 @@ func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernau
 	}
 
 	if !kn.Spec.Monitoring.MonitoringEnabled() {
-		for _, name := range resources.MonitoringCRBNames(kn) {
-			monCRB := &rbacv1.ClusterRoleBinding{}
-			monCRB.Name = name
-			if err := r.deleteIfExists(ctx, monCRB); err != nil {
-				errs = append(errs, fmt.Errorf("removing stale monitoring CRB %s: %w", name, err))
-			}
-		}
-		for _, name := range resources.MonitoringClusterRoleNames(kn) {
-			monCR := &rbacv1.ClusterRole{}
-			monCR.Name = name
-			if err := r.deleteIfExists(ctx, monCR); err != nil {
-				errs = append(errs, fmt.Errorf("removing stale monitoring ClusterRole %s: %w", name, err))
-			}
-		}
 		for _, name := range []string{"effectivenessmonitor-service-ca", "kubernaut-agent-service-ca"} {
 			staleCM := &corev1.ConfigMap{}
 			staleCM.Name = name
@@ -1805,16 +1853,12 @@ func (r *KubernautReconciler) deleteAgentRuntimeCR(ctx context.Context, kn *kube
 func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
 	var errs []error
 
-	for _, cr := range resources.ClusterRoles(kn) {
-		if err := r.deleteIfExists(ctx, cr); err != nil {
-			errs = append(errs, fmt.Errorf("deleting ClusterRole %s: %w", cr.Name, err))
-		}
-	}
-	for _, crb := range resources.ClusterRoleBindings(kn) {
-		if err := r.deleteIfExists(ctx, crb); err != nil {
-			errs = append(errs, fmt.Errorf("deleting CRB %s: %w", crb.Name, err))
-		}
-	}
+	// Full label-based sweep instead of recomputing resources.ClusterRoles/
+	// ClusterRoleBindings(kn): by the time the finalizer runs, kn.Spec may
+	// already reflect a toggle-off that happened without an intervening
+	// reconcile, so recomputing the "desired" set from the current spec
+	// would silently skip exactly the objects that need deleting (#341).
+	errs = append(errs, r.pruneOrphanedCoreClusterRBAC(ctx, kn, nil, nil)...)
 
 	cr, crb := resources.AnsibleRBAC(kn)
 	if err := r.deleteIfExists(ctx, cr); err != nil {
@@ -1822,21 +1866,6 @@ func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kuber
 	}
 	if err := r.deleteIfExists(ctx, crb); err != nil {
 		errs = append(errs, fmt.Errorf("deleting AWX CRB: %w", err))
-	}
-
-	for _, name := range resources.MonitoringCRBNames(kn) {
-		monCRB := &rbacv1.ClusterRoleBinding{}
-		monCRB.Name = name
-		if err := r.deleteIfExists(ctx, monCRB); err != nil {
-			errs = append(errs, fmt.Errorf("deleting monitoring CRB %s: %w", name, err))
-		}
-	}
-	for _, name := range resources.MonitoringClusterRoleNames(kn) {
-		monCR := &rbacv1.ClusterRole{}
-		monCR.Name = name
-		if err := r.deleteIfExists(ctx, monCR); err != nil {
-			errs = append(errs, fmt.Errorf("deleting monitoring ClusterRole %s: %w", name, err))
-		}
 	}
 
 	for _, name := range kn.Status.BoundAdditionalClusterRoles {
