@@ -424,7 +424,7 @@ operator's own ClusterRole), manual edits to operator-managed ClusterRoles
 (the operator will overwrite on the next reconcile), or OLM permission
 conflicts with other operators managing the same ClusterRole names.
 
-If using `additionalClusterRoleBindings`, check the `AdditionalRBACBound`
+If using `spec.additionalClusterRoles`, check the `AdditionalRBACBound`
 condition for `PartiallyBound` — one or more referenced ClusterRoles may
 not exist.
 

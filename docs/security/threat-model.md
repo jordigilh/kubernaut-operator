@@ -30,7 +30,7 @@ Kubernaut is an AIOps platform that runs on OpenShift. It ingests operational si
 | Prompt injection via alert payload | Tampering | Kubernaut Agent | High | Safety sanitization (`injectionPatternsEnabled`, `credentialScrubEnabled`), anomaly controls (`maxToolCallsPerTool`, `maxTotalToolCalls`), optional alignment checks |
 | LLM data exfiltration via secrets or verbose tool output in prompts | Information Disclosure | Kubernaut Agent | High | Tool output summarization limiting data sent to the LLM (`maxToolOutputSize`), credential scrubbing of known patterns, least-privilege review of tools |
 | Unauthorized remediation execution | Elevation of Privilege | Remediation Orchestrator | High | Rego policy approval gates, `dryRun` mode, human review via `awaitingApproval` timeouts, optional alignment checks for step-level oversight |
-| Cluster administrator binds excessive roles to the agent via CR | Elevation of Privilege | Operator | Critical | `additionalClusterRoleBindings` permits arbitrary ClusterRoleBindings; restrict who may edit the Kubernaut CR and use cluster RBAC reviews |
+| Cluster administrator binds excessive roles to KA/Gateway/EM via CR | Elevation of Privilege | Operator | Critical | `spec.additionalClusterRoles` permits arbitrary ClusterRoleBindings across all three components (KA, EM always; Gateway when enabled, #277); restrict who may edit the Kubernaut CR and use cluster RBAC reviews |
 | Compromised agent pod with broad secret visibility | Information Disclosure | Kubernaut Agent | High | Accepted design trade-off for investigator-style cluster read; compensate with NetworkPolicy isolation, short-lived projected tokens (for example one-hour TTL), namespace separation, and monitoring |
 | Webhook bypass or impersonation during upgrades | Spoofing | AuthWebhook | Medium | `failurePolicy: Fail` fail-closed admission; Deployment recreate strategy implies brief admission unavailability; PodDisBudget recommended for high availability |
 
@@ -40,7 +40,7 @@ The following items are acknowledged as residual or intentional risks that custo
 
 - **Cluster-wide secret readability** for the investigation role is comparable to a cluster auditor; customers must align this with their threat model and network policy posture.
 - **LLM providers receive investigation context** necessary for analysis; exposure is reduced via summarization and sanitization but not eliminated.
-- **`additionalClusterRoleBindings`** can escalate privileges if the Kubernaut CR is writable by untrusted actors; protection is organizational RBAC on the CR and change management, not a separate operator-side block.
+- **`spec.additionalClusterRoles`** can escalate privileges if the Kubernaut CR is writable by untrusted actors, and since #277 now binds every listed ClusterRole to KA, EM, and (when enabled) Gateway rather than only KA; protection is organizational RBAC on the CR and change management, not a separate operator-side block.
 
 Organizations deploying Kubernaut should extend this model with their own data classification, compliance obligations, and incident response playbooks.
 
