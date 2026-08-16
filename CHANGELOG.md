@@ -5,6 +5,12 @@ All notable changes to the Kubernaut Operator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.11] - 2026-08-16
+
+### Changed
+- **GA promotion**: Promotes `v1.5.11-rc1` to GA, now that upstream `kubernaut v1.5.7` GA is available. QE approved `v1.5.11-rc1` (validated against `kubernaut v1.5.7-rc2`) for release. All 12 kubernaut-service `RELATED_IMAGE_*` env vars now reference the final `kubernaut v1.5.7` GA images -- content-identical to the validated `rc2` images (same functional commits: apifrontend's console-access auth-only fallback kubernaut#2148/#2150, kubernautagent's MCP-takeover race fix kubernaut#2156, aianalysis's session-lost regeneration backoff kubernaut#2080 recurrence), digests differ only because the GA tag's tree also carries one CI-only fix (`fix(ci): give apifrontend unit tests real timeout headroom`) which shifted every service's build layer. `RELATED_IMAGE_CONSOLE` remains on `kubernaut-console v1.5.6` GA (unaffected this cycle). Bumped `VERSION` to `1.5.11`. No operator code or CRD changes -- `make manifests generate` produced no CRD diff.
+- A follow-up PR will pin the operator's own image, bundle, and airgap imageset to their published `v1.5.11` digests once the tag image is built, per the usual pattern.
+
 ## [1.5.11-rc1] - 2026-08-16
 
 ### Changed
