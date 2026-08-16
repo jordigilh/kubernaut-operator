@@ -32,12 +32,40 @@ const (
 	// ClusterRoleBindings so the finalizer can perform a catch-all sweep.
 	LabelAdditionalAgentRBAC = "kubernaut.ai/additional-agent-rbac"
 
+	// LabelCoreClusterRBAC marks every ClusterRole/ClusterRoleBinding
+	// returned by ClusterRoles()/ClusterRoleBindings() (#341) so the
+	// controller can prune orphans with a single generic label-selector
+	// diff instead of a dedicated static-name delete function per
+	// conditionally-gated component. Scope is deliberately limited to
+	// these two aggregators -- additional-agent CRBs, tool RBAC, and
+	// console-access's CRB already have their own correct, narrower
+	// lifecycle management (status-field diffing or inline nil-checks)
+	// and are not part of this label's coverage.
+	LabelCoreClusterRBAC = "kubernaut.ai/core-cluster-rbac"
+
 	// LabelValueTrue is the canonical string value for boolean-true labels.
 	LabelValueTrue = "true"
 
 	// maxK8sNameLen is the maximum length for a Kubernetes object name.
 	maxK8sNameLen = 253
 )
+
+// markCoreClusterRBAC stamps LabelCoreClusterRBAC=true onto every object in
+// objs, mutating each in place and returning the same slice for chaining.
+// Used by ClusterRoles()/ClusterRoleBindings() so every entry they build --
+// regardless of which internal helper constructed its Labels map -- carries
+// a uniform marker the generic prune pass (#341) can select on.
+func markCoreClusterRBAC[T metav1.Object](objs []T) []T {
+	for _, o := range objs {
+		labels := o.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels[LabelCoreClusterRBAC] = LabelValueTrue
+		o.SetLabels(labels)
+	}
+	return objs
+}
 
 // clusterRoleName returns a namespace-scoped ClusterRole name to prevent
 // collisions when multiple Kubernaut CRs exist in different namespaces.
@@ -100,7 +128,7 @@ func ClusterRoles(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kuber
 		)
 	}
 
-	return roles
+	return markCoreClusterRBAC(roles)
 }
 
 // ClusterRoleBindings builds all CRBs, binding SAs in the CR namespace.
@@ -189,7 +217,7 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha
 		)
 	}
 
-	return crbs
+	return markCoreClusterRBAC(crbs)
 }
 
 // DataStorageClientRoleBindings builds the RoleBindings that grant

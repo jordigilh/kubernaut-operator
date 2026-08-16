@@ -662,16 +662,43 @@ func (r *KubernautReconciler) deployConsoleAccessRBAC(ctx context.Context, kn *k
 // deployCoreRBAC provisions ClusterRoles, ClusterRoleBindings, namespace-scoped
 // Roles/RoleBindings, DataStorage client bindings, and the Kubernaut Agent client binding.
 func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
-	for _, cr := range resources.ClusterRoles(kn, knV2) {
+	if err := r.deployClusterScopedCoreRBAC(ctx, kn, knV2); err != nil {
+		return err
+	}
+	if err := r.deployNamespacedCoreRBAC(ctx, kn, knV2); err != nil {
+		return err
+	}
+	if err := r.deployMCPGatewayNamespaceRBAC(ctx, kn, knV2); err != nil {
+		return err
+	}
+	return r.deployAdditionalAgentRBAC(ctx, kn)
+}
+
+// deployClusterScopedCoreRBAC ensures the always-computed ClusterRoles/
+// ClusterRoleBindings and prunes any orphaned by a feature toggle-off
+// (#341) in the same pass.
+func (r *KubernautReconciler) deployClusterScopedCoreRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
+	desiredCRs := resources.ClusterRoles(kn, knV2)
+	for _, cr := range desiredCRs {
 		if err := r.ensureUnowned(ctx, cr); err != nil {
 			return fmt.Errorf("ensuring ClusterRole %s: %w", cr.Name, err)
 		}
 	}
-	for _, crb := range resources.ClusterRoleBindings(kn, knV2) {
+	desiredCRBs := resources.ClusterRoleBindings(kn, knV2)
+	for _, crb := range desiredCRBs {
 		if err := r.ensureUnowned(ctx, crb); err != nil {
 			return fmt.Errorf("ensuring CRB %s: %w", crb.Name, err)
 		}
 	}
+	if errs := r.pruneOrphanedCoreClusterRBAC(ctx, kn, desiredCRs, desiredCRBs); len(errs) > 0 {
+		return fmt.Errorf("pruning orphaned core cluster RBAC: %w", errors.Join(errs...))
+	}
+	return nil
+}
+
+// deployNamespacedCoreRBAC ensures the namespace-scoped Roles/RoleBindings
+// and DataStorage/KubernautAgent client bindings.
+func (r *KubernautReconciler) deployNamespacedCoreRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
 	for _, role := range resources.NamespaceRoles(kn, knV2) {
 		if err := r.ensureNamespaced(ctx, kn, role); err != nil {
 			return fmt.Errorf("ensuring ns role %s: %w", role.Name, err)
@@ -695,22 +722,82 @@ func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv
 			return err
 		}
 	}
-	if err := r.deployMCPGatewayNamespaceRBAC(ctx, kn, knV2); err != nil {
-		return err
+	return nil
+}
+
+// pruneOrphanedCoreClusterRBAC deletes any ClusterRole/ClusterRoleBinding
+// carrying LabelCoreClusterRBAC for this instance that is not present in
+// desiredCRs/desiredCRBs (#341). It replaces a family of dedicated,
+// static-name delete functions that each had to be kept in sync by hand
+// whenever a conditionally-gated entry was added to
+// resources.ClusterRoles()/ClusterRoleBindings() -- FMC's #1993
+// auth-middleware/scope-check-client pair shipped without one, leaking on
+// disable. A single label-selector diff instead closes the gap uniformly
+// for every current and future entry in those two aggregators.
+//
+// Passing nil/empty desired slices (as the finalizer path does via
+// deleteCoreClusterRBAC) prunes every labeled object unconditionally,
+// regardless of the instance's current spec -- appropriate when the
+// instance itself is being deleted.
+func (r *KubernautReconciler) pruneOrphanedCoreClusterRBAC(
+	ctx context.Context, kn *kubernautv1alpha1.Kubernaut,
+	desiredCRs []*rbacv1.ClusterRole, desiredCRBs []*rbacv1.ClusterRoleBinding,
+) []error {
+	var errs []error
+	selector := client.MatchingLabels{
+		resources.LabelCoreClusterRBAC: resources.LabelValueTrue,
+		"app.kubernetes.io/instance":   kn.Name,
 	}
-	return r.deployAdditionalAgentRBAC(ctx, kn)
+
+	desiredCRNames := make(map[string]bool, len(desiredCRs))
+	for _, cr := range desiredCRs {
+		desiredCRNames[cr.Name] = true
+	}
+	liveCRs := &rbacv1.ClusterRoleList{}
+	if err := r.List(ctx, liveCRs, selector); err != nil {
+		return append(errs, fmt.Errorf("listing core ClusterRoles for pruning: %w", err))
+	}
+	for i := range liveCRs.Items {
+		cr := &liveCRs.Items[i]
+		if desiredCRNames[cr.Name] {
+			continue
+		}
+		if err := r.deleteIfExists(ctx, cr); err != nil {
+			errs = append(errs, fmt.Errorf("pruning orphaned ClusterRole %s: %w", cr.Name, err))
+		}
+	}
+
+	desiredCRBNames := make(map[string]bool, len(desiredCRBs))
+	for _, crb := range desiredCRBs {
+		desiredCRBNames[crb.Name] = true
+	}
+	liveCRBs := &rbacv1.ClusterRoleBindingList{}
+	if err := r.List(ctx, liveCRBs, selector); err != nil {
+		return append(errs, fmt.Errorf("listing core ClusterRoleBindings for pruning: %w", err))
+	}
+	for i := range liveCRBs.Items {
+		crb := &liveCRBs.Items[i]
+		if desiredCRBNames[crb.Name] {
+			continue
+		}
+		if err := r.deleteIfExists(ctx, crb); err != nil {
+			errs = append(errs, fmt.Errorf("pruning orphaned ClusterRoleBinding %s: %w", crb.Name, err))
+		}
+	}
+
+	return errs
 }
 
 // deployMCPGatewayNamespaceRBAC provisions the namespace-scoped Roles/
-// RoleBindings for FMC/SP's MCP Gateway CRD reads (#224 Finding 5) and
-// cleans up FMC's cluster-scoped ClusterRole/ClusterRoleBinding once its
-// effective mcpGatewayNamespace resolves. SP's ClusterRole is always
-// present (it carries unconditional core rules too), so ensureUnowned
-// naturally drops its MCP Gateway rules in place when SP's namespace
-// resolves -- no explicit delete is needed there, unlike FMC where the
-// entire ClusterRole is MCP-Gateway-only and ClusterRoles()/
-// ClusterRoleBindings() stop returning it entirely, which would otherwise
-// leave a stale, over-privileged ClusterRole behind.
+// RoleBindings for FMC/SP's MCP Gateway CRD reads (#224 Finding 5). FMC's
+// cluster-scoped ClusterRole/ClusterRoleBinding naturally drop out of
+// resources.ClusterRoles()/ClusterRoleBindings() once its effective
+// mcpGatewayNamespace resolves (the entire ClusterRole is MCP-Gateway-only),
+// and deployCoreRBAC's generic prune (#341) removes the now-stale objects in
+// the same reconcile -- no dedicated delete is needed here. SP's ClusterRole
+// is always present (it carries unconditional core rules too), so
+// ensureUnowned naturally drops its MCP Gateway rules in place when SP's
+// namespace resolves.
 func (r *KubernautReconciler) deployMCPGatewayNamespaceRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
 	roles, rbs := resources.MCPGatewayNamespaceRBAC(kn, knV2)
 	for _, role := range roles {
@@ -724,18 +811,6 @@ func (r *KubernautReconciler) deployMCPGatewayNamespaceRBAC(ctx context.Context,
 		}
 	}
 
-	if knV2.Spec.FleetMetadataCacheEnabled() && resources.EffectiveFleetMetadataCacheMCPGatewayNamespace(knV2) != "" {
-		cr := &rbacv1.ClusterRole{}
-		cr.Name = kn.Namespace + "-fleetmetadatacache"
-		if err := r.deleteIfExists(ctx, cr); err != nil {
-			return fmt.Errorf("deleting stale fleetmetadatacache ClusterRole after namespace retrofit: %w", err)
-		}
-		crb := &rbacv1.ClusterRoleBinding{}
-		crb.Name = kn.Namespace + "-fleetmetadatacache-binding"
-		if err := r.deleteIfExists(ctx, crb); err != nil {
-			return fmt.Errorf("deleting stale fleetmetadatacache ClusterRoleBinding after namespace retrofit: %w", err)
-		}
-	}
 	return nil
 }
 
@@ -997,27 +1072,16 @@ func (r *KubernautReconciler) pruneStaleAnsibleRBAC(ctx context.Context, cr *rba
 	return errs
 }
 
-// pruneStaleGatewayRBAC deletes cluster-scoped gateway RBAC and the
-// namespaced DataStorage-client RoleBinding when the gateway component is
-// disabled.
+// pruneStaleGatewayRBAC deletes the namespaced DataStorage-client
+// RoleBinding when the gateway component is disabled. Gateway's
+// cluster-scoped ClusterRole/ClusterRoleBinding (gateway-role,
+// gateway-role-binding, alertmanager-gateway-signal-source) are handled by
+// deployCoreRBAC's generic prune (#341) instead -- they naturally drop out
+// of resources.ClusterRoles()/ClusterRoleBindings() when gateway is
+// disabled, so the same label-selector diff that closes the FMC leak covers
+// them too, without a dedicated static-name delete list to keep in sync.
 func (r *KubernautReconciler) pruneStaleGatewayRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
 	var errs []error
-	p := func(base string) string { return kn.Namespace + "-" + base }
-
-	for _, name := range []string{p("gateway-role")} {
-		staleCR := &rbacv1.ClusterRole{}
-		staleCR.Name = name
-		if err := r.deleteIfExists(ctx, staleCR); err != nil {
-			errs = append(errs, fmt.Errorf("removing stale gateway ClusterRole %s: %w", name, err))
-		}
-	}
-	for _, name := range []string{p("gateway-role-binding"), p("alertmanager-gateway-signal-source")} {
-		staleCRB := &rbacv1.ClusterRoleBinding{}
-		staleCRB.Name = name
-		if err := r.deleteIfExists(ctx, staleCRB); err != nil {
-			errs = append(errs, fmt.Errorf("removing stale gateway CRB %s: %w", name, err))
-		}
-	}
 	staleRB := &rbacv1.RoleBinding{}
 	staleRB.Name = "data-storage-client-gateway"
 	staleRB.Namespace = kn.Namespace
@@ -1085,11 +1149,14 @@ func (r *KubernautReconciler) cleanupDisabledGateway(ctx context.Context, kn *ku
 }
 
 // cleanupDisabledFleetMetadataCache removes FMC's Deployment, Service,
-// ConfigMap, NetworkPolicy, ClusterRole, and ClusterRoleBinding when
-// spec.fleetMetadataCache.enabled transitions to false. The ServiceAccount
-// and PDB are left in place -- like AuthWebhook/APIFrontend, FMC's SA is
-// managed unconditionally via deployServiceAccounts, and PodDisruptionBudgets
-// already skips inactive components on its own.
+// ConfigMap, and NetworkPolicy when spec.fleetMetadataCache.enabled
+// transitions to false. The ServiceAccount and PDB are left in place --
+// like AuthWebhook/APIFrontend, FMC's SA is managed unconditionally via
+// deployServiceAccounts, and PodDisruptionBudgets already skips inactive
+// components on its own. FMC's cluster-scoped ClusterRole/ClusterRoleBinding
+// (both the original MCP-Gateway-CRD pair and the #1993 auth-middleware/
+// scope-check-client pair) are handled by deployCoreRBAC's generic prune
+// (#341), not here.
 func (r *KubernautReconciler) cleanupDisabledFleetMetadataCache(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) error {
 	ns := kn.Namespace
 	var errs []error
@@ -1120,18 +1187,6 @@ func (r *KubernautReconciler) cleanupDisabledFleetMetadataCache(ctx context.Cont
 	np.Namespace = ns
 	if err := r.deleteIfExists(ctx, np); err != nil {
 		errs = append(errs, fmt.Errorf("deleting fleetmetadatacache NetworkPolicy: %w", err))
-	}
-
-	cr := &rbacv1.ClusterRole{}
-	cr.Name = kn.Namespace + "-fleetmetadatacache"
-	if err := r.deleteIfExists(ctx, cr); err != nil {
-		errs = append(errs, fmt.Errorf("deleting fleetmetadatacache ClusterRole: %w", err))
-	}
-
-	crb := &rbacv1.ClusterRoleBinding{}
-	crb.Name = kn.Namespace + "-fleetmetadatacache-binding"
-	if err := r.deleteIfExists(ctx, crb); err != nil {
-		errs = append(errs, fmt.Errorf("deleting fleetmetadatacache ClusterRoleBinding: %w", err))
 	}
 
 	if len(errs) > 0 {
@@ -2184,31 +2239,25 @@ func (r *KubernautReconciler) deleteAgentRuntimeCR(ctx context.Context, kn *kube
 // AWX RBAC, and monitoring RBAC. Always attempts all resources regardless
 // of current feature-flag state.
 func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []error {
-	errs := make([]error, 0, 6)
-	errs = append(errs, r.deleteCoreClusterRBAC(ctx, kn, knV2)...)
+	errs := make([]error, 0, 5)
+	errs = append(errs, r.deleteCoreClusterRBAC(ctx, kn)...)
 	errs = append(errs, r.deleteAnsibleClusterRBAC(ctx, kn)...)
 	errs = append(errs, r.deleteMonitoringClusterRBAC(ctx, kn)...)
 	errs = append(errs, r.deleteAdditionalAgentAndToolRBAC(ctx, kn)...)
-	errs = append(errs, r.deleteFleetMetadataCacheClusterRBAC(ctx, kn)...)
 	errs = append(errs, r.deleteMCPGatewayNamespaceRBAC(ctx, kn, knV2)...)
 	return errs
 }
 
-// deleteCoreClusterRBAC removes the always-present cluster-scoped
-// ClusterRoles and ClusterRoleBindings built from the current spec.
-func (r *KubernautReconciler) deleteCoreClusterRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []error {
-	var errs []error
-	for _, cr := range resources.ClusterRoles(kn, knV2) {
-		if err := r.deleteIfExists(ctx, cr); err != nil {
-			errs = append(errs, fmt.Errorf("deleting ClusterRole %s: %w", cr.Name, err))
-		}
-	}
-	for _, crb := range resources.ClusterRoleBindings(kn, knV2) {
-		if err := r.deleteIfExists(ctx, crb); err != nil {
-			errs = append(errs, fmt.Errorf("deleting CRB %s: %w", crb.Name, err))
-		}
-	}
-	return errs
+// deleteCoreClusterRBAC removes every ClusterRole/ClusterRoleBinding this
+// instance could ever have produced via resources.ClusterRoles()/
+// ClusterRoleBindings() (#341), by label rather than by recomputing the
+// current spec's desired list -- the instance is being deleted, so nothing
+// computed from its current spec should survive, including objects a prior
+// (now-changed) spec state left behind and that ClusterRoles()/
+// ClusterRoleBindings() would no longer even enumerate (e.g. FMC's
+// cluster-scoped-mode pair after a namespace retrofit).
+func (r *KubernautReconciler) deleteCoreClusterRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
+	return r.pruneOrphanedCoreClusterRBAC(ctx, kn, nil, nil)
 }
 
 // deleteAnsibleClusterRBAC removes the AWX ClusterRole/ClusterRoleBinding.
@@ -2298,29 +2347,6 @@ func (r *KubernautReconciler) deleteAdditionalAgentAndToolRBAC(ctx context.Conte
 		if err := r.deleteIfExists(ctx, &extCRBList.Items[i]); err != nil {
 			errs = append(errs, fmt.Errorf("deleting additional agent CRB %s: %w", extCRBList.Items[i].Name, err))
 		}
-	}
-	return errs
-}
-
-// deleteFleetMetadataCacheClusterRBAC removes FMC's ClusterRole and
-// ClusterRoleBinding unconditionally.
-//
-// #224: this is required in addition to deleteCoreClusterRBAC because
-// resources.ClusterRoles()/ClusterRoleBindings() stop returning FMC's
-// entries once FMC's effective mcpGatewayNamespace resolves --
-// deleteIfExists here is the only path that still covers cluster-scoped-mode
-// installs, and is a no-op if they were never created.
-func (r *KubernautReconciler) deleteFleetMetadataCacheClusterRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) []error {
-	var errs []error
-	fmcCR := &rbacv1.ClusterRole{}
-	fmcCR.Name = kn.Namespace + "-fleetmetadatacache"
-	if err := r.deleteIfExists(ctx, fmcCR); err != nil {
-		errs = append(errs, fmt.Errorf("deleting fleetmetadatacache ClusterRole: %w", err))
-	}
-	fmcCRB := &rbacv1.ClusterRoleBinding{}
-	fmcCRB.Name = kn.Namespace + "-fleetmetadatacache-binding"
-	if err := r.deleteIfExists(ctx, fmcCRB); err != nil {
-		errs = append(errs, fmt.Errorf("deleting fleetmetadatacache ClusterRoleBinding: %w", err))
 	}
 	return errs
 }
