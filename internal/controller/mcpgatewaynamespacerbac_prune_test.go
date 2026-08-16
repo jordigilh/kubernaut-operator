@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -29,9 +30,108 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
+
+// isMCPGatewayNamespaceRBACLabeled reports whether obj is a Role/RoleBinding
+// carrying LabelMCPGatewayNamespaceRBAC, used by the failing-client wrappers
+// below to scope injected failures to exactly the objects
+// deployMCPGatewayNamespaceRBAC/pruneOrphanedMCPGatewayNamespaceRBAC manage
+// (#354), leaving every other RBAC object's Create/Update/Delete unaffected
+// so the rest of a normal reconcile still succeeds.
+func isMCPGatewayNamespaceRBACLabeled(obj client.Object) bool {
+	switch obj.(type) {
+	case *rbacv1.Role, *rbacv1.RoleBinding:
+	default:
+		return false
+	}
+	return obj.GetLabels()[resources.LabelMCPGatewayNamespaceRBAC] == resources.LabelValueTrue
+}
+
+// mcpGatewayNamespaceRoleWriteFailingClient wraps a real client but returns
+// an error on Create/Update calls for Role and/or RoleBinding objects
+// carrying LabelMCPGatewayNamespaceRBAC (per failRole/failRoleBinding),
+// simulating an RBAC provisioning failure inside
+// deployMCPGatewayNamespaceRBAC's ensureUnowned calls (#354). Split by
+// object kind (rather than a single failEither flag) so a test can fail
+// only the RoleBinding half while the Role half still succeeds --
+// deployMCPGatewayNamespaceRBAC ensures all Roles before any RoleBinding,
+// so failing both indistinguishably would only ever exercise the Role
+// branch.
+type mcpGatewayNamespaceRoleWriteFailingClient struct {
+	client.Client
+	failRole        bool
+	failRoleBinding bool
+}
+
+func (c *mcpGatewayNamespaceRoleWriteFailingClient) shouldFail(obj client.Object) bool {
+	if !isMCPGatewayNamespaceRBACLabeled(obj) {
+		return false
+	}
+	switch obj.(type) {
+	case *rbacv1.Role:
+		return c.failRole
+	case *rbacv1.RoleBinding:
+		return c.failRoleBinding
+	default:
+		return false
+	}
+}
+
+func (c *mcpGatewayNamespaceRoleWriteFailingClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
+	if c.shouldFail(obj) {
+		return fmt.Errorf("simulated: forbidden creating %s/%s", obj.GetNamespace(), obj.GetName())
+	}
+	return c.Client.Create(ctx, obj, opts...)
+}
+
+func (c *mcpGatewayNamespaceRoleWriteFailingClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+	if c.shouldFail(obj) {
+		return fmt.Errorf("simulated: forbidden updating %s/%s", obj.GetNamespace(), obj.GetName())
+	}
+	return c.Client.Update(ctx, obj, opts...)
+}
+
+// mcpGatewayNamespaceRoleDeleteFailingClient wraps a real client but returns
+// an error on Delete calls for Role/RoleBinding objects carrying
+// LabelMCPGatewayNamespaceRBAC, simulating a persistent cleanup failure
+// inside pruneUndesiredNamespaced's deleteIfExists calls (#354).
+type mcpGatewayNamespaceRoleDeleteFailingClient struct {
+	client.Client
+}
+
+func (c *mcpGatewayNamespaceRoleDeleteFailingClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	if isMCPGatewayNamespaceRBACLabeled(obj) {
+		return fmt.Errorf("simulated: forbidden deleting %s/%s", obj.GetNamespace(), obj.GetName())
+	}
+	return c.Client.Delete(ctx, obj, opts...)
+}
+
+// mcpGatewayNamespaceRoleListFailingClient wraps a real client but returns
+// an error on List calls for the list type(s) selected by failRoleList/
+// failRoleBindingList, simulating an apiserver failure inside
+// pruneOrphanedMCPGatewayNamespaceRBAC's label-selector list calls (#354).
+type mcpGatewayNamespaceRoleListFailingClient struct {
+	client.Client
+	failRoleList        bool
+	failRoleBindingList bool
+}
+
+func (c *mcpGatewayNamespaceRoleListFailingClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	switch list.(type) {
+	case *rbacv1.RoleList:
+		if c.failRoleList {
+			return fmt.Errorf("simulated: forbidden listing Roles")
+		}
+	case *rbacv1.RoleBindingList:
+		if c.failRoleBindingList {
+			return fmt.Errorf("simulated: forbidden listing RoleBindings")
+		}
+	}
+	return c.Client.List(ctx, list, opts...)
+}
 
 // Business acceptance criteria (#354, AC-6 least-privilege): a namespace-
 // scoped Role/RoleBinding granting MCP Gateway CRD read access (FMC/SP) must
@@ -241,5 +341,159 @@ var _ = Describe("Namespace-scoped MCP Gateway RBAC pruning on namespace change 
 		}, fmcRole)
 		Expect(errors.IsNotFound(err)).To(BeTrue(),
 			"fleetmetadatacache-mcpgateway Role in the stale namespace should be removed by the finalizer path, got: %v", err)
+	})
+
+	// Business acceptance criteria (AGENTS.md GA Readiness Audit #10,
+	// "Fail-Open Safety": no silent failures -- all error paths are
+	// observable): if the apiserver itself rejects a create/update/delete/
+	// list call during MCP Gateway namespace RBAC provisioning or pruning,
+	// the reconciler must surface that failure (return an error, and for
+	// the deploy path, an RBACProvisioned=False condition) rather than
+	// silently treating the reconcile as successful while a Role/
+	// RoleBinding is left missing, stale, or unverified.
+	Context("error paths (#354)", func() {
+		It("surfaces an error and sets RBACProvisioned=False when creating FMC's namespace-scoped Role fails", func() {
+			ensureNamespace(fmcNSa)
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
+			fleet := defaultFMCFleetSpec()
+			fleet.MCPGatewayNamespace = fmcNSa
+			enableFleetMetadataCacheWithFleet(ctx, fleet)
+
+			r := newReconciler()
+			By("reconcile 1: add finalizer")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("reconcile 2: validate + start migration")
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			markMigrationJobComplete(ctx)
+
+			By("injecting a client that fails creating MCP Gateway namespace Roles")
+			r.Client = &mcpGatewayNamespaceRoleWriteFailingClient{Client: k8sClient, failRole: true}
+
+			By("reconcile 3: migration complete + deploy -- FMC's namespace Role creation should fail")
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).To(HaveOccurred())
+
+			By("restoring the real client to read status")
+			r.Client = k8sClient
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionRBACProvisioned)
+			Expect(cond).NotTo(BeNil(), "RBACProvisioned condition should exist")
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(ReasonRBACApplyFailed))
+		})
+
+		It("surfaces an error and sets RBACProvisioned=False when creating FMC's namespace-scoped RoleBinding fails", func() {
+			ensureNamespace(fmcNSa)
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
+			fleet := defaultFMCFleetSpec()
+			fleet.MCPGatewayNamespace = fmcNSa
+			enableFleetMetadataCacheWithFleet(ctx, fleet)
+
+			r := newReconciler()
+			By("reconcile 1: add finalizer")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("reconcile 2: validate + start migration")
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			markMigrationJobComplete(ctx)
+
+			By("injecting a client that fails creating MCP Gateway namespace RoleBindings only (Roles still succeed)")
+			r.Client = &mcpGatewayNamespaceRoleWriteFailingClient{Client: k8sClient, failRoleBinding: true}
+
+			By("reconcile 3: migration complete + deploy -- FMC's namespace RoleBinding creation should fail")
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).To(HaveOccurred())
+
+			By("restoring the real client to read status")
+			r.Client = k8sClient
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionRBACProvisioned)
+			Expect(cond).NotTo(BeNil(), "RBACProvisioned condition should exist")
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(ReasonRBACApplyFailed))
+		})
+
+		It("surfaces an error, and leaves the stale Role in place, when pruning FMC's old-namespace Role fails", func() {
+			ensureNamespace(fmcNSa)
+			ensureNamespace(fmcNSb)
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
+			fleet := defaultFMCFleetSpec()
+			fleet.MCPGatewayNamespace = fmcNSa
+			enableFleetMetadataCacheWithFleet(ctx, fleet)
+			reconcileToRunning(ctx)
+
+			By("sanity: FMC's Role exists in the original namespace")
+			staleRole := &rbacv1.Role{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: testNamespace + "-fleetmetadatacache-mcpgateway", Namespace: fmcNSa,
+			}, staleRole)).To(Succeed())
+
+			By("changing the shared mcpGatewayNamespace so the old namespace's Role becomes orphaned")
+			existing := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), existing)).To(Succeed())
+			existing.Spec.Fleet.MCPGatewayNamespace = fmcNSb
+			Expect(k8sClient.Update(ctx, existing)).To(Succeed())
+
+			r := newReconciler()
+			By("injecting a client that fails deleting MCP Gateway namespace Roles/RoleBindings")
+			r.Client = &mcpGatewayNamespaceRoleDeleteFailingClient{Client: k8sClient}
+
+			By("reconciling -- pruning the now-orphaned Role should fail and surface an error")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).To(HaveOccurred())
+
+			By("verifying the stale Role was not silently dropped from status/observability -- it's still on the cluster")
+			err = k8sClient.Get(ctx, types.NamespacedName{
+				Name: testNamespace + "-fleetmetadatacache-mcpgateway", Namespace: fmcNSa,
+			}, staleRole)
+			Expect(err).NotTo(HaveOccurred(),
+				"the stale Role should still exist -- a failed prune must not be silently treated as success")
+		})
+
+		It("surfaces an error when listing live Roles fails during MCP Gateway namespace RBAC pruning", func() {
+			ensureNamespace(fmcNSa)
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
+			fleet := defaultFMCFleetSpec()
+			fleet.MCPGatewayNamespace = fmcNSa
+			enableFleetMetadataCacheWithFleet(ctx, fleet)
+			reconcileToRunning(ctx)
+
+			r := newReconciler()
+			r.Client = &mcpGatewayNamespaceRoleListFailingClient{Client: k8sClient, failRoleList: true}
+
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("surfaces an error when listing live RoleBindings fails during MCP Gateway namespace RBAC pruning", func() {
+			ensureNamespace(fmcNSa)
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
+			fleet := defaultFMCFleetSpec()
+			fleet.MCPGatewayNamespace = fmcNSa
+			enableFleetMetadataCacheWithFleet(ctx, fleet)
+			reconcileToRunning(ctx)
+
+			r := newReconciler()
+			r.Client = &mcpGatewayNamespaceRoleListFailingClient{Client: k8sClient, failRoleBindingList: true}
+
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).To(HaveOccurred())
+		})
 	})
 })
