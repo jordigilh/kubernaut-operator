@@ -1890,6 +1890,23 @@ var _ = Describe("MCPGatewayNamespaceRBAC", func() {
 		Expect(roles).To(HaveLen(2))
 		Expect(rbs).To(HaveLen(2))
 	})
+
+	It("stamps LabelMCPGatewayNamespaceRBAC on every returned Role/RoleBinding so the controller can prune stale namespaces by label selector (#354)", func() {
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testFMCMCPGatewayNamespace}
+		knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testSPMCPGatewayNamespace}
+		roles, rbs := MCPGatewayNamespaceRBAC(kn, knV2)
+		Expect(roles).NotTo(BeEmpty())
+		Expect(rbs).NotTo(BeEmpty())
+		for _, r := range roles {
+			Expect(r.Labels).To(HaveKeyWithValue(LabelMCPGatewayNamespaceRBAC, LabelValueTrue),
+				"Role %s/%s missing LabelMCPGatewayNamespaceRBAC", r.Namespace, r.Name)
+		}
+		for _, rb := range rbs {
+			Expect(rb.Labels).To(HaveKeyWithValue(LabelMCPGatewayNamespaceRBAC, LabelValueTrue),
+				"RoleBinding %s/%s missing LabelMCPGatewayNamespaceRBAC", rb.Namespace, rb.Name)
+		}
+	})
 })
 
 var _ = Describe("FleetMetadataCache RBAC namespace retrofit", func() {
