@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.12] - 2026-08-16
+
 ### Fixed
 - **Disabling a feature (gateway, apiFrontend, or OCP monitoring) after install left its cluster-scoped ClusterRole/ClusterRoleBinding grants behind forever (#341, #352)** — `resources.ClusterRoles`/`ClusterRoleBindings` conditionally omit an entry once its owning feature is toggled off, but nothing then went back and deleted the ClusterRole/CRB that had already been created while the feature was enabled: `apiFrontend`/console-access toggle-off had no cleanup at all, and even gateway/monitoring's existing static-name cleanup in `deployToggleRBAC` and the finalizer's delete path recomputed the "objects to delete" list from the CR's *current* spec — so a toggle-off applied without an intervening reconcile before deletion silently excluded exactly the objects that needed deleting. Both are least-privilege (AC-6) violations: a standing cluster-scoped grant nothing is using is a leaked over-privilege, not just an unbound one. Fixed by stamping every object returned by `resources.ClusterRoles`/`ClusterRoleBindings` with a new `kubernaut.ai/core-cluster-rbac` label and adding `pruneOrphanedCoreClusterRBAC`, which lists all objects carrying that label for the instance and deletes any not present in the current desired set (or all of them, for the finalizer's unconditional full sweep). Replaces the old static-name gateway/monitoring cleanup blocks and the `MonitoringCRBNames`/`MonitoringClusterRoleNames` helpers they depended on, which are now redundant. This is the `release/v1.5` (v1alpha1) backport of the equivalent `main`/v1alpha2 fix (#343); the RBAC/toggle architecture differs enough between the two lines that this required an independent implementation rather than a literal cherry-pick, though the label-diff design is the same.
+
+### Changed
+- Bumped `VERSION` to `1.5.12`. No operand (`kubernaut`/`kubernaut-console`) image changes — this is an operator-code-only patch. No CRD schema changes (`make manifests generate` produced no diff). A follow-up PR will pin the operator's own image and bundle to their published `v1.5.12` digests once the tag image is built, per the usual pattern.
 
 ## [1.5.11] - 2026-08-16
 
