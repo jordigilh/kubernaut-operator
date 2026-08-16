@@ -217,6 +217,45 @@ func fleetNamespaceFromYAML(data string) string {
 	return root.Fleet.Namespace
 }
 
+// telemetrySpecFixture returns a fully-populated v1alpha2.TelemetrySpec used
+// by the #323 TelemetrySpec wiring tests shared across Gateway, DataStorage,
+// and Kubernaut Agent ConfigMap builders.
+func telemetrySpecFixture() kubernautv1alpha2.TelemetrySpec {
+	logSink := true
+	tlsEnabled := true
+	return kubernautv1alpha2.TelemetrySpec{
+		Endpoint: "otel-collector.observability.svc:4317",
+		LogSink:  &logSink,
+		TLS: kubernautv1alpha2.TelemetryTLSConfig{
+			Enabled:  &tlsEnabled,
+			CAFile:   "/etc/telemetry/ca.crt",
+			CertFile: "/etc/telemetry/tls.crt",
+			KeyFile:  "/etc/telemetry/tls.key",
+		},
+	}
+}
+
+// assertTelemetryYAML asserts that a rendered config.yaml contains the
+// exact telemetrySpecFixture() values under the shared telemetry: block
+// (#323), used by Gateway/DataStorage/KubernautAgent ConfigMap tests.
+// Unmarshals into the actual production telemetryYAML/telemetryTLSYAML
+// types (this file is package resources, i.e. a white-box test, so they're
+// already visible) rather than a hand-copied mirror struct -- see AGENTS.md
+// Testing Conventions: a hand-copied struct doesn't fail to compile when the
+// production type's yaml tag changes, silently asserting the wrong thing.
+func assertTelemetryYAML(data string) {
+	var root struct {
+		Telemetry telemetryYAML `yaml:"telemetry"`
+	}
+	ExpectWithOffset(1, yaml.Unmarshal([]byte(data), &root)).To(Succeed())
+	ExpectWithOffset(1, root.Telemetry.Endpoint).To(Equal("otel-collector.observability.svc:4317"), "telemetry.endpoint mismatch, got:\n%s", data)
+	ExpectWithOffset(1, root.Telemetry.LogSink).To(BeTrue(), "telemetry.logSink mismatch, got:\n%s", data)
+	ExpectWithOffset(1, root.Telemetry.TLS.Enabled).To(BeTrue(), "telemetry.tls.enabled mismatch, got:\n%s", data)
+	ExpectWithOffset(1, root.Telemetry.TLS.CAFile).To(Equal("/etc/telemetry/ca.crt"), "telemetry.tls.caFile mismatch, got:\n%s", data)
+	ExpectWithOffset(1, root.Telemetry.TLS.CertFile).To(Equal("/etc/telemetry/tls.crt"), "telemetry.tls.certFile mismatch, got:\n%s", data)
+	ExpectWithOffset(1, root.Telemetry.TLS.KeyFile).To(Equal("/etc/telemetry/tls.key"), "telemetry.tls.keyFile mismatch, got:\n%s", data)
+}
+
 func testKubernautWithValkeyTLS() *kubernautv1alpha1.Kubernaut {
 	kn := testKubernaut()
 	kn.Spec.Valkey.TLS = &kubernautv1alpha1.ValkeyTLSSpec{

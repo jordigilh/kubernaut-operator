@@ -2729,6 +2729,19 @@ spec:
                       When set, the operator provisions persona-based tool ClusterRoles
                       and group-to-role ClusterRoleBindings instead of file-based RBAC.
                     properties:
+                      consoleAccessAuthorizationCheckEnabled:
+                        default: false
+                        description: |-
+                          ConsoleAccessAuthorizationCheckEnabled turns on AF's coarse-grained
+                          kubernaut.ai/console authorization check (kubernaut#1919) -- the same
+                          enforcement RoleBindings/ConsoleAccessGroups above configure. Defaults
+                          to false: this is a security-hardening opt-in, not a mandatory setting,
+                          so a zero-config CR deploys successfully and console access is
+                          unrestricted until an administrator explicitly enables the check after
+                          populating personas/consoleAccessGroups -- enabling it by default would
+                          make every install responsible for RBAC configuration before console
+                          login works at all.
+                        type: boolean
                       consoleAccessGroups:
                         description: |-
                           ConsoleAccessGroups are the OIDC groups granted the coarse-grained
@@ -3245,6 +3258,44 @@ spec:
                     required:
                     - secretName
                     type: object
+                  telemetry:
+                    description: OpenTelemetry distributed-trace export configuration.
+                      Off by default.
+                    properties:
+                      endpoint:
+                        description: |-
+                          OTLP collector endpoint (e.g. "otel-collector.observability.svc:4317").
+                          Tracing is disabled while this is empty.
+                        type: string
+                      logSink:
+                        default: false
+                        description: |-
+                          Mirror trace spans into the component's structured log output in
+                          addition to exporting them via OTLP. Has no effect while Endpoint is
+                          empty.
+                        type: boolean
+                      tls:
+                        description: TLS configures the connection to the OTLP collector.
+                        properties:
+                          caFile:
+                            description: |-
+                              CA bundle path for a self-signed or private collector certificate.
+                              Empty trusts the system CA pool.
+                            type: string
+                          certFile:
+                            description: Optional mTLS client certificate path.
+                            type: string
+                          enabled:
+                            default: false
+                            description: |-
+                              Use TLS when connecting to the OTLP collector. False (default) uses
+                              plain HTTP/gRPC, matching most in-cluster collector deployments.
+                            type: boolean
+                          keyFile:
+                            description: Optional mTLS client key path.
+                            type: string
+                        type: object
+                    type: object
                 type: object
               effectivenessMonitor:
                 description: EffectivenessMonitor controller configuration.
@@ -3623,6 +3674,45 @@ spec:
                         description: 'Timeout for outbound K8s API requests. Default:
                           "15s".'
                         type: string
+                      telemetry:
+                        description: OpenTelemetry distributed-trace export configuration.
+                          Off by default.
+                        properties:
+                          endpoint:
+                            description: |-
+                              OTLP collector endpoint (e.g. "otel-collector.observability.svc:4317").
+                              Tracing is disabled while this is empty.
+                            type: string
+                          logSink:
+                            default: false
+                            description: |-
+                              Mirror trace spans into the component's structured log output in
+                              addition to exporting them via OTLP. Has no effect while Endpoint is
+                              empty.
+                            type: boolean
+                          tls:
+                            description: TLS configures the connection to the OTLP
+                              collector.
+                            properties:
+                              caFile:
+                                description: |-
+                                  CA bundle path for a self-signed or private collector certificate.
+                                  Empty trusts the system CA pool.
+                                type: string
+                              certFile:
+                                description: Optional mTLS client certificate path.
+                                type: string
+                              enabled:
+                                default: false
+                                description: |-
+                                  Use TLS when connecting to the OTLP collector. False (default) uses
+                                  plain HTTP/gRPC, matching most in-cluster collector deployments.
+                                type: boolean
+                              keyFile:
+                                description: Optional mTLS client key path.
+                                type: string
+                            type: object
+                        type: object
                       trustedProxyCIDRs:
                         description: |-
                           Trusted proxy CIDRs for X-Forwarded-For / RealIP extraction.
@@ -3816,10 +3906,32 @@ spec:
                   audit:
                     description: Audit logging configuration.
                     properties:
+                      batchSize:
+                        default: 50
+                        description: Maximum number of audit events flushed to Data
+                          Storage per batch.
+                        minimum: 1
+                        type: integer
+                      bufferSize:
+                        default: 10000
+                        description: |-
+                          Size of the in-memory audit event buffer. Events are dropped once the
+                          buffer is full and Data Storage cannot keep up with the flush rate.
+                        minimum: 1
+                        type: integer
                       enabled:
                         default: true
                         description: Whether audit logging is enabled.
                         type: boolean
+                      flushIntervalSeconds:
+                        default: "1"
+                        description: |-
+                          How often buffered audit events are flushed to Data Storage, in
+                          seconds (e.g. "0.5" for 500ms). Serialized as string to avoid CRD
+                          float portability issues (see AlignmentCheckLLMSpec.Temperature).
+                          Lower values reduce the audit-visibility gap after a remediation
+                          action at the cost of more frequent Data Storage writes.
+                        type: string
                     type: object
                   fleet:
                     description: |-
@@ -4068,6 +4180,44 @@ spec:
                         default: 8000
                         description: Token threshold above which tool output is summarized.
                         type: integer
+                    type: object
+                  telemetry:
+                    description: OpenTelemetry distributed-trace export configuration.
+                      Off by default.
+                    properties:
+                      endpoint:
+                        description: |-
+                          OTLP collector endpoint (e.g. "otel-collector.observability.svc:4317").
+                          Tracing is disabled while this is empty.
+                        type: string
+                      logSink:
+                        default: false
+                        description: |-
+                          Mirror trace spans into the component's structured log output in
+                          addition to exporting them via OTLP. Has no effect while Endpoint is
+                          empty.
+                        type: boolean
+                      tls:
+                        description: TLS configures the connection to the OTLP collector.
+                        properties:
+                          caFile:
+                            description: |-
+                              CA bundle path for a self-signed or private collector certificate.
+                              Empty trusts the system CA pool.
+                            type: string
+                          certFile:
+                            description: Optional mTLS client certificate path.
+                            type: string
+                          enabled:
+                            default: false
+                            description: |-
+                              Use TLS when connecting to the OTLP collector. False (default) uses
+                              plain HTTP/gRPC, matching most in-cluster collector deployments.
+                            type: boolean
+                          keyFile:
+                            description: Optional mTLS client key path.
+                            type: string
+                        type: object
                     type: object
                 type: object
               llmProfiles:

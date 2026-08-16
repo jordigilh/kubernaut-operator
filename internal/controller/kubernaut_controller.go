@@ -1326,7 +1326,9 @@ func buildCoreConfigMaps(
 		// DNS lookup that deliberately uses context.Background() (see its doc
 		// comment): every error path, including a cancelled context, falls back
 		// to the configured hostname, so propagating ctx would not change behavior.
-		{"datastorage", func() (*corev1.ConfigMap, error) { return resources.DataStorageConfigMap(kn, dbName, dbUser, tlsOpt) }}, //nolint:contextcheck
+		{"datastorage", func() (*corev1.ConfigMap, error) {
+			return resources.DataStorageConfigMap(kn, knV2, dbName, dbUser, tlsOpt)
+		}}, //nolint:contextcheck
 		{"aianalysis", func() (*corev1.ConfigMap, error) { return resources.AIAnalysisConfigMap(kn, tlsOpt) }},
 		{"signalprocessing", func() (*corev1.ConfigMap, error) { return resources.SignalProcessingConfigMap(kn, knV2, tlsOpt) }},
 		{"remediationorchestrator", func() (*corev1.ConfigMap, error) { return resources.RemediationOrchestratorConfigMap(kn, knV2, tlsOpt) }},

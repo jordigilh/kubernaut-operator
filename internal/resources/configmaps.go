@@ -106,6 +106,45 @@ type gatewayConfigYAML struct {
 	Middleware  gatewayMiddlewareYAML  `json:"middleware" yaml:"middleware"`
 	Datastorage gatewayDatastorageYAML `json:"datastorage" yaml:"datastorage"`
 	Fleet       *fleetConfigYAML       `json:"fleet,omitempty" yaml:"fleet,omitempty"`
+	Telemetry   *telemetryYAML         `json:"telemetry,omitempty" yaml:"telemetry,omitempty"`
+}
+
+// telemetryYAML mirrors upstream's shared TelemetryConfig shape (ADR-068,
+// DD-OTEL-001), rendered identically for Gateway, DataStorage, and
+// Kubernaut Agent -- see TelemetrySpec (api/v1alpha2) for the CRD-level
+// field documentation.
+type telemetryYAML struct {
+	Endpoint string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	LogSink  bool             `json:"logSink,omitempty" yaml:"logSink,omitempty"`
+	TLS      telemetryTLSYAML `json:"tls,omitempty" yaml:"tls,omitempty"`
+}
+
+type telemetryTLSYAML struct {
+	Enabled  bool   `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	CAFile   string `json:"caFile,omitempty" yaml:"caFile,omitempty"`
+	CertFile string `json:"certFile,omitempty" yaml:"certFile,omitempty"`
+	KeyFile  string `json:"keyFile,omitempty" yaml:"keyFile,omitempty"`
+}
+
+// resolveTelemetryConfig converts a CRD TelemetrySpec into the rendered
+// telemetry YAML block, omitting the block entirely (nil) while tracing is
+// disabled (Endpoint empty) -- matching upstream's zero-overhead-when-off
+// default so existing CRs render byte-for-byte the same config.yaml as
+// before this field existed.
+func resolveTelemetryConfig(t kubernautv1alpha2.TelemetrySpec) *telemetryYAML {
+	if t.Endpoint == "" {
+		return nil
+	}
+	return &telemetryYAML{
+		Endpoint: t.Endpoint,
+		LogSink:  t.LogSink != nil && *t.LogSink,
+		TLS: telemetryTLSYAML{
+			Enabled:  t.TLS.Enabled != nil && *t.TLS.Enabled,
+			CAFile:   t.TLS.CAFile,
+			CertFile: t.TLS.CertFile,
+			KeyFile:  t.TLS.KeyFile,
+		},
+	}
 }
 
 // fleetConfigYAML mirrors upstream pkg/fleet.FleetConfig's rendered subset
@@ -305,6 +344,7 @@ type dataStorageConfigYAML struct {
 	Logging                  dataStorageLoggingYAML    `json:"logging" yaml:"logging"`
 	EndpointPropagationDelay string                    `json:"endpointPropagationDelay,omitempty" yaml:"endpointPropagationDelay,omitempty"`
 	Retention                *dataStorageRetentionYAML `json:"retention,omitempty" yaml:"retention,omitempty"`
+	Telemetry                *telemetryYAML            `json:"telemetry,omitempty" yaml:"telemetry,omitempty"`
 }
 
 type dataStorageRetentionYAML struct {
@@ -871,6 +911,7 @@ type kubernautAgentConfigYAML struct {
 	AI           kaAIYAML           `json:"ai" yaml:"ai"`
 	Integrations kaIntegrationsYAML `json:"integrations" yaml:"integrations"`
 	Interactive  *kaInteractiveYAML `json:"interactive,omitempty" yaml:"interactive,omitempty"`
+	Telemetry    *telemetryYAML     `json:"telemetry,omitempty" yaml:"telemetry,omitempty"`
 }
 
 type kaInteractiveYAML struct {
@@ -1039,7 +1080,8 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.K
 			Timeout: "10s",
 			Buffer:  dataStorageBufferYAML{BufferSize: 10000, BatchSize: 100, FlushInterval: "1s", MaxRetries: 3},
 		},
-		Fleet: resolveFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.Gateway.Fleet, ""), InterServiceTLSCAFile),
+		Fleet:     resolveFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.Gateway.Fleet, ""), InterServiceTLSCAFile),
+		Telemetry: resolveTelemetryConfig(knV2.Spec.Gateway.Config.Telemetry),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1054,7 +1096,7 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.K
 // DataStorageConfigMap builds the data-storage config ConfigMap. The dbName and
 // dbUser parameters must match the values written into the DataStorageDBSecret
 // to avoid a config/secret mismatch.
-func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, dbName, dbUser string, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	pgPort := PostgreSQLPort(kn)
 	pgHost := resolveHostToIP(kn.Spec.PostgreSQL.Host)
@@ -1089,6 +1131,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, dbName, dbUser string
 		},
 		EndpointPropagationDelay: withDefault(kn.Spec.DataStorage.EndpointPropagationDelay, "10s"),
 		Retention:                dataStorageRetentionConfig(kn),
+		Telemetry:                resolveTelemetryConfig(knV2.Spec.DataStorage.Telemetry),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1695,13 +1738,15 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1a
 		Integrations: kaIntegrationsYAML{
 			DataStorage: kaIntegrationsDataStorageYAML{URL: DataStorageURL(ns)},
 		},
+		Telemetry: resolveTelemetryConfig(knV2.Spec.KubernautAgent.Telemetry),
 	}
 
 	if ka.Audit.AuditEnabled() {
+		kaAudit := knV2.Spec.KubernautAgent.Audit
 		cfg.Runtime.Audit = &kaAuditYAML{
-			FlushIntervalSeconds: 1.0,
-			BufferSize:           10000,
-			BatchSize:            50,
+			FlushIntervalSeconds: parseFloatDefault(kaAudit.FlushIntervalSeconds, 1.0),
+			BufferSize:           intPtrDefault(kaAudit.BufferSize, 10000),
+			BatchSize:            intPtrDefault(kaAudit.BatchSize, 50),
 		}
 	}
 
@@ -1942,6 +1987,20 @@ func intPtrDefault(val *int, def int) int {
 	return def
 }
 
+// parseFloatDefault parses a string-encoded float (see AuditSpec's
+// FlushIntervalSeconds doc comment for why floats are string-serialized in
+// the CRD), returning def when s is empty or unparsable.
+func parseFloatDefault(s string, def float64) float64 {
+	if s == "" {
+		return def
+	}
+	parsed, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return def
+	}
+	return parsed
+}
+
 // ---------- APIFrontend ConfigMaps ----------
 
 type afConfigYAML struct {
@@ -1967,7 +2026,8 @@ type afSessionYAML struct {
 }
 
 type afRBACYAML struct {
-	SARCacheTTL string `json:"sarCacheTTL" yaml:"sarCacheTTL"`
+	SARCacheTTL                            string `json:"sarCacheTTL" yaml:"sarCacheTTL"`
+	ConsoleAccessAuthorizationCheckEnabled bool   `json:"consoleAccessAuthorizationCheckEnabled" yaml:"consoleAccessAuthorizationCheckEnabled"`
 }
 
 type afServerYAML struct {
@@ -2219,7 +2279,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 			URL:  agentCardURL,
 		},
 		Auth: afAuthConfig(kn, oidc),
-		RBAC: afRBACConfig(kn),
+		RBAC: afRBACConfig(kn, knV2),
 		Logging: afLoggingYAML{
 			Level: withDefault(af.Logging.Level, "info"),
 		},
@@ -2454,12 +2514,16 @@ func injectConsoleAudience(providers []afJWTProviderYAML) {
 	}
 }
 
-func afRBACConfig(kn *kubernautv1alpha1.Kubernaut) afRBACYAML {
+func afRBACConfig(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) afRBACYAML {
 	ttl := "30s"
 	if kn.Spec.APIFrontend.RBAC != nil && kn.Spec.APIFrontend.RBAC.SARCacheTTL != "" {
 		ttl = kn.Spec.APIFrontend.RBAC.SARCacheTTL
 	}
-	return afRBACYAML{SARCacheTTL: ttl}
+	checkEnabled := false
+	if rbac := knV2.Spec.APIFrontend.RBAC; rbac != nil && rbac.ConsoleAccessAuthorizationCheckEnabled != nil {
+		checkEnabled = *rbac.ConsoleAccessAuthorizationCheckEnabled
+	}
+	return afRBACYAML{SARCacheTTL: ttl, ConsoleAccessAuthorizationCheckEnabled: checkEnabled}
 }
 
 // APIFrontendRBACRolesConfigMap generates the default RBAC roles mapping
