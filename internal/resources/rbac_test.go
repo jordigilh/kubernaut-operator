@@ -123,7 +123,13 @@ var _ = Describe("ClusterRoles", func() {
 			}
 		})
 
-		It("has owner-chain resolution rules", func() {
+		// #277: ownerChainResolutionRules() shrunk to only genuinely
+		// universal, non-ecosystem-specific kinds (PDB + networking.k8s.io).
+		// OLM/Istio/cert-manager/ArgoCD/Routes/KubeVirt are no longer
+		// unconditionally granted -- operators needing that ecosystem
+		// coverage supply their own ClusterRole via
+		// spec.additionalClusterRoles (least-privilege, SC-7/AC-6).
+		It("has only the universal owner-chain resolution rules, not ecosystem-specific ones", func() {
 			kn := testKubernaut()
 			roles := ClusterRoles(kn, testKnV2(kn))
 			var gw *rbacv1.ClusterRole
@@ -135,25 +141,27 @@ var _ = Describe("ClusterRoles", func() {
 			}
 			Expect(gw).NotTo(BeNil(), "gateway-role ClusterRole not found")
 
-			wantGroups := []string{
-				"operators.coreos.com",
-				"packages.operators.coreos.com",
-				"security.istio.io",
-				"networking.istio.io",
-				"cert-manager.io",
-				"argoproj.io",
-				"route.openshift.io",
-				"kubevirt.io",
-				"cdi.kubevirt.io",
-			}
 			foundGroups := make(map[string]bool)
 			for _, rule := range gw.Rules {
 				for _, g := range rule.APIGroups {
 					foundGroups[g] = true
 				}
 			}
+
+			wantGroups := []string{"policy", "networking.k8s.io"}
 			for _, g := range wantGroups {
-				Expect(foundGroups[g]).To(BeTrue(), "gateway-role missing owner-chain API group %q", g)
+				Expect(foundGroups[g]).To(BeTrue(), "gateway-role missing universal owner-chain API group %q", g)
+			}
+
+			droppedGroups := []string{
+				"operators.coreos.com", "packages.operators.coreos.com",
+				"security.istio.io", "networking.istio.io",
+				"cert-manager.io", "argoproj.io", "route.openshift.io",
+				"kubevirt.io", "cdi.kubevirt.io",
+			}
+			for _, g := range droppedGroups {
+				Expect(foundGroups[g]).To(BeFalse(),
+					"gateway-role should no longer unconditionally grant ecosystem-specific API group %q (#277 least-privilege shrink)", g)
 			}
 		})
 	})
@@ -318,7 +326,8 @@ var _ = Describe("ClusterRoles", func() {
 	})
 
 	Describe("EffectivenessMonitor controller", func() {
-		It("has owner-chain resolution rules", func() {
+		// #277: see the matching Gateway test above for rationale.
+		It("has only the universal owner-chain resolution rules, not ecosystem-specific ones", func() {
 			kn := testKubernaut()
 			roles := ClusterRoles(kn, testKnV2(kn))
 			var em *rbacv1.ClusterRole
@@ -330,25 +339,27 @@ var _ = Describe("ClusterRoles", func() {
 			}
 			Expect(em).NotTo(BeNil(), "effectivenessmonitor-controller ClusterRole not found")
 
-			wantGroups := []string{
-				"operators.coreos.com",
-				"packages.operators.coreos.com",
-				"security.istio.io",
-				"networking.istio.io",
-				"cert-manager.io",
-				"argoproj.io",
-				"route.openshift.io",
-				"kubevirt.io",
-				"cdi.kubevirt.io",
-			}
 			foundGroups := make(map[string]bool)
 			for _, rule := range em.Rules {
 				for _, g := range rule.APIGroups {
 					foundGroups[g] = true
 				}
 			}
+
+			wantGroups := []string{"policy", "networking.k8s.io"}
 			for _, g := range wantGroups {
-				Expect(foundGroups[g]).To(BeTrue(), "effectivenessmonitor-controller missing owner-chain API group %q", g)
+				Expect(foundGroups[g]).To(BeTrue(), "effectivenessmonitor-controller missing universal owner-chain API group %q", g)
+			}
+
+			droppedGroups := []string{
+				"operators.coreos.com", "packages.operators.coreos.com",
+				"security.istio.io", "networking.istio.io",
+				"cert-manager.io", "argoproj.io", "route.openshift.io",
+				"kubevirt.io", "cdi.kubevirt.io",
+			}
+			for _, g := range droppedGroups {
+				Expect(foundGroups[g]).To(BeFalse(),
+					"effectivenessmonitor-controller should no longer unconditionally grant ecosystem-specific API group %q (#277 least-privilege shrink)", g)
 			}
 		})
 	})

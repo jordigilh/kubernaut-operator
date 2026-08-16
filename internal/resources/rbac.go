@@ -885,23 +885,26 @@ func ConsoleAccessClusterRoleBinding(kn *kubernautv1alpha1.Kubernaut) *rbacv1.Cl
 }
 
 // ownerChainResolutionRules returns the read-only PolicyRules needed for
-// traversing Kubernetes owner-reference chains across ecosystem resources.
-// Used by Gateway, EM, and KA investigator to correlate workloads with
-// their higher-order controllers (OLM, Istio, cert-manager, ArgoCD, OCP).
+// traversing Kubernetes owner-reference chains. Used by Gateway and EM to
+// correlate workloads with their higher-order controllers.
+//
+// #277: shrunk to only genuinely universal, non-ecosystem-specific kinds
+// (PDB + core networking). This previously also unconditionally granted
+// read access to OLM, Istio, cert-manager, ArgoCD, OpenShift Routes, and
+// KubeVirt/CDI CRDs regardless of whether a cluster actually ran any of
+// those ecosystems -- an unbounded, ever-growing list (every new ecosystem
+// needed a code change here) that also violated least-privilege (SC-7/AC-6)
+// by forcing permission surface onto clusters that don't run them. Clusters
+// that do run one of those ecosystems and want Kubernaut's owner-chain
+// correlation to see it now supply their own ClusterRole and reference its
+// name via spec.additionalClusterRoles -- the same mechanism KA already
+// used pre-#277, generalized to Gateway/EM too. See
+// docs/architecture/decisions (kubernaut DD-GATEWAY-018) for the full
+// alternatives analysis.
 func ownerChainResolutionRules() []rbacv1.PolicyRule {
 	return []rbacv1.PolicyRule{
 		{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"networkpolicies", "ingresses"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{"operators.coreos.com"}, Resources: []string{"clusterserviceversions", "subscriptions", "installplans", "operatorgroups", "catalogsources", "operatorconditions"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{"packages.operators.coreos.com"}, Resources: []string{"packagemanifests"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{"security.istio.io"}, Resources: []string{"authorizationpolicies", "peerauthentications", "requestauthentications"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{"networking.istio.io"}, Resources: []string{"virtualservices", "destinationrules", "gateways", "serviceentries"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{"cert-manager.io"}, Resources: []string{"certificates", "clusterissuers", "certificaterequests"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{"argoproj.io"}, Resources: []string{"applications"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{"route.openshift.io"}, Resources: []string{"routes"}, Verbs: []string{"get", "list", "watch"}},
-		// KubeVirt / CDI: VM workload correlation and investigation
-		{APIGroups: []string{"kubevirt.io"}, Resources: []string{"virtualmachines", "virtualmachineinstances", "virtualmachineinstancemigrations"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{"cdi.kubevirt.io"}, Resources: []string{"datavolumes"}, Verbs: []string{"get", "list", "watch"}},
 	}
 }
 
