@@ -287,12 +287,28 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("credentialsSecretRef: gateway-oauth2-creds"), "gateway config should use its own oauth2 client override, got:\n%s", data)
 			Expect(data).NotTo(ContainSubstring("credentialsSecretRef: fleet-oauth2-creds"), "gateway config should not fall back to the shared credentialsSecretRef when it has its own override, got:\n%s", data)
 		})
+
+		It("omits telemetry entirely by default (#323)", func() {
+			kn := testKubernaut()
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("telemetry:"), "gateway config should omit telemetry when spec.gateway.config.telemetry.endpoint is unset (zero overhead when off)")
+		})
+
+		It("renders telemetry endpoint/logSink/tls from spec.gateway.config.telemetry (#323)", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			knV2.Spec.Gateway.Config.Telemetry = telemetrySpecFixture()
+			cm, err := GatewayConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			assertTelemetryYAML(cm.Data["config.yaml"])
+		})
 	})
 
 	Describe("DataStorage ConfigMap", func() {
 		It("contains PostgreSQL and Valkey settings", func() {
 			kn := testKubernaut()
-			cm, err := DataStorageConfigMap(kn, "kubernautdb", "kubernautuser")
+			cm, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
 			Expect(err).NotTo(HaveOccurred())
 
 			data := cm.Data["config.yaml"]
@@ -304,16 +320,32 @@ var _ = Describe("ConfigMaps", func() {
 		It("defaults PostgreSQL port to 5432 when unset", func() {
 			kn := testKubernaut()
 			kn.Spec.PostgreSQL.Port = 0
-			cm, err := DataStorageConfigMap(kn, "kubernautdb", "kubernautuser")
+			cm, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("port: 5432"), "datastorage config should default to port 5432, got:\n%s", data)
 		})
 
+		It("omits telemetry entirely by default (#323)", func() {
+			kn := testKubernaut()
+			cm, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("telemetry:"), "datastorage config should omit telemetry when spec.dataStorage.telemetry.endpoint is unset (zero overhead when off)")
+		})
+
+		It("renders telemetry endpoint/logSink/tls from spec.dataStorage.telemetry (#323)", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			knV2.Spec.DataStorage.Telemetry = telemetrySpecFixture()
+			cm, err := DataStorageConfigMap(kn, knV2, "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+			assertTelemetryYAML(cm.Data["config.yaml"])
+		})
+
 		It("passes through PostgreSQL SSL mode", func() {
 			kn := testKubernaut()
 			kn.Spec.PostgreSQL.SSLMode = "require"
-			cm, err := DataStorageConfigMap(kn, "kubernautdb", "kubernautuser")
+			cm, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
 			Expect(err).NotTo(HaveOccurred())
 			var root struct {
 				Database struct {
@@ -1084,7 +1116,9 @@ var _ = Describe("ConfigMaps", func() {
 						Port    int    `yaml:"port"`
 					} `yaml:"server"`
 					Audit struct {
-						BufferSize int `yaml:"bufferSize"`
+						FlushIntervalSeconds float64 `yaml:"flushIntervalSeconds"`
+						BufferSize           int     `yaml:"bufferSize"`
+						BatchSize            int     `yaml:"batchSize"`
 					} `yaml:"audit"`
 				} `yaml:"runtime"`
 				AI struct {
@@ -1115,7 +1149,9 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(root.Runtime.Logging.Level).To(Equal("info"), "runtime.logging.level = %q, want info", root.Runtime.Logging.Level)
 			Expect(root.Runtime.Server.Port == 8443 && root.Runtime.Server.Address == "0.0.0.0").To(BeTrue(), "runtime.server = %#v, want address 0.0.0.0 port 8443", root.Runtime.Server)
+			Expect(root.Runtime.Audit.FlushIntervalSeconds).To(Equal(1.0), "runtime.audit.flushIntervalSeconds = %v, want 1.0", root.Runtime.Audit.FlushIntervalSeconds)
 			Expect(root.Runtime.Audit.BufferSize).To(Equal(10000), "runtime.audit.bufferSize = %d, want 10000", root.Runtime.Audit.BufferSize)
+			Expect(root.Runtime.Audit.BatchSize).To(Equal(50), "runtime.audit.batchSize = %d, want 50", root.Runtime.Audit.BatchSize)
 			Expect(root.AI.LLM.Provider).To(Equal(LLMProviderOpenAI), "ai.llm.provider = %q, want openai", root.AI.LLM.Provider)
 			Expect(root.AI.Investigation.MaxTurns).To(Equal(40), "ai.investigation.maxTurns = %d, want 40", root.AI.Investigation.MaxTurns)
 			wantDS := DataStorageURL(kn.Namespace)
@@ -1174,6 +1210,59 @@ var _ = Describe("ConfigMaps", func() {
 			}
 			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
 			Expect(root.Runtime.Shutdown.DrainSeconds).To(Equal(120))
+		})
+
+		It("renders custom runtime.audit tuning fields from spec.kubernautAgent.audit (#257)", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			buffer := 25000
+			batch := 200
+			knV2.Spec.KubernautAgent.Audit.FlushIntervalSeconds = "0.5"
+			knV2.Spec.KubernautAgent.Audit.BufferSize = &buffer
+			knV2.Spec.KubernautAgent.Audit.BatchSize = &batch
+			cm, err := KubernautAgentConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			var root struct {
+				Runtime struct {
+					Audit struct {
+						FlushIntervalSeconds float64 `yaml:"flushIntervalSeconds"`
+						BufferSize           int     `yaml:"bufferSize"`
+						BatchSize            int     `yaml:"batchSize"`
+					} `yaml:"audit"`
+				} `yaml:"runtime"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Runtime.Audit.FlushIntervalSeconds).To(Equal(0.5), "runtime.audit.flushIntervalSeconds should honor spec.kubernautAgent.audit.flushIntervalSeconds override")
+			Expect(root.Runtime.Audit.BufferSize).To(Equal(25000), "runtime.audit.bufferSize should honor spec.kubernautAgent.audit.bufferSize override")
+			Expect(root.Runtime.Audit.BatchSize).To(Equal(200), "runtime.audit.batchSize should honor spec.kubernautAgent.audit.batchSize override")
+		})
+
+		It("omits runtime.audit entirely when audit is disabled, even with tuning overrides set (#257)", func() {
+			kn := testKubernaut()
+			disabled := false
+			kn.Spec.KubernautAgent.Audit.Enabled = &disabled
+			knV2 := testKnV2(kn)
+			buffer := 25000
+			knV2.Spec.KubernautAgent.Audit.BufferSize = &buffer
+			cm, err := KubernautAgentConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("bufferSize"), "runtime.audit block (and its tuning fields) should be omitted entirely when audit is disabled")
+		})
+
+		It("omits telemetry entirely by default (#323)", func() {
+			kn := testKubernaut()
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("telemetry:"), "KA config should omit telemetry when spec.kubernautAgent.telemetry.endpoint is unset (zero overhead when off)")
+		})
+
+		It("renders telemetry endpoint/logSink/tls from spec.kubernautAgent.telemetry (#323)", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			knV2.Spec.KubernautAgent.Telemetry = telemetrySpecFixture()
+			cm, err := KubernautAgentConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			assertTelemetryYAML(cm.Data["config.yaml"])
 		})
 
 		It("renders alignment check settings when enabled", func() {
@@ -1788,7 +1877,7 @@ var _ = Describe("ConfigMaps", func() {
 			}
 			builders := []builder{
 				{"gateway", func() (*corev1.ConfigMap, error) { return GatewayConfigMap(kn, testKnV2(kn)) }},
-				{"datastorage", func() (*corev1.ConfigMap, error) { return DataStorageConfigMap(kn, "db", "user") }},
+				{"datastorage", func() (*corev1.ConfigMap, error) { return DataStorageConfigMap(kn, testKnV2(kn), "db", "user") }},
 				{"aianalysis", func() (*corev1.ConfigMap, error) { return AIAnalysisConfigMap(kn) }},
 				{"signalprocessing", func() (*corev1.ConfigMap, error) { return SignalProcessingConfigMap(kn, testKnV2(kn)) }},
 				{"remediationorchestrator", func() (*corev1.ConfigMap, error) { return RemediationOrchestratorConfigMap(kn, testKnV2(kn)) }},
@@ -1831,7 +1920,7 @@ var _ = Describe("ConfigMaps", func() {
 				},
 				"config.yaml",
 				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
-					return DataStorageConfigMap(kn, "kubernautdb", "kubernautuser")
+					return DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
 				},
 			),
 			Entry("aianalysis",
@@ -2914,6 +3003,27 @@ var _ = Describe("APIFrontendConfigMap SAR", func() {
 		Expect(data).To(ContainSubstring("sarCacheTTL: 2m"),
 			"AF config should render custom sarCacheTTL, got:\n%s", data)
 	})
+
+	It("defaults rbac.consoleAccessAuthorizationCheckEnabled to false (#338)", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("consoleAccessAuthorizationCheckEnabled: false"),
+			"AF config should default rbac.consoleAccessAuthorizationCheckEnabled to false so zero-config installs never need RBAC set up first, got:\n%s", data)
+	})
+
+	It("renders rbac.consoleAccessAuthorizationCheckEnabled: true when explicitly enabled via spec.apiFrontend.rbac (#338)", func() {
+		kn := testKubernautWithAF()
+		knV2 := testKnV2(kn)
+		enabled := true
+		knV2.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{ConsoleAccessAuthorizationCheckEnabled: &enabled}
+		cm, err := APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("consoleAccessAuthorizationCheckEnabled: true"),
+			"AF config should honor an explicit spec.apiFrontend.rbac.consoleAccessAuthorizationCheckEnabled=true override, got:\n%s", data)
+	})
 })
 
 var _ = Describe("APIFrontendRBACRolesConfigMap", func() {
@@ -2936,7 +3046,7 @@ var _ = Describe("DataStorage SignerCertDir Config", func() {
 		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha1.SigningCertSpec{
 			SecretName: "datastorage-signing-cert",
 		}
-		cm, err := DataStorageConfigMap(kn, "testdb", "testuser")
+		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("signerCertDir: /etc/certs"))
@@ -2944,7 +3054,7 @@ var _ = Describe("DataStorage SignerCertDir Config", func() {
 
 	It("defaults signerCertDir to /etc/certs when signing cert is not configured", func() {
 		kn := testKubernaut()
-		cm, err := DataStorageConfigMap(kn, "testdb", "testuser")
+		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("signerCertDir: /etc/certs"))
@@ -2954,7 +3064,7 @@ var _ = Describe("DataStorage SignerCertDir Config", func() {
 var _ = Describe("DataStorage Redis TLS Config", func() {
 	It("renders TLS config when Valkey TLS is enabled", func() {
 		kn := testKubernautWithValkeyTLS()
-		cm, err := DataStorageConfigMap(kn, "testdb", "testuser")
+		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("enabled: true"))
@@ -2965,7 +3075,7 @@ var _ = Describe("DataStorage Redis TLS Config", func() {
 
 	It("omits TLS block when Valkey TLS is not configured", func() {
 		kn := testKubernaut()
-		cm, err := DataStorageConfigMap(kn, "testdb", "testuser")
+		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).NotTo(ContainSubstring("caFile:"))
@@ -2979,7 +3089,7 @@ var _ = Describe("DataStorage Retention Config", func() {
 		kn.Spec.DataStorage.Retention = &kubernautv1alpha1.RetentionSpec{
 			Enabled: &enabled,
 		}
-		cm, err := DataStorageConfigMap(kn, "testdb", "testuser")
+		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("retention:"))
@@ -2991,7 +3101,7 @@ var _ = Describe("DataStorage Retention Config", func() {
 
 	It("omits retention block when spec is nil", func() {
 		kn := testKubernaut()
-		cm, err := DataStorageConfigMap(kn, "testdb", "testuser")
+		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).NotTo(ContainSubstring("retention:"))
@@ -3003,7 +3113,7 @@ var _ = Describe("DataStorage Retention Config", func() {
 		kn.Spec.DataStorage.Retention = &kubernautv1alpha1.RetentionSpec{
 			DefaultDays: &days,
 		}
-		cm, err := DataStorageConfigMap(kn, "testdb", "testuser")
+		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("defaultDays: 2555"))
@@ -3021,7 +3131,7 @@ var _ = Describe("DataStorage Retention Config", func() {
 			BatchSize:   &batch,
 			DefaultDays: &days,
 		}
-		cm, err := DataStorageConfigMap(kn, "testdb", "testuser")
+		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("enabled: false"))
