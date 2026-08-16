@@ -138,6 +138,27 @@ type KubernautSpec struct {
 	// Search installation) instead of standing up FMC.
 	// +optional
 	FleetMetadataCache FleetMetadataCacheSpec `json:"fleetMetadataCache,omitempty"`
+
+	// AdditionalClusterRoles is an optional list of pre-existing ClusterRole
+	// names the operator binds to every component that performs
+	// owner-reference-chain resolution across ecosystem CRDs (Kubernaut
+	// Agent, Gateway, and EffectivenessMonitor) -- #277 -- generalized from
+	// v1alpha1's kubernautAgent-only additionalClusterRoleBindings, since
+	// none of the three components has a legitimate reason to see a
+	// different set of ecosystem CRDs than the others; they all resolve the
+	// same owner chains. Moved to top level (out of kubernautAgent) to
+	// reflect that it is no longer KA-specific.
+	//
+	// The operator only creates the ClusterRoleBinding(s); it never creates
+	// or modifies the referenced ClusterRole itself, so least-privilege
+	// stays entirely in the cluster administrator's hands -- see
+	// docs/security/threat-model.md. One ClusterRoleBinding per (component,
+	// ClusterRole name) pair is created; Gateway is skipped when
+	// spec.gateway.enabled=false.
+	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	// +listType=set
+	AdditionalClusterRoles []string `json:"additionalClusterRoles,omitempty"`
 }
 
 // ImageSpec configures container image policy for all services.
@@ -838,13 +859,6 @@ type KubernautAgentSpec struct {
 	// Interactive mode JWT identity delegation configuration.
 	// +optional
 	Interactive *InteractiveSpec `json:"interactive,omitempty"`
-
-	// AdditionalClusterRoleBindings is an optional list of pre-existing
-	// ClusterRole names to bind to the Kubernaut Agent ServiceAccount.
-	// +optional
-	// +kubebuilder:validation:MaxItems=64
-	// +listType=set
-	AdditionalClusterRoleBindings []string `json:"additionalClusterRoleBindings,omitempty"`
 
 	// Server-level rate limiting for the KA HTTP endpoint.
 	// +optional

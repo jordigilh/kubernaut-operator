@@ -2394,6 +2394,29 @@ spec:
               docs/design/ADR-CRD-001-v1alpha2-redesign.md for the full rationale
               behind every diff from v1alpha1 (referenced as F1-F9 below).
             properties:
+              additionalClusterRoles:
+                description: |-
+                  AdditionalClusterRoles is an optional list of pre-existing ClusterRole
+                  names the operator binds to every component that performs
+                  owner-reference-chain resolution across ecosystem CRDs (Kubernaut
+                  Agent, Gateway, and EffectivenessMonitor) -- #277 -- generalized from
+                  v1alpha1's kubernautAgent-only additionalClusterRoleBindings, since
+                  none of the three components has a legitimate reason to see a
+                  different set of ecosystem CRDs than the others; they all resolve the
+                  same owner chains. Moved to top level (out of kubernautAgent) to
+                  reflect that it is no longer KA-specific.
+
+                  The operator only creates the ClusterRoleBinding(s); it never creates
+                  or modifies the referenced ClusterRole itself, so least-privilege
+                  stays entirely in the cluster administrator's hands -- see
+                  docs/security/threat-model.md. One ClusterRoleBinding per (component,
+                  ClusterRole name) pair is created; Gateway is skipped when
+                  spec.gateway.enabled=false.
+                items:
+                  type: string
+                maxItems: 64
+                type: array
+                x-kubernetes-list-type: set
               aiAnalysis:
                 description: |-
                   AIAnalysis controller configuration. Required (not just AIAnalysisSpec.Policy
@@ -3765,15 +3788,6 @@ spec:
                 description: Kubernaut Agent (KA) -- LLM-powered investigation and
                   analysis service.
                 properties:
-                  additionalClusterRoleBindings:
-                    description: |-
-                      AdditionalClusterRoleBindings is an optional list of pre-existing
-                      ClusterRole names to bind to the Kubernaut Agent ServiceAccount.
-                    items:
-                      type: string
-                    maxItems: 64
-                    type: array
-                    x-kubernetes-list-type: set
                   alignmentCheck:
                     description: Alignment check (shadow agent) configuration.
                     properties:
