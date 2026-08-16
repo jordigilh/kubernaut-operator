@@ -436,27 +436,30 @@ func WorkflowNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut) ([]*rbacv1.Role, []*
 }
 
 // MCPGatewayNamespaceRBAC returns the namespace-scoped Roles/RoleBindings
-// granting MCP Gateway CRD read access to FMC and SignalProcessing when
-// their effective mcpGatewayNamespace (own override, falling back to the
-// shared spec.fleet.mcpGatewayNamespace) resolves non-empty (#224 Finding
-// 5). When empty, the corresponding cluster-scoped ClusterRole rule in
-// fleetMetadataCacheClusterRole/signalprocessingClusterRole is used
+// granting MCP Gateway CRD read access to FMC, SignalProcessing, AF, and EM
+// when their effective mcpGatewayNamespace (own override, falling back to
+// the shared spec.fleet.mcpGatewayNamespace) resolves non-empty (#224
+// Finding 5). When empty, the corresponding cluster-scoped ClusterRole rule
+// in fleetMetadataCacheClusterRole/signalprocessingClusterRole/
+// apifrontendClusterRole/effectivenessMonitorControllerClusterRole is used
 // instead -- callers must not double-grant.
 //
-// AF/EM are deliberately excluded: their upstream ClusterRegistry
-// construction always uses registry.RegistryConfig{} (cluster-wide watch,
-// no Namespace field to populate), confirmed against
-// cmd/apifrontend/backend_deps.go and cmd/effectivenessmonitor/main.go
-// (Finding 4) -- granting them a namespace-scoped Role today would make
-// the apiserver reject their LIST/WATCH with 403 Forbidden.
+// AF/EM were originally excluded here (#224 Finding 4: their upstream
+// ClusterRegistry construction always used registry.RegistryConfig{},
+// cluster-wide watch, no Namespace field to populate). That blocker closed
+// upstream via kubernaut#1720 (confirmed against
+// cmd/apifrontend/backend_deps.go and cmd/effectivenessmonitor/main.go,
+// both now read registry.RegistryConfig{Namespace: cfg.Fleet.Namespace}),
+// so AF/EM are included below on the same terms as FMC/SP (#227).
 func MCPGatewayNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) ([]*rbacv1.Role, []*rbacv1.RoleBinding) {
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
 	rules := mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGatewayType)
 
-	// One code path shared by FMC and SP -- both grant the same rules,
-	// differing only in whether they're active, their effective namespace,
-	// their role-name base, and the ServiceAccount bound to the RoleBinding.
+	// One code path shared by FMC, SP, AF, and EM -- all grant the same
+	// rules, differing only in whether they're active, their effective
+	// namespace, their role-name base, and the ServiceAccount bound to the
+	// RoleBinding.
 	grants := []struct {
 		active    bool
 		namespace string
@@ -465,6 +468,8 @@ func MCPGatewayNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1a
 	}{
 		{knV2.Spec.FleetMetadataCacheEnabled(), effectiveFleetMetadataCacheMCPGatewayNamespace(knV2), "fleetmetadatacache-mcpgateway", ComponentFleetMetadataCache},
 		{mcpGatewayRemoteReadsEnabled(knV2), effectiveSignalProcessingMCPGatewayNamespace(knV2), "signalprocessing-mcpgateway", ComponentSignalProcessing},
+		{mcpGatewayRemoteReadsEnabled(knV2), effectiveAPIFrontendMCPGatewayNamespace(knV2), "apifrontend-mcpgateway", ComponentAPIFrontend},
+		{mcpGatewayRemoteReadsEnabled(knV2), effectiveEffectivenessMonitorMCPGatewayNamespace(knV2), "effectivenessmonitor-mcpgateway", ComponentEffectivenessMonitor},
 	}
 
 	var roles []*rbacv1.Role
@@ -1085,6 +1090,24 @@ func effectiveSignalProcessingMCPGatewayNamespace(knV2 *kubernautv1alpha2.Kubern
 	return effectiveFleetNamespace(knV2.Spec.SignalProcessing.Fleet, knV2.Spec.Fleet.MCPGatewayNamespace)
 }
 
+// effectiveAPIFrontendMCPGatewayNamespace resolves AF's own
+// mcpGatewayNamespace override (APIFrontendSpec.Fleet), falling back to the
+// shared spec.fleet.mcpGatewayNamespace. AF's upstream ClusterRegistry now
+// reads this Namespace (kubernaut#1720, confirmed against
+// cmd/apifrontend/backend_deps.go post-#1686) -- #227.
+func effectiveAPIFrontendMCPGatewayNamespace(knV2 *kubernautv1alpha2.Kubernaut) string {
+	return effectiveFleetNamespace(knV2.Spec.APIFrontend.Fleet, knV2.Spec.Fleet.MCPGatewayNamespace)
+}
+
+// effectiveEffectivenessMonitorMCPGatewayNamespace resolves EM's own
+// mcpGatewayNamespace override (EffectivenessMonitorSpec.Fleet), falling
+// back to the shared spec.fleet.mcpGatewayNamespace. EM's upstream
+// ClusterRegistry now reads this Namespace (kubernaut#1720, confirmed
+// against cmd/effectivenessmonitor/main.go post-#1686) -- #227.
+func effectiveEffectivenessMonitorMCPGatewayNamespace(knV2 *kubernautv1alpha2.Kubernaut) string {
+	return effectiveFleetNamespace(knV2.Spec.EffectivenessMonitor.Fleet, knV2.Spec.Fleet.MCPGatewayNamespace)
+}
+
 func signalprocessingClusterRole(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	rules := []rbacv1.PolicyRule{
 		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings", "remediationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
@@ -1194,12 +1217,13 @@ func effectivenessMonitorControllerClusterRole(kn *kubernautv1alpha1.Kubernaut, 
 		{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
 	}...)
 	rules = append(rules, ocr...)
-	// #224 Finding 4: always cluster-scoped, never namespace-scoped -- EM's
-	// upstream ClusterRegistry construction hardcodes registry.RegistryConfig{}
-	// (cluster-wide watch) because its config schema has no Namespace field,
-	// unlike SP/FMC. Tracked upstream (kubernaut#1686 follow-up) before this
-	// can safely move to a namespace-scoped Role.
-	if mcpGatewayRemoteReadsEnabled(knV2) {
+	// #227: EM's upstream ClusterRegistry now reads registry.RegistryConfig{
+	// Namespace: cfg.Fleet.Namespace} (kubernaut#1720, closing #224 Finding
+	// 4's kubernaut#1686 blocker), so the cluster-scoped MCP Gateway CRD
+	// rules are only needed while EM's effective namespace is unresolved --
+	// once it resolves, MCPGatewayNamespaceRBAC grants a namespace-scoped
+	// Role instead (mirroring FMC/SP).
+	if mcpGatewayRemoteReadsEnabled(knV2) && effectiveEffectivenessMonitorMCPGatewayNamespace(knV2) == "" {
 		rules = append(rules, mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGatewayType)...)
 	}
 	return &rbacv1.ClusterRole{
@@ -1326,12 +1350,13 @@ func apifrontendClusterRole(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1al
 		{APIGroups: []string{"kubevirt.io"}, Resources: []string{"virtualmachines", "virtualmachineinstances", "virtualmachineinstancemigrations"}, Verbs: []string{"get", "list"}},
 		{APIGroups: []string{"cdi.kubevirt.io"}, Resources: []string{"datavolumes"}, Verbs: []string{"get", "list"}},
 	}
-	// #224 Finding 4: always cluster-scoped, never namespace-scoped -- AF's
-	// upstream ClusterRegistry construction hardcodes registry.RegistryConfig{}
-	// (cluster-wide watch) because its config schema has no Namespace field,
-	// unlike SP/FMC. Tracked upstream (kubernaut#1686 follow-up) before this
-	// can safely move to a namespace-scoped Role.
-	if mcpGatewayRemoteReadsEnabled(knV2) {
+	// #227: AF's upstream ClusterRegistry now reads registry.RegistryConfig{
+	// Namespace: cfg.Fleet.Namespace} (kubernaut#1720, closing #224 Finding
+	// 4's kubernaut#1686 blocker), so the cluster-scoped MCP Gateway CRD
+	// rules are only needed while AF's effective namespace is unresolved --
+	// once it resolves, MCPGatewayNamespaceRBAC grants a namespace-scoped
+	// Role instead (mirroring FMC/SP).
+	if mcpGatewayRemoteReadsEnabled(knV2) && effectiveAPIFrontendMCPGatewayNamespace(knV2) == "" {
 		rules = append(rules, mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGatewayType)...)
 	}
 	return &rbacv1.ClusterRole{

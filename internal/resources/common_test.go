@@ -56,6 +56,8 @@ const (
 	// configmaps_test.go and rbac_test.go's namespace-retrofit coverage.
 	testSPMCPGatewayNamespace     = "sp-ns"
 	testFMCMCPGatewayNamespace    = "fmc-ns"
+	testAFMCPGatewayNamespace     = "af-ns"
+	testEMMCPGatewayNamespace     = "em-ns"
 	testSharedMCPGatewayNamespace = "shared-ns"
 
 	// testVertexLocation is a placeholder region used across vertex_ai
@@ -194,6 +196,25 @@ func testKnV2(kn *kubernautv1alpha1.Kubernaut) *kubernautv1alpha2.Kubernaut {
 	knV2 := &kubernautv1alpha2.Kubernaut{}
 	ExpectWithOffset(1, kn.ConvertTo(knV2)).To(Succeed())
 	return knV2
+}
+
+// fleetNamespaceFromYAML extracts fleet.namespace from a rendered
+// config.yaml (#227). Unmarshals into a thin wrapper around the actual
+// production fleetConfigYAML type (this file is package resources,
+// white-box) rather than a hand-copied mirror struct -- see AGENTS.md
+// Testing Conventions. Used by AF/EM ConfigMap tests, where fleet: is
+// rendered alongside several other root keys sharing "namespace" as a
+// nested field name, so a plain ContainSubstring("namespace:") check would
+// be ambiguous.
+func fleetNamespaceFromYAML(data string) string {
+	var root struct {
+		Fleet *fleetConfigYAML `yaml:"fleet"`
+	}
+	ExpectWithOffset(1, yaml.Unmarshal([]byte(data), &root)).To(Succeed())
+	if root.Fleet == nil {
+		return ""
+	}
+	return root.Fleet.Namespace
 }
 
 // telemetrySpecFixture returns a fully-populated v1alpha2.TelemetrySpec used
