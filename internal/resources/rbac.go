@@ -46,6 +46,17 @@ const (
 	// nil-checks) and are not part of this label's coverage.
 	LabelCoreClusterRBAC = "kubernaut.ai/core-cluster-rbac"
 
+	// LabelMCPGatewayNamespaceRBAC marks every namespace-scoped Role/
+	// RoleBinding returned by MCPGatewayNamespaceRBAC() (#354) so the
+	// controller can list them across all namespaces and prune any whose
+	// namespace no longer matches the current desired (namespace, name)
+	// set -- e.g. after an administrator changes a component's effective
+	// mcpGatewayNamespace to a different namespace. CommonLabels alone is
+	// too broad for this purpose (it's stamped on nearly every operator-
+	// managed object), so a dedicated marker is needed the same way
+	// LabelCoreClusterRBAC is for cluster-scoped RBAC (#341).
+	LabelMCPGatewayNamespaceRBAC = "kubernaut.ai/mcp-gateway-namespace-rbac"
+
 	// LabelValueTrue is the canonical string value for boolean-true labels.
 	LabelValueTrue = "true"
 
@@ -451,6 +462,7 @@ func WorkflowNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut) ([]*rbacv1.Role, []*
 // the apiserver reject their LIST/WATCH with 403 Forbidden.
 func MCPGatewayNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) ([]*rbacv1.Role, []*rbacv1.RoleBinding) {
 	labels := CommonLabels(kn)
+	labels[LabelMCPGatewayNamespaceRBAC] = LabelValueTrue
 	ns := kn.Namespace
 	rules := mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGatewayType)
 

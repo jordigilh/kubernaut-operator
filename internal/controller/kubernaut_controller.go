@@ -820,6 +820,13 @@ func (r *KubernautReconciler) pruneOrphanedCoreClusterRBAC(
 // is always present (it carries unconditional core rules too), so
 // ensureUnowned naturally drops its MCP Gateway rules in place when SP's
 // namespace resolves.
+//
+// #341's name-only prune isn't sufficient for these namespace-scoped
+// objects: the same role name (e.g. "<instance>-fleetmetadatacache-
+// mcpgateway") is expected to exist in a *different* namespace after an
+// administrator changes the effective mcpGatewayNamespace, so
+// pruneOrphanedMCPGatewayNamespaceRBAC (#354) diffs by (namespace, name)
+// instead of name alone.
 func (r *KubernautReconciler) deployMCPGatewayNamespaceRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
 	roles, rbs := resources.MCPGatewayNamespaceRBAC(kn, knV2)
 	for _, role := range roles {
@@ -833,7 +840,86 @@ func (r *KubernautReconciler) deployMCPGatewayNamespaceRBAC(ctx context.Context,
 		}
 	}
 
+	if errs := r.pruneOrphanedMCPGatewayNamespaceRBAC(ctx, kn, roles, rbs); len(errs) > 0 {
+		return fmt.Errorf("pruning orphaned mcp gateway namespace RBAC: %w", errors.Join(errs...))
+	}
+
 	return nil
+}
+
+// namespacedKeysOf returns the (namespace, name) of every object in objs as
+// a lookup set, used to build the "desired" side of a namespace-aware
+// label-selector prune diff (#354) -- unlike namesOf, this distinguishes a
+// same-named object across different namespaces, since a role name
+// legitimately recurs in a new namespace after an mcpGatewayNamespace
+// change while the old namespace's copy becomes orphaned.
+func namespacedKeysOf[T client.Object](objs []T) map[types.NamespacedName]bool {
+	keys := make(map[types.NamespacedName]bool, len(objs))
+	for _, o := range objs {
+		keys[types.NamespacedName{Namespace: o.GetNamespace(), Name: o.GetName()}] = true
+	}
+	return keys
+}
+
+// pruneUndesiredNamespaced deletes every element of live whose (namespace,
+// name) is not present in desiredKeys, mirroring pruneUndesired's logging
+// and error-wrapping shape (#341) but keyed on the full NamespacedName so a
+// same-named object in a since-abandoned namespace is correctly treated as
+// orphaned even though an object with the same name is still desired
+// elsewhere.
+func pruneUndesiredNamespaced[T client.Object](r *KubernautReconciler, ctx context.Context, kind string, live []T, desiredKeys map[types.NamespacedName]bool) []error {
+	log := logf.FromContext(ctx)
+	var errs []error
+	for _, obj := range live {
+		key := types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()}
+		if desiredKeys[key] {
+			continue
+		}
+		if err := r.deleteIfExists(ctx, obj); err != nil {
+			errs = append(errs, fmt.Errorf("pruning orphaned %s %s: %w", kind, key, err))
+			continue
+		}
+		log.Info("pruned orphaned RBAC object", "kind", kind, "namespace", key.Namespace, "name", key.Name)
+	}
+	return errs
+}
+
+// pruneOrphanedMCPGatewayNamespaceRBAC deletes any Role/RoleBinding carrying
+// LabelMCPGatewayNamespaceRBAC for this instance whose (namespace, name) is
+// not present in desiredRoles/desiredRBs (#354). Lists across all
+// namespaces since the whole point is to catch a stale copy left behind in
+// a namespace the component no longer targets.
+//
+// Passing nil/empty desired slices (as the finalizer path does via
+// deleteMCPGatewayNamespaceRBAC) prunes every labeled object for this
+// instance unconditionally, regardless of which namespace the current spec
+// resolves to -- necessary because recomputing desired state from the
+// current spec at delete time can miss a namespace the CR pointed at
+// earlier in its lifetime but was never reconciled away from before
+// deletion began.
+func (r *KubernautReconciler) pruneOrphanedMCPGatewayNamespaceRBAC(
+	ctx context.Context, kn *kubernautv1alpha1.Kubernaut,
+	desiredRoles []*rbacv1.Role, desiredRBs []*rbacv1.RoleBinding,
+) []error {
+	var errs []error
+	selector := client.MatchingLabels{
+		resources.LabelMCPGatewayNamespaceRBAC: resources.LabelValueTrue,
+		"app.kubernetes.io/instance":           kn.Name,
+	}
+
+	liveRoles := &rbacv1.RoleList{}
+	if err := r.List(ctx, liveRoles, selector); err != nil {
+		return append(errs, fmt.Errorf("listing mcp gateway namespace Roles for pruning: %w", err))
+	}
+	errs = append(errs, pruneUndesiredNamespaced(r, ctx, "Role", pointersOf(liveRoles.Items), namespacedKeysOf(desiredRoles))...)
+
+	liveRBs := &rbacv1.RoleBindingList{}
+	if err := r.List(ctx, liveRBs, selector); err != nil {
+		return append(errs, fmt.Errorf("listing mcp gateway namespace RoleBindings for pruning: %w", err))
+	}
+	errs = append(errs, pruneUndesiredNamespaced(r, ctx, "RoleBinding", pointersOf(liveRBs.Items), namespacedKeysOf(desiredRBs))...)
+
+	return errs
 }
 
 // additionalRBACComponentSA pairs a component name with its ServiceAccount
@@ -2388,22 +2474,16 @@ func (r *KubernautReconciler) deleteAdditionalAgentAndToolRBAC(ctx context.Conte
 	return errs
 }
 
-// deleteMCPGatewayNamespaceRBAC removes the namespaced Roles/RoleBindings
-// used for MCP Gateway authorization.
-func (r *KubernautReconciler) deleteMCPGatewayNamespaceRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []error {
-	var errs []error
-	mgRoles, mgRBs := resources.MCPGatewayNamespaceRBAC(kn, knV2)
-	for _, role := range mgRoles {
-		if err := r.deleteIfExists(ctx, role); err != nil {
-			errs = append(errs, fmt.Errorf("deleting mcp gateway namespace role %s/%s: %w", role.Namespace, role.Name, err))
-		}
-	}
-	for _, rb := range mgRBs {
-		if err := r.deleteIfExists(ctx, rb); err != nil {
-			errs = append(errs, fmt.Errorf("deleting mcp gateway namespace rolebinding %s/%s: %w", rb.Namespace, rb.Name, err))
-		}
-	}
-	return errs
+// deleteMCPGatewayNamespaceRBAC removes every namespaced Role/RoleBinding
+// used for MCP Gateway authorization, via the unconditional form of the
+// (namespace, name)-keyed prune (#354). Deliberately does not recompute
+// resources.MCPGatewayNamespaceRBAC(kn, knV2) from the CR's current spec:
+// that would only find/delete whatever namespace the last-set
+// mcpGatewayNamespace value resolves to, missing any namespace an earlier,
+// never-reconciled spec change pointed at -- the label-selector list below
+// catches those regardless of what the spec says at delete time.
+func (r *KubernautReconciler) deleteMCPGatewayNamespaceRBAC(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) []error {
+	return r.pruneOrphanedMCPGatewayNamespaceRBAC(ctx, kn, nil, nil)
 }
 
 // deleteWebhookResources removes MutatingWebhookConfiguration and
