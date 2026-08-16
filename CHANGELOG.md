@@ -5,6 +5,12 @@ All notable changes to the Kubernaut Operator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.11-rc1] - 2026-08-16
+
+### Changed
+- **Images**: Bumps all 12 kubernaut-service `RELATED_IMAGE_*` env vars to `kubernaut v1.5.7-rc2` (`gateway`, `datastorage`, `aianalysis`, `signalprocessing`, `remediationorchestrator`, `workflowexecution`, `effectivenessmonitor`, `notification`, `kubernautagent`, `authwebhook`, `apifrontend`, `db-migrate`). All 12 changed digest because `v1.5.7` fixed hardcoded `APP_VERSION` baking across every `docker/*.Dockerfile`, not because every service has a functional change. The functional fixes actually in `v1.5.7-rc2`: `apifrontend`'s console-access gate auth-only fallback (kubernaut#2148/#2150, defaults to authentication-only with zero RBAC configured), `kubernautagent`'s MCP-takeover/investigation race fix (kubernaut#2156), and `aianalysis`'s session-lost regeneration backoff durability fix (kubernaut#2080 recurrence). `RELATED_IMAGE_CONSOLE` stays on `kubernaut-console v1.5.6` GA — no console changes in this cycle. Bumped `VERSION` to `1.5.11-rc1`. No operator code or CRD changes.
+- A follow-up PR will pin the operator's own image, bundle, and airgap imageset to their published `v1.5.11-rc1` digests once the tag image is built, per the usual pattern.
+
 ## [1.5.10] - 2026-08-12
 
 ### Changed (follow-up)
