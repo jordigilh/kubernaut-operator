@@ -635,32 +635,6 @@ var _ = Describe("KubernautAgentClientAPIfrontendRoleBinding", func() {
 	})
 })
 
-var _ = Describe("MonitoringCRBNames", func() {
-	It("returns all five namespace-prefixed names", func() {
-		kn := testKubernaut()
-		names := MonitoringCRBNames(kn)
-		Expect(names).To(HaveLen(5), "MonitoringCRBNames() count = %d, want 5", len(names))
-		ns := kn.Namespace
-		for _, name := range names {
-			Expect(name).To(HavePrefix(ns),
-				"MonitoringCRBNames entry %q should be namespace-prefixed with %q", name, ns)
-		}
-	})
-})
-
-var _ = Describe("MonitoringClusterRoleNames", func() {
-	It("returns two namespace-prefixed names", func() {
-		kn := testKubernaut()
-		names := MonitoringClusterRoleNames(kn)
-		Expect(names).To(HaveLen(2), "MonitoringClusterRoleNames() count = %d, want 2", len(names))
-		ns := kn.Namespace
-		for _, name := range names {
-			Expect(name).To(HavePrefix(ns),
-				"MonitoringClusterRoleNames entry %q should be namespace-prefixed with %q", name, ns)
-		}
-	})
-})
-
 var _ = Describe("AdditionalAgentCRB", func() {
 	Describe("AdditionalAgentCRBName", func() {
 		It("returns the short form", func() {

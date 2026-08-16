@@ -31,6 +31,17 @@ const (
 	// ClusterRoleBindings so the finalizer can perform a catch-all sweep.
 	LabelAdditionalAgentRBAC = "kubernaut.ai/additional-agent-rbac"
 
+	// LabelCoreClusterRBAC marks every ClusterRole/ClusterRoleBinding returned
+	// by ClusterRoles/ClusterRoleBindings -- the operator's own
+	// feature-toggle-gated cluster-scoped RBAC set, as opposed to the
+	// console-access CRB, tool-persona CRBs, additional-agent CRBs, or the
+	// unowned Ansible/AWX ClusterRole/CRB, which each follow their own
+	// lifecycle. It lets the reconciler compute "orphaned" as "labeled for
+	// this instance but absent from the current desired set" instead of
+	// requiring every feature toggle to also update a hand-maintained
+	// static-name deny/cleanup list (#341).
+	LabelCoreClusterRBAC = "kubernaut.ai/core-cluster-rbac"
+
 	// LabelValueTrue is the canonical string value for boolean-true labels.
 	LabelValueTrue = "true"
 
@@ -42,6 +53,20 @@ const (
 // collisions when multiple Kubernaut CRs exist in different namespaces.
 func clusterRoleName(kn *kubernautv1alpha1.Kubernaut, base string) string {
 	return kn.Namespace + "-" + base
+}
+
+// markCoreClusterRBAC stamps LabelCoreClusterRBAC=true on every object in
+// objs, mutating each in place, so the reconciler can later identify and
+// prune them by label diff against the current desired set (#341).
+func markCoreClusterRBAC[T metav1.Object](objs []T) {
+	for _, o := range objs {
+		labels := o.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels[LabelCoreClusterRBAC] = LabelValueTrue
+		o.SetLabels(labels)
+	}
 }
 
 // ClusterRoles builds all ClusterRoles needed by the Kubernaut deployment,
@@ -79,6 +104,7 @@ func ClusterRoles(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRole {
 		roles = append(roles, ConsoleAccessClusterRole(kn))
 	}
 
+	markCoreClusterRBAC(roles)
 	return roles
 }
 
@@ -144,6 +170,7 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut) []*rbacv1.ClusterRoleB
 		)
 	}
 
+	markCoreClusterRBAC(crbs)
 	return crbs
 }
 
@@ -357,28 +384,6 @@ func WorkflowNamespaceRBAC(kn *kubernautv1alpha1.Kubernaut) ([]*rbacv1.Role, []*
 	}
 
 	return roles, rbs
-}
-
-// MonitoringCRBNames returns the names of all monitoring-related ClusterRoleBindings.
-// Used by the finalizer to always attempt cleanup regardless of current Monitoring.Enabled.
-func MonitoringCRBNames(kn *kubernautv1alpha1.Kubernaut) []string {
-	p := func(base string) string { return clusterRoleName(kn, base) }
-	return []string{
-		p("effectivenessmonitor-alertmanager-view-binding"),
-		p("effectivenessmonitor-monitoring-view"),
-		p("kubernaut-agent-monitoring-view"),
-		p("alertmanager-gateway-signal-source"),
-		p("apifrontend-monitoring-view"),
-	}
-}
-
-// MonitoringClusterRoleNames returns the names of all monitoring-related ClusterRoles.
-func MonitoringClusterRoleNames(kn *kubernautv1alpha1.Kubernaut) []string {
-	p := func(base string) string { return clusterRoleName(kn, base) }
-	return []string{
-		p("alertmanager-view"),
-		p("gateway-signal-source"),
-	}
 }
 
 // AnsibleRBAC returns the conditional AWX RBAC resources.
