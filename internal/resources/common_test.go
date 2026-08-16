@@ -217,18 +217,14 @@ func telemetrySpecFixture() kubernautv1alpha2.TelemetrySpec {
 // assertTelemetryYAML asserts that a rendered config.yaml contains the
 // exact telemetrySpecFixture() values under the shared telemetry: block
 // (#323), used by Gateway/DataStorage/KubernautAgent ConfigMap tests.
+// Unmarshals into the actual production telemetryYAML/telemetryTLSYAML
+// types (this file is package resources, i.e. a white-box test, so they're
+// already visible) rather than a hand-copied mirror struct -- see AGENTS.md
+// Testing Conventions: a hand-copied struct doesn't fail to compile when the
+// production type's yaml tag changes, silently asserting the wrong thing.
 func assertTelemetryYAML(data string) {
 	var root struct {
-		Telemetry struct {
-			Endpoint string `yaml:"endpoint"`
-			LogSink  bool   `yaml:"logSink"`
-			TLS      struct {
-				Enabled  bool   `yaml:"enabled"`
-				CAFile   string `yaml:"caFile"`
-				CertFile string `yaml:"certFile"`
-				KeyFile  string `yaml:"keyFile"`
-			} `yaml:"tls"`
-		} `yaml:"telemetry"`
+		Telemetry telemetryYAML `yaml:"telemetry"`
 	}
 	ExpectWithOffset(1, yaml.Unmarshal([]byte(data), &root)).To(Succeed())
 	ExpectWithOffset(1, root.Telemetry.Endpoint).To(Equal("otel-collector.observability.svc:4317"), "telemetry.endpoint mismatch, got:\n%s", data)

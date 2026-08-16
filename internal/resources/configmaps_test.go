@@ -1106,49 +1106,15 @@ var _ = Describe("ConfigMaps", func() {
 			kn := testKubernaut()
 			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
-			var root struct {
-				Runtime struct {
-					Logging struct {
-						Level string `yaml:"level"`
-					} `yaml:"logging"`
-					Server struct {
-						Address string `yaml:"address"`
-						Port    int    `yaml:"port"`
-					} `yaml:"server"`
-					Audit struct {
-						FlushIntervalSeconds float64 `yaml:"flushIntervalSeconds"`
-						BufferSize           int     `yaml:"bufferSize"`
-						BatchSize            int     `yaml:"batchSize"`
-					} `yaml:"audit"`
-				} `yaml:"runtime"`
-				AI struct {
-					LLM struct {
-						Provider string `yaml:"provider"`
-					} `yaml:"llm"`
-					Investigation struct {
-						MaxTurns int `yaml:"maxTurns"`
-					} `yaml:"investigation"`
-				} `yaml:"ai"`
-				Integrations struct {
-					DataStorage struct {
-						URL string `yaml:"url"`
-					} `yaml:"dataStorage"`
-					Tools *struct {
-						Prometheus struct {
-							URL       string `yaml:"url"`
-							TLSCaFile string `yaml:"tlsCaFile"`
-						} `yaml:"prometheus"`
-						Alertmanager *struct {
-							URL       string `yaml:"url"`
-							TLSCaFile string `yaml:"tlsCaFile"`
-						} `yaml:"alertmanager,omitempty"`
-					} `yaml:"tools,omitempty"`
-				} `yaml:"integrations"`
-			}
+			// Unmarshal into the actual production kubernautAgentConfigYAML
+			// type (this file is package resources, white-box) instead of a
+			// hand-copied mirror struct -- see AGENTS.md Testing Conventions.
+			var root kubernautAgentConfigYAML
 			err = yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(root.Runtime.Logging.Level).To(Equal("info"), "runtime.logging.level = %q, want info", root.Runtime.Logging.Level)
 			Expect(root.Runtime.Server.Port == 8443 && root.Runtime.Server.Address == "0.0.0.0").To(BeTrue(), "runtime.server = %#v, want address 0.0.0.0 port 8443", root.Runtime.Server)
+			Expect(root.Runtime.Audit).NotTo(BeNil(), "runtime.audit should be present when audit is enabled by default")
 			Expect(root.Runtime.Audit.FlushIntervalSeconds).To(Equal(1.0), "runtime.audit.flushIntervalSeconds = %v, want 1.0", root.Runtime.Audit.FlushIntervalSeconds)
 			Expect(root.Runtime.Audit.BufferSize).To(Equal(10000), "runtime.audit.bufferSize = %d, want 10000", root.Runtime.Audit.BufferSize)
 			Expect(root.Runtime.Audit.BatchSize).To(Equal(50), "runtime.audit.batchSize = %d, want 50", root.Runtime.Audit.BatchSize)
@@ -1222,13 +1188,12 @@ var _ = Describe("ConfigMaps", func() {
 			knV2.Spec.KubernautAgent.Audit.BatchSize = &batch
 			cm, err := KubernautAgentConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
+			// Unmarshal into the production kaAuditYAML type directly (this
+			// file is package resources, white-box) instead of a hand-copied
+			// mirror struct -- see AGENTS.md Testing Conventions.
 			var root struct {
 				Runtime struct {
-					Audit struct {
-						FlushIntervalSeconds float64 `yaml:"flushIntervalSeconds"`
-						BufferSize           int     `yaml:"bufferSize"`
-						BatchSize            int     `yaml:"batchSize"`
-					} `yaml:"audit"`
+					Audit kaAuditYAML `yaml:"audit"`
 				} `yaml:"runtime"`
 			}
 			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
