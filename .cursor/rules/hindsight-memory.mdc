@@ -80,6 +80,38 @@ Use `cocoindex_search` when:
 Prefer `cocoindex_search` over Grep/SemanticSearch when searching by meaning.
 Use Grep only when you need exact regex matching.
 
+## Multi-branch code search (2026-08-10)
+
+The code index additionally covers `release/v1.5` and `release/v1.6` mirrors
+of kubernaut, kubernaut-operator, and kubernaut-console (docs/issues stay
+main-only, unaffected). `cocoindex_search`/`cocoindex_pattern_search`
+auto-detect which release line your current workspace belongs to -- either a
+checked-out `release/vX.Y` branch, or (the common case) a feature/fix branch
+inside a dedicated per-release-line clone directory like `kubernaut-operator-v1.5`
+-- and scope results to match, so a v1.5 workspace's searches return v1.5's
+code, not main's. Pass `branch: "v1.5"` explicitly to override detection, or
+`branch: "main"` to force main regardless of your checkout.
+
+Branches outside `{main, v1.5, v1.6}` (regular feature/fix work) aren't
+indexed here at all -- use gopls for those; it operates on your live checkout
+directly so it's always accurate regardless of index staleness. (This repo's
+tier-1 tool is still raw `gopls`, not Serena -- see the still-open
+Serena-migration question for this repo, tracked separately from this
+multi-branch change.)
+
+**If you do reach for Serena's `query_project` anyway** (e.g. from a
+`kubernaut-docs` or cross-repo session) to pull `kubernaut`/`kubernaut-console`
+state into an `kubernaut-operator` task, use the `-mirror`-suffixed project
+names (`kubernaut-mirror`, `kubernaut-release-v1.5-mirror`, etc.), not the
+bare repo names. The bare names are interactive dev clones that get freely
+branch-switched, so they don't reliably reflect any particular branch's
+state -- this caused a real incident (2026-08-16) where a query against
+`kubernaut` silently returned stale pre-merge content because that clone
+happened to be sitting on `release/v1.5` at the time. The `-mirror` projects
+are dedicated, read-only, auto-synced-every-10-minutes worktrees pinned
+one-per-branch. See docs/findings/2026-08.md, 2026-08-16 entry, for the full
+incident and fix.
+
 ## When to recall again (mid-session)
 
 Call `recall` again if:
@@ -155,14 +187,40 @@ Use the right tool for the right question:
   `user-cocoindex-code` MCP server. Call it with `{"query": "...", "limit": 10}`.
   Use for "where do we handle CRD reconciliation?", "how does the operator controller work?",
   "what functions touch this data?"
+- **`cocoindex_pattern_search`** — structural (by-example) code search, on the
+  same `user-cocoindex-code` MCP server. Call it with
+  `{"pattern": "func \\NAME(\\(A*\\)) error", "language": "go", "repo": "kubernaut-operator"}`.
+  Use for "find every function shaped like X" (a signature, not a
+  name/concept) -- purely syntactic, no type resolution or find-references;
+  not a substitute for gopls.
 
 - **hindsight** — past mistakes, conventions, behavioral patterns about code.
   Use for "how should I structure this test?", "what was corrected before?"
 
 Prefer gopls for precise lookups, `cocoindex_search` for semantic exploration,
-and hindsight for behavioral context. Do not redundantly call all three for the
-same question.
+`cocoindex_pattern_search` for structural shape queries, and hindsight for
+behavioral context. Do not redundantly call all of these for the same
+question.
 
-## Do NOT retain
+## Retain/reflect: on-demand, suggest-then-confirm
 
-Never call `retain` during sessions. Memory extraction runs nightly.
+No background job does this anymore — `retain`, `sync_retain`, and `reflect`
+are on-demand only, triggered explicitly in-chat (see docs/findings/2026-08.md,
+2026-08-13 "retain/reflect on-demand" decision). This keeps LLM cost visible
+and bounded until there's a stable, well-understood cost baseline for
+background extraction.
+
+**Suggest, don't call silently.** When you notice one of the following during
+a session, propose it to the user and wait for confirmation before calling
+the tool:
+
+- **Retain** — an explicit correction, a decision, a stated preference, or a
+  hard-won discovery (e.g. a root cause that took real effort to find) worth
+  recalling in a future session.
+- **Reflect** — several related retains have accumulated on the same topic,
+  you're about to lean on a mental model that looks stale, or the user
+  directly points out staleness.
+
+Only call `retain`/`sync_retain`/`reflect` after the user confirms, or when
+they ask for it directly ("retain this", "update the mental model", etc.).
+Never call them proactively or as a matter of routine.
