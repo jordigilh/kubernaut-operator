@@ -45,9 +45,12 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 		}
 	})
 
-	It("renders the mcpGateway namespace when set", func() {
+	// DD-362: FMC always renders mcpGateway.namespace from the shared
+	// spec.fleet.mcpGatewayNamespace -- there is no per-component
+	// override (FleetOverrideSpec.Namespace was removed).
+	It("renders the mcpGateway namespace from the shared spec.fleet.mcpGatewayNamespace when set", func() {
 		kn, knV2 := testKubernautWithFMC()
-		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: "managed-clusters"}
+		knV2.Spec.Fleet.MCPGatewayNamespace = "managed-clusters"
 		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cm.Data["config.yaml"]).To(ContainSubstring("namespace: managed-clusters"))

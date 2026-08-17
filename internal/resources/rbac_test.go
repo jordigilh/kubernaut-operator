@@ -27,7 +27,6 @@ import (
 	"k8s.io/utils/ptr"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
-	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 const (
@@ -1614,7 +1613,7 @@ var _ = Describe("SignalProcessing fleet RBAC", func() {
 		Expect(apiGroups).NotTo(ContainElement("gateway.envoyproxy.io"))
 	})
 
-	It("gains MCP Gateway CRD rules when fleet enabled with mcpGatewayEndpoint set and no namespace override", func() {
+	It("gains MCP Gateway CRD rules when fleet enabled with mcpGatewayEndpoint set and spec.fleet.mcpGatewayNamespace unset", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
 		cr := signalprocessingClusterRole(kn, knV2, CommonLabels(kn))
 		apiGroups := make([]string, 0, len(cr.Rules))
@@ -1625,18 +1624,9 @@ var _ = Describe("SignalProcessing fleet RBAC", func() {
 		Expect(apiGroups).To(ContainElement("kubernaut.ai"), "signalprocessing ClusterRole should keep its pre-existing rules")
 	})
 
-	It("omits MCP Gateway CRD rules from the ClusterRole when its effective mcpGatewayNamespace resolves non-empty (moved to a namespace-scoped Role instead)", func() {
-		kn, knV2 := testKubernautWithFleetMCP()
-		knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testSPMCPGatewayNamespace}
-		cr := signalprocessingClusterRole(kn, knV2, CommonLabels(kn))
-		apiGroups := make([]string, 0, len(cr.Rules))
-		for _, r := range cr.Rules {
-			apiGroups = append(apiGroups, r.APIGroups...)
-		}
-		Expect(apiGroups).NotTo(ContainElement("gateway.envoyproxy.io"), "signalprocessing ClusterRole should not grant cluster-wide MCP Gateway CRD access once a namespace resolves")
-	})
-
-	It("falls back to the shared spec.fleet.mcpGatewayNamespace when signalProcessing has no override", func() {
+	// DD-362: there is no per-component mcpGatewayNamespace override --
+	// SignalProcessing always resolves the shared spec.fleet.mcpGatewayNamespace.
+	It("omits MCP Gateway CRD rules from the ClusterRole once the shared spec.fleet.mcpGatewayNamespace resolves non-empty (moved to a namespace-scoped Role instead)", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
 		knV2.Spec.Fleet.MCPGatewayNamespace = testSharedMCPGatewayNamespace
 		cr := signalprocessingClusterRole(kn, knV2, CommonLabels(kn))
@@ -1644,7 +1634,7 @@ var _ = Describe("SignalProcessing fleet RBAC", func() {
 		for _, r := range cr.Rules {
 			apiGroups = append(apiGroups, r.APIGroups...)
 		}
-		Expect(apiGroups).NotTo(ContainElement("gateway.envoyproxy.io"), "signalprocessing ClusterRole should defer to the namespace-scoped Role once the shared namespace resolves")
+		Expect(apiGroups).NotTo(ContainElement("gateway.envoyproxy.io"), "signalprocessing ClusterRole should not grant cluster-wide MCP Gateway CRD access once a namespace resolves")
 	})
 })
 
@@ -1809,92 +1799,45 @@ var _ = Describe("FMC scope-check RBAC (#1993 gap)", func() {
 	})
 })
 
+// DD-362: FMC, SignalProcessing, APIFrontend, and EffectivenessMonitor all
+// resolve the SAME shared spec.fleet.mcpGatewayNamespace -- there is no
+// per-component override to diverge it (FleetOverrideSpec.Namespace was
+// removed). Once it resolves non-empty, every active component gets its
+// own namespace-scoped Role/RoleBinding pair in that one namespace.
 var _ = Describe("MCPGatewayNamespaceRBAC", func() {
-	It("returns nothing for either FMC or SignalProcessing when their effective namespace is empty", func() {
+	It("returns nothing for any fleet-aware component when the shared spec.fleet.mcpGatewayNamespace is empty", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
 		roles, rbs := MCPGatewayNamespaceRBAC(kn, knV2)
 		Expect(roles).To(BeEmpty())
 		Expect(rbs).To(BeEmpty())
 	})
 
-	It("returns a Role/RoleBinding pair for SignalProcessing when its effective namespace resolves", func() {
-		kn, knV2 := testKubernautWithFleetMCP()
-		knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testSPMCPGatewayNamespace}
-		roles, rbs := MCPGatewayNamespaceRBAC(kn, knV2)
-		Expect(roles).To(HaveLen(1))
-		Expect(roles[0].Namespace).To(Equal(testSPMCPGatewayNamespace))
-		apiGroups := make([]string, 0, len(roles[0].Rules))
-		for _, r := range roles[0].Rules {
-			apiGroups = append(apiGroups, r.APIGroups...)
-		}
-		Expect(apiGroups).To(ContainElement("gateway.envoyproxy.io"))
-		Expect(rbs).To(HaveLen(1))
-		Expect(rbs[0].Namespace).To(Equal(testSPMCPGatewayNamespace))
-		Expect(rbs[0].Subjects[0].Name).To(Equal(ServiceAccountName(ComponentSignalProcessing)))
-	})
-
-	It("returns a Role/RoleBinding pair for FleetMetadataCache when its effective namespace resolves", func() {
-		kn, knV2 := testKubernautWithFMC()
-		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testFMCMCPGatewayNamespace}
-		roles, rbs := MCPGatewayNamespaceRBAC(kn, knV2)
-		Expect(roles).To(HaveLen(1))
-		Expect(roles[0].Namespace).To(Equal(testFMCMCPGatewayNamespace))
-		Expect(rbs).To(HaveLen(1))
-		Expect(rbs[0].Subjects[0].Name).To(Equal(ServiceAccountName(ComponentFleetMetadataCache)))
-	})
-
-	It("FleetMetadataCache falls back to the shared spec.fleet.mcpGatewayNamespace when it has no override", func() {
+	It("returns a Role/RoleBinding pair for every active fleet-aware component (FMC, SP, AF, EM) once the shared namespace resolves", func() {
 		kn, knV2 := testKubernautWithFMC()
 		knV2.Spec.Fleet.MCPGatewayNamespace = testSharedMCPGatewayNamespace
-		roles, _ := MCPGatewayNamespaceRBAC(kn, knV2)
-		// SP also falls back to the same shared namespace here since
-		// testKubernautWithFMC() already satisfies mcpGatewayRemoteReadsEnabled
-		// (fleet.enabled + mcpGatewayEndpoint) -- SP's cluster classification
-		// is orthogonal to FMC's backend choice (BR-INTEGRATION-054).
-		var fmcRole *rbacv1.Role
+		roles, rbs := MCPGatewayNamespaceRBAC(kn, knV2)
+		Expect(roles).To(HaveLen(4))
+		Expect(rbs).To(HaveLen(4))
 		for _, r := range roles {
-			if r.Namespace == testSharedMCPGatewayNamespace && strings.Contains(r.Name, "fleetmetadatacache") {
-				fmcRole = r
-			}
+			Expect(r.Namespace).To(Equal(testSharedMCPGatewayNamespace))
 		}
-		Expect(fmcRole).NotTo(BeNil())
-	})
-
-	It("returns a Role/RoleBinding pair for APIFrontend when its effective namespace resolves (#227)", func() {
-		kn, knV2 := testKubernautWithFleetMCP()
-		knV2.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testAFMCPGatewayNamespace}
-		roles, rbs := MCPGatewayNamespaceRBAC(kn, knV2)
-		Expect(roles).To(HaveLen(1))
-		Expect(roles[0].Namespace).To(Equal(testAFMCPGatewayNamespace))
-		Expect(rbs).To(HaveLen(1))
-		Expect(rbs[0].Subjects[0].Name).To(Equal(ServiceAccountName(ComponentAPIFrontend)))
-	})
-
-	It("returns a Role/RoleBinding pair for EffectivenessMonitor when its effective namespace resolves (#227)", func() {
-		kn, knV2 := testKubernautWithFleetMCP()
-		knV2.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testEMMCPGatewayNamespace}
-		roles, rbs := MCPGatewayNamespaceRBAC(kn, knV2)
-		Expect(roles).To(HaveLen(1))
-		Expect(roles[0].Namespace).To(Equal(testEMMCPGatewayNamespace))
-		Expect(rbs).To(HaveLen(1))
-		Expect(rbs[0].Subjects[0].Name).To(Equal(ServiceAccountName(ComponentEffectivenessMonitor)))
-	})
-
-	It("returns both when both FMC and SignalProcessing resolve to (possibly different) namespaces", func() {
-		kn, knV2 := testKubernautWithFMC()
-		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testFMCMCPGatewayNamespace}
-		knV2.Spec.Fleet.MCPGatewayEndpoint = "https://mcp-gateway.example.com/sse"
-		knV2.Spec.Fleet.MCPGatewayType = "eaigw"
-		knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testSPMCPGatewayNamespace}
-		roles, rbs := MCPGatewayNamespaceRBAC(kn, knV2)
-		Expect(roles).To(HaveLen(2))
-		Expect(rbs).To(HaveLen(2))
+		subjectNames := make([]string, 0, len(rbs))
+		for _, rb := range rbs {
+			Expect(rb.Namespace).To(Equal(testSharedMCPGatewayNamespace))
+			Expect(rb.Subjects).To(HaveLen(1))
+			subjectNames = append(subjectNames, rb.Subjects[0].Name)
+		}
+		Expect(subjectNames).To(ConsistOf(
+			ServiceAccountName(ComponentFleetMetadataCache),
+			ServiceAccountName(ComponentSignalProcessing),
+			ServiceAccountName(ComponentAPIFrontend),
+			ServiceAccountName(ComponentEffectivenessMonitor),
+		))
 	})
 
 	It("stamps LabelMCPGatewayNamespaceRBAC on every returned Role/RoleBinding so the controller can prune stale namespaces by label selector (#354)", func() {
 		kn, knV2 := testKubernautWithFMC()
-		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testFMCMCPGatewayNamespace}
-		knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testSPMCPGatewayNamespace}
+		knV2.Spec.Fleet.MCPGatewayNamespace = testSharedMCPGatewayNamespace
 		roles, rbs := MCPGatewayNamespaceRBAC(kn, knV2)
 		Expect(roles).NotTo(BeEmpty())
 		Expect(rbs).NotTo(BeEmpty())
@@ -1910,9 +1853,9 @@ var _ = Describe("MCPGatewayNamespaceRBAC", func() {
 })
 
 var _ = Describe("FleetMetadataCache RBAC namespace retrofit", func() {
-	It("fleetMetadataCacheClusterRole/Binding are excluded from ClusterRoles()/ClusterRoleBindings() once FMC's effective namespace resolves", func() {
+	It("fleetMetadataCacheClusterRole/Binding are excluded from ClusterRoles()/ClusterRoleBindings() once the shared spec.fleet.mcpGatewayNamespace resolves", func() {
 		kn, knV2 := testKubernautWithFMC()
-		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testFMCMCPGatewayNamespace}
+		knV2.Spec.Fleet.MCPGatewayNamespace = testFMCMCPGatewayNamespace
 
 		for _, cr := range ClusterRoles(kn, knV2) {
 			Expect(cr.Name).NotTo(Equal(clusterRoleName(kn, "fleetmetadatacache")),
@@ -1923,7 +1866,7 @@ var _ = Describe("FleetMetadataCache RBAC namespace retrofit", func() {
 		}
 	})
 
-	It("still includes fleetMetadataCacheClusterRole/Binding when FMC has no effective namespace (regression)", func() {
+	It("still includes fleetMetadataCacheClusterRole/Binding when the shared spec.fleet.mcpGatewayNamespace is unset (regression)", func() {
 		kn, knV2 := testKubernautWithFMC()
 		found := false
 		for _, cr := range ClusterRoles(kn, knV2) {
@@ -1935,10 +1878,13 @@ var _ = Describe("FleetMetadataCache RBAC namespace retrofit", func() {
 	})
 })
 
+// DD-362: AF/EM's MCP Gateway CRD ClusterRole rules are gated on the same
+// shared spec.fleet.mcpGatewayNamespace as every other fleet-aware
+// component -- there is no per-component override.
 var _ = Describe("AF/EM RBAC namespace retrofit (#227)", func() {
-	It("apifrontendClusterRole omits the MCP Gateway CRD rules once AF's effective namespace resolves", func() {
+	It("apifrontendClusterRole omits the MCP Gateway CRD rules once the shared spec.fleet.mcpGatewayNamespace resolves", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		knV2.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testAFMCPGatewayNamespace}
+		knV2.Spec.Fleet.MCPGatewayNamespace = testAFMCPGatewayNamespace
 		labels := CommonLabels(kn)
 		cr := apifrontendClusterRole(kn, knV2, labels)
 		for _, r := range cr.Rules {
@@ -1948,7 +1894,7 @@ var _ = Describe("AF/EM RBAC namespace retrofit (#227)", func() {
 		}
 	})
 
-	It("apifrontendClusterRole still includes the MCP Gateway CRD rules when AF has no effective namespace (regression)", func() {
+	It("apifrontendClusterRole still includes the MCP Gateway CRD rules when the shared spec.fleet.mcpGatewayNamespace is unset (regression)", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
 		labels := CommonLabels(kn)
 		cr := apifrontendClusterRole(kn, knV2, labels)
@@ -1961,9 +1907,9 @@ var _ = Describe("AF/EM RBAC namespace retrofit (#227)", func() {
 		Expect(found).To(BeTrue())
 	})
 
-	It("effectivenessMonitorControllerClusterRole omits the MCP Gateway CRD rules once EM's effective namespace resolves", func() {
+	It("effectivenessMonitorControllerClusterRole omits the MCP Gateway CRD rules once the shared spec.fleet.mcpGatewayNamespace resolves", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		knV2.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testEMMCPGatewayNamespace}
+		knV2.Spec.Fleet.MCPGatewayNamespace = testEMMCPGatewayNamespace
 		labels := CommonLabels(kn)
 		cr := effectivenessMonitorControllerClusterRole(kn, knV2, labels)
 		for _, r := range cr.Rules {
@@ -1973,7 +1919,7 @@ var _ = Describe("AF/EM RBAC namespace retrofit (#227)", func() {
 		}
 	})
 
-	It("effectivenessMonitorControllerClusterRole still includes the MCP Gateway CRD rules when EM has no effective namespace (regression)", func() {
+	It("effectivenessMonitorControllerClusterRole still includes the MCP Gateway CRD rules when the shared spec.fleet.mcpGatewayNamespace is unset (regression)", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
 		labels := CommonLabels(kn)
 		cr := effectivenessMonitorControllerClusterRole(kn, knV2, labels)

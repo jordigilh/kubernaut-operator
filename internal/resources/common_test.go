@@ -52,9 +52,18 @@ const (
 	testEMFleetOAuth2SecretRef      = "em-oauth2-creds"
 	testKAFleetOAuth2SecretRef      = "ka-oauth2-creds"
 
-	// Per-component/shared MCP Gateway namespace fixtures used across
+	// testWEFleetOAuth2SecretRef is WorkflowExecution's own write-scoped
+	// fleet OAuth2 credential (#235, DD-235) -- deliberately distinct from
+	// every read-only component's fixture above and from the shared
+	// "fleet-oauth2-creds" literal used across this package's other
+	// fixtures, since WE's credential must never be interchangeable with
+	// (or fall back to) the shared one.
+	testWEFleetOAuth2SecretRef = "we-write-oauth2-creds"
+
+	// DD-362: shared MCP Gateway namespace fixtures used across
 	// configmaps_test.go and rbac_test.go's namespace-retrofit coverage.
-	testSPMCPGatewayNamespace     = "sp-ns"
+	// There is no per-component override anymore -- every fleet-aware
+	// component resolves the one shared spec.fleet.mcpGatewayNamespace.
 	testFMCMCPGatewayNamespace    = "fmc-ns"
 	testAFMCPGatewayNamespace     = "af-ns"
 	testEMMCPGatewayNamespace     = "em-ns"

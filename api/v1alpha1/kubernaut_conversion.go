@@ -151,10 +151,10 @@ func (dst *Kubernaut) ConvertFrom(srcRaw conversion.Hub) error {
 // ---------- Fleet: v1alpha2-only, no v1alpha1 source or destination ----------
 //
 // Fleet migrated from v1alpha1 (FleetSpec/FleetMetadataCacheSpec top-level
-// fields, plus a FleetOAuth2CredentialsSecretRef/MCPGatewayNamespace
-// override field on each of the 6 fleet-aware component specs) to
-// v1alpha2-only, following the same "no v1alpha1 source" pattern already
-// used for workflowExecution.fleet (F1). ConvertTo always leaves the v1alpha2
+// fields, plus a FleetOAuth2CredentialsSecretRef override field on each of
+// the 6 fleet-aware component specs) to v1alpha2-only, following the same
+// "no v1alpha1 source" pattern already used for workflowExecution.fleet
+// (F1). ConvertTo always leaves the v1alpha2
 // Fleet fields at their zero value; ConvertFrom drops any non-empty v1alpha2
 // Fleet configuration, logging once per downgrade so operators moving a CR
 // back to v1alpha1 notice the loss (the same structured-log pattern used
@@ -461,17 +461,17 @@ func convertWorkflowExecutionSpecToV2(s WorkflowExecutionSpec, ansible AnsibleSp
 		WorkflowNamespace: s.WorkflowNamespace,
 		CooldownPeriod:    s.CooldownPeriod,
 		Tekton:            v1alpha2.TektonSpec{Enabled: s.Tekton.Enabled},
-		Ansible:           convertAnsibleSpecToV2(ansible), // F4: relocated from top-level spec.ansible
-		Fleet:             nil,                             // F1: new field, no v1alpha1 source
+		Ansible:           convertAnsibleSpecToV2(ansible),       // F4: relocated from top-level spec.ansible
+		Fleet:             v1alpha2.WorkflowExecutionFleetSpec{}, // F1/#235: new field, no v1alpha1 source
 		Logging:           convertLoggingSpecToV2(s.Logging),
 		Resources:         s.Resources,
 	}
 }
 
 func convertWorkflowExecutionSpecToV1(s v1alpha2.WorkflowExecutionSpec) WorkflowExecutionSpec {
-	if s.Fleet != nil {
+	if s.Fleet.OAuth2CredentialsSecretRef != "" {
 		conversionLog.Info("dropping workflowExecution.fleet on downgrade to v1alpha1: field has no v1alpha1 equivalent",
-			"oauth2CredentialsSecretRef", s.Fleet.OAuth2CredentialsSecretRef != "", "namespace", s.Fleet.Namespace != "")
+			"oauth2CredentialsSecretRef", s.Fleet.OAuth2CredentialsSecretRef != "")
 	}
 	return WorkflowExecutionSpec{
 		WorkflowNamespace: s.WorkflowNamespace,

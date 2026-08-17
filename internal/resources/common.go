@@ -497,15 +497,6 @@ func effectiveFleetOAuth2SecretRef(override *kubernautv1alpha2.FleetOverrideSpec
 	return withDefault(override.OAuth2CredentialsSecretRef, fleetDefault)
 }
 
-// effectiveFleetNamespace resolves a component's nilable Fleet override (F1)
-// Namespace field, falling back to the shared spec.fleet.mcpGatewayNamespace.
-func effectiveFleetNamespace(override *kubernautv1alpha2.FleetOverrideSpec, fleetDefault string) string {
-	if override == nil {
-		return fleetDefault
-	}
-	return withDefault(override.Namespace, fleetDefault)
-}
-
 // PostgreSQLPort returns the effective PostgreSQL port, defaulting to 5432.
 func PostgreSQLPort(kn *kubernautv1alpha1.Kubernaut) int32 {
 	if kn.Spec.PostgreSQL.Port != 0 {

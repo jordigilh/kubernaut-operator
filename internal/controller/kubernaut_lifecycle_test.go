@@ -1454,9 +1454,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				},
 				resources.SignalProcessingDeployment,
 				resources.RemediationOrchestratorDeployment,
-				func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-					return resources.WorkflowExecutionDeployment(kn)
-				},
+				resources.WorkflowExecutionDeployment,
 				resources.EffectivenessMonitorDeployment,
 				func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 					return resources.NotificationDeployment(kn)

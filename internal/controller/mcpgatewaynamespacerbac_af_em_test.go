@@ -31,20 +31,16 @@ import (
 )
 
 // Business acceptance criteria (#227, BR-FLEET-003/BR-INTEGRATION-054,
-// AC-6 least-privilege): once AF/EM's own mcpGatewayNamespace override (or
-// the shared spec.fleet.mcpGatewayNamespace fallback) resolves to a real
-// namespace, the operator must grant them a namespace-scoped Role/
-// RoleBinding there instead of leaving the cluster-wide MCP Gateway CRD
-// read grant on their ClusterRole -- mirroring FMC/SP's existing #224
-// Finding 5 pattern. This proves the reconciler wiring end-to-end via
-// envtest, not just the resource-builder unit output covered in
-// internal/resources/rbac_test.go.
+// AC-6 least-privilege): once the shared spec.fleet.mcpGatewayNamespace
+// (DD-362 -- no per-component override) resolves to a real namespace, the
+// operator must grant AF/EM a namespace-scoped Role/RoleBinding there
+// instead of leaving the cluster-wide MCP Gateway CRD read grant on their
+// ClusterRole -- mirroring FMC/SP's existing #224 Finding 5 pattern. This
+// proves the reconciler wiring end-to-end via envtest, not just the
+// resource-builder unit output covered in internal/resources/rbac_test.go.
 var _ = Describe("AF/EM namespace-scoped MCP Gateway RBAC wiring (#227)", func() {
 	ctx := context.Background()
-	const (
-		afTargetNS = "af-mcpgateway-target-ns"
-		emTargetNS = "em-mcpgateway-target-ns"
-	)
+	const mcpGatewayTargetNS = "mcpgateway-target-ns"
 
 	ensureNamespace := func(name string) {
 		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
@@ -59,9 +55,8 @@ var _ = Describe("AF/EM namespace-scoped MCP Gateway RBAC wiring (#227)", func()
 		cleanupClusterScoped(ctx)
 	})
 
-	It("creates AF/EM's namespace-scoped Role+RoleBinding once their fleet namespace override resolves, and drops the MCP Gateway CRD rules from their ClusterRole", func() {
-		ensureNamespace(afTargetNS)
-		ensureNamespace(emTargetNS)
+	It("creates AF/EM's namespace-scoped Role+RoleBinding once the shared spec.fleet.mcpGatewayNamespace resolves, and drops the MCP Gateway CRD rules from their ClusterRole", func() {
+		ensureNamespace(mcpGatewayTargetNS)
 		createBYOSecrets(ctx)
 		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 
@@ -71,54 +66,57 @@ var _ = Describe("AF/EM namespace-scoped MCP Gateway RBAC wiring (#227)", func()
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &t, Backend: "fleetmetadatacache", Endpoint: "http://fleetmetadatacache.example.com",
 			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayNamespace: mcpGatewayTargetNS,
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
 			},
 		}
-		knV2.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: afTargetNS}
-		knV2.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: emTargetNS}
+		// #235/DD-235: WorkflowExecution's own write-scoped credential is
+		// independently required and never falls back to the shared one
+		// above.
+		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
 		Expect(k8sClient.Update(ctx, knV2)).To(Succeed())
 
 		reconcileToRunning(ctx)
 
-		By("verifying AF's namespace-scoped Role/RoleBinding exist in its target namespace")
+		By("verifying AF's namespace-scoped Role/RoleBinding exist in the shared target namespace")
 		afRole := &rbacv1.Role{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{
-			Name: testNamespace + "-apifrontend-mcpgateway", Namespace: afTargetNS,
+			Name: testNamespace + "-apifrontend-mcpgateway", Namespace: mcpGatewayTargetNS,
 		}, afRole)).To(Succeed())
 		Expect(hasMCPGatewayCRDRule(afRole.Rules)).To(BeTrue(),
 			"apifrontend-mcpgateway Role should carry the MCP Gateway CRD rules, got: %+v", afRole.Rules)
 
 		afRB := &rbacv1.RoleBinding{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{
-			Name: testNamespace + "-apifrontend-mcpgateway-binding", Namespace: afTargetNS,
+			Name: testNamespace + "-apifrontend-mcpgateway-binding", Namespace: mcpGatewayTargetNS,
 		}, afRB)).To(Succeed())
 
-		By("verifying EM's namespace-scoped Role/RoleBinding exist in its target namespace")
+		By("verifying EM's namespace-scoped Role/RoleBinding exist in the shared target namespace")
 		emRole := &rbacv1.Role{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{
-			Name: testNamespace + "-effectivenessmonitor-mcpgateway", Namespace: emTargetNS,
+			Name: testNamespace + "-effectivenessmonitor-mcpgateway", Namespace: mcpGatewayTargetNS,
 		}, emRole)).To(Succeed())
 		Expect(hasMCPGatewayCRDRule(emRole.Rules)).To(BeTrue(),
 			"effectivenessmonitor-mcpgateway Role should carry the MCP Gateway CRD rules, got: %+v", emRole.Rules)
 
 		emRB := &rbacv1.RoleBinding{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{
-			Name: testNamespace + "-effectivenessmonitor-mcpgateway-binding", Namespace: emTargetNS,
+			Name: testNamespace + "-effectivenessmonitor-mcpgateway-binding", Namespace: mcpGatewayTargetNS,
 		}, emRB)).To(Succeed())
 
 		By("verifying AF's cluster-scoped ClusterRole no longer carries the MCP Gateway CRD rules")
 		afCR := &rbacv1.ClusterRole{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNamespace + "-apifrontend-role"}, afCR)).To(Succeed())
 		Expect(hasMCPGatewayCRDRule(afCR.Rules)).To(BeFalse(),
-			"apifrontend-role ClusterRole should omit the MCP Gateway CRD rules once AF's namespace resolves, got: %+v", afCR.Rules)
+			"apifrontend-role ClusterRole should omit the MCP Gateway CRD rules once the shared namespace resolves, got: %+v", afCR.Rules)
 
 		By("verifying EM's cluster-scoped ClusterRole no longer carries the MCP Gateway CRD rules")
 		emCR := &rbacv1.ClusterRole{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNamespace + "-effectivenessmonitor-controller"}, emCR)).To(Succeed())
 		Expect(hasMCPGatewayCRDRule(emCR.Rules)).To(BeFalse(),
-			"effectivenessmonitor-controller ClusterRole should omit the MCP Gateway CRD rules once EM's namespace resolves, got: %+v", emCR.Rules)
+			"effectivenessmonitor-controller ClusterRole should omit the MCP Gateway CRD rules once the shared namespace resolves, got: %+v", emCR.Rules)
 	})
 })
 

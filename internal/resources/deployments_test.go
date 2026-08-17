@@ -53,9 +53,7 @@ func getAllDeployments(kn *kubernautv1alpha1.Kubernaut) []*appsv1.Deployment {
 		},
 		SignalProcessingDeployment,
 		RemediationOrchestratorDeployment,
-		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-			return WorkflowExecutionDeployment(kn)
-		},
+		WorkflowExecutionDeployment,
 		EffectivenessMonitorDeployment,
 		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 			return NotificationDeployment(kn)
@@ -643,7 +641,7 @@ var _ = Describe("Deployments", func() {
 	Context("WorkflowExecution AAP CA cert", func() {
 		It("has no init container without caCertSecretRef", func() {
 			kn := testKubernaut()
-			dep, err := WorkflowExecutionDeployment(kn)
+			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(dep.Spec.Template.Spec.InitContainers).To(BeEmpty())
@@ -664,7 +662,7 @@ var _ = Describe("Deployments", func() {
 		It("does not set SSL_CERT_FILE", func() {
 			kn := testKubernaut()
 			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
-			dep, err := WorkflowExecutionDeployment(kn)
+			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			container := dep.Spec.Template.Spec.Containers[0]
@@ -676,7 +674,7 @@ var _ = Describe("Deployments", func() {
 		It("has init container with caCertSecretRef", func() {
 			kn := testKubernaut()
 			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
-			dep, err := WorkflowExecutionDeployment(kn)
+			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(dep.Spec.Template.Spec.InitContainers).To(HaveLen(1))
@@ -689,7 +687,7 @@ var _ = Describe("Deployments", func() {
 				Name: "aap-ca-secret",
 				Key:  "custom-ca.pem",
 			}
-			dep, err := WorkflowExecutionDeployment(kn)
+			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			found := false
@@ -708,7 +706,7 @@ var _ = Describe("Deployments", func() {
 		It("uses default key ca.crt", func() {
 			kn := testKubernaut()
 			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
-			dep, err := WorkflowExecutionDeployment(kn)
+			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			for _, v := range dep.Spec.Template.Spec.Volumes {
@@ -724,7 +722,7 @@ var _ = Describe("Deployments", func() {
 		It("has combined-ca emptyDir volume", func() {
 			kn := testKubernaut()
 			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
-			dep, err := WorkflowExecutionDeployment(kn)
+			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			for _, v := range dep.Spec.Template.Spec.Volumes {
@@ -739,7 +737,7 @@ var _ = Describe("Deployments", func() {
 		It("overrides TLS_CA_FILE", func() {
 			kn := testKubernaut()
 			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
-			dep, err := WorkflowExecutionDeployment(kn)
+			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			container := dep.Spec.Template.Spec.Containers[0]
@@ -755,7 +753,7 @@ var _ = Describe("Deployments", func() {
 		It("init container concatenates correct sources", func() {
 			kn := testKubernaut()
 			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
-			dep, err := WorkflowExecutionDeployment(kn)
+			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			init := dep.Spec.Template.Spec.InitContainers[0]
@@ -769,7 +767,7 @@ var _ = Describe("Deployments", func() {
 		It("init container has required volume mounts", func() {
 			kn := testKubernaut()
 			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
-			dep, err := WorkflowExecutionDeployment(kn)
+			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			init := dep.Spec.Template.Spec.InitContainers[0]
@@ -785,7 +783,7 @@ var _ = Describe("Deployments", func() {
 		It("main container mounts combined-ca", func() {
 			kn := testKubernaut()
 			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
-			dep, err := WorkflowExecutionDeployment(kn)
+			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			container := dep.Spec.Template.Spec.Containers[0]
@@ -802,7 +800,7 @@ var _ = Describe("Deployments", func() {
 		It("init container has restricted security context", func() {
 			kn := testKubernaut()
 			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
-			dep, err := WorkflowExecutionDeployment(kn)
+			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			init := dep.Spec.Template.Spec.InitContainers[0]
@@ -814,6 +812,68 @@ var _ = Describe("Deployments", func() {
 			Expect(*sc.ReadOnlyRootFilesystem).To(BeTrue())
 			Expect(sc.Capabilities).NotTo(BeNil())
 			Expect(sc.Capabilities.Drop).NotTo(BeEmpty())
+		})
+	})
+
+	// #235/DD-235: WE's own write-scoped fleet-oauth2 mount must never fall
+	// back to the shared spec.fleet.oauth2.credentialsSecretRef the way
+	// SP/AF/EM's appendMCPGatewayOnlyFleetSecretMount does.
+	Context("WorkflowExecution fleet OAuth2 secret mount", func() {
+		It("has no fleet-oauth2 volume when spec.fleet.enabled is false", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+			dep, err := WorkflowExecutionDeployment(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				Expect(v.Name).NotTo(Equal(testVolumeFleetOAuth2), "WE should not have a fleet-oauth2 volume when fleet is disabled")
+			}
+		})
+
+		It("has no fleet-oauth2 volume when WE's own oauth2CredentialsSecretRef is unset, even though fleet+oauth2 are enabled", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			enabled := true
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
+					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+					CredentialsSecretRef: "fleet-oauth2-creds",
+				},
+			}
+			dep, err := WorkflowExecutionDeployment(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				Expect(v.Name).NotTo(Equal(testVolumeFleetOAuth2),
+					"[AC-6] WE must never mount the shared fleet-oauth2-creds Secret in place of its own unset credential")
+			}
+		})
+
+		It("[AC-6] mounts only WE's own write-scoped credential Secret, never the shared one, at a path distinct from every other component", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			enabled := true
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
+					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+					CredentialsSecretRef: "fleet-oauth2-creds",
+				},
+			}
+			knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+			dep, err := WorkflowExecutionDeployment(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, testVolumeFleetOAuth2)
+			expectHasVolumeMount(dep, testVolumeFleetOAuth2, "/etc/workflowexecution/"+testWEFleetOAuth2SecretRef)
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == testVolumeFleetOAuth2 {
+					Expect(v.Secret).NotTo(BeNil())
+					Expect(v.Secret.SecretName).To(Equal(testWEFleetOAuth2SecretRef),
+						"[AC-6] WE must mount its own write-scoped Secret, never the shared fleet-oauth2-creds one")
+				}
+			}
 		})
 	})
 

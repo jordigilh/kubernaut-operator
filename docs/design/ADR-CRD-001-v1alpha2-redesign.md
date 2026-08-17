@@ -280,6 +280,22 @@ type FleetOverrideSpec struct {
 
 Replaces the flat `FleetOAuth2CredentialsSecretRef string` field with `Fleet *FleetOverrideSpec `json:"fleet,omitempty"`` on: `GatewaySpec`, `RemediationOrchestratorSpec`, `SignalProcessingSpec`, `EffectivenessMonitorSpec`, `KubernautAgentSpec`, `APIFrontendSpec` (new `Namespace` field added here and on EM), `WorkflowExecutionSpec` (entirely new field, unblocks #235), `FleetMetadataCacheSpec` (its bespoke `FleetOAuth2CredentialsSecretRef`/`MCPGatewayNamespace` pair collapses into the same shared type).
 
+> **Addendum (2026-08-16, #235):** `WorkflowExecutionSpec.Fleet` ended up
+> using a dedicated `WorkflowExecutionFleetSpec` type instead of the shared
+> `*FleetOverrideSpec` described above — WE's write-scoped credential must
+> never fall back to the shared read-only one, and it has no use for the
+> `Namespace` sub-field. See `docs/design/DD-235-workflowexecution-fleet-oauth2-no-fallback.md`
+> for the full rationale. Every other component listed above is unaffected.
+
+> **Addendum (2026-08-16, #362):** `FleetOverrideSpec.Namespace` (shown
+> above) was removed entirely -- consumption was already inconsistent (only
+> 4 of the 7 components using this type ever read it) and no supported
+> topology motivates per-component divergence from the shared
+> `spec.fleet.mcpGatewayNamespace`. See
+> `docs/design/DD-362-remove-fleet-namespace-override.md` for the full
+> rationale. `FleetOverrideSpec` now carries only
+> `OAuth2CredentialsSecretRef`.
+
 ### F2 -- New top-level `MonitoringSpec`
 
 ```go
