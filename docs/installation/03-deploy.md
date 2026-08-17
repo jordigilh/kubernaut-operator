@@ -527,3 +527,5 @@ oc describe pod -n kubernaut-system -l app=<service>
 ---
 
 Previous: [Configure Services](02-configure-services.md)
+
+Next (optional): [Fleet: Kuadrant MCP Gateway](04-fleet-mcp-gateway.md) -- required only if you enable `spec.fleet.mcpGatewayType: kuadrant` above.
