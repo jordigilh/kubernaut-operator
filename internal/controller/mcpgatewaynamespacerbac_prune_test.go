@@ -147,11 +147,8 @@ var _ = Describe("Namespace-scoped MCP Gateway RBAC pruning on namespace change 
 	ctx := context.Background()
 
 	const (
-		fmcNSa    = "fmc-mcpgw-prune-ns-a"
-		fmcNSb    = "fmc-mcpgw-prune-ns-b"
-		sharedNS  = "shared-mcpgw-prune-ns"
-		overrideA = "fmc-override-prune-ns-a"
-		overrideB = "fmc-override-prune-ns-b"
+		fmcNSa = "fmc-mcpgw-prune-ns-a"
+		fmcNSb = "fmc-mcpgw-prune-ns-b"
 	)
 
 	ensureNamespace := func(name string) {
@@ -243,62 +240,6 @@ var _ = Describe("Namespace-scoped MCP Gateway RBAC pruning on namespace change 
 		}, fmcRole)).To(Succeed())
 		Expect(k8sClient.Get(ctx, types.NamespacedName{
 			Name: testNamespace + "-signalprocessing-mcpgateway", Namespace: fmcNSb,
-		}, spRole)).To(Succeed())
-	})
-
-	It("prunes FMC's own mcpGatewayNamespace override RBAC when the override changes, without touching SignalProcessing's independently-resolved shared namespace", func() {
-		ensureNamespace(sharedNS)
-		ensureNamespace(overrideA)
-		ensureNamespace(overrideB)
-		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
-		fleet := defaultFMCFleetSpec()
-		fleet.MCPGatewayNamespace = sharedNS
-		enableFleetMetadataCacheWithFleet(ctx, fleet)
-
-		existing := &kubernautv1alpha2.Kubernaut{}
-		Expect(k8sClient.Get(ctx, singletonKey(), existing)).To(Succeed())
-		existing.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: overrideA}
-		Expect(k8sClient.Update(ctx, existing)).To(Succeed())
-
-		reconcileToRunning(ctx)
-
-		By("sanity: FMC's Role is in its override namespace, SP's Role is in the shared namespace")
-		fmcRole := &rbacv1.Role{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{
-			Name: testNamespace + "-fleetmetadatacache-mcpgateway", Namespace: overrideA,
-		}, fmcRole)).To(Succeed())
-		spRole := &rbacv1.Role{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{
-			Name: testNamespace + "-signalprocessing-mcpgateway", Namespace: sharedNS,
-		}, spRole)).To(Succeed())
-
-		By("changing only FMC's own namespace override")
-		Expect(k8sClient.Get(ctx, singletonKey(), existing)).To(Succeed())
-		existing.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: overrideB}
-		Expect(k8sClient.Update(ctx, existing)).To(Succeed())
-
-		r := newReconciler()
-		for i := 0; i < 3; i++ {
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			Expect(err).NotTo(HaveOccurred())
-		}
-
-		By("verifying FMC's old override namespace Role is pruned")
-		err := k8sClient.Get(ctx, types.NamespacedName{
-			Name: testNamespace + "-fleetmetadatacache-mcpgateway", Namespace: overrideA,
-		}, fmcRole)
-		Expect(errors.IsNotFound(err)).To(BeTrue(),
-			"fleetmetadatacache-mcpgateway Role in the old override namespace should be pruned, got: %v", err)
-
-		By("verifying FMC's new override namespace Role exists")
-		Expect(k8sClient.Get(ctx, types.NamespacedName{
-			Name: testNamespace + "-fleetmetadatacache-mcpgateway", Namespace: overrideB,
-		}, fmcRole)).To(Succeed())
-
-		By("verifying SignalProcessing's Role in the shared namespace was left untouched")
-		Expect(k8sClient.Get(ctx, types.NamespacedName{
-			Name: testNamespace + "-signalprocessing-mcpgateway", Namespace: sharedNS,
 		}, spRole)).To(Succeed())
 	})
 

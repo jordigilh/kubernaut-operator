@@ -259,14 +259,11 @@ func resolveFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefO
 // FleetConfig.Validate()'s own doc comment: "AF and EM... never call the
 // Backend/Endpoint scope-check adapter"). Reuses resolveFleetConfig's
 // marshaling and TLSCAFile defaulting, then strips the backend/endpoint/
-// tokenPath fields those services neither need nor read. effectiveNamespace
-// (the caller's own mcpGatewayNamespace override, falling back to the
-// shared spec.fleet.mcpGatewayNamespace -- see
-// effectiveAPIFrontendMCPGatewayNamespace/
-// effectiveEffectivenessMonitorMCPGatewayNamespace) is rendered as
-// fleet.namespace so AF/EM's ClusterRegistry scopes its watch to a single
-// namespace instead of cluster-wide (#227).
-func resolveMCPGatewayOnlyFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefOverride, defaultOAuth2CAFile, effectiveNamespace string) *fleetConfigYAML {
+// tokenPath fields those services neither need nor read. fleet.namespace is
+// always the shared spec.fleet.mcpGatewayNamespace (DD-362 -- no
+// per-component override) so AF/EM's ClusterRegistry scopes its watch to a
+// single namespace instead of cluster-wide (#227).
+func resolveMCPGatewayOnlyFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefOverride, defaultOAuth2CAFile string) *fleetConfigYAML {
 	cfg := resolveFleetConfig(knV2, credentialsSecretRefOverride, defaultOAuth2CAFile)
 	if cfg == nil {
 		return nil
@@ -275,7 +272,7 @@ func resolveMCPGatewayOnlyFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credent
 	cfg.Endpoint = ""
 	cfg.TLSCAFile = ""
 	cfg.TokenPath = ""
-	cfg.Namespace = effectiveNamespace
+	cfg.Namespace = knV2.Spec.Fleet.MCPGatewayNamespace
 	return cfg
 }
 
@@ -442,10 +439,9 @@ type signalProcessingFleetYAML struct {
 // is omitted entirely (upstream's Config.Fleet is a non-pointer struct that
 // tolerates an all-zero-value fleet: block -- BR-INTEGRATION-054, "when
 // Endpoint is empty, SP operates in local-only mode" -- but omitting the
-// key keeps non-fleet deployments' rendered YAML unchanged).
-// spec.signalProcessing.fleet.namespace overrides the shared
-// spec.fleet.mcpGatewayNamespace (F1), mirroring FleetMetadataCache's
-// precedent.
+// key keeps non-fleet deployments' rendered YAML unchanged). fleet.namespace
+// is always the shared spec.fleet.mcpGatewayNamespace (DD-362 -- no
+// per-component override).
 func resolveSignalProcessingFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) *signalProcessingFleetYAML {
 	fleet := &knV2.Spec.Fleet
 	if fleet.Enabled == nil || !*fleet.Enabled {
@@ -455,7 +451,7 @@ func resolveSignalProcessingFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) *sign
 	cfg := &signalProcessingFleetYAML{
 		Endpoint:       fleet.MCPGatewayEndpoint,
 		MCPGatewayType: fleet.MCPGatewayType,
-		Namespace:      effectiveFleetNamespace(override, fleet.MCPGatewayNamespace),
+		Namespace:      fleet.MCPGatewayNamespace,
 	}
 	if fleet.OAuth2.Enabled {
 		cfg.OAuth2 = &fleetOAuth2YAML{
@@ -1504,7 +1500,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubern
 				MaxRetries:    3,
 			},
 		},
-		Fleet: resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.EffectivenessMonitor.Fleet, ""), InterServiceTLSCAFile, effectiveEffectivenessMonitorMCPGatewayNamespace(knV2)),
+		Fleet: resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.EffectivenessMonitor.Fleet, ""), InterServiceTLSCAFile),
 	}
 	cfg.External = &emExternalYAML{
 		PrometheusURL:       effectivePrometheusURL(knV2),
@@ -2343,7 +2339,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 			DisconnectTTL: "10m",
 			RetentionTTL:  "720h",
 		},
-		Fleet:      resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""), apifrontendTLSCAFile, effectiveAPIFrontendMCPGatewayNamespace(knV2)),
+		Fleet:      resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""), apifrontendTLSCAFile),
 		Resilience: afResilienceConfig(),
 	}
 

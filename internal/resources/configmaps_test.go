@@ -428,23 +428,10 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("mcpGatewayType: eaigw"), "signalprocessing config should render mcpGatewayType, got:\n%s", data)
 		})
 
-		It("renders fleet.namespace from spec.signalProcessing.mcpGatewayNamespace, overriding the shared spec.fleet.mcpGatewayNamespace", func() {
-			kn := testKubernaut()
-			enabled := true
-			knV2 := testKnV2(kn)
-			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-				MCPGatewayNamespace: testSharedMCPGatewayNamespace,
-			}
-			knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testSPMCPGatewayNamespace}
-			cm, err := SignalProcessingConfigMap(kn, knV2)
-			Expect(err).NotTo(HaveOccurred())
-			data := cm.Data["config.yaml"]
-			Expect(data).To(ContainSubstring("namespace: sp-ns"), "signalprocessing fleet.namespace should use its own override, got:\n%s", data)
-		})
-
-		It("falls back to the shared spec.fleet.mcpGatewayNamespace when signalProcessing has no override", func() {
+		// DD-362: SignalProcessing always renders fleet.namespace from the
+		// shared spec.fleet.mcpGatewayNamespace -- there is no
+		// per-component override (FleetOverrideSpec.Namespace was removed).
+		It("renders fleet.namespace from the shared spec.fleet.mcpGatewayNamespace", func() {
 			kn := testKubernaut()
 			enabled := true
 			knV2 := testKnV2(kn)
@@ -456,7 +443,7 @@ var _ = Describe("ConfigMaps", func() {
 			cm, err := SignalProcessingConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
-			Expect(data).To(ContainSubstring("namespace: shared-ns"), "signalprocessing fleet.namespace should fall back to the shared value, got:\n%s", data)
+			Expect(data).To(ContainSubstring("namespace: shared-ns"), "signalprocessing fleet.namespace should use the shared value, got:\n%s", data)
 		})
 
 		It("renders fleet.oauth2.tlsCAFile defaulting to the inter-service CA path when oauth2 is enabled", func() {
@@ -1091,7 +1078,10 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).NotTo(ContainSubstring("credentialsSecretRef: fleet-oauth2-creds"), "EM config should not fall back to the shared credentialsSecretRef when it has its own override, got:\n%s", data)
 		})
 
-		It("omits fleet.namespace when neither spec.effectivenessMonitor.fleet.namespace nor spec.fleet.mcpGatewayNamespace is set (#227)", func() {
+		// DD-362: EM always renders fleet.namespace from the shared
+		// spec.fleet.mcpGatewayNamespace -- there is no per-component
+		// override (FleetOverrideSpec.Namespace was removed).
+		It("omits fleet.namespace when spec.fleet.mcpGatewayNamespace is unset (#227)", func() {
 			kn := testKubernaut()
 			enabled := true
 			knV2 := testKnV2(kn)
@@ -1101,7 +1091,7 @@ var _ = Describe("ConfigMaps", func() {
 			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["effectivenessmonitor.yaml"]
-			Expect(fleetNamespaceFromYAML(data)).To(BeEmpty(), "EM fleet block should omit namespace when no override resolves, got:\n%s", data)
+			Expect(fleetNamespaceFromYAML(data)).To(BeEmpty(), "EM fleet block should omit namespace when the shared namespace is unset, got:\n%s", data)
 		})
 
 		It("renders fleet.namespace from the shared spec.fleet.mcpGatewayNamespace (#227)", func() {
@@ -1115,22 +1105,7 @@ var _ = Describe("ConfigMaps", func() {
 			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["effectivenessmonitor.yaml"]
-			Expect(fleetNamespaceFromYAML(data)).To(Equal("kubernaut-fleet"), "EM fleet block should fall back to the shared spec.fleet.mcpGatewayNamespace, got:\n%s", data)
-		})
-
-		It("renders fleet.namespace from spec.effectivenessMonitor.fleet.namespace, overriding the shared default (#227)", func() {
-			kn := testKubernaut()
-			enabled := true
-			knV2 := testKnV2(kn)
-			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-				Enabled: &enabled, MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-				MCPGatewayNamespace: "kubernaut-fleet",
-			}
-			knV2.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testEMMCPGatewayNamespace}
-			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
-			Expect(err).NotTo(HaveOccurred())
-			data := cm.Data["effectivenessmonitor.yaml"]
-			Expect(fleetNamespaceFromYAML(data)).To(Equal(testEMMCPGatewayNamespace), "EM fleet block should honor its own namespace override over the shared default, got:\n%s", data)
+			Expect(fleetNamespaceFromYAML(data)).To(Equal("kubernaut-fleet"), "EM fleet block should use the shared spec.fleet.mcpGatewayNamespace, got:\n%s", data)
 		})
 	})
 
@@ -2790,7 +2765,10 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).NotTo(ContainSubstring("credentialsSecretRef: fleet-oauth2-creds"), "apifrontend config should not fall back to the shared credentialsSecretRef when it has its own override, got:\n%s", data)
 	})
 
-	It("omits fleet.namespace when neither spec.apiFrontend.fleet.namespace nor spec.fleet.mcpGatewayNamespace is set (#227)", func() {
+	// DD-362: AF always renders fleet.namespace from the shared
+	// spec.fleet.mcpGatewayNamespace -- there is no per-component
+	// override (FleetOverrideSpec.Namespace was removed).
+	It("omits fleet.namespace when spec.fleet.mcpGatewayNamespace is unset (#227)", func() {
 		kn := testKubernautWithAF()
 		enabled := true
 		knV2 := testKnV2(kn)
@@ -2800,7 +2778,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		cm, err := APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
-		Expect(fleetNamespaceFromYAML(data)).To(BeEmpty(), "apifrontend fleet block should omit namespace when no override resolves, got:\n%s", data)
+		Expect(fleetNamespaceFromYAML(data)).To(BeEmpty(), "apifrontend fleet block should omit namespace when the shared namespace is unset, got:\n%s", data)
 	})
 
 	It("renders fleet.namespace from the shared spec.fleet.mcpGatewayNamespace (#227)", func() {
@@ -2814,23 +2792,9 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		cm, err := APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
-		Expect(fleetNamespaceFromYAML(data)).To(Equal("kubernaut-fleet"), "apifrontend fleet block should fall back to the shared spec.fleet.mcpGatewayNamespace, got:\n%s", data)
+		Expect(fleetNamespaceFromYAML(data)).To(Equal("kubernaut-fleet"), "apifrontend fleet block should use the shared spec.fleet.mcpGatewayNamespace, got:\n%s", data)
 	})
 
-	It("renders fleet.namespace from spec.apiFrontend.fleet.namespace, overriding the shared default (#227)", func() {
-		kn := testKubernautWithAF()
-		enabled := true
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-			MCPGatewayNamespace: "kubernaut-fleet",
-		}
-		knV2.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: testAFMCPGatewayNamespace}
-		cm, err := APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
-		Expect(err).NotTo(HaveOccurred())
-		data := cm.Data["config.yaml"]
-		Expect(fleetNamespaceFromYAML(data)).To(Equal(testAFMCPGatewayNamespace), "apifrontend fleet block should honor its own namespace override over the shared default, got:\n%s", data)
-	})
 })
 
 var _ = Describe("APIFrontendConfigMap OIDC", func() {

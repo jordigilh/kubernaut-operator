@@ -287,6 +287,15 @@ Replaces the flat `FleetOAuth2CredentialsSecretRef string` field with `Fleet *Fl
 > `Namespace` sub-field. See `docs/design/DD-235-workflowexecution-fleet-oauth2-no-fallback.md`
 > for the full rationale. Every other component listed above is unaffected.
 
+> **Addendum (2026-08-16, #362):** `FleetOverrideSpec.Namespace` (shown
+> above) was removed entirely -- consumption was already inconsistent (only
+> 4 of the 7 components using this type ever read it) and no supported
+> topology motivates per-component divergence from the shared
+> `spec.fleet.mcpGatewayNamespace`. See
+> `docs/design/DD-362-remove-fleet-namespace-override.md` for the full
+> rationale. `FleetOverrideSpec` now carries only
+> `OAuth2CredentialsSecretRef`.
+
 ### F2 -- New top-level `MonitoringSpec`
 
 ```go

@@ -257,12 +257,12 @@ func (v *ValkeySpec) ValkeyTLSEnabled() bool {
 	return v.TLS != nil && v.TLS.Enabled
 }
 
-// FleetOverrideSpec overrides spec.fleet's shared OAuth2 credentials and/or
-// MCP Gateway namespace scope for a single component (F1). Every field
-// falls back to the corresponding spec.fleet.* value when unset. Replaces
-// v1alpha1's flat, per-component FleetOAuth2CredentialsSecretRef/
-// MCPGatewayNamespace fields with one shared, embeddable type mirroring
-// Helm's <component>.fleet.{oauth2.credentialsSecretRef,namespace} nesting.
+// FleetOverrideSpec overrides spec.fleet.oauth2.credentialsSecretRef for a
+// single component (F1). Falls back to spec.fleet.oauth2.credentialsSecretRef
+// when unset. Replaces v1alpha1's flat, per-component
+// FleetOAuth2CredentialsSecretRef field. All fleet-aware components share
+// one MCP Gateway CRD registry (spec.fleet.mcpGatewayNamespace) -- there is
+// no per-component namespace override (DD-362).
 type FleetOverrideSpec struct {
 	// Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
 	// Use when this component must authenticate to the MCP Gateway as a
@@ -271,11 +271,6 @@ type FleetOverrideSpec struct {
 	// against the same shared spec.fleet.oauth2.tokenURL).
 	// +optional
 	OAuth2CredentialsSecretRef string `json:"oauth2CredentialsSecretRef,omitempty"`
-
-	// Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
-	// Gateway CRD watch scope.
-	// +optional
-	Namespace string `json:"namespace,omitempty"`
 }
 
 // FleetSpec configures federated scope-checking for Gateway and
@@ -374,11 +369,13 @@ type FleetMetadataCacheSpec struct {
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// Fleet overrides for FMC's own MCP Gateway CRD watch namespace and/or
+	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for FMC's own
 	// OAuth2 client credentials (F1 -- collapses v1alpha1's bespoke
-	// MCPGatewayNamespace/FleetOAuth2CredentialsSecretRef pair into the
-	// shared FleetOverrideSpec type used by every other fleet-aware
-	// component). Every field falls back to spec.fleet.* when unset.
+	// FleetOAuth2CredentialsSecretRef field into the shared
+	// FleetOverrideSpec type used by every other fleet-aware component).
+	// Falls back to spec.fleet.oauth2.credentialsSecretRef when unset. FMC's
+	// MCP Gateway CRD watch namespace always uses the shared
+	// spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 
@@ -557,12 +554,14 @@ type SignalProcessingSpec struct {
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
-	// Fleet overrides spec.fleet.mcpGatewayNamespace/oauth2.credentialsSecretRef
-	// for SignalProcessing's own ClusterRegistry watch (used for cluster
-	// classification labels, BR-FLEET-003) and MCP Gateway authentication
-	// (F1 -- collapses v1alpha1's separate MCPGatewayNamespace/
-	// FleetOAuth2CredentialsSecretRef fields into the shared
-	// FleetOverrideSpec type used by every other fleet-aware component).
+	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for
+	// SignalProcessing's own MCP Gateway authentication (F1 -- collapses
+	// v1alpha1's separate FleetOAuth2CredentialsSecretRef field into the
+	// shared FleetOverrideSpec type used by every other fleet-aware
+	// component). Falls back to spec.fleet.oauth2.credentialsSecretRef when
+	// unset. SignalProcessing's ClusterRegistry watch (used for cluster
+	// classification labels, BR-FLEET-003) always uses the shared
+	// spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 }
@@ -617,8 +616,8 @@ type RemediationOrchestratorSpec struct {
 	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for
 	// RemediationOrchestrator only (F1). Use when RemediationOrchestrator
 	// must authenticate to the MCP Gateway as a different OAuth2 client
-	// than other fleet-aware components. Falls back to spec.fleet.* when
-	// unset.
+	// than other fleet-aware components. Falls back to
+	// spec.fleet.oauth2.credentialsSecretRef when unset.
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 }
@@ -806,10 +805,11 @@ type EffectivenessMonitorSpec struct {
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
-	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef/mcpGatewayNamespace
-	// for EffectivenessMonitor only (F1 -- also adds the Namespace override
-	// EM was missing in v1alpha1; only OAuth2CredentialsSecretRef existed
-	// there). Falls back to spec.fleet.* when unset.
+	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for
+	// EffectivenessMonitor only (F1). Falls back to
+	// spec.fleet.oauth2.credentialsSecretRef when unset. EM's MCP Gateway
+	// CRD watch namespace always uses the shared
+	// spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 }
@@ -909,7 +909,7 @@ type KubernautAgentSpec struct {
 	// Kubernaut Agent only (F1). Use when KA must authenticate to the MCP
 	// Gateway (for fleet tool discovery, ADR-068 decision #11) as a
 	// different OAuth2 client than other fleet-aware components. Falls
-	// back to spec.fleet.* when unset.
+	// back to spec.fleet.oauth2.credentialsSecretRef when unset.
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 }
@@ -1344,7 +1344,7 @@ type GatewaySpec struct {
 	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for Gateway
 	// only (F1). Use when Gateway must authenticate to the MCP Gateway as
 	// a different OAuth2 client than other fleet-aware components. Falls
-	// back to spec.fleet.* when unset.
+	// back to spec.fleet.oauth2.credentialsSecretRef when unset.
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 }
@@ -1608,9 +1608,10 @@ type APIFrontendSpec struct {
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
 	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for
-	// APIFrontend only (F1 -- also adds the Namespace override APIFrontend
-	// was missing in v1alpha1; only OAuth2CredentialsSecretRef existed
-	// there). Falls back to spec.fleet.* when unset.
+	// APIFrontend only (F1). Falls back to
+	// spec.fleet.oauth2.credentialsSecretRef when unset. AF's MCP Gateway
+	// CRD watch namespace always uses the shared
+	// spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 }

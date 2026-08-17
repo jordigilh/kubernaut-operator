@@ -151,10 +151,10 @@ func (dst *Kubernaut) ConvertFrom(srcRaw conversion.Hub) error {
 // ---------- Fleet: v1alpha2-only, no v1alpha1 source or destination ----------
 //
 // Fleet migrated from v1alpha1 (FleetSpec/FleetMetadataCacheSpec top-level
-// fields, plus a FleetOAuth2CredentialsSecretRef/MCPGatewayNamespace
-// override field on each of the 6 fleet-aware component specs) to
-// v1alpha2-only, following the same "no v1alpha1 source" pattern already
-// used for workflowExecution.fleet (F1). ConvertTo always leaves the v1alpha2
+// fields, plus a FleetOAuth2CredentialsSecretRef override field on each of
+// the 6 fleet-aware component specs) to v1alpha2-only, following the same
+// "no v1alpha1 source" pattern already used for workflowExecution.fleet
+// (F1). ConvertTo always leaves the v1alpha2
 // Fleet fields at their zero value; ConvertFrom drops any non-empty v1alpha2
 // Fleet configuration, logging once per downgrade so operators moving a CR
 // back to v1alpha1 notice the loss (the same structured-log pattern used

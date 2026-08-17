@@ -60,9 +60,10 @@ const (
 	// (or fall back to) the shared one.
 	testWEFleetOAuth2SecretRef = "we-write-oauth2-creds"
 
-	// Per-component/shared MCP Gateway namespace fixtures used across
+	// DD-362: shared MCP Gateway namespace fixtures used across
 	// configmaps_test.go and rbac_test.go's namespace-retrofit coverage.
-	testSPMCPGatewayNamespace     = "sp-ns"
+	// There is no per-component override anymore -- every fleet-aware
+	// component resolves the one shared spec.fleet.mcpGatewayNamespace.
 	testFMCMCPGatewayNamespace    = "fmc-ns"
 	testAFMCPGatewayNamespace     = "af-ns"
 	testEMMCPGatewayNamespace     = "em-ns"
