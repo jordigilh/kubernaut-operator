@@ -46,6 +46,13 @@ const (
 	llmSecretName = "llm-credentials"
 	timeout       = 10 * time.Second
 	interval      = 250 * time.Millisecond
+
+	// testWEFleetOAuth2SecretRef is WorkflowExecution's own write-scoped
+	// fleet OAuth2 credential (#235, DD-235). Any test that enables
+	// spec.fleet.oauth2 and drives the CR through phaseValidate must set
+	// this -- WE's credential is independently required and never falls
+	// back to the shared spec.fleet.oauth2.credentialsSecretRef.
+	testWEFleetOAuth2SecretRef = "we-write-oauth2-creds"
 )
 
 func singletonKey() types.NamespacedName {
@@ -520,6 +527,10 @@ var _ = Describe("Kubernaut Controller", func() {
 					CredentialsSecretRef: "fleet-oauth2-creds",
 				},
 			}
+			// #235/DD-235: WorkflowExecution's own write-scoped credential
+			// is independently required and never falls back to the
+			// shared one above.
+			knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
 			Expect(k8sClient.Update(ctx, knV2)).To(Succeed(),
 				"CM-6: a legitimate spec.fleet configuration must be accepted end-to-end")
 

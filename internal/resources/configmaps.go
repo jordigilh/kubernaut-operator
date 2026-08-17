@@ -575,6 +575,50 @@ type workflowExecutionConfigYAML struct {
 	Tekton      *weTektonYAML                 `json:"tekton,omitempty" yaml:"tekton,omitempty"`
 	Datastorage weDatastorageYAML             `json:"datastorage" yaml:"datastorage"`
 	Controller  weControllerYAML              `json:"controller" yaml:"controller"`
+	Fleet       *weFleetYAML                  `json:"fleet,omitempty" yaml:"fleet,omitempty"`
+}
+
+// weFleetYAML mirrors upstream pkg/workflowexecution/config.FleetConfig
+// field-for-field: Endpoint + OAuth2 only -- WE resolves its MCP tool-name
+// prefix dynamically per target cluster (pkg/workflowexecution/executor/client_factory.go's
+// registry.ToolPrefixResolver), so unlike KubernautAgent's own FleetConfig
+// there is no static gatewayType knob to render, and WE never watches the
+// Backend/MCPServerRegistration CRDs so there is no namespace field either
+// (DD-235).
+type weFleetYAML struct {
+	Endpoint string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	OAuth2   *fleetOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+}
+
+// resolveWEFleetConfig builds the fleet: block rendered into
+// WorkflowExecutionConfigMap. Unlike resolveMCPGatewayOnlyFleetConfig/
+// resolveSignalProcessingFleetConfig, WE's own
+// spec.workflowExecution.fleet.oauth2CredentialsSecretRef is rendered
+// as-is with NO fallback to the shared spec.fleet.oauth2.credentialsSecretRef
+// (DD-235, least-privilege) -- validateFleetOAuth2 rejects fleet+oauth2
+// enablement without it before this is ever reached with an empty value, so
+// the empty-string render below (if ever reached with validation bypassed)
+// is defense-in-depth, not the primary enforcement. Returns nil when fleet
+// is disabled so the key is omitted entirely, matching every sibling
+// component's precedent.
+func resolveWEFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, defaultOAuth2CAFile string) *weFleetYAML {
+	fleet := &knV2.Spec.Fleet
+	if fleet.Enabled == nil || !*fleet.Enabled {
+		return nil
+	}
+	cfg := &weFleetYAML{
+		Endpoint: fleet.MCPGatewayEndpoint,
+	}
+	if fleet.OAuth2.Enabled {
+		cfg.OAuth2 = &fleetOAuth2YAML{
+			Enabled:              true,
+			TokenURL:             fleet.OAuth2.TokenURL,
+			CredentialsSecretRef: knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef,
+			Scopes:               fleet.OAuth2.Scopes,
+			TLSCAFile:            defaultOAuth2CAFile,
+		}
+	}
+	return cfg
 }
 
 type emAssessmentYAML struct {
@@ -1378,7 +1422,7 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kub
 }
 
 // WorkflowExecutionConfigMap builds the workflowexecution-config ConfigMap.
-func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	we := &kn.Spec.WorkflowExecution
 	wfNs := ResolveWorkflowNamespace(kn)
@@ -1427,6 +1471,7 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigM
 	if we.Tekton.Enabled != nil {
 		cfg.Tekton = &weTektonYAML{Enabled: we.Tekton.Enabled}
 	}
+	cfg.Fleet = resolveWEFleetConfig(knV2, InterServiceTLSCAFile)
 	data, err := marshalYAML(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("workflowexecution config: %w", err)

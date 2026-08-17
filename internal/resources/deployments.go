@@ -304,13 +304,14 @@ func RemediationOrchestratorDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *ku
 }
 
 // WorkflowExecutionDeployment builds the workflowexecution Deployment.
-func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	volumes := []corev1.Volume{configMapVolume("config", "workflowexecution-config")}
 	mounts := []corev1.VolumeMount{{Name: "config", MountPath: "/etc/config", ReadOnly: true}}
 	var env []corev1.EnvVar
 	var initContainers []corev1.Container
 
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
+	volumes, mounts = appendWorkflowExecutionFleetSecretMount(volumes, mounts, knV2, "/etc/workflowexecution")
 
 	if ref := kn.Spec.Ansible.CACertSecretRef; ref != nil {
 		key := ref.Key
@@ -1183,6 +1184,32 @@ func appendFleetSecretMounts(volumes []corev1.Volume, mounts []corev1.VolumeMoun
 // dead weight.
 func appendMCPGatewayOnlyFleetSecretMount(volumes []corev1.Volume, mounts []corev1.VolumeMount, knV2 *kubernautv1alpha2.Kubernaut, componentEtcDir, credentialsSecretRefOverride string) ([]corev1.Volume, []corev1.VolumeMount) {
 	return appendFleetSecretMountsVariant(volumes, mounts, knV2, componentEtcDir, credentialsSecretRefOverride, false)
+}
+
+// appendWorkflowExecutionFleetSecretMount mounts WE's own write-scoped
+// fleet-oauth2 credentials Secret (#235, DD-235). Unlike
+// appendMCPGatewayOnlyFleetSecretMount (SP/AF/EM/KA), this never falls back
+// to the shared spec.fleet.oauth2.credentialsSecretRef: WE's write-scoped
+// client must always be independently configured (least-privilege).
+// validateFleetOAuth2 rejects fleet+oauth2 enablement without WE's own
+// secretRef before this is ever reached with an empty ref, so the no-mount
+// branch below is defense-in-depth, not the primary enforcement.
+func appendWorkflowExecutionFleetSecretMount(volumes []corev1.Volume, mounts []corev1.VolumeMount, knV2 *kubernautv1alpha2.Kubernaut, componentEtcDir string) ([]corev1.Volume, []corev1.VolumeMount) {
+	fleet := &knV2.Spec.Fleet
+	if fleet.Enabled == nil || !*fleet.Enabled || !fleet.OAuth2.Enabled {
+		return volumes, mounts
+	}
+	credentialsSecretRef := knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef
+	if credentialsSecretRef == "" {
+		return volumes, mounts
+	}
+	volumes = append(volumes, secretVolume("fleet-oauth2", credentialsSecretRef))
+	mounts = append(mounts, corev1.VolumeMount{
+		Name:      "fleet-oauth2",
+		MountPath: componentEtcDir + "/" + credentialsSecretRef,
+		ReadOnly:  true,
+	})
+	return volumes, mounts
 }
 
 func appendFleetSecretMountsVariant(volumes []corev1.Volume, mounts []corev1.VolumeMount, knV2 *kubernautv1alpha2.Kubernaut, componentEtcDir, credentialsSecretRefOverride string, includeBackend bool) ([]corev1.Volume, []corev1.VolumeMount) {

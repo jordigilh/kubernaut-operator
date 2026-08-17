@@ -77,6 +77,14 @@ func enableFleetMetadataCacheWithFleet(ctx context.Context, fleet kubernautv1alp
 	Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())
 	knV2.Spec.Fleet = fleet
 	knV2.Spec.FleetMetadataCache = kubernautv1alpha2.FleetMetadataCacheSpec{Enabled: &t}
+	// #235/DD-235: WorkflowExecution's own write-scoped credential is
+	// independently required whenever fleet.oauth2.enabled is true, and
+	// never falls back to the shared fleet.oauth2.credentialsSecretRef.
+	// Set unconditionally here (harmless when fleet.oauth2 ends up
+	// disabled in a caller's override) so every FMC-focused test in this
+	// file keeps reaching its own FMC-specific reconcile outcome instead
+	// of tripping over an unrelated WE validation failure.
+	knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
 	Expect(k8sClient.Update(ctx, knV2)).To(Succeed())
 }
 

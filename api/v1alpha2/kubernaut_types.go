@@ -744,13 +744,18 @@ type WorkflowExecutionSpec struct {
 	// +optional
 	Ansible AnsibleSpec `json:"ansible,omitempty"`
 
-	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef/mcpGatewayNamespace
-	// for WorkflowExecution's own fleet-aware operations (F1 -- entirely new
-	// in v1alpha2; v1alpha1 had no Fleet field on WorkflowExecutionSpec at
-	// all, which blocked #235/BR-FLEET-054). Falls back to spec.fleet.*
-	// when unset.
+	// Fleet configures WorkflowExecution's own write-scoped MCP Gateway
+	// OAuth2 client (F1/#235, BR-FLEET-054, ADR-068). Unlike every other
+	// fleet-aware component's FleetOverrideSpec, WorkflowExecutionFleetSpec
+	// does NOT fall back to spec.fleet.oauth2.credentialsSecretRef -- WE is
+	// the only fleet-integration service that calls MCP write tools
+	// (resources_create_or_update/resources_delete), so it must never share
+	// the read-only credential used by Gateway/RemediationOrchestrator/
+	// SignalProcessing/APIFrontend/EffectivenessMonitor/KubernautAgent/
+	// FleetMetadataCache (least-privilege). See
+	// docs/design/DD-235-workflowexecution-fleet-oauth2-no-fallback.md.
 	// +optional
-	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
+	Fleet WorkflowExecutionFleetSpec `json:"fleet,omitempty"`
 
 	// +optional
 	Logging LoggingSpec `json:"logging,omitempty"`
@@ -758,6 +763,27 @@ type WorkflowExecutionSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// WorkflowExecutionFleetSpec configures WorkflowExecution's own write-scoped
+// MCP Gateway OAuth2 client (BR-FLEET-054, ADR-068, DD-235). Required when
+// spec.fleet.oauth2.enabled is true; enforced by validateFleetOAuth2, not by
+// kubebuilder (the requirement is a cross-tree condition kubebuilder markers
+// can't express). Deliberately does not embed FleetOverrideSpec: it has no
+// Namespace field (WE never watches MCP Gateway CRDs, unlike FMC/SP/AF/EM),
+// and its OAuth2CredentialsSecretRef never falls back to
+// spec.fleet.oauth2.credentialsSecretRef the way every other fleet-aware
+// component's does -- WE's write-scoped client must never share the
+// read-only credential (least-privilege). See
+// docs/design/DD-235-workflowexecution-fleet-oauth2-no-fallback.md.
+type WorkflowExecutionFleetSpec struct {
+	// OAuth2CredentialsSecretRef names the Secret holding WE's own
+	// write-scoped OAuth2 client credentials (client-id/client-secret) for
+	// authenticating to the MCP Gateway's write tools. Required when
+	// spec.fleet.oauth2.enabled is true -- has no fallback to
+	// spec.fleet.oauth2.credentialsSecretRef.
+	// +optional
+	OAuth2CredentialsSecretRef string `json:"oauth2CredentialsSecretRef,omitempty"`
 }
 
 // TektonSpec configures Tekton PipelineRun integration for workflow execution.

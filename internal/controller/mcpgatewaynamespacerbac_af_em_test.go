@@ -78,6 +78,10 @@ var _ = Describe("AF/EM namespace-scoped MCP Gateway RBAC wiring (#227)", func()
 		}
 		knV2.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: afTargetNS}
 		knV2.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{Namespace: emTargetNS}
+		// #235/DD-235: WorkflowExecution's own write-scoped credential is
+		// independently required and never falls back to the shared one
+		// above.
+		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
 		Expect(k8sClient.Update(ctx, knV2)).To(Succeed())
 
 		reconcileToRunning(ctx)

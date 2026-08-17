@@ -629,6 +629,18 @@ func validateFleetOAuth2(knV2 *kubernautv1alpha2.Kubernaut, fleet *kubernautv1al
 	default:
 		errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set, or %s must be set, when fleet.oauth2.enabled is true (the other fleet-aware components already override their own)", base, strings.Join(missing, " or ")))
 	}
+
+	// #235/DD-235: WorkflowExecution is deliberately NOT one of the six
+	// components above -- it is the only fleet-aware component that calls
+	// MCP write tools (resources_create_or_update/resources_delete), so its
+	// credential must never fall back to the shared read-only
+	// spec.fleet.oauth2.credentialsSecretRef (least-privilege). Checked
+	// unconditionally here, independent of whether the shared field or any
+	// of the six read-only components' overrides are set.
+	if knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef == "" {
+		errs = append(errs, fmt.Errorf("spec.workflowExecution.fleet.oauth2CredentialsSecretRef: must be independently set when fleet.oauth2.enabled is true -- WorkflowExecution's write-scoped MCP credential never falls back to the shared %s.oauth2.credentialsSecretRef (least-privilege, DD-235)", base))
+	}
+
 	return errs
 }
 

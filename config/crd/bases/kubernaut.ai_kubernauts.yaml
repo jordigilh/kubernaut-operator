@@ -5462,24 +5462,24 @@ spec:
                     type: string
                   fleet:
                     description: |-
-                      Fleet overrides spec.fleet.oauth2.credentialsSecretRef/mcpGatewayNamespace
-                      for WorkflowExecution's own fleet-aware operations (F1 -- entirely new
-                      in v1alpha2; v1alpha1 had no Fleet field on WorkflowExecutionSpec at
-                      all, which blocked #235/BR-FLEET-054). Falls back to spec.fleet.*
-                      when unset.
+                      Fleet configures WorkflowExecution's own write-scoped MCP Gateway
+                      OAuth2 client (F1/#235, BR-FLEET-054, ADR-068). Unlike every other
+                      fleet-aware component's FleetOverrideSpec, WorkflowExecutionFleetSpec
+                      does NOT fall back to spec.fleet.oauth2.credentialsSecretRef -- WE is
+                      the only fleet-integration service that calls MCP write tools
+                      (resources_create_or_update/resources_delete), so it must never share
+                      the read-only credential used by Gateway/RemediationOrchestrator/
+                      SignalProcessing/APIFrontend/EffectivenessMonitor/KubernautAgent/
+                      FleetMetadataCache (least-privilege). See
+                      docs/design/DD-235-workflowexecution-fleet-oauth2-no-fallback.md.
                     properties:
-                      namespace:
-                        description: |-
-                          Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
-                          Gateway CRD watch scope.
-                        type: string
                       oauth2CredentialsSecretRef:
                         description: |-
-                          Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
-                          Use when this component must authenticate to the MCP Gateway as a
-                          different OAuth2 client than other fleet-aware components (e.g. a
-                          federated Keycloak issuing distinct per-service client registrations
-                          against the same shared spec.fleet.oauth2.tokenURL).
+                          OAuth2CredentialsSecretRef names the Secret holding WE's own
+                          write-scoped OAuth2 client credentials (client-id/client-secret) for
+                          authenticating to the MCP Gateway's write tools. Required when
+                          spec.fleet.oauth2.enabled is true -- has no fallback to
+                          spec.fleet.oauth2.credentialsSecretRef.
                         type: string
                     type: object
                   logging:

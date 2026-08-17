@@ -1418,7 +1418,7 @@ func buildCoreConfigMaps(
 		{"aianalysis", func() (*corev1.ConfigMap, error) { return resources.AIAnalysisConfigMap(kn, tlsOpt) }},
 		{"signalprocessing", func() (*corev1.ConfigMap, error) { return resources.SignalProcessingConfigMap(kn, knV2, tlsOpt) }},
 		{"remediationorchestrator", func() (*corev1.ConfigMap, error) { return resources.RemediationOrchestratorConfigMap(kn, knV2, tlsOpt) }},
-		{"workflowexecution", func() (*corev1.ConfigMap, error) { return resources.WorkflowExecutionConfigMap(kn, tlsOpt) }},
+		{"workflowexecution", func() (*corev1.ConfigMap, error) { return resources.WorkflowExecutionConfigMap(kn, knV2, tlsOpt) }},
 		{"effectivenessmonitor", func() (*corev1.ConfigMap, error) { return resources.EffectivenessMonitorConfigMap(kn, knV2, tlsOpt) }},
 		{"notification-controller", func() (*corev1.ConfigMap, error) { return resources.NotificationControllerConfigMap(kn, tlsOpt) }},
 		{"notification-routing", func() (*corev1.ConfigMap, error) {
@@ -1577,9 +1577,7 @@ func (r *KubernautReconciler) enabledDeploymentBuilders(
 		},
 		resources.SignalProcessingDeployment,
 		resources.RemediationOrchestratorDeployment,
-		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-			return resources.WorkflowExecutionDeployment(kn)
-		},
+		resources.WorkflowExecutionDeployment,
 		resources.EffectivenessMonitorDeployment,
 		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 			return resources.NotificationDeployment(kn)

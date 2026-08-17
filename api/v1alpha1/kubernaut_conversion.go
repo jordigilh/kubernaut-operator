@@ -461,17 +461,17 @@ func convertWorkflowExecutionSpecToV2(s WorkflowExecutionSpec, ansible AnsibleSp
 		WorkflowNamespace: s.WorkflowNamespace,
 		CooldownPeriod:    s.CooldownPeriod,
 		Tekton:            v1alpha2.TektonSpec{Enabled: s.Tekton.Enabled},
-		Ansible:           convertAnsibleSpecToV2(ansible), // F4: relocated from top-level spec.ansible
-		Fleet:             nil,                             // F1: new field, no v1alpha1 source
+		Ansible:           convertAnsibleSpecToV2(ansible),       // F4: relocated from top-level spec.ansible
+		Fleet:             v1alpha2.WorkflowExecutionFleetSpec{}, // F1/#235: new field, no v1alpha1 source
 		Logging:           convertLoggingSpecToV2(s.Logging),
 		Resources:         s.Resources,
 	}
 }
 
 func convertWorkflowExecutionSpecToV1(s v1alpha2.WorkflowExecutionSpec) WorkflowExecutionSpec {
-	if s.Fleet != nil {
+	if s.Fleet.OAuth2CredentialsSecretRef != "" {
 		conversionLog.Info("dropping workflowExecution.fleet on downgrade to v1alpha1: field has no v1alpha1 equivalent",
-			"oauth2CredentialsSecretRef", s.Fleet.OAuth2CredentialsSecretRef != "", "namespace", s.Fleet.Namespace != "")
+			"oauth2CredentialsSecretRef", s.Fleet.OAuth2CredentialsSecretRef != "")
 	}
 	return WorkflowExecutionSpec{
 		WorkflowNamespace: s.WorkflowNamespace,
