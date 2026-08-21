@@ -102,6 +102,14 @@ var _ = Describe("envtest namespace-termination lifecycle (#358, #359)", func() 
 				"in Terminating forever (no kube-controller-manager to clear spec.finalizers) -- the exact "+
 				"#358/#359 cascading-failure root cause")
 
+		// envtest also has no garbage-collector controller, so the deleted
+		// CR's owned namespaced resources (e.g. the migration Job) outlive
+		// it. Without this, recreating the CR below reuses the same Job name
+		// and the apiserver rejects re-setting its now-immutable
+		// status.startTime/completionTime fields (mirrors what every other
+		// spec's AfterEach already does between specs).
+		cleanupNamespacedResources(ctx)
+
 		By("recreating the CR and verifying the workflow namespace can be provisioned again in the SAME process")
 		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 		reconcileToRunning(ctx)
