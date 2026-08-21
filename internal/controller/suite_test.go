@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -30,7 +31,11 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -124,7 +129,83 @@ var _ = BeforeSuite(func() {
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
+
+	clientset, err := kubernetes.NewForConfig(cfg)
+	Expect(err).NotTo(HaveOccurred())
+	finalizeTerminatingNamespaces(ctx, clientset)
 })
+
+// finalizeTerminatingNamespaces runs for the life of the suite, clearing a
+// Namespace's spec.finalizers as soon as it enters Terminating (#358, #359).
+//
+// envtest runs a real kube-apiserver but no kube-controller-manager, so the
+// namespace-lifecycle controller that normally does this after sweeping a
+// terminating namespace's contents never runs -- a Namespace, once deleted,
+// keeps its default "kubernetes" finalizer and its object is never actually
+// removed from etcd for the life of the test binary (a documented envtest
+// limitation: https://github.com/kubernetes-sigs/controller-runtime/issues/880).
+// Every operator-managed Kubernaut CR shares one hardcoded workflow
+// namespace (resources.DefaultWorkflowNamespace) across the whole
+// internal/controller suite; any spec whose finalizer cleanup legitimately
+// deletes it (KubernautReconciler.deleteOperatorManagedWorkflowNamespace)
+// would otherwise permanently wedge that namespace in Terminating, and every
+// later spec in the same test binary that tries to create content in it
+// fails with "forbidden: unable to create new content ... because it is
+// being terminated" -- the exact cascading-failure signature reported in
+// #358/#359. This makes namespace deletion behave like a real cluster for
+// the rest of the suite, eliminating the wedge at its structural root
+// instead of relying on every current and future spec remembering to call
+// stripWorkflowNamespaceCreatedByAnnotation before it deletes the CR.
+func finalizeTerminatingNamespaces(ctx context.Context, clientset *kubernetes.Clientset) {
+	go func() {
+		defer GinkgoRecover()
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+			watcher, err := clientset.CoreV1().Namespaces().Watch(ctx, metav1.ListOptions{})
+			if err != nil {
+				// forbidigo forbids time.Sleep() (TESTING_GUIDELINES.md); a
+				// context-aware timer gives the same reconnect backoff
+				// without blocking ctx cancellation.
+				timer := time.NewTimer(200 * time.Millisecond)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+				continue
+			}
+			drainNamespaceTerminationEvents(ctx, clientset, watcher.ResultChan())
+			watcher.Stop()
+		}
+	}()
+}
+
+// drainNamespaceTerminationEvents processes watch events until the channel
+// closes (e.g. the envtest apiserver's watch timeout) or ctx is cancelled,
+// finalizing any Namespace observed in the Terminating phase.
+func drainNamespaceTerminationEvents(ctx context.Context, clientset *kubernetes.Clientset, events <-chan watch.Event) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			ns, ok := event.Object.(*corev1.Namespace)
+			if !ok || ns.Status.Phase != corev1.NamespaceTerminating || len(ns.Spec.Finalizers) == 0 {
+				continue
+			}
+			ns.Spec.Finalizers = nil
+			if _, err := clientset.CoreV1().Namespaces().Finalize(ctx, ns, metav1.UpdateOptions{}); err != nil && ctx.Err() == nil {
+				logf.Log.Info("finalizeTerminatingNamespaces: failed to finalize namespace, will retry on next watch event", "namespace", ns.Name, "error", err.Error())
+			}
+		}
+	}
+}
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
