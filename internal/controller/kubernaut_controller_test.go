@@ -548,6 +548,30 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(cm.Data["config.yaml"]).To(ContainSubstring("gatewayType: kuadrant"),
 				"CM-6: the reconcile loop must render spec.fleet.mcpGatewayType into KA's live ConfigMap, not just in unit-level struct construction")
 		})
+
+		It("AF-TT-002 [CM-6]: AF's live ConfigMap omits mcp.sessionIdleTimeout/toolTimeout/toolTimeouts through reconciliation, not just in unit-level struct construction", func() {
+			// #374: a unit test on resources.APIFrontendConfigMap alone
+			// proves the struct construction is correct, but not that the
+			// reconcile loop actually persists that (lack of) config to the
+			// live ConfigMap. AF's own pkg/apifrontend/config.Load() governs
+			// these values via config.DefaultConfig(); the operator must not
+			// render a competing copy that can drift from it (root cause of
+			// the original #374 bug).
+			createBYOSecrets(ctx)
+			kn := newCRWithRouteDisabled()
+			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
+
+			reconcileToDeployPhase(ctx)
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "apifrontend-config", Namespace: testNamespace}, cm)).To(Succeed())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("mcp:"))
+			Expect(data).NotTo(ContainSubstring("sessionIdleTimeout"),
+				"CM-6: AF's live ConfigMap must not shadow AF's own config.DefaultConfig() sessionIdleTimeout")
+			Expect(data).NotTo(ContainSubstring("toolTimeout"),
+				"CM-6: AF's live ConfigMap must not shadow AF's own config.DefaultConfig() toolTimeout/toolTimeouts")
+		})
 	})
 })
 
