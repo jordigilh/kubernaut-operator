@@ -649,6 +649,34 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	// ======================================================================
 
 	Context("Feature Toggle Conditional Resources", func() {
+		// #372: IT-CL-01 and IT-CL-03 below both create a Secret literally
+		// named "console-oidc" in testNamespace, but neither the suite's
+		// AfterEach (deleteBYOSecrets only knew about pgSecretName/
+		// vkSecretName) nor cleanupNamespacedResources (scoped to
+		// app.kubernetes.io/managed-by: kubernaut-operator; console-oidc is
+		// user-supplied/BYO, not operator-managed) ever removed it. That's
+		// latent today only because Ginkgo's default (non
+		// -ginkgo.randomize-all) run preserves in-file spec order, but it
+		// would surface as "secrets \"console-oidc\" already exists" the
+		// moment these two specs ran back-to-back with IT-CL-01 second under
+		// full spec randomization. This proves deleteBYOSecrets now covers
+		// it, independent of suite-wide run order.
+		It("#372: deleteBYOSecrets removes a leftover console-oidc BYO secret", func() {
+			Expect(k8sClient.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
+				Data: map[string][]byte{
+					"client-id":     []byte("cid"),
+					"client-secret": []byte("csec"),
+					"cookie-secret": []byte("cook"),
+				},
+			})).To(Succeed())
+
+			deleteBYOSecrets(ctx)
+
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: consoleOIDCSecretName, Namespace: testNamespace}, &corev1.Secret{})
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "deleteBYOSecrets should remove the console-oidc BYO secret so later specs don't collide with it")
+		})
+
 		It("should create monitoring RBAC when monitoring is enabled (default)", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
@@ -730,9 +758,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			cr.Spec.Console.Enabled = &t
 			f := false
 			cr.Spec.Console.Route.Enabled = &f
-			cr.Spec.Console.Auth.SecretName = "console-oidc"
+			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
 			Expect(k8sClient.Create(ctx, &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{Name: "console-oidc", Namespace: testNamespace},
+				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
 				Data: map[string][]byte{
 					"client-id":     []byte("cid"),
 					"client-secret": []byte("csec"),
@@ -774,9 +802,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			cr.Spec.Console.Enabled = &t
 			f := false
 			cr.Spec.Console.Route.Enabled = &f
-			cr.Spec.Console.Auth.SecretName = "console-oidc"
+			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
 			oidcSecret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{Name: "console-oidc", Namespace: testNamespace},
+				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
 				Data: map[string][]byte{
 					"client-id":     []byte("cid"),
 					"client-secret": []byte("csec"),

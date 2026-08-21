@@ -40,12 +40,13 @@ import (
 )
 
 const (
-	testNamespace = "default"
-	pgSecretName  = "postgresql-secret"
-	vkSecretName  = "valkey-secret"
-	llmSecretName = "llm-credentials"
-	timeout       = 10 * time.Second
-	interval      = 250 * time.Millisecond
+	testNamespace         = "default"
+	pgSecretName          = "postgresql-secret"
+	vkSecretName          = "valkey-secret"
+	llmSecretName         = "llm-credentials"
+	consoleOIDCSecretName = "console-oidc"
+	timeout               = 10 * time.Second
+	interval              = 250 * time.Millisecond
 
 	// testWEFleetOAuth2SecretRef is WorkflowExecution's own write-scoped
 	// fleet OAuth2 credential (#235, DD-235). Any test that enables
@@ -141,7 +142,13 @@ func createBYOSecrets(ctx context.Context) {
 }
 
 func deleteBYOSecrets(ctx context.Context) {
-	for _, name := range []string{pgSecretName, vkSecretName} {
+	// #372: consoleOIDCSecretName is BYO/user-supplied (not
+	// app.kubernetes.io/managed-by: kubernaut-operator labeled, so
+	// cleanupNamespacedResources's Secret sweep won't catch it either) and
+	// created directly by name in several console-auth specs
+	// (kubernaut_lifecycle_test.go). Must be cleaned up here so those specs
+	// don't collide under any run order.
+	for _, name := range []string{pgSecretName, vkSecretName, consoleOIDCSecretName} {
 		s := &corev1.Secret{}
 		err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: testNamespace}, s)
 		if err == nil {
