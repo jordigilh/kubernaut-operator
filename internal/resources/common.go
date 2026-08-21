@@ -450,6 +450,20 @@ func DataStorageURL(namespace string) string {
 	return fmt.Sprintf("https://data-storage-service.%s.svc.cluster.local:8443", namespace)
 }
 
+// DataStorageHealthURL returns DataStorage's cross-service readiness-check
+// endpoint (DD-PLATFORM-010, BR-AUDIT-005 v2.0, #360). It is an unauthenticated
+// /readyz route on the SAME main API port as DataStorageURL, not a separate
+// port -- registered as a top-level route outside the DD-AUTH-014
+// auth-middleware group, so it differs from DataStorageURL only by path.
+// Every upstream service that writes audit events (and KubernautAgent, via
+// integrations.dataStorage.healthUrl) requires this as a REQUIRED config
+// field (internal/config.DataStorageConfig.HealthURL /
+// pkg/apifrontend/config.AgentConfig.DSHealthURL); omitting it causes those
+// services to fail closed at startup.
+func DataStorageHealthURL(namespace string) string {
+	return DataStorageURL(namespace) + "/readyz"
+}
+
 // GatewayURL returns the in-cluster Gateway service URL (HTTPS via service-ca).
 func GatewayURL(namespace string) string {
 	return fmt.Sprintf("https://gateway-service.%s.svc.cluster.local:8443", namespace)
