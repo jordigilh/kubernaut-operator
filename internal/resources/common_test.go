@@ -369,6 +369,17 @@ var _ = Describe("URL helpers", func() {
 		Expect(got).To(Equal("https://data-storage-service.kubernaut-system.svc.cluster.local:8443"))
 	})
 
+	// #360, DD-PLATFORM-010: HealthURL must be the same host:port as
+	// DataStorageURL, differing only by the /readyz path -- not a separate
+	// port. This ensures the readyz route is reachable through the same
+	// NetworkPolicy ingress rule that already permits 8443, with no
+	// additional port to open.
+	It("DataStorageHealthURL returns DataStorageURL with a /readyz suffix on the same host:port", func() {
+		got := DataStorageHealthURL(testSystemNamespace)
+		Expect(got).To(Equal(DataStorageURL(testSystemNamespace) + "/readyz"))
+		Expect(got).To(Equal("https://data-storage-service.kubernaut-system.svc.cluster.local:8443/readyz"))
+	})
+
 	It("GatewayURL returns correct HTTPS URL", func() {
 		got := GatewayURL(testSystemNamespace)
 		Expect(got).To(Equal("https://gateway-service.kubernaut-system.svc.cluster.local:8443"))
