@@ -2333,9 +2333,15 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 			Enabled:            true,
 			SessionIdleTimeout: "30m",
 			ToolTimeout:        "30s",
+			// #173: must mirror kubernaut's pkg/apifrontend/config.Default()
+			// exactly. A tool missing from this map silently falls back to
+			// the 30s ToolTimeout above (handler.MCPBridgeConfig.GetToolTimeoutFor),
+			// which breaks long-running/streaming tools like kubernaut_watch.
 			ToolTimeouts: map[string]string{
-				"kubernaut_investigate":   "15m",
-				"kubernaut_await_session": "3m",
+				"kubernaut_investigate":        "15m",
+				"kubernaut_await_session":      "3m",
+				"kubernaut_watch":              "15m",
+				"kubernaut_discover_workflows": "60s",
 			},
 		},
 		AgentCard: afAgentCardYAML{

@@ -2219,6 +2219,28 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).To(ContainSubstring("retryMax:"))
 	})
 
+	It("#173: renders all four upstream per-tool MCP timeouts, matching AF's config.Default()", func() {
+		// Upstream source of truth: kubernaut pkg/apifrontend/config/config.go
+		// Default() sets these four ToolTimeouts entries. A tool missing from
+		// this map silently falls back to the 30s base ToolTimeout
+		// (handler.MCPBridgeConfig.GetToolTimeoutFor) -- kubernaut_watch is a
+		// long-running/streaming tool, so dropping it to 30s breaks it.
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+
+		var root afConfigYAML
+		Expect(yaml.Unmarshal([]byte(data), &root)).To(Succeed())
+		Expect(root.MCP.ToolTimeout).To(Equal("30s"))
+		Expect(root.MCP.ToolTimeouts).To(Equal(map[string]string{
+			"kubernaut_investigate":        "15m",
+			"kubernaut_await_session":      "3m",
+			"kubernaut_watch":              "15m",
+			"kubernaut_discover_workflows": "60s",
+		}))
+	})
+
 	It("renders replayCache when Valkey secret is set", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.Valkey.SecretName = "my-valkey-secret"
