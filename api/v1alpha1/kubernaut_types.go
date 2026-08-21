@@ -980,6 +980,23 @@ type GatewaySpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Name of a Secret (in this Kubernaut CR's namespace) containing a
+	// bearer token AlertManager presents when calling Gateway's webhook
+	// endpoint. The Secret must contain a "token" key holding a valid
+	// Kubernetes ServiceAccount token for an identity authorized to call
+	// this Gateway (bound to the generated gateway-signal-source
+	// ClusterRole -- see docs/security/credentials-and-tls.md).
+	//
+	// This is a bring-your-own credential, consistent with
+	// spec.postgresql.secretName/spec.llmProfiles[*].credentialsSecretName:
+	// the operator never mints or stores this token itself. When unset,
+	// the generated AlertmanagerConfig omits webhook authentication
+	// entirely (Gateway will reject unauthenticated calls) and the CR's
+	// ConditionAlertManagerAuthConfigured status condition explains why.
+	// See docs/installation/03-deploy.md "Configure AlertManager".
+	// +optional
+	AlertManagerTokenSecretName string `json:"alertManagerTokenSecretName,omitempty"`
 }
 
 // ConsoleSpec configures the standalone web console (A2A chat UI).
@@ -1606,6 +1623,13 @@ const (
 	ConditionAnsibleReady        ConditionType = "AnsibleReady"
 	ConditionAdditionalRBACBound ConditionType = "AdditionalRBACBound"
 	ConditionToolRBACBound       ConditionType = "ToolRBACBound"
+
+	// ConditionAlertManagerAuthConfigured reports whether
+	// spec.gateway.alertManagerTokenSecretName is set and resolves to a
+	// Secret with a "token" key, so AlertManager's calls into Gateway's
+	// webhook (via the generated AlertmanagerConfig) can authenticate.
+	// Only meaningful when Gateway is enabled; see #377.
+	ConditionAlertManagerAuthConfigured ConditionType = "AlertManagerAuthConfigured"
 )
 
 // Finalizer used for cluster-scoped resource cleanup.

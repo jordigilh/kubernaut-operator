@@ -752,9 +752,10 @@ func convertGatewaySpecToV2(s GatewaySpec) v1alpha2.GatewaySpec {
 			},
 			DeduplicationCooldown: s.Config.DeduplicationCooldown,
 		},
-		Logging:   convertLoggingSpecToV2(s.Logging),
-		Resources: s.Resources,
-		Fleet:     nil, // F1: no v1alpha1 source (Fleet moved to v1alpha2-only)
+		Logging:                     convertLoggingSpecToV2(s.Logging),
+		Resources:                   s.Resources,
+		Fleet:                       nil, // F1: no v1alpha1 source (Fleet moved to v1alpha2-only)
+		AlertManagerTokenSecretName: s.AlertManagerTokenSecretName,
 	}
 }
 
@@ -770,8 +771,9 @@ func convertGatewaySpecToV1(s v1alpha2.GatewaySpec) GatewaySpec {
 			},
 			DeduplicationCooldown: s.Config.DeduplicationCooldown,
 		},
-		Logging:   convertLoggingSpecToV1(s.Logging),
-		Resources: s.Resources,
+		Logging:                     convertLoggingSpecToV1(s.Logging),
+		Resources:                   s.Resources,
+		AlertManagerTokenSecretName: s.AlertManagerTokenSecretName,
 	}
 }
 

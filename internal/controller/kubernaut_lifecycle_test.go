@@ -2216,6 +2216,109 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		})
 	})
 
+	// ======================================================================
+	// 18. AlertManagerAuthConfigured Condition Lifecycle (#377)
+	// ======================================================================
+
+	Context("AlertManagerAuthConfigured Condition Lifecycle", func() {
+		const amTokenSecretName = "alertmanager-gateway-token"
+
+		AfterEach(func() {
+			deleteAnsibleSecret(ctx, amTokenSecretName) // generic Secret delete-by-name helper
+		})
+
+		It("AM1 [CM-6]: sets AlertManagerAuthConfigured=False/SecretNameNotConfigured "+
+			"when Gateway is enabled and alertManagerTokenSecretName is unset", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			Expect(cr.Spec.Gateway.AlertManagerTokenSecretName).To(BeEmpty())
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAlertManagerAuthConfigured)
+			Expect(cond).NotTo(BeNil(), "AlertManagerAuthConfigured condition should be present")
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal("SecretNameNotConfigured"))
+		})
+
+		It("AM2 [CM-6]: sets AlertManagerAuthConfigured=True/Ready when the field is set "+
+			"and the referenced Secret has a token key", func() {
+			createBYOSecrets(ctx)
+			createAnsibleSecret(ctx, amTokenSecretName, "token", "my-token-value")
+			cr := newCRWithRouteDisabled()
+			cr.Spec.Gateway.AlertManagerTokenSecretName = amTokenSecretName
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAlertManagerAuthConfigured)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(cond.Reason).To(Equal("Ready"))
+		})
+
+		It("AM3 [CM-6]: sets AlertManagerAuthConfigured=False/TokenSecretNotFound "+
+			"when the referenced Secret does not exist", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			cr.Spec.Gateway.AlertManagerTokenSecretName = "nonexistent-secret"
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAlertManagerAuthConfigured)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal("TokenSecretNotFound"))
+		})
+
+		It("AM4 [CM-6]: sets AlertManagerAuthConfigured=False/TokenKeyMissing "+
+			"when the Secret lacks the \"token\" key", func() {
+			createBYOSecrets(ctx)
+			createAnsibleSecret(ctx, amTokenSecretName, "wrong-key", "value")
+			cr := newCRWithRouteDisabled()
+			cr.Spec.Gateway.AlertManagerTokenSecretName = amTokenSecretName
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAlertManagerAuthConfigured)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal("TokenKeyMissing"))
+		})
+
+		It("AM5: reaches PhaseRunning even when AlertManagerAuthConfigured=False (non-blocking, CA-8)", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			kn := &kubernautv1alpha1.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseRunning),
+				"PhaseRunning must be reached even when AlertManagerAuthConfigured is False")
+
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAlertManagerAuthConfigured)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+		})
+	})
+
 	Context("Wiring Verification — Hostname Validation via Reconcile", func() {
 		BeforeEach(func() {
 			deleteCRIfExists(ctx)
