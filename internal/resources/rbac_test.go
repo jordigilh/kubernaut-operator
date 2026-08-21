@@ -1566,6 +1566,63 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 	})
 })
 
+// #368: kubernaut's AgentSession CRD (DD-AA-KA-001) replaces AA<->KA HTTP
+// polling. AA now creates/watches/deletes AgentSession directly
+// (AgentSessionCreator.GetOrCreate / DeleteForRetry) instead of driving the
+// full InvestigationSession lifecycle itself, so the AA ClusterRole must
+// gain an agentsessions grant and lose its former investigationsessions
+// create/update/patch verbs on the base resource (AA now only watches IS
+// and writes IS/status for the narrow terminal-phase-close path).
+var _ = Describe("AIAnalysis controller ClusterRole", func() {
+	aaRole := func() *rbacv1.ClusterRole {
+		kn := testKubernautWithAF()
+		roles := ClusterRoles(kn, testKnV2(kn))
+		for _, r := range roles {
+			if r.Name == clusterRoleName(kn, "aianalysis-controller") {
+				return r
+			}
+		}
+		return nil
+	}
+
+	ruleMapFor := func(role *rbacv1.ClusterRole) map[string][]string {
+		ruleMap := map[string][]string{}
+		for _, rule := range role.Rules {
+			for _, res := range rule.Resources {
+				key := rule.APIGroups[0] + "/" + res
+				ruleMap[key] = rule.Verbs
+			}
+		}
+		return ruleMap
+	}
+
+	It("grants agentsessions get/list/watch/create/delete, no status (BR-AA-KA-065.1, BR-AA-KA-065.9, BR-AI-009)", func() {
+		role := aaRole()
+		Expect(role).NotTo(BeNil())
+		ruleMap := ruleMapFor(role)
+
+		Expect(ruleMap).To(HaveKey("kubernaut.ai/agentsessions"))
+		Expect(ruleMap["kubernaut.ai/agentsessions"]).To(ContainElements("get", "list", "watch", "create", "delete"))
+
+		Expect(ruleMap).NotTo(HaveKey("kubernaut.ai/agentsessions/status"),
+			"AA never writes AgentSession Status -- only KA does (BR-AA-KA-065.9)")
+	})
+
+	It("narrows investigationsessions to get/list/watch only, keeps status write for terminal-phase-close (DD-AA-KA-001)", func() {
+		role := aaRole()
+		Expect(role).NotTo(BeNil())
+		ruleMap := ruleMapFor(role)
+
+		Expect(ruleMap).To(HaveKey("kubernaut.ai/investigationsessions"))
+		Expect(ruleMap["kubernaut.ai/investigationsessions"]).To(ContainElements("get", "list", "watch"))
+		Expect(ruleMap["kubernaut.ai/investigationsessions"]).NotTo(ContainElements("create", "update", "patch"),
+			"AA no longer owns the InvestigationSession lifecycle post-AgentSession redesign")
+
+		Expect(ruleMap).To(HaveKey("kubernaut.ai/investigationsessions/status"))
+		Expect(ruleMap["kubernaut.ai/investigationsessions/status"]).To(ContainElements("get", "update", "patch"))
+	})
+})
+
 // #224: mcpGatewayCRDPolicyRules extracts the gatewayType-conditional MCP
 // Gateway CRD watch rules FMC already had (#200) into a shared helper
 // reused by SP/AF/EM's ClusterRoles and by MCPGatewayNamespaceRBAC's
