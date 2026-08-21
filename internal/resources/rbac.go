@@ -983,8 +983,22 @@ func aianalysisControllerClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map
 		Rules: []rbacv1.PolicyRule{
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses/status"}, Verbs: []string{"get", "update", "patch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			// AA no longer owns the InvestigationSession lifecycle (DD-AA-KA-001):
+			// it only watches IS and writes IS/status for the narrow
+			// terminal-phase-close path (K8sISPhaseUpdater).
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update", "patch"}},
+			// AgentSessionCreator.GetOrCreate (DD-AA-KA-001, BR-AA-KA-065.1): "create"
+			// for the initial dispatch write; "get"/"list"/"watch" because AgentSession
+			// is namespace-scoped in this controller's mgr.GetCache() ByObject config,
+			// so Get() reads go through the informer cache, not a direct API call.
+			// "delete" (BR-AI-009, DD-AA-KA-001 amendment) is for
+			// AgentSessionCreator.DeleteForRetry, called from
+			// InvestigatingHandler.retryCapacityExceeded to discard a stale
+			// Failed+CapacityExceeded AgentSession so the retry attempt gets a fresh
+			// one. No "agentsessions/status" grant -- AA never writes Status, only KA
+			// does (BR-AA-KA-065.9).
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"agentsessions"}, Verbs: []string{"get", "list", "watch", "create", "delete"}},
 			{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
 		},
