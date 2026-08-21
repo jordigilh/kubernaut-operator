@@ -222,8 +222,9 @@ var _ = Describe("DataStorageDBSecret", func() {
 })
 
 var _ = Describe("GatewayAlertManagerConfig", func() {
-	It("creates an AlertmanagerConfig when monitoring is enabled", func() {
+	It("creates an AlertmanagerConfig with Bearer auth when alertManagerTokenSecretName is set (BYO, #377)", func() {
 		kn := testKubernaut()
+		kn.Spec.Gateway.AlertManagerTokenSecretName = "my-alertmanager-token"
 		amcfg := GatewayAlertManagerConfig(kn)
 
 		Expect(amcfg).NotTo(BeNil(), "AlertmanagerConfig should not be nil when monitoring is enabled")
@@ -248,9 +249,11 @@ var _ = Describe("GatewayAlertManagerConfig", func() {
 		Expect(*wh.SendResolved).To(BeFalse())
 
 		Expect(wh.HTTPConfig).NotTo(BeNil())
-		Expect(wh.HTTPConfig.Authorization).NotTo(BeNil())
+		Expect(wh.HTTPConfig.Authorization).NotTo(BeNil(),
+			"BYO: when alertManagerTokenSecretName is set, Authorization must reference it")
 		Expect(wh.HTTPConfig.Authorization.Type).To(Equal("Bearer"))
-		Expect(wh.HTTPConfig.Authorization.Credentials.Name).To(Equal("alertmanager-gateway-token"))
+		Expect(wh.HTTPConfig.Authorization.Credentials.Name).To(Equal("my-alertmanager-token"),
+			"#377: the Secret name must be BYO (from the CR field), never a hardcoded operator-owned name")
 		Expect(wh.HTTPConfig.Authorization.Credentials.Key).To(Equal("token"))
 		Expect(wh.HTTPConfig.TLSConfig).NotTo(BeNil())
 		Expect(wh.HTTPConfig.TLSConfig.CA.ConfigMap).NotTo(BeNil(),
@@ -259,19 +262,25 @@ var _ = Describe("GatewayAlertManagerConfig", func() {
 		Expect(wh.HTTPConfig.TLSConfig.CA.ConfigMap.Key).To(Equal("service-ca.crt"))
 	})
 
-})
-
-var _ = Describe("GatewayAlertManagerTokenSecret", func() {
-	It("creates a token Secret when monitoring is enabled", func() {
+	It("omits Authorization entirely when alertManagerTokenSecretName is unset (#377)", func() {
+		// #377: the operator must never reference a Secret it didn't
+		// confirm exists -- previously this hardcoded a reference to
+		// "alertmanager-gateway-token", a Secret the controller never
+		// actually created (built-but-not-wired GatewayAlertManagerTokenSecret),
+		// silently producing an AlertmanagerConfig AlertManager could never
+		// successfully authenticate with. Omitting Authorization when
+		// unconfigured keeps the CR valid and lets the controller's
+		// ConditionAlertManagerAuthConfigured status condition explain why.
 		kn := testKubernaut()
-		secret := GatewayAlertManagerTokenSecret(kn)
+		Expect(kn.Spec.Gateway.AlertManagerTokenSecretName).To(BeEmpty())
 
-		Expect(secret).NotTo(BeNil())
-		Expect(secret.Name).To(Equal("alertmanager-gateway-token"))
-		Expect(secret.Namespace).To(Equal(testSystemNamespace))
-		Expect(secret.Type).To(Equal(corev1.SecretTypeOpaque))
+		amcfg := GatewayAlertManagerConfig(kn)
+		Expect(amcfg).NotTo(BeNil())
+		wh := amcfg.Spec.Receivers[0].WebhookConfigs[0]
+		Expect(wh.HTTPConfig).NotTo(BeNil(), "TLS config should still be present")
+		Expect(wh.HTTPConfig.Authorization).To(BeNil(),
+			"must not reference any Secret when alertManagerTokenSecretName is unset")
 	})
-
 })
 
 var _ = Describe("WorkflowNamespace", func() {

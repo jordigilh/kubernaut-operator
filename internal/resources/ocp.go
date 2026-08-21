@@ -130,12 +130,41 @@ func APIFrontendRouteStub(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 // webhook. This eliminates the need to manually edit the global AlertManager
 // secret in openshift-monitoring.
 //
-// The AlertManager SA must be bound to the gateway-signal-source ClusterRole
-// (handled by the operator's RBAC provisioning) so that the bearer token
-// included via credentials_file is authorized by the Gateway's SAR middleware.
+// Authorization is only included when spec.gateway.alertManagerTokenSecretName
+// is set (#377): the referenced Secret is bring-your-own, never minted or
+// owned by the operator (consistent with spec.postgresql.secretName and
+// spec.llmProfiles[*].credentialsSecretName), since the token belongs to a
+// Kubernetes identity in openshift-monitoring that the operator has no
+// business impersonating or provisioning credentials for. It must be bound
+// to the gateway-signal-source ClusterRole (handled by the operator's RBAC
+// provisioning) so the bearer token is authorized by Gateway's SAR
+// middleware. When unset, the CR is still valid but unauthenticated calls
+// will be rejected by Gateway -- the controller surfaces this via the
+// ConditionAlertManagerAuthConfigured status condition rather than silently
+// referencing a Secret that may not exist.
 func GatewayAlertManagerConfig(kn *kubernautv1alpha1.Kubernaut) *monitoringv1alpha1.AlertmanagerConfig {
 	gwURL := fmt.Sprintf("https://gateway-service.%s.svc.cluster.local:%d/api/v1/signals/prometheus",
 		kn.Namespace, PortHTTPS)
+
+	httpConfig := &monitoringv1alpha1.HTTPConfig{
+		TLSConfig: &monitoringv1.SafeTLSConfig{
+			CA: monitoringv1.SecretOrConfigMap{
+				ConfigMap: &corev1.ConfigMapKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: InterServiceCAConfigMapName},
+					Key:                  "service-ca.crt",
+				},
+			},
+		},
+	}
+	if secretName := kn.Spec.Gateway.AlertManagerTokenSecretName; secretName != "" {
+		httpConfig.Authorization = &monitoringv1.SafeAuthorization{
+			Type: "Bearer",
+			Credentials: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+				Key:                  "token",
+			},
+		}
+	}
 
 	return &monitoringv1alpha1.AlertmanagerConfig{
 		ObjectMeta: ObjectMeta(kn, "kubernaut-gateway-alerts", ComponentGateway),
@@ -153,40 +182,12 @@ func GatewayAlertManagerConfig(kn *kubernautv1alpha1.Kubernaut) *monitoringv1alp
 						{
 							URL:          &gwURL,
 							SendResolved: boolPtr(false),
-							HTTPConfig: &monitoringv1alpha1.HTTPConfig{
-								Authorization: &monitoringv1.SafeAuthorization{
-									Type: "Bearer",
-									Credentials: &corev1.SecretKeySelector{
-										LocalObjectReference: corev1.LocalObjectReference{Name: "alertmanager-gateway-token"},
-										Key:                  "token",
-									},
-								},
-								TLSConfig: &monitoringv1.SafeTLSConfig{
-									CA: monitoringv1.SecretOrConfigMap{
-										ConfigMap: &corev1.ConfigMapKeySelector{
-											LocalObjectReference: corev1.LocalObjectReference{Name: InterServiceCAConfigMapName},
-											Key:                  "service-ca.crt",
-										},
-									},
-								},
-							},
+							HTTPConfig:   httpConfig,
 						},
 					},
 				},
 			},
 		},
-	}
-}
-
-// GatewayAlertManagerTokenSecret builds the Secret containing a long-lived SA
-// token for the AlertManager → Gateway webhook authentication. The token is
-// projected from the alertmanager-main ServiceAccount in openshift-monitoring,
-// but since AlertmanagerConfig webhook_configs reference a Secret in the local
-// namespace, the operator creates this bridging Secret.
-func GatewayAlertManagerTokenSecret(kn *kubernautv1alpha1.Kubernaut) *corev1.Secret {
-	return &corev1.Secret{
-		ObjectMeta: ObjectMeta(kn, "alertmanager-gateway-token", ComponentGateway),
-		Type:       corev1.SecretTypeOpaque,
 	}
 }
 

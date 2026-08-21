@@ -327,9 +327,24 @@ For signals to flow into Kubernaut, OCP AlertManager must route alerts to the Ga
 
 ### Option A: Operator-managed AlertmanagerConfig (recommended)
 
-The operator always creates a namespace-scoped `AlertmanagerConfig` CR that routes alerts originating from the `kubernaut-system` namespace to the Gateway. No manual AlertManager configuration is required.
+The operator always creates a namespace-scoped `AlertmanagerConfig` CR that routes alerts originating from the `kubernaut-system` namespace to the Gateway, and provisions the RBAC binding (`alertmanager-main` SA → `gateway-signal-source` ClusterRole) so the AlertManager bearer token is authorized by the Gateway's SAR middleware.
 
-The operator also provisions the RBAC binding (`alertmanager-main` SA → `gateway-signal-source` ClusterRole) so that the AlertManager bearer token is authorized by the Gateway's SAR middleware.
+**One manual step is required**: unlike Option B (where AlertManager's pod uses its own auto-mounted ServiceAccount token), the `AlertmanagerConfig` CRD's `authorization` field only accepts a Secret reference, not a file path -- Prometheus Operator's `SafeAuthorization` type intentionally has no `credentials_file` option, to prevent namespaced `AlertmanagerConfig` authors from reading arbitrary files off the Alertmanager container. The operator therefore never mints or stores this token itself (it is bring-your-own, like `spec.postgresql.secretName`); you must create it once:
+
+```bash
+# Mint a long-lived token for alertmanager-main and copy it into a Secret
+# in the same namespace as your Kubernaut CR. Choose a duration you're
+# comfortable re-running this command before (there is no auto-rotation
+# for this copy -- see the note below).
+TOKEN=$(oc create token alertmanager-main -n openshift-monitoring --duration=8760h)
+oc create secret generic alertmanager-gateway-token \
+  -n kubernaut-system \
+  --from-literal=token="$TOKEN"
+```
+
+Then set `spec.gateway.alertManagerTokenSecretName: alertmanager-gateway-token` on your Kubernaut CR. The CR's `AlertManagerAuthConfigured` status condition reports whether this is correctly configured (`Ready`) or explains what's missing (`SecretNameNotConfigured`, `TokenSecretNotFound`, `TokenKeyMissing`) -- check it if alerts aren't reaching Gateway.
+
+> **Note on rotation**: this token is a snapshot, not a live projection -- it does **not** auto-rotate the way a pod's mounted ServiceAccount token does. Re-run the command above (and update the Secret) before the `--duration` you chose elapses, or scope a shorter duration and rotate via your own automation/cron if you need tighter token lifetimes.
 
 To route alerts from **other** namespaces (e.g. `demo-*`), you must use Option B or add additional `AlertmanagerConfig` CRs in those namespaces.
 
@@ -427,6 +442,22 @@ conflicts with other operators managing the same ClusterRole names.
 If using `spec.additionalClusterRoles`, check the `AdditionalRBACBound`
 condition for `PartiallyBound` — one or more referenced ClusterRoles may
 not exist.
+
+**AlertManager alerts never reach Gateway (Option A):**
+
+Check the `AlertManagerAuthConfigured` status condition:
+
+```bash
+oc get kubernaut kubernaut -n kubernaut-system \
+  -o jsonpath='{.status.conditions[?(@.type=="AlertManagerAuthConfigured")]}'
+```
+
+| Reason | Meaning | Fix |
+|---|---|---|
+| `SecretNameNotConfigured` | `spec.gateway.alertManagerTokenSecretName` is unset | Follow the one-time setup step in [Option A](#option-a-operator-managed-alertmanagerconfig-recommended) above |
+| `TokenSecretNotFound` | The named Secret doesn't exist in the CR's namespace | Re-check the Secret name/namespace, or re-run the `oc create secret` step |
+| `TokenKeyMissing` | The Secret exists but has no `token` key | Recreate the Secret with `--from-literal=token=...` |
+| `Ready` | Configuration is valid | If alerts still aren't arriving, check the token hasn't expired (see the rotation note above) or inspect Gateway's logs for `403` SAR-authorization failures |
 
 **API Frontend crash-looping with `auth.issuerURL is required`:**
 

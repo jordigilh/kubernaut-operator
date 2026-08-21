@@ -97,6 +97,12 @@ const (
 
 	ReasonOIDCAutoDetected    = "OIDCAutoDetected"
 	ReasonOIDCDetectionFailed = "OIDCDetectionFailed"
+
+	ReasonAlertManagerAuthReady           = "Ready"
+	ReasonAlertManagerAuthNotConfigured   = "SecretNameNotConfigured"
+	ReasonAlertManagerAuthSecretMissing   = "TokenSecretNotFound"
+	ReasonAlertManagerAuthKeyMissing      = "TokenKeyMissing"
+	ReasonAlertManagerAuthGatewayDisabled = "GatewayDisabled"
 )
 
 // kagentiAuthbridgeConfigMapName is the well-known ConfigMap the kagenti
@@ -2260,6 +2266,7 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 	finalAllReady := allReady
 
 	ansibleCond := r.validateAnsibleConfig(ctx, kn)
+	amAuthCond := r.validateAlertManagerAuthConfig(ctx, kn)
 
 	if err := r.patchStatus(ctx, kn, func() {
 		kn.Status.Services = finalStatuses
@@ -2269,6 +2276,7 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 			r.setPhase(kn, kubernautv1alpha1.PhaseDegraded)
 		}
 		meta.SetStatusCondition(&kn.Status.Conditions, ansibleCond)
+		meta.SetStatusCondition(&kn.Status.Conditions, amAuthCond)
 	}); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -2276,6 +2284,10 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 	if ansibleCond.Status == metav1.ConditionFalse {
 		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "AnsibleConfigInvalid", "Reconcile",
 			"%s: %s", ansibleCond.Reason, ansibleCond.Message)
+	}
+	if amAuthCond.Status == metav1.ConditionFalse {
+		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "AlertManagerAuthNotConfigured", "Reconcile",
+			"%s: %s", amAuthCond.Reason, amAuthCond.Message)
 	}
 
 	log.Info("reconciliation complete", "phase", kn.Status.Phase)
@@ -2691,6 +2703,69 @@ func (r *KubernautReconciler) validateAnsibleConfig(ctx context.Context, kn *kub
 		Status:             metav1.ConditionTrue,
 		Reason:             ReasonAnsibleReady,
 		Message:            "Ansible token Secret is valid",
+		ObservedGeneration: kn.Generation,
+	}
+}
+
+// validateAlertManagerAuthConfig evaluates the AlertManagerAuthConfigured
+// condition (#377) based on spec.gateway.alertManagerTokenSecretName and
+// cluster state. It mirrors validateAnsibleConfig's BYO-token-Secret
+// validation shape. When Gateway is disabled the condition is vacuously
+// True. When enabled but the field is unset, resources.GatewayAlertManagerConfig
+// still renders a valid (unauthenticated) AlertmanagerConfig, so this
+// reports False without blocking reconciliation -- non-blocking by design,
+// matching validateAnsibleConfig's contract (never returns an error or sets
+// PhaseError).
+func (r *KubernautReconciler) validateAlertManagerAuthConfig(ctx context.Context, kn *kubernautv1alpha1.Kubernaut) metav1.Condition {
+	if !kn.Spec.GatewayEnabled() {
+		return metav1.Condition{
+			Type:               kubernautv1alpha1.ConditionAlertManagerAuthConfigured,
+			Status:             metav1.ConditionTrue,
+			Reason:             ReasonAlertManagerAuthGatewayDisabled,
+			Message:            "Gateway is disabled",
+			ObservedGeneration: kn.Generation,
+		}
+	}
+
+	secretName := kn.Spec.Gateway.AlertManagerTokenSecretName
+	if secretName == "" {
+		return metav1.Condition{
+			Type:   kubernautv1alpha1.ConditionAlertManagerAuthConfigured,
+			Status: metav1.ConditionFalse,
+			Reason: ReasonAlertManagerAuthNotConfigured,
+			Message: "spec.gateway.alertManagerTokenSecretName is not set -- AlertManager's webhook calls to " +
+				"Gateway will be unauthenticated and rejected; see docs/installation/03-deploy.md",
+			ObservedGeneration: kn.Generation,
+		}
+	}
+
+	secret := &corev1.Secret{}
+	secretKey := client.ObjectKey{Namespace: kn.Namespace, Name: secretName}
+	if err := r.Get(ctx, secretKey, secret); err != nil {
+		return metav1.Condition{
+			Type:               kubernautv1alpha1.ConditionAlertManagerAuthConfigured,
+			Status:             metav1.ConditionFalse,
+			Reason:             ReasonAlertManagerAuthSecretMissing,
+			Message:            fmt.Sprintf("Secret %q not found", secretName),
+			ObservedGeneration: kn.Generation,
+		}
+	}
+
+	if _, ok := secret.Data["token"]; !ok {
+		return metav1.Condition{
+			Type:               kubernautv1alpha1.ConditionAlertManagerAuthConfigured,
+			Status:             metav1.ConditionFalse,
+			Reason:             ReasonAlertManagerAuthKeyMissing,
+			Message:            fmt.Sprintf("Secret %q is missing key %q", secretName, "token"),
+			ObservedGeneration: kn.Generation,
+		}
+	}
+
+	return metav1.Condition{
+		Type:               kubernautv1alpha1.ConditionAlertManagerAuthConfigured,
+		Status:             metav1.ConditionTrue,
+		Reason:             ReasonAlertManagerAuthReady,
+		Message:            fmt.Sprintf("AlertManager gateway token Secret %q is valid", secretName),
 		ObservedGeneration: kn.Generation,
 	}
 }

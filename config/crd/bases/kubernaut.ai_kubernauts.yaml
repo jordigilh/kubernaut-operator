@@ -1018,6 +1018,23 @@ spec:
               gateway:
                 description: Gateway service settings.
                 properties:
+                  alertManagerTokenSecretName:
+                    description: |-
+                      Name of a Secret (in this Kubernaut CR's namespace) containing a
+                      bearer token AlertManager presents when calling Gateway's webhook
+                      endpoint. The Secret must contain a "token" key holding a valid
+                      Kubernetes ServiceAccount token for an identity authorized to call
+                      this Gateway (bound to the generated gateway-signal-source
+                      ClusterRole -- see docs/security/credentials-and-tls.md).
+
+                      This is a bring-your-own credential, consistent with
+                      spec.postgresql.secretName/spec.llmProfiles[*].credentialsSecretName:
+                      the operator never mints or stores this token itself. When unset,
+                      the generated AlertmanagerConfig omits webhook authentication
+                      entirely (Gateway will reject unauthenticated calls) and the CR's
+                      ConditionAlertManagerAuthConfigured status condition explains why.
+                      See docs/installation/03-deploy.md "Configure AlertManager".
+                    type: string
                   config:
                     description: Gateway server and middleware configuration.
                     properties:
@@ -3622,6 +3639,23 @@ spec:
               gateway:
                 description: Gateway service settings.
                 properties:
+                  alertManagerTokenSecretName:
+                    description: |-
+                      Name of a Secret (in this Kubernaut CR's namespace) containing a
+                      bearer token AlertManager presents when calling Gateway's webhook
+                      endpoint. The Secret must contain a "token" key holding a valid
+                      Kubernetes ServiceAccount token for an identity authorized to call
+                      this Gateway (bound to the generated gateway-signal-source
+                      ClusterRole -- see docs/security/credentials-and-tls.md).
+
+                      This is a bring-your-own credential, consistent with
+                      spec.postgresql.secretName/spec.llmProfiles[*].credentialsSecretName:
+                      the operator never mints or stores this token itself. When unset,
+                      the generated AlertmanagerConfig omits webhook authentication
+                      entirely (Gateway will reject unauthenticated calls) and the CR's
+                      ConditionAlertManagerAuthConfigured status condition explains why.
+                      See docs/installation/03-deploy.md "Configure AlertManager".
+                    type: string
                   config:
                     description: Gateway server and middleware configuration.
                     properties:

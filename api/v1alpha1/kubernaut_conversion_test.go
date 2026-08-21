@@ -69,7 +69,7 @@ func fullV1alpha1Kubernaut() *Kubernaut {
 				},
 				ServerRateLimit: &KARateLimitSpec{RequestsPerSecond: &rps},
 			},
-			Gateway: GatewaySpec{Enabled: ptr.To(true)},
+			Gateway: GatewaySpec{Enabled: ptr.To(true), AlertManagerTokenSecretName: "alertmanager-gateway-token"},
 			SignalProcessing: SignalProcessingSpec{
 				Policy: PolicyConfigMapRef{ConfigMapName: "sp-policy"},
 			},
@@ -124,6 +124,14 @@ var _ = Describe("Kubernaut v1alpha1 <-> v1alpha2 conversion webhook", func() {
 			Expect(dst.Spec.WorkflowExecution.Ansible.Enabled).To(BeTrue())
 			Expect(dst.Spec.WorkflowExecution.Ansible.APIURL).To(Equal("https://awx.example.com"))
 			Expect(dst.Spec.WorkflowExecution.Ansible.TokenSecretRef.Name).To(Equal("awx-token"))
+		})
+
+		It("#377: carries gateway.alertManagerTokenSecretName over unchanged", func() {
+			src := fullV1alpha1Kubernaut()
+			dst := &v1alpha2.Kubernaut{}
+			Expect(src.ConvertTo(dst)).To(Succeed())
+
+			Expect(dst.Spec.Gateway.AlertManagerTokenSecretName).To(Equal("alertmanager-gateway-token"))
 		})
 
 		It("F8: normalizes LoggingSpec.Level to uppercase", func() {
@@ -342,6 +350,16 @@ var _ = Describe("Kubernaut v1alpha1 <-> v1alpha2 conversion webhook", func() {
 			Expect(roundTripped.Spec.LLMProfiles).To(Equal(src.Spec.LLMProfiles))
 			Expect(roundTripped.Spec.Ansible).To(Equal(src.Spec.Ansible))
 			Expect(roundTripped.Status).To(Equal(src.Status))
+		})
+
+		It("#377: preserves gateway.alertManagerTokenSecretName through a full round-trip", func() {
+			src := fullV1alpha1Kubernaut()
+			hub := &v1alpha2.Kubernaut{}
+			Expect(src.ConvertTo(hub)).To(Succeed())
+			roundTripped := &Kubernaut{}
+			Expect(roundTripped.ConvertFrom(hub)).To(Succeed())
+
+			Expect(roundTripped.Spec.Gateway.AlertManagerTokenSecretName).To(Equal(src.Spec.Gateway.AlertManagerTokenSecretName))
 		})
 
 		It("documents the F3 exception: an explicitly-disabled NetworkPolicies does not round-trip", func() {
