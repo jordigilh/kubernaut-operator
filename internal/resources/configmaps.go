@@ -2148,11 +2148,21 @@ type afReasoningYAML struct {
 	CapabilityOverride string `json:"capabilityOverride,omitempty" yaml:"capabilityOverride,omitempty"`
 }
 
+// afMCPYAML intentionally omits sessionIdleTimeout/toolTimeout/toolTimeouts.
+// #173/#374: AF's own pkg/apifrontend/config.Load() starts from
+// DefaultConfig() (which already sets ToolTimeout=30s and the 4-entry
+// ToolTimeouts map) and yaml.Unmarshal()'s the rendered file on top; yaml.v3
+// only overwrites keys present in the document, so omitting these keys here
+// leaves the binary's own defaults in effect. SessionIdleTimeout is handled
+// the same way via an inline zero-value fallback to 30m in
+// cmd/apifrontend/mcp_a2a_handlers.go. Writing operator-side copies of these
+// values is pure duplication with no deployment-specific rationale -- it was
+// the root cause of #374 (the operator's copy silently drifted from AF's
+// binary defaults when AF added two new tools). Do not reintroduce these
+// fields; add them back only if a genuine, deliberate CRD-configurable
+// override is designed (see CHECKPOINT DD in AGENTS.md).
 type afMCPYAML struct {
-	Enabled            bool              `json:"enabled" yaml:"enabled"`
-	SessionIdleTimeout string            `json:"sessionIdleTimeout" yaml:"sessionIdleTimeout"`
-	ToolTimeout        string            `json:"toolTimeout" yaml:"toolTimeout"`
-	ToolTimeouts       map[string]string `json:"toolTimeouts,omitempty" yaml:"toolTimeouts,omitempty"`
+	Enabled bool `json:"enabled" yaml:"enabled"`
 }
 
 type afAgentCardYAML struct {
@@ -2330,19 +2340,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 			LLM:               afAgentLLMConfig(afProfile),
 		},
 		MCP: afMCPYAML{
-			Enabled:            true,
-			SessionIdleTimeout: "30m",
-			ToolTimeout:        "30s",
-			// #173: must mirror kubernaut's pkg/apifrontend/config.Default()
-			// exactly. A tool missing from this map silently falls back to
-			// the 30s ToolTimeout above (handler.MCPBridgeConfig.GetToolTimeoutFor),
-			// which breaks long-running/streaming tools like kubernaut_watch.
-			ToolTimeouts: map[string]string{
-				"kubernaut_investigate":        "15m",
-				"kubernaut_await_session":      "3m",
-				"kubernaut_watch":              "15m",
-				"kubernaut_discover_workflows": "60s",
-			},
+			Enabled: true,
 		},
 		AgentCard: afAgentCardYAML{
 			Name: "Kubernaut Agent",

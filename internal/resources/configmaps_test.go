@@ -2219,26 +2219,29 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).To(ContainSubstring("retryMax:"))
 	})
 
-	It("#173: renders all four upstream per-tool MCP timeouts, matching AF's config.Default()", func() {
-		// Upstream source of truth: kubernaut pkg/apifrontend/config/config.go
-		// Default() sets these four ToolTimeouts entries. A tool missing from
-		// this map silently falls back to the 30s base ToolTimeout
-		// (handler.MCPBridgeConfig.GetToolTimeoutFor) -- kubernaut_watch is a
-		// long-running/streaming tool, so dropping it to 30s breaks it.
+	It("AF-TT-001 [CM-6]: does not render mcp.sessionIdleTimeout/toolTimeout/toolTimeouts, deferring to AF's own config.DefaultConfig()", func() {
+		// #374 root cause: kubernaut pkg/apifrontend/config.Load() starts
+		// from DefaultConfig() (ToolTimeout=30s, plus the 4-entry
+		// ToolTimeouts map) and yaml.Unmarshal()'s the operator's rendered
+		// file on top of it; yaml.v3 only overwrites keys present in the
+		// document. SessionIdleTimeout gets the same treatment via an
+		// inline zero-value fallback to 30m in
+		// cmd/apifrontend/mcp_a2a_handlers.go. The operator previously kept
+		// a hand-maintained copy of these values, which silently drifted
+		// from AF's binary defaults when AF added two new tools -- the only
+		// fix that eliminates the drift class permanently is to not write
+		// these keys at all, letting AF's own defaults govern.
 		kn := testKubernautWithAF()
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 
+		Expect(data).NotTo(ContainSubstring("sessionIdleTimeout"))
+		Expect(data).NotTo(ContainSubstring("toolTimeout"))
+
 		var root afConfigYAML
 		Expect(yaml.Unmarshal([]byte(data), &root)).To(Succeed())
-		Expect(root.MCP.ToolTimeout).To(Equal("30s"))
-		Expect(root.MCP.ToolTimeouts).To(Equal(map[string]string{
-			"kubernaut_investigate":        "15m",
-			"kubernaut_await_session":      "3m",
-			"kubernaut_watch":              "15m",
-			"kubernaut_discover_workflows": "60s",
-		}))
+		Expect(root.MCP.Enabled).To(BeTrue())
 	})
 
 	It("renders replayCache when Valkey secret is set", func() {
