@@ -143,6 +143,16 @@ test-e2e: manifests generate fmt vet ## Run the e2e tests against a live OCP clu
 	@oc whoami >/dev/null 2>&1 || { echo "Not logged in to OCP. Run 'oc login' first."; exit 1; }
 	go test ./test/e2e/ -v -ginkgo.v -timeout 30m
 
+# NetworkPolicy e2e proves internal/resources.NetworkPolicies() actually
+# allows/denies traffic on a real CNI (#342) -- UT (rendered-shape-only) and
+# envtest IT (no CNI) both structurally cannot catch enforcement bugs. This
+# self-provisions its own throwaway kind+Calico cluster; no oc login needed.
+.PHONY: test-e2e-networkpolicy
+test-e2e-networkpolicy: ## Run the NetworkPolicy e2e suite. Requires: kind, kubectl, a container runtime.
+	@command -v kind >/dev/null 2>&1 || { echo "kind CLI not found. Install: https://kind.sigs.k8s.io/docs/user/quick-start/"; exit 1; }
+	@command -v kubectl >/dev/null 2>&1 || { echo "kubectl CLI not found."; exit 1; }
+	go test ./test/e2e/networkpolicy/... -v -ginkgo.v -timeout 25m
+
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
 	$(GOLANGCI_LINT) run
