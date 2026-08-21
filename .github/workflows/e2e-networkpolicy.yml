@@ -1,0 +1,53 @@
+name: NetworkPolicy E2E
+
+# Proves internal/resources.NetworkPolicies() actually allows/denies the
+# traffic it claims to, on a real NetworkPolicy-enforcing CNI (#342). The
+# UT tier (internal/resources/networkpolicies_test.go) only asserts
+# rendered-object shape, and the envtest-backed IT tier has no CNI at all --
+# neither can structurally catch an enforcement bug. Path-filtered so it
+# only runs when the code it protects (or the suite itself) changes, since
+# it self-provisions a throwaway kind+Calico cluster and is heavier than a
+# typical unit/integration job.
+on:
+  pull_request:
+    branches: [main, 'release/**']
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'internal/resources/networkpolicies*.go'
+      - 'test/e2e/networkpolicy/**'
+      - '.github/workflows/e2e-networkpolicy.yml'
+  push:
+    branches: [main, 'release/**']
+    paths:
+      - 'internal/resources/networkpolicies*.go'
+      - 'test/e2e/networkpolicy/**'
+      - '.github/workflows/e2e-networkpolicy.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test-e2e-networkpolicy:
+    name: NetworkPolicy enforcement (kind+Calico)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # ubuntu-latest ships kind and kubectl preinstalled (currently kind
+      # 0.32.0, matching this suite's pinned node image version) -- no
+      # separate install step needed.
+      - name: Verify kind and kubectl are available
+        run: |
+          kind version
+          kubectl version --client
+
+      - name: Run NetworkPolicy e2e suite
+        run: make test-e2e-networkpolicy
