@@ -92,9 +92,10 @@ type gatewayRetryYAML struct {
 }
 
 type gatewayDatastorageYAML struct {
-	URL     string                `json:"url" yaml:"url"`
-	Timeout string                `json:"timeout" yaml:"timeout"`
-	Buffer  dataStorageBufferYAML `json:"buffer" yaml:"buffer"`
+	URL       string                `json:"url" yaml:"url"`
+	HealthURL string                `json:"healthUrl" yaml:"healthUrl"`
+	Timeout   string                `json:"timeout" yaml:"timeout"`
+	Buffer    dataStorageBufferYAML `json:"buffer" yaml:"buffer"`
 }
 
 type gatewayConfigYAML struct {
@@ -365,9 +366,10 @@ type aiAnalysisKubernautAgentYAML struct {
 }
 
 type aiAnalysisDatastorageYAML struct {
-	URL     string                `json:"url" yaml:"url"`
-	Timeout string                `json:"timeout" yaml:"timeout"`
-	Buffer  dataStorageBufferYAML `json:"buffer" yaml:"buffer"`
+	URL       string                `json:"url" yaml:"url"`
+	HealthURL string                `json:"healthUrl" yaml:"healthUrl"`
+	Timeout   string                `json:"timeout" yaml:"timeout"`
+	Buffer    dataStorageBufferYAML `json:"buffer" yaml:"buffer"`
 }
 
 type aiAnalysisRegoYAML struct {
@@ -404,9 +406,10 @@ type signalProcessingBufferYAML struct {
 }
 
 type signalProcessingDatastorageYAML struct {
-	URL     string                     `json:"url" yaml:"url"`
-	Timeout string                     `json:"timeout" yaml:"timeout"`
-	Buffer  signalProcessingBufferYAML `json:"buffer" yaml:"buffer"`
+	URL       string                     `json:"url" yaml:"url"`
+	HealthURL string                     `json:"healthUrl" yaml:"healthUrl"`
+	Timeout   string                     `json:"timeout" yaml:"timeout"`
+	Buffer    signalProcessingBufferYAML `json:"buffer" yaml:"buffer"`
 }
 
 // signalProcessingConfigYAML embeds controllerConfig under "controller" via controllerBlock.
@@ -508,9 +511,10 @@ type roAsyncPropagationYAML struct {
 }
 
 type roDatastorageYAML struct {
-	URL     string                `json:"url" yaml:"url"`
-	Timeout string                `json:"timeout" yaml:"timeout"`
-	Buffer  dataStorageBufferYAML `json:"buffer" yaml:"buffer"`
+	URL       string                `json:"url" yaml:"url"`
+	HealthURL string                `json:"healthUrl" yaml:"healthUrl"`
+	Timeout   string                `json:"timeout" yaml:"timeout"`
+	Buffer    dataStorageBufferYAML `json:"buffer" yaml:"buffer"`
 }
 
 type remediationOrchestratorConfigYAML struct {
@@ -542,9 +546,10 @@ type weControllerYAML struct {
 }
 
 type weDatastorageYAML struct {
-	URL     string                `json:"url" yaml:"url"`
-	Timeout string                `json:"timeout" yaml:"timeout"`
-	Buffer  dataStorageBufferYAML `json:"buffer" yaml:"buffer"`
+	URL       string                `json:"url" yaml:"url"`
+	HealthURL string                `json:"healthUrl" yaml:"healthUrl"`
+	Timeout   string                `json:"timeout" yaml:"timeout"`
+	Buffer    dataStorageBufferYAML `json:"buffer" yaml:"buffer"`
 }
 
 type weTokenSecretRefYAML struct {
@@ -623,9 +628,10 @@ type emAssessmentYAML struct {
 }
 
 type emDatastorageYAML struct {
-	URL     string                `json:"url" yaml:"url"`
-	Timeout string                `json:"timeout" yaml:"timeout"`
-	Buffer  dataStorageBufferYAML `json:"buffer" yaml:"buffer"`
+	URL       string                `json:"url" yaml:"url"`
+	HealthURL string                `json:"healthUrl" yaml:"healthUrl"`
+	Timeout   string                `json:"timeout" yaml:"timeout"`
+	Buffer    dataStorageBufferYAML `json:"buffer" yaml:"buffer"`
 }
 
 type emExternalYAML struct {
@@ -686,9 +692,10 @@ type notificationBufferYAML struct {
 }
 
 type notificationDatastorageYAML struct {
-	URL     string                 `json:"url" yaml:"url"`
-	Timeout string                 `json:"timeout" yaml:"timeout"`
-	Buffer  notificationBufferYAML `json:"buffer" yaml:"buffer"`
+	URL       string                 `json:"url" yaml:"url"`
+	HealthURL string                 `json:"healthUrl" yaml:"healthUrl"`
+	Timeout   string                 `json:"timeout" yaml:"timeout"`
+	Buffer    notificationBufferYAML `json:"buffer" yaml:"buffer"`
 }
 
 // notificationControllerConfigYAML embeds controllerConfig under "controller" via controllerBlock.
@@ -928,7 +935,8 @@ func resolveKAFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) *kaFleetYAML {
 }
 
 type kaIntegrationsDataStorageYAML struct {
-	URL string `json:"url" yaml:"url"`
+	URL       string `json:"url" yaml:"url"`
+	HealthURL string `json:"healthUrl" yaml:"healthUrl"`
 }
 
 type kaIntegrationsToolsYAML struct {
@@ -1011,9 +1019,10 @@ type authWebhookBufferYAML struct {
 }
 
 type authWebhookDatastorageYAML struct {
-	URL     string                `json:"url" yaml:"url"`
-	Timeout string                `json:"timeout" yaml:"timeout"`
-	Buffer  authWebhookBufferYAML `json:"buffer" yaml:"buffer"`
+	URL       string                `json:"url" yaml:"url"`
+	HealthURL string                `json:"healthUrl" yaml:"healthUrl"`
+	Timeout   string                `json:"timeout" yaml:"timeout"`
+	Buffer    authWebhookBufferYAML `json:"buffer" yaml:"buffer"`
 }
 
 type authWebhookConfigYAML struct {
@@ -1116,9 +1125,10 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.K
 			TrustedProxyCIDRs: proxyCIDRs,
 		},
 		Datastorage: gatewayDatastorageYAML{
-			URL:     DataStorageURL(ns),
-			Timeout: "10s",
-			Buffer:  dataStorageBufferYAML{BufferSize: 10000, BatchSize: 100, FlushInterval: "1s", MaxRetries: 3},
+			URL:       DataStorageURL(ns),
+			HealthURL: DataStorageHealthURL(ns),
+			Timeout:   "10s",
+			Buffer:    dataStorageBufferYAML{BufferSize: 10000, BatchSize: 100, FlushInterval: "1s", MaxRetries: 3},
 		},
 		Fleet:     resolveFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.Gateway.Fleet, ""), InterServiceTLSCAFile),
 		Telemetry: resolveTelemetryConfig(knV2.Spec.Gateway.Config.Telemetry),
@@ -1267,8 +1277,9 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOptio
 			SessionPollInterval: "15s",
 		},
 		Datastorage: aiAnalysisDatastorageYAML{
-			URL:     DataStorageURL(ns),
-			Timeout: "10s",
+			URL:       DataStorageURL(ns),
+			HealthURL: DataStorageHealthURL(ns),
+			Timeout:   "10s",
 			Buffer: dataStorageBufferYAML{
 				BufferSize:    20000,
 				BatchSize:     1000,
@@ -1312,9 +1323,10 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv
 			HotReloadInterval: "30s",
 		},
 		Datastorage: signalProcessingDatastorageYAML{
-			URL:     DataStorageURL(ns),
-			Timeout: "10s",
-			Buffer:  buf,
+			URL:       DataStorageURL(ns),
+			HealthURL: DataStorageHealthURL(ns),
+			Timeout:   "10s",
+			Buffer:    buf,
 		},
 		Fleet: resolveSignalProcessingFleetConfig(knV2),
 	}
@@ -1358,8 +1370,9 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kub
 		Controller: newControllerBlock("remediationorchestrator.kubernaut.ai"),
 		Logging:    loggingYAML{Level: withDefault(ro.Logging.Level, "info")},
 		Datastorage: roDatastorageYAML{
-			URL:     DataStorageURL(ns),
-			Timeout: "10s",
+			URL:       DataStorageURL(ns),
+			HealthURL: DataStorageHealthURL(ns),
+			Timeout:   "10s",
 			Buffer: dataStorageBufferYAML{
 				BufferSize:    30000,
 				BatchSize:     1000,
@@ -1434,8 +1447,9 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernaut
 			CooldownPeriod: cooldown,
 		},
 		Datastorage: weDatastorageYAML{
-			URL:     DataStorageURL(kn.Namespace),
-			Timeout: "10s",
+			URL:       DataStorageURL(kn.Namespace),
+			HealthURL: DataStorageHealthURL(kn.Namespace),
+			Timeout:   "10s",
 			Buffer: dataStorageBufferYAML{
 				BufferSize:    10000,
 				BatchSize:     500,
@@ -1491,8 +1505,9 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubern
 		},
 		Controller: newControllerBlock("effectivenessmonitor.kubernaut.ai"),
 		Datastorage: emDatastorageYAML{
-			URL:     DataStorageURL(kn.Namespace),
-			Timeout: "10s",
+			URL:       DataStorageURL(kn.Namespace),
+			HealthURL: DataStorageHealthURL(kn.Namespace),
+			Timeout:   "10s",
 			Buffer: dataStorageBufferYAML{
 				BufferSize:    100,
 				BatchSize:     10,
@@ -1530,9 +1545,10 @@ func NotificationControllerConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...Co
 		MaxRetries:    3,
 	}
 	ds := notificationDatastorageYAML{
-		URL:     DataStorageURL(kn.Namespace),
-		Timeout: "10s",
-		Buffer:  buf,
+		URL:       DataStorageURL(kn.Namespace),
+		HealthURL: DataStorageHealthURL(kn.Namespace),
+		Timeout:   "10s",
+		Buffer:    buf,
 	}
 	cfg := notificationControllerConfigYAML{
 		TLSProfile: o.tlsProfile,
@@ -1777,7 +1793,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1a
 			Investigation: kaInvestigationYAML{MaxTurns: maxTurns},
 		},
 		Integrations: kaIntegrationsYAML{
-			DataStorage: kaIntegrationsDataStorageYAML{URL: DataStorageURL(ns)},
+			DataStorage: kaIntegrationsDataStorageYAML{URL: DataStorageURL(ns), HealthURL: DataStorageHealthURL(ns)},
 		},
 		Telemetry: resolveTelemetryConfig(knV2.Spec.KubernautAgent.Telemetry),
 	}
@@ -1926,9 +1942,10 @@ func AuthWebhookConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOpti
 		MaxRetries:    3,
 	}
 	ds := authWebhookDatastorageYAML{
-		URL:     DataStorageURL(kn.Namespace),
-		Timeout: "30s",
-		Buffer:  buf,
+		URL:       DataStorageURL(kn.Namespace),
+		HealthURL: DataStorageHealthURL(kn.Namespace),
+		Timeout:   "30s",
+		Buffer:    buf,
 	}
 	cfg := authWebhookConfigYAML{
 		TLSProfile: o.tlsProfile,
@@ -2084,9 +2101,14 @@ type afTLSYAML struct {
 }
 
 type afAgentYAML struct {
-	KABaseURL         string         `json:"kaBaseURL" yaml:"kaBaseURL"`
-	KAMCPEndpoint     string         `json:"kaMCPEndpoint" yaml:"kaMCPEndpoint"`
-	DSBaseURL         string         `json:"dsBaseURL" yaml:"dsBaseURL"`
+	KABaseURL     string `json:"kaBaseURL" yaml:"kaBaseURL"`
+	KAMCPEndpoint string `json:"kaMCPEndpoint" yaml:"kaMCPEndpoint"`
+	DSBaseURL     string `json:"dsBaseURL" yaml:"dsBaseURL"`
+	// DSHealthURL is DataStorage's cross-service readiness-check endpoint
+	// (REQUIRED, #360): pkg/apifrontend/config.AgentConfig.DSHealthURL fails
+	// closed at startup when empty. DD-PLATFORM-010: same host:port as
+	// DSBaseURL above, differing only by the /readyz path.
+	DSHealthURL       string         `json:"dsHealthURL" yaml:"dsHealthURL"`
 	DSBearerTokenFile string         `json:"dsBearerTokenFile,omitempty" yaml:"dsBearerTokenFile,omitempty"`
 	KABearerTokenFile string         `json:"kaBearerTokenFile,omitempty" yaml:"kaBearerTokenFile,omitempty"`
 	KATLSCAFile       string         `json:"kaTlsCaFile" yaml:"kaTlsCaFile"`
@@ -2300,6 +2322,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 			KABaseURL:         kaBaseURL,
 			KAMCPEndpoint:     kaBaseURL + "/api/v1/mcp/",
 			DSBaseURL:         dsBaseURL,
+			DSHealthURL:       dsBaseURL + "/readyz",
 			DSBearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
 			KABearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
 			KATLSCAFile:       apifrontendTLSCAFile,

@@ -1941,6 +1941,58 @@ var _ = Describe("ConfigMaps", func() {
 			}
 		})
 
+		// #360: every audit-writing service embeds upstream's
+		// internal/config.DataStorageConfig under a top-level `datastorage:`
+		// section, which -- since kubernaut v1.6.0-rc2 (DD-PLATFORM-010,
+		// BR-AUDIT-005 v2.0) -- validates HealthURL as a REQUIRED field and
+		// fails closed at startup ("datastorage.healthUrl is required") when
+		// it is empty. DataStorage itself is exempt (it doesn't audit-write
+		// to itself); KubernautAgent and APIFrontend use their own
+		// differently-shaped config sections, asserted separately below.
+		It("renders datastorage.healthUrl for every audit-writing service (DD-PLATFORM-010, #360)", func() {
+			kn := testKubernaut()
+			type builder struct {
+				name string
+				key  string
+				fn   func() (*corev1.ConfigMap, error)
+			}
+			auditWritingBuilders := []builder{
+				{"gateway", "config.yaml", func() (*corev1.ConfigMap, error) { return GatewayConfigMap(kn, testKnV2(kn)) }},
+				{"aianalysis", "config.yaml", func() (*corev1.ConfigMap, error) { return AIAnalysisConfigMap(kn) }},
+				{"signalprocessing", "config.yaml", func() (*corev1.ConfigMap, error) { return SignalProcessingConfigMap(kn, testKnV2(kn)) }},
+				{"remediationorchestrator", "remediationorchestrator.yaml", func() (*corev1.ConfigMap, error) { return RemediationOrchestratorConfigMap(kn, testKnV2(kn)) }},
+				{"workflowexecution", "workflowexecution.yaml", func() (*corev1.ConfigMap, error) { return WorkflowExecutionConfigMap(kn, testKnV2(kn)) }},
+				{"effectivenessmonitor", "effectivenessmonitor.yaml", func() (*corev1.ConfigMap, error) { return EffectivenessMonitorConfigMap(kn, testKnV2(kn)) }},
+				{"notification-controller", "config.yaml", func() (*corev1.ConfigMap, error) { return NotificationControllerConfigMap(kn) }},
+				{"authwebhook", "authwebhook.yaml", func() (*corev1.ConfigMap, error) { return AuthWebhookConfigMap(kn) }},
+			}
+			wantHealthURL := "healthUrl: " + DataStorageHealthURL(testSystemNamespace)
+			for _, b := range auditWritingBuilders {
+				cm, err := b.fn()
+				Expect(err).NotTo(HaveOccurred(), "building %s ConfigMap", b.name)
+				data := cm.Data[b.key]
+				Expect(data).To(ContainSubstring(wantHealthURL),
+					"%s %s should render %q so the service's own /readyz can gate on "+
+						"DataStorage reachability (DD-PLATFORM-010); got:\n%s", b.name, b.key, wantHealthURL, data)
+			}
+		})
+
+		It("renders integrations.dataStorage.healthUrl for KubernautAgent (#360)", func() {
+			kn := testKubernaut()
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("healthUrl: " + DataStorageHealthURL(testSystemNamespace)))
+		})
+
+		It("renders agent.dsHealthURL for APIFrontend (#360)", func() {
+			kn := testKubernaut()
+			cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("dsHealthURL: " + DataStorageHealthURL(testSystemNamespace)))
+		})
+
 		const loggingLevelAllServicesTestLevel = "error"
 
 		DescribeTable("logging level propagates to each service ConfigMap",
