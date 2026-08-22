@@ -983,11 +983,15 @@ func aianalysisControllerClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map
 		Rules: []rbacv1.PolicyRule{
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses/status"}, Verbs: []string{"get", "update", "patch"}},
-			// AA no longer owns the InvestigationSession lifecycle (DD-AA-KA-001):
-			// it only watches IS and writes IS/status for the narrow
-			// terminal-phase-close path (K8sISPhaseUpdater).
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch"}},
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update", "patch"}},
+			// v1.6.0-rc4 (kubernaut#2214, DD-AA-KA-001 Amendment): AA no
+			// longer interacts with InvestigationSession at all (full RBAC
+			// removal, not just narrowing -- #368 originally kept a
+			// get/list/watch + status-write grant for a terminal-phase-close
+			// path, K8sISPhaseUpdater; that path no longer exists). AF's
+			// AgentSessionTerminalCloseReconciler now owns IS terminal-phase
+			// closure exclusively, driven by watching AgentSession (see
+			// apifrontendClusterRole).
+			//
 			// AgentSessionCreator.GetOrCreate (DD-AA-KA-001, BR-AA-KA-065.1): "create"
 			// for the initial dispatch write; "get"/"list"/"watch" because AgentSession
 			// is namespace-scoped in this controller's mgr.GetCache() ByObject config,
@@ -996,9 +1000,13 @@ func aianalysisControllerClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map
 			// AgentSessionCreator.DeleteForRetry, called from
 			// InvestigatingHandler.retryCapacityExceeded to discard a stale
 			// Failed+CapacityExceeded AgentSession so the retry attempt gets a fresh
-			// one. No "agentsessions/status" grant -- AA never writes Status, only KA
-			// does (BR-AA-KA-065.9).
-			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"agentsessions"}, Verbs: []string{"get", "list", "watch", "create", "delete"}},
+			// one; also used by DeleteForCascadeCancel (kubernaut#2214) on
+			// external ParentCancelled. "update" (kubernaut#2214 finalizer
+			// fix, CI run 32525130330): DeleteForRetry/DeleteForCascadeCancel
+			// strip AA's own TerminalCloseFinalizer before deleting, which
+			// needs Update, not just Delete. No "agentsessions/status" grant
+			// -- AA never writes Status, only KA does (BR-AA-KA-065.9).
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"agentsessions"}, Verbs: []string{"get", "list", "watch", "create", "update", "delete"}},
 			{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
 		},
@@ -1328,6 +1336,16 @@ func apifrontendClusterRole(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1al
 	rules := []rbacv1.PolicyRule{
 		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch", "create", "update", "delete"}},
 		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update"}},
+		// kubernaut#2172 (AwaitAgentSessionInteractive, DD-AA-KA-001
+		// Amendment Gap 1): read-only watch of KA's own ack signal.
+		// kubernaut#2214 (v1.6.0-rc4, finalizer redesign, CI RCA PR #2222
+		// run 32513171970): AgentSessionTerminalCloseReconciler adds/removes
+		// its own metadata-only finalizer (terminalCloseFinalizer) to
+		// reliably observe deletion via Reconcile instead of a best-effort
+		// raw watch delete event -- update/patch only touch
+		// metadata.finalizers. No "agentsessions/status" grant -- AF never
+		// writes Status, only KA does (BR-AA-KA-065.9).
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"agentsessions"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
 		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
 		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/status"}, Verbs: []string{"get", "update", "patch"}},
 		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationapprovalrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
