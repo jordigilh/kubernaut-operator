@@ -549,14 +549,16 @@ var _ = Describe("Kubernaut Controller", func() {
 				"CM-6: the reconcile loop must render spec.fleet.mcpGatewayType into KA's live ConfigMap, not just in unit-level struct construction")
 		})
 
-		It("AF-TT-002 [CM-6]: AF's live ConfigMap omits mcp.sessionIdleTimeout/toolTimeout/toolTimeouts through reconciliation, not just in unit-level struct construction", func() {
-			// #374: a unit test on resources.APIFrontendConfigMap alone
-			// proves the struct construction is correct, but not that the
-			// reconcile loop actually persists that (lack of) config to the
-			// live ConfigMap. AF's own pkg/apifrontend/config.Load() governs
-			// these values via config.DefaultConfig(); the operator must not
-			// render a competing copy that can drift from it (root cause of
-			// the original #374 bug).
+		It("AF-TT-002 [CM-6]: AF's live ConfigMap renders mcp.sessionIdleTimeout/toolTimeout/toolTimeouts matching AF's own binary defaults through reconciliation, not just in unit-level struct construction", func() {
+			// #258/#374: a unit test on resources.APIFrontendConfigMap
+			// alone proves the struct construction is correct, but not
+			// that the reconcile loop actually persists it to the live
+			// ConfigMap. #374's root cause was a hand-maintained
+			// operator-side copy of these values silently drifting from
+			// AF's own binary defaults (config.DefaultConfig()) when AF
+			// added new tools; #258 reintroduces them as CRD-configurable
+			// fields whose defaults are set to match AF's binary defaults
+			// exactly, making the CRD the single source of truth.
 			createBYOSecrets(ctx)
 			kn := newCRWithRouteDisabled()
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
@@ -567,10 +569,10 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "apifrontend-config", Namespace: testNamespace}, cm)).To(Succeed())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("mcp:"))
-			Expect(data).NotTo(ContainSubstring("sessionIdleTimeout"),
-				"CM-6: AF's live ConfigMap must not shadow AF's own config.DefaultConfig() sessionIdleTimeout")
-			Expect(data).NotTo(ContainSubstring("toolTimeout"),
-				"CM-6: AF's live ConfigMap must not shadow AF's own config.DefaultConfig() toolTimeout/toolTimeouts")
+			Expect(data).To(ContainSubstring("sessionIdleTimeout: 30m"),
+				"CM-6: AF's live ConfigMap must render mcp.sessionIdleTimeout matching AF's own config.DefaultConfig() default")
+			Expect(data).To(ContainSubstring("toolTimeout: 30s"),
+				"CM-6: AF's live ConfigMap must render mcp.toolTimeout matching AF's own config.DefaultConfig() default")
 		})
 	})
 })

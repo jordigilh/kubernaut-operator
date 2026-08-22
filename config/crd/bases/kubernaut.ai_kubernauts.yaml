@@ -2707,6 +2707,37 @@ spec:
                         - ERROR
                         type: string
                     type: object
+                  mcp:
+                    description: |-
+                      MCP configures AF's MCP tool-call timeout behavior. When unset,
+                      defaults match AF's own binary defaults (#258/#374).
+                    properties:
+                      sessionIdleTimeout:
+                        default: 30m
+                        description: |-
+                          Idle timeout before an MCP session is eligible for cleanup. Must be
+                          a valid Go duration string.
+                        type: string
+                      toolTimeout:
+                        default: 30s
+                        description: |-
+                          Default timeout applied to MCP tool calls without a per-tool
+                          override in ToolTimeouts. Must be a valid Go duration string.
+                        type: string
+                      toolTimeouts:
+                        additionalProperties:
+                          type: string
+                        default:
+                          kubernaut_await_session: 3m
+                          kubernaut_discover_workflows: 60s
+                          kubernaut_investigate: 15m
+                          kubernaut_watch: 15m
+                        description: |-
+                          Per-tool timeout overrides, keyed by MCP tool name. Tools not
+                          present as a key fall back to AF's own per-tool default for that
+                          tool, not to ToolTimeout above.
+                        type: object
+                    type: object
                   metricsPort:
                     description: |-
                       Override for the AF metrics port. Defaults to 9090 (or 9092 when
@@ -2904,11 +2935,41 @@ spec:
                           auto-generates a hostname.
                         type: string
                     type: object
+                  session:
+                    description: |-
+                      Session configures AF's MCP/A2A session lifecycle. When unset,
+                      defaults match the operator's prior hardcoded behavior (#258).
+                    properties:
+                      disconnectTTL:
+                        default: 10m
+                        description: |-
+                          How long a disconnected session is kept before it becomes eligible
+                          for cleanup. Must be a valid Go duration string.
+                        type: string
+                      retentionTTL:
+                        default: 720h
+                        description: |-
+                          How long session state is retained after disconnect before
+                          permanent removal. Must be a valid Go duration string.
+                        type: string
+                    type: object
                   severityTriage:
                     description: |-
                       Independent LLM configuration for severity-triage's LLM fallback
                       tiers, distinct from API Frontend's main llmProfileRef connection.
                     properties:
+                      cacheTTLSeconds:
+                        default: 30
+                        description: Cache TTL in seconds for severity-triage query
+                          results (#258).
+                        type: integer
+                      llmConfidence:
+                        default: "0.7"
+                        description: |-
+                          Minimum LLM confidence threshold for severity-triage decisions,
+                          string-encoded to avoid controller-gen's "dangerous float" CRD
+                          portability restriction (mirrors AlignmentCheckLLMSpec.Temperature).
+                        type: string
                       llmEnabled:
                         default: true
                         description: |-
@@ -3143,6 +3204,33 @@ spec:
               dataStorage:
                 description: DataStorage service settings.
                 properties:
+                  database:
+                    description: |-
+                      Database connection-pool tuning for the DataStorage PostgreSQL
+                      connection. When unset, defaults match the operator's prior
+                      hardcoded behavior (#260).
+                    properties:
+                      connMaxIdleTime:
+                        default: 10m
+                        description: |-
+                          Maximum amount of time a connection may be idle before being
+                          closed. Must be a valid Go duration string.
+                        type: string
+                      connMaxLifetime:
+                        default: 1h
+                        description: |-
+                          Maximum amount of time a connection may be reused. Must be a valid
+                          Go duration string.
+                        type: string
+                      maxIdleConns:
+                        default: 20
+                        description: Maximum number of idle database connections.
+                        type: integer
+                      maxOpenConns:
+                        default: 100
+                        description: Maximum number of open database connections.
+                        type: integer
+                    type: object
                   endpointPropagationDelay:
                     default: 10s
                     description: |-
@@ -3252,6 +3340,22 @@ spec:
                         default: 24h
                         description: How often the purge worker runs. Must be a valid
                           Go duration string.
+                        type: string
+                    type: object
+                  server:
+                    description: |-
+                      Server timeout tuning for the DataStorage HTTP server.
+                      When unset, defaults match the operator's prior hardcoded behavior (#260).
+                    properties:
+                      readTimeout:
+                        default: 30s
+                        description: HTTP server read timeout. Must be a valid Go
+                          duration string.
+                        type: string
+                      writeTimeout:
+                        default: 30s
+                        description: HTTP server write timeout. Must be a valid Go
+                          duration string.
                         type: string
                     type: object
                   signingCert:
@@ -3697,6 +3801,57 @@ spec:
                         description: 'Timeout for outbound K8s API requests. Default:
                           "15s".'
                         type: string
+                      retry:
+                        description: |-
+                          Retry tuning for Gateway's DataStorage write path.
+                          When unset, defaults match the operator's prior hardcoded behavior (#259).
+                        properties:
+                          initialBackoff:
+                            default: 100ms
+                            description: Initial backoff before the first retry. Must
+                              be a valid Go duration string.
+                            type: string
+                          maxAttempts:
+                            default: 3
+                            description: Maximum number of retry attempts.
+                            type: integer
+                          maxBackoff:
+                            default: 5s
+                            description: Maximum backoff between retries. Must be
+                              a valid Go duration string.
+                            type: string
+                        type: object
+                      server:
+                        description: |-
+                          Server tuning (concurrency and timeouts) for the Gateway HTTP server.
+                          When unset, defaults match the operator's prior hardcoded behavior (#259).
+                        properties:
+                          idleTimeout:
+                            default: 120s
+                            description: HTTP server idle timeout. Must be a valid
+                              Go duration string.
+                            type: string
+                          maxConcurrentRequests:
+                            default: 100
+                            description: Maximum number of concurrent in-flight requests.
+                            type: integer
+                          readTimeout:
+                            default: 3600s
+                            description: |-
+                              HTTP server read timeout. Must be a valid Go duration string.
+                              Defaults to the operator's prior hardcoded value (3600s), not
+                              upstream's chart default (30s), to avoid a behavior change for
+                              existing CRs.
+                            type: string
+                          writeTimeout:
+                            default: 3600s
+                            description: |-
+                              HTTP server write timeout. Must be a valid Go duration string.
+                              Defaults to the operator's prior hardcoded value (3600s), not
+                              upstream's chart default (30s), to avoid a behavior change for
+                              existing CRs.
+                            type: string
+                        type: object
                       telemetry:
                         description: OpenTelemetry distributed-trace export configuration.
                           Off by default.
