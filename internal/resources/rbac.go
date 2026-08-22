@@ -1070,6 +1070,15 @@ func kubernautAgentInvestigatorClusterRole(kn *kubernautv1alpha1.Kubernaut, labe
 			"investigationsessions", "aianalyses", "signalprocessings",
 			"effectivenessassessments", "workflowexecutions", "actiontypes",
 		}, Verbs: []string{"get", "list", "watch"}},
+		// AgentSession (#380, parity with kubernaut#2231/PR#2250): KA's
+		// Dispatcher Reconciler's dispatchCleanupFinalizer is a
+		// metadata-only write on the base resource (not the status
+		// subresource), so "update"/"patch" are needed alongside the
+		// pre-existing read verbs. agentsessions/status is KA's
+		// BR-AA-KA-065.9 status-reporting write path to AA -- without it,
+		// both the finalizer add/remove and every status write 403.
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"agentsessions"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"agentsessions/status"}, Verbs: []string{"get", "update", "patch"}},
 		// Interactive session locking via Leases (v1.5+); list needed for ReconcileOrphanedLeases
 		{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "create", "update", "delete", "list"}},
 		// KubeVirt / CDI: VM investigation and enrichment

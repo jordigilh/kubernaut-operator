@@ -291,6 +291,61 @@ var _ = Describe("ClusterRoles", func() {
 			}
 			Expect(found).To(BeTrue(), "kubernaut-agent-investigator should have get permission on nodes/proxy for nodes_log and nodes_stats_summary tools (#205)")
 		})
+
+		// #380 (parity with kubernaut#2231 / PR #2250): KA's Dispatcher
+		// Reconciler cannot function against this role without these two
+		// rules -- dispatchCleanupFinalizer 403s on the base resource
+		// (metadata-only update/patch), and BR-AA-KA-065.9's KA -> AA
+		// status write 403s without the status subresource grant. Exact
+		// verb sets asserted (ConsistOf, not ContainElements) to keep this
+		// least-privilege (AC-6): no create/delete on either resource.
+		It("[AC-6] grants agentsessions get/list/watch/update/patch (kubernaut#2231 parity)", func() {
+			kn := testKubernaut()
+			roles := ClusterRoles(kn, testKnV2(kn))
+			var investigator *rbacv1.ClusterRole
+			for _, r := range roles {
+				if r.Name == kn.Namespace+"-kubernaut-agent-investigator" {
+					investigator = r
+					break
+				}
+			}
+			Expect(investigator).NotTo(BeNil(), "kubernaut-agent-investigator ClusterRole not found")
+
+			ruleMap := make(map[string][]string)
+			for _, rule := range investigator.Rules {
+				for _, res := range rule.Resources {
+					ruleMap[rule.APIGroups[0]+"/"+res] = rule.Verbs
+				}
+			}
+
+			Expect(ruleMap).To(HaveKey("kubernaut.ai/agentsessions"))
+			Expect(ruleMap["kubernaut.ai/agentsessions"]).To(ConsistOf("get", "list", "watch", "update", "patch"),
+				"[AC-6] kubernaut-agent-investigator must grant exactly get/list/watch/update/patch on agentsessions -- no create/delete")
+		})
+
+		It("[AC-6] grants full agentsessions/status get/update/patch for KA status-reporting (BR-AA-KA-065.9)", func() {
+			kn := testKubernaut()
+			roles := ClusterRoles(kn, testKnV2(kn))
+			var investigator *rbacv1.ClusterRole
+			for _, r := range roles {
+				if r.Name == kn.Namespace+"-kubernaut-agent-investigator" {
+					investigator = r
+					break
+				}
+			}
+			Expect(investigator).NotTo(BeNil(), "kubernaut-agent-investigator ClusterRole not found")
+
+			ruleMap := make(map[string][]string)
+			for _, rule := range investigator.Rules {
+				for _, res := range rule.Resources {
+					ruleMap[rule.APIGroups[0]+"/"+res] = rule.Verbs
+				}
+			}
+
+			Expect(ruleMap).To(HaveKey("kubernaut.ai/agentsessions/status"))
+			Expect(ruleMap["kubernaut.ai/agentsessions/status"]).To(ConsistOf("get", "update", "patch"),
+				"[AC-6] kubernaut-agent-investigator must grant exactly get/update/patch on agentsessions/status (BR-AA-KA-065.9) -- no list/watch/create/delete")
+		})
 	})
 
 	Describe("Workflow runner", func() {
