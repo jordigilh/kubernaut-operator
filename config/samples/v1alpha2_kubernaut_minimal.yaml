@@ -1,0 +1,58 @@
+# Minimal Kubernaut CR: only the fields the operator actually requires to
+# reach Running, everything else relies on defaults. See
+# docs/installation/00-quickstart.md for the field-by-field walkthrough, and
+# config/samples/v1alpha2_kubernaut.yaml for the fully-annotated, every-knob
+# reference sample.
+apiVersion: kubernaut.ai/v1alpha2
+kind: Kubernaut
+metadata:
+  labels:
+    app.kubernetes.io/name: kubernaut-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: kubernaut
+  namespace: kubernaut-system
+spec:
+  # BYO PostgreSQL (schema-required parent object + host/secretName; see
+  # docs/installation/01-infrastructure.md to provision it).
+  postgresql:
+    host: postgresql.kubernaut-system.svc.cluster.local
+    secretName: postgresql-secret   # keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+
+  # BYO Valkey/Redis (schema-required parent object + host/secretName).
+  valkey:
+    host: valkey.kubernaut-system.svc.cluster.local
+    secretName: valkey-secret       # key: valkey-secrets.yaml
+
+  # At least one named LLM profile is schema-required (spec.llmProfiles
+  # itself is a mandatory key). provider/model/credentialsSecretName are
+  # always required; endpoint is additionally required for provider: openai.
+  llmProfiles:
+    primary:
+      provider: openai              # or: anthropic, vertex_ai, bedrock, azure
+      model: gpt-4o
+      credentialsSecretName: llm-credentials
+      endpoint: "https://api.openai.com/v1"   # required only when provider is openai
+
+  # kubernautAgent is a schema-required parent key, but llmProfileRef itself
+  # can stay unset here: exactly one profile is defined above, so the
+  # operator infers it automatically (v1alpha2/F10).
+  kubernautAgent: {}
+
+  # Both Rego policy ConfigMaps are schema-required (no operator-bundled
+  # default, matching the upstream Helm chart's own "fail" guard) -- the
+  # ConfigMaps named here must already exist before this CR is applied. See
+  # docs/installation/00-quickstart.md for a minimal starter policy for each.
+  aiAnalysis:
+    policy:
+      configMapName: aianalysis-policy
+  signalProcessing:
+    policy:
+      configMapName: signalprocessing-policy
+
+  # apiFrontend is enabled by default and requires an OIDC issuer -- replace
+  # with your real IdP, or set apiFrontend.enabled: false below if you don't
+  # have one yet (see docs/installation/02-configure-services.md).
+  apiFrontend:
+    auth:
+      issuerURL: "https://login.example.com/realms/kubernaut"
+      audience: "kubernaut-apifrontend"

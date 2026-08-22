@@ -25,7 +25,9 @@ The operator is designed as a **singleton**: exactly one `Kubernaut` CR named `k
 
 ## Installation Guide
 
-Follow the three-part installation guide to deploy Kubernaut on OCP:
+For the fastest path to a `Running` Kubernaut using defaults wherever possible, start with the [Quickstart](docs/installation/00-quickstart.md).
+
+For the fuller, every-knob-annotated walkthrough, follow the three-part installation guide to deploy Kubernaut on OCP:
 
 | Step | Document | What it covers |
 |---|---|---|

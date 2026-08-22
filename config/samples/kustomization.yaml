@@ -2,4 +2,5 @@
 resources:
 - v1alpha1_kubernaut.yaml
 - v1alpha2_kubernaut.yaml
+- v1alpha2_kubernaut_minimal.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
