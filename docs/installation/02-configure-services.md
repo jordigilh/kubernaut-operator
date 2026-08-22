@@ -146,9 +146,7 @@ spec:
       enabled: true
       timeout: "10s"
       maxStepTokens: 500
-      llm:                      # optional: use a different LLM for alignment
-        provider: openai
-        model: gpt-4o-mini
+      llmProfileRef: lightweight   # optional: use a different named profile (from spec.llmProfiles) for alignment; defaults to kubernautAgent's own resolved profile
 ```
 
 When enabled, the agent will flag investigation steps that diverge from the shadow agent's analysis.
@@ -300,13 +298,14 @@ If you have AWX or AAP and want Kubernaut to execute Ansible-based remediation w
 
 ```yaml
 spec:
-  ansible:
-    enabled: true
-    apiURL: "https://awx.example.com"
-    organizationID: 1
-    tokenSecretRef:
-      name: awx-token
-      key: token
+  workflowExecution:
+    ansible:
+      enabled: true
+      apiURL: "https://awx.example.com"
+      organizationID: 1
+      tokenSecretRef:
+        name: awx-token
+        key: token
 ```
 
 Create the token secret:
@@ -337,17 +336,18 @@ Then reference it in the CR:
 
 ```yaml
 spec:
-  ansible:
-    enabled: true
-    apiURL: "https://awx.example.com"
-    caCertSecretRef:
-      name: aap-ca-cert
-      key: ca.crt   # default, can be omitted
+  workflowExecution:
+    ansible:
+      enabled: true
+      apiURL: "https://awx.example.com"
+      caCertSecretRef:
+        name: aap-ca-cert
+        key: ca.crt   # default, can be omitted
 ```
 
 If your AAP uses a publicly trusted CA (e.g., Let's Encrypt), omit `caCertSecretRef` — the system trust store handles it automatically.
 
-If you do not use Ansible, omit the `ansible` block entirely (it defaults to disabled).
+If you do not use Ansible, omit the `ansible` block entirely (it defaults to disabled). Note: v1alpha1 modeled this as a top-level `spec.ansible` block; v1alpha2 relocates it under `spec.workflowExecution.ansible` (F4 -- WorkflowExecution is Ansible's only consumer). The v1alpha1 API still accepts the old location and converts it losslessly.
 
 ## Gateway Configuration (optional)
 

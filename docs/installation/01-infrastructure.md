@@ -238,4 +238,4 @@ oc get secret postgresql-secret valkey-secret llm-credentials -n kubernaut-syste
 
 ---
 
-Next: [Configure Services](02-configure-services.md)
+Previous: [Quickstart](00-quickstart.md) | Next: [Configure Services](02-configure-services.md)
