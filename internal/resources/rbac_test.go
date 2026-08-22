@@ -1493,6 +1493,37 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include effectivenessassessments get/list/watch")
 	})
 
+	// v1.6.0-rc4 (kubernaut#2172, #2214): AF's AwaitAgentSessionInteractive
+	// watches AgentSession directly (get/list/watch), and its
+	// AgentSessionTerminalCloseReconciler adds/removes its own metadata-only
+	// finalizer (update/patch) to reliably observe deletion instead of a
+	// best-effort raw watch delete event. No agentsessions/status grant --
+	// AF never writes Status, only KA does (BR-AA-KA-065.9).
+	It("includes agentsessions get/list/watch/update/patch, no status (kubernaut#2172, #2214)", func() {
+		kn := testKubernautWithAF()
+		roles := ClusterRoles(kn, testKnV2(kn))
+		var afRole *rbacv1.ClusterRole
+		for _, r := range roles {
+			if r.Name == clusterRoleName(kn, "apifrontend-role") {
+				afRole = r
+				break
+			}
+		}
+		Expect(afRole).NotTo(BeNil())
+
+		ruleMap := map[string][]string{}
+		for _, rule := range afRole.Rules {
+			for _, res := range rule.Resources {
+				ruleMap[rule.APIGroups[0]+"/"+res] = rule.Verbs
+			}
+		}
+
+		Expect(ruleMap).To(HaveKey("kubernaut.ai/agentsessions"))
+		Expect(ruleMap["kubernaut.ai/agentsessions"]).To(ContainElements("get", "list", "watch", "update", "patch"))
+		Expect(ruleMap).NotTo(HaveKey("kubernaut.ai/agentsessions/status"),
+			"AF never writes AgentSession Status -- only KA does (BR-AA-KA-065.9)")
+	})
+
 	It("includes tokenreviews create for TokenReview auth", func() {
 		kn := testKubernautWithAF()
 		roles := ClusterRoles(kn, testKnV2(kn))
@@ -1608,18 +1639,32 @@ var _ = Describe("AIAnalysis controller ClusterRole", func() {
 			"AA never writes AgentSession Status -- only KA does (BR-AA-KA-065.9)")
 	})
 
-	It("narrows investigationsessions to get/list/watch only, keeps status write for terminal-phase-close (DD-AA-KA-001)", func() {
+	It("grants no investigationsessions access at all (v1.6.0-rc4, kubernaut#2214)", func() {
 		role := aaRole()
 		Expect(role).NotTo(BeNil())
 		ruleMap := ruleMapFor(role)
 
-		Expect(ruleMap).To(HaveKey("kubernaut.ai/investigationsessions"))
-		Expect(ruleMap["kubernaut.ai/investigationsessions"]).To(ContainElements("get", "list", "watch"))
-		Expect(ruleMap["kubernaut.ai/investigationsessions"]).NotTo(ContainElements("create", "update", "patch"),
-			"AA no longer owns the InvestigationSession lifecycle post-AgentSession redesign")
+		// #368 originally narrowed this to get/list/watch + status
+		// write-only for a terminal-phase-close path (K8sISPhaseUpdater).
+		// kubernaut#2214 (DD-AA-KA-001 Amendment) removed that path
+		// entirely -- AF's AgentSessionTerminalCloseReconciler now owns IS
+		// terminal-phase closure exclusively, driven by watching
+		// AgentSession. AA no longer needs any investigationsessions
+		// access.
+		Expect(ruleMap).NotTo(HaveKey("kubernaut.ai/investigationsessions"))
+		Expect(ruleMap).NotTo(HaveKey("kubernaut.ai/investigationsessions/status"))
+	})
 
-		Expect(ruleMap).To(HaveKey("kubernaut.ai/investigationsessions/status"))
-		Expect(ruleMap["kubernaut.ai/investigationsessions/status"]).To(ContainElements("get", "update", "patch"))
+	It("grants update on agentsessions for finalizer removal (kubernaut#2214, CI run 32525130330)", func() {
+		role := aaRole()
+		Expect(role).NotTo(BeNil())
+		ruleMap := ruleMapFor(role)
+
+		// DeleteForRetry/DeleteForCascadeCancel strip AA's own
+		// TerminalCloseFinalizer before deleting the AgentSession, which
+		// needs Update, not just Delete.
+		Expect(ruleMap).To(HaveKey("kubernaut.ai/agentsessions"))
+		Expect(ruleMap["kubernaut.ai/agentsessions"]).To(ContainElements("get", "list", "watch", "create", "update", "delete"))
 	})
 })
 

@@ -3,7 +3,8 @@ module github.com/jordigilh/kubernaut-operator
 go 1.26.6
 
 require (
-	github.com/jordigilh/kubernaut v1.6.0-rc3
+	github.com/go-logr/logr v1.4.4
+	github.com/jordigilh/kubernaut v1.6.0-rc4
 	github.com/onsi/ginkgo/v2 v2.32.1
 	github.com/onsi/gomega v1.42.1
 	github.com/openshift/api v0.0.0-20260327162646-993e604705e3
@@ -32,7 +33,6 @@ require (
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
-	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-logr/zapr v1.3.0 // indirect
 	github.com/go-openapi/jsonpointer v0.23.1 // indirect
