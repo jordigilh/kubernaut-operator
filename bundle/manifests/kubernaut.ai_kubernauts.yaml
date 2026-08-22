@@ -1018,6 +1018,23 @@ spec:
               gateway:
                 description: Gateway service settings.
                 properties:
+                  alertManagerTokenSecretName:
+                    description: |-
+                      Name of a Secret (in this Kubernaut CR's namespace) containing a
+                      bearer token AlertManager presents when calling Gateway's webhook
+                      endpoint. The Secret must contain a "token" key holding a valid
+                      Kubernetes ServiceAccount token for an identity authorized to call
+                      this Gateway (bound to the generated gateway-signal-source
+                      ClusterRole -- see docs/security/credentials-and-tls.md).
+
+                      This is a bring-your-own credential, consistent with
+                      spec.postgresql.secretName/spec.llmProfiles[*].credentialsSecretName:
+                      the operator never mints or stores this token itself. When unset,
+                      the generated AlertmanagerConfig omits webhook authentication
+                      entirely (Gateway will reject unauthenticated calls) and the CR's
+                      ConditionAlertManagerAuthConfigured status condition explains why.
+                      See docs/installation/03-deploy.md "Configure AlertManager".
+                    type: string
                   config:
                     description: Gateway server and middleware configuration.
                     properties:
@@ -2394,6 +2411,29 @@ spec:
               docs/design/ADR-CRD-001-v1alpha2-redesign.md for the full rationale
               behind every diff from v1alpha1 (referenced as F1-F9 below).
             properties:
+              additionalClusterRoles:
+                description: |-
+                  AdditionalClusterRoles is an optional list of pre-existing ClusterRole
+                  names the operator binds to every component that performs
+                  owner-reference-chain resolution across ecosystem CRDs (Kubernaut
+                  Agent, Gateway, and EffectivenessMonitor) -- #277 -- generalized from
+                  v1alpha1's kubernautAgent-only additionalClusterRoleBindings, since
+                  none of the three components has a legitimate reason to see a
+                  different set of ecosystem CRDs than the others; they all resolve the
+                  same owner chains. Moved to top level (out of kubernautAgent) to
+                  reflect that it is no longer KA-specific.
+
+                  The operator only creates the ClusterRoleBinding(s); it never creates
+                  or modifies the referenced ClusterRole itself, so least-privilege
+                  stays entirely in the cluster administrator's hands -- see
+                  docs/security/threat-model.md. One ClusterRoleBinding per (component,
+                  ClusterRole name) pair is created; Gateway is skipped when
+                  spec.gateway.enabled=false.
+                items:
+                  type: string
+                maxItems: 64
+                type: array
+                x-kubernetes-list-type: set
               aiAnalysis:
                 description: |-
                   AIAnalysis controller configuration. Required (not just AIAnalysisSpec.Policy
@@ -2620,15 +2660,11 @@ spec:
                   fleet:
                     description: |-
                       Fleet overrides spec.fleet.oauth2.credentialsSecretRef for
-                      APIFrontend only (F1 -- also adds the Namespace override APIFrontend
-                      was missing in v1alpha1; only OAuth2CredentialsSecretRef existed
-                      there). Falls back to spec.fleet.* when unset.
+                      APIFrontend only (F1). Falls back to
+                      spec.fleet.oauth2.credentialsSecretRef when unset. AF's MCP Gateway
+                      CRD watch namespace always uses the shared
+                      spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
                     properties:
-                      namespace:
-                        description: |-
-                          Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
-                          Gateway CRD watch scope.
-                        type: string
                       oauth2CredentialsSecretRef:
                         description: |-
                           Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
@@ -2671,6 +2707,37 @@ spec:
                         - ERROR
                         type: string
                     type: object
+                  mcp:
+                    description: |-
+                      MCP configures AF's MCP tool-call timeout behavior. When unset,
+                      defaults match AF's own binary defaults (#258/#374).
+                    properties:
+                      sessionIdleTimeout:
+                        default: 30m
+                        description: |-
+                          Idle timeout before an MCP session is eligible for cleanup. Must be
+                          a valid Go duration string.
+                        type: string
+                      toolTimeout:
+                        default: 30s
+                        description: |-
+                          Default timeout applied to MCP tool calls without a per-tool
+                          override in ToolTimeouts. Must be a valid Go duration string.
+                        type: string
+                      toolTimeouts:
+                        additionalProperties:
+                          type: string
+                        default:
+                          kubernaut_await_session: 3m
+                          kubernaut_discover_workflows: 60s
+                          kubernaut_investigate: 15m
+                          kubernaut_watch: 15m
+                        description: |-
+                          Per-tool timeout overrides, keyed by MCP tool name. Tools not
+                          present as a key fall back to AF's own per-tool default for that
+                          tool, not to ToolTimeout above.
+                        type: object
+                    type: object
                   metricsPort:
                     description: |-
                       Override for the AF metrics port. Defaults to 9090 (or 9092 when
@@ -2706,6 +2773,19 @@ spec:
                       When set, the operator provisions persona-based tool ClusterRoles
                       and group-to-role ClusterRoleBindings instead of file-based RBAC.
                     properties:
+                      consoleAccessAuthorizationCheckEnabled:
+                        default: false
+                        description: |-
+                          ConsoleAccessAuthorizationCheckEnabled turns on AF's coarse-grained
+                          kubernaut.ai/console authorization check (kubernaut#1919) -- the same
+                          enforcement RoleBindings/ConsoleAccessGroups above configure. Defaults
+                          to false: this is a security-hardening opt-in, not a mandatory setting,
+                          so a zero-config CR deploys successfully and console access is
+                          unrestricted until an administrator explicitly enables the check after
+                          populating personas/consoleAccessGroups -- enabling it by default would
+                          make every install responsible for RBAC configuration before console
+                          login works at all.
+                        type: boolean
                       consoleAccessGroups:
                         description: |-
                           ConsoleAccessGroups are the OIDC groups granted the coarse-grained
@@ -2855,11 +2935,41 @@ spec:
                           auto-generates a hostname.
                         type: string
                     type: object
+                  session:
+                    description: |-
+                      Session configures AF's MCP/A2A session lifecycle. When unset,
+                      defaults match the operator's prior hardcoded behavior (#258).
+                    properties:
+                      disconnectTTL:
+                        default: 10m
+                        description: |-
+                          How long a disconnected session is kept before it becomes eligible
+                          for cleanup. Must be a valid Go duration string.
+                        type: string
+                      retentionTTL:
+                        default: 720h
+                        description: |-
+                          How long session state is retained after disconnect before
+                          permanent removal. Must be a valid Go duration string.
+                        type: string
+                    type: object
                   severityTriage:
                     description: |-
                       Independent LLM configuration for severity-triage's LLM fallback
                       tiers, distinct from API Frontend's main llmProfileRef connection.
                     properties:
+                      cacheTTLSeconds:
+                        default: 30
+                        description: Cache TTL in seconds for severity-triage query
+                          results (#258).
+                        type: integer
+                      llmConfidence:
+                        default: "0.7"
+                        description: |-
+                          Minimum LLM confidence threshold for severity-triage decisions,
+                          string-encoded to avoid controller-gen's "dangerous float" CRD
+                          portability restriction (mirrors AlignmentCheckLLMSpec.Temperature).
+                        type: string
                       llmEnabled:
                         default: true
                         description: |-
@@ -3094,6 +3204,33 @@ spec:
               dataStorage:
                 description: DataStorage service settings.
                 properties:
+                  database:
+                    description: |-
+                      Database connection-pool tuning for the DataStorage PostgreSQL
+                      connection. When unset, defaults match the operator's prior
+                      hardcoded behavior (#260).
+                    properties:
+                      connMaxIdleTime:
+                        default: 10m
+                        description: |-
+                          Maximum amount of time a connection may be idle before being
+                          closed. Must be a valid Go duration string.
+                        type: string
+                      connMaxLifetime:
+                        default: 1h
+                        description: |-
+                          Maximum amount of time a connection may be reused. Must be a valid
+                          Go duration string.
+                        type: string
+                      maxIdleConns:
+                        default: 20
+                        description: Maximum number of idle database connections.
+                        type: integer
+                      maxOpenConns:
+                        default: 100
+                        description: Maximum number of open database connections.
+                        type: integer
+                    type: object
                   endpointPropagationDelay:
                     default: 10s
                     description: |-
@@ -3205,6 +3342,22 @@ spec:
                           Go duration string.
                         type: string
                     type: object
+                  server:
+                    description: |-
+                      Server timeout tuning for the DataStorage HTTP server.
+                      When unset, defaults match the operator's prior hardcoded behavior (#260).
+                    properties:
+                      readTimeout:
+                        default: 30s
+                        description: HTTP server read timeout. Must be a valid Go
+                          duration string.
+                        type: string
+                      writeTimeout:
+                        default: 30s
+                        description: HTTP server write timeout. Must be a valid Go
+                          duration string.
+                        type: string
+                    type: object
                   signingCert:
                     description: |-
                       SigningCert configures the audit export signing certificate (FedRAMP AU-9).
@@ -3221,6 +3374,44 @@ spec:
                         type: string
                     required:
                     - secretName
+                    type: object
+                  telemetry:
+                    description: OpenTelemetry distributed-trace export configuration.
+                      Off by default.
+                    properties:
+                      endpoint:
+                        description: |-
+                          OTLP collector endpoint (e.g. "otel-collector.observability.svc:4317").
+                          Tracing is disabled while this is empty.
+                        type: string
+                      logSink:
+                        default: false
+                        description: |-
+                          Mirror trace spans into the component's structured log output in
+                          addition to exporting them via OTLP. Has no effect while Endpoint is
+                          empty.
+                        type: boolean
+                      tls:
+                        description: TLS configures the connection to the OTLP collector.
+                        properties:
+                          caFile:
+                            description: |-
+                              CA bundle path for a self-signed or private collector certificate.
+                              Empty trusts the system CA pool.
+                            type: string
+                          certFile:
+                            description: Optional mTLS client certificate path.
+                            type: string
+                          enabled:
+                            default: false
+                            description: |-
+                              Use TLS when connecting to the OTLP collector. False (default) uses
+                              plain HTTP/gRPC, matching most in-cluster collector deployments.
+                            type: boolean
+                          keyFile:
+                            description: Optional mTLS client key path.
+                            type: string
+                        type: object
                     type: object
                 type: object
               effectivenessMonitor:
@@ -3239,16 +3430,12 @@ spec:
                     type: object
                   fleet:
                     description: |-
-                      Fleet overrides spec.fleet.oauth2.credentialsSecretRef/mcpGatewayNamespace
-                      for EffectivenessMonitor only (F1 -- also adds the Namespace override
-                      EM was missing in v1alpha1; only OAuth2CredentialsSecretRef existed
-                      there). Falls back to spec.fleet.* when unset.
+                      Fleet overrides spec.fleet.oauth2.credentialsSecretRef for
+                      EffectivenessMonitor only (F1). Falls back to
+                      spec.fleet.oauth2.credentialsSecretRef when unset. EM's MCP Gateway
+                      CRD watch namespace always uses the shared
+                      spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
                     properties:
-                      namespace:
-                        description: |-
-                          Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
-                          Gateway CRD watch scope.
-                        type: string
                       oauth2CredentialsSecretRef:
                         description: |-
                           Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
@@ -3447,17 +3634,14 @@ spec:
                     type: boolean
                   fleet:
                     description: |-
-                      Fleet overrides for FMC's own MCP Gateway CRD watch namespace and/or
+                      Fleet overrides spec.fleet.oauth2.credentialsSecretRef for FMC's own
                       OAuth2 client credentials (F1 -- collapses v1alpha1's bespoke
-                      MCPGatewayNamespace/FleetOAuth2CredentialsSecretRef pair into the
-                      shared FleetOverrideSpec type used by every other fleet-aware
-                      component). Every field falls back to spec.fleet.* when unset.
+                      FleetOAuth2CredentialsSecretRef field into the shared
+                      FleetOverrideSpec type used by every other fleet-aware component).
+                      Falls back to spec.fleet.oauth2.credentialsSecretRef when unset. FMC's
+                      MCP Gateway CRD watch namespace always uses the shared
+                      spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
                     properties:
-                      namespace:
-                        description: |-
-                          Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
-                          Gateway CRD watch scope.
-                        type: string
                       oauth2CredentialsSecretRef:
                         description: |-
                           Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
@@ -3559,6 +3743,23 @@ spec:
               gateway:
                 description: Gateway service settings.
                 properties:
+                  alertManagerTokenSecretName:
+                    description: |-
+                      Name of a Secret (in this Kubernaut CR's namespace) containing a
+                      bearer token AlertManager presents when calling Gateway's webhook
+                      endpoint. The Secret must contain a "token" key holding a valid
+                      Kubernetes ServiceAccount token for an identity authorized to call
+                      this Gateway (bound to the generated gateway-signal-source
+                      ClusterRole -- see docs/security/credentials-and-tls.md).
+
+                      This is a bring-your-own credential, consistent with
+                      spec.postgresql.secretName/spec.llmProfiles[*].credentialsSecretName:
+                      the operator never mints or stores this token itself. When unset,
+                      the generated AlertmanagerConfig omits webhook authentication
+                      entirely (Gateway will reject unauthenticated calls) and the CR's
+                      ConditionAlertManagerAuthConfigured status condition explains why.
+                      See docs/installation/03-deploy.md "Configure AlertManager".
+                    type: string
                   config:
                     description: Gateway server and middleware configuration.
                     properties:
@@ -3600,6 +3801,96 @@ spec:
                         description: 'Timeout for outbound K8s API requests. Default:
                           "15s".'
                         type: string
+                      retry:
+                        description: |-
+                          Retry tuning for Gateway's DataStorage write path.
+                          When unset, defaults match the operator's prior hardcoded behavior (#259).
+                        properties:
+                          initialBackoff:
+                            default: 100ms
+                            description: Initial backoff before the first retry. Must
+                              be a valid Go duration string.
+                            type: string
+                          maxAttempts:
+                            default: 3
+                            description: Maximum number of retry attempts.
+                            type: integer
+                          maxBackoff:
+                            default: 5s
+                            description: Maximum backoff between retries. Must be
+                              a valid Go duration string.
+                            type: string
+                        type: object
+                      server:
+                        description: |-
+                          Server tuning (concurrency and timeouts) for the Gateway HTTP server.
+                          When unset, defaults match the operator's prior hardcoded behavior (#259).
+                        properties:
+                          idleTimeout:
+                            default: 120s
+                            description: HTTP server idle timeout. Must be a valid
+                              Go duration string.
+                            type: string
+                          maxConcurrentRequests:
+                            default: 100
+                            description: Maximum number of concurrent in-flight requests.
+                            type: integer
+                          readTimeout:
+                            default: 3600s
+                            description: |-
+                              HTTP server read timeout. Must be a valid Go duration string.
+                              Defaults to the operator's prior hardcoded value (3600s), not
+                              upstream's chart default (30s), to avoid a behavior change for
+                              existing CRs.
+                            type: string
+                          writeTimeout:
+                            default: 3600s
+                            description: |-
+                              HTTP server write timeout. Must be a valid Go duration string.
+                              Defaults to the operator's prior hardcoded value (3600s), not
+                              upstream's chart default (30s), to avoid a behavior change for
+                              existing CRs.
+                            type: string
+                        type: object
+                      telemetry:
+                        description: OpenTelemetry distributed-trace export configuration.
+                          Off by default.
+                        properties:
+                          endpoint:
+                            description: |-
+                              OTLP collector endpoint (e.g. "otel-collector.observability.svc:4317").
+                              Tracing is disabled while this is empty.
+                            type: string
+                          logSink:
+                            default: false
+                            description: |-
+                              Mirror trace spans into the component's structured log output in
+                              addition to exporting them via OTLP. Has no effect while Endpoint is
+                              empty.
+                            type: boolean
+                          tls:
+                            description: TLS configures the connection to the OTLP
+                              collector.
+                            properties:
+                              caFile:
+                                description: |-
+                                  CA bundle path for a self-signed or private collector certificate.
+                                  Empty trusts the system CA pool.
+                                type: string
+                              certFile:
+                                description: Optional mTLS client certificate path.
+                                type: string
+                              enabled:
+                                default: false
+                                description: |-
+                                  Use TLS when connecting to the OTLP collector. False (default) uses
+                                  plain HTTP/gRPC, matching most in-cluster collector deployments.
+                                type: boolean
+                              keyFile:
+                                description: Optional mTLS client key path.
+                                type: string
+                            type: object
+                        type: object
                       trustedProxyCIDRs:
                         description: |-
                           Trusted proxy CIDRs for X-Forwarded-For / RealIP extraction.
@@ -3619,13 +3910,8 @@ spec:
                       Fleet overrides spec.fleet.oauth2.credentialsSecretRef for Gateway
                       only (F1). Use when Gateway must authenticate to the MCP Gateway as
                       a different OAuth2 client than other fleet-aware components. Falls
-                      back to spec.fleet.* when unset.
+                      back to spec.fleet.oauth2.credentialsSecretRef when unset.
                     properties:
-                      namespace:
-                        description: |-
-                          Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
-                          Gateway CRD watch scope.
-                        type: string
                       oauth2CredentialsSecretRef:
                         description: |-
                           Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
@@ -3765,15 +4051,6 @@ spec:
                 description: Kubernaut Agent (KA) -- LLM-powered investigation and
                   analysis service.
                 properties:
-                  additionalClusterRoleBindings:
-                    description: |-
-                      AdditionalClusterRoleBindings is an optional list of pre-existing
-                      ClusterRole names to bind to the Kubernaut Agent ServiceAccount.
-                    items:
-                      type: string
-                    maxItems: 64
-                    type: array
-                    x-kubernetes-list-type: set
                   alignmentCheck:
                     description: Alignment check (shadow agent) configuration.
                     properties:
@@ -3802,10 +4079,32 @@ spec:
                   audit:
                     description: Audit logging configuration.
                     properties:
+                      batchSize:
+                        default: 50
+                        description: Maximum number of audit events flushed to Data
+                          Storage per batch.
+                        minimum: 1
+                        type: integer
+                      bufferSize:
+                        default: 10000
+                        description: |-
+                          Size of the in-memory audit event buffer. Events are dropped once the
+                          buffer is full and Data Storage cannot keep up with the flush rate.
+                        minimum: 1
+                        type: integer
                       enabled:
                         default: true
                         description: Whether audit logging is enabled.
                         type: boolean
+                      flushIntervalSeconds:
+                        default: "1"
+                        description: |-
+                          How often buffered audit events are flushed to Data Storage, in
+                          seconds (e.g. "0.5" for 500ms). Serialized as string to avoid CRD
+                          float portability issues (see AlignmentCheckLLMSpec.Temperature).
+                          Lower values reduce the audit-visibility gap after a remediation
+                          action at the cost of more frequent Data Storage writes.
+                        type: string
                     type: object
                   fleet:
                     description: |-
@@ -3813,13 +4112,8 @@ spec:
                       Kubernaut Agent only (F1). Use when KA must authenticate to the MCP
                       Gateway (for fleet tool discovery, ADR-068 decision #11) as a
                       different OAuth2 client than other fleet-aware components. Falls
-                      back to spec.fleet.* when unset.
+                      back to spec.fleet.oauth2.credentialsSecretRef when unset.
                     properties:
-                      namespace:
-                        description: |-
-                          Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
-                          Gateway CRD watch scope.
-                        type: string
                       oauth2CredentialsSecretRef:
                         description: |-
                           Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
@@ -4055,6 +4349,44 @@ spec:
                         description: Token threshold above which tool output is summarized.
                         type: integer
                     type: object
+                  telemetry:
+                    description: OpenTelemetry distributed-trace export configuration.
+                      Off by default.
+                    properties:
+                      endpoint:
+                        description: |-
+                          OTLP collector endpoint (e.g. "otel-collector.observability.svc:4317").
+                          Tracing is disabled while this is empty.
+                        type: string
+                      logSink:
+                        default: false
+                        description: |-
+                          Mirror trace spans into the component's structured log output in
+                          addition to exporting them via OTLP. Has no effect while Endpoint is
+                          empty.
+                        type: boolean
+                      tls:
+                        description: TLS configures the connection to the OTLP collector.
+                        properties:
+                          caFile:
+                            description: |-
+                              CA bundle path for a self-signed or private collector certificate.
+                              Empty trusts the system CA pool.
+                            type: string
+                          certFile:
+                            description: Optional mTLS client certificate path.
+                            type: string
+                          enabled:
+                            default: false
+                            description: |-
+                              Use TLS when connecting to the OTLP collector. False (default) uses
+                              plain HTTP/gRPC, matching most in-cluster collector deployments.
+                            type: boolean
+                          keyFile:
+                            description: Optional mTLS client key path.
+                            type: string
+                        type: object
+                    type: object
                 type: object
               llmProfiles:
                 additionalProperties:
@@ -4219,6 +4551,28 @@ spec:
                   OCP's built-in Thanos Querier at a well-known in-cluster URL,
                   auto-detected, no user action needed.
                 properties:
+                  alertManager:
+                    description: |-
+                      AlertManagerSpec configures the AlertManager endpoint used by
+                      EffectivenessMonitor and KubernautAgent alert correlation (#298 --
+                      mirrors PrometheusSpec's shape and defaults for a consistent DX).
+                    properties:
+                      enabled:
+                        default: true
+                        description: |-
+                          Whether AlertManager-backed features (EM assessment, KA alert
+                          correlation) are active. Defaults to true (auto-detected OCP
+                          monitoring stack).
+                        type: boolean
+                      tlsCaFile:
+                        description: Path to a CA certificate file for TLS to the
+                          AlertManager endpoint.
+                        type: string
+                      url:
+                        description: AlertManager URL. Defaults to the OCP AlertManager
+                          route when empty.
+                        type: string
+                    type: object
                   prometheus:
                     description: PrometheusSpec configures the Prometheus/Thanos Querier
                       endpoint.
@@ -4863,14 +5217,9 @@ spec:
                       Fleet overrides spec.fleet.oauth2.credentialsSecretRef for
                       RemediationOrchestrator only (F1). Use when RemediationOrchestrator
                       must authenticate to the MCP Gateway as a different OAuth2 client
-                      than other fleet-aware components. Falls back to spec.fleet.* when
-                      unset.
+                      than other fleet-aware components. Falls back to
+                      spec.fleet.oauth2.credentialsSecretRef when unset.
                     properties:
-                      namespace:
-                        description: |-
-                          Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
-                          Gateway CRD watch scope.
-                        type: string
                       oauth2CredentialsSecretRef:
                         description: |-
                           Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
@@ -5042,18 +5391,15 @@ spec:
                 properties:
                   fleet:
                     description: |-
-                      Fleet overrides spec.fleet.mcpGatewayNamespace/oauth2.credentialsSecretRef
-                      for SignalProcessing's own ClusterRegistry watch (used for cluster
-                      classification labels, BR-FLEET-003) and MCP Gateway authentication
-                      (F1 -- collapses v1alpha1's separate MCPGatewayNamespace/
-                      FleetOAuth2CredentialsSecretRef fields into the shared
-                      FleetOverrideSpec type used by every other fleet-aware component).
+                      Fleet overrides spec.fleet.oauth2.credentialsSecretRef for
+                      SignalProcessing's own MCP Gateway authentication (F1 -- collapses
+                      v1alpha1's separate FleetOAuth2CredentialsSecretRef field into the
+                      shared FleetOverrideSpec type used by every other fleet-aware
+                      component). Falls back to spec.fleet.oauth2.credentialsSecretRef when
+                      unset. SignalProcessing's ClusterRegistry watch (used for cluster
+                      classification labels, BR-FLEET-003) always uses the shared
+                      spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
                     properties:
-                      namespace:
-                        description: |-
-                          Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
-                          Gateway CRD watch scope.
-                        type: string
                       oauth2CredentialsSecretRef:
                         description: |-
                           Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
@@ -5276,24 +5622,24 @@ spec:
                     type: string
                   fleet:
                     description: |-
-                      Fleet overrides spec.fleet.oauth2.credentialsSecretRef/mcpGatewayNamespace
-                      for WorkflowExecution's own fleet-aware operations (F1 -- entirely new
-                      in v1alpha2; v1alpha1 had no Fleet field on WorkflowExecutionSpec at
-                      all, which blocked #235/BR-FLEET-054). Falls back to spec.fleet.*
-                      when unset.
+                      Fleet configures WorkflowExecution's own write-scoped MCP Gateway
+                      OAuth2 client (F1/#235, BR-FLEET-054, ADR-068). Unlike every other
+                      fleet-aware component's FleetOverrideSpec, WorkflowExecutionFleetSpec
+                      does NOT fall back to spec.fleet.oauth2.credentialsSecretRef -- WE is
+                      the only fleet-integration service that calls MCP write tools
+                      (resources_create_or_update/resources_delete), so it must never share
+                      the read-only credential used by Gateway/RemediationOrchestrator/
+                      SignalProcessing/APIFrontend/EffectivenessMonitor/KubernautAgent/
+                      FleetMetadataCache (least-privilege). See
+                      docs/design/DD-235-workflowexecution-fleet-oauth2-no-fallback.md.
                     properties:
-                      namespace:
-                        description: |-
-                          Overrides spec.fleet.mcpGatewayNamespace for this component's own MCP
-                          Gateway CRD watch scope.
-                        type: string
                       oauth2CredentialsSecretRef:
                         description: |-
-                          Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
-                          Use when this component must authenticate to the MCP Gateway as a
-                          different OAuth2 client than other fleet-aware components (e.g. a
-                          federated Keycloak issuing distinct per-service client registrations
-                          against the same shared spec.fleet.oauth2.tokenURL).
+                          OAuth2CredentialsSecretRef names the Secret holding WE's own
+                          write-scoped OAuth2 client credentials (client-id/client-secret) for
+                          authenticating to the MCP Gateway's write tools. Required when
+                          spec.fleet.oauth2.enabled is true -- has no fallback to
+                          spec.fleet.oauth2.credentialsSecretRef.
                         type: string
                     type: object
                   logging:

@@ -1,6 +1,15 @@
 ## Append samples of your project ##
+# v1alpha2_kubernaut_minimal.yaml is intentionally NOT listed here: it
+# shares the same apiVersion/kind/name/namespace (the "kubernaut" singleton)
+# as v1alpha2_kubernaut.yaml below, so kustomize's resource accumulation
+# treats them as the same resource ID and errors with "may not add resource
+# with an already registered id" -- this broke `make bundle` (used by
+# .github/workflows/release.yml) once both were listed together. The
+# minimal sample is read directly by path (docs/installation/00-quickstart.md,
+# internal/resources/sample_cr_test.go, internal/controller/quickstart_sample_cr_test.go),
+# never via `kubectl apply -k` or OLM's alm-examples, so omitting it from
+# this kustomization has no effect on its actual use.
 resources:
 - v1alpha1_kubernaut.yaml
 - v1alpha2_kubernaut.yaml
-- v1alpha2_kubernaut_minimal.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
