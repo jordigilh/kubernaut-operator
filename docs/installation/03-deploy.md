@@ -52,7 +52,7 @@ Apply the CR in the namespace where your secrets and ConfigMaps were created. Ad
 
 ```bash
 oc apply -f - <<EOF
-apiVersion: kubernaut.ai/v1alpha1
+apiVersion: kubernaut.ai/v1alpha2
 kind: Kubernaut
 metadata:
   name: kubernaut
@@ -91,9 +91,7 @@ spec:
     #   enabled: false
     #   timeout: "10s"
     #   maxStepTokens: 500
-    #   llm:                               # optional separate LLM for alignment
-    #     provider: openai
-    #     model: gpt-4o-mini
+    #   llmProfileRef: primary             # optional: use a different profile for alignment (defaults to the same profile as llmProfileRef above)
     # safety:                              # agent safety controls
     #   sanitization:
     #     injectionPatternsEnabled: true    # detect prompt injection patterns
@@ -105,12 +103,12 @@ spec:
     # summarizer:                          # tool output summarization
     #   threshold: 8000                    # token count to trigger summarization
     #   maxToolOutputSize: 100000          # max tool output size in bytes
-    # fleetOAuth2CredentialsSecretRef: ka-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for KubernautAgent only -- used when fleet.enabled: true, for its list_clusters/list_tools_for_cluster MCP tools (ADR-068 decision #11)
+    # fleet:
+    #   oauth2CredentialsSecretRef: ka-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for KubernautAgent only -- used when fleet.enabled: true, for its list_clusters/list_tools_for_cluster MCP tools (ADR-068 decision #11)
 
-  # --- NetworkPolicies (default: disabled) ---
+  # --- NetworkPolicies (always created, F3 -- no enabled toggle; tune only) ---
   # networkPolicies:
-  #   enabled: true
-  #     - "openshift-ingress"
+  #   apiServerCIDR: "10.0.0.1/32"         # override when default API server CIDR detection doesn't resolve correctly
 
   # --- Policies (from Step 2: Configure Services) ---
   aiAnalysis:
@@ -122,8 +120,8 @@ spec:
       configMapName: signalprocessing-policy
     # proactiveSignalMappings:
     #   configMapName: proactive-signal-mappings  # uncomment to enable proactive mode
-    # mcpGatewayNamespace: managed-clusters   # optional; overrides fleet.mcpGatewayNamespace for SignalProcessing only -- used when fleet.enabled: true, for cluster-label classification via the MCP Gateway CRD
-    # fleetOAuth2CredentialsSecretRef: sp-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for SignalProcessing only
+    # fleet:
+    #   oauth2CredentialsSecretRef: sp-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for SignalProcessing only
 
   # --- Notifications (from Step 2: Configure Services) ---
   notification:
@@ -150,7 +148,8 @@ spec:
       roleBindings:
         - role: sre
           groups: ["platform-engineering"]
-    # fleetOAuth2CredentialsSecretRef: af-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for APIFrontend only -- used when fleet.enabled: true, for its list_clusters MCP tool
+    # fleet:
+    #   oauth2CredentialsSecretRef: af-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for APIFrontend only -- used when fleet.enabled: true, for its list_clusters MCP tool
 
   # --- Gateway tuning (optional) ---
   gateway:
@@ -163,7 +162,8 @@ spec:
     #     - "10.128.0.0/14"
     #   deduplicationCooldown: "5m"     # dedup window for identical signals
     #   k8sRequestTimeout: "15s"        # timeout for K8s API calls
-    # fleetOAuth2CredentialsSecretRef: gateway-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for Gateway only
+    # fleet:
+    #   oauth2CredentialsSecretRef: gateway-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for Gateway only
 
   # --- Fleet federation (optional, ADR-068) ---
   # Points Gateway/RemediationOrchestrator (scope-checking),
@@ -188,7 +188,7 @@ spec:
   #   tokenSecretName: acm-search-token    # optional; Secret key: token (typically required for backend: acm)
   #   mcpGatewayEndpoint: "https://mcp-gateway.example.com/sse"
   #   mcpGatewayType: eaigw                # or: kuadrant
-  #   mcpGatewayNamespace: managed-clusters   # optional shared fallback; see FMC/SignalProcessing notes below
+  #   mcpGatewayNamespace: managed-clusters   # optional; scopes the MCP Gateway CRD watch (and its RBAC) to one namespace instead of cluster-wide, shared by every fleet-aware component (DD-362 -- no per-component override)
   #   oauth2:
   #     enabled: true
   #     tokenURL: "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token"
@@ -197,24 +197,15 @@ spec:
   #
   # A federated IdP (e.g. Keycloak) can issue distinct per-service OAuth2
   # client registrations against the same tokenURL above — set
-  # gateway.fleetOAuth2CredentialsSecretRef,
-  # remediationOrchestrator.fleetOAuth2CredentialsSecretRef,
-  # signalProcessing.fleetOAuth2CredentialsSecretRef,
-  # apiFrontend.fleetOAuth2CredentialsSecretRef,
-  # effectivenessMonitor.fleetOAuth2CredentialsSecretRef, and/or
-  # kubernautAgent.fleetOAuth2CredentialsSecretRef to override
+  # gateway.fleet.oauth2CredentialsSecretRef,
+  # remediationOrchestrator.fleet.oauth2CredentialsSecretRef,
+  # signalProcessing.fleet.oauth2CredentialsSecretRef,
+  # apiFrontend.fleet.oauth2CredentialsSecretRef,
+  # effectivenessMonitor.fleet.oauth2CredentialsSecretRef, and/or
+  # kubernautAgent.fleet.oauth2CredentialsSecretRef to override
   # fleet.oauth2.credentialsSecretRef for that component only. Each falls
   # back to the shared value when unset, so setting the shared field alone
   # is enough when every component uses the same OAuth2 client.
-  #
-  # mcpGatewayNamespace scopes the MCP Gateway CRD watch — and the RBAC
-  # backing it — to one namespace instead of cluster-wide, for whichever of
-  # FleetMetadataCache/SignalProcessing enable it (their upstream binaries
-  # support namespace-scoped watches; the operator grants a namespace Role/
-  # RoleBinding instead of a cluster-scoped ClusterRole once it resolves).
-  # APIFrontend/EffectivenessMonitor always watch cluster-wide today — their
-  # upstream ClusterRegistry construction has no namespace knob yet — so
-  # they ignore this field and always need a cluster-scoped ClusterRole.
 
   # --- Fleet Metadata Cache (FMC) — optional, ADR-068 ---
   # Deploys the operator-managed FMC service, which polls managed clusters
@@ -231,8 +222,8 @@ spec:
   #
   # fleetMetadataCache:
   #   enabled: false
-  #   mcpGatewayNamespace: managed-clusters   # optional; overrides fleet.mcpGatewayNamespace for FMC only
-  #   fleetOAuth2CredentialsSecretRef: fmc-oauth2-creds   # optional; overrides fleet.oauth2.credentialsSecretRef for FMC only
+  #   fleet:
+  #     oauth2CredentialsSecretRef: fmc-oauth2-creds   # optional; overrides fleet.oauth2.credentialsSecretRef for FMC only
   #   syncInterval: "30s"
   #   keyTTL: "45s"
   #   logging:
@@ -242,7 +233,8 @@ spec:
   remediationOrchestrator:
     # dryRun: false                     # enable dry-run mode (plans but does not execute)
     # dryRunHoldPeriod: "1h"            # how long to hold dry-run plans before expiry
-    # fleetOAuth2CredentialsSecretRef: ro-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for RemediationOrchestrator only
+    # fleet:
+    #   oauth2CredentialsSecretRef: ro-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for RemediationOrchestrator only
     # logging:
     #   level: info
     # timeouts:
@@ -264,7 +256,8 @@ spec:
 
   # --- Effectiveness Monitor tuning (optional) ---
   effectivenessMonitor:
-    # fleetOAuth2CredentialsSecretRef: em-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for EffectivenessMonitor only -- used when fleet.enabled: true, for remote-cluster effectiveness reads
+    # fleet:
+    #   oauth2CredentialsSecretRef: em-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for EffectivenessMonitor only -- used when fleet.enabled: true, for remote-cluster effectiveness reads
     # logging:
     #   level: info
 
