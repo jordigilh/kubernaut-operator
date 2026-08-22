@@ -1433,6 +1433,63 @@ type GatewayConfigSpec struct {
 	// OpenTelemetry distributed-trace export configuration. Off by default.
 	// +optional
 	Telemetry TelemetrySpec `json:"telemetry,omitempty"`
+
+	// Server tuning (concurrency and timeouts) for the Gateway HTTP server.
+	// When unset, defaults match the operator's prior hardcoded behavior (#259).
+	// +optional
+	Server *GatewayServerSpec `json:"server,omitempty"`
+
+	// Retry tuning for Gateway's DataStorage write path.
+	// When unset, defaults match the operator's prior hardcoded behavior (#259).
+	// +optional
+	Retry *GatewayRetrySpec `json:"retry,omitempty"`
+}
+
+// GatewayServerSpec configures Gateway HTTP server concurrency and timeouts.
+type GatewayServerSpec struct {
+	// Maximum number of concurrent in-flight requests.
+	// +kubebuilder:default=100
+	// +optional
+	MaxConcurrentRequests *int `json:"maxConcurrentRequests,omitempty"`
+
+	// HTTP server read timeout. Must be a valid Go duration string.
+	// Defaults to the operator's prior hardcoded value (3600s), not
+	// upstream's chart default (30s), to avoid a behavior change for
+	// existing CRs.
+	// +kubebuilder:default="3600s"
+	// +optional
+	ReadTimeout string `json:"readTimeout,omitempty"`
+
+	// HTTP server write timeout. Must be a valid Go duration string.
+	// Defaults to the operator's prior hardcoded value (3600s), not
+	// upstream's chart default (30s), to avoid a behavior change for
+	// existing CRs.
+	// +kubebuilder:default="3600s"
+	// +optional
+	WriteTimeout string `json:"writeTimeout,omitempty"`
+
+	// HTTP server idle timeout. Must be a valid Go duration string.
+	// +kubebuilder:default="120s"
+	// +optional
+	IdleTimeout string `json:"idleTimeout,omitempty"`
+}
+
+// GatewayRetrySpec configures Gateway's DataStorage write-path retry behavior.
+type GatewayRetrySpec struct {
+	// Maximum number of retry attempts.
+	// +kubebuilder:default=3
+	// +optional
+	MaxAttempts *int `json:"maxAttempts,omitempty"`
+
+	// Initial backoff before the first retry. Must be a valid Go duration string.
+	// +kubebuilder:default="100ms"
+	// +optional
+	InitialBackoff string `json:"initialBackoff,omitempty"`
+
+	// Maximum backoff between retries. Must be a valid Go duration string.
+	// +kubebuilder:default="5s"
+	// +optional
+	MaxBackoff string `json:"maxBackoff,omitempty"`
 }
 
 // GatewayCORSSpec configures CORS for the Gateway HTTP API.
@@ -1631,6 +1688,59 @@ type APIFrontendSpec struct {
 	// spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
+
+	// Session configures AF's MCP/A2A session lifecycle. When unset,
+	// defaults match the operator's prior hardcoded behavior (#258).
+	// +optional
+	Session *APIFrontendSessionSpec `json:"session,omitempty"`
+
+	// MCP configures AF's MCP tool-call timeout behavior. When unset,
+	// defaults match AF's own binary defaults (#258/#374).
+	// +optional
+	MCP *APIFrontendMCPSpec `json:"mcp,omitempty"`
+}
+
+// APIFrontendSessionSpec configures AF's MCP/A2A session lifecycle.
+type APIFrontendSessionSpec struct {
+	// How long a disconnected session is kept before it becomes eligible
+	// for cleanup. Must be a valid Go duration string.
+	// +kubebuilder:default="10m"
+	// +optional
+	DisconnectTTL string `json:"disconnectTTL,omitempty"`
+
+	// How long session state is retained after disconnect before
+	// permanent removal. Must be a valid Go duration string.
+	// +kubebuilder:default="720h"
+	// +optional
+	RetentionTTL string `json:"retentionTTL,omitempty"`
+}
+
+// APIFrontendMCPSpec configures AF's MCP tool-call timeout behavior.
+// Defaults match AF's own binary defaults (pkg/apifrontend/config.DefaultConfig())
+// so that, whether or not the operator renders these keys, the effective
+// timeouts are identical -- the operator's previous hand-maintained copy of
+// these values silently drifted from AF's binary defaults when AF added new
+// tools (#374); making the CRD the single source of truth closes that drift
+// risk permanently.
+type APIFrontendMCPSpec struct {
+	// Idle timeout before an MCP session is eligible for cleanup. Must be
+	// a valid Go duration string.
+	// +kubebuilder:default="30m"
+	// +optional
+	SessionIdleTimeout string `json:"sessionIdleTimeout,omitempty"`
+
+	// Default timeout applied to MCP tool calls without a per-tool
+	// override in ToolTimeouts. Must be a valid Go duration string.
+	// +kubebuilder:default="30s"
+	// +optional
+	ToolTimeout string `json:"toolTimeout,omitempty"`
+
+	// Per-tool timeout overrides, keyed by MCP tool name. Tools not
+	// present as a key fall back to AF's own per-tool default for that
+	// tool, not to ToolTimeout above.
+	// +kubebuilder:default={"kubernaut_investigate":"15m","kubernaut_await_session":"3m","kubernaut_watch":"15m","kubernaut_discover_workflows":"60s"}
+	// +optional
+	ToolTimeouts map[string]string `json:"toolTimeouts,omitempty"`
 }
 
 // APIFrontendRBACSpec configures SAR-based tool authorization for the API Frontend.
@@ -1780,6 +1890,18 @@ type APIFrontendSeverityTriageSpec struct {
 	// +kubebuilder:default=true
 	// +optional
 	LLMEnabled *bool `json:"llmEnabled,omitempty"`
+
+	// Cache TTL in seconds for severity-triage query results (#258).
+	// +kubebuilder:default=30
+	// +optional
+	CacheTTLSeconds *int `json:"cacheTTLSeconds,omitempty"`
+
+	// Minimum LLM confidence threshold for severity-triage decisions,
+	// string-encoded to avoid controller-gen's "dangerous float" CRD
+	// portability restriction (mirrors AlignmentCheckLLMSpec.Temperature).
+	// +kubebuilder:default="0.7"
+	// +optional
+	LLMConfidence string `json:"llmConfidence,omitempty"`
 }
 
 // LLMTriageEnabled returns true when LLM-based severity-triage tiers should
@@ -1857,6 +1979,55 @@ type DataStorageSpec struct {
 	// OpenTelemetry distributed-trace export configuration. Off by default.
 	// +optional
 	Telemetry TelemetrySpec `json:"telemetry,omitempty"`
+
+	// Database connection-pool tuning for the DataStorage PostgreSQL
+	// connection. When unset, defaults match the operator's prior
+	// hardcoded behavior (#260).
+	// +optional
+	Database *DataStorageDatabaseSpec `json:"database,omitempty"`
+
+	// Server timeout tuning for the DataStorage HTTP server.
+	// When unset, defaults match the operator's prior hardcoded behavior (#260).
+	// +optional
+	Server *DataStorageServerSpec `json:"server,omitempty"`
+}
+
+// DataStorageDatabaseSpec configures DataStorage's PostgreSQL connection pool.
+type DataStorageDatabaseSpec struct {
+	// Maximum number of open database connections.
+	// +kubebuilder:default=100
+	// +optional
+	MaxOpenConns *int `json:"maxOpenConns,omitempty"`
+
+	// Maximum number of idle database connections.
+	// +kubebuilder:default=20
+	// +optional
+	MaxIdleConns *int `json:"maxIdleConns,omitempty"`
+
+	// Maximum amount of time a connection may be reused. Must be a valid
+	// Go duration string.
+	// +kubebuilder:default="1h"
+	// +optional
+	ConnMaxLifetime string `json:"connMaxLifetime,omitempty"`
+
+	// Maximum amount of time a connection may be idle before being
+	// closed. Must be a valid Go duration string.
+	// +kubebuilder:default="10m"
+	// +optional
+	ConnMaxIdleTime string `json:"connMaxIdleTime,omitempty"`
+}
+
+// DataStorageServerSpec configures DataStorage's HTTP server timeouts.
+type DataStorageServerSpec struct {
+	// HTTP server read timeout. Must be a valid Go duration string.
+	// +kubebuilder:default="30s"
+	// +optional
+	ReadTimeout string `json:"readTimeout,omitempty"`
+
+	// HTTP server write timeout. Must be a valid Go duration string.
+	// +kubebuilder:default="30s"
+	// +optional
+	WriteTimeout string `json:"writeTimeout,omitempty"`
 }
 
 // SigningCertSpec configures the audit export signing certificate.

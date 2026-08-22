@@ -91,6 +91,43 @@ type gatewayRetryYAML struct {
 	MaxBackoff     string `json:"maxBackoff" yaml:"maxBackoff"`
 }
 
+// gatewayServerConfig builds server.* from spec.gateway.config.server
+// (#259), defaulting to the operator's prior hardcoded values.
+// readTimeout/writeTimeout intentionally default to 3600s, not upstream's
+// chart default of 30s, to avoid a behavior change for existing CRs.
+func gatewayServerConfig(knV2 *kubernautv1alpha2.Kubernaut, gwCfg *kubernautv1alpha1.GatewayConfigSpec) gatewayServerYAML {
+	s := gatewayServerYAML{
+		ListenAddr:            ":8443",
+		HealthAddr:            ":8081",
+		MetricsAddr:           ":9090",
+		MaxConcurrentRequests: 100,
+		ReadTimeout:           "3600s",
+		WriteTimeout:          "3600s",
+		IdleTimeout:           "120s",
+		K8sRequestTimeout:     withDefault(gwCfg.K8sRequestTimeout, "15s"),
+		TLS:                   tlsConfigYAML{CertDir: InterServiceTLSCertDir},
+	}
+	if srv := knV2.Spec.Gateway.Config.Server; srv != nil {
+		s.MaxConcurrentRequests = intPtrDefault(srv.MaxConcurrentRequests, s.MaxConcurrentRequests)
+		s.ReadTimeout = withDefault(srv.ReadTimeout, s.ReadTimeout)
+		s.WriteTimeout = withDefault(srv.WriteTimeout, s.WriteTimeout)
+		s.IdleTimeout = withDefault(srv.IdleTimeout, s.IdleTimeout)
+	}
+	return s
+}
+
+// gatewayRetryConfig builds processing.retry.* from spec.gateway.config.retry
+// (#259), defaulting to the operator's prior hardcoded values.
+func gatewayRetryConfig(knV2 *kubernautv1alpha2.Kubernaut) gatewayRetryYAML {
+	r := gatewayRetryYAML{MaxAttempts: 3, InitialBackoff: "100ms", MaxBackoff: "5s"}
+	if retry := knV2.Spec.Gateway.Config.Retry; retry != nil {
+		r.MaxAttempts = intPtrDefault(retry.MaxAttempts, r.MaxAttempts)
+		r.InitialBackoff = withDefault(retry.InitialBackoff, r.InitialBackoff)
+		r.MaxBackoff = withDefault(retry.MaxBackoff, r.MaxBackoff)
+	}
+	return r
+}
+
 type gatewayDatastorageYAML struct {
 	URL       string                `json:"url" yaml:"url"`
 	HealthURL string                `json:"healthUrl" yaml:"healthUrl"`
@@ -1102,19 +1139,9 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.K
 			Deduplication: gatewayDeduplicationYAML{
 				CooldownPeriod: withDefault(gwCfg.DeduplicationCooldown, "5m"),
 			},
-			Retry: gatewayRetryYAML{MaxAttempts: 3, InitialBackoff: "100ms", MaxBackoff: "5s"},
+			Retry: gatewayRetryConfig(knV2),
 		},
-		Server: gatewayServerYAML{
-			ListenAddr:            ":8443",
-			HealthAddr:            ":8081",
-			MetricsAddr:           ":9090",
-			MaxConcurrentRequests: 100,
-			ReadTimeout:           "3600s",
-			WriteTimeout:          "3600s",
-			IdleTimeout:           "120s",
-			K8sRequestTimeout:     withDefault(gwCfg.K8sRequestTimeout, "15s"),
-			TLS:                   tlsConfigYAML{CertDir: InterServiceTLSCertDir},
-		},
+		Server: gatewayServerConfig(knV2, gwCfg),
 		CORS: gatewayCORSYAML{
 			AllowedOrigins:   corsOrigins,
 			AllowedMethods:   corsMethods,
@@ -1152,7 +1179,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 	pgHost := resolveHostToIP(kn.Spec.PostgreSQL.Host)
 	cfg := dataStorageConfigYAML{
 		TLSProfile: o.tlsProfile,
-		Server:     dataStorageServerConfig(kn),
+		Server:     dataStorageServerConfig(kn, knV2),
 		Database: func() dataStorageDatabaseYAML {
 			sslMode := withDefault(kn.Spec.PostgreSQL.SSLMode, DefaultSSLMode)
 			db := dataStorageDatabaseYAML{
@@ -1168,6 +1195,14 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 				SecretsFile:     "/etc/datastorage/secrets/db-secrets.yaml",
 				UsernameKey:     "username",
 				PasswordKey:     "password",
+			}
+			// #260: v1alpha2-only additions, defaulting to the operator's
+			// prior hardcoded values above.
+			if dbCfg := knV2.Spec.DataStorage.Database; dbCfg != nil {
+				db.MaxOpenConns = intPtrDefault(dbCfg.MaxOpenConns, db.MaxOpenConns)
+				db.MaxIdleConns = intPtrDefault(dbCfg.MaxIdleConns, db.MaxIdleConns)
+				db.ConnMaxLifetime = withDefault(dbCfg.ConnMaxLifetime, db.ConnMaxLifetime)
+				db.ConnMaxIdleTime = withDefault(dbCfg.ConnMaxIdleTime, db.ConnMaxIdleTime)
 			}
 			if sslMode == DefaultSSLMode {
 				db.SSLRootCert = InterServiceTLSCAFile
@@ -1210,7 +1245,7 @@ func dataStorageRetentionConfig(kn *kubernautv1alpha1.Kubernaut) *dataStorageRet
 	}
 }
 
-func dataStorageServerConfig(kn *kubernautv1alpha1.Kubernaut) dataStorageServerYAML {
+func dataStorageServerConfig(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) dataStorageServerYAML {
 	s := dataStorageServerYAML{
 		Port:         8443,
 		Host:         "0.0.0.0",
@@ -1219,6 +1254,12 @@ func dataStorageServerConfig(kn *kubernautv1alpha1.Kubernaut) dataStorageServerY
 		ReadTimeout:  "30s",
 		WriteTimeout: "30s",
 		TLS:          tlsConfigYAML{CertDir: InterServiceTLSCertDir},
+	}
+	// #260: v1alpha2-only addition, defaulting to the operator's prior
+	// hardcoded values above.
+	if srv := knV2.Spec.DataStorage.Server; srv != nil {
+		s.ReadTimeout = withDefault(srv.ReadTimeout, s.ReadTimeout)
+		s.WriteTimeout = withDefault(srv.WriteTimeout, s.WriteTimeout)
 	}
 	dir := "/etc/certs"
 	if sc := kn.Spec.DataStorage.SigningCert; sc != nil && sc.MountPath != "" {
@@ -2059,6 +2100,22 @@ func parseFloatDefault(s string, def float64) float64 {
 	return parsed
 }
 
+// mergeStringMapDefaults returns a new map containing every key in defaults,
+// with any key present in overrides taking precedence. Used for
+// spec.apiFrontend.mcp.toolTimeouts (#258), where an administrator may
+// override a subset of AF's per-tool timeouts while the rest keep AF's own
+// binary defaults.
+func mergeStringMapDefaults(overrides, defaults map[string]string) map[string]string {
+	merged := make(map[string]string, len(defaults))
+	for k, v := range defaults {
+		merged[k] = v
+	}
+	for k, v := range overrides {
+		merged[k] = v
+	}
+	return merged
+}
+
 // ---------- APIFrontend ConfigMaps ----------
 
 type afConfigYAML struct {
@@ -2081,6 +2138,55 @@ type afSessionYAML struct {
 	Namespace     string `json:"namespace" yaml:"namespace"`
 	DisconnectTTL string `json:"disconnectTTL,omitempty" yaml:"disconnectTTL,omitempty"`
 	RetentionTTL  string `json:"retentionTTL,omitempty" yaml:"retentionTTL,omitempty"`
+}
+
+// afSessionConfig builds session.* from spec.apiFrontend.session (#258),
+// defaulting to the operator's prior hardcoded values for backward
+// compatibility.
+func afSessionConfig(knV2 *kubernautv1alpha2.Kubernaut, ns string) afSessionYAML {
+	session := knV2.Spec.APIFrontend.Session
+	disconnectTTL := "10m"
+	retentionTTL := "720h"
+	if session != nil {
+		disconnectTTL = withDefault(session.DisconnectTTL, disconnectTTL)
+		retentionTTL = withDefault(session.RetentionTTL, retentionTTL)
+	}
+	return afSessionYAML{
+		Namespace:     ns,
+		DisconnectTTL: disconnectTTL,
+		RetentionTTL:  retentionTTL,
+	}
+}
+
+// afDefaultToolTimeouts are AF's own per-tool MCP timeout defaults
+// (pkg/apifrontend/config.DefaultConfig()). Used both as the CRD field's
+// +kubebuilder:default and as the merge base in afMCPConfig so a partial
+// spec.apiFrontend.mcp.toolTimeouts override doesn't lose the remaining
+// tools' defaults (#258/#374).
+var afDefaultToolTimeouts = map[string]string{
+	"kubernaut_investigate":        "15m",
+	"kubernaut_await_session":      "3m",
+	"kubernaut_watch":              "15m",
+	"kubernaut_discover_workflows": "60s",
+}
+
+// afMCPConfig builds mcp.* from spec.apiFrontend.mcp (#258), defaulting to
+// AF's own binary defaults so the rendered values are identical whether or
+// not an administrator has customized them.
+func afMCPConfig(knV2 *kubernautv1alpha2.Kubernaut) afMCPYAML {
+	mcp := knV2.Spec.APIFrontend.MCP
+	cfg := afMCPYAML{
+		Enabled:            true,
+		SessionIdleTimeout: "30m",
+		ToolTimeout:        "30s",
+		ToolTimeouts:       mergeStringMapDefaults(nil, afDefaultToolTimeouts),
+	}
+	if mcp != nil {
+		cfg.SessionIdleTimeout = withDefault(mcp.SessionIdleTimeout, cfg.SessionIdleTimeout)
+		cfg.ToolTimeout = withDefault(mcp.ToolTimeout, cfg.ToolTimeout)
+		cfg.ToolTimeouts = mergeStringMapDefaults(mcp.ToolTimeouts, afDefaultToolTimeouts)
+	}
+	return cfg
 }
 
 type afRBACYAML struct {
@@ -2148,21 +2254,18 @@ type afReasoningYAML struct {
 	CapabilityOverride string `json:"capabilityOverride,omitempty" yaml:"capabilityOverride,omitempty"`
 }
 
-// afMCPYAML intentionally omits sessionIdleTimeout/toolTimeout/toolTimeouts.
-// #173/#374: AF's own pkg/apifrontend/config.Load() starts from
-// DefaultConfig() (which already sets ToolTimeout=30s and the 4-entry
-// ToolTimeouts map) and yaml.Unmarshal()'s the rendered file on top; yaml.v3
-// only overwrites keys present in the document, so omitting these keys here
-// leaves the binary's own defaults in effect. SessionIdleTimeout is handled
-// the same way via an inline zero-value fallback to 30m in
-// cmd/apifrontend/mcp_a2a_handlers.go. Writing operator-side copies of these
-// values is pure duplication with no deployment-specific rationale -- it was
-// the root cause of #374 (the operator's copy silently drifted from AF's
-// binary defaults when AF added two new tools). Do not reintroduce these
-// fields; add them back only if a genuine, deliberate CRD-configurable
-// override is designed (see CHECKPOINT DD in AGENTS.md).
+// afMCPYAML renders mcp.sessionIdleTimeout/toolTimeout/toolTimeouts,
+// CRD-configurable via spec.apiFrontend.mcp (#258). #374's root cause was a
+// hand-maintained operator-side copy of these values silently drifting from
+// AF's own binary defaults (pkg/apifrontend/config.DefaultConfig()) when AF
+// added new tools; the CRD's own +kubebuilder:default values are set to
+// match those binary defaults exactly, so the CRD is now the single source
+// of truth instead of a second copy that can go stale.
 type afMCPYAML struct {
-	Enabled bool `json:"enabled" yaml:"enabled"`
+	Enabled            bool              `json:"enabled" yaml:"enabled"`
+	SessionIdleTimeout string            `json:"sessionIdleTimeout,omitempty" yaml:"sessionIdleTimeout,omitempty"`
+	ToolTimeout        string            `json:"toolTimeout,omitempty" yaml:"toolTimeout,omitempty"`
+	ToolTimeouts       map[string]string `json:"toolTimeouts,omitempty" yaml:"toolTimeouts,omitempty"`
 }
 
 type afAgentCardYAML struct {
@@ -2339,9 +2442,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 			DSTLSCAFile:       apifrontendTLSCAFile,
 			LLM:               afAgentLLMConfig(afProfile),
 		},
-		MCP: afMCPYAML{
-			Enabled: true,
-		},
+		MCP: afMCPConfig(knV2),
 		AgentCard: afAgentCardYAML{
 			Name: "Kubernaut Agent",
 			URL:  agentCardURL,
@@ -2361,13 +2462,9 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 			DrainSeconds: intPtrDefault(af.Shutdown.DrainSeconds, 15),
 		},
 		SeverityTriage: afSeverityTriageConfig(kn, knV2),
-		Session: afSessionYAML{
-			Namespace:     ns,
-			DisconnectTTL: "10m",
-			RetentionTTL:  "720h",
-		},
-		Fleet:      resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""), apifrontendTLSCAFile),
-		Resilience: afResilienceConfig(),
+		Session:        afSessionConfig(knV2, ns),
+		Fleet:          resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""), apifrontendTLSCAFile),
+		Resilience:     afResilienceConfig(),
 	}
 
 	data, err := marshalYAML(cfg)
@@ -2399,6 +2496,13 @@ func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1al
 		MaxQueriesPerCall:         10,
 		MaxRulesEvaluated:         100,
 		LLMConfidence:             0.7,
+	}
+	// #258: CacheTTLSeconds/LLMConfidence are v1alpha2-only additions (no
+	// v1alpha1 equivalent), so they're read from knV2 while the rest of
+	// this function reads from kn (v1alpha1) for backward compatibility.
+	if stV2 := knV2.Spec.APIFrontend.SeverityTriage; stV2 != nil {
+		cfg.CacheTTLSeconds = intPtrDefault(stV2.CacheTTLSeconds, cfg.CacheTTLSeconds)
+		cfg.LLMConfidence = parseFloatDefault(stV2.LLMConfidence, cfg.LLMConfidence)
 	}
 
 	st := kn.Spec.APIFrontend.SeverityTriage

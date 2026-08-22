@@ -305,6 +305,80 @@ var _ = Describe("ConfigMaps", func() {
 		})
 	})
 
+	// #259 [CM-6]: server.maxConcurrentRequests/readTimeout/writeTimeout/
+	// idleTimeout and retry.maxAttempts/initialBackoff/maxBackoff were
+	// hardcoded; these tests prove spec.gateway.config.{server,retry} make
+	// them administrator-tunable while preserving current hardcoded
+	// defaults (readTimeout/writeTimeout intentionally stay at 3600s, not
+	// upstream's chart default of 30s, to avoid a behavior change for
+	// existing CRs).
+	Describe("Gateway Server/Retry Config", func() {
+		It("renders default server tuning fields when spec.gateway.config.server is unset (#259) [CM-6]", func() {
+			kn := testKubernaut()
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			var root gatewayConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Server.MaxConcurrentRequests).To(Equal(100))
+			Expect(root.Server.ReadTimeout).To(Equal("3600s"), "server.readTimeout must default to the current hardcoded value, not upstream's chart default, to avoid a behavior change")
+			Expect(root.Server.WriteTimeout).To(Equal("3600s"), "server.writeTimeout must default to the current hardcoded value, not upstream's chart default, to avoid a behavior change")
+			Expect(root.Server.IdleTimeout).To(Equal("120s"))
+		})
+
+		It("renders custom server tuning fields from spec.gateway.config.server (#259) [CM-6]", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			maxConcurrent := 250
+			knV2.Spec.Gateway.Config.Server = &kubernautv1alpha2.GatewayServerSpec{
+				MaxConcurrentRequests: &maxConcurrent,
+				ReadTimeout:           "60s",
+				WriteTimeout:          "60s",
+				IdleTimeout:           "90s",
+			}
+			cm, err := GatewayConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+
+			var root gatewayConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Server.MaxConcurrentRequests).To(Equal(250))
+			Expect(root.Server.ReadTimeout).To(Equal("60s"))
+			Expect(root.Server.WriteTimeout).To(Equal("60s"))
+			Expect(root.Server.IdleTimeout).To(Equal("90s"))
+		})
+
+		It("renders default retry tuning fields when spec.gateway.config.retry is unset (#259) [CM-6]", func() {
+			kn := testKubernaut()
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			var root gatewayConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Processing.Retry.MaxAttempts).To(Equal(3))
+			Expect(root.Processing.Retry.InitialBackoff).To(Equal("100ms"))
+			Expect(root.Processing.Retry.MaxBackoff).To(Equal("5s"))
+		})
+
+		It("renders custom retry tuning fields from spec.gateway.config.retry (#259) [CM-6]", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			maxAttempts := 5
+			knV2.Spec.Gateway.Config.Retry = &kubernautv1alpha2.GatewayRetrySpec{
+				MaxAttempts:    &maxAttempts,
+				InitialBackoff: "200ms",
+				MaxBackoff:     "10s",
+			}
+			cm, err := GatewayConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+
+			var root gatewayConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Processing.Retry.MaxAttempts).To(Equal(5))
+			Expect(root.Processing.Retry.InitialBackoff).To(Equal("200ms"))
+			Expect(root.Processing.Retry.MaxBackoff).To(Equal("10s"))
+		})
+	})
+
 	Describe("DataStorage ConfigMap", func() {
 		It("contains PostgreSQL and Valkey settings", func() {
 			kn := testKubernaut()
@@ -355,6 +429,74 @@ var _ = Describe("ConfigMaps", func() {
 			err = yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(root.Database.SSLMode).To(Equal("require"), "database.sslMode = %q, want require", root.Database.SSLMode)
+		})
+	})
+
+	// #260 [CM-6]: database.maxOpenConns/maxIdleConns/connMaxLifetime/
+	// connMaxIdleTime and server.readTimeout/writeTimeout were hardcoded;
+	// these tests prove spec.dataStorage.{database,server} make them
+	// administrator-tunable while preserving current hardcoded defaults.
+	Describe("DataStorage Database/Server Config", func() {
+		It("renders default database connection-pool fields when spec.dataStorage.database is unset (#260) [CM-6]", func() {
+			kn := testKubernaut()
+			cm, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+
+			var root dataStorageConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Database.MaxOpenConns).To(Equal(100))
+			Expect(root.Database.MaxIdleConns).To(Equal(20))
+			Expect(root.Database.ConnMaxLifetime).To(Equal("1h"))
+			Expect(root.Database.ConnMaxIdleTime).To(Equal("10m"))
+		})
+
+		It("renders custom database connection-pool fields from spec.dataStorage.database (#260) [CM-6]", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			maxOpen := 200
+			maxIdle := 50
+			knV2.Spec.DataStorage.Database = &kubernautv1alpha2.DataStorageDatabaseSpec{
+				MaxOpenConns:    &maxOpen,
+				MaxIdleConns:    &maxIdle,
+				ConnMaxLifetime: "30m",
+				ConnMaxIdleTime: "5m",
+			}
+			cm, err := DataStorageConfigMap(kn, knV2, "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+
+			var root dataStorageConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Database.MaxOpenConns).To(Equal(200))
+			Expect(root.Database.MaxIdleConns).To(Equal(50))
+			Expect(root.Database.ConnMaxLifetime).To(Equal("30m"))
+			Expect(root.Database.ConnMaxIdleTime).To(Equal("5m"))
+		})
+
+		It("renders default server.readTimeout/writeTimeout when spec.dataStorage.server is unset (#260) [CM-6]", func() {
+			kn := testKubernaut()
+			cm, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+
+			var root dataStorageConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Server.ReadTimeout).To(Equal("30s"))
+			Expect(root.Server.WriteTimeout).To(Equal("30s"))
+		})
+
+		It("renders custom server.readTimeout/writeTimeout from spec.dataStorage.server (#260) [CM-6]", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			knV2.Spec.DataStorage.Server = &kubernautv1alpha2.DataStorageServerSpec{
+				ReadTimeout:  "60s",
+				WriteTimeout: "45s",
+			}
+			cm, err := DataStorageConfigMap(kn, knV2, "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+
+			var root dataStorageConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Server.ReadTimeout).To(Equal("60s"))
+			Expect(root.Server.WriteTimeout).To(Equal("45s"))
 		})
 	})
 
@@ -2219,29 +2361,25 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).To(ContainSubstring("retryMax:"))
 	})
 
-	It("AF-TT-001 [CM-6]: does not render mcp.sessionIdleTimeout/toolTimeout/toolTimeouts, deferring to AF's own config.DefaultConfig()", func() {
-		// #374 root cause: kubernaut pkg/apifrontend/config.Load() starts
-		// from DefaultConfig() (ToolTimeout=30s, plus the 4-entry
-		// ToolTimeouts map) and yaml.Unmarshal()'s the operator's rendered
-		// file on top of it; yaml.v3 only overwrites keys present in the
-		// document. SessionIdleTimeout gets the same treatment via an
-		// inline zero-value fallback to 30m in
-		// cmd/apifrontend/mcp_a2a_handlers.go. The operator previously kept
-		// a hand-maintained copy of these values, which silently drifted
-		// from AF's binary defaults when AF added two new tools -- the only
-		// fix that eliminates the drift class permanently is to not write
-		// these keys at all, letting AF's own defaults govern.
+	It("AF-TT-001 [CM-6]: renders mcp.sessionIdleTimeout/toolTimeout/toolTimeouts matching AF's own config.DefaultConfig() values", func() {
+		// #374's root cause was a hand-maintained operator-side copy of
+		// these values silently drifting from AF's own binary defaults
+		// (pkg/apifrontend/config.DefaultConfig()) when AF added new
+		// tools. #258 reintroduces these as CRD-configurable fields
+		// (see "APIFrontend MCP Config" below) whose +kubebuilder:default
+		// values are set to match AF's binary defaults exactly, making
+		// the CRD the single source of truth instead of a second,
+		// independently-maintained copy.
 		kn := testKubernautWithAF()
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 
-		Expect(data).NotTo(ContainSubstring("sessionIdleTimeout"))
-		Expect(data).NotTo(ContainSubstring("toolTimeout"))
-
 		var root afConfigYAML
 		Expect(yaml.Unmarshal([]byte(data), &root)).To(Succeed())
 		Expect(root.MCP.Enabled).To(BeTrue())
+		Expect(root.MCP.SessionIdleTimeout).To(Equal("30m"))
+		Expect(root.MCP.ToolTimeout).To(Equal("30s"))
 	})
 
 	It("renders replayCache when Valkey secret is set", func() {
@@ -2872,6 +3010,131 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(fleetNamespaceFromYAML(data)).To(Equal("kubernaut-fleet"), "apifrontend fleet block should use the shared spec.fleet.mcpGatewayNamespace, got:\n%s", data)
 	})
 
+})
+
+// #258 [CM-6]: session.disconnectTTL/retentionTTL were hardcoded; these
+// tests prove spec.apiFrontend.session makes them administrator-tunable
+// while preserving the current hardcoded values as defaults.
+var _ = Describe("APIFrontend Session Config", func() {
+	It("renders default session.disconnectTTL/retentionTTL when spec.apiFrontend.session is unset (#258) [CM-6]", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		var root afConfigYAML
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.Session.DisconnectTTL).To(Equal("10m"), "session.disconnectTTL must default to the current hardcoded value for backward compatibility")
+		Expect(root.Session.RetentionTTL).To(Equal("720h"), "session.retentionTTL must default to the current hardcoded value for backward compatibility")
+	})
+
+	It("renders custom session.disconnectTTL/retentionTTL from spec.apiFrontend.session (#258) [CM-6]", func() {
+		kn := testKubernautWithAF()
+		knV2 := testKnV2(kn)
+		knV2.Spec.APIFrontend.Session = &kubernautv1alpha2.APIFrontendSessionSpec{
+			DisconnectTTL: "5m",
+			RetentionTTL:  "48h",
+		}
+		cm, err := APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		var root afConfigYAML
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.Session.DisconnectTTL).To(Equal("5m"), "session.disconnectTTL should honor spec.apiFrontend.session.disconnectTTL override")
+		Expect(root.Session.RetentionTTL).To(Equal("48h"), "session.retentionTTL should honor spec.apiFrontend.session.retentionTTL override")
+	})
+})
+
+// #258/#374 [CM-6]: mcp.sessionIdleTimeout/toolTimeout/toolTimeouts were
+// deliberately never rendered (#374 root cause: AF's own binary defaults
+// silently drifted from the operator's hand-maintained copy). Reintroducing
+// them as CRD-configurable, defaulting to AF's own current binary defaults
+// (config.DefaultConfig()), closes the drift risk permanently: the operator
+// now has a single source of truth (the CRD) instead of a second copy that
+// can go stale.
+var _ = Describe("APIFrontend MCP Config", func() {
+	It("renders mcp.sessionIdleTimeout/toolTimeout/toolTimeouts matching AF's own binary defaults when spec.apiFrontend.mcp is unset (#258) [CM-6]", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		var root afConfigYAML
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.MCP.Enabled).To(BeTrue())
+		Expect(root.MCP.SessionIdleTimeout).To(Equal("30m"), "mcp.sessionIdleTimeout must default to AF's own binary default (30m)")
+		Expect(root.MCP.ToolTimeout).To(Equal("30s"), "mcp.toolTimeout must default to AF's own binary default (30s)")
+		Expect(root.MCP.ToolTimeouts).To(Equal(map[string]string{
+			"kubernaut_investigate":        "15m",
+			"kubernaut_await_session":      "3m",
+			"kubernaut_watch":              "15m",
+			"kubernaut_discover_workflows": "60s",
+		}), "mcp.toolTimeouts must default to AF's own binary defaults (config.DefaultConfig())")
+	})
+
+	It("renders custom mcp.sessionIdleTimeout/toolTimeout from spec.apiFrontend.mcp (#258) [CM-6]", func() {
+		kn := testKubernautWithAF()
+		knV2 := testKnV2(kn)
+		knV2.Spec.APIFrontend.MCP = &kubernautv1alpha2.APIFrontendMCPSpec{
+			SessionIdleTimeout: "45m",
+			ToolTimeout:        "10s",
+		}
+		cm, err := APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		var root afConfigYAML
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.MCP.SessionIdleTimeout).To(Equal("45m"), "mcp.sessionIdleTimeout should honor spec.apiFrontend.mcp.sessionIdleTimeout override")
+		Expect(root.MCP.ToolTimeout).To(Equal("10s"), "mcp.toolTimeout should honor spec.apiFrontend.mcp.toolTimeout override")
+	})
+
+	It("merges a partial mcp.toolTimeouts override with the remaining per-tool defaults (#258) [CM-6]", func() {
+		kn := testKubernautWithAF()
+		knV2 := testKnV2(kn)
+		knV2.Spec.APIFrontend.MCP = &kubernautv1alpha2.APIFrontendMCPSpec{
+			ToolTimeouts: map[string]string{"kubernaut_investigate": "20m"},
+		}
+		cm, err := APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		var root afConfigYAML
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.MCP.ToolTimeouts["kubernaut_investigate"]).To(Equal("20m"), "explicit override must take effect")
+		Expect(root.MCP.ToolTimeouts["kubernaut_await_session"]).To(Equal("3m"), "unset keys must keep their AF binary default")
+		Expect(root.MCP.ToolTimeouts["kubernaut_watch"]).To(Equal("15m"), "unset keys must keep their AF binary default")
+		Expect(root.MCP.ToolTimeouts["kubernaut_discover_workflows"]).To(Equal("60s"), "unset keys must keep their AF binary default")
+	})
+})
+
+// #258 [CM-6]: severityTriage.cacheTTLSeconds/llmConfidence were hardcoded;
+// these tests prove spec.apiFrontend.severityTriage makes them
+// administrator-tunable while preserving current hardcoded defaults.
+var _ = Describe("APIFrontend SeverityTriage Cache/Confidence Config", func() {
+	It("renders default severityTriage.cacheTTLSeconds/llmConfidence when spec.apiFrontend.severityTriage is unset (#258) [CM-6]", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		var root afConfigYAML
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.SeverityTriage.CacheTTLSeconds).To(Equal(30), "severityTriage.cacheTTLSeconds must default to the current hardcoded value")
+		Expect(root.SeverityTriage.LLMConfidence).To(Equal(0.7), "severityTriage.llmConfidence must default to the current hardcoded value")
+	})
+
+	It("renders custom severityTriage.cacheTTLSeconds/llmConfidence from spec.apiFrontend.severityTriage (#258) [CM-6]", func() {
+		kn := testKubernautWithAF()
+		knV2 := testKnV2(kn)
+		cacheTTL := 60
+		knV2.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{
+			CacheTTLSeconds: &cacheTTL,
+			LLMConfidence:   "0.85",
+		}
+		cm, err := APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		var root afConfigYAML
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.SeverityTriage.CacheTTLSeconds).To(Equal(60), "severityTriage.cacheTTLSeconds should honor spec.apiFrontend.severityTriage.cacheTTLSeconds override")
+		Expect(root.SeverityTriage.LLMConfidence).To(Equal(0.85), "severityTriage.llmConfidence should honor spec.apiFrontend.severityTriage.llmConfidence override")
+	})
 })
 
 var _ = Describe("APIFrontendConfigMap OIDC", func() {
