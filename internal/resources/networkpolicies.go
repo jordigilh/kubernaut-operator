@@ -18,9 +18,11 @@ package resources
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -28,10 +30,13 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
+
+var networkPoliciesLog = logf.Log.WithName("networkpolicies")
 
 // NetworkPolicies returns NetworkPolicy resources matching the upstream
 // kubernaut v1.4.0 traffic matrix. Returns nil when NetworkPolicies are
@@ -454,38 +459,39 @@ func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
 	}
 }
 
-// resolveAPIServerIPs returns the real endpoint IPs of the kubernetes API
-// server by querying the "kubernetes" endpoints in the default namespace.
-// Falls back to KUBERNETES_SERVICE_HOST if endpoint lookup fails.
+// apiServerIPsCache holds the last successfully-resolved real API server
+// endpoint IPs, guarded by mu. Read/written only by resolveAPIServerIPs.
+var apiServerIPsCache struct {
+	mu  sync.RWMutex
+	ips []string
+}
+
+// liveResolveAPIServerIPsFunc is a seam over liveResolveAPIServerIPs so unit
+// tests can simulate live-lookup success/failure without a real in-cluster
+// config (internal/resources/*_test.go is the pure-Go unit tier -- no
+// envtest/live cluster per AGENTS.md Testing Requirements).
+var liveResolveAPIServerIPsFunc = liveResolveAPIServerIPs
+
+// liveResolveAPIServerIPs queries the real endpoint IPs of the Kubernetes API
+// server from the "kubernetes" Endpoints object in the default namespace.
 //
-// Deliberately uses context.Background() instead of the reconcile-scoped
-// context: this is a best-effort, self-degrading lookup (every error path,
-// including a cancelled context, falls back to KUBERNETES_SERVICE_HOST), and
-// propagating ctx here would require adding a context parameter to all ~14
-// NetworkPolicy builder functions in this file, breaking the "builder takes
-// only *Kubernaut" convention (AGENTS.md Resource Builder Patterns) for a
-// call whose behavior would not otherwise change.
-func resolveAPIServerIPs() []string { //nolint:contextcheck
+// Deliberately uses context.Background() instead of a reconcile-scoped
+// context: propagating ctx here would require adding a context parameter to
+// all ~14 NetworkPolicy builder functions in this file, breaking the
+// "builder takes only *Kubernaut" convention (AGENTS.md Resource Builder
+// Patterns) for a call whose behavior would not otherwise change.
+func liveResolveAPIServerIPs() ([]string, error) { //nolint:contextcheck
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
-		if host := os.Getenv("KUBERNETES_SERVICE_HOST"); host != "" {
-			return []string{host}
-		}
-		return nil
+		return nil, fmt.Errorf("load in-cluster config: %w", err)
 	}
 	cs, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
-		if host := os.Getenv("KUBERNETES_SERVICE_HOST"); host != "" {
-			return []string{host}
-		}
-		return nil
+		return nil, fmt.Errorf("build kubernetes clientset: %w", err)
 	}
 	ep, err := cs.CoreV1().Endpoints("default").Get(context.Background(), "kubernetes", metav1.GetOptions{})
 	if err != nil {
-		if host := os.Getenv("KUBERNETES_SERVICE_HOST"); host != "" {
-			return []string{host}
-		}
-		return nil
+		return nil, fmt.Errorf("get default/kubernetes endpoints: %w", err)
 	}
 	var ips []string
 	for _, subset := range ep.Subsets {
@@ -494,11 +500,49 @@ func resolveAPIServerIPs() []string { //nolint:contextcheck
 		}
 	}
 	if len(ips) == 0 {
-		if host := os.Getenv("KUBERNETES_SERVICE_HOST"); host != "" {
-			return []string{host}
-		}
+		return nil, fmt.Errorf("default/kubernetes endpoints has no ready addresses")
 	}
-	return ips
+	return ips, nil
+}
+
+// resolveAPIServerIPs returns the real endpoint IPs of the Kubernetes API
+// server, re-resolving live on every call so NetworkPolicy egress stays
+// correct across control-plane IP changes (e.g. HA failover).
+//
+// On a failed live lookup this fails closed, not open: it reuses the last
+// successfully-resolved IPs rather than falling back to
+// KUBERNETES_SERVICE_HOST, which is always the ClusterIP -- the one address
+// this whole mechanism exists to avoid, since NetworkPolicy egress to it
+// does not reliably match on OVN-Kubernetes (the ClusterIP is DNAT'd to the
+// real endpoint before NetworkPolicy ACL evaluation). KUBERNETES_SERVICE_HOST
+// is only used when no successful resolution has ever occurred yet (e.g. the
+// very first reconcile), and that value is deliberately never cached, so
+// every subsequent call keeps retrying the live lookup instead of getting
+// stuck on it.
+func resolveAPIServerIPs() []string {
+	ips, err := liveResolveAPIServerIPsFunc()
+	if err == nil {
+		apiServerIPsCache.mu.Lock()
+		apiServerIPsCache.ips = ips
+		apiServerIPsCache.mu.Unlock()
+		return ips
+	}
+
+	networkPoliciesLog.Error(err, "failed to resolve live Kubernetes API server endpoint IPs")
+
+	apiServerIPsCache.mu.RLock()
+	cached := apiServerIPsCache.ips
+	apiServerIPsCache.mu.RUnlock()
+	if len(cached) > 0 {
+		networkPoliciesLog.Info("reusing last known-good API server endpoint IPs after a failed live lookup", "ips", cached)
+		return cached
+	}
+
+	if host := os.Getenv("KUBERNETES_SERVICE_HOST"); host != "" {
+		networkPoliciesLog.Info("no cached API server endpoint IPs yet; falling back to KUBERNETES_SERVICE_HOST (the ClusterIP, which NetworkPolicy egress may not match on OVN-Kubernetes)", "host", host)
+		return []string{host}
+	}
+	return nil
 }
 
 // apiServerEgressRule allows HTTPS to the Kubernetes API server. The
