@@ -180,7 +180,12 @@ func FleetMetadataCacheDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kuberna
 			{Name: "api", ContainerPort: fleetMetadataCacheAPIPort, Protocol: corev1.ProtocolTCP},
 			{Name: "metrics", ContainerPort: fleetMetadataCacheMetricsPort, Protocol: corev1.ProtocolTCP},
 		},
-		ProbePort: fleetMetadataCacheAPIPort,
+		// FMC's own healthAddr binds /healthz and /readyz on the metrics
+		// port (8081), not the api port (8080, request traffic only) --
+		// confirmed against live startup logs ("healthAddr":":8081").
+		// Probing 8080 left the container permanently stuck at 0/1
+		// Ready (startup probe: connection refused) even when healthy.
+		ProbePort: fleetMetadataCacheMetricsPort,
 	})
 }
 

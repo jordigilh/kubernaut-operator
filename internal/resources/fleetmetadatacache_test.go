@@ -123,6 +123,23 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 		Expect(portMap).To(HaveKeyWithValue("metrics", int32(8081)))
 	})
 
+	It("probes /healthz and /readyz on the metrics port (8081), matching FMC's own healthAddr, not the api port (8080)", func() {
+		// On-cluster validation (2026-08-23): probing 8080 left FMC
+		// permanently stuck at 0/1 Ready (startup probe: connection
+		// refused) even when otherwise healthy, since FMC's healthAddr
+		// binds /healthz and /readyz on the metrics port, not the api
+		// port which only serves request traffic.
+		kn, knV2 := testKubernautWithFMC()
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		container := dep.Spec.Template.Spec.Containers[0]
+		for _, probe := range []*corev1.Probe{container.StartupProbe, container.ReadinessProbe, container.LivenessProbe} {
+			Expect(probe).NotTo(BeNil())
+			Expect(probe.HTTPGet).NotTo(BeNil())
+			Expect(probe.HTTPGet.Port.IntValue()).To(Equal(8081))
+		}
+	})
+
 	It("mounts config and fleet-oauth2 volumes", func() {
 		kn, knV2 := testKubernautWithFMC()
 		dep, err := FleetMetadataCacheDeployment(kn, knV2)
