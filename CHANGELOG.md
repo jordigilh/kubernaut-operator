@@ -108,6 +108,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of relying on the operator's own service-ca-signed endpoint got no CA
   at all. Now defaults to the trust-bundle path, matching the adjacent
   `fleet.oauth2.tlsCAFile` default
+- **FleetMetadataCache readiness**: `startupProbe`/`readinessProbe`/
+  `livenessProbe` all targeted the `api` port (8080), but FMC's own
+  startup log (`"healthAddr":":8081"`) shows `/healthz` and `/readyz`
+  are actually served on the `metrics` port (8081) -- confirmed via
+  on-cluster validation of the TLS trust-bundle fix above, which left
+  FMC stuck at `0/1 Ready` (`startup probe: connection refused`) even
+  once otherwise healthy. Probes now target the metrics port
 
 ## [1.6.0-rc2] - 2026-08-23
 
