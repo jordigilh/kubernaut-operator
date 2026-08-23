@@ -6007,18 +6007,6 @@ metadata:
   name: kubernaut-operator-manager-role
 rules:
 - apiGroups:
-  - agent.kagenti.dev
-  resources:
-  - agentruntimes
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
   - ""
   resources:
   - configmaps
@@ -6036,6 +6024,14 @@ rules:
   - watch
 - apiGroups:
   - ""
+  resourceNames:
+  - kubernetes
+  resources:
+  - endpoints
+  verbs:
+  - get
+- apiGroups:
+  - ""
   - events.k8s.io
   resources:
   - events
@@ -6047,6 +6043,18 @@ rules:
   resources:
   - mutatingwebhookconfigurations
   - validatingwebhookconfigurations
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - agent.kagenti.dev
+  resources:
+  - agentruntimes
   verbs:
   - create
   - delete
@@ -6211,12 +6219,6 @@ rules:
   verbs:
   - create
   - update
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: kubernaut-operator-manager-spire-role
-rules:
 - apiGroups:
   - spire.spiffe.io
   resources:
@@ -6286,19 +6288,6 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: kubernaut-operator-manager-role
-subjects:
-- kind: ServiceAccount
-  name: kubernaut-operator-controller-manager
-  namespace: kubernaut-operator-system
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: kubernaut-operator-manager-spire-rolebinding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: kubernaut-operator-manager-spire-role
 subjects:
 - kind: ServiceAccount
   name: kubernaut-operator-controller-manager

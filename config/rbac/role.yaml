@@ -5,17 +5,13 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - agent.kagenti.dev
+  - ""
+  resourceNames:
+  - default-ingress-cert
   resources:
-  - agentruntimes
+  - configmaps
   verbs:
-  - create
-  - delete
   - get
-  - list
-  - patch
-  - update
-  - watch
 - apiGroups:
   - ""
   resources:
@@ -34,6 +30,14 @@ rules:
   - watch
 - apiGroups:
   - ""
+  resourceNames:
+  - kubernetes
+  resources:
+  - endpoints
+  verbs:
+  - get
+- apiGroups:
+  - ""
   - events.k8s.io
   resources:
   - events
@@ -45,6 +49,18 @@ rules:
   resources:
   - mutatingwebhookconfigurations
   - validatingwebhookconfigurations
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - agent.kagenti.dev
+  resources:
+  - agentruntimes
   verbs:
   - create
   - delete
@@ -209,3 +225,15 @@ rules:
   verbs:
   - create
   - update
+- apiGroups:
+  - spire.spiffe.io
+  resources:
+  - clusterspiffeids
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch

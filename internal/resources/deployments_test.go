@@ -31,6 +31,7 @@ import (
 
 const (
 	testEnvTLSCAFile       = "TLS_CA_FILE"
+	testEnvSSLCertFile     = "SSL_CERT_FILE"
 	testVolumeTLSCA        = "tls-ca"
 	testVolumeAAPCA        = "aap-ca"
 	testVolumeCombinedCA   = "combined-ca"
@@ -659,16 +660,25 @@ var _ = Describe("Deployments", func() {
 			}
 		})
 
-		It("does not set SSL_CERT_FILE", func() {
+		It("overrides SSL_CERT_FILE to the combined-CA path alongside TLS_CA_FILE", func() {
+			// overrideTLSCAFile keeps SSL_CERT_FILE in sync with
+			// TLS_CA_FILE (both must point at the AAP+inter-service
+			// combined bundle, not just the inter-service one) so the Go
+			// runtime's system cert pool also trusts the AAP CA.
 			kn := testKubernaut()
 			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
 			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			container := dep.Spec.Template.Spec.Containers[0]
+			found := false
 			for _, e := range container.Env {
-				Expect(e.Name).NotTo(Equal("SSL_CERT_FILE"), "WFE must not set SSL_CERT_FILE env var")
+				if e.Name == testEnvSSLCertFile {
+					found = true
+					Expect(e.Value).To(Equal("/etc/combined-ca/ca-bundle.crt"))
+				}
 			}
+			Expect(found).To(BeTrue(), "WFE must set SSL_CERT_FILE env var")
 		})
 
 		It("has init container with caCertSecretRef", func() {
@@ -878,33 +888,38 @@ var _ = Describe("Deployments", func() {
 	})
 
 	Context("overrideTLSCAFile helper", func() {
-		It("replaces existing TLS_CA_FILE", func() {
+		It("replaces existing TLS_CA_FILE and SSL_CERT_FILE", func() {
 			env := []corev1.EnvVar{
 				{Name: "OTHER", Value: "foo"},
 				{Name: testEnvTLSCAFile, Value: "/old/path"},
+				{Name: testEnvSSLCertFile, Value: "/old/path"},
 			}
 			result := overrideTLSCAFile(env, "/new/path")
-			found := false
-			for _, e := range result {
-				if e.Name == testEnvTLSCAFile {
-					found = true
-					Expect(e.Value).To(Equal("/new/path"))
+			for _, name := range []string{testEnvTLSCAFile, testEnvSSLCertFile} {
+				found := false
+				for _, e := range result {
+					if e.Name == name {
+						found = true
+						Expect(e.Value).To(Equal("/new/path"))
+					}
 				}
+				Expect(found).To(BeTrue(), "%s not found after override", name)
 			}
-			Expect(found).To(BeTrue(), "TLS_CA_FILE not found after override")
 		})
 
-		It("appends when missing", func() {
+		It("appends both TLS_CA_FILE and SSL_CERT_FILE when missing", func() {
 			env := []corev1.EnvVar{{Name: "OTHER", Value: "foo"}}
 			result := overrideTLSCAFile(env, "/new/path")
-			Expect(result).To(HaveLen(2))
-			found := false
-			for _, e := range result {
-				if e.Name == testEnvTLSCAFile && e.Value == "/new/path" {
-					found = true
+			Expect(result).To(HaveLen(3))
+			for _, name := range []string{testEnvTLSCAFile, testEnvSSLCertFile} {
+				found := false
+				for _, e := range result {
+					if e.Name == name && e.Value == "/new/path" {
+						found = true
+					}
 				}
+				Expect(found).To(BeTrue(), "%s should be appended when missing", name)
 			}
-			Expect(found).To(BeTrue(), "TLS_CA_FILE should be appended when missing")
 		})
 	})
 
@@ -1075,11 +1090,11 @@ var _ = Describe("Deployments", func() {
 
 				hasCAVolume := false
 				for _, v := range dep.Spec.Template.Spec.Volumes {
-					if v.Name == testVolumeTLSCA && v.ConfigMap != nil && v.ConfigMap.Name == InterServiceCAConfigMapName {
+					if v.Name == testVolumeTLSCA && v.ConfigMap != nil && v.ConfigMap.Name == TrustBundleConfigMapName {
 						hasCAVolume = true
 					}
 				}
-				Expect(hasCAVolume).To(BeTrue(), "Deployment %q missing %s volume", dep.Name, testVolumeTLSCA)
+				Expect(hasCAVolume).To(BeTrue(), "Deployment %q missing %s volume sourced from the trust-bundle ConfigMap", dep.Name, testVolumeTLSCA)
 
 				hasCAMount := false
 				for _, vm := range container.VolumeMounts {
@@ -1090,12 +1105,17 @@ var _ = Describe("Deployments", func() {
 				Expect(hasCAMount).To(BeTrue(), "Deployment %q missing %s volume mount", dep.Name, testVolumeTLSCA)
 
 				hasCAEnv := false
+				hasSSLCertEnv := false
 				for _, env := range container.Env {
 					if env.Name == "TLS_CA_FILE" && env.Value == InterServiceTLSCAFile {
 						hasCAEnv = true
 					}
+					if env.Name == testEnvSSLCertFile && env.Value == InterServiceTLSCAFile {
+						hasSSLCertEnv = true
+					}
 				}
 				Expect(hasCAEnv).To(BeTrue(), "Deployment %q missing TLS_CA_FILE env var", dep.Name)
+				Expect(hasSSLCertEnv).To(BeTrue(), "Deployment %q missing SSL_CERT_FILE env var (workaround for kubernaut#TBD: MCP client base transport doesn't honor a custom CA)", dep.Name)
 			}
 		})
 
@@ -1170,7 +1190,7 @@ var _ = Describe("overrideTLSCAFile standalone", func() {
 	It("appends when missing", func() {
 		env := []corev1.EnvVar{{Name: "OTHER", Value: "foo"}}
 		result := overrideTLSCAFile(env, "/new/path")
-		Expect(result).To(HaveLen(2))
+		Expect(result).To(HaveLen(3))
 		found := false
 		for _, e := range result {
 			if e.Name == testEnvTLSCAFile && e.Value == "/new/path" {

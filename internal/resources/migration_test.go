@@ -171,13 +171,13 @@ var _ = Describe("MigrationJob", func() {
 
 		volFound := false
 		for _, v := range job.Spec.Template.Spec.Volumes {
-			if v.Name == "tls-ca" && v.ConfigMap != nil && v.ConfigMap.Name == InterServiceCAConfigMapName {
+			if v.Name == "tls-ca" && v.ConfigMap != nil && v.ConfigMap.Name == TrustBundleConfigMapName {
 				volFound = true
 				Expect(v.ConfigMap.Optional).NotTo(BeNil())
 				Expect(*v.ConfigMap.Optional).To(BeTrue(), "tls-ca volume should be optional")
 			}
 		}
-		Expect(volFound).To(BeTrue(), "verify-full should have tls-ca volume from inter-service-ca ConfigMap")
+		Expect(volFound).To(BeTrue(), "verify-full should have tls-ca volume from the trust-bundle ConfigMap")
 	})
 
 	It("does not mount service-CA when sslmode is require", func() {

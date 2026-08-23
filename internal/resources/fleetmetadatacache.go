@@ -154,23 +154,38 @@ func FleetMetadataCacheDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kuberna
 	volumes := []corev1.Volume{
 		configMapVolume("config", fleetMetadataCacheConfigMapName),
 		secretVolume("fleet-oauth2", credRef),
-		optionalConfigMapVolume("tls-ca", InterServiceCAConfigMapName),
+		optionalConfigMapVolume("tls-ca", TrustBundleConfigMapName),
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: "config", MountPath: "/etc/fleetmetadatacache", ReadOnly: true},
 		{Name: "fleet-oauth2", MountPath: fleetMetadataCacheOAuth2Dir, ReadOnly: true},
 		{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
 	}
+	// SSL_CERT_FILE: FMC's actual MCP Gateway session transport
+	// (pkg/fleet/mcpclient.WithReloadableOAuth2Transport) falls back to an
+	// unmodified http.DefaultTransport for the real MCP protocol calls --
+	// OAuth2.TlsCaFile (config.yaml) only covers the separate OAuth2 token
+	// fetch. Setting SSL_CERT_FILE extends the process's Go system cert
+	// pool (additive: the container's own base-image trust directories are
+	// still scanned) to also trust this bundle, closing that gap without
+	// an upstream kubernaut-core code change. Tracked upstream for a proper
+	// fix (WithHTTPClient wiring in cmd/fleetmetadatacache/main.go).
+	env := []corev1.EnvVar{{Name: "SSL_CERT_FILE", Value: InterServiceTLSCAFile}}
 
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentFleetMetadataCache, ImageName: "fleetmetadatacache",
-		Resources: knV2.Spec.FleetMetadataCache.Resources, VolumeMounts: mounts, Volumes: volumes,
+		Resources: knV2.Spec.FleetMetadataCache.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
 		Args: []string{"-config=/etc/fleetmetadatacache/config.yaml"},
 		Ports: []corev1.ContainerPort{
 			{Name: "api", ContainerPort: fleetMetadataCacheAPIPort, Protocol: corev1.ProtocolTCP},
 			{Name: "metrics", ContainerPort: fleetMetadataCacheMetricsPort, Protocol: corev1.ProtocolTCP},
 		},
-		ProbePort: fleetMetadataCacheAPIPort,
+		// FMC's own healthAddr binds /healthz and /readyz on the metrics
+		// port (8081), not the api port (8080, request traffic only) --
+		// confirmed against live startup logs ("healthAddr":":8081").
+		// Probing 8080 left the container permanently stuck at 0/1
+		// Ready (startup probe: connection refused) even when healthy.
+		ProbePort: fleetMetadataCacheMetricsPort,
 	})
 }
 

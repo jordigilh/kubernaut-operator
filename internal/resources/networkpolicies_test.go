@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"errors"
 	"os"
 	"slices"
 
@@ -236,6 +237,9 @@ var _ = Describe("NetworkPolicies", func() {
 	})
 
 	It("always adds API server egress using auto-detected KUBERNETES_SERVICE_HOST", func() {
+		resetAPIServerIPsCacheForTest()
+		stubLiveResolveAPIServerIPsForTest(nil, errors.New("no in-cluster config in test"))
+
 		old := os.Getenv("KUBERNETES_SERVICE_HOST")
 		Expect(os.Setenv("KUBERNETES_SERVICE_HOST", testAPIServerHost)).To(Succeed())
 		defer func() { Expect(os.Setenv("KUBERNETES_SERVICE_HOST", old)).To(Succeed()) }()
@@ -265,7 +269,80 @@ var _ = Describe("NetworkPolicies", func() {
 		}
 		Expect(found).To(BeTrue(), "expected at least one NetworkPolicy with API server egress (%s)", wantCIDR)
 	})
+
+	It("uses live-resolved API server IPs when the lookup succeeds, not KUBERNETES_SERVICE_HOST", func() {
+		resetAPIServerIPsCacheForTest()
+		const liveIP = "192.168.100.50"
+		stubLiveResolveAPIServerIPsForTest([]string{liveIP}, nil)
+
+		old := os.Getenv("KUBERNETES_SERVICE_HOST")
+		Expect(os.Setenv("KUBERNETES_SERVICE_HOST", "172.30.0.1")).To(Succeed())
+		defer func() { Expect(os.Setenv("KUBERNETES_SERVICE_HOST", old)).To(Succeed()) }()
+
+		kn := testKubernaut()
+		enabled := true
+		kn.Spec.NetworkPolicies.Enabled = &enabled
+		nps := NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone)
+
+		Expect(anyEgressHasIPBlock(nps, liveIP+"/32")).To(BeTrue(), "expected egress to the live-resolved API server IP %s", liveIP)
+		Expect(anyEgressHasIPBlock(nps, "172.30.0.1/32")).To(BeFalse(), "must not fall back to the ClusterIP when the live lookup succeeds")
+	})
+
+	It("reuses the last known-good API server IPs when a live lookup fails, instead of falling back to the ClusterIP", func() {
+		resetAPIServerIPsCacheForTest()
+		const goodIP = "192.168.100.51"
+
+		old := os.Getenv("KUBERNETES_SERVICE_HOST")
+		Expect(os.Setenv("KUBERNETES_SERVICE_HOST", "172.30.0.1")).To(Succeed())
+		defer func() { Expect(os.Setenv("KUBERNETES_SERVICE_HOST", old)).To(Succeed()) }()
+
+		// First reconcile: live lookup succeeds, populating the cache.
+		stubLiveResolveAPIServerIPsForTest([]string{goodIP}, nil)
+		kn := testKubernaut()
+		enabled := true
+		kn.Spec.NetworkPolicies.Enabled = &enabled
+		_ = NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone)
+
+		// Second reconcile: live lookup fails (e.g. transient API error).
+		stubLiveResolveAPIServerIPsForTest(nil, errors.New("transient apiserver error"))
+		nps := NetworkPolicies(kn, testKnV2(kn), KagentiSidecarNone)
+
+		Expect(anyEgressHasIPBlock(nps, goodIP+"/32")).To(BeTrue(), "expected egress to still target the last known-good IP %s", goodIP)
+		Expect(anyEgressHasIPBlock(nps, "172.30.0.1/32")).To(BeFalse(), "must fail closed (reuse last known-good), never fall back to the ClusterIP once a cache exists")
+	})
 })
+
+func anyEgressHasIPBlock(nps []*networkingv1.NetworkPolicy, cidr string) bool {
+	for _, np := range nps {
+		for _, rule := range np.Spec.Egress {
+			for _, peer := range rule.To {
+				if peer.IPBlock != nil && peer.IPBlock.CIDR == cidr {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// resetAPIServerIPsCacheForTest clears the package-level last-known-good IP
+// cache so each test starts from a clean slate regardless of execution
+// order (Ginkgo specs share process-level state within this package).
+func resetAPIServerIPsCacheForTest() {
+	apiServerIPsCache.mu.Lock()
+	apiServerIPsCache.ips = nil
+	apiServerIPsCache.mu.Unlock()
+}
+
+// stubLiveResolveAPIServerIPsForTest swaps the live-lookup seam for the
+// duration of the current spec (restored via DeferCleanup), letting tests
+// simulate live Endpoints lookup success/failure without a real in-cluster
+// config.
+func stubLiveResolveAPIServerIPsForTest(ips []string, err error) {
+	original := liveResolveAPIServerIPsFunc
+	liveResolveAPIServerIPsFunc = func() ([]string, error) { return ips, err }
+	DeferCleanup(func() { liveResolveAPIServerIPsFunc = original })
+}
 
 func ingressNamespaceNames(rule networkingv1.NetworkPolicyIngressRule) map[string]bool {
 	out := make(map[string]bool)

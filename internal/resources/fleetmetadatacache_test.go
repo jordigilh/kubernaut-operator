@@ -123,6 +123,23 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 		Expect(portMap).To(HaveKeyWithValue("metrics", int32(8081)))
 	})
 
+	It("probes /healthz and /readyz on the metrics port (8081), matching FMC's own healthAddr, not the api port (8080)", func() {
+		// On-cluster validation (2026-08-23): probing 8080 left FMC
+		// permanently stuck at 0/1 Ready (startup probe: connection
+		// refused) even when otherwise healthy, since FMC's healthAddr
+		// binds /healthz and /readyz on the metrics port, not the api
+		// port which only serves request traffic.
+		kn, knV2 := testKubernautWithFMC()
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		container := dep.Spec.Template.Spec.Containers[0]
+		for _, probe := range []*corev1.Probe{container.StartupProbe, container.ReadinessProbe, container.LivenessProbe} {
+			Expect(probe).NotTo(BeNil())
+			Expect(probe.HTTPGet).NotTo(BeNil())
+			Expect(probe.HTTPGet.Port.IntValue()).To(Equal(8081))
+		}
+	})
+
 	It("mounts config and fleet-oauth2 volumes", func() {
 		kn, knV2 := testKubernautWithFMC()
 		dep, err := FleetMetadataCacheDeployment(kn, knV2)
@@ -134,13 +151,27 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 		expectVolumeSourceConfigMap(dep, "config", "fleetmetadatacache-config")
 	})
 
-	It("#267: mounts tls-ca volume from inter-service-ca ConfigMap so the OAuth2 token-source client can trust a self-signed IdP CA", func() {
+	It("#267: mounts tls-ca volume from the trust-bundle ConfigMap so the OAuth2 token-source client can trust a self-signed IdP CA", func() {
 		kn, knV2 := testKubernautWithFMC()
 		dep, err := FleetMetadataCacheDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		expectHasVolume(dep, "tls-ca")
 		expectHasVolumeMount(dep, "tls-ca", "/etc/tls-ca")
-		expectVolumeSourceConfigMap(dep, "tls-ca", InterServiceCAConfigMapName)
+		expectVolumeSourceConfigMap(dep, "tls-ca", TrustBundleConfigMapName)
+	})
+
+	It("sets SSL_CERT_FILE so the MCP Gateway session transport (which never reads OAuth2.TlsCaFile) also trusts the merged bundle", func() {
+		kn, knV2 := testKubernautWithFMC()
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		container := dep.Spec.Template.Spec.Containers[0]
+		found := false
+		for _, e := range container.Env {
+			if e.Name == "SSL_CERT_FILE" && e.Value == InterServiceTLSCAFile {
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue(), "SSL_CERT_FILE env var not found")
 	})
 
 	It("mounts the shared fleet.oauth2.credentialsSecretRef when FMC has no override", func() {

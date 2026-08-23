@@ -46,12 +46,13 @@ func GatewayDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
 		{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile},
+		{Name: "SSL_CERT_FILE", Value: InterServiceTLSCAFile},
 	}
 
 	volumes := []corev1.Volume{
 		configMapVolume("config", "gateway-config"),
 		secretVolume("tls-certs", GatewayTLSSecretName),
-		optionalConfigMapVolume("tls-ca", InterServiceCAConfigMapName),
+		optionalConfigMapVolume("tls-ca", TrustBundleConfigMapName),
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: "config", MountPath: "/etc/gateway", ReadOnly: true},
@@ -90,6 +91,7 @@ func DataStorageDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
 		{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile},
+		{Name: "SSL_CERT_FILE", Value: InterServiceTLSCAFile},
 	}
 	if sslMode == DefaultSSLMode {
 		env = append(env, corev1.EnvVar{Name: "PGSSLROOTCERT", Value: InterServiceTLSCAFile})
@@ -176,7 +178,7 @@ func dataStorageVolumesAndMounts(kn *kubernautv1alpha1.Kubernaut) ([]corev1.Volu
 
 	volumes = append(volumes,
 		secretVolume("tls-certs", DataStorageTLSSecretName),
-		configMapVolume("tls-ca", InterServiceCAConfigMapName),
+		configMapVolume("tls-ca", TrustBundleConfigMapName),
 		corev1.Volume{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		corev1.Volume{Name: "data", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	)
@@ -795,6 +797,7 @@ func apifrontendBaseVolumesMountsEnv(kn *kubernautv1alpha1.Kubernaut, sidecar Ka
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
 		{Name: "TLS_CA_FILE", Value: "/etc/apifrontend/tls-ca/ca.crt"},
+		{Name: "SSL_CERT_FILE", Value: "/etc/apifrontend/tls-ca/ca.crt"},
 	}
 	if sidecar != KagentiSidecarNone {
 		noProxy := fmt.Sprintf("127.0.0.1,localhost,kubernaut-agent.%s.svc.cluster.local,data-storage-service.%s.svc.cluster.local", ns, ns)
@@ -807,7 +810,7 @@ func apifrontendBaseVolumesMountsEnv(kn *kubernautv1alpha1.Kubernaut, sidecar Ka
 		secretVolume("tls-server", APIFrontendTLSSecretName),
 		{Name: "tls-ca", VolumeSource: corev1.VolumeSource{
 			ConfigMap: &corev1.ConfigMapVolumeSource{
-				LocalObjectReference: corev1.LocalObjectReference{Name: InterServiceCAConfigMapName},
+				LocalObjectReference: corev1.LocalObjectReference{Name: TrustBundleConfigMapName},
 				Items:                []corev1.KeyToPath{{Key: "service-ca.crt", Path: "ca.crt"}},
 				Optional:             ptr.To(true),
 			},
@@ -1150,9 +1153,12 @@ func secretVolume(name, secretName string) corev1.Volume {
 }
 
 func appendInterServiceTLSCA(volumes []corev1.Volume, mounts []corev1.VolumeMount, env []corev1.EnvVar) ([]corev1.Volume, []corev1.VolumeMount, []corev1.EnvVar) {
-	volumes = append(volumes, configMapVolume("tls-ca", InterServiceCAConfigMapName))
+	volumes = append(volumes, configMapVolume("tls-ca", TrustBundleConfigMapName))
 	mounts = append(mounts, corev1.VolumeMount{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true})
-	env = append(env, corev1.EnvVar{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile})
+	env = append(env,
+		corev1.EnvVar{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile},
+		corev1.EnvVar{Name: "SSL_CERT_FILE", Value: InterServiceTLSCAFile},
+	)
 	return volumes, mounts, env
 }
 
@@ -1238,14 +1244,23 @@ func appendFleetSecretMountsVariant(volumes []corev1.Volume, mounts []corev1.Vol
 	return volumes, mounts
 }
 
+// overrideTLSCAFile redirects both TLS_CA_FILE and SSL_CERT_FILE (kept in
+// sync, same as appendInterServiceTLSCA) to path -- used when a component
+// combines the inter-service CA with an additional CA (e.g. WorkflowExecution's
+// AAP CA) into a single file via an init container.
 func overrideTLSCAFile(env []corev1.EnvVar, path string) []corev1.EnvVar {
+	env = setOrAppendEnv(env, "TLS_CA_FILE", path)
+	return setOrAppendEnv(env, "SSL_CERT_FILE", path)
+}
+
+func setOrAppendEnv(env []corev1.EnvVar, name, value string) []corev1.EnvVar {
 	for i := range env {
-		if env[i].Name == "TLS_CA_FILE" {
-			env[i].Value = path
+		if env[i].Name == name {
+			env[i].Value = value
 			return env
 		}
 	}
-	return append(env, corev1.EnvVar{Name: "TLS_CA_FILE", Value: path})
+	return append(env, corev1.EnvVar{Name: name, Value: value})
 }
 
 // ProbeConfig holds per-component HTTP GET probe paths and timing, mirroring

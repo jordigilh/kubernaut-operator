@@ -150,7 +150,7 @@ func GatewayAlertManagerConfig(kn *kubernautv1alpha1.Kubernaut) *monitoringv1alp
 		TLSConfig: &monitoringv1.SafeTLSConfig{
 			CA: monitoringv1.SecretOrConfigMap{
 				ConfigMap: &corev1.ConfigMapKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: InterServiceCAConfigMapName},
+					LocalObjectReference: corev1.LocalObjectReference{Name: TrustBundleConfigMapName},
 					Key:                  "service-ca.crt",
 				},
 			},

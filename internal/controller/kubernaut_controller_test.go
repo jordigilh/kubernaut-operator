@@ -575,6 +575,34 @@ var _ = Describe("Kubernaut Controller", func() {
 				"CM-6: AF's live ConfigMap must render mcp.toolTimeout matching AF's own config.DefaultConfig() default")
 		})
 	})
+
+	// ---- Trust-bundle ConfigMap wiring (operator-level ingress CA trust fix) ----
+	//
+	// resources.TrustBundleConfigMap's merge logic (service-ca + router-ca,
+	// fail-open) is fully unit-tested with seams in
+	// internal/resources/trustbundle_test.go (Pyramid Invariant: "UT proves
+	// logic"). This IT proves the wiring only: the reconcile loop actually
+	// calls it and persists an owned ConfigMap -- envtest has no real
+	// in-cluster environment (no SA token/CA mount), so
+	// rest.InClusterConfig() inside TrustBundleConfigMap's live reads always
+	// fails here, same as the already-shipped liveResolveAPIServerIPs
+	// (networkpolicies.go); this is expected and does not indicate a bug.
+	Context("Trust-bundle ConfigMap wiring", func() {
+		It("TB-001 [CM-6]: the reconcile loop creates an owned inter-service-trust-bundle ConfigMap with the service-ca.crt key present", func() {
+			createBYOSecrets(ctx)
+			kn := newCRWithRouteDisabled()
+			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
+
+			reconcileToDeployPhase(ctx)
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.TrustBundleConfigMapName, Namespace: testNamespace}, cm)).To(Succeed(),
+				"CHECKPOINT W: TrustBundleConfigMap must be wired into the reconcile loop, not just unit-tested in isolation")
+			Expect(cm.Data).To(HaveKey("service-ca.crt"))
+			Expect(cm.OwnerReferences).NotTo(BeEmpty(),
+				"the trust-bundle ConfigMap must be owned by the Kubernaut CR for garbage collection, matching every other operator-managed ConfigMap")
+		})
+	})
 })
 
 // enabled is a package-level *bool for FleetSpec.Enabled (a pointer field).
