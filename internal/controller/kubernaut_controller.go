@@ -131,6 +131,7 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services;configmaps;secrets;serviceaccounts;namespaces,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=endpoints,resourceNames=kubernetes,verbs=get
+// +kubebuilder:rbac:groups="",resources=configmaps,resourceNames=default-ingress-cert,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings;roles;rolebindings,verbs=get;list;watch;create;update;patch;delete;escalate;bind
@@ -1522,10 +1523,11 @@ func (r *KubernautReconciler) appendOptionalComponentConfigMaps(
 }
 
 // appendServiceCAConfigMaps appends the always-present inter-service CA
-// bundle ConfigMap and the per-component service-CA ConfigMaps consumed by
-// mTLS-scraping sidecars.
+// bundle ConfigMap, the operator-computed trust-bundle ConfigMap that
+// merges it with the cluster's default ingress/router CA, and the
+// per-component service-CA ConfigMaps consumed by mTLS-scraping sidecars.
 func appendServiceCAConfigMaps(kn *kubernautv1alpha1.Kubernaut, configMaps []*corev1.ConfigMap) []*corev1.ConfigMap {
-	configMaps = append(configMaps, resources.InterServiceCAConfigMap(kn))
+	configMaps = append(configMaps, resources.InterServiceCAConfigMap(kn), resources.TrustBundleConfigMap(kn))
 	configMaps = append(configMaps,
 		resources.EffectivenessMonitorServiceCAConfigMap(kn),
 		resources.KubernautAgentServiceCAConfigMap(kn),

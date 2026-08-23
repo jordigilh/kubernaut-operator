@@ -6,6 +6,14 @@ metadata:
 rules:
 - apiGroups:
   - ""
+  resourceNames:
+  - default-ingress-cert
+  resources:
+  - configmaps
+  verbs:
+  - get
+- apiGroups:
+  - ""
   resources:
   - configmaps
   - namespaces
