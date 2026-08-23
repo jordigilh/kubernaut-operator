@@ -226,9 +226,7 @@ func registerSingletonWebhook(mgr ctrl.Manager) {
 	}
 	setupLog.Info("webhook TLS certs found, registering singleton validating webhook")
 	mgr.GetWebhookServer().Register("/validate-kubernaut-singleton", &admission.Webhook{
-		Handler: &webhook.SingletonValidator{
-			Client: mgr.GetClient(),
-		},
+		Handler: webhook.NewSingletonValidator(mgr.GetClient(), mgr.GetScheme()),
 	})
 }
 

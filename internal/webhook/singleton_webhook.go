@@ -23,6 +23,7 @@ import (
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	admissionv1 "k8s.io/api/admission/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -31,9 +32,23 @@ import (
 // SingletonValidator is a validating admission webhook handler that enforces
 // the singleton constraint on Kubernaut CRs: only one instance with the
 // canonical name is allowed cluster-wide.
+//
+// Construct via NewSingletonValidator, not this literal: controller-runtime
+// no longer auto-injects a decoder into admission.Handler implementations
+// (the old DecoderInjector/InjectDecoder mechanism was removed), so a
+// zero-value decoder field here is nil and Handle panics on every request.
 type SingletonValidator struct {
 	Client  client.Client
 	decoder admission.Decoder
+}
+
+// NewSingletonValidator builds a SingletonValidator with a working decoder
+// bound to scheme. This is the only supported way to construct one.
+func NewSingletonValidator(c client.Client, scheme *runtime.Scheme) *SingletonValidator {
+	return &SingletonValidator{
+		Client:  c,
+		decoder: admission.NewDecoder(scheme),
+	}
 }
 
 func (v *SingletonValidator) Handle(ctx context.Context, req admission.Request) admission.Response {
@@ -67,10 +82,4 @@ func (v *SingletonValidator) Handle(ctx context.Context, req admission.Request) 
 	}
 
 	return admission.Allowed("singleton constraint satisfied")
-}
-
-// InjectDecoder injects the admission decoder.
-func (v *SingletonValidator) InjectDecoder(d admission.Decoder) error {
-	v.decoder = d
-	return nil
 }
