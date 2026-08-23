@@ -214,6 +214,17 @@ const InterServiceTLSCertDir = "/etc/tls"
 // the bundle under the key "service-ca.crt".
 const InterServiceTLSCAFile = "/etc/tls-ca/service-ca.crt"
 
+// TrustBundleConfigMapName is the operator-managed ConfigMap that merges the
+// OCP service-ca bundle (from InterServiceCAConfigMapName) with the
+// cluster's default ingress/router CA (read from
+// openshift-config-managed/default-ingress-cert) under the same
+// "service-ca.crt" key used by InterServiceCAConfigMapName today. Every
+// client-side mount of InterServiceCAConfigMapName is repointed at this
+// ConfigMap instead, so a single trust file verifies both internal Service
+// TLS (signed by service-ca) and Route-based TLS -- MCP Gateway, Keycloak
+// OIDC (signed by the cluster's IngressController) -- without any CR change.
+const TrustBundleConfigMapName = "inter-service-trust-bundle"
+
 // DefaultSSLMode is the PostgreSQL connection SSL mode used when not
 // explicitly configured in the CR.
 const DefaultSSLMode = "verify-full"
