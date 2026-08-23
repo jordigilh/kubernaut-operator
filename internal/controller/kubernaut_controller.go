@@ -129,7 +129,8 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=kubernaut.ai,resources=kubernauts/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kubernaut.ai,resources=kubernauts/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=endpoints;services;configmaps;secrets;serviceaccounts;namespaces,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services;configmaps;secrets;serviceaccounts;namespaces,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=endpoints,resourceNames=kubernetes,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings;roles;rolebindings,verbs=get;list;watch;create;update;patch;delete;escalate;bind
@@ -145,6 +146,17 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors;prometheusrules;alertmanagerconfigs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=spire.spiffe.io,resources=clusterspiffeids,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=agent.kagenti.dev,resources=agentruntimes,verbs=get;list;watch;create;update;patch;delete
+
+// Reconcile is the main reconciliation loop for the Kubernaut singleton CR.
+//
+// The blank line and this doc comment above are required, not stylistic: Go
+// attaches an unbroken comment block directly above a func as that func's
+// GoDoc, and controller-gen's marker-association logic only treats markers
+// as package-level (which +kubebuilder:rbac markers must be) for specific
+// node kinds (GenDecl/TypeSpec/Field/File) or "floating" comments -- a
+// FuncDecl's GoDoc isn't one of them, so a marker block glued directly to
+// this function's declaration is silently dropped by `make manifests`
+// (verified: 0 RBAC rules generated without this separation, 231 with it).
 func (r *KubernautReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
