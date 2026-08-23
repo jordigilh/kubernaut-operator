@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0-rc3] - 2026-08-23
+
+### Known Issues
+- **Fleet mode: FleetMetadataCache may not reach Ready.** On clusters where
+  `fleetmetadatacache` (FMC) connects to a Kuadrant-fronted MCP Gateway,
+  `mcpclient.NewResilient()` (upstream `kubernaut` core) can time out
+  establishing an MCP session (`context deadline exceeded`) even though
+  DNS, TCP, TLS, OAuth2, and the raw MCP protocol handshake all
+  independently succeed against the same live endpoint. This is an
+  upstream `kubernaut` core issue, not an operator defect -- tracked at
+  [kubernaut#2262](https://github.com/jordigilh/kubernaut/issues/2262).
+  Non-fleet (single-cluster) deployments are unaffected.
+
 ### Fixed
 - **NetworkPolicy**: Egress rules to the Kubernetes API server used the
   `KUBERNETES_SERVICE_HOST` ClusterIP (e.g. `172.30.0.1/32`) as an `ipBlock`
