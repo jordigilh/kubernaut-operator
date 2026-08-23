@@ -5,6 +5,22 @@ All notable changes to the Kubernaut Operator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0-rc2] - 2026-08-23
+
+### Fixed
+- **Webhook**: `SingletonValidator` (the `validate-kubernaut-singleton`
+  admission webhook enforcing the one-CR-per-cluster constraint) panicked
+  with a nil pointer dereference on every `Kubernaut` CR `CREATE`, denying
+  all installs. `cmd/main.go` constructed it as a bare struct literal and
+  relied on the legacy `InjectDecoder`/`DecoderInjector` mechanism to supply
+  a decoder; that auto-injection path was removed from `controller-runtime`
+  several versions ago (this repo is on v0.24.1), so `decoder` stayed `nil`
+  and `Handle` crashed on the first `v.decoder.Decode(...)` call. Added
+  `webhook.NewSingletonValidator(client, scheme)`, the only supported
+  constructor, which builds a working `admission.NewDecoder(scheme)`;
+  `cmd/main.go` now uses it instead of the literal. This had zero test
+  coverage at any tier prior to this fix
+
 ## [1.6.0-rc1] - 2026-08-22
 
 ### Added
