@@ -110,7 +110,7 @@ var _ = Describe("ValidatingWebhookConfiguration", func() {
 
 		Expect(vwc.Name).To(Equal("kubernaut-system-authwebhook-validating"), "name = %q, want %q", vwc.Name, "kubernaut-system-authwebhook-validating")
 		Expect(vwc.Annotations[OCPServiceCAInjectAnnotation]).To(Equal("true"), "VWC should have OCP service-CA inject annotation")
-		Expect(vwc.Webhooks).To(HaveLen(3), "should have 3 webhooks, got %d", len(vwc.Webhooks))
+		Expect(vwc.Webhooks).To(HaveLen(4), "should have 4 webhooks, got %d", len(vwc.Webhooks))
 	})
 
 	It("uses the expected webhook names", func() {
@@ -121,6 +121,7 @@ var _ = Describe("ValidatingWebhookConfiguration", func() {
 			"notificationrequest.validate.kubernaut.ai",
 			"remediationworkflow.validate.kubernaut.ai",
 			"actiontype.validate.kubernaut.ai",
+			"agentsession.validate.kubernaut.ai",
 		}
 
 		for i, wh := range vwc.Webhooks {
@@ -136,6 +137,7 @@ var _ = Describe("ValidatingWebhookConfiguration", func() {
 			"/validate-notificationrequest-delete",
 			"/validate-remediationworkflow",
 			"/validate-actiontype",
+			"/validate-agentsession",
 		}
 
 		for i, wh := range vwc.Webhooks {
@@ -153,16 +155,24 @@ var _ = Describe("ValidatingWebhookConfiguration", func() {
 			"notificationrequests",
 			"remediationworkflows",
 			"actiontypes",
+			"agentsessions",
 		}
 
 		for i, wh := range vwc.Webhooks {
 			Expect(wh.Rules).To(HaveLen(1), "webhook[%d] should have 1 rule, got %d", i, len(wh.Rules))
 			rule := wh.Rules[0]
 
-			if i == 0 {
+			switch i {
+			case 0:
 				Expect(rule.Operations).To(HaveLen(1))
 				Expect(rule.Operations[0]).To(Equal(admissionregistrationv1.Delete), "webhook[%d] should only have DELETE, got %v", i, rule.Operations)
-			} else {
+			case 3:
+				// agentsession (kubernaut#2244): CREATE-only existence gate --
+				// AgentSessionSpec is CEL-immutable, so no UPDATE/DELETE gate
+				// is needed.
+				Expect(rule.Operations).To(HaveLen(1))
+				Expect(rule.Operations[0]).To(Equal(admissionregistrationv1.Create), "webhook[%d] should only have CREATE, got %v", i, rule.Operations)
+			default:
 				Expect(rule.Operations).To(HaveLen(3), "webhook[%d] should have CREATE, UPDATE, DELETE, got %v", i, rule.Operations)
 			}
 
@@ -177,7 +187,7 @@ var _ = Describe("ValidatingWebhookConfiguration", func() {
 
 		Expect(vwc.Webhooks[0].NamespaceSelector).To(BeNil(), "notificationrequest validating webhook should not have namespaceSelector")
 
-		for _, i := range []int{1, 2} {
+		for _, i := range []int{1, 2, 3} {
 			wh := vwc.Webhooks[i]
 			Expect(wh.NamespaceSelector).NotTo(BeNil(), "webhook[%d] should have namespaceSelector", i)
 			ns, ok := wh.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"]
@@ -190,7 +200,7 @@ var _ = Describe("ValidatingWebhookConfiguration", func() {
 		vwc := ValidatingWebhookConfiguration(kn)
 
 		Expect(*vwc.Webhooks[0].SideEffects).To(Equal(admissionregistrationv1.SideEffectClassNone), "notificationrequest webhook should have SideEffects=None")
-		for _, i := range []int{1, 2} {
+		for _, i := range []int{1, 2, 3} {
 			Expect(*vwc.Webhooks[i].SideEffects).To(Equal(admissionregistrationv1.SideEffectClassNoneOnDryRun), "webhook[%d] should have SideEffects=NoneOnDryRun", i)
 		}
 	})
@@ -200,7 +210,7 @@ var _ = Describe("ValidatingWebhookConfiguration", func() {
 		vwc := ValidatingWebhookConfiguration(kn)
 
 		Expect(*vwc.Webhooks[0].TimeoutSeconds).To(Equal(int32(10)), "notificationrequest timeout = %d, want 10", *vwc.Webhooks[0].TimeoutSeconds)
-		for _, i := range []int{1, 2} {
+		for _, i := range []int{1, 2, 3} {
 			Expect(*vwc.Webhooks[i].TimeoutSeconds).To(Equal(int32(15)), "webhook[%d] timeout = %d, want 15", i, *vwc.Webhooks[i].TimeoutSeconds)
 		}
 	})

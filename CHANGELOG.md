@@ -5,7 +5,7 @@ All notable changes to the Kubernaut Operator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.6.0-rc1] - 2026-08-22
 
 ### Added
 - **CR**: `spec.apiFrontend.rbac.consoleAccessGroups` for the coarse-grained
@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `roleBindings`, so upgrading to an AF version enforcing this gate does not
   silently deny existing deployments' console access. Set to an explicit
   empty list to opt out, or a non-empty list for independent control (#290)
+- **Webhook**: AuthWebhook's `ValidatingWebhookConfiguration` now includes
+  an `agentsession.validate.kubernaut.ai` entry mirroring upstream
+  kubernaut's AgentSession CREATE existence gate (kubernaut#2244,
+  BR-AA-KA-065.13) -- denies creation when
+  `Spec.RemediationRequestRef` does not resolve to a real
+  `RemediationRequest` in the same namespace
 
 ### Changed
 - **BREAKING**: `spec.monitoring` (and its `enabled` field) is removed from
@@ -26,6 +32,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kubernaut#1839 removed AF's ungrounded LLM severity fallback. See
   `docs/upgrade-1.5-to-1.6.md` and
   `docs/design/DD-273-deprecate-monitoring-disabled.md` (#273)
+- **RBAC**: SignalProcessing's `ClusterRole` no longer grants any verbs on
+  `remediationrequests`, matching upstream's least-privilege fix
+  (kubernaut#2243, FedRAMP AC-6). SP never performs CRUD against the
+  RemediationRequest CRD -- it only reads `Spec.RemediationRequestRef.Name`
+  (a plain string field on its own CRD) for audit correlation
+- **Images**: Bumped the 13 kubernaut-service `RELATED_IMAGE_*` env vars,
+  the bundle CSV, the airgap imageset, and `dist/install.yaml` to reference
+  the freshly-built upstream kubernaut `v1.6.0-rc5` images. Bumped the
+  `kubernaut` Go module dependency to `v1.6.0-rc5`. Bumped `VERSION` to
+  `1.6.0-rc1`. The operator's own image and bundle references remain
+  tag-based (`1.6.0-rc1`) pending the tag build; a follow-up PR will pin
+  them to digests once published, matching the pattern used for
+  v1.5.6/v1.5.7/v1.5.8
 
 ### Fixed
 - `ConsoleRoute()` now sets the `haproxy.router.openshift.io/timeout: 3600s`

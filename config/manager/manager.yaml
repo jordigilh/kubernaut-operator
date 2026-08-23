@@ -58,31 +58,31 @@ spec:
         name: manager
         env:
         - name: RELATED_IMAGE_GATEWAY
-          value: quay.io/kubernaut-ai/gateway@sha256:8b09bafdfd119424c93915703f347994e786b59a902028e8c51def51fda87ee3
+          value: quay.io/kubernaut-ai/gateway@sha256:e578dd1f9e598d9f08a8a990361bcae4742dfa1f7d9401b79e13c3a2af1db498
         - name: RELATED_IMAGE_DATA_STORAGE
-          value: quay.io/kubernaut-ai/datastorage@sha256:e07fa27f2c3e3f14ad96f33f89387d0fb735699a6cdd6b794065ca840eecb649
+          value: quay.io/kubernaut-ai/datastorage@sha256:8a9b01a4fa0cc0df6e2936c088d57e2064f92abe0935d148360fd9750bad4492
         - name: RELATED_IMAGE_AIANALYSIS
-          value: quay.io/kubernaut-ai/aianalysis@sha256:ca6ccf69586f38915da7e340e714e2657171db93a9149cafeeebf4ca27e6a657
+          value: quay.io/kubernaut-ai/aianalysis@sha256:84ccdc03dc96b25b96ea33788add3208ce00e9eb25d5f6d4501ca02eed53a313
         - name: RELATED_IMAGE_SIGNALPROCESSING
-          value: quay.io/kubernaut-ai/signalprocessing@sha256:4e770e3010529974a95653eabdf3a77c6e9c08ff7559e852ff3838d1279f4035
+          value: quay.io/kubernaut-ai/signalprocessing@sha256:ef443c9a46ca9f30ca89383d6ca00d73f1ab64a67c672f79bb863c2c91cb7f0e
         - name: RELATED_IMAGE_REMEDIATIONORCHESTRATOR
-          value: quay.io/kubernaut-ai/remediationorchestrator@sha256:129cc18a6374bc901a17de8d8bc650802443d311c8b4cb05245d6ae3f03dab53
+          value: quay.io/kubernaut-ai/remediationorchestrator@sha256:b270e38a115097aac783660e32555cbcda558477d29e39325412b4aed1264585
         - name: RELATED_IMAGE_WORKFLOWEXECUTION
-          value: quay.io/kubernaut-ai/workflowexecution@sha256:e9d8292719139cf845b26bfa5d8d4911af197aba853b7e69538061175063c3e0
+          value: quay.io/kubernaut-ai/workflowexecution@sha256:7ec075e123a9729742b88e1e4d2e652ef695d50d18f13488df6bcdcbd643bee9
         - name: RELATED_IMAGE_EFFECTIVENESSMONITOR
-          value: quay.io/kubernaut-ai/effectivenessmonitor@sha256:c4e8278f163ef911b6b8f5c33586cfb0d34b067cc0ec4233a6a7cdf7cac147e3
+          value: quay.io/kubernaut-ai/effectivenessmonitor@sha256:34fc1d592634935ec0d0b504729b753feafbce02e2cbbbdd34ba44815e61b519
         - name: RELATED_IMAGE_NOTIFICATION
-          value: quay.io/kubernaut-ai/notification@sha256:52cd62fdf1db98131b806af8fcc9984e077427e46939568096b8da80da58ed7e
+          value: quay.io/kubernaut-ai/notification@sha256:260c321dd4a5a390a9c120bb6ee9ff1139a26db42e8674427c6c7fee33c0d950
         - name: RELATED_IMAGE_KUBERNAUT_AGENT
-          value: quay.io/kubernaut-ai/kubernautagent@sha256:6e44133517b7126cf24b44bf9332fde682f98b56d56b41ff26893062ab9c5105
+          value: quay.io/kubernaut-ai/kubernautagent@sha256:871a1b97c1f730b3febbd744fd9fda1d5574a887e0dbec524b55c2ed0683ff43
         - name: RELATED_IMAGE_AUTHWEBHOOK
-          value: quay.io/kubernaut-ai/authwebhook@sha256:dbc42f8a27331f0795b3bfb96ff13e1de73a2517801d7a7b5d6acedc36835ded
+          value: quay.io/kubernaut-ai/authwebhook@sha256:5d71d5161165cd57535027d63a530ce8db0ee867a198725f6154564ebb581c72
         - name: RELATED_IMAGE_API_FRONTEND
-          value: quay.io/kubernaut-ai/apifrontend@sha256:4e60d1e5e88717f991c20739fee408cfc985e5ba072c3273d91dc9f805600e1b
+          value: quay.io/kubernaut-ai/apifrontend@sha256:512c2b3cdd274b912b1fbd534d3e2b01e648f0038b2608b00f84eb122f922c5b
         - name: RELATED_IMAGE_FLEETMETADATACACHE
-          value: quay.io/kubernaut-ai/fleetmetadatacache@sha256:3bcac1b04288f67656f91f96c790e5cb441a765bfdd88e43379b348d95d9b2d7
+          value: quay.io/kubernaut-ai/fleetmetadatacache@sha256:7d56e051794ce27d80e9ef7173bd925fa6ae889a191072e1a5fb67fda5f18882
         - name: RELATED_IMAGE_DB_MIGRATE
-          value: quay.io/kubernaut-ai/db-migrate@sha256:b364243e5780dd8fbf19309ce5d17011b12edaba0e591e499e1c3a9e8df3576f
+          value: quay.io/kubernaut-ai/db-migrate@sha256:d283fa1aa45b96408dac2dedd36c92bc7c8b992c2a63bf85f50860f79c1508e5
         - name: RELATED_IMAGE_CONSOLE
           value: quay.io/kubernaut-ai/kubernaut-console@sha256:01300d335dece46e8dab7a5722e6c52a85a564886f2934dcf4719d3fc363317c
         - name: RELATED_IMAGE_OAUTH2_PROXY
