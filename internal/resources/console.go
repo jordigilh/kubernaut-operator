@@ -110,7 +110,7 @@ func ConsoleDeployment(kn *kubernautv1alpha1.Kubernaut, ingressDomain string) (*
 						{Name: "nginx-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 							LocalObjectReference: corev1.LocalObjectReference{Name: ComponentConsole + "-nginx"},
 						}}},
-						configMapVolume("tls-ca", InterServiceCAConfigMapName),
+						configMapVolume("tls-ca", TrustBundleConfigMapName),
 					},
 				},
 			},

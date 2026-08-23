@@ -134,13 +134,27 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 		expectVolumeSourceConfigMap(dep, "config", "fleetmetadatacache-config")
 	})
 
-	It("#267: mounts tls-ca volume from inter-service-ca ConfigMap so the OAuth2 token-source client can trust a self-signed IdP CA", func() {
+	It("#267: mounts tls-ca volume from the trust-bundle ConfigMap so the OAuth2 token-source client can trust a self-signed IdP CA", func() {
 		kn, knV2 := testKubernautWithFMC()
 		dep, err := FleetMetadataCacheDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		expectHasVolume(dep, "tls-ca")
 		expectHasVolumeMount(dep, "tls-ca", "/etc/tls-ca")
-		expectVolumeSourceConfigMap(dep, "tls-ca", InterServiceCAConfigMapName)
+		expectVolumeSourceConfigMap(dep, "tls-ca", TrustBundleConfigMapName)
+	})
+
+	It("sets SSL_CERT_FILE so the MCP Gateway session transport (which never reads OAuth2.TlsCaFile) also trusts the merged bundle", func() {
+		kn, knV2 := testKubernautWithFMC()
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		container := dep.Spec.Template.Spec.Containers[0]
+		found := false
+		for _, e := range container.Env {
+			if e.Name == "SSL_CERT_FILE" && e.Value == InterServiceTLSCAFile {
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue(), "SSL_CERT_FILE env var not found")
 	})
 
 	It("mounts the shared fleet.oauth2.credentialsSecretRef when FMC has no override", func() {

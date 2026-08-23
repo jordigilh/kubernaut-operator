@@ -258,7 +258,7 @@ var _ = Describe("GatewayAlertManagerConfig", func() {
 		Expect(wh.HTTPConfig.TLSConfig).NotTo(BeNil())
 		Expect(wh.HTTPConfig.TLSConfig.CA.ConfigMap).NotTo(BeNil(),
 			"TLS CA should reference the inter-service CA ConfigMap")
-		Expect(wh.HTTPConfig.TLSConfig.CA.ConfigMap.Name).To(Equal(InterServiceCAConfigMapName))
+		Expect(wh.HTTPConfig.TLSConfig.CA.ConfigMap.Name).To(Equal(TrustBundleConfigMapName))
 		Expect(wh.HTTPConfig.TLSConfig.CA.ConfigMap.Key).To(Equal("service-ca.crt"))
 	})
 

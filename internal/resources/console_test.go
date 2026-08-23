@@ -233,19 +233,19 @@ var _ = Describe("Console Resources", func() {
 				"console container must mount tls-ca at %s for nginx proxy_ssl_trusted_certificate", tlsCAMountPath)
 		})
 
-		It("UT-CD-198-002 [CM-6]: tls-ca volume sources from inter-service-ca ConfigMap", func() {
+		It("UT-CD-198-002 [CM-6]: tls-ca volume sources from the trust-bundle ConfigMap", func() {
 			kn := testKubernautWithConsole()
 			dep, err := ConsoleDeployment(kn, testIngressDomain)
 			Expect(err).NotTo(HaveOccurred())
 
 			found := false
 			for _, v := range dep.Spec.Template.Spec.Volumes {
-				if v.Name == testVolumeTLSCA && v.ConfigMap != nil && v.ConfigMap.Name == InterServiceCAConfigMapName {
+				if v.Name == testVolumeTLSCA && v.ConfigMap != nil && v.ConfigMap.Name == TrustBundleConfigMapName {
 					found = true
 				}
 			}
 			Expect(found).To(BeTrue(),
-				"tls-ca volume must source from the inter-service-ca ConfigMap")
+				"tls-ca volume must source from the trust-bundle ConfigMap (merges inter-service-ca with the cluster's ingress CA so oauth2-proxy also trusts Route-based TLS)")
 		})
 	})
 
