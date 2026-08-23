@@ -1759,6 +1759,38 @@ var _ = Describe("mcpGatewayCRDPolicyRules", func() {
 	})
 })
 
+var _ = Describe("SignalProcessing least-privilege RBAC", func() {
+	It("grants no verbs on remediationrequests (kubernaut#2243, FedRAMP AC-6)", func() {
+		kn := testKubernaut()
+		cr := signalprocessingClusterRole(kn, testKnV2(kn), CommonLabels(kn))
+		for _, r := range cr.Rules {
+			for _, apiGroup := range r.APIGroups {
+				if apiGroup != "kubernaut.ai" {
+					continue
+				}
+				Expect(r.Resources).NotTo(ContainElement("remediationrequests"),
+					"SP never performs CRUD against RemediationRequest -- it only reads "+
+						"Spec.RemediationRequestRef.Name (a plain string field on its own CRD)")
+			}
+		}
+	})
+
+	It("retains full CRUD on signalprocessings (regression guard)", func() {
+		kn := testKubernaut()
+		cr := signalprocessingClusterRole(kn, testKnV2(kn), CommonLabels(kn))
+		found := false
+		for _, r := range cr.Rules {
+			for _, res := range r.Resources {
+				if res == "signalprocessings" {
+					found = true
+					Expect(r.Verbs).To(ContainElements("get", "list", "watch", "create", "update", "patch", "delete"))
+				}
+			}
+		}
+		Expect(found).To(BeTrue(), "signalprocessings rule should still be present")
+	})
+})
+
 var _ = Describe("SignalProcessing fleet RBAC", func() {
 	It("omits MCP Gateway CRD rules when fleet is disabled", func() {
 		kn := testKubernaut()

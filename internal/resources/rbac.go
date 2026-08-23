@@ -1129,7 +1129,13 @@ func mcpGatewayRemoteReadsEnabled(knV2 *kubernautv1alpha2.Kubernaut) bool {
 
 func signalprocessingClusterRole(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	rules := []rbacv1.PolicyRule{
-		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings", "remediationrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+		// kubernaut#2243 (BR-RBAC-020, FedRAMP AC-6): remediationrequests was
+		// previously granted here alongside signalprocessings, but SP never
+		// performs CRUD against the RemediationRequest CRD -- it only reads
+		// Spec.RemediationRequestRef.Name (a plain string field on its own
+		// CRD) for audit correlation. Removed as an unused,
+		// least-privilege-violating grant, matching upstream v1.6.0-rc5.
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings/status", "signalprocessings/finalizers"}, Verbs: []string{"get", "update", "patch"}},
 		{APIGroups: []string{""}, Resources: []string{"pods", "services", "namespaces", "nodes"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},

@@ -97,9 +97,10 @@ func MutatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut) *admissionreg
 }
 
 // ValidatingWebhookConfiguration builds the AuthWebhook ValidatingWebhookConfiguration.
-// Mirrors the Helm chart's authwebhook/webhooks.yaml with three validating
+// Mirrors the Helm chart's authwebhook/webhooks.yaml with four validating
 // webhooks: notificationrequest deletion (attribution), remediationworkflow
-// CUD (schema validation), and actiontype CUD (schema validation).
+// CUD (schema validation), actiontype CUD (schema validation), and
+// agentsession CREATE (existence gate, kubernaut#2244).
 // OCP service-CA injects the caBundle via the inject-cabundle annotation.
 func ValidatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut) *admissionregistrationv1.ValidatingWebhookConfiguration {
 	return &admissionregistrationv1.ValidatingWebhookConfiguration{
@@ -112,6 +113,7 @@ func ValidatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut) *admissionr
 			notificationRequestValidatingWebhook(kn),
 			remediationWorkflowValidatingWebhook(kn),
 			actionTypeValidatingWebhook(kn),
+			agentSessionValidatingWebhook(kn),
 		},
 	}
 }
@@ -194,6 +196,40 @@ func actionTypeValidatingWebhook(kn *kubernautv1alpha1.Kubernaut) admissionregis
 				APIGroups:   []string{"kubernaut.ai"},
 				APIVersions: []string{"v1alpha1"},
 				Resources:   []string{"actiontypes"},
+				Scope:       &namespacedScope,
+			},
+		}},
+	}
+}
+
+// agentSessionValidatingWebhook builds the AgentSession CREATE
+// existence-gate webhook (kubernaut#2244, BR-AA-KA-065.13): denies creation
+// when Spec.RemediationRequestRef does not resolve to a real
+// RemediationRequest in the same namespace. No UPDATE/DELETE gate is needed
+// since AgentSessionSpec is CEL-immutable.
+func agentSessionValidatingWebhook(kn *kubernautv1alpha1.Kubernaut) admissionregistrationv1.ValidatingWebhook {
+	namespacedScope := admissionregistrationv1.NamespacedScope
+	return admissionregistrationv1.ValidatingWebhook{
+		Name:                    "agentsession.validate.kubernaut.ai",
+		AdmissionReviewVersions: []string{"v1"},
+		SideEffects:             sideEffectPtr(admissionregistrationv1.SideEffectClassNoneOnDryRun),
+		FailurePolicy:           failurePolicyPtr(admissionregistrationv1.Fail),
+		MatchPolicy:             matchPolicyPtr(admissionregistrationv1.Equivalent),
+		TimeoutSeconds:          int32Ptr(15),
+		ClientConfig:            webhookClientConfig(kn, "/validate-agentsession"),
+		NamespaceSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{
+				"kubernetes.io/metadata.name": kn.Namespace,
+			},
+		},
+		Rules: []admissionregistrationv1.RuleWithOperations{{
+			Operations: []admissionregistrationv1.OperationType{
+				admissionregistrationv1.Create,
+			},
+			Rule: admissionregistrationv1.Rule{
+				APIGroups:   []string{"kubernaut.ai"},
+				APIVersions: []string{"v1alpha1"},
+				Resources:   []string{"agentsessions"},
 				Scope:       &namespacedScope,
 			},
 		}},
