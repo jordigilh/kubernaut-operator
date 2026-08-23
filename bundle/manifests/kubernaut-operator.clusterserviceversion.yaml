@@ -92,7 +92,7 @@ metadata:
     categories: AI/Machine Learning,Monitoring
     com.redhat.openshift.versions: v4.18
     containerImage: quay.io/kubernaut-ai/kubernaut-operator:1.6.0-rc2
-    createdAt: '2026-08-23T04:12:37Z'
+    createdAt: '2026-08-23T13:07:22Z'
     description: "Automated Kubernetes remediation powered by AI \u2014 detects issues, analyzes root causes, and executes verified fixes."
     documentation: https://jordigilh.github.io/kubernaut-docs/latest/
     features.operators.openshift.io/cnf: 'false'
@@ -172,18 +172,6 @@ spec:
       clusterPermissions:
       - rules:
         - apiGroups:
-          - agent.kagenti.dev
-          resources:
-          - agentruntimes
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
           - ''
           resources:
           - configmaps
@@ -201,6 +189,14 @@ spec:
           - watch
         - apiGroups:
           - ''
+          resourceNames:
+          - kubernetes
+          resources:
+          - endpoints
+          verbs:
+          - get
+        - apiGroups:
+          - ''
           - events.k8s.io
           resources:
           - events
@@ -212,6 +208,18 @@ spec:
           resources:
           - mutatingwebhookconfigurations
           - validatingwebhookconfigurations
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - agent.kagenti.dev
+          resources:
+          - agentruntimes
           verbs:
           - create
           - delete
