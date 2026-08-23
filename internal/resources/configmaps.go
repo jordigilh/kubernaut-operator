@@ -261,6 +261,15 @@ const apifrontendTLSCAFile = "/etc/apifrontend/tls-ca/ca.crt"
 // registrations against one shared token endpoint (confirmed against
 // upstream's own Helm chart: kubernaut.fleet.oauth2 helper), so Gateway and
 // RemediationOrchestrator must be able to authenticate as different clients.
+//
+// The top-level TLSCAFile (used by upstream's Backend/Endpoint scope-check
+// adapter to verify fleet.Endpoint's TLS, e.g. FleetMetadataCache's
+// in-cluster Service) defaults to defaultOAuth2CAFile -- the same
+// trust-bundle path already mounted for the OAuth2 sub-block -- whenever
+// the admin hasn't set an explicit fleet.CASecretName. Without this
+// default, an admin relying on the operator's own service-ca-signed
+// endpoint (the common case: no BYO CA) got no CA at all here, silently
+// falling back to the Go process's system-only cert pool.
 func resolveFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefOverride, defaultOAuth2CAFile string) *fleetConfigYAML {
 	fleet := &knV2.Spec.Fleet
 	if fleet.Enabled == nil || !*fleet.Enabled {
@@ -275,6 +284,8 @@ func resolveFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefO
 	}
 	if fleet.CASecretName != "" {
 		cfg.TLSCAFile = fleetCAMountPath
+	} else {
+		cfg.TLSCAFile = defaultOAuth2CAFile
 	}
 	if fleet.TokenSecretName != "" {
 		cfg.TokenPath = fleetTokenMountPath

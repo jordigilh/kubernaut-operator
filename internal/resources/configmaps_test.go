@@ -172,6 +172,8 @@ var _ = Describe("ConfigMaps", func() {
 			} {
 				Expect(data).To(ContainSubstring(want), "gateway config should contain %q when fleet enabled, got:\n%s", want, data)
 			}
+			Expect(data).To(ContainSubstring("tlsCAFile: "+InterServiceTLSCAFile),
+				"gateway config should default tlsCAFile to the inter-service trust-bundle path when no explicit CA secret is set (fleet.Endpoint is typically an in-cluster, service-ca-signed Service), got:\n%s", data)
 		})
 
 		It("renders tlsCAFile and tokenPath when the corresponding secrets are set", func() {
@@ -811,7 +813,8 @@ var _ = Describe("ConfigMaps", func() {
 			} {
 				Expect(data).To(ContainSubstring(want), "RO config should contain %q when fleet enabled, got:\n%s", want, data)
 			}
-			Expect(data).NotTo(ContainSubstring("tlsCAFile"), "RO config should omit tlsCAFile when no CA secret set, got:\n%s", data)
+			Expect(data).To(ContainSubstring("tlsCAFile: "+InterServiceTLSCAFile),
+				"RO config should default tlsCAFile to the inter-service trust-bundle path when no explicit CA secret is set, got:\n%s", data)
 			Expect(data).NotTo(ContainSubstring("tokenPath"), "RO config should omit tokenPath when no token secret set, got:\n%s", data)
 		})
 
