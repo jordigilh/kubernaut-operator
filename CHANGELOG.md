@@ -57,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Fixed both: added the blank line + doc comment, and added
   `output:rbac:artifacts:config=config/rbac` to the `manifests` target.
   Regenerating surfaced one real pre-existing gap beyond the `endpoints`
-  rule above: `spire.spiffe.io/clusterspiffeids` permissions declared via
+  rule above:   `spire.spiffe.io/clusterspiffeids` permissions declared via
   marker were never in the applied ClusterRole either. Removed
   `config/rbac/spire_role.yaml` and `spire_role_binding.yaml`, a
   hand-maintained standalone `ClusterRole`/`ClusterRoleBinding` pair that
@@ -66,6 +66,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   module's dependency graph" -- not the actual root cause above), now
   redundant and removed to avoid duplicate rules in the generated OLM
   bundle CSV
+- **TLS trust (ingress/router CA)**: `fleetmetadatacache` and
+  `kubernaut-console` failed TLS verification
+  (`x509: certificate signed by unknown authority`) against OpenShift
+  Routes (MCP Gateway, Keycloak OIDC), which are signed by the
+  cluster's default IngressController CA -- a separate chain from the
+  service-ca-operator's inter-service CA that the operator's existing
+  `inter-service-ca` ConfigMap already covered. Added a new
+  operator-computed `inter-service-trust-bundle` ConfigMap that merges
+  `inter-service-ca` with `openshift-config-managed/default-ingress-cert`
+  (both reads fail open, live-read pattern mirroring
+  `resolveAPIServerIPs`), granted a narrowly scoped RBAC rule
+  (`get`-only, `resourceNames=default-ingress-cert`) to read it, and
+  repointed every component's `tls-ca` mount (console, Gateway,
+  DataStorage, APIFrontend, RemediationOrchestrator,
+  WorkflowExecution/AAP, EffectivenessMonitor, FleetMetadataCache, the
+  migration Job, and the Gateway `AlertmanagerConfig`'s
+  `ServiceMonitor`) at this new bundle instead of `inter-service-ca`
+  directly, at the same mount path -- no client-side code changes
+  required
+- **TLS trust (MCP Gateway session, operator-only workaround)**:
+  `fleetmetadatacache`'s actual MCP Gateway session transport (upstream
+  `pkg/fleet/mcpclient.WithReloadableOAuth2Transport`) builds its HTTP
+  transport from an unmodified `http.DefaultTransport` -- none of its
+  three call sites (`cmd/gateway`, `cmd/remediationorchestrator`,
+  `cmd/fleetmetadatacache`) ever call `mcpclient.WithHTTPClient` to
+  inject a custom CA, so `config.yaml`'s `fleet.oauth2.tlsCAFile` only
+  ever covered the separate OAuth2 token fetch, never the actual MCP
+  protocol traffic itself. Set `SSL_CERT_FILE` alongside `TLS_CA_FILE`
+  on every component carrying the inter-service CA env var (plus a new
+  dedicated env var on FleetMetadataCache, which previously had none)
+  as an operator-only workaround, since Go's `crypto/x509` additively
+  extends -- rather than replaces -- the system cert pool with the file
+  it names. A proper fix requires an upstream `kubernaut` core change;
+  tracked separately
+- **Fleet backend TLS default**: `resolveFleetConfig`'s top-level
+  `tlsCAFile` (verifies `fleet.Endpoint`'s TLS, e.g.
+  FleetMetadataCache's in-cluster Service, via upstream's
+  Backend/Endpoint scope-check adapter) was only ever set when the
+  admin configured an explicit `fleet.CASecretName` -- the common case
+  of relying on the operator's own service-ca-signed endpoint got no CA
+  at all. Now defaults to the trust-bundle path, matching the adjacent
+  `fleet.oauth2.tlsCAFile` default
 
 ## [1.6.0-rc2] - 2026-08-23
 
