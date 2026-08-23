@@ -78,13 +78,14 @@ spec:
 
   # At least one named LLM profile is schema-required. provider/model/
   # credentialsSecretName are always required; endpoint is additionally
-  # required for provider: openai.
+  # required for provider: openai. claude-sonnet-4-6 is the model validated
+  # against this operator's KA/AF integration -- swap in openai/vertex_ai/
+  # bedrock/azure once your own provider is validated.
   llmProfiles:
     primary:
-      provider: openai              # or: anthropic, vertex_ai, bedrock, azure
-      model: gpt-4o
+      provider: anthropic           # or: openai, vertex_ai, bedrock, azure
+      model: claude-sonnet-4-6
       credentialsSecretName: llm-credentials
-      endpoint: "https://api.openai.com/v1"   # required only when provider is openai
 
   # kubernautAgent is a schema-required parent key, but llmProfileRef itself
   # can stay unset here: exactly one profile is defined above, so the
