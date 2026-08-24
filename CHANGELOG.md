@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0-rc4] - 2026-08-23
+
 ### Added
 - **CR**: `spec.fleet.resilience` tunes the MCP client's startup backoff
   and per-operation timeouts (`initialInterval`, `maxInterval`,
@@ -18,6 +20,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (kubernaut#2262 Phase 2, kubernaut#2268). Every field is optional and
   zero-value-safe -- omitting `spec.fleet.resilience` entirely preserves
   each service's existing hardcoded defaults unchanged (#390)
+
+### Fixed
+- **Resolves the rc3 Known Issue**: bumped the `RELATED_IMAGE_*` digests for
+  all 13 operand images (Gateway, DataStorage, AIAnalysis,
+  SignalProcessing, RemediationOrchestrator, WorkflowExecution,
+  EffectivenessMonitor, Notification, KubernautAgent, AuthWebhook,
+  APIFrontend, FleetMetadataCache, DB-Migrate) and the
+  `github.com/jordigilh/kubernaut` Go module dependency to upstream
+  [v1.6.0-rc6](https://github.com/jordigilh/kubernaut/releases/tag/v1.6.0-rc6).
+  This pulls in the upstream fix for
+  [kubernaut#2262](https://github.com/jordigilh/kubernaut/issues/2262) --
+  FleetMetadataCache's `mcpclient.NewResilient()` no longer hangs
+  establishing an MCP session against a Kuadrant-fronted MCP Gateway; the
+  SEP-2575 `server/discover` probe is now bounded by its own sub-timeout
+  independent of the connect timeout. Fleet-mode deployments should now
+  reach `Ready` without the workaround noted in rc3.
+- No changes to `kubernaut-console`; `RELATED_IMAGE_CONSOLE` is unchanged
+  from rc3.
 
 ## [1.6.0-rc3] - 2026-08-23
 

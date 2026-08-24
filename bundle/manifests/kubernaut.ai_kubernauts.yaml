@@ -3605,6 +3605,43 @@ spec:
                         description: Token endpoint URL.
                         type: string
                     type: object
+                  resilience:
+                    description: |-
+                      Resilience overrides the MCP client's backoff/timeout tuning shared
+                      by every fleet-aware component (issue #390, kubernaut#2262 Phase 2).
+                      Mirrors upstream pkg/fleet.FleetResilienceConfig. There is no
+                      per-component override -- like the rest of FleetSpec, this is a
+                      single shared block (DD-362 precedent).
+                    properties:
+                      connectTimeout:
+                        description: ConnectTimeout bounds each individual MCP connect
+                          attempt.
+                        type: string
+                      discoverProbeTimeout:
+                        description: |-
+                          DiscoverProbeTimeout bounds the SEP-2575 "server/discover" probe
+                          independently of ConnectTimeout (kubernaut#2262).
+                        type: string
+                      initialInterval:
+                        description: |-
+                          InitialInterval is the starting backoff interval for startup
+                          connection retries.
+                        type: string
+                      maxElapsedTime:
+                        description: |-
+                          MaxElapsedTime is the total time budget before giving up on startup
+                          connection retries.
+                        type: string
+                      maxInterval:
+                        description: |-
+                          MaxInterval is the maximum backoff interval between startup
+                          connection retries.
+                        type: string
+                      tokenRefreshTimeout:
+                        description: TokenRefreshTimeout bounds each OAuth2 token
+                          refresh HTTP call.
+                        type: string
+                    type: object
                   tokenSecretName:
                     description: |-
                       Name of a Secret containing a bearer token (key: token) for ACM
