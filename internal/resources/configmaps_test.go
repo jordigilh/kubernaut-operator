@@ -402,6 +402,25 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("port: 5432"), "datastorage config should default to port 5432, got:\n%s", data)
 		})
 
+		It("#399 [SC-8]: renders the configured PostgreSQL/Valkey hostnames verbatim, never pre-resolved to an IP", func() {
+			// "localhost" reliably resolves via /etc/hosts in every
+			// environment (CI sandboxes included), making it a deterministic
+			// probe for the IP-substitution regression fixed by #399: prior
+			// to the fix, resolveHostToIP("localhost") returned "127.0.0.1",
+			// which breaks TLS hostname verification against a serving cert
+			// that only has DNS SANs (see #398's on-cluster discovery).
+			kn := testKubernaut()
+			kn.Spec.PostgreSQL.Host = "localhost"
+			kn.Spec.Valkey.Host = "localhost"
+			cm, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("host: localhost"), "PostgreSQL host must remain the literal hostname, not be pre-resolved to an IP, got:\n%s", data)
+			Expect(data).To(ContainSubstring("addr: localhost:6379"), "Valkey addr must remain the literal hostname, not be pre-resolved to an IP, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("127.0.0.1"), "DataStorage config must never contain a pre-resolved IP in place of the configured hostname, got:\n%s", data)
+		})
+
 		It("omits telemetry entirely by default (#323)", func() {
 			kn := testKubernaut()
 			cm, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")

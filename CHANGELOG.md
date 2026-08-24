@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **DataStorage**: Postgres/Valkey addresses were pre-resolved to a raw IP
+  before being written into `datastorage-config`, breaking TLS hostname
+  verification the moment `spec.valkey.tls` (or the operator's own
+  `verify-full` default `spec.postgresql.sslMode`) is enabled -- a
+  service-ca-issued serving cert only has DNS SANs, not IP SANs, so
+  connecting via IP fails with `x509: cannot validate certificate ... doesn't
+  contain any IP SANs`. This IP pre-resolution (`resolveHostToIP`) was added
+  in #175 as a workaround for `ubi-minimal`'s unreliable glibc DNS resolver,
+  but the same PR also added `GODEBUG=netdns=go` to every deployment, making
+  the pre-resolution redundant since. Removed it entirely; DataStorage now
+  renders the configured hostname verbatim, matching FleetMetadataCache's
+  `ValkeyAddr()` (which never resolved to an IP and was unaffected) (#399)
 - **FleetMetadataCache**: `spec.valkey.tls` was silently ignored -- unlike
   DataStorage/APIFrontend, FMC's rendered config never had a `valkey.tls`
   block at all, even though upstream's `pkg/fleet/fmc/config.ValkeyConfig`
