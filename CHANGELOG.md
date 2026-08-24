@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **AIAnalysis RBAC**: `aianalysis-controller`'s ClusterRole was missing
+  `update` on `aianalyses/finalizers`, a hard, 100%-reproducible block on
+  every investigation. `AgentSessionCreator.GetOrCreate` sets an
+  ownerReference from `AgentSession` back to the `AIAnalysis` CR via
+  `controllerutil.SetControllerReference`, which defaults
+  `blockOwnerDeletion` to `true` -- Kubernetes'
+  `OwnerReferencesPermissionEnforcement` admission plugin requires `update`
+  on the *owner's* `/finalizers` subresource for that to be permitted.
+  Every sibling controller that owns its own CR (SignalProcessing,
+  RemediationOrchestrator, WorkflowExecution, Notification, AuthWebhook)
+  already granted the equivalent rule; AIAnalysis was the sole omission,
+  causing every `AgentSession` creation to fail with "cannot set
+  blockOwnerDeletion if an ownerReference refers to a resource you can't
+  set finalizers on" and blocking all workflow discovery/remediation on
+  `v1.6.0-rc5` (#400)
+
 ## [1.6.0-rc5] - 2026-08-24
 
 ### Known Issues

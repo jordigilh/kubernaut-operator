@@ -1721,6 +1721,26 @@ var _ = Describe("AIAnalysis controller ClusterRole", func() {
 		Expect(ruleMap).To(HaveKey("kubernaut.ai/agentsessions"))
 		Expect(ruleMap["kubernaut.ai/agentsessions"]).To(ContainElements("get", "list", "watch", "create", "update", "delete"))
 	})
+
+	It("[AC-6] grants update on aianalyses/finalizers so AA can own AgentSession via blockOwnerDeletion (#400)", func() {
+		role := aaRole()
+		Expect(role).NotTo(BeNil())
+		ruleMap := ruleMapFor(role)
+
+		// AgentSessionCreator.GetOrCreate uses controllerutil.SetControllerReference,
+		// which defaults blockOwnerDeletion to true on the AgentSession's
+		// ownerReference back to the AIAnalysis CR. Kubernetes'
+		// OwnerReferencesPermissionEnforcement admission plugin requires "update"
+		// on the *owner's* /finalizers subresource for that to be permitted --
+		// every sibling controller that owns its own CR (SP, RO, WE, Notification,
+		// AuthWebhook) already grants this; AA was the sole omission, blocking
+		// every AgentSession creation with "cannot set blockOwnerDeletion" (#400).
+		Expect(ruleMap).To(HaveKey("kubernaut.ai/aianalyses/finalizers"))
+		Expect(ruleMap["kubernaut.ai/aianalyses/finalizers"]).To(ConsistOf("update"),
+			"aianalyses/finalizers should grant exactly update, matching the "+
+				"remediationrequests/workflowexecutions/notificationrequests/"+
+				"remediationworkflows finalizers rules -- not a broader grant")
+	})
 })
 
 // #224: mcpGatewayCRDPolicyRules extracts the gatewayType-conditional MCP

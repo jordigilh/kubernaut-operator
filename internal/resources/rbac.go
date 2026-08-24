@@ -983,6 +983,19 @@ func aianalysisControllerClusterRole(kn *kubernautv1alpha1.Kubernaut, labels map
 		Rules: []rbacv1.PolicyRule{
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses/status"}, Verbs: []string{"get", "update", "patch"}},
+			// #400: AgentSessionCreator.GetOrCreate sets an ownerReference from
+			// AgentSession back to this AIAnalysis CR via
+			// controllerutil.SetControllerReference, which defaults
+			// blockOwnerDeletion to true. Kubernetes'
+			// OwnerReferencesPermissionEnforcement admission plugin requires
+			// "update" on the owner's own /finalizers subresource for that to be
+			// permitted -- every sibling controller that owns its own CR
+			// (signalprocessing, remediationorchestrator, workflowexecution,
+			// notification, authwebhook) already grants this; this was the sole
+			// omission, blocking every AgentSession creation cluster-wide with
+			// "cannot set blockOwnerDeletion if an ownerReference refers to a
+			// resource you can't set finalizers on".
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses/finalizers"}, Verbs: []string{"update"}},
 			// v1.6.0-rc4 (kubernaut#2214, DD-AA-KA-001 Amendment): AA no
 			// longer interacts with InvestigationSession at all (full RBAC
 			// removal, not just narrowing -- #368 originally kept a
