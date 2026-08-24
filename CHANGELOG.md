@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **CR**: `spec.fleet.resilience` tunes the MCP client's startup backoff
+  and per-operation timeouts (`initialInterval`, `maxInterval`,
+  `maxElapsedTime`, `tokenRefreshTimeout`, `connectTimeout`,
+  `discoverProbeTimeout`) shared by every fleet-aware component (Gateway,
+  RemediationOrchestrator, APIFrontend, EffectivenessMonitor,
+  SignalProcessing, WorkflowExecution, KubernautAgent,
+  FleetMetadataCache). Mirrors upstream `pkg/fleet.FleetResilienceConfig`
+  (kubernaut#2262 Phase 2, kubernaut#2268). Every field is optional and
+  zero-value-safe -- omitting `spec.fleet.resilience` entirely preserves
+  each service's existing hardcoded defaults unchanged (#390)
+
 ## [1.6.0-rc3] - 2026-08-23
 
 ### Known Issues
