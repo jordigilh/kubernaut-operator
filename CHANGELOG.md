@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **NetworkPolicy**: fleet-aware components (FleetMetadataCache,
+  SignalProcessing, RemediationOrchestrator, EffectivenessMonitor,
+  KubernautAgent, APIFrontend, Gateway) could not reach a Route-fronted MCP
+  Gateway -- `fleetDestinationsEgressRule`'s `namespaceSelector: {}` peer
+  only matches destinations backed by a namespaced Pod IP, but an
+  OpenShift Route resolves to the Ingress Router's hostNetwork VIP, which
+  OVN-Kubernetes silently drops regardless of that peer. The rule now also
+  resolves `spec.fleet.mcpGatewayEndpoint`/`oauth2.tokenURL`/`endpoint`'s
+  hostnames via DNS and adds their real IPs as `ipBlock` peers, mirroring
+  the same live-resolve/cache/fail-closed pattern already used for the
+  Kubernetes API server egress fix. Confirmed via live on-cluster curl
+  reproduction (#392)
+- **NetworkPolicy**: `workflowExecutionNetworkPolicy` never granted any
+  fleet egress at all, a gap missed by the original #224/#204 retrofit,
+  despite WorkflowExecution being fully fleet-config-aware since #390 (#392)
+
 ## [1.6.0-rc4] - 2026-08-23
 
 ### Added
