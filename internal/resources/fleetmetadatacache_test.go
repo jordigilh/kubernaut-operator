@@ -100,6 +100,38 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cm.Data["config.yaml"]).To(ContainSubstring("tlsCaFile: " + InterServiceTLSCAFile))
 	})
+
+	// #390: mcpGateway.resilience mirrors upstream pkg/fleet.MCPGatewayConfig.Resilience
+	// (kubernaut#2262 Phase 2, kubernaut PR #2268) -- FMC's
+	// fmcconfig.ServiceConfig.MCPGateway is typed directly as
+	// fleet.MCPGatewayConfig, so it inherits Resilience automatically.
+	It("UT-FLEET-RES-015 [CM-6]: omits mcpGateway.resilience when spec.fleet.resilience is unset", func() {
+		kn, knV2 := testKubernautWithFMC()
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("resilience:"), "FMC config should omit mcpGateway.resilience when spec.fleet.resilience is unset, got:\n%s", cm.Data["config.yaml"])
+	})
+
+	It("UT-FLEET-RES-016 [CM-6, SC-5]: renders mcpGateway.resilience.* verbatim from spec.fleet.resilience", func() {
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.Fleet.Resilience = &kubernautv1alpha2.FleetResilienceSpec{
+			InitialInterval:      "2s",
+			MaxInterval:          "45s",
+			MaxElapsedTime:       "10m",
+			TokenRefreshTimeout:  "15s",
+			ConnectTimeout:       "20s",
+			DiscoverProbeTimeout: "8s",
+		}
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		for _, want := range []string{
+			"resilience:", "initialInterval: 2s", "maxInterval: 45s", "maxElapsedTime: 10m",
+			"tokenRefreshTimeout: 15s", "connectTimeout: 20s", "discoverProbeTimeout: 8s",
+		} {
+			Expect(data).To(ContainSubstring(want), "FMC config should contain %q when spec.fleet.resilience is set, got:\n%s", want, data)
+		}
+	})
 })
 
 var _ = Describe("FleetMetadataCacheDeployment", func() {
