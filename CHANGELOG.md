@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0-rc5] - 2026-08-24
+
+### Known Issues
+- **FleetMetadataCache/DataStorage/APIFrontend Valkey clients have no
+  authentication beyond one-way TLS** -- any pod that can reach Valkey's
+  port can read/write the cache with zero credentials. Upstream is closing
+  this via client-certificate mTLS
+  ([kubernaut#2269](https://github.com/jordigilh/kubernaut/issues/2269),
+  DD-PLATFORM-006 Decision Area 19) rather than password auth as originally
+  requested; this operator's `spec.valkey.tls.clientCertSecretName` wiring
+  (added in #398) is already forward-compatible with that design and will
+  require no operator changes once it lands. Two further hardening
+  follow-ups are scoped as part of the same upstream effort:
+  [kubernaut#2270](https://github.com/jordigilh/kubernaut/issues/2270)
+  (Postgres `sslMode` chart default hardening) and
+  [kubernaut#2271](https://github.com/jordigilh/kubernaut/issues/2271)
+  (Valkey per-user ACL mapped to mTLS client cert CN, backlog/no-urgency).
+  None of these block this release -- they are pre-existing upstream gaps,
+  not regressions introduced by the fixes below.
+
 ### Fixed
 - **DataStorage**: Postgres/Valkey addresses were pre-resolved to a raw IP
   before being written into `datastorage-config`, breaking TLS hostname
