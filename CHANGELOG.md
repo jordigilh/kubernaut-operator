@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0-rc6] - 2026-08-24
+
 ### Fixed
 - **AIAnalysis RBAC**: `aianalysis-controller`'s ClusterRole was missing
   `update` on `aianalyses/finalizers`, a hard, 100%-reproducible block on
