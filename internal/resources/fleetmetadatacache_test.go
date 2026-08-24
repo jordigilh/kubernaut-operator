@@ -23,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
+	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
@@ -149,6 +150,38 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 			Expect(data).To(ContainSubstring(want), "FMC config should contain %q when spec.fleet.resilience is set, got:\n%s", want, data)
 		}
 	})
+
+	// #398: FMC's Valkey client (unlike DataStorage/APIFrontend) never
+	// rendered a valkey.tls block at all, even though upstream's own
+	// pkg/fleet/fmc/config.ValkeyConfig supports TLS ValkeyTLSConfig. Per
+	// upstream DD-PLATFORM-006 DA8, the chart's own Valkey is TLS-only
+	// (one-way TLS -- no client cert required), so without this block FMC
+	// cannot connect to a TLS-secured Valkey at all. Mirrors DataStorage's
+	// exact rendering (dataStorageRedisTLSYAML) for cross-service consistency.
+	It("#398 [SC-8]: omits valkey.tls when spec.valkey.tls is not configured", func() {
+		kn, knV2 := testKubernautWithFMC()
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("tls:"), "FMC config should omit valkey.tls when spec.valkey.tls is unset, got:\n%s", cm.Data["config.yaml"])
+	})
+
+	It("#398 [SC-8]: renders valkey.tls.* from spec.valkey.tls, mirroring DataStorage's rendering", func() {
+		kn, knV2 := testKubernautWithFMC()
+		kn.Spec.Valkey.TLS = &kubernautv1alpha1.ValkeyTLSSpec{
+			Enabled:              true,
+			CASecretName:         "valkey-ca",
+			ClientCertSecretName: "valkey-client-cert",
+		}
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		for _, want := range []string{
+			"enabled: true", "caFile: /etc/valkey-tls/ca/ca.crt",
+			"certFile: /etc/valkey-tls/client/tls.crt", "keyFile: /etc/valkey-tls/client/tls.key",
+		} {
+			Expect(data).To(ContainSubstring(want), "FMC config should contain %q when spec.valkey.tls is set, got:\n%s", want, data)
+		}
+	})
 })
 
 var _ = Describe("FleetMetadataCacheDeployment", func() {
@@ -222,6 +255,31 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 			}
 		}
 		Expect(found).To(BeTrue(), "SSL_CERT_FILE env var not found")
+	})
+
+	It("#398 [SC-8]: mounts valkey-ca and valkey-client-cert when spec.valkey.tls is configured, mirroring DataStorageDeployment", func() {
+		kn, knV2 := testKubernautWithFMC()
+		kn.Spec.Valkey.TLS = &kubernautv1alpha1.ValkeyTLSSpec{
+			Enabled:              true,
+			CASecretName:         "valkey-ca",
+			ClientCertSecretName: "valkey-client-cert",
+		}
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(dep, "valkey-ca")
+		expectHasVolume(dep, "valkey-client-cert")
+		expectHasVolumeMount(dep, "valkey-ca", "/etc/valkey-tls/ca")
+		expectHasVolumeMount(dep, "valkey-client-cert", "/etc/valkey-tls/client")
+	})
+
+	It("#398: does not mount valkey TLS volumes when spec.valkey.tls is disabled", func() {
+		kn, knV2 := testKubernautWithFMC()
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		for _, v := range dep.Spec.Template.Spec.Volumes {
+			Expect(v.Name).NotTo(HavePrefix("valkey-"),
+				"should not have valkey TLS volume %q when TLS is disabled", v.Name)
+		}
 	})
 
 	It("mounts the shared fleet.oauth2.credentialsSecretRef when FMC has no override", func() {

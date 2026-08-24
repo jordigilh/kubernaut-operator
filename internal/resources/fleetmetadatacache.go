@@ -63,7 +63,23 @@ type fleetMetadataCacheMCPGatewayYAML struct {
 }
 
 type fleetMetadataCacheValkeyYAML struct {
-	Addr string `json:"addr" yaml:"addr"`
+	Addr string                           `json:"addr" yaml:"addr"`
+	TLS  *fleetMetadataCacheValkeyTLSYAML `json:"tls,omitempty" yaml:"tls,omitempty"`
+}
+
+// fleetMetadataCacheValkeyTLSYAML mirrors upstream's
+// pkg/fleet/fmc/config.ValkeyTLSConfig field-for-field (issue #398). Per
+// upstream DD-PLATFORM-006 Decision Area 8, the chart's own Valkey is
+// TLS-only using one-way TLS -- the server presents a cert the client
+// verifies via CAFile, and no client certificate is required ("a client
+// presenting no certificate still succeeds"). CertFile/KeyFile are
+// therefore optional mTLS, kept only for cross-service consistency with
+// DataStorage's identical dataStorageRedisTLSYAML rendering.
+type fleetMetadataCacheValkeyTLSYAML struct {
+	Enabled  bool   `json:"enabled" yaml:"enabled"`
+	CAFile   string `json:"caFile,omitempty" yaml:"caFile,omitempty"`
+	CertFile string `json:"certFile,omitempty" yaml:"certFile,omitempty"`
+	KeyFile  string `json:"keyFile,omitempty" yaml:"keyFile,omitempty"`
 }
 
 type fleetMetadataCacheSyncYAML struct {
@@ -113,6 +129,7 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernau
 		},
 		Valkey: fleetMetadataCacheValkeyYAML{
 			Addr: ValkeyAddr(&kn.Spec.Valkey),
+			TLS:  resolveFleetMetadataCacheValkeyTLS(kn),
 		},
 		Sync: fleetMetadataCacheSyncYAML{
 			Interval: withDefault(fmc.SyncInterval, "30s"),
@@ -134,6 +151,26 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernau
 		ObjectMeta: ObjectMeta(kn, fleetMetadataCacheConfigMapName, ComponentFleetMetadataCache),
 		Data:       map[string]string{"config.yaml": data},
 	}, nil
+}
+
+// resolveFleetMetadataCacheValkeyTLS mirrors DataStorageConfigMap's identical
+// spec.valkey.tls resolution (issue #398): omitted entirely when TLS is
+// disabled, CAFile only when an explicit CA secret is configured, CertFile/
+// KeyFile only when an explicit client-cert secret is configured. Paths must
+// stay in sync with the volume mounts FleetMetadataCacheDeployment adds.
+func resolveFleetMetadataCacheValkeyTLS(kn *kubernautv1alpha1.Kubernaut) *fleetMetadataCacheValkeyTLSYAML {
+	if !kn.Spec.Valkey.ValkeyTLSEnabled() {
+		return nil
+	}
+	t := &fleetMetadataCacheValkeyTLSYAML{Enabled: true}
+	if kn.Spec.Valkey.TLS.CASecretName != "" {
+		t.CAFile = "/etc/valkey-tls/ca/ca.crt"
+	}
+	if kn.Spec.Valkey.TLS.ClientCertSecretName != "" {
+		t.CertFile = "/etc/valkey-tls/client/tls.crt"
+		t.KeyFile = "/etc/valkey-tls/client/tls.key"
+	}
+	return t
 }
 
 // --- Deployment ---
@@ -163,6 +200,20 @@ func FleetMetadataCacheDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kuberna
 		{Name: "config", MountPath: "/etc/fleetmetadatacache", ReadOnly: true},
 		{Name: "fleet-oauth2", MountPath: fleetMetadataCacheOAuth2Dir, ReadOnly: true},
 		{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
+	}
+	// #398: mirrors DataStorageDeployment's identical spec.valkey.tls volume
+	// wiring -- without this, FMC's rendered valkey.tls.caFile/certFile/
+	// keyFile paths (resolveFleetMetadataCacheValkeyTLS) point at files that
+	// are never actually mounted into the container.
+	if kn.Spec.Valkey.ValkeyTLSEnabled() {
+		if kn.Spec.Valkey.TLS.CASecretName != "" {
+			volumes = append(volumes, secretVolume("valkey-ca", kn.Spec.Valkey.TLS.CASecretName))
+			mounts = append(mounts, corev1.VolumeMount{Name: "valkey-ca", MountPath: "/etc/valkey-tls/ca", ReadOnly: true})
+		}
+		if kn.Spec.Valkey.TLS.ClientCertSecretName != "" {
+			volumes = append(volumes, secretVolume("valkey-client-cert", kn.Spec.Valkey.TLS.ClientCertSecretName))
+			mounts = append(mounts, corev1.VolumeMount{Name: "valkey-client-cert", MountPath: "/etc/valkey-tls/client", ReadOnly: true})
+		}
 	}
 	// SSL_CERT_FILE: FMC's actual MCP Gateway session transport
 	// (pkg/fleet/mcpclient.WithReloadableOAuth2Transport) falls back to an

@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **FleetMetadataCache**: `spec.valkey.tls` was silently ignored -- unlike
+  DataStorage/APIFrontend, FMC's rendered config never had a `valkey.tls`
+  block at all, even though upstream's `pkg/fleet/fmc/config.ValkeyConfig`
+  supports it. Per upstream DD-PLATFORM-006 Decision Area 8, the chart's own
+  Valkey deployment is TLS-only (one-way TLS -- no client cert required),
+  so without this FMC could never connect to a TLS-secured Valkey. Now
+  renders `valkey.tls.enabled`/`caFile`/`certFile`/`keyFile` and mounts the
+  `valkey-ca`/`valkey-client-cert` secret volumes whenever
+  `spec.valkey.tls.enabled` is set, mirroring `DataStorageConfigMap`/
+  `DataStorageDeployment`'s existing rendering exactly. A separate gap --
+  upstream's Valkey client having no password/AUTH support at all, meaning
+  any in-namespace pod can read/write the cache unauthenticated -- is not
+  fixable from the operator and has been filed upstream
+  ([kubernaut#2269](https://github.com/jordigilh/kubernaut/issues/2269)) (#398)
 - **FleetMetadataCache**: stopped `metricsAddr` colliding with `healthAddr`'s
   implicit default. The rendered config omitted `healthAddr` entirely, so
   FMC fell back to its own default (`:8081`) for the health server, but the
