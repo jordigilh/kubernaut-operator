@@ -1387,13 +1387,7 @@ func (r *KubernautReconciler) warnIfFleetMetadataCacheUnused(knV2 *kubernautv1al
 func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, dbName, dbUser, tlsProfile string, sidecar resources.KagentiSidecarMode, oidc *resources.KagentiOIDCDefaults) (map[string]string, error) {
 	tlsOpt := resources.WithTLSProfile(tlsProfile)
 
-	// buildCoreConfigMaps transitively calls resolveHostToIP (via
-	// DataStorageConfigMap), a best-effort DNS lookup that deliberately uses
-	// context.Background() (see its doc comment): every error path,
-	// including a cancelled context, falls back to the configured hostname,
-	// so threading ctx through the builder-table plumbing would not change
-	// behavior. See the inline nolint on the datastorage builder entry.
-	configMaps, cmHashes, err := buildCoreConfigMaps(kn, knV2, tlsOpt, dbName, dbUser) //nolint:contextcheck
+	configMaps, cmHashes, err := buildCoreConfigMaps(kn, knV2, tlsOpt, dbName, dbUser)
 	if err != nil {
 		return nil, err
 	}
@@ -1427,13 +1421,9 @@ func buildCoreConfigMaps(
 		fn   func() (*corev1.ConfigMap, error)
 	}
 	builders := []cmBuilder{
-		// DataStorageConfigMap transitively calls resolveHostToIP, a best-effort
-		// DNS lookup that deliberately uses context.Background() (see its doc
-		// comment): every error path, including a cancelled context, falls back
-		// to the configured hostname, so propagating ctx would not change behavior.
 		{"datastorage", func() (*corev1.ConfigMap, error) {
 			return resources.DataStorageConfigMap(kn, knV2, dbName, dbUser, tlsOpt)
-		}}, //nolint:contextcheck
+		}},
 		{"aianalysis", func() (*corev1.ConfigMap, error) { return resources.AIAnalysisConfigMap(kn, tlsOpt) }},
 		{"signalprocessing", func() (*corev1.ConfigMap, error) { return resources.SignalProcessingConfigMap(kn, knV2, tlsOpt) }},
 		{"remediationorchestrator", func() (*corev1.ConfigMap, error) { return resources.RemediationOrchestratorConfigMap(kn, knV2, tlsOpt) }},

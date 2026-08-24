@@ -23,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
+	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
@@ -35,7 +36,7 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 
 		data := cm.Data["config.yaml"]
 		for _, want := range []string{
-			"server:", "apiAddr: :8080", "metricsAddr: :8081",
+			"server:", "apiAddr: :8080", "healthAddr: :8081", "metricsAddr: :9090",
 			"mcpGateway:", "endpoint: https://mcp-gateway.example.com/sse", "gatewayType: eaigw",
 			"valkey:", "sync:", "keyTtl: 45s", "interval: 30s",
 			"oauth2:", "tokenUrl: https://keycloak.example.com/token",
@@ -43,6 +44,23 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 		} {
 			Expect(data).To(ContainSubstring(want), "FMC config should contain %q, got:\n%s", want, data)
 		}
+	})
+
+	// #396: healthAddr and metricsAddr must resolve to different ports.
+	// Upstream's ServiceConfig has three independent server addresses
+	// (apiAddr/healthAddr/metricsAddr); omitting healthAddr here previously
+	// left FMC falling back to its own default (:8081) for the health
+	// server while this ConfigMap explicitly set metricsAddr to that same
+	// value, so both servers tried to bind :8081 and the metrics server
+	// crashed with "bind: address already in use" -- confirmed on-cluster.
+	It("#396 [CM-6]: healthAddr and metricsAddr never collide", func() {
+		kn, knV2 := testKubernautWithFMC()
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cm.Data["config.yaml"]).To(ContainSubstring("healthAddr: :8081"),
+			"FMC config must explicitly set healthAddr so it never depends on FMC's own implicit default")
+		Expect(cm.Data["config.yaml"]).To(ContainSubstring("metricsAddr: :9090"),
+			"metricsAddr must be a genuinely separate port from healthAddr (:8081), not reuse it")
 	})
 
 	// DD-362: FMC always renders mcpGateway.namespace from the shared
@@ -132,6 +150,38 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 			Expect(data).To(ContainSubstring(want), "FMC config should contain %q when spec.fleet.resilience is set, got:\n%s", want, data)
 		}
 	})
+
+	// #398: FMC's Valkey client (unlike DataStorage/APIFrontend) never
+	// rendered a valkey.tls block at all, even though upstream's own
+	// pkg/fleet/fmc/config.ValkeyConfig supports TLS ValkeyTLSConfig. Per
+	// upstream DD-PLATFORM-006 DA8, the chart's own Valkey is TLS-only
+	// (one-way TLS -- no client cert required), so without this block FMC
+	// cannot connect to a TLS-secured Valkey at all. Mirrors DataStorage's
+	// exact rendering (dataStorageRedisTLSYAML) for cross-service consistency.
+	It("#398 [SC-8]: omits valkey.tls when spec.valkey.tls is not configured", func() {
+		kn, knV2 := testKubernautWithFMC()
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("tls:"), "FMC config should omit valkey.tls when spec.valkey.tls is unset, got:\n%s", cm.Data["config.yaml"])
+	})
+
+	It("#398 [SC-8]: renders valkey.tls.* from spec.valkey.tls, mirroring DataStorage's rendering", func() {
+		kn, knV2 := testKubernautWithFMC()
+		kn.Spec.Valkey.TLS = &kubernautv1alpha1.ValkeyTLSSpec{
+			Enabled:              true,
+			CASecretName:         "valkey-ca",
+			ClientCertSecretName: "valkey-client-cert",
+		}
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		for _, want := range []string{
+			"enabled: true", "caFile: /etc/valkey-tls/ca/ca.crt",
+			"certFile: /etc/valkey-tls/client/tls.crt", "keyFile: /etc/valkey-tls/client/tls.key",
+		} {
+			Expect(data).To(ContainSubstring(want), "FMC config should contain %q when spec.valkey.tls is set, got:\n%s", want, data)
+		}
+	})
 })
 
 var _ = Describe("FleetMetadataCacheDeployment", func() {
@@ -142,7 +192,7 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 		expectDeploymentBasics(dep, "fleetmetadatacache")
 	})
 
-	It("exposes api (8080) and metrics (8081) ports", func() {
+	It("exposes api (8080), health (8081), and metrics (9090) ports", func() {
 		kn, knV2 := testKubernautWithFMC()
 		dep, err := FleetMetadataCacheDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
@@ -152,15 +202,16 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 			portMap[p.Name] = p.ContainerPort
 		}
 		Expect(portMap).To(HaveKeyWithValue("api", int32(8080)))
-		Expect(portMap).To(HaveKeyWithValue("metrics", int32(8081)))
+		Expect(portMap).To(HaveKeyWithValue("health", int32(8081)))
+		Expect(portMap).To(HaveKeyWithValue("metrics", int32(9090)))
 	})
 
-	It("probes /healthz and /readyz on the metrics port (8081), matching FMC's own healthAddr, not the api port (8080)", func() {
+	It("probes /healthz and /readyz on the health port (8081), matching FMC's own healthAddr, not the api port (8080)", func() {
 		// On-cluster validation (2026-08-23): probing 8080 left FMC
 		// permanently stuck at 0/1 Ready (startup probe: connection
 		// refused) even when otherwise healthy, since FMC's healthAddr
-		// binds /healthz and /readyz on the metrics port, not the api
-		// port which only serves request traffic.
+		// binds /healthz and /readyz on a dedicated health port, not the
+		// api port which only serves request traffic.
 		kn, knV2 := testKubernautWithFMC()
 		dep, err := FleetMetadataCacheDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
@@ -204,6 +255,31 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 			}
 		}
 		Expect(found).To(BeTrue(), "SSL_CERT_FILE env var not found")
+	})
+
+	It("#398 [SC-8]: mounts valkey-ca and valkey-client-cert when spec.valkey.tls is configured, mirroring DataStorageDeployment", func() {
+		kn, knV2 := testKubernautWithFMC()
+		kn.Spec.Valkey.TLS = &kubernautv1alpha1.ValkeyTLSSpec{
+			Enabled:              true,
+			CASecretName:         "valkey-ca",
+			ClientCertSecretName: "valkey-client-cert",
+		}
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(dep, "valkey-ca")
+		expectHasVolume(dep, "valkey-client-cert")
+		expectHasVolumeMount(dep, "valkey-ca", "/etc/valkey-tls/ca")
+		expectHasVolumeMount(dep, "valkey-client-cert", "/etc/valkey-tls/client")
+	})
+
+	It("#398: does not mount valkey TLS volumes when spec.valkey.tls is disabled", func() {
+		kn, knV2 := testKubernautWithFMC()
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		for _, v := range dep.Spec.Template.Spec.Volumes {
+			Expect(v.Name).NotTo(HavePrefix("valkey-"),
+				"should not have valkey TLS volume %q when TLS is disabled", v.Name)
+		}
 	})
 
 	It("mounts the shared fleet.oauth2.credentialsSecretRef when FMC has no override", func() {
@@ -255,7 +331,7 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 })
 
 var _ = Describe("FleetMetadataCacheService", func() {
-	It("selects the fleetmetadatacache component and exposes api+metrics ports", func() {
+	It("selects the fleetmetadatacache component and exposes api+health+metrics ports", func() {
 		kn, _ := testKubernautWithFMC()
 		svc := FleetMetadataCacheService(kn)
 		Expect(svc.Name).To(Equal("fleetmetadatacache-service"))
@@ -266,7 +342,8 @@ var _ = Describe("FleetMetadataCacheService", func() {
 			portMap[p.Name] = p.Port
 		}
 		Expect(portMap).To(HaveKeyWithValue("api", int32(8080)))
-		Expect(portMap).To(HaveKeyWithValue("metrics", int32(8081)))
+		Expect(portMap).To(HaveKeyWithValue("health", int32(8081)))
+		Expect(portMap).To(HaveKeyWithValue("metrics", int32(9090)))
 	})
 
 	It("is included in Services() when fleetMetadataCache.enabled is true", func() {

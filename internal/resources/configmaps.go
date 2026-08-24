@@ -1238,7 +1238,7 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.K
 func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, dbName, dbUser string, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	pgPort := PostgreSQLPort(kn)
-	pgHost := resolveHostToIP(kn.Spec.PostgreSQL.Host)
+	pgHost := kn.Spec.PostgreSQL.Host
 	cfg := dataStorageConfigYAML{
 		TLSProfile: o.tlsProfile,
 		Server:     dataStorageServerConfig(kn, knV2),
@@ -1332,7 +1332,7 @@ func dataStorageServerConfig(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1a
 }
 
 func dataStorageRedisConfig(kn *kubernautv1alpha1.Kubernaut) dataStorageRedisYAML {
-	valkeyHost := resolveHostToIP(kn.Spec.Valkey.Host)
+	valkeyHost := kn.Spec.Valkey.Host
 	valkeyPort := kn.Spec.Valkey.Port
 	if valkeyPort == 0 {
 		valkeyPort = DefaultValkeyPort
