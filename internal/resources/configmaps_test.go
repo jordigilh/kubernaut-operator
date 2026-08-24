@@ -3640,3 +3640,174 @@ var _ = Describe("kaRateLimitFromSpec", func() {
 		Expect(rl.Burst).To(Equal(50))
 	})
 })
+
+// Fleet Resilience Config (#390) mirrors upstream pkg/fleet.FleetResilienceConfig
+// (kubernaut#2262 Phase 2, kubernaut PR #2268): every field is optional and
+// zero-value-safe, so omitting spec.fleet.resilience entirely must leave
+// every rendered ConfigMap's resilience key absent (upstream's own
+// mcpclient.DefaultResilienceConfig() then supplies its existing hardcoded
+// defaults unchanged). Grouped in its own top-level Describe (matching the
+// "Cross-cutting" precedent above) rather than scattered across each
+// component's own Describe block, since this is one CRD field threaded
+// through 6 render sites, not 6 independent features.
+var _ = Describe("Fleet Resilience Config (#390)", func() {
+	newResilienceSpec := func() *kubernautv1alpha2.FleetResilienceSpec {
+		return &kubernautv1alpha2.FleetResilienceSpec{
+			InitialInterval:      "2s",
+			MaxInterval:          "45s",
+			MaxElapsedTime:       "10m",
+			TokenRefreshTimeout:  "15s",
+			ConnectTimeout:       "20s",
+			DiscoverProbeTimeout: "8s",
+		}
+	}
+
+	assertResilienceRendered := func(data string) {
+		for _, want := range []string{
+			"resilience:",
+			"initialInterval: 2s",
+			"maxInterval: 45s",
+			"maxElapsedTime: 10m",
+			"tokenRefreshTimeout: 15s",
+			"connectTimeout: 20s",
+			"discoverProbeTimeout: 8s",
+		} {
+			Expect(data).To(ContainSubstring(want), "expected rendered config to contain %q, got:\n%s", want, data)
+		}
+	}
+
+	Context("Gateway/RemediationOrchestrator/APIFrontend/EffectivenessMonitor (shared fleetConfigYAML)", func() {
+		It("UT-FLEET-RES-001 [CM-6]: omits resilience from GatewayConfigMap when spec.fleet.resilience is unset", func() {
+			kn, knV2 := testKubernautWithFleetMCP()
+			cm, err := GatewayConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("resilience:"), "gateway config should omit resilience when spec.fleet.resilience is unset, got:\n%s", cm.Data["config.yaml"])
+		})
+
+		It("UT-FLEET-RES-002 [CM-6, SC-5]: renders fleet.resilience.* verbatim in GatewayConfigMap", func() {
+			kn, knV2 := testKubernautWithFleetMCP()
+			knV2.Spec.Fleet.Resilience = newResilienceSpec()
+			cm, err := GatewayConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			assertResilienceRendered(cm.Data["config.yaml"])
+		})
+
+		It("UT-FLEET-RES-003 [CM-6]: omits resilience from RemediationOrchestratorConfigMap when unset", func() {
+			kn, knV2 := testKubernautWithFleetMCP()
+			cm, err := RemediationOrchestratorConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["remediationorchestrator.yaml"]).NotTo(ContainSubstring("resilience:"), "RO config should omit resilience when spec.fleet.resilience is unset, got:\n%s", cm.Data["remediationorchestrator.yaml"])
+		})
+
+		It("UT-FLEET-RES-004 [CM-6, SC-5]: renders fleet.resilience.* verbatim in RemediationOrchestratorConfigMap", func() {
+			kn, knV2 := testKubernautWithFleetMCP()
+			knV2.Spec.Fleet.Resilience = newResilienceSpec()
+			cm, err := RemediationOrchestratorConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			assertResilienceRendered(cm.Data["remediationorchestrator.yaml"])
+		})
+
+		// AF already renders an unrelated top-level "resilience:" key
+		// (afResilienceYAML, #1839's per-dependency Prometheus
+		// circuit-breaker config) -- a plain ContainSubstring("resilience:")
+		// would false-positive against that pre-existing block, so this
+		// scopes the assertion to fleet.resilience specifically by
+		// unmarshaling into the real production fleetConfigYAML type
+		// (package resources is white-box here).
+		It("UT-FLEET-RES-005 [CM-6]: omits fleet.resilience from APIFrontendConfigMap when unset", func() {
+			kn := testKubernautWithAF()
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+				Enabled: &testFleetEnabled, MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			}
+			cm, err := APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
+			Expect(err).NotTo(HaveOccurred())
+			var root struct {
+				Fleet *fleetConfigYAML `yaml:"fleet"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Fleet).NotTo(BeNil())
+			Expect(root.Fleet.Resilience).To(BeNil(), "apifrontend fleet.resilience should be nil when spec.fleet.resilience is unset")
+		})
+
+		It("UT-FLEET-RES-006 [CM-6, SC-5]: renders fleet.resilience.* verbatim in APIFrontendConfigMap", func() {
+			kn := testKubernautWithAF()
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+				Enabled: &testFleetEnabled, MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+				Resilience: newResilienceSpec(),
+			}
+			cm, err := APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
+			Expect(err).NotTo(HaveOccurred())
+			assertResilienceRendered(cm.Data["config.yaml"])
+		})
+
+		It("UT-FLEET-RES-007 [CM-6]: omits resilience from EffectivenessMonitorConfigMap when unset", func() {
+			kn, knV2 := testKubernautWithFleetMCP()
+			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["effectivenessmonitor.yaml"]).NotTo(ContainSubstring("resilience:"), "EM config should omit resilience when spec.fleet.resilience is unset, got:\n%s", cm.Data["effectivenessmonitor.yaml"])
+		})
+
+		It("UT-FLEET-RES-008 [CM-6, SC-5]: renders fleet.resilience.* verbatim in EffectivenessMonitorConfigMap", func() {
+			kn, knV2 := testKubernautWithFleetMCP()
+			knV2.Spec.Fleet.Resilience = newResilienceSpec()
+			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			assertResilienceRendered(cm.Data["effectivenessmonitor.yaml"])
+		})
+	})
+
+	Context("SignalProcessing (bespoke signalProcessingFleetYAML)", func() {
+		It("UT-FLEET-RES-009 [CM-6]: omits resilience from SignalProcessingConfigMap when unset", func() {
+			kn, knV2 := testKubernautWithFleetMCP()
+			cm, err := SignalProcessingConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("resilience:"), "SP config should omit resilience when spec.fleet.resilience is unset, got:\n%s", cm.Data["config.yaml"])
+		})
+
+		It("UT-FLEET-RES-010 [CM-6, SC-5]: renders fleet.resilience.* verbatim in SignalProcessingConfigMap", func() {
+			kn, knV2 := testKubernautWithFleetMCP()
+			knV2.Spec.Fleet.Resilience = newResilienceSpec()
+			cm, err := SignalProcessingConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			assertResilienceRendered(cm.Data["config.yaml"])
+		})
+	})
+
+	Context("WorkflowExecution (bespoke weFleetYAML)", func() {
+		It("UT-FLEET-RES-011 [CM-6]: omits resilience from WorkflowExecutionConfigMap when unset", func() {
+			kn, knV2 := testKubernautWithFleetMCP()
+			knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+			cm, err := WorkflowExecutionConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["workflowexecution.yaml"]).NotTo(ContainSubstring("resilience:"), "WE config should omit resilience when spec.fleet.resilience is unset, got:\n%s", cm.Data["workflowexecution.yaml"])
+		})
+
+		It("UT-FLEET-RES-012 [CM-6, SC-5]: renders fleet.resilience.* verbatim in WorkflowExecutionConfigMap", func() {
+			kn, knV2 := testKubernautWithFleetMCP()
+			knV2.Spec.Fleet.Resilience = newResilienceSpec()
+			knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+			cm, err := WorkflowExecutionConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			assertResilienceRendered(cm.Data["workflowexecution.yaml"])
+		})
+	})
+
+	Context("KubernautAgent (bespoke kaFleetYAML)", func() {
+		It("UT-FLEET-RES-013 [CM-6]: omits integrations.fleet.resilience from KubernautAgentConfigMap when unset", func() {
+			kn, knV2 := testKubernautWithFleetMCP()
+			cm, err := KubernautAgentConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("resilience:"), "KA config should omit integrations.fleet.resilience when spec.fleet.resilience is unset, got:\n%s", cm.Data["config.yaml"])
+		})
+
+		It("UT-FLEET-RES-014 [CM-6, SC-5]: renders integrations.fleet.resilience.* verbatim in KubernautAgentConfigMap", func() {
+			kn, knV2 := testKubernautWithFleetMCP()
+			knV2.Spec.Fleet.Resilience = newResilienceSpec()
+			cm, err := KubernautAgentConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			assertResilienceRendered(cm.Data["config.yaml"])
+		})
+	})
+})

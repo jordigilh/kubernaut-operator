@@ -56,9 +56,10 @@ type fleetMetadataCacheServerYAML struct {
 }
 
 type fleetMetadataCacheMCPGatewayYAML struct {
-	Endpoint    string `json:"endpoint" yaml:"endpoint"`
-	GatewayType string `json:"gatewayType" yaml:"gatewayType"`
-	Namespace   string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Endpoint    string               `json:"endpoint" yaml:"endpoint"`
+	GatewayType string               `json:"gatewayType" yaml:"gatewayType"`
+	Namespace   string               `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Resilience  *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
 }
 
 type fleetMetadataCacheValkeyYAML struct {
@@ -107,6 +108,7 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernau
 			Endpoint:    fleet.MCPGatewayEndpoint,
 			GatewayType: fleet.MCPGatewayType,
 			Namespace:   fleet.MCPGatewayNamespace,
+			Resilience:  resolveFleetResilience(knV2),
 		},
 		Valkey: fleetMetadataCacheValkeyYAML{
 			Addr: ValkeyAddr(&kn.Spec.Valkey),

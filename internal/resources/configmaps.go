@@ -214,6 +214,50 @@ type fleetConfigYAML struct {
 	// #227); GW/RO never read a ClusterRegistry, so resolveFleetConfig never
 	// sets it.
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+
+	// Resilience mirrors upstream pkg/fleet.FleetConfig.Resilience (#390,
+	// kubernaut#2262 Phase 2). Shared by every component that renders this
+	// type (GW/RO directly, AF/EM via resolveMCPGatewayOnlyFleetConfig).
+	Resilience *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
+}
+
+// fleetResilienceYAML mirrors upstream pkg/fleet.FleetResilienceConfig
+// (#390, kubernaut#2262 Phase 2, kubernaut PR #2268) field-for-field. Every
+// field is a Go duration string and omitempty: unset fields let the
+// consuming service's own mcpclient.DefaultResilienceConfig() supply its
+// existing hardcoded default unchanged. Shared by all 6 render sites
+// (resolveFleetResilience below); named distinctly from the pre-existing
+// afResilienceYAML (API Frontend's per-dependency Prometheus
+// circuit-breaker config, issue #1839) -- two unrelated "resilience"
+// concepts in this same file.
+type fleetResilienceYAML struct {
+	InitialInterval      string `json:"initialInterval,omitempty" yaml:"initialInterval,omitempty"`
+	MaxInterval          string `json:"maxInterval,omitempty" yaml:"maxInterval,omitempty"`
+	MaxElapsedTime       string `json:"maxElapsedTime,omitempty" yaml:"maxElapsedTime,omitempty"`
+	TokenRefreshTimeout  string `json:"tokenRefreshTimeout,omitempty" yaml:"tokenRefreshTimeout,omitempty"`
+	ConnectTimeout       string `json:"connectTimeout,omitempty" yaml:"connectTimeout,omitempty"`
+	DiscoverProbeTimeout string `json:"discoverProbeTimeout,omitempty" yaml:"discoverProbeTimeout,omitempty"`
+}
+
+// resolveFleetResilience builds the shared resilience: block rendered by
+// every fleet-aware component from spec.fleet.resilience (#390). Returns
+// nil when unset (or the CRD field is nil) so the key is omitted entirely,
+// matching every sibling fleet sub-block's zero-value-safe precedent
+// (fleet.oauth2, fleet.tokenPath, etc.) -- the consuming service's own
+// mcpclient.DefaultResilienceConfig() then supplies unchanged defaults.
+func resolveFleetResilience(knV2 *kubernautv1alpha2.Kubernaut) *fleetResilienceYAML {
+	r := knV2.Spec.Fleet.Resilience
+	if r == nil {
+		return nil
+	}
+	return &fleetResilienceYAML{
+		InitialInterval:      r.InitialInterval,
+		MaxInterval:          r.MaxInterval,
+		MaxElapsedTime:       r.MaxElapsedTime,
+		TokenRefreshTimeout:  r.TokenRefreshTimeout,
+		ConnectTimeout:       r.ConnectTimeout,
+		DiscoverProbeTimeout: r.DiscoverProbeTimeout,
+	}
 }
 
 // fleetOAuth2YAML mirrors upstream pkg/fleet.FleetOAuth2Config. CredentialsSecretRef
@@ -281,6 +325,7 @@ func resolveFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefO
 		Endpoint:           resolveFleetEndpoint(knV2),
 		MCPGatewayEndpoint: fleet.MCPGatewayEndpoint,
 		MCPGatewayType:     fleet.MCPGatewayType,
+		Resilience:         resolveFleetResilience(knV2),
 	}
 	if fleet.CASecretName != "" {
 		cfg.TLSCAFile = fleetCAMountPath
@@ -479,10 +524,11 @@ type signalProcessingConfigYAML struct {
 // validation error, since YAML unmarshal leaves the zero value on a key
 // mismatch.
 type signalProcessingFleetYAML struct {
-	Endpoint       string           `json:"endpoint" yaml:"endpoint"`
-	OAuth2         *fleetOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
-	MCPGatewayType string           `json:"mcpGatewayType,omitempty" yaml:"mcpGatewayType,omitempty"`
-	Namespace      string           `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Endpoint       string               `json:"endpoint" yaml:"endpoint"`
+	OAuth2         *fleetOAuth2YAML     `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	MCPGatewayType string               `json:"mcpGatewayType,omitempty" yaml:"mcpGatewayType,omitempty"`
+	Namespace      string               `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Resilience     *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
 }
 
 // resolveSignalProcessingFleetConfig builds the fleet: block rendered into
@@ -503,6 +549,7 @@ func resolveSignalProcessingFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) *sign
 		Endpoint:       fleet.MCPGatewayEndpoint,
 		MCPGatewayType: fleet.MCPGatewayType,
 		Namespace:      fleet.MCPGatewayNamespace,
+		Resilience:     resolveFleetResilience(knV2),
 	}
 	if fleet.OAuth2.Enabled {
 		cfg.OAuth2 = &fleetOAuth2YAML{
@@ -635,8 +682,9 @@ type workflowExecutionConfigYAML struct {
 // Backend/MCPServerRegistration CRDs so there is no namespace field either
 // (DD-235).
 type weFleetYAML struct {
-	Endpoint string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
-	OAuth2   *fleetOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	Endpoint   string               `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	OAuth2     *fleetOAuth2YAML     `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	Resilience *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
 }
 
 // resolveWEFleetConfig builds the fleet: block rendered into
@@ -656,7 +704,8 @@ func resolveWEFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, defaultOAuth2CAFile
 		return nil
 	}
 	cfg := &weFleetYAML{
-		Endpoint: fleet.MCPGatewayEndpoint,
+		Endpoint:   fleet.MCPGatewayEndpoint,
+		Resilience: resolveFleetResilience(knV2),
 	}
 	if fleet.OAuth2.Enabled {
 		cfg.OAuth2 = &fleetOAuth2YAML{
@@ -940,9 +989,10 @@ type kaIntegrationsYAML struct {
 // GatewayDiscoverer (Kuadrant vs EAIGW) and register the
 // list_clusters/list_tools_for_cluster tools (ADR-068 decision #11).
 type kaFleetYAML struct {
-	Endpoint    string             `json:"endpoint" yaml:"endpoint"`
-	GatewayType string             `json:"gatewayType" yaml:"gatewayType"`
-	OAuth2      *kaFleetOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	Endpoint    string               `json:"endpoint" yaml:"endpoint"`
+	GatewayType string               `json:"gatewayType" yaml:"gatewayType"`
+	OAuth2      *kaFleetOAuth2YAML   `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	Resilience  *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
 }
 
 // kaFleetOAuth2YAML mirrors upstream internal/kubernautagent/config.FleetOAuth2.
@@ -970,6 +1020,7 @@ func resolveKAFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) *kaFleetYAML {
 	cfg := &kaFleetYAML{
 		Endpoint:    fleet.MCPGatewayEndpoint,
 		GatewayType: fleet.MCPGatewayType,
+		Resilience:  resolveFleetResilience(knV2),
 	}
 	if fleet.OAuth2.Enabled {
 		cfg.OAuth2 = &kaFleetOAuth2YAML{
