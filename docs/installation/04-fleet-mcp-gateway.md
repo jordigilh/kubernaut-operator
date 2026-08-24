@@ -280,6 +280,8 @@ The broker discovers backend MCP servers via `MCPServerRegistration` CRs, which 
 
 > **The `kubernaut.ai/managed: "true"` label is mandatory, not decorative.** Kubernaut's `KuadrantRegistry` (`pkg/fleet/registry/kuadrant_registry.go`) only tracks `MCPServerRegistration` CRs carrying this exact label; anything without it is silently ignored and never enters `ClusterRegistry`. A cluster missing this label is invisible to Fleet: SignalProcessing/RemediationOrchestrator/APIFrontend won't classify or route signals for it, so alerts and remediations targeting that cluster are effectively dropped with no error surfaced. Do not omit or rename it when adding registrations for additional clusters.
 
+> **Every other label you add here becomes that cluster's Rego-visible "spec."** `KuadrantRegistry` doesn't just check for `kubernaut.ai/managed` -- it copies the *entire* `metadata.labels` map of each `MCPServerRegistration` into `ClusterInfo.Labels`, which SignalProcessing's enricher then surfaces as the `cluster` classification dimension (`KubernetesContext.Cluster.Labels`, upstream `BR-FLEET-003`/`#1511`) for every signal coming from that cluster. In other words, this is how a Rego policy (the same `signalprocessing-policy`/`aianalysis-policy` ConfigMaps from [Quickstart](00-quickstart.md#1-prerequisites)) tells clusters apart and applies different rules per cluster -- e.g. stricter auto-remediation gating for `environment: "production"` than for `environment: "staging"`. The `environment: "production"` label on the example registration below isn't just a cosmetic tag; it's exactly this mechanism. When registering additional clusters, add whatever labels your policies need to differentiate them (environment, region, criticality tier, etc.) -- they'll be readable in Rego as `input.cluster.labels.<key>`.
+
 ```bash
 oc apply -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
@@ -317,7 +319,7 @@ spec:
 EOF
 ```
 
-Add one `HTTPRoute` + `MCPServerRegistration` pair per managed cluster you want Fleet to see, each with its own `prefix` (tool names are exposed as `<prefix><tool-name>`, e.g. `loopback_cluster_pods_list`).
+Add one `HTTPRoute` + `MCPServerRegistration` pair per managed cluster you want Fleet to see, each with its own `prefix` (tool names are exposed as `<prefix><tool-name>`, e.g. `loopback_cluster_pods_list`) and its own classification labels (see the callout above) so downstream Rego policies can tell clusters apart.
 
 ## Verification
 

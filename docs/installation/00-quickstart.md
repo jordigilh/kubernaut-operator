@@ -126,7 +126,7 @@ The CR progresses through **Validating** -> **Migrating** -> **Deploying** -> **
 
 ## Before you rely on this for real use
 
-The minimal CR above deliberately omits one thing you should not skip in practice: `apiFrontend.rbac.roleBindings`. It isn't schema-required and isn't checked at reconcile time either, so the CR above reaches `Running` without it -- but with it unset, **every** user (including `cluster-admin`) gets "Access Denied" on the Console and every tool call is rejected, fail-closed by design. Add it as soon as you're ready to actually use API Frontend/Console -- see [Additional RBAC for API Frontend](02-configure-services.md#additional-rbac-for-api-frontend).
+The minimal CR above deliberately omits one thing you should not skip in practice: `apiFrontend.rbac.roleBindings`. It isn't schema-required and isn't checked at reconcile time either, so the CR above reaches `Running` without it -- but with it unset, **every** tool call is rejected for **every** user (including `cluster-admin`), fail-closed by design, with no permissive fallback. The Console itself still opens: its own coarse-grained access gate is authentication-only by default (`apiFrontend.rbac.consoleAccessAuthorizationCheckEnabled` defaults to `false`, kubernaut#2150) -- but every chat/tool action inside it 403s until `roleBindings` is set. Add it as soon as you're ready to actually use API Frontend/Console -- see [Additional RBAC for API Frontend](02-configure-services.md#additional-rbac-for-api-frontend).
 
 ## What's next
 
