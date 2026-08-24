@@ -7,7 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0-rc5] - 2026-08-24
+
+### Known Issues
+- **FleetMetadataCache/DataStorage/APIFrontend Valkey clients have no
+  authentication beyond one-way TLS** -- any pod that can reach Valkey's
+  port can read/write the cache with zero credentials. Upstream is closing
+  this via client-certificate mTLS
+  ([kubernaut#2269](https://github.com/jordigilh/kubernaut/issues/2269),
+  DD-PLATFORM-006 Decision Area 19) rather than password auth as originally
+  requested; this operator's `spec.valkey.tls.clientCertSecretName` wiring
+  (added in #398) is already forward-compatible with that design and will
+  require no operator changes once it lands. Two further hardening
+  follow-ups are scoped as part of the same upstream effort:
+  [kubernaut#2270](https://github.com/jordigilh/kubernaut/issues/2270)
+  (Postgres `sslMode` chart default hardening) and
+  [kubernaut#2271](https://github.com/jordigilh/kubernaut/issues/2271)
+  (Valkey per-user ACL mapped to mTLS client cert CN, backlog/no-urgency).
+  None of these block this release -- they are pre-existing upstream gaps,
+  not regressions introduced by the fixes below.
+
 ### Fixed
+- **DataStorage**: Postgres/Valkey addresses were pre-resolved to a raw IP
+  before being written into `datastorage-config`, breaking TLS hostname
+  verification the moment `spec.valkey.tls` (or the operator's own
+  `verify-full` default `spec.postgresql.sslMode`) is enabled -- a
+  service-ca-issued serving cert only has DNS SANs, not IP SANs, so
+  connecting via IP fails with `x509: cannot validate certificate ... doesn't
+  contain any IP SANs`. This IP pre-resolution (`resolveHostToIP`) was added
+  in #175 as a workaround for `ubi-minimal`'s unreliable glibc DNS resolver,
+  but the same PR also added `GODEBUG=netdns=go` to every deployment, making
+  the pre-resolution redundant since. Removed it entirely; DataStorage now
+  renders the configured hostname verbatim, matching FleetMetadataCache's
+  `ValkeyAddr()` (which never resolved to an IP and was unaffected) (#399)
+- **FleetMetadataCache**: `spec.valkey.tls` was silently ignored -- unlike
+  DataStorage/APIFrontend, FMC's rendered config never had a `valkey.tls`
+  block at all, even though upstream's `pkg/fleet/fmc/config.ValkeyConfig`
+  supports it. Per upstream DD-PLATFORM-006 Decision Area 8, the chart's own
+  Valkey deployment is TLS-only (one-way TLS -- no client cert required),
+  so without this FMC could never connect to a TLS-secured Valkey. Now
+  renders `valkey.tls.enabled`/`caFile`/`certFile`/`keyFile` and mounts the
+  `valkey-ca`/`valkey-client-cert` secret volumes whenever
+  `spec.valkey.tls.enabled` is set, mirroring `DataStorageConfigMap`/
+  `DataStorageDeployment`'s existing rendering exactly. A separate gap --
+  upstream's Valkey client having no password/AUTH support at all, meaning
+  any in-namespace pod can read/write the cache unauthenticated -- is not
+  fixable from the operator and has been filed upstream
+  ([kubernaut#2269](https://github.com/jordigilh/kubernaut/issues/2269)) (#398)
+- **FleetMetadataCache**: stopped `metricsAddr` colliding with `healthAddr`'s
+  implicit default. The rendered config omitted `healthAddr` entirely, so
+  FMC fell back to its own default (`:8081`) for the health server, but the
+  ConfigMap explicitly set `metricsAddr` to that same `:8081`, crashing the
+  metrics server with "bind: address already in use" on every startup.
+  Now renders `healthAddr: :8081` explicitly and `metricsAddr: :9090`
+  (`PortHealthProbe`/`PortMetrics`), matching every other service in this
+  operator (#396)
 - **NetworkPolicy**: fleet-aware components (FleetMetadataCache,
   SignalProcessing, RemediationOrchestrator, EffectivenessMonitor,
   KubernautAgent, APIFrontend, Gateway) could not reach a Route-fronted MCP
