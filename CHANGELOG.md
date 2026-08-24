@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **FleetMetadataCache**: stopped `metricsAddr` colliding with `healthAddr`'s
+  implicit default. The rendered config omitted `healthAddr` entirely, so
+  FMC fell back to its own default (`:8081`) for the health server, but the
+  ConfigMap explicitly set `metricsAddr` to that same `:8081`, crashing the
+  metrics server with "bind: address already in use" on every startup.
+  Now renders `healthAddr: :8081` explicitly and `metricsAddr: :9090`
+  (`PortHealthProbe`/`PortMetrics`), matching every other service in this
+  operator (#396)
 - **NetworkPolicy**: fleet-aware components (FleetMetadataCache,
   SignalProcessing, RemediationOrchestrator, EffectivenessMonitor,
   KubernautAgent, APIFrontend, Gateway) could not reach a Route-fronted MCP
