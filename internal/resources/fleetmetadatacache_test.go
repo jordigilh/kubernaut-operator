@@ -346,8 +346,8 @@ var _ = Describe("FleetMetadataCache RBAC", func() {
 
 var _ = Describe("fleetMetadataCacheNetworkPolicy", func() {
 	It("allows ingress from gateway and remediationorchestrator on the api port", func() {
-		kn, _ := testKubernautWithFMC()
-		np := fleetMetadataCacheNetworkPolicy(kn)
+		kn, knV2 := testKubernautWithFMC()
+		np := fleetMetadataCacheNetworkPolicy(kn, knV2)
 		Expect(np.Spec.Ingress).NotTo(BeEmpty())
 
 		var selectors []map[string]string
@@ -361,8 +361,8 @@ var _ = Describe("fleetMetadataCacheNetworkPolicy", func() {
 	})
 
 	It("adds a metrics ingress rule", func() {
-		kn, _ := testKubernautWithFMC()
-		np := fleetMetadataCacheNetworkPolicy(kn)
+		kn, knV2 := testKubernautWithFMC()
+		np := fleetMetadataCacheNetworkPolicy(kn, knV2)
 		Expect(len(np.Spec.Ingress)).To(BeNumerically(">=", 2))
 	})
 

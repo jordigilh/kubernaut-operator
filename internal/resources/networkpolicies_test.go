@@ -18,6 +18,7 @@ package resources
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 
@@ -25,6 +26,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -618,15 +620,128 @@ var _ = Describe("APIFrontend NetworkPolicy OIDC egress", func() {
 // inline in fleetMetadataCacheNetworkPolicy) for reuse across components.
 var _ = Describe("fleetDestinationsEgressRule", func() {
 	It("matches FleetMetadataCache's pre-existing fleet egress rule exactly (extracted helper, no behavior change)", func() {
-		kn, _ := testKubernautWithFMC()
-		fmcNP := fleetMetadataCacheNetworkPolicy(kn)
-		want := fleetDestinationsEgressRule()
+		kn, knV2 := testKubernautWithFMC()
+		fmcNP := fleetMetadataCacheNetworkPolicy(kn, knV2)
+		want := fleetDestinationsEgressRule(knV2)
 		Expect(fmcNP.Spec.Egress).To(ContainElement(want))
+	})
+
+	// #392: the namespaceSelector peer alone cannot match a Route-fronted
+	// MCP Gateway, which resolves to the Ingress Router's hostNetwork VIP,
+	// not a namespaced Pod IP (confirmed via live on-cluster curl
+	// reproduction). ipBlock peers, by contrast, match on the literal
+	// packet destination IP regardless of whether OVN can attribute it to
+	// a namespace/pod, so resolving the configured destination hostnames'
+	// real IPs and adding them as ipBlock peers closes that gap.
+	It("EGR-392-003 [AC-4, SC-7]: adds an ipBlock peer for mcpGatewayEndpoint's resolved IP alongside the existing namespaceSelector peer", func() {
+		_, knV2 := testKubernautWithFleetMCP()
+		stubLiveResolveFleetHostIPsForTest(map[string][]string{
+			"mcp-gateway.example.com": {"203.0.113.10"},
+		})
+
+		rule := fleetDestinationsEgressRule(knV2)
+
+		Expect(hasNamespaceSelectorPeer(rule)).To(BeTrue(), "must keep the namespaceSelector peer for in-cluster-Service-backed destinations")
+		Expect(hasIPBlockPeer(rule, "203.0.113.10/32")).To(BeTrue(), "must add an ipBlock peer for the resolved MCP Gateway IP")
+	})
+
+	It("EGR-392-004 [AC-4, SC-7]: resolves and adds ipBlock peers for both mcpGatewayEndpoint and oauth2.tokenURL when both are set", func() {
+		_, knV2 := testKubernautWithFMC()
+		stubLiveResolveFleetHostIPsForTest(map[string][]string{
+			"mcp-gateway.example.com": {"203.0.113.10"},
+			"keycloak.example.com":    {"203.0.113.20"},
+		})
+
+		rule := fleetDestinationsEgressRule(knV2)
+
+		Expect(hasIPBlockPeer(rule, "203.0.113.10/32")).To(BeTrue(), "must resolve the MCP Gateway host")
+		Expect(hasIPBlockPeer(rule, "203.0.113.20/32")).To(BeTrue(), "must resolve the OAuth2 token endpoint host")
+	})
+
+	It("EGR-392-005: adds a /128 ipBlock for an IPv6-resolved address", func() {
+		_, knV2 := testKubernautWithFleetMCP()
+		stubLiveResolveFleetHostIPsForTest(map[string][]string{
+			"mcp-gateway.example.com": {"2001:db8::1"},
+		})
+
+		rule := fleetDestinationsEgressRule(knV2)
+		Expect(hasIPBlockPeer(rule, "2001:db8::1/128")).To(BeTrue())
+	})
+
+	It("EGR-392-006: omits the ipBlock peer (namespaceSelector-only) when DNS resolution fails and no cache exists yet", func() {
+		_, knV2 := testKubernautWithFleetMCP()
+		stubLiveResolveFleetHostIPsForTestErr(errors.New("no such host"))
+
+		rule := fleetDestinationsEgressRule(knV2)
+		Expect(hasNamespaceSelectorPeer(rule)).To(BeTrue())
+		Expect(rule.To).To(HaveLen(1), "no ipBlock peer should be added when resolution has never succeeded")
+	})
+
+	It("EGR-392-007: fails closed by reusing the last known-good IP after a transient DNS failure", func() {
+		_, knV2 := testKubernautWithFleetMCP()
+
+		stubLiveResolveFleetHostIPsForTest(map[string][]string{"mcp-gateway.example.com": {"203.0.113.10"}})
+		_ = fleetDestinationsEgressRule(knV2)
+
+		stubLiveResolveFleetHostIPsForTestErr(errors.New("transient DNS error"))
+		rule := fleetDestinationsEgressRule(knV2)
+
+		Expect(hasIPBlockPeer(rule, "203.0.113.10/32")).To(BeTrue(), "must reuse the last known-good IP, never silently drop egress once resolved once")
 	})
 })
 
-func hasFleetEgressRule(np *networkingv1.NetworkPolicy) bool {
-	want := fleetDestinationsEgressRule()
+func hasNamespaceSelectorPeer(rule networkingv1.NetworkPolicyEgressRule) bool {
+	for _, peer := range rule.To {
+		if peer.NamespaceSelector != nil && len(peer.NamespaceSelector.MatchLabels) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func hasIPBlockPeer(rule networkingv1.NetworkPolicyEgressRule, cidr string) bool {
+	for _, peer := range rule.To {
+		if peer.IPBlock != nil && peer.IPBlock.CIDR == cidr {
+			return true
+		}
+	}
+	return false
+}
+
+// resetFleetHostIPsCacheForTest clears the package-level per-hostname IP
+// cache so each test starts from a clean slate regardless of execution
+// order (Ginkgo specs share process-level state within this package).
+func resetFleetHostIPsCacheForTest() {
+	fleetHostIPsCache.mu.Lock()
+	fleetHostIPsCache.ips = nil
+	fleetHostIPsCache.mu.Unlock()
+}
+
+// stubLiveResolveFleetHostIPsForTest swaps the live DNS-lookup seam for the
+// duration of the current spec (restored via DeferCleanup) to return the
+// given per-hostname IPs, letting tests simulate DNS success
+// deterministically without a real network lookup.
+func stubLiveResolveFleetHostIPsForTest(byHost map[string][]string) {
+	original := liveResolveFleetHostIPsFunc
+	liveResolveFleetHostIPsFunc = func(host string) ([]string, error) {
+		if ips, ok := byHost[host]; ok {
+			return ips, nil
+		}
+		return nil, fmt.Errorf("no stubbed resolution for host %q", host)
+	}
+	DeferCleanup(func() { liveResolveFleetHostIPsFunc = original })
+}
+
+// stubLiveResolveFleetHostIPsForTestErr swaps the live DNS-lookup seam to
+// always fail with err, for testing the fail-closed cache-reuse path.
+func stubLiveResolveFleetHostIPsForTestErr(err error) {
+	original := liveResolveFleetHostIPsFunc
+	liveResolveFleetHostIPsFunc = func(string) ([]string, error) { return nil, err }
+	DeferCleanup(func() { liveResolveFleetHostIPsFunc = original })
+}
+
+func hasFleetEgressRule(np *networkingv1.NetworkPolicy, knV2 *kubernautv1alpha2.Kubernaut) bool {
+	want := fleetDestinationsEgressRule(knV2)
 	for _, rule := range np.Spec.Egress {
 		if len(rule.To) == len(want.To) && len(rule.Ports) == len(want.Ports) {
 			match := true
@@ -647,37 +762,41 @@ func hasFleetEgressRule(np *networkingv1.NetworkPolicy) bool {
 var _ = Describe("Gateway/RemediationOrchestrator/SignalProcessing/APIFrontend/EffectivenessMonitor fleet NetworkPolicy egress", func() {
 	It("gateway omits fleet egress when fleet disabled", func() {
 		kn := testKubernaut()
-		Expect(hasFleetEgressRule(gatewayNetworkPolicy(kn, testKnV2(kn)))).To(BeFalse())
+		knV2 := testKnV2(kn)
+		Expect(hasFleetEgressRule(gatewayNetworkPolicy(kn, knV2), knV2)).To(BeFalse())
 	})
 
 	It("gateway gains fleet egress when fleet enabled", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		Expect(hasFleetEgressRule(gatewayNetworkPolicy(kn, knV2))).To(BeTrue())
+		Expect(hasFleetEgressRule(gatewayNetworkPolicy(kn, knV2), knV2)).To(BeTrue())
 	})
 
 	It("remediationorchestrator omits fleet egress when fleet disabled", func() {
 		kn := testKubernaut()
-		Expect(hasFleetEgressRule(remediationOrchestratorNetworkPolicy(kn, testKnV2(kn)))).To(BeFalse())
+		knV2 := testKnV2(kn)
+		Expect(hasFleetEgressRule(remediationOrchestratorNetworkPolicy(kn, knV2), knV2)).To(BeFalse())
 	})
 
 	It("remediationorchestrator gains fleet egress when fleet enabled", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		Expect(hasFleetEgressRule(remediationOrchestratorNetworkPolicy(kn, knV2))).To(BeTrue())
+		Expect(hasFleetEgressRule(remediationOrchestratorNetworkPolicy(kn, knV2), knV2)).To(BeTrue())
 	})
 
 	It("signalprocessing omits fleet egress when fleet disabled", func() {
 		kn := testKubernaut()
-		Expect(hasFleetEgressRule(signalProcessingNetworkPolicy(kn, testKnV2(kn)))).To(BeFalse())
+		knV2 := testKnV2(kn)
+		Expect(hasFleetEgressRule(signalProcessingNetworkPolicy(kn, knV2), knV2)).To(BeFalse())
 	})
 
 	It("signalprocessing gains fleet egress when fleet enabled", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		Expect(hasFleetEgressRule(signalProcessingNetworkPolicy(kn, knV2))).To(BeTrue())
+		Expect(hasFleetEgressRule(signalProcessingNetworkPolicy(kn, knV2), knV2)).To(BeTrue())
 	})
 
 	It("apifrontend omits fleet egress when fleet disabled", func() {
 		kn := testKubernautWithAF()
-		Expect(hasFleetEgressRule(apifrontendNetworkPolicy(kn, testKnV2(kn), KagentiSidecarNone))).To(BeFalse())
+		knV2 := testKnV2(kn)
+		Expect(hasFleetEgressRule(apifrontendNetworkPolicy(kn, knV2, KagentiSidecarNone), knV2)).To(BeFalse())
 	})
 
 	It("apifrontend gains fleet egress when fleet enabled", func() {
@@ -685,27 +804,40 @@ var _ = Describe("Gateway/RemediationOrchestrator/SignalProcessing/APIFrontend/E
 		kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
 			Auth: kubernautv1alpha1.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
-		Expect(hasFleetEgressRule(apifrontendNetworkPolicy(kn, knV2, KagentiSidecarNone))).To(BeTrue())
+		Expect(hasFleetEgressRule(apifrontendNetworkPolicy(kn, knV2, KagentiSidecarNone), knV2)).To(BeTrue())
 	})
 
 	It("effectivenessmonitor omits fleet egress when fleet disabled", func() {
 		kn := testKubernaut()
-		Expect(hasFleetEgressRule(effectivenessMonitorNetworkPolicy(kn, testKnV2(kn)))).To(BeFalse())
+		knV2 := testKnV2(kn)
+		Expect(hasFleetEgressRule(effectivenessMonitorNetworkPolicy(kn, knV2), knV2)).To(BeFalse())
 	})
 
 	It("effectivenessmonitor gains fleet egress when fleet enabled", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		Expect(hasFleetEgressRule(effectivenessMonitorNetworkPolicy(kn, knV2))).To(BeTrue())
+		Expect(hasFleetEgressRule(effectivenessMonitorNetworkPolicy(kn, knV2), knV2)).To(BeTrue())
 	})
 
 	It("KFG-030 [AC-4]: kubernautagent omits fleet egress when fleet disabled", func() {
 		kn := testKubernaut()
-		Expect(hasFleetEgressRule(kubernautAgentNetworkPolicy(kn, testKnV2(kn)))).To(BeFalse())
+		knV2 := testKnV2(kn)
+		Expect(hasFleetEgressRule(kubernautAgentNetworkPolicy(kn, knV2), knV2)).To(BeFalse())
 	})
 
 	It("KFG-031 [AC-4]: kubernautagent gains fleet egress when fleet enabled, so KA can reach the MCP Gateway for GatewayDiscoverer tool calls", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		Expect(hasFleetEgressRule(kubernautAgentNetworkPolicy(kn, knV2))).To(BeTrue())
+		Expect(hasFleetEgressRule(kubernautAgentNetworkPolicy(kn, knV2), knV2)).To(BeTrue())
+	})
+
+	It("EGR-392-001 [AC-4]: workflowexecution omits fleet egress when fleet disabled", func() {
+		kn := testKubernaut()
+		knV2 := testKnV2(kn)
+		Expect(hasFleetEgressRule(workflowExecutionNetworkPolicy(kn, knV2), knV2)).To(BeFalse())
+	})
+
+	It("EGR-392-002 [AC-4]: workflowexecution gains fleet egress when fleet enabled, closing the gap missed by the original #224/#204 retrofit", func() {
+		kn, knV2 := testKubernautWithFleetMCP()
+		Expect(hasFleetEgressRule(workflowExecutionNetworkPolicy(kn, knV2), knV2)).To(BeTrue())
 	})
 })
 
