@@ -35,7 +35,7 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 
 		data := cm.Data["config.yaml"]
 		for _, want := range []string{
-			"server:", "apiAddr: :8080", "metricsAddr: :8081",
+			"server:", "apiAddr: :8080", "healthAddr: :8081", "metricsAddr: :9090",
 			"mcpGateway:", "endpoint: https://mcp-gateway.example.com/sse", "gatewayType: eaigw",
 			"valkey:", "sync:", "keyTtl: 45s", "interval: 30s",
 			"oauth2:", "tokenUrl: https://keycloak.example.com/token",
@@ -43,6 +43,23 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 		} {
 			Expect(data).To(ContainSubstring(want), "FMC config should contain %q, got:\n%s", want, data)
 		}
+	})
+
+	// #396: healthAddr and metricsAddr must resolve to different ports.
+	// Upstream's ServiceConfig has three independent server addresses
+	// (apiAddr/healthAddr/metricsAddr); omitting healthAddr here previously
+	// left FMC falling back to its own default (:8081) for the health
+	// server while this ConfigMap explicitly set metricsAddr to that same
+	// value, so both servers tried to bind :8081 and the metrics server
+	// crashed with "bind: address already in use" -- confirmed on-cluster.
+	It("#396 [CM-6]: healthAddr and metricsAddr never collide", func() {
+		kn, knV2 := testKubernautWithFMC()
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cm.Data["config.yaml"]).To(ContainSubstring("healthAddr: :8081"),
+			"FMC config must explicitly set healthAddr so it never depends on FMC's own implicit default")
+		Expect(cm.Data["config.yaml"]).To(ContainSubstring("metricsAddr: :9090"),
+			"metricsAddr must be a genuinely separate port from healthAddr (:8081), not reuse it")
 	})
 
 	// DD-362: FMC always renders mcpGateway.namespace from the shared
@@ -142,7 +159,7 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 		expectDeploymentBasics(dep, "fleetmetadatacache")
 	})
 
-	It("exposes api (8080) and metrics (8081) ports", func() {
+	It("exposes api (8080), health (8081), and metrics (9090) ports", func() {
 		kn, knV2 := testKubernautWithFMC()
 		dep, err := FleetMetadataCacheDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
@@ -152,15 +169,16 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 			portMap[p.Name] = p.ContainerPort
 		}
 		Expect(portMap).To(HaveKeyWithValue("api", int32(8080)))
-		Expect(portMap).To(HaveKeyWithValue("metrics", int32(8081)))
+		Expect(portMap).To(HaveKeyWithValue("health", int32(8081)))
+		Expect(portMap).To(HaveKeyWithValue("metrics", int32(9090)))
 	})
 
-	It("probes /healthz and /readyz on the metrics port (8081), matching FMC's own healthAddr, not the api port (8080)", func() {
+	It("probes /healthz and /readyz on the health port (8081), matching FMC's own healthAddr, not the api port (8080)", func() {
 		// On-cluster validation (2026-08-23): probing 8080 left FMC
 		// permanently stuck at 0/1 Ready (startup probe: connection
 		// refused) even when otherwise healthy, since FMC's healthAddr
-		// binds /healthz and /readyz on the metrics port, not the api
-		// port which only serves request traffic.
+		// binds /healthz and /readyz on a dedicated health port, not the
+		// api port which only serves request traffic.
 		kn, knV2 := testKubernautWithFMC()
 		dep, err := FleetMetadataCacheDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
@@ -255,7 +273,7 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 })
 
 var _ = Describe("FleetMetadataCacheService", func() {
-	It("selects the fleetmetadatacache component and exposes api+metrics ports", func() {
+	It("selects the fleetmetadatacache component and exposes api+health+metrics ports", func() {
 		kn, _ := testKubernautWithFMC()
 		svc := FleetMetadataCacheService(kn)
 		Expect(svc.Name).To(Equal("fleetmetadatacache-service"))
@@ -266,7 +284,8 @@ var _ = Describe("FleetMetadataCacheService", func() {
 			portMap[p.Name] = p.Port
 		}
 		Expect(portMap).To(HaveKeyWithValue("api", int32(8080)))
-		Expect(portMap).To(HaveKeyWithValue("metrics", int32(8081)))
+		Expect(portMap).To(HaveKeyWithValue("health", int32(8081)))
+		Expect(portMap).To(HaveKeyWithValue("metrics", int32(9090)))
 	})
 
 	It("is included in Services() when fleetMetadataCache.enabled is true", func() {

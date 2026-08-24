@@ -36,8 +36,7 @@ import (
 // exactly -- FMC's LoadFromFile unmarshals directly into
 // pkg/fleet/fmc/config.ServiceConfig, so field names/nesting here must match.
 const (
-	fleetMetadataCacheAPIPort     int32 = 8080
-	fleetMetadataCacheMetricsPort int32 = 8081
+	fleetMetadataCacheAPIPort int32 = 8080
 
 	fleetMetadataCacheConfigMapName = "fleetmetadatacache-config"
 	fleetMetadataCacheServiceName   = "fleetmetadatacache-service"
@@ -52,6 +51,7 @@ const (
 
 type fleetMetadataCacheServerYAML struct {
 	APIAddr     string `json:"apiAddr" yaml:"apiAddr"`
+	HealthAddr  string `json:"healthAddr" yaml:"healthAddr"`
 	MetricsAddr string `json:"metricsAddr" yaml:"metricsAddr"`
 }
 
@@ -102,7 +102,8 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernau
 	cfg := fleetMetadataCacheConfigYAML{
 		Server: fleetMetadataCacheServerYAML{
 			APIAddr:     fmt.Sprintf(":%d", fleetMetadataCacheAPIPort),
-			MetricsAddr: fmt.Sprintf(":%d", fleetMetadataCacheMetricsPort),
+			HealthAddr:  fmt.Sprintf(":%d", PortHealthProbe),
+			MetricsAddr: fmt.Sprintf(":%d", PortMetrics),
 		},
 		MCPGateway: fleetMetadataCacheMCPGatewayYAML{
 			Endpoint:    fleet.MCPGatewayEndpoint,
@@ -180,14 +181,20 @@ func FleetMetadataCacheDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kuberna
 		Args: []string{"-config=/etc/fleetmetadatacache/config.yaml"},
 		Ports: []corev1.ContainerPort{
 			{Name: "api", ContainerPort: fleetMetadataCacheAPIPort, Protocol: corev1.ProtocolTCP},
-			{Name: "metrics", ContainerPort: fleetMetadataCacheMetricsPort, Protocol: corev1.ProtocolTCP},
+			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		},
-		// FMC's own healthAddr binds /healthz and /readyz on the metrics
-		// port (8081), not the api port (8080, request traffic only) --
-		// confirmed against live startup logs ("healthAddr":":8081").
-		// Probing 8080 left the container permanently stuck at 0/1
-		// Ready (startup probe: connection refused) even when healthy.
-		ProbePort: fleetMetadataCacheMetricsPort,
+		// FMC's own healthAddr binds /healthz and /readyz on a dedicated
+		// health port (8081), not the api port (8080, request traffic
+		// only) -- confirmed against live startup logs
+		// ("healthAddr":":8081"). Probing 8080 left the container
+		// permanently stuck at 0/1 Ready (startup probe: connection
+		// refused) even when healthy. #396: metricsAddr is a genuinely
+		// separate port (9090, PortMetrics) from healthAddr -- FMC used to
+		// crash on "bind: address already in use" because this ConfigMap
+		// rendered metricsAddr as the same port FMC's own default
+		// (undeclared here before #396) already used for healthAddr.
+		ProbePort: PortHealthProbe,
 	})
 }
 
@@ -203,7 +210,8 @@ func FleetMetadataCacheService(kn *kubernautv1alpha1.Kubernaut) *corev1.Service 
 			Selector: SelectorLabels(ComponentFleetMetadataCache),
 			Ports: []corev1.ServicePort{
 				ServicePort("api", fleetMetadataCacheAPIPort),
-				ServicePort("metrics", fleetMetadataCacheMetricsPort),
+				ServicePort("health", PortHealthProbe),
+				ServicePort("metrics", PortMetrics),
 			},
 		},
 	}
