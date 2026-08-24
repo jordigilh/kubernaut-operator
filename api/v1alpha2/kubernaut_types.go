@@ -353,6 +353,55 @@ type FleetSpec struct {
 	// component's own spec.<component>.fleet.namespace override (F1).
 	// +optional
 	MCPGatewayNamespace string `json:"mcpGatewayNamespace,omitempty"`
+
+	// Resilience overrides the MCP client's backoff/timeout tuning shared
+	// by every fleet-aware component (issue #390, kubernaut#2262 Phase 2).
+	// Mirrors upstream pkg/fleet.FleetResilienceConfig. There is no
+	// per-component override -- like the rest of FleetSpec, this is a
+	// single shared block (DD-362 precedent).
+	// +optional
+	Resilience *FleetResilienceSpec `json:"resilience,omitempty"`
+}
+
+// FleetResilienceSpec tunes the MCP client's startup backoff and
+// per-operation timeouts shared by every fleet-aware component (issue
+// #390). Mirrors upstream pkg/fleet.FleetResilienceConfig field-for-field
+// (kubernaut PR jordigilh/kubernaut#2268). Every field is optional and
+// zero-value-safe: omitting a field (or the whole block) keeps
+// mcpclient.DefaultResilienceConfig()'s existing value for that field
+// unchanged, so adding this is safe for every existing deployment. Values
+// are Go duration strings (e.g. "30s", "5m"), matching this CRD's existing
+// precedent (FleetMetadataCacheSpec.SyncInterval/KeyTTL) -- invalid
+// durations fail at the consuming service's own config parse, not at
+// admission.
+type FleetResilienceSpec struct {
+	// InitialInterval is the starting backoff interval for startup
+	// connection retries.
+	// +optional
+	InitialInterval string `json:"initialInterval,omitempty"`
+
+	// MaxInterval is the maximum backoff interval between startup
+	// connection retries.
+	// +optional
+	MaxInterval string `json:"maxInterval,omitempty"`
+
+	// MaxElapsedTime is the total time budget before giving up on startup
+	// connection retries.
+	// +optional
+	MaxElapsedTime string `json:"maxElapsedTime,omitempty"`
+
+	// TokenRefreshTimeout bounds each OAuth2 token refresh HTTP call.
+	// +optional
+	TokenRefreshTimeout string `json:"tokenRefreshTimeout,omitempty"`
+
+	// ConnectTimeout bounds each individual MCP connect attempt.
+	// +optional
+	ConnectTimeout string `json:"connectTimeout,omitempty"`
+
+	// DiscoverProbeTimeout bounds the SEP-2575 "server/discover" probe
+	// independently of ConnectTimeout (kubernaut#2262).
+	// +optional
+	DiscoverProbeTimeout string `json:"discoverProbeTimeout,omitempty"`
 }
 
 // FleetMetadataCacheSpec configures the operator-managed Fleet Metadata
