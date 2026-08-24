@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`internal/controller` envtest suite intermittently failed with a cascading namespace-termination race (#358, #359)** — envtest runs a real kube-apiserver but no kube-controller-manager, so a deleted Namespace's default `kubernetes` finalizer is never cleared and it stays wedged in `Terminating` forever. Every spec in the suite shares one hardcoded workflow namespace (`resources.DefaultWorkflowNamespace`), so any spec whose finalizer cleanup legitimately deleted it could permanently break every later spec in the same test binary that needed to create content in it (`forbidden: unable to create new content ... because it is being terminated`), with the blast radius depending on Ginkgo's randomized spec order. Added a `BeforeSuite` background watcher that clears `spec.finalizers` on any Namespace it observes entering `Terminating`, so deletion behaves like a real cluster for the life of the suite. Test-only change, no production code affected. This is the `release/v1.5` backport of the equivalent `main` fix (#371).
+
 ## [1.5.12] - 2026-08-16
 
 ### Fixed
