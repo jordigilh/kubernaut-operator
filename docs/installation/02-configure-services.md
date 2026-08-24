@@ -476,14 +476,19 @@ oc get configmap -n kubernaut-system \
 
 ## Additional RBAC for API Frontend
 
-> **Hard requirement, not optional:** whenever `spec.apiFrontend.enabled`
-> is true (the default), `spec.apiFrontend.rbac.roleBindings` **must** list
-> at least one OIDC group your users actually belong to, before you apply
-> the CR. There is no permissive fallback if it's left unset — every user,
-> including `cluster-admin`, gets "Access Denied" on the Console and every
-> tool call rejected. This is fail-closed by design (least-privilege), with
-> no dev-mode bypass; skip this section only if you set
-> `spec.apiFrontend.enabled: false`.
+> **Hard requirement, not optional, for tool access:** whenever
+> `spec.apiFrontend.enabled` is true (the default),
+> `spec.apiFrontend.rbac.roleBindings` **must** list at least one OIDC
+> group your users actually belong to, before you apply the CR. There is
+> no permissive fallback if it's left unset — every user, including
+> `cluster-admin`, gets every tool call rejected. This is fail-closed by
+> design (least-privilege), with no dev-mode bypass; skip this section
+> only if you set `spec.apiFrontend.enabled: false`.
+>
+> The Console UI itself is a *separate* gate and, unlike tool access, is
+> permissive by default (kubernaut#2150) — see "Console access" (2) below
+> before assuming an unset `roleBindings` blocks Console login too; it
+> doesn't, only tool/chat actions inside it.
 
 Required whenever `spec.apiFrontend.enabled: true` and any human or agent
 actually calls AF's `/mcp`, `/a2a/invoke`, or Console endpoints (skip if AF
@@ -495,17 +500,29 @@ checks, both configured through `spec.apiFrontend.rbac`:
 1. **Per-tool authorization** — one ClusterRole per persona (`sre`,
    `ai-orchestrator`, `cicd`, `observability`, `l3-audit`,
    `remediation-approver`), granting `use` on specific tool
-   `resourceNames`. Enforced on every `/mcp`/`/a2a/invoke` call.
-2. **Console access** — a single coarse-grained gate
-   (`kubernaut.ai/console`, verb `use`) that the Console's `/a2a/access`
-   pre-flight check must pass before it will even render its UI,
-   independent of (1) (kubernaut#1919, kubernaut-operator#289/#290).
+   `resourceNames`. Enforced on every `/mcp`/`/a2a/invoke` call,
+   unconditionally fail-closed — there is no toggle for this one.
+2. **Console access** — a coarse-grained gate (`kubernaut.ai/console`,
+   verb `use`) that the Console's `/a2a/access` pre-flight check must pass
+   before it will render its UI, independent of (1) (kubernaut#1919,
+   kubernaut-operator#289/#290). Unlike (1), this gate is **opt-in**:
+   `spec.apiFrontend.rbac.consoleAccessAuthorizationCheckEnabled` defaults
+   to `false` (kubernaut-operator#338, kubernaut#2148/#2150), which makes
+   it authentication-only — any authenticated user passes, regardless of
+   `consoleAccessGroups`/`roleBindings` — so a zero-config CR's Console
+   still opens. Set it to `true` once you've populated
+   `roleBindings`/`consoleAccessGroups` for production use, to actually
+   enforce group-based Console access.
 
 ```yaml
 spec:
   apiFrontend:
     rbac:
       sarCacheTTL: "30s"
+      # Enforce gate (2) too, not just authentication-only (see above) --
+      # set this once roleBindings/consoleAccessGroups are populated for
+      # your real personas.
+      consoleAccessAuthorizationCheckEnabled: true
       roleBindings:
         - role: sre
           groups: ["platform-engineering"]
@@ -520,21 +537,29 @@ ClusterRole (`clusterRoleName`, mutually exclusive with `role`) — to one or
 more OIDC groups. Those groups must appear in the `groups` claim of the JWT
 AF receives; if your IdP doesn't emit that claim by default (Keycloak, for
 example, requires an explicit "Group Membership" protocol mapper on the
-client), every tool call and the Console itself will be denied regardless
-of this config.
+client), every tool call will be denied regardless of this config (and, if
+you've set `consoleAccessAuthorizationCheckEnabled: true`, Console access
+too — with it left at the default `false`, Console access doesn't consult
+groups at all and is unaffected by a missing claim).
 
 **Console access is derived automatically — leave `consoleAccessGroups`
-unset.** `spec.apiFrontend.rbac.consoleAccessGroups` controls gate (2)
-above. By default (unset), the operator derives it as the deduplicated
-union of every group already listed in `roleBindings`, so Console access
-tracks your existing tool-persona grants with zero extra configuration.
-Only set it explicitly if Console access should be scoped narrower/wider
-than tool access, or to `[]` to disable Console access entirely while
-keeping tool access intact.
+unset.** `spec.apiFrontend.rbac.consoleAccessGroups` only has any effect
+once `consoleAccessAuthorizationCheckEnabled: true` is set (see above) --
+while that stays `false` (the default), `consoleAccessGroups` is inert.
+Once enabled, and by default (`consoleAccessGroups` unset), the operator
+derives it as the deduplicated union of every group already listed in
+`roleBindings`, so Console access tracks your existing tool-persona grants
+with zero extra configuration. Only set it explicitly if Console access
+should be scoped narrower/wider than tool access, or to `[]` to disable
+Console access entirely while keeping tool access intact.
 
 If users see "Access Denied" on the Console despite `roleBindings` looking
-correct, see [Troubleshooting](03-deploy.md#troubleshooting) or the
-detailed writeup: [Kubernaut Console: troubleshooting "Access
+correct, first confirm whether you actually meant `consoleAccessAuthorizationCheckEnabled: true`
+(gate (2)) or the tool-call SAR check (gate (1), always enforced) --
+tool/chat *actions* inside the Console failing with "Access Denied" is
+gate (1), and is the far more common case since it has no opt-out. See
+[Troubleshooting](03-deploy.md#troubleshooting) or the detailed writeup:
+[Kubernaut Console: troubleshooting "Access
 Denied"](https://gist.github.com/jordigilh/5984f65c88da042f2207825a9e57df62).
 
 ## Additional ClusterRoles for ecosystem CRDs (KA, Gateway, EM)
