@@ -19,6 +19,7 @@ package resources
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -52,7 +53,7 @@ func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Ku
 		aiAnalysisNetworkPolicy(kn),
 		signalProcessingNetworkPolicy(kn, knV2),
 		remediationOrchestratorNetworkPolicy(kn, knV2),
-		workflowExecutionNetworkPolicy(kn),
+		workflowExecutionNetworkPolicy(kn, knV2),
 		notificationNetworkPolicy(kn),
 		effectivenessMonitorNetworkPolicy(kn, knV2),
 		authWebhookNetworkPolicy(kn),
@@ -65,7 +66,7 @@ func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Ku
 		nps = append(nps, apifrontendNetworkPolicy(kn, knV2, sidecar))
 	}
 	if knV2.Spec.FleetMetadataCacheEnabled() {
-		nps = append(nps, fleetMetadataCacheNetworkPolicy(kn))
+		nps = append(nps, fleetMetadataCacheNetworkPolicy(kn, knV2))
 	}
 	return nps
 }
@@ -91,7 +92,7 @@ func gatewayNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 	egress := baseEgress(2)
 	egress = append(egress, datastorageEgressRule())
 	if knV2.Spec.FleetEnabled() {
-		egress = append(egress, fleetDestinationsEgressRule())
+		egress = append(egress, fleetDestinationsEgressRule(knV2))
 	}
 
 	return &networkingv1.NetworkPolicy{
@@ -180,7 +181,7 @@ func aiAnalysisNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Netw
 func signalProcessingNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
 	np := controllerWithDataStorageEgressOnly(kn, ComponentSignalProcessing, metricsOnlyIngress())
 	if knV2.Spec.FleetEnabled() {
-		np.Spec.Egress = append(np.Spec.Egress, fleetDestinationsEgressRule())
+		np.Spec.Egress = append(np.Spec.Egress, fleetDestinationsEgressRule(knV2))
 	}
 	return np
 }
@@ -188,16 +189,28 @@ func signalProcessingNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubern
 func remediationOrchestratorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
 	np := controllerWithDataStorageEgressOnly(kn, ComponentRemediationOrchestrator, metricsOnlyIngress())
 	if knV2.Spec.FleetEnabled() {
-		np.Spec.Egress = append(np.Spec.Egress, fleetDestinationsEgressRule())
+		np.Spec.Egress = append(np.Spec.Egress, fleetDestinationsEgressRule(knV2))
 	}
 	return np
 }
 
-func workflowExecutionNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
+func workflowExecutionNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
+	var np *networkingv1.NetworkPolicy
 	if kn.Spec.Ansible.Enabled {
-		return controllerWithDataStorageAndHTTPSEgress(kn, ComponentWorkflowExecution, metricsOnlyIngress())
+		np = controllerWithDataStorageAndHTTPSEgress(kn, ComponentWorkflowExecution, metricsOnlyIngress())
+	} else {
+		np = controllerWithDataStorageEgressOnly(kn, ComponentWorkflowExecution, metricsOnlyIngress())
 	}
-	return controllerWithDataStorageEgressOnly(kn, ComponentWorkflowExecution, metricsOnlyIngress())
+	// WorkflowExecution is fleet-config-aware (resolveWEFleetConfig/
+	// weFleetYAML, #390) but was never granted egress to reach the MCP
+	// Gateway it's configured to call -- a gap missed by the original
+	// #224/#204 retrofit that added this rule to GW/RO/SP/AF/EM/KA. Fixed
+	// alongside the fleetDestinationsEgressRule Route/VIP fix (#392) since
+	// both surfaced from the same on-cluster triage.
+	if knV2.Spec.FleetEnabled() {
+		np.Spec.Egress = append(np.Spec.Egress, fleetDestinationsEgressRule(knV2))
+	}
+	return np
 }
 
 func notificationNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
@@ -233,7 +246,7 @@ func effectivenessMonitorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *ku
 	egress = append(egress, datastorageEgressRule())
 	egress = append(egress, monitoringEgressRules(knV2, true)...)
 	if knV2.Spec.FleetEnabled() {
-		egress = append(egress, fleetDestinationsEgressRule())
+		egress = append(egress, fleetDestinationsEgressRule(knV2))
 	}
 
 	return &networkingv1.NetworkPolicy{
@@ -314,7 +327,7 @@ func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernau
 		})
 	}
 	if knV2.Spec.FleetEnabled() {
-		egress = append(egress, fleetDestinationsEgressRule())
+		egress = append(egress, fleetDestinationsEgressRule(knV2))
 	}
 
 	return &networkingv1.NetworkPolicy{
@@ -820,7 +833,7 @@ func apifrontendEgressRules(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1al
 	}
 
 	if knV2.Spec.FleetEnabled() {
-		egress = append(egress, fleetDestinationsEgressRule())
+		egress = append(egress, fleetDestinationsEgressRule(knV2))
 	}
 	return egress
 }
@@ -856,17 +869,152 @@ const fleetDestinationsCommonPort int32 = 8080
 // MCP Gateway, OAuth2 IdP, and ACM Search API are all external or
 // cluster-wide), so, like FMC, an all-namespace peer is the correct scope,
 // not a namespace- or pod-selector peer.
-func fleetDestinationsEgressRule() networkingv1.NetworkPolicyEgressRule {
+//
+// The namespaceSelector peer alone is not sufficient: it only matches
+// destinations backed by a namespaced Pod IP (in-cluster Services).
+// mcpGatewayEndpoint/oauth2.tokenURL/endpoint are free-form and may instead
+// point at an OpenShift Route, which resolves to the Ingress Router's
+// hostNetwork VIP -- not a namespaced Pod IP -- so OVN-Kubernetes silently
+// drops the traffic regardless of this rule (#392, confirmed via live
+// on-cluster curl reproduction: identical request succeeds with the
+// NetworkPolicy unapplied, times out once it applies). To cover that case
+// too, this also resolves each configured destination hostname's real IPs
+// via DNS and adds them as ipBlock peers alongside the namespaceSelector
+// peer -- ipBlock peers match on the literal packet destination IP
+// (correct for Route VIPs and other external/hostNetwork destinations),
+// whereas an ipBlock peer for an in-cluster ClusterIP is a harmless no-op
+// under OVN's DNAT-before-NetworkPolicy-evaluation behavior (see
+// sameNamespacePeers), not a false grant -- so adding both peer kinds is
+// always safe.
+func fleetDestinationsEgressRule(knV2 *kubernautv1alpha2.Kubernaut) networkingv1.NetworkPolicyEgressRule {
 	protoTCP := corev1.ProtocolTCP
 	p443 := intstr.FromInt32(443)
 	pMCPGateway := intstr.FromInt32(fleetDestinationsCommonPort)
+
+	peers := []networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{}}}
+	for _, host := range fleetDestinationHostnames(knV2) {
+		for _, ip := range resolveFleetHostIPs(host) {
+			peers = append(peers, networkingv1.NetworkPolicyPeer{
+				IPBlock: &networkingv1.IPBlock{CIDR: hostIPCIDR(ip)},
+			})
+		}
+	}
+
 	return networkingv1.NetworkPolicyEgressRule{
-		To: []networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{}}},
+		To: peers,
 		Ports: []networkingv1.NetworkPolicyPort{
 			{Protocol: &protoTCP, Port: &p443},
 			{Protocol: &protoTCP, Port: &pMCPGateway},
 		},
 	}
+}
+
+// fleetDestinationHostnames returns the deduplicated hostnames parsed from
+// every configured free-form fleet destination URL
+// (mcpGatewayEndpoint/oauth2.tokenURL/endpoint), so fleetDestinationsEgressRule
+// can resolve their real IPs for its ipBlock peers. A URL that fails to
+// parse or has no hostname is skipped rather than erroring -- best-effort,
+// matching this rule's existing design (see fleetDestinationsCommonPort).
+func fleetDestinationHostnames(knV2 *kubernautv1alpha2.Kubernaut) []string {
+	seen := make(map[string]bool, 3)
+	hosts := make([]string, 0, 3)
+	for _, raw := range []string{
+		knV2.Spec.Fleet.MCPGatewayEndpoint,
+		knV2.Spec.Fleet.OAuth2.TokenURL,
+		knV2.Spec.Fleet.Endpoint,
+	} {
+		if raw == "" {
+			continue
+		}
+		u, err := url.Parse(raw)
+		if err != nil || u.Hostname() == "" {
+			continue
+		}
+		host := u.Hostname()
+		if !seen[host] {
+			seen[host] = true
+			hosts = append(hosts, host)
+		}
+	}
+	return hosts
+}
+
+// hostIPCIDR returns the /32 (IPv4) or /128 (IPv6) host CIDR for ip,
+// matching ipWorldPeers' dual-stack handling elsewhere in this file.
+// Malformed input (should not happen -- callers only pass addresses
+// returned by net.DefaultResolver.LookupHost) falls back to /32.
+func hostIPCIDR(ip string) string {
+	if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() == nil {
+		return ip + "/128"
+	}
+	return ip + "/32"
+}
+
+// fleetHostIPsCache holds the last successfully-resolved IPs per hostname
+// for fleet destination hosts (MCP Gateway, OAuth2 token endpoint, fleet
+// backend endpoint), guarded by mu. Read/written only by resolveFleetHostIPs.
+var fleetHostIPsCache struct {
+	mu  sync.RWMutex
+	ips map[string][]string
+}
+
+// liveResolveFleetHostIPsFunc is a seam over liveResolveFleetHostIPs so unit
+// tests can simulate DNS success/failure deterministically instead of
+// making a real network call (internal/resources/*_test.go is the pure-Go
+// unit tier -- no envtest/live cluster, no real DNS, per AGENTS.md Testing
+// Requirements / Mock Strategy). suite_test.go's BeforeSuite overrides this
+// to a fast, network-free failure by default for every test in this
+// package; individual tests override further via
+// stubLiveResolveFleetHostIPsForTest.
+var liveResolveFleetHostIPsFunc = liveResolveFleetHostIPs
+
+// liveResolveFleetHostIPs resolves host via DNS -- the same resolution path
+// any HTTP client (including the fleet-aware components themselves) would
+// use to reach it. Unlike resolveAPIServerIPs (which reads a known
+// Kubernetes Endpoints object), fleet destination hosts are free-form and
+// not necessarily backed by any Kubernetes API object, so DNS is the only
+// generally-correct way to resolve their real IPs.
+func liveResolveFleetHostIPs(host string) ([]string, error) { //nolint:contextcheck // see resolveAPIServerIPs' identical rationale: a context param here would require plumbing ctx through ~14 builder functions for a call whose behavior would not otherwise change.
+	addrs, err := net.DefaultResolver.LookupHost(context.Background(), host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve fleet destination host %q: %w", host, err)
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("fleet destination host %q resolved to no addresses", host)
+	}
+	return addrs, nil
+}
+
+// resolveFleetHostIPs returns the resolved IPs for host, re-resolving live
+// on every call so egress stays correct as DNS/VIP assignment changes.
+// Like resolveAPIServerIPs, a failed live lookup fails closed by reusing
+// the last successfully-resolved IPs for that host rather than granting no
+// egress at all. With no prior successful resolution, it logs and returns
+// nil -- fleetDestinationsEgressRule's namespaceSelector peer still covers
+// in-cluster-Service-backed destinations in that case, so this is reduced
+// coverage, not a hard failure.
+func resolveFleetHostIPs(host string) []string {
+	ips, err := liveResolveFleetHostIPsFunc(host)
+	if err == nil {
+		fleetHostIPsCache.mu.Lock()
+		if fleetHostIPsCache.ips == nil {
+			fleetHostIPsCache.ips = make(map[string][]string)
+		}
+		fleetHostIPsCache.ips[host] = ips
+		fleetHostIPsCache.mu.Unlock()
+		return ips
+	}
+
+	networkPoliciesLog.Error(err, "failed to resolve fleet destination host IPs", "host", host)
+
+	fleetHostIPsCache.mu.RLock()
+	cached := fleetHostIPsCache.ips[host]
+	fleetHostIPsCache.mu.RUnlock()
+	if len(cached) > 0 {
+		networkPoliciesLog.Info("reusing last known-good fleet destination IPs after a failed DNS lookup", "host", host, "ips", cached)
+		return cached
+	}
+	return nil
 }
 
 // datastorageEgressRule allows TCP 8443 to DataStorage pods in the same

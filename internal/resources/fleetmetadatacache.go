@@ -253,7 +253,7 @@ func fleetMetadataCacheClusterRoleBinding(kn *kubernautv1alpha1.Kubernaut, label
 // fleetMetadataCacheNetworkPolicy allows Gateway/RemediationOrchestrator to
 // reach FMC's api port, monitoring to scrape metrics, and FMC itself to
 // reach Valkey plus the MCP Gateway/OAuth2 token endpoint egress.
-func fleetMetadataCacheNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
+func fleetMetadataCacheNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
 	protoTCP := corev1.ProtocolTCP
 	pAPI := intstr.FromInt32(fleetMetadataCacheAPIPort)
 
@@ -280,7 +280,7 @@ func fleetMetadataCacheNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkin
 			To:    sameNamespacePeers(),
 			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protoTCP, Port: &pValkey}},
 		},
-		fleetDestinationsEgressRule(),
+		fleetDestinationsEgressRule(knV2),
 	)
 
 	return &networkingv1.NetworkPolicy{
