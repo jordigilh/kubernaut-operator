@@ -419,6 +419,9 @@ kubernaut-ocp/
     postgresql-secret.yaml          # SealedSecret or ExternalSecret
     valkey-secret.yaml
     llm-credentials.yaml
+    fleet-oauth2-creds.yaml          # if spec.fleet.enabled
+    fleet-oauth2-write-creds.yaml    # if spec.fleet.enabled
+    kubernaut-console-oidc.yaml      # if spec.console.enabled
   configmaps/
     signalprocessing-policy.yaml
     aianalysis-policy.yaml
@@ -453,6 +456,32 @@ spec:
 ```
 
 If omitted, notifications are delivered to the console log and file output only.
+
+## Console (optional)
+
+The standalone web Console (A2A chat UI, `spec.console.enabled`) is fronted by an oauth2-proxy sidecar that needs its own OIDC client -- distinct from the Fleet client-credentials clients above and from AF's own OIDC config. Provision a **confidential, Authorization Code flow** client (`standardFlowEnabled`, not a service-account/client-credentials client) on your OIDC provider:
+
+- Redirect URI: `https://<console-route-host>/oauth2/callback`, matching `spec.console.route.host`.
+- Web origin: `https://<console-route-host>`.
+
+Build the Secret from the client's credentials plus a locally-generated cookie secret (used by oauth2-proxy to encrypt the session cookie, not an OIDC value). `spec.console.auth.secretName` requires exactly these three keys:
+
+```bash
+oc create secret generic kubernaut-console-oidc -n kubernaut-system \
+  --from-literal=client-id=<CLIENT_ID> \
+  --from-literal=client-secret=<CLIENT_SECRET> \
+  --from-literal=cookie-secret="$(openssl rand -base64 32 | head -c 32 | base64)"
+```
+
+```yaml
+spec:
+  console:
+    enabled: true
+    auth:
+      secretName: kubernaut-console-oidc
+```
+
+If you don't need the standalone Console UI, omit the `console` block entirely (it defaults to disabled).
 
 ## Verification
 
