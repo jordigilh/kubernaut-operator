@@ -1424,12 +1424,12 @@ func buildCoreConfigMaps(
 		{"datastorage", func() (*corev1.ConfigMap, error) {
 			return resources.DataStorageConfigMap(kn, knV2, dbName, dbUser, tlsOpt)
 		}},
-		{"aianalysis", func() (*corev1.ConfigMap, error) { return resources.AIAnalysisConfigMap(kn, tlsOpt) }},
+		{"aianalysis", func() (*corev1.ConfigMap, error) { return resources.AIAnalysisConfigMap(kn, knV2, tlsOpt) }},
 		{"signalprocessing", func() (*corev1.ConfigMap, error) { return resources.SignalProcessingConfigMap(kn, knV2, tlsOpt) }},
 		{"remediationorchestrator", func() (*corev1.ConfigMap, error) { return resources.RemediationOrchestratorConfigMap(kn, knV2, tlsOpt) }},
 		{"workflowexecution", func() (*corev1.ConfigMap, error) { return resources.WorkflowExecutionConfigMap(kn, knV2, tlsOpt) }},
 		{"effectivenessmonitor", func() (*corev1.ConfigMap, error) { return resources.EffectivenessMonitorConfigMap(kn, knV2, tlsOpt) }},
-		{"notification-controller", func() (*corev1.ConfigMap, error) { return resources.NotificationControllerConfigMap(kn, tlsOpt) }},
+		{"notification-controller", func() (*corev1.ConfigMap, error) { return resources.NotificationControllerConfigMap(kn, knV2, tlsOpt) }},
 		{"notification-routing", func() (*corev1.ConfigMap, error) {
 			if kn.Spec.Notification.Routing != nil && kn.Spec.Notification.Routing.ConfigMapName != "" {
 				// Caller supplied their own routing ConfigMap (spec.notification.routing.configMapName);
@@ -1440,7 +1440,7 @@ func buildCoreConfigMaps(
 			return resources.NotificationRoutingConfigMap(kn)
 		}},
 		{"kubernaut-agent", func() (*corev1.ConfigMap, error) { return resources.KubernautAgentConfigMap(kn, knV2, tlsOpt) }},
-		{"authwebhook", func() (*corev1.ConfigMap, error) { return resources.AuthWebhookConfigMap(kn, tlsOpt) }},
+		{"authwebhook", func() (*corev1.ConfigMap, error) { return resources.AuthWebhookConfigMap(kn, knV2, tlsOpt) }},
 	}
 
 	cmHashes := make(map[string]string, len(builders))
@@ -1582,20 +1582,14 @@ func (r *KubernautReconciler) enabledDeploymentBuilders(
 		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 			return resources.DataStorageDeployment(kn)
 		},
-		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-			return resources.AIAnalysisDeployment(kn)
-		},
+		resources.AIAnalysisDeployment,
 		resources.SignalProcessingDeployment,
 		resources.RemediationOrchestratorDeployment,
 		resources.WorkflowExecutionDeployment,
 		resources.EffectivenessMonitorDeployment,
-		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-			return resources.NotificationDeployment(kn)
-		},
+		resources.NotificationDeployment,
 		resources.KubernautAgentDeployment,
-		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-			return resources.AuthWebhookDeployment(kn)
-		},
+		resources.AuthWebhookDeployment,
 	}
 	if kn.Spec.GatewayEnabled() {
 		depBuilders = append(depBuilders, resources.GatewayDeployment)

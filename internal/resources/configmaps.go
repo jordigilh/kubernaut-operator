@@ -72,6 +72,15 @@ type loggingYAML struct {
 	Level string `json:"level" yaml:"level"`
 }
 
+// debugYAML mirrors upstream's shared internal/config.DebugConfig
+// (BR-PLATFORM-012, kubernaut#2275/#2277) field-for-field: positive
+// polarity, defaults to false (profiling OFF, AC-6 secure-by-default),
+// rendered identically across all 12 Go services so spec.<component>.debug
+// passes straight through with no negation-translation layer.
+type debugYAML struct {
+	PprofEnabled bool `json:"pprofEnabled" yaml:"pprofEnabled"`
+}
+
 type gatewayMiddlewareYAML struct {
 	TrustedProxyCIDRs []string `json:"trustedProxyCIDRs" yaml:"trustedProxyCIDRs"`
 }
@@ -145,6 +154,7 @@ type gatewayConfigYAML struct {
 	Datastorage gatewayDatastorageYAML `json:"datastorage" yaml:"datastorage"`
 	Fleet       *fleetConfigYAML       `json:"fleet,omitempty" yaml:"fleet,omitempty"`
 	Telemetry   *telemetryYAML         `json:"telemetry,omitempty" yaml:"telemetry,omitempty"`
+	Debug       debugYAML              `json:"debug" yaml:"debug"`
 }
 
 // telemetryYAML mirrors upstream's shared TelemetryConfig shape (ADR-068,
@@ -436,6 +446,7 @@ type dataStorageConfigYAML struct {
 	EndpointPropagationDelay string                    `json:"endpointPropagationDelay,omitempty" yaml:"endpointPropagationDelay,omitempty"`
 	Retention                *dataStorageRetentionYAML `json:"retention,omitempty" yaml:"retention,omitempty"`
 	Telemetry                *telemetryYAML            `json:"telemetry,omitempty" yaml:"telemetry,omitempty"`
+	Debug                    debugYAML                 `json:"debug" yaml:"debug"`
 }
 
 type dataStorageRetentionYAML struct {
@@ -478,6 +489,7 @@ type aiAnalysisConfigYAML struct {
 	Agent       aiAnalysisKubernautAgentYAML `json:"agent" yaml:"agent"`
 	Datastorage aiAnalysisDatastorageYAML    `json:"datastorage" yaml:"datastorage"`
 	Rego        aiAnalysisRegoYAML           `json:"rego" yaml:"rego"`
+	Debug       debugYAML                    `json:"debug" yaml:"debug"`
 }
 
 type signalProcessingEnrichmentYAML struct {
@@ -514,6 +526,7 @@ type signalProcessingConfigYAML struct {
 	Classifier  signalProcessingClassifierYAML  `json:"classifier" yaml:"classifier"`
 	Datastorage signalProcessingDatastorageYAML `json:"datastorage" yaml:"datastorage"`
 	Fleet       *signalProcessingFleetYAML      `json:"fleet,omitempty" yaml:"fleet,omitempty"`
+	Debug       debugYAML                       `json:"debug" yaml:"debug"`
 }
 
 // signalProcessingFleetYAML mirrors upstream pkg/signalprocessing/config.FleetConfig
@@ -626,6 +639,7 @@ type remediationOrchestratorConfigYAML struct {
 	DryRun                  bool                   `json:"dryRun" yaml:"dryRun"`
 	DryRunHoldPeriod        string                 `json:"dryRunHoldPeriod" yaml:"dryRunHoldPeriod"`
 	Fleet                   *fleetConfigYAML       `json:"fleet,omitempty" yaml:"fleet,omitempty"`
+	Debug                   debugYAML              `json:"debug" yaml:"debug"`
 }
 
 type weExecutionYAML struct {
@@ -672,6 +686,7 @@ type workflowExecutionConfigYAML struct {
 	Datastorage weDatastorageYAML             `json:"datastorage" yaml:"datastorage"`
 	Controller  weControllerYAML              `json:"controller" yaml:"controller"`
 	Fleet       *weFleetYAML                  `json:"fleet,omitempty" yaml:"fleet,omitempty"`
+	Debug       debugYAML                     `json:"debug" yaml:"debug"`
 }
 
 // weFleetYAML mirrors upstream pkg/workflowexecution/config.FleetConfig
@@ -748,6 +763,7 @@ type effectivenessMonitorConfigYAML struct {
 	Datastorage emDatastorageYAML `json:"datastorage" yaml:"datastorage"`
 	External    *emExternalYAML   `json:"external,omitempty" yaml:"external,omitempty"`
 	Fleet       *fleetConfigYAML  `json:"fleet,omitempty" yaml:"fleet,omitempty"`
+	Debug       debugYAML         `json:"debug" yaml:"debug"`
 }
 
 type notificationConsoleYAML struct {
@@ -802,6 +818,7 @@ type notificationControllerConfigYAML struct {
 	Controller  controllerBlock             `json:"controller" yaml:"controller"`
 	Delivery    notificationDeliveryYAML    `json:"delivery" yaml:"delivery"`
 	Datastorage notificationDatastorageYAML `json:"datastorage" yaml:"datastorage"`
+	Debug       debugYAML                   `json:"debug" yaml:"debug"`
 }
 
 type notificationRoutingSlackRoute struct {
@@ -843,6 +860,7 @@ type kaLoggingYAML struct {
 
 type kaRuntimeYAML struct {
 	Logging  kaLoggingYAML       `json:"logging" yaml:"logging"`
+	Debug    debugYAML           `json:"debug" yaml:"debug"`
 	Server   kaRuntimeServerYAML `json:"server" yaml:"server"`
 	Audit    *kaAuditYAML        `json:"audit,omitempty" yaml:"audit,omitempty"`
 	Session  *kaSessionYAML      `json:"session,omitempty" yaml:"session,omitempty"`
@@ -1129,6 +1147,7 @@ type authWebhookConfigYAML struct {
 	Logging     loggingYAML                `json:"logging" yaml:"logging"`
 	Webhook     authWebhookWebhookYAML     `json:"webhook" yaml:"webhook"`
 	Datastorage authWebhookDatastorageYAML `json:"datastorage" yaml:"datastorage"`
+	Debug       debugYAML                  `json:"debug" yaml:"debug"`
 }
 
 // configMapOpts holds resolved functional options for ConfigMap builders.
@@ -1221,6 +1240,7 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.K
 		},
 		Fleet:     resolveFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.Gateway.Fleet, ""), InterServiceTLSCAFile),
 		Telemetry: resolveTelemetryConfig(knV2.Spec.Gateway.Config.Telemetry),
+		Debug:     debugYAML{PprofEnabled: knV2.Spec.Gateway.Debug.PprofEnabled},
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1279,6 +1299,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 		EndpointPropagationDelay: withDefault(kn.Spec.DataStorage.EndpointPropagationDelay, "10s"),
 		Retention:                dataStorageRetentionConfig(kn),
 		Telemetry:                resolveTelemetryConfig(knV2.Spec.DataStorage.Telemetry),
+		Debug:                    debugYAML{PprofEnabled: knV2.Spec.DataStorage.Debug.PprofEnabled},
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1361,7 +1382,7 @@ func dataStorageRedisConfig(kn *kubernautv1alpha1.Kubernaut) dataStorageRedisYAM
 }
 
 // AIAnalysisConfigMap builds the aianalysis-config ConfigMap.
-func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ns := kn.Namespace
 	rego := aiAnalysisRegoYAML{
@@ -1390,7 +1411,8 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOptio
 				MaxRetries:    3,
 			},
 		},
-		Rego: rego,
+		Rego:  rego,
+		Debug: debugYAML{PprofEnabled: knV2.Spec.AIAnalysis.Debug.PprofEnabled},
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1432,6 +1454,7 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv
 			Buffer:    buf,
 		},
 		Fleet: resolveSignalProcessingFleetConfig(knV2),
+		Debug: debugYAML{PprofEnabled: knV2.Spec.SignalProcessing.Debug.PprofEnabled},
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1522,6 +1545,7 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kub
 		DryRun:           ro.DryRun,
 		DryRunHoldPeriod: withDefault(ro.DryRunHoldPeriod, "1h"),
 		Fleet:            resolveFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.RemediationOrchestrator.Fleet, ""), InterServiceTLSCAFile),
+		Debug:            debugYAML{PprofEnabled: knV2.Spec.RemediationOrchestrator.Debug.PprofEnabled},
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1585,6 +1609,7 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernaut
 		cfg.Tekton = &weTektonYAML{Enabled: we.Tekton.Enabled}
 	}
 	cfg.Fleet = resolveWEFleetConfig(knV2, InterServiceTLSCAFile)
+	cfg.Debug = debugYAML{PprofEnabled: knV2.Spec.WorkflowExecution.Debug.PprofEnabled}
 	data, err := marshalYAML(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("workflowexecution config: %w", err)
@@ -1619,6 +1644,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubern
 			},
 		},
 		Fleet: resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.EffectivenessMonitor.Fleet, ""), InterServiceTLSCAFile),
+		Debug: debugYAML{PprofEnabled: knV2.Spec.EffectivenessMonitor.Debug.PprofEnabled},
 	}
 	cfg.External = &emExternalYAML{
 		PrometheusURL:       effectivePrometheusURL(knV2),
@@ -1639,7 +1665,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubern
 }
 
 // NotificationControllerConfigMap builds the notification-controller-config ConfigMap.
-func NotificationControllerConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func NotificationControllerConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	buf := notificationBufferYAML{
 		BufferSize:    10000,
@@ -1674,6 +1700,7 @@ func NotificationControllerConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...Co
 			},
 		},
 		Datastorage: ds,
+		Debug:       debugYAML{PprofEnabled: knV2.Spec.Notification.Debug.PprofEnabled},
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1876,6 +1903,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1a
 	cfg := kubernautAgentConfigYAML{
 		Runtime: kaRuntimeYAML{
 			Logging: kaLoggingYAML{Level: withDefault(ka.Logging.Level, "info"), Format: "json"},
+			Debug:   debugYAML{PprofEnabled: knV2.Spec.KubernautAgent.Debug.PprofEnabled},
 			Server: kaRuntimeServerYAML{
 				Address:     "0.0.0.0",
 				Port:        8443,
@@ -2036,7 +2064,7 @@ func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1
 }
 
 // AuthWebhookConfigMap builds the authwebhook-config ConfigMap.
-func AuthWebhookConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func AuthWebhookConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	buf := authWebhookBufferYAML{
 		BufferSize:    1000,
@@ -2059,6 +2087,7 @@ func AuthWebhookConfigMap(kn *kubernautv1alpha1.Kubernaut, opts ...ConfigMapOpti
 			HealthProbeAddr: ":8081",
 		},
 		Datastorage: ds,
+		Debug:       debugYAML{PprofEnabled: knV2.Spec.AuthWebhook.Debug.PprofEnabled},
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -2194,6 +2223,7 @@ type afConfigYAML struct {
 	Resilience     afResilienceYAML     `json:"resilience" yaml:"resilience"`
 	Session        afSessionYAML        `json:"session" yaml:"session"`
 	Fleet          *fleetConfigYAML     `json:"fleet,omitempty" yaml:"fleet,omitempty"`
+	Debug          debugYAML            `json:"debug" yaml:"debug"`
 }
 
 type afSessionYAML struct {
@@ -2527,6 +2557,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 		Session:        afSessionConfig(knV2, ns),
 		Fleet:          resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""), apifrontendTLSCAFile),
 		Resilience:     afResilienceConfig(),
+		Debug:          debugYAML{PprofEnabled: knV2.Spec.APIFrontend.Debug.PprofEnabled},
 	}
 
 	data, err := marshalYAML(cfg)

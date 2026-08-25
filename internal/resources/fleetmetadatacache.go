@@ -102,6 +102,7 @@ type fleetMetadataCacheConfigYAML struct {
 	Valkey     fleetMetadataCacheValkeyYAML     `json:"valkey" yaml:"valkey"`
 	Sync       fleetMetadataCacheSyncYAML       `json:"sync" yaml:"sync"`
 	OAuth2     fleetMetadataCacheOAuth2YAML     `json:"oauth2" yaml:"oauth2"`
+	Debug      debugYAML                        `json:"debug" yaml:"debug"`
 }
 
 // FleetMetadataCacheConfigMap builds the fleetmetadatacache-config ConfigMap.
@@ -141,6 +142,7 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernau
 			Scopes:         fleet.OAuth2.Scopes,
 			TLSCaFile:      InterServiceTLSCAFile,
 		},
+		Debug: debugYAML{PprofEnabled: fmc.Debug.PprofEnabled},
 	}
 
 	data, err := marshalYAML(cfg)

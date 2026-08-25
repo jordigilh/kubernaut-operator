@@ -83,7 +83,26 @@ const (
 	PortAuthWebhookService int32 = 443
 	PortWebhookServer      int32 = 9443
 	PortHealthProbe        int32 = 8081
+	// PortPprof is controller-runtime's ctrl.Options.PprofBindAddress
+	// default (":6060") for the 7 controller-runtime-managed services
+	// (AIAnalysis, AuthWebhook, EffectivenessMonitor, Notification,
+	// RemediationOrchestrator, SignalProcessing, WorkflowExecution) --
+	// see upstream internal/config.PprofBindAddress (BR-PLATFORM-012,
+	// kubernaut#2275/#2277).
+	PortPprof int32 = 6060
 )
+
+// pprofContainerPort returns a single-element []corev1.ContainerPort
+// exposing PortPprof when enabled, or nil otherwise, for appending onto a
+// ctrl-runtime-managed service's Ports slice (BR-PLATFORM-012, #403).
+// Secure-by-default (AC-6): omits the port entirely rather than merely
+// documenting it as unused when profiling is off.
+func pprofContainerPort(enabled bool) []corev1.ContainerPort {
+	if !enabled {
+		return nil
+	}
+	return []corev1.ContainerPort{{Name: "pprof", ContainerPort: PortPprof, Protocol: corev1.ProtocolTCP}}
+}
 
 // Default PostgreSQL port when not specified in the CR.
 const DefaultPostgreSQLPort int32 = 5432
