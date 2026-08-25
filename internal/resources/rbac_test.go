@@ -1811,6 +1811,47 @@ var _ = Describe("SignalProcessing least-privilege RBAC", func() {
 	})
 })
 
+// #411: workflowexecution-controller's ClusterRole granted only create/patch
+// on core events -- write-only, matching the Recorder.Event() pattern most
+// other controllers use. But BR-WE-019/DD-WE-008's countPodCreationAttempts
+// (pkg/workflowexecution/executor/job.go in kubernaut core) counts
+// "SuccessfulCreate" Events on the Job object through the manager's client to
+// work around job.Status.Failed not incrementing for PodFailurePolicy-Ignore
+// tolerated failures (OOM-kill, node-disruption). That List/Get call makes
+// controller-runtime register a cluster-scoped cache watch/list reflector on
+// *v1.Event, which never got the matching RBAC verbs -- leaving the cache
+// permanently failing to sync and blocking all WorkflowExecution
+// reconciliation on live clusters.
+var _ = Describe("WorkflowExecution controller ClusterRole", func() {
+	weRole := func() *rbacv1.ClusterRole {
+		kn := testKubernaut()
+		roles := ClusterRoles(kn, testKnV2(kn))
+		for _, r := range roles {
+			if r.Name == clusterRoleName(kn, "workflowexecution-controller") {
+				return r
+			}
+		}
+		return nil
+	}
+
+	It("[AC-6] grants get/list/watch/create/patch on events so its cache can sync (#411)", func() {
+		role := weRole()
+		Expect(role).NotTo(BeNil())
+
+		found := false
+		for _, rule := range role.Rules {
+			if len(rule.APIGroups) == 1 && rule.APIGroups[0] == "" && slices.Contains(rule.Resources, "events") {
+				found = true
+				Expect(rule.Verbs).To(ConsistOf("get", "list", "watch", "create", "patch"),
+					"workflowexecution-controller must be able to list/watch events so its "+
+						"controller-runtime cache can sync (#411, BR-WE-019/DD-WE-008 "+
+						"countPodCreationAttempts) -- not just create/patch")
+			}
+		}
+		Expect(found).To(BeTrue(), "no events rule found on workflowexecution-controller ClusterRole")
+	})
+})
+
 var _ = Describe("SignalProcessing fleet RBAC", func() {
 	It("omits MCP Gateway CRD rules when fleet is disabled", func() {
 		kn := testKubernaut()
