@@ -221,7 +221,7 @@ func dataStorageVolumesAndMounts(kn *kubernautv1alpha1.Kubernaut) ([]corev1.Volu
 }
 
 // AIAnalysisDeployment builds the aianalysis Deployment.
-func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	policyName := AIAnalysisPolicyName(kn)
 	volumes := []corev1.Volume{
 		configMapVolume("config", "aianalysis-config"),
@@ -235,16 +235,19 @@ func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, 
 		{Name: "CONFIG_PATH", Value: "/etc/aianalysis/config.yaml"},
 	}
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
+	ports := make([]corev1.ContainerPort, 0, 4)
+	ports = append(ports,
+		corev1.ContainerPort{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
+		corev1.ContainerPort{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
+		corev1.ContainerPort{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+	)
+	ports = append(ports, pprofContainerPort(knV2.Spec.AIAnalysis.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentAIAnalysis, ImageName: "aianalysis",
 		Resources: kn.Spec.AIAnalysis.Resources, VolumeMounts: mounts, Volumes: volumes,
 		Env: env, ProbePort: PortHealthProbe,
-		Args: []string{"-config", "/etc/aianalysis/config.yaml"},
-		Ports: []corev1.ContainerPort{
-			{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
-			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
-			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
-		},
+		Args:  []string{"-config", "/etc/aianalysis/config.yaml"},
+		Ports: ports,
 	})
 }
 
@@ -274,15 +277,18 @@ func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernaut
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
 	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, knV2, "/etc/signalprocessing", effectiveFleetOAuth2SecretRef(knV2.Spec.SignalProcessing.Fleet, ""))
+	ports := make([]corev1.ContainerPort, 0, 3)
+	ports = append(ports,
+		corev1.ContainerPort{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
+		corev1.ContainerPort{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+	)
+	ports = append(ports, pprofContainerPort(knV2.Spec.SignalProcessing.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentSignalProcessing, ImageName: "signalprocessing",
 		Resources: kn.Spec.SignalProcessing.Resources, VolumeMounts: mounts, Volumes: volumes,
 		Env: env, ProbePort: PortHealthProbe,
-		Args: []string{"--config=/etc/signalprocessing/config.yaml"},
-		Ports: []corev1.ContainerPort{
-			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
-			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
-		},
+		Args:  []string{"--config=/etc/signalprocessing/config.yaml"},
+		Ports: ports,
 	})
 }
 
@@ -293,15 +299,18 @@ func RemediationOrchestratorDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *ku
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
 	volumes, mounts = appendFleetSecretMounts(volumes, mounts, knV2, "/etc/remediationorchestrator", effectiveFleetOAuth2SecretRef(knV2.Spec.RemediationOrchestrator.Fleet, ""))
+	ports := make([]corev1.ContainerPort, 0, 3)
+	ports = append(ports,
+		corev1.ContainerPort{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+		corev1.ContainerPort{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
+	)
+	ports = append(ports, pprofContainerPort(knV2.Spec.RemediationOrchestrator.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentRemediationOrchestrator, ImageName: "remediationorchestrator",
 		Resources: kn.Spec.RemediationOrchestrator.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
 		Args:      []string{"--config=/etc/config/remediationorchestrator.yaml"},
 		ProbePort: PortHealthProbe,
-		Ports: []corev1.ContainerPort{
-			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
-			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
-		},
+		Ports:     ports,
 	})
 }
 
@@ -358,16 +367,19 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernau
 		env = overrideTLSCAFile(env, "/etc/combined-ca/ca-bundle.crt")
 	}
 
+	ports := make([]corev1.ContainerPort, 0, 3)
+	ports = append(ports,
+		corev1.ContainerPort{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
+		corev1.ContainerPort{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+	)
+	ports = append(ports, pprofContainerPort(knV2.Spec.WorkflowExecution.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentWorkflowExecution, ImageName: "workflowexecution",
 		Resources: kn.Spec.WorkflowExecution.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
 		InitContainers: initContainers,
 		Args:           []string{"--config=/etc/config/workflowexecution.yaml"},
 		ProbePort:      PortHealthProbe,
-		Ports: []corev1.ContainerPort{
-			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
-			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
-		},
+		Ports:          ports,
 	})
 }
 
@@ -417,21 +429,24 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kuber
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
 	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, knV2, "/etc/effectivenessmonitor", effectiveFleetOAuth2SecretRef(knV2.Spec.EffectivenessMonitor.Fleet, ""))
+	ports := make([]corev1.ContainerPort, 0, 3)
+	ports = append(ports,
+		corev1.ContainerPort{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
+		corev1.ContainerPort{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+	)
+	ports = append(ports, pprofContainerPort(knV2.Spec.EffectivenessMonitor.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentEffectivenessMonitor, ImageName: "effectivenessmonitor",
 		Resources: kn.Spec.EffectivenessMonitor.Resources, VolumeMounts: mounts, Volumes: volumes,
 		Env: env, InitContainers: initContainers,
 		Args:      []string{"--config=/etc/effectivenessmonitor/effectivenessmonitor.yaml"},
 		ProbePort: PortHealthProbe,
-		Ports: []corev1.ContainerPort{
-			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
-			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
-		},
+		Ports:     ports,
 	})
 }
 
 // NotificationDeployment builds the notification Deployment.
-func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	routingCMName := "notification-routing-config"
 	if kn.Spec.Notification.Routing != nil && kn.Spec.Notification.Routing.ConfigMapName != "" {
 		routingCMName = kn.Spec.Notification.Routing.ConfigMapName
@@ -483,15 +498,18 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment
 		}},
 	}
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
+	ports := make([]corev1.ContainerPort, 0, 3)
+	ports = append(ports,
+		corev1.ContainerPort{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
+		corev1.ContainerPort{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+	)
+	ports = append(ports, pprofContainerPort(knV2.Spec.Notification.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentNotification, ImageName: "notification",
 		Resources: kn.Spec.Notification.Resources, VolumeMounts: mounts, Volumes: volumes,
 		Env: env, ProbePort: PortHealthProbe,
-		Args: []string{"-config", "/etc/notification/config.yaml"},
-		Ports: []corev1.ContainerPort{
-			{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
-			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
-		},
+		Args:  []string{"-config", "/etc/notification/config.yaml"},
+		Ports: ports,
 	})
 }
 
@@ -662,8 +680,13 @@ func kaResources(kn *kubernautv1alpha1.Kubernaut) corev1.ResourceRequirements {
 }
 
 // kaInitContainers returns the build-ca-bundle init container, which
-// concatenates the base image's trust bundle with the OpenShift service-ca
-// cert.
+// concatenates the base image's system trust bundle with the router-
+// inclusive inter-service trust bundle (tls-ca, sourced from
+// TrustBundleConfigMapName) into one file so KA's single SSL_CERT_FILE
+// declaration is a superset covering both public-CA LLM providers and the
+// fleet MCP client's Route-based endpoints (#404). Reads from tls-ca rather
+// than kubernaut-agent-service-ca's own narrower service-ca-only bundle,
+// since tls-ca's content is a strict superset (service-ca + router CA).
 func kaInitContainers(kn *kubernautv1alpha1.Kubernaut) ([]corev1.Container, error) {
 	kaUbiImage, err := ResolveImage(kn, "init-ubi-minimal")
 	if err != nil {
@@ -674,10 +697,10 @@ func kaInitContainers(kn *kubernautv1alpha1.Kubernaut) ([]corev1.Container, erro
 		Image:           kaUbiImage,
 		ImagePullPolicy: kn.Spec.Image.PullPolicy,
 		Command: []string{"sh", "-c",
-			"cat /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /service-ca/service-ca.crt > /combined/ca-bundle.crt",
+			"cat /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/tls-ca/service-ca.crt > /combined/ca-bundle.crt",
 		},
 		VolumeMounts: []corev1.VolumeMount{
-			{Name: "service-ca", MountPath: "/service-ca", ReadOnly: true},
+			{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
 			{Name: "combined-ca", MountPath: "/combined"},
 		},
 		SecurityContext: &corev1.SecurityContext{
@@ -742,7 +765,7 @@ func kaServiceAccountTokenVolume() (corev1.Volume, corev1.VolumeMount) {
 // RemediationRequest status, NotificationRequest deletions,
 // RemediationWorkflow CUD, ActionType CUD) will be rejected during this
 // window. SREs should plan operator upgrades during low-activity windows.
-func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	volumes := []corev1.Volume{
 		configMapVolume("config", "authwebhook-config"),
 		secretVolume("webhook-certs", "authwebhook-tls"),
@@ -754,15 +777,18 @@ func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment,
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
 
+	ports := make([]corev1.ContainerPort, 0, 3)
+	ports = append(ports,
+		corev1.ContainerPort{Name: "webhook", ContainerPort: PortWebhookServer, Protocol: corev1.ProtocolTCP},
+		corev1.ContainerPort{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
+	)
+	ports = append(ports, pprofContainerPort(knV2.Spec.AuthWebhook.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentAuthWebhook, ImageName: "authwebhook",
 		Resources: kn.Spec.AuthWebhook.Resources, VolumeMounts: mounts, Volumes: volumes,
-		Env:  env,
-		Args: []string{"-config=/etc/authwebhook/authwebhook.yaml"},
-		Ports: []corev1.ContainerPort{
-			{Name: "webhook", ContainerPort: PortWebhookServer, Protocol: corev1.ProtocolTCP},
-			{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
-		},
+		Env:       env,
+		Args:      []string{"-config=/etc/authwebhook/authwebhook.yaml"},
+		Ports:     ports,
 		ProbePort: PortHealthProbe,
 		Strategy:  &appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 	})
@@ -797,7 +823,14 @@ func apifrontendBaseVolumesMountsEnv(kn *kubernautv1alpha1.Kubernaut, sidecar Ka
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
 		{Name: "TLS_CA_FILE", Value: "/etc/apifrontend/tls-ca/ca.crt"},
-		{Name: "SSL_CERT_FILE", Value: "/etc/apifrontend/tls-ca/ca.crt"},
+		// SSL_CERT_FILE points at AF's own merged (system+inter-service)
+		// bundle, not the narrower /etc/apifrontend/tls-ca/ca.crt above
+		// (#404) -- Go's SSL_CERT_FILE replaces rather than extends the
+		// system trust store, and AF's severityTriage/LLM profile can point
+		// at a public-CA provider (Vertex AI/Anthropic/OpenAI), which that
+		// narrower, router+service-ca-only file doesn't cover. Built by the
+		// build-ca-bundle init container below (mirrors KA's pattern).
+		{Name: "SSL_CERT_FILE", Value: "/etc/ssl/combined/ca-bundle.crt"},
 	}
 	if sidecar != KagentiSidecarNone {
 		noProxy := fmt.Sprintf("127.0.0.1,localhost,kubernaut-agent.%s.svc.cluster.local,data-storage-service.%s.svc.cluster.local", ns, ns)
@@ -816,6 +849,7 @@ func apifrontendBaseVolumesMountsEnv(kn *kubernautv1alpha1.Kubernaut, sidecar Ka
 			},
 		}},
 		configMapVolume("service-ca", "apifrontend-service-ca"),
+		{Name: "combined-ca", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: "tmp", MountPath: "/tmp"},
@@ -823,8 +857,40 @@ func apifrontendBaseVolumesMountsEnv(kn *kubernautv1alpha1.Kubernaut, sidecar Ka
 		{Name: "tls-server", MountPath: "/etc/apifrontend/tls", ReadOnly: true},
 		{Name: "tls-ca", MountPath: "/etc/apifrontend/tls-ca", ReadOnly: true},
 		{Name: "service-ca", MountPath: "/etc/ssl/af", ReadOnly: true},
+		{Name: "combined-ca", MountPath: "/etc/ssl/combined", ReadOnly: true},
 	}
 	return volumes, mounts, env
+}
+
+// afInitContainers returns the build-ca-bundle init container, which
+// concatenates the base image's system trust bundle with AF's own
+// inter-service trust bundle (mounted at /etc/apifrontend/tls-ca/ca.crt)
+// into one file, mirroring KubernautAgent's pattern (#404). AF's own
+// SSL_CERT_FILE (apifrontendBaseVolumesMountsEnv) points at this merged
+// bundle rather than the narrower, router+service-ca-only tls-ca file.
+func afInitContainers(kn *kubernautv1alpha1.Kubernaut) ([]corev1.Container, error) {
+	afUbiImage, err := ResolveImage(kn, "init-ubi-minimal")
+	if err != nil {
+		return nil, err
+	}
+	return []corev1.Container{{
+		Name:            "build-ca-bundle",
+		Image:           afUbiImage,
+		ImagePullPolicy: kn.Spec.Image.PullPolicy,
+		Command: []string{"sh", "-c",
+			"cat /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/apifrontend/tls-ca/ca.crt > /combined/ca-bundle.crt",
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "tls-ca", MountPath: "/etc/apifrontend/tls-ca", ReadOnly: true},
+			{Name: "combined-ca", MountPath: "/combined"},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsNonRoot:             ptr.To(true),
+			AllowPrivilegeEscalation: ptr.To(false),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		},
+	}}, nil
 }
 
 // apifrontendCredentialVolumesMountsEnv appends AF's own resolved LLM
@@ -925,6 +991,11 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alp
 	volumes, mounts, env := apifrontendVolumesMountsEnv(kn, sidecar)
 	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, knV2, "/etc/apifrontend", effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""))
 
+	initContainers, err := afInitContainers(kn)
+	if err != nil {
+		return nil, err
+	}
+
 	drainSec := int64(15)
 	if kn.Spec.APIFrontend.Shutdown.DrainSeconds != nil {
 		drainSec = int64(*kn.Spec.APIFrontend.Shutdown.DrainSeconds)
@@ -936,8 +1007,9 @@ func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alp
 	dep, err := buildDeployment(kn, DeploymentParams{
 		Component: ComponentAPIFrontend, ImageName: "apifrontend",
 		Resources: kn.Spec.APIFrontend.Resources, VolumeMounts: mounts, Volumes: volumes,
-		Env:  env,
-		Args: []string{"--config=/etc/apifrontend/config.yaml"},
+		InitContainers: initContainers,
+		Env:            env,
+		Args:           []string{"--config=/etc/apifrontend/config.yaml"},
 		Ports: []corev1.ContainerPort{
 			{Name: "https", ContainerPort: listenPort, Protocol: corev1.ProtocolTCP},
 			{Name: "health", ContainerPort: healthPort, Protocol: corev1.ProtocolTCP},
@@ -1152,14 +1224,33 @@ func secretVolume(name, secretName string) corev1.Volume {
 	}
 }
 
+// appendInterServiceTLSCA mounts the inter-service trust bundle and points
+// TLS_CA_FILE/SSL_CERT_FILE at it. SSL_CERT_FILE is only appended when the
+// caller hasn't already declared one (#404) -- Go's SSL_CERT_FILE replaces
+// rather than extends the system trust store, so a caller that already set
+// it to its own merged (system+inter-service) bundle -- e.g. KubernautAgent,
+// which also verifies public-CA LLM providers via this same global var --
+// must keep its own, broader value rather than have it silently shadowed by
+// this narrower, inter-service-only one. TLS_CA_FILE has no such conflict
+// (no caller pre-sets it) so it keeps unconditional-append semantics.
 func appendInterServiceTLSCA(volumes []corev1.Volume, mounts []corev1.VolumeMount, env []corev1.EnvVar) ([]corev1.Volume, []corev1.VolumeMount, []corev1.EnvVar) {
 	volumes = append(volumes, configMapVolume("tls-ca", TrustBundleConfigMapName))
 	mounts = append(mounts, corev1.VolumeMount{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true})
-	env = append(env,
-		corev1.EnvVar{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile},
-		corev1.EnvVar{Name: "SSL_CERT_FILE", Value: InterServiceTLSCAFile},
-	)
+	env = append(env, corev1.EnvVar{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile})
+	env = appendEnvIfAbsent(env, "SSL_CERT_FILE", InterServiceTLSCAFile)
 	return volumes, mounts, env
+}
+
+// appendEnvIfAbsent appends name=value only when name isn't already present
+// in env, preserving whatever value an earlier caller set (#404) -- the
+// inverse of setOrAppendEnv, which always overwrites.
+func appendEnvIfAbsent(env []corev1.EnvVar, name, value string) []corev1.EnvVar {
+	for i := range env {
+		if env[i].Name == name {
+			return env
+		}
+	}
+	return append(env, corev1.EnvVar{Name: name, Value: value})
 }
 
 // appendFleetSecretMounts adds the fleet-ca / fleet-token / fleet-oauth2

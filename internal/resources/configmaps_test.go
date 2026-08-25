@@ -525,7 +525,7 @@ var _ = Describe("ConfigMaps", func() {
 		It("includes confidence threshold when set", func() {
 			kn := testKubernaut()
 			kn.Spec.AIAnalysis.ConfidenceThreshold = "0.85"
-			cm, err := AIAnalysisConfigMap(kn)
+			cm, err := AIAnalysisConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			data := cm.Data["config.yaml"]
@@ -534,7 +534,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("uses agent key and not legacy kubernautAgent key", func() {
 			kn := testKubernaut()
-			cm, err := AIAnalysisConfigMap(kn)
+			cm, err := AIAnalysisConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("agent:"), "aianalysis config should contain 'agent:' key, got:\n%s", data)
@@ -543,7 +543,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("omits threshold when empty", func() {
 			kn := testKubernaut()
-			cm, err := AIAnalysisConfigMap(kn)
+			cm, err := AIAnalysisConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			data := cm.Data["config.yaml"]
@@ -1298,7 +1298,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("controller config places credentials under delivery", func() {
 			kn := testKubernaut()
-			cm, err := NotificationControllerConfigMap(kn)
+			cm, err := NotificationControllerConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("delivery:"), "notification config should contain delivery: block, got:\n%s", data)
@@ -2021,7 +2021,7 @@ var _ = Describe("ConfigMaps", func() {
 	Describe("AuthWebhook ConfigMap", func() {
 		It("writes authwebhook.yaml as the config key", func() {
 			kn := testKubernaut()
-			cm, err := AuthWebhookConfigMap(kn)
+			cm, err := AuthWebhookConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(cm.Data).To(HaveKey("authwebhook.yaml"), "AuthWebhookConfigMap should write authwebhook.yaml, keys: %#v", cm.Data)
@@ -2089,14 +2089,14 @@ var _ = Describe("ConfigMaps", func() {
 			builders := []builder{
 				{"gateway", func() (*corev1.ConfigMap, error) { return GatewayConfigMap(kn, testKnV2(kn)) }},
 				{"datastorage", func() (*corev1.ConfigMap, error) { return DataStorageConfigMap(kn, testKnV2(kn), "db", "user") }},
-				{"aianalysis", func() (*corev1.ConfigMap, error) { return AIAnalysisConfigMap(kn) }},
+				{"aianalysis", func() (*corev1.ConfigMap, error) { return AIAnalysisConfigMap(kn, testKnV2(kn)) }},
 				{"signalprocessing", func() (*corev1.ConfigMap, error) { return SignalProcessingConfigMap(kn, testKnV2(kn)) }},
 				{"remediationorchestrator", func() (*corev1.ConfigMap, error) { return RemediationOrchestratorConfigMap(kn, testKnV2(kn)) }},
 				{"workflowexecution", func() (*corev1.ConfigMap, error) { return WorkflowExecutionConfigMap(kn, testKnV2(kn)) }},
 				{"effectivenessmonitor", func() (*corev1.ConfigMap, error) { return EffectivenessMonitorConfigMap(kn, testKnV2(kn)) }},
-				{"notification-controller", func() (*corev1.ConfigMap, error) { return NotificationControllerConfigMap(kn) }},
+				{"notification-controller", func() (*corev1.ConfigMap, error) { return NotificationControllerConfigMap(kn, testKnV2(kn)) }},
 				{"kubernaut-agent", func() (*corev1.ConfigMap, error) { return KubernautAgentConfigMap(kn, testKnV2(kn)) }},
-				{"authwebhook", func() (*corev1.ConfigMap, error) { return AuthWebhookConfigMap(kn) }},
+				{"authwebhook", func() (*corev1.ConfigMap, error) { return AuthWebhookConfigMap(kn, testKnV2(kn)) }},
 			}
 			for _, b := range builders {
 				cm, err := b.fn()
@@ -2122,13 +2122,13 @@ var _ = Describe("ConfigMaps", func() {
 			}
 			auditWritingBuilders := []builder{
 				{"gateway", "config.yaml", func() (*corev1.ConfigMap, error) { return GatewayConfigMap(kn, testKnV2(kn)) }},
-				{"aianalysis", "config.yaml", func() (*corev1.ConfigMap, error) { return AIAnalysisConfigMap(kn) }},
+				{"aianalysis", "config.yaml", func() (*corev1.ConfigMap, error) { return AIAnalysisConfigMap(kn, testKnV2(kn)) }},
 				{"signalprocessing", "config.yaml", func() (*corev1.ConfigMap, error) { return SignalProcessingConfigMap(kn, testKnV2(kn)) }},
 				{"remediationorchestrator", "remediationorchestrator.yaml", func() (*corev1.ConfigMap, error) { return RemediationOrchestratorConfigMap(kn, testKnV2(kn)) }},
 				{"workflowexecution", "workflowexecution.yaml", func() (*corev1.ConfigMap, error) { return WorkflowExecutionConfigMap(kn, testKnV2(kn)) }},
 				{"effectivenessmonitor", "effectivenessmonitor.yaml", func() (*corev1.ConfigMap, error) { return EffectivenessMonitorConfigMap(kn, testKnV2(kn)) }},
-				{"notification-controller", "config.yaml", func() (*corev1.ConfigMap, error) { return NotificationControllerConfigMap(kn) }},
-				{"authwebhook", "authwebhook.yaml", func() (*corev1.ConfigMap, error) { return AuthWebhookConfigMap(kn) }},
+				{"notification-controller", "config.yaml", func() (*corev1.ConfigMap, error) { return NotificationControllerConfigMap(kn, testKnV2(kn)) }},
+				{"authwebhook", "authwebhook.yaml", func() (*corev1.ConfigMap, error) { return AuthWebhookConfigMap(kn, testKnV2(kn)) }},
 			}
 			wantHealthURL := "healthUrl: " + DataStorageHealthURL(testSystemNamespace)
 			for _, b := range auditWritingBuilders {
@@ -2191,7 +2191,9 @@ var _ = Describe("ConfigMaps", func() {
 					kn.Spec.AIAnalysis.Logging.Level = loggingLevelAllServicesTestLevel
 				},
 				"config.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) { return AIAnalysisConfigMap(kn) },
+				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+					return AIAnalysisConfigMap(kn, testKnV2(kn))
+				},
 			),
 			Entry("signalprocessing",
 				func(kn *kubernautv1alpha1.Kubernaut) {
@@ -2235,7 +2237,7 @@ var _ = Describe("ConfigMaps", func() {
 				},
 				"config.yaml",
 				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
-					return NotificationControllerConfigMap(kn)
+					return NotificationControllerConfigMap(kn, testKnV2(kn))
 				},
 			),
 			Entry("kubernaut-agent",
@@ -2252,7 +2254,166 @@ var _ = Describe("ConfigMaps", func() {
 					kn.Spec.AuthWebhook.Logging.Level = loggingLevelAllServicesTestLevel
 				},
 				"authwebhook.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) { return AuthWebhookConfigMap(kn) },
+				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+					return AuthWebhookConfigMap(kn, testKnV2(kn))
+				},
+			),
+		)
+
+		// #403 (BR-PLATFORM-012, AC-6): upstream kubernaut v1.6.0-rc7
+		// (kubernaut#2275/#2277) replaced each service's own ad-hoc
+		// profiling toggle with a single shared debug.pprofEnabled field,
+		// defaulting to false. Every one of the 12 components must render
+		// this field verbatim from spec.<component>.debug.pprofEnabled --
+		// secure-by-default when unset/omitted, and precisely mirroring an
+		// explicit opt-in. KubernautAgent nests the field under
+		// runtime.debug (matching its existing runtime.* layout); the
+		// other 11 render it at the config root -- ContainSubstring on the
+		// rendered value is nesting-agnostic, so one table covers both
+		// shapes.
+		DescribeTable("debug.pprofEnabled propagates to each service ConfigMap (#403)",
+			func(build func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut), prep func(*kubernautv1alpha2.Kubernaut), key string, fn func(*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error)) {
+				kn, knV2 := build()
+
+				cmOff, err := fn(kn, knV2)
+				Expect(err).NotTo(HaveOccurred())
+				dataOff := cmOff.Data[key]
+				Expect(dataOff).To(ContainSubstring("pprofEnabled: false"),
+					"expected pprofEnabled: false by default (AC-6 secure-by-default) in %s, got:\n%s", key, dataOff)
+
+				prep(knV2)
+				cmOn, err := fn(kn, knV2)
+				Expect(err).NotTo(HaveOccurred())
+				dataOn := cmOn.Data[key]
+				Expect(dataOn).To(ContainSubstring("pprofEnabled: true"),
+					"expected pprofEnabled: true after explicit opt-in in %s, got:\n%s", key, dataOn)
+			},
+			Entry("gateway",
+				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+					kn := testKubernaut()
+					return kn, testKnV2(kn)
+				},
+				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.Gateway.Debug.PprofEnabled = true },
+				"config.yaml",
+				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+					return GatewayConfigMap(kn, knV2)
+				},
+			),
+			Entry("datastorage",
+				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+					kn := testKubernaut()
+					return kn, testKnV2(kn)
+				},
+				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.DataStorage.Debug.PprofEnabled = true },
+				"config.yaml",
+				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+					return DataStorageConfigMap(kn, knV2, "kubernautdb", "kubernautuser")
+				},
+			),
+			Entry("fleetmetadatacache",
+				testKubernautWithFMC,
+				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.FleetMetadataCache.Debug.PprofEnabled = true },
+				"config.yaml",
+				FleetMetadataCacheConfigMap,
+			),
+			Entry("aianalysis",
+				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+					kn := testKubernaut()
+					return kn, testKnV2(kn)
+				},
+				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.AIAnalysis.Debug.PprofEnabled = true },
+				"config.yaml",
+				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+					return AIAnalysisConfigMap(kn, knV2)
+				},
+			),
+			Entry("signalprocessing",
+				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+					kn := testKubernaut()
+					return kn, testKnV2(kn)
+				},
+				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.SignalProcessing.Debug.PprofEnabled = true },
+				"config.yaml",
+				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+					return SignalProcessingConfigMap(kn, knV2)
+				},
+			),
+			Entry("remediationorchestrator",
+				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+					kn := testKubernaut()
+					return kn, testKnV2(kn)
+				},
+				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.RemediationOrchestrator.Debug.PprofEnabled = true },
+				"remediationorchestrator.yaml",
+				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+					return RemediationOrchestratorConfigMap(kn, knV2)
+				},
+			),
+			Entry("workflowexecution",
+				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+					kn := testKubernaut()
+					return kn, testKnV2(kn)
+				},
+				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.WorkflowExecution.Debug.PprofEnabled = true },
+				"workflowexecution.yaml",
+				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+					return WorkflowExecutionConfigMap(kn, knV2)
+				},
+			),
+			Entry("effectivenessmonitor",
+				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+					kn := testKubernaut()
+					return kn, testKnV2(kn)
+				},
+				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.EffectivenessMonitor.Debug.PprofEnabled = true },
+				"effectivenessmonitor.yaml",
+				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+					return EffectivenessMonitorConfigMap(kn, knV2)
+				},
+			),
+			Entry("notification-controller",
+				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+					kn := testKubernaut()
+					return kn, testKnV2(kn)
+				},
+				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.Notification.Debug.PprofEnabled = true },
+				"config.yaml",
+				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+					return NotificationControllerConfigMap(kn, knV2)
+				},
+			),
+			Entry("kubernaut-agent (nested under runtime.debug)",
+				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+					kn := testKubernaut()
+					return kn, testKnV2(kn)
+				},
+				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.KubernautAgent.Debug.PprofEnabled = true },
+				"config.yaml",
+				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+					return KubernautAgentConfigMap(kn, knV2)
+				},
+			),
+			Entry("authwebhook",
+				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+					kn := testKubernaut()
+					return kn, testKnV2(kn)
+				},
+				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.AuthWebhook.Debug.PprofEnabled = true },
+				"authwebhook.yaml",
+				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+					return AuthWebhookConfigMap(kn, knV2)
+				},
+			),
+			Entry("apifrontend",
+				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+					kn := testKubernaut()
+					return kn, testKnV2(kn)
+				},
+				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.APIFrontend.Debug.PprofEnabled = true },
+				"config.yaml",
+				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+					return APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
+				},
 			),
 		)
 	})

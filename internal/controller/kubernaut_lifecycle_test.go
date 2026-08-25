@@ -1477,20 +1477,14 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 					return resources.DataStorageDeployment(kn)
 				},
-				func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-					return resources.AIAnalysisDeployment(kn)
-				},
+				resources.AIAnalysisDeployment,
 				resources.SignalProcessingDeployment,
 				resources.RemediationOrchestratorDeployment,
 				resources.WorkflowExecutionDeployment,
 				resources.EffectivenessMonitorDeployment,
-				func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-					return resources.NotificationDeployment(kn)
-				},
+				resources.NotificationDeployment,
 				resources.KubernautAgentDeployment,
-				func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-					return resources.AuthWebhookDeployment(kn)
-				},
+				resources.AuthWebhookDeployment,
 			} {
 				dep, err := build(cr, knV2)
 				Expect(err).NotTo(HaveOccurred())
