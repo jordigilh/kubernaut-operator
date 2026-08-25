@@ -8,30 +8,31 @@
 #   oc-mirror --config hack/airgap/imageset-config.yaml \
 #     docker://<mirror-registry>
 #
-# Version: v1.6.0-rc4
+# Version: v1.6.0-rc7
 kind: ImageSetConfiguration
 apiVersion: mirror.openshift.io/v2alpha1
 mirror:
   additionalImages:
-    # Operator (tag-based pending the v1.6.0-rc4 tag build; a follow-up PR
+    # Operator (tag-based pending the v1.6.0-rc7 tag build; a follow-up PR
     # will pin this to a digest once published)
-    - name: quay.io/kubernaut-ai/kubernaut-operator:1.6.0-rc4
+    - name: quay.io/kubernaut-ai/kubernaut-operator:1.6.0-rc7
     # Operator bundle (tag-based, see note above)
-    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle:v1.6.0-rc4
+    - name: quay.io/kubernaut-ai/kubernaut-operator-bundle:v1.6.0-rc7
     # Operand and infrastructure images
-    - name: quay.io/kubernaut-ai/aianalysis@sha256:d176120d230944665be06b14ea766e010d842ff473caf650e1d8ee8b3f3412e3
-    - name: quay.io/kubernaut-ai/apifrontend@sha256:dd93d95ab49c0f215bc0f6f019c3080670160776c10d4a9b5002e3466103aca5
-    - name: quay.io/kubernaut-ai/authwebhook@sha256:a5741fb36ecf94b1d4249d37aa503799b5d4adecc2366e3f0c5f0f42d4449679
-    - name: quay.io/kubernaut-ai/datastorage@sha256:c78b97e26a92a29d7781b779c695bb95ad999d4f47a7ae01f474cb5266b38c9d
-    - name: quay.io/kubernaut-ai/db-migrate@sha256:217a8d735e1b2c2122a2aef73a9675d66c856fe6ac47b5b7de4a8c7aa2e3a3bb
-    - name: quay.io/kubernaut-ai/effectivenessmonitor@sha256:bab6c030325a2fd2f69716cc285da0211988d8ce07c341b4ca652a93db871180
-    - name: quay.io/kubernaut-ai/gateway@sha256:86497fa2794e4d39fa98465f2b31ef21ff73e09e39b265ba8d773265d8bfa9aa
+    - name: quay.io/kubernaut-ai/aianalysis@sha256:4327a879b4939aa51f27d33b4fe41e0975088f2dba7c525e3c423bfae9b4f0f4
+    - name: quay.io/kubernaut-ai/apifrontend@sha256:eb8d601027daf8bb266979551a684d3bd1161b81a89c9ddade60d0eba381025e
+    - name: quay.io/kubernaut-ai/authwebhook@sha256:712e313f732bc3627cc80de92f954e62e3e2175a50e257a44a1945dd8b67114b
+    - name: quay.io/kubernaut-ai/datastorage@sha256:682d9e7efe01df4f761c391cee106db50be71044024199ba6b2389c67b72bcad
+    - name: quay.io/kubernaut-ai/db-migrate@sha256:92be36e11506274a26bc60b181e21e2fa9fc37ba6c1d1cb9cc433094529730ab
+    - name: quay.io/kubernaut-ai/effectivenessmonitor@sha256:b09c98a7546dc8dbfad3b777f27c4efcfa31d885526a0537dee00b1d39cd240c
+    - name: quay.io/kubernaut-ai/fleetmetadatacache@sha256:9bf395cd70b36e49733437dd09c8c141497b35038b56aef8555b087612621169
+    - name: quay.io/kubernaut-ai/gateway@sha256:9fe7830503d9ecbe15e503849b915e8442274249b41cded518953a9fca9b7ede
     - name: quay.io/kubernaut-ai/kubernaut-console@sha256:01300d335dece46e8dab7a5722e6c52a85a564886f2934dcf4719d3fc363317c
-    - name: quay.io/kubernaut-ai/kubernautagent@sha256:99f8aad3e5e6c1be05507f0f53c483dc06ae5db08bec762cae93925d32f190ec
-    - name: quay.io/kubernaut-ai/notification@sha256:c78c90511dbf263852c4d451692cf37069ed1f87b2336d54fa54974f77436a76
-    - name: quay.io/kubernaut-ai/remediationorchestrator@sha256:9003538e5f0187a162681280ea4964b010a91a4ddb3d25d4245373306a27a61e
-    - name: quay.io/kubernaut-ai/signalprocessing@sha256:f69bb91bf36d894534cb9effa098f7e3730c284a059cb3fd16008e45678fc8f8
-    - name: quay.io/kubernaut-ai/workflowexecution@sha256:e7ed2948d2fb7e7a264cdd584965c7574bb88c21b508c8dc4ca7746c691a4811
+    - name: quay.io/kubernaut-ai/kubernautagent@sha256:0afe5cec85d4d836ad1e13815b05c6e4ae513bf0b044793606d59065e254f551
+    - name: quay.io/kubernaut-ai/notification@sha256:aec3d3a01e55b483e2aa245aec1032c13ed454132552313ef5dc2dd8bf06a410
+    - name: quay.io/kubernaut-ai/remediationorchestrator@sha256:5c4cbe35a600ec69f092e6451068207ef2051d6b924977532ee49d4fe2a23d9c
+    - name: quay.io/kubernaut-ai/signalprocessing@sha256:2cddf26a54aad6129867f6f6616525662344045b61c2339669269854440a54c6
+    - name: quay.io/kubernaut-ai/workflowexecution@sha256:06449843d240a70bbf5f9d9719d652794b7bd6e203983398a191e5356794f2ce
     - name: quay.io/oauth2-proxy/oauth2-proxy@sha256:37c1570c0427e02fc7c947ef2c04e8995b8347b7abc9fcf1dbb4e376a4b221a7
     - name: registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c
     - name: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e

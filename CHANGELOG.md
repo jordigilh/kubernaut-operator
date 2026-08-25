@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0-rc7] - 2026-08-25
+
+### Added
+- **`debug.pprofEnabled`**: exposes upstream's new secure-by-default pprof
+  toggle (defaults `false`) on all 12 component specs in `v1alpha2.Kubernaut`,
+  rendered into each service's ConfigMap. The pprof container port (`:6060`)
+  is conditionally exposed on the 7 controller-runtime-managed services when
+  enabled. Mirrors upstream kubernaut PR
+  [#2277](https://github.com/jordigilh/kubernaut/pull/2277) (#403)
+
+### Fixed
+- **KubernautAgent/APIFrontend**: `SSL_CERT_FILE` was declared twice in both
+  containers' env (once via each service's own base env, once via
+  `appendInterServiceTLSCA`), with the inter-service-only value silently
+  winning. Since Go's `SSL_CERT_FILE` replaces rather than extends the
+  system trust store, this broke verification of public-CA endpoints (Vertex
+  AI/Anthropic/OpenAI for KA's LLM calls; AF's `severityTriage` LLM profile)
+  once inter-service TLS trust was wired in. `appendInterServiceTLSCA` now
+  only appends `SSL_CERT_FILE` if absent; KA's and AF's own `build-ca-bundle`
+  init containers now merge the system trust bundle with their respective
+  inter-service bundles so each service's single, winning `SSL_CERT_FILE`
+  covers both. `TLS_CA_FILE` is unaffected in both services. Complements
+  upstream's own ambient-CA-trust fix for its 12 services in
+  [kubernaut#2288](https://github.com/jordigilh/kubernaut/pull/2288)
+  (closing [kubernaut#2276](https://github.com/jordigilh/kubernaut/issues/2276)) (#404)
+- **hack/airgap/imageset-config.yaml**: added the missing
+  `fleetmetadatacache` image entry (never included since fleet support was
+  added) while refreshing digests for this release.
+
+### Changed
+- Bumped upstream `github.com/jordigilh/kubernaut` dependency to
+  [v1.6.0-rc7](https://github.com/jordigilh/kubernaut/releases/tag/v1.6.0-rc7)
+  and refreshed all 13 `RELATED_IMAGE_*` digests. Notable upstream changes in
+  this RC: Valkey mTLS client auth + PostgreSQL server-side TLS
+  ([kubernaut#2272](https://github.com/jordigilh/kubernaut/pull/2272),
+  closing the [kubernaut#2269](https://github.com/jordigilh/kubernaut/issues/2269)
+  Valkey auth gap noted in the `v1.6.0-rc5` Known Issues below), ambient CA
+  trust injection, and a CEL nullable-field false-positive fix that was
+  causing infinite reconcile loops in AIAnalysis/WorkflowExecution
+  ([kubernaut#2284](https://github.com/jordigilh/kubernaut/pull/2290)). No
+  console image changes in this release.
+
+### Known Issues
+- **`debug.pprofEnabled` is a per-component CRD field on all 12 component
+  specs**, mirroring upstream's per-service config schema. In practice this
+  toggle has only ever been used all-or-nothing (enable everywhere for
+  troubleshooting); a follow-up
+  ([kubernaut-operator#406](https://github.com/jordigilh/kubernaut-operator/issues/406))
+  will simplify this to a single top-level `spec.debug.pprofEnabled` field
+  applied uniformly, once the current design has shipped in this RC.
+
 ## [1.6.0-rc6] - 2026-08-24
 
 ### Fixed
