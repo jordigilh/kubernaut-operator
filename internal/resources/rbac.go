@@ -1206,7 +1206,18 @@ func workflowExecutionControllerClusterRole(kn *kubernautv1alpha1.Kubernaut, lab
 			{APIGroups: []string{"tekton.dev"}, Resources: []string{"pipelineruns"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 			{APIGroups: []string{"tekton.dev"}, Resources: []string{"taskruns"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
-			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"create", "patch"}},
+			// #411: BR-WE-019/DD-WE-008's countPodCreationAttempts (kubernaut
+			// core, pkg/workflowexecution/executor/job.go) counts
+			// "SuccessfulCreate" Events on the Job object through the manager's
+			// client to work around job.Status.Failed not incrementing for
+			// PodFailurePolicy-Ignore-tolerated failures (OOM-kill,
+			// node-disruption). That List/Get on core Events makes
+			// controller-runtime register a cluster-scoped cache watch/list
+			// reflector on *v1.Event -- write-only create/patch (the
+			// Recorder.Event() pattern every other controller uses) left that
+			// cache permanently failing to sync, blocking all
+			// WorkflowExecution reconciliation.
+			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"get", "list", "watch", "create", "patch"}},
 			{APIGroups: []string{""}, Resources: []string{"serviceaccounts/token"}, Verbs: []string{"create"}},
 			{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 		},
