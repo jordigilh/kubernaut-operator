@@ -2,6 +2,32 @@
 
 ## Install the Operator
 
+> **Namespace choice**: the examples below install into `openshift-operators`,
+> which already has a global `OperatorGroup` on most clusters and works
+> out of the box. If your cluster is shared with other operators, or
+> `openshift-operators`' global `OperatorGroup` is unavailable/restricted in
+> your environment, install into a dedicated namespace with its own
+> `OperatorGroup` instead:
+>
+> ```bash
+> oc apply -f - <<EOF
+> apiVersion: v1
+> kind: Namespace
+> metadata:
+>   name: kubernaut-system
+> ---
+> apiVersion: operators.coreos.com/v1
+> kind: OperatorGroup
+> metadata:
+>   name: kubernaut-system-og
+>   namespace: kubernaut-system
+> spec: {}
+> EOF
+> ```
+>
+> Then point the `Subscription`'s `metadata.namespace` (below) at this
+> namespace instead of `openshift-operators`.
+
 **From OperatorHub (after publication):**
 
 Navigate to **Operators > OperatorHub** in the OCP console, search for **Kubernaut**, and click **Install**.
@@ -261,6 +287,36 @@ spec:
     # logging:
     #   level: info
 
+EOF
+```
+
+### Fleet OAuth2 credentials (optional, only if `spec.fleet.enabled: true`)
+
+Provision two separate OAuth2 client-credentials clients on your OIDC provider (e.g. Keycloak) — a read-only one and a write-scoped one. They **must** be distinct clients/secrets, not the same credentials reused twice: `spec.workflowExecution.fleet.oauth2CredentialsSecretRef` requires broader (write) scope than `spec.fleet.oauth2.credentialsSecretRef`'s read-only default, and per DD-235 the operator does not enforce this separation for you — a shared client would give every fleet-aware component write access.
+
+```bash
+# Read-only client (spec.fleet.oauth2.credentialsSecretRef)
+oc apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fleet-oauth2-creds
+  namespace: kubernaut-system
+stringData:
+  client-id: "<READ_ONLY_CLIENT_ID>"
+  client-secret: "<READ_ONLY_CLIENT_SECRET>"
+EOF
+
+# Write-scoped client (spec.workflowExecution.fleet.oauth2CredentialsSecretRef)
+oc apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fleet-oauth2-write-creds
+  namespace: kubernaut-system
+stringData:
+  client-id: "<WRITE_SCOPED_CLIENT_ID>"
+  client-secret: "<WRITE_SCOPED_CLIENT_SECRET>"
 EOF
 ```
 
