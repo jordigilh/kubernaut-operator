@@ -30,6 +30,7 @@ The Kuadrant **controller** watches `MCPGatewayExtension`/`MCPServerRegistration
 - Gateway API CRDs v1.1.0 or later, cluster-wide (`gateway.networking.k8s.io` group: `GatewayClass`, `Gateway`, `HTTPRoute`, `ReferenceGrant`).
 - Istio or OpenShift Service Mesh (OSSM, Sail Operator) installed and providing an `istio` `GatewayClass`. Both sidecar and ambient mesh modes work — the stack only relies on `EnvoyFilter` and Gateway API objects, neither of which is ambient-mode-specific.
 - A namespace to host the gateway and MCP components. This guide uses `gateway-system` for the `Gateway`/`Route` and `mcp-system` for everything else, matching the upstream [Kuadrant mcp-gateway](https://github.com/Kuadrant/mcp-gateway) `overlays/mcp-system` naming.
+- An OIDC identity provider (RHBK — Red Hat build of Keycloak — or upstream Keycloak) with a realm that provides: a `client_credentials` client for callers (e.g. `kubernaut-fleet-read`), a client with RFC 8693 Standard Token Exchange enabled for `kube-mcp-server` itself, and a bearer-only audience client the target Kubernetes API server validates against (e.g. `k8s-api`). The target cluster's API server must already trust this issuer as an OIDC provider (on OpenShift, via a `type: OIDC` entry in the cluster `Authentication` CR's `oidcProviders`; see your OCP version's OIDC identity provider documentation). This is required for **Step 6**'s `passthrough` mode below — the only mode validated end-to-end by kubernaut's own fleet E2E suite, and the only one that lets the target API server enforce RBAC per caller identity instead of a single blanket ServiceAccount for every fleet caller.
 
 > **Note:** if your cluster already has a `kagenti` Helm-based deployment, it may have already created a `Gateway`, `gateway-system`/`mcp-system` namespaces, and a `ReferenceGrant` for its own (unrelated) `mcp.kagenti.com/MCPGatewayExtension` CRD. See [Troubleshooting: naming collision with kagenti](#referencegrantrequired-despite-having-a-referencegrant) before assuming a pre-existing `ReferenceGrant` covers Kuadrant's.
 
@@ -166,6 +167,10 @@ oc rollout status deployment/mcp-gateway -n mcp-system --timeout=2m
 
 ## Step 6: Deploy a backend MCP server (kube-mcp-server)
 
+> **Use `passthrough` mode, not `cluster_auth_mode = "kubeconfig"`.** `kubeconfig` mode makes kube-mcp-server ignore any caller-forwarded `Authorization` header and always act as its own ServiceAccount — every fleet caller gets the same blanket RBAC regardless of who they are, and (per [Issue #414](https://github.com/jordigilh/kubernaut-operator/issues/414)) it is a combination kubernaut's own fleet E2E suite has never exercised against a real `tools/call`: every E2E lane pins `cluster_auth_mode = "passthrough"` with RFC 8693 Standard Token Exchange. `passthrough` below is the only mode with actual E2E coverage and the only one that lets the target API server enforce RBAC per caller identity — use it even for a single-cluster/loopback registration like this one.
+
+kube-mcp-server validates the caller's own Bearer token (issued by RHBK/Keycloak) as an OAuth resource server, then exchanges it via RFC 8693 for a token the target Kubernetes API server's OIDC integration accepts (see [Prerequisites](#prerequisites)). Replace `<RHBK_ISSUER_URL>` (e.g. `https://rhbk.apps.<cluster-domain>/realms/kubernaut-fleet`), `<STS_CLIENT_ID>`/`<STS_CLIENT_SECRET>` (the token-exchange-enabled client), and `<K8S_API_AUDIENCE_SCOPE>` (the client scope carrying the audience-mapper that gates the exchange, e.g. `k8s-api-audience`) with your realm's actual values:
+
 ```bash
 oc apply -f - <<EOF
 apiVersion: v1
@@ -187,17 +192,26 @@ subjects:
   name: kube-mcp-server
   namespace: mcp-system
 ---
+# A Secret, not a ConfigMap: this file carries sts_client_secret in plaintext.
 apiVersion: v1
-kind: ConfigMap
+kind: Secret
 metadata:
   name: kube-mcp-server-config
   namespace: mcp-system
   labels:
     app: kube-mcp-server
     component: fleet
-data:
+type: Opaque
+stringData:
   config.toml: |
-    cluster_auth_mode = "kubeconfig"
+    require_oauth = true
+    authorization_url = "<RHBK_ISSUER_URL>"
+    oauth_audience = "kube-mcp-server"
+    cluster_auth_mode = "passthrough"
+    sts_client_id = "<STS_CLIENT_ID>"
+    sts_client_secret = "<STS_CLIENT_SECRET>"
+    sts_audience = "k8s-api"
+    sts_scopes = ["<K8S_API_AUDIENCE_SCOPE>"]
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -249,8 +263,8 @@ spec:
           limits: {memory: "128Mi", cpu: "250m"}
       volumes:
       - name: config
-        configMap:
-          name: kube-mcp-server-config
+        secret:
+          secretName: kube-mcp-server-config
 ---
 apiVersion: v1
 kind: Service
@@ -272,11 +286,34 @@ EOF
 oc rollout status deployment/kube-mcp-server -n mcp-system --timeout=2m
 ```
 
-`cluster_auth_mode = "kubeconfig"` makes kube-mcp-server always use its own ServiceAccount and ignore any caller-forwarded `Authorization` header (ADR-068 Decision #9's default, "no token delegation"). No SCC/PSA changes are needed: this pod spec runs cleanly under the `restricted` Pod Security profile `mcp-system` enforces by default.
+`require_oauth = true` makes kube-mcp-server validate the caller's incoming Bearer token before attempting the exchange (this is also what the broker's own discovery-connection credential in **Step 7** authenticates against). `sts_scopes` must be set explicitly even if the scope is already a default client scope — RHBK/Keycloak's token-exchange endpoint rejects an explicitly-empty `scope` parameter rather than treating it as "no filter." The `kube-mcp-server` ServiceAccount/ClusterRoleBinding above is vestigial in `passthrough` mode (RBAC is enforced against the *exchanged caller identity* on the target API server, not this ServiceAccount) but still required for the pod's own liveness/readiness probing and any fallback paths. No SCC/PSA changes are needed: this pod spec runs cleanly under the `restricted` Pod Security profile `mcp-system` enforces by default.
 
 ## Step 7: Register the backend with the broker
 
 The broker discovers backend MCP servers via `MCPServerRegistration` CRs, which target an `HTTPRoute` describing where the backend lives.
+
+> **`credentialRef` is required now that `require_oauth = true` (Step 6).** The broker maintains its own upstream tool-discovery/session-management connection to kube-mcp-server, separate from per-request `tools/call` proxying (which forwards the caller's own `Authorization` header unmodified — see [Kuadrant's `MCPServerRegistration` reference](https://docs.kuadrant.io/dev/mcp-gateway/docs/reference/mcpserverregistration/)). With `require_oauth = true`, that discovery connection is itself subject to kube-mcp-server's OAuth resource-server check, so the broker needs its own static credential here or its discovery/health probe gets rejected — surfacing later as tools that list correctly but fail `tools/call` (the exact symptom in [Issue #414](https://github.com/jordigilh/kubernaut-operator/issues/414)). Get a token the same way a real caller would (`client_credentials` against your `kubernaut-fleet-read`-equivalent client, scoped to the `kube-mcp-server` audience) and store it verbatim — Kuadrant sends the Secret's value as-is as the `Authorization` header, it does not prepend `Bearer ` itself:
+>
+> ```bash
+> BROKER_TOKEN=$(curl -sk -X POST "<RHBK_ISSUER_URL>/protocol/openid-connect/token" \
+>   -d grant_type=client_credentials -d client_id=<CALLER_CLIENT_ID> \
+>   -d client_secret=<CALLER_CLIENT_SECRET> -d scope=kube-mcp-server-audience \
+>   | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
+>
+> oc apply -n mcp-system -f - <<EOF
+> apiVersion: v1
+> kind: Secret
+> metadata:
+>   name: kube-mcp-server-broker-cred
+>   labels:
+>     mcp.kuadrant.io/secret: "true"
+> type: Opaque
+> stringData:
+>   token: "Bearer ${BROKER_TOKEN}"
+> EOF
+> ```
+>
+> Reference it from the registration below with `spec.credentialRef: {name: kube-mcp-server-broker-cred}`. The token is static for its own lifetime (no refresh) — pick a realm client whose access-token lifespan comfortably outlives your operational window, and rotate the Secret (re-run the `curl` above and re-apply) before it expires.
 
 > **The `kubernaut.ai/managed: "true"` label is mandatory, not decorative.** Kubernaut's `KuadrantRegistry` (`pkg/fleet/registry/kuadrant_registry.go`) only tracks `MCPServerRegistration` CRs carrying this exact label; anything without it is silently ignored and never enters `ClusterRegistry`. A cluster missing this label is invisible to Fleet: SignalProcessing/RemediationOrchestrator/APIFrontend won't classify or route signals for it, so alerts and remediations targeting that cluster are effectively dropped with no error surfaced. Do not omit or rename it when adding registrations for additional clusters.
 
@@ -311,6 +348,8 @@ metadata:
     environment: "production"
 spec:
   prefix: "loopback_cluster_"
+  credentialRef:
+    name: kube-mcp-server-broker-cred
   targetRef:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
@@ -335,12 +374,33 @@ oc get mcpserverregistration -n mcp-system
 # Expect READY=True and a non-zero TOOLS count
 
 # End-to-end MCP handshake through the real external Route
-curl -sS -X POST "https://${MCP_GATEWAY_HOST}/mcp" \
+curl -sS -D /tmp/mcp-headers.txt -X POST "https://${MCP_GATEWAY_HOST}/mcp" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"preflight-check","version":"0.1"}}}'
 # Expect HTTP 200 with a "Kuadrant MCP Gateway" serverInfo result
 ```
+
+> **A successful `initialize` does NOT prove `tools/call` works — verify a real authenticated tool call too.** `tools/list`/`discover_tools` are served straight from the broker's own aggregated catalog; `tools/call` is routed separately (Envoy `ext_proc` parses the tool name, strips the prefix, and resolves the target backend). A cluster can pass every check above and still fail every real tool call — this exact gap is what [Issue #414](https://github.com/jordigilh/kubernaut-operator/issues/414) found. Don't consider this stack verified until this succeeds:
+>
+> ```bash
+> SESSION_ID=$(grep -i mcp-session-id /tmp/mcp-headers.txt | awk -F': ' '{print $2}' | tr -d '\r')
+>
+> # Same client_credentials token a real fleet caller (e.g. fleetmetadatacache) would use.
+> TOKEN=$(curl -sk -X POST "<RHBK_ISSUER_URL>/protocol/openid-connect/token" \
+>   -d grant_type=client_credentials -d client_id=<CALLER_CLIENT_ID> \
+>   -d client_secret=<CALLER_CLIENT_SECRET> -d scope=kube-mcp-server-audience \
+>   | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
+>
+> curl -sS -X POST "https://${MCP_GATEWAY_HOST}/mcp" \
+>   -H "Authorization: Bearer ${TOKEN}" \
+>   -H "Content-Type: application/json" \
+>   -H "Accept: application/json, text/event-stream" \
+>   -H "Mcp-Session-Id: ${SESSION_ID}" \
+>   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"loopback_cluster_resources_list","arguments":{"kind":"Pod","apiVersion":"v1","namespace":"mcp-system"}}}'
+> # Expect a real JSON-RPC result carrying Pod data, NOT
+> # {"error":{"code":-32602,"message":"tool '...' not found: tool not found"}}
+> ```
 
 A full `tools/list` call requires the session established by `initialize`: capture the `Mcp-Session-Id` response header and send it back as a request header on the follow-up call (see the `curl -D` pattern in [Troubleshooting: "Invalid session ID"](#invalid-session-id-on-toolslist)).
 
@@ -397,6 +457,25 @@ If it's still `NotReady` after 2 minutes, check the broker's own logs (not the c
 ```bash
 oc logs deployment/mcp-gateway -n mcp-system --tail=50
 ```
+
+### Tools appear in `tools/list`/`discover_tools` but `tools/call` fails with `"tool ... not found"`
+
+```json
+{"jsonrpc":"2.0","id":3,"error":{"code":-32602,"message":"tool 'resources_list' not found: tool not found"}}
+```
+
+with the broker logging something like:
+
+```
+level=INFO msg="received 404 from backend MCP " component=router method=server/discover server=""
+```
+
+This is [Issue #414](https://github.com/jordigilh/kubernaut-operator/issues/414)'s exact signature. `tools/list`/`discover_tools` are served directly from the broker's own aggregated catalog and don't prove `tools/call` routing works — that's a separate code path (Envoy `ext_proc` parses the tool name out of the request, strips the prefix, and resolves the target backend). Root-cause investigation for #414 found this combination is not covered by kubernaut's own fleet E2E suite in two dimensions simultaneously:
+
+- **Auth mode**: every E2E lane pins `cluster_auth_mode = "passthrough"` with RFC 8693 token exchange and a `credentialRef` on the registration. If you're running `cluster_auth_mode = "kubeconfig"` with no `credentialRef` (an earlier revision of **Step 6**/**Step 7** in this doc showed exactly that, untested, configuration), switch to the `passthrough` example now in this doc.
+- **Network path**: every E2E lane reaches the gateway via a Kind cluster's NodePort directly; none goes through an OpenShift `Route` (edge/re-encrypt TLS termination) in front of the Istio `Gateway`, as this doc's Step 1 does. If switching to `passthrough` mode doesn't resolve it, this is the next thing to isolate — try reaching the gateway's in-cluster Service directly (bypassing the `Route`) from a debug pod to see if the failure persists without the Route hop.
+
+If neither resolves it, capture the broker's `tools/call` logs (`oc logs deployment/mcp-gateway -n mcp-system`) at debug verbosity and compare against [Kuadrant's own troubleshooting guide](https://docs.kuadrant.io/dev/mcp-gateway/docs/guides/troubleshooting/) before filing upstream against `Kuadrant/mcp-gateway`.
 
 ### `unknown field "spec.rules[0].name"` in controller logs
 

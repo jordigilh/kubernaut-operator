@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`workflowexecution-controller` RBAC missing `get`/`list`/`watch` on core
+  `events`** ([#411](https://github.com/jordigilh/kubernaut-operator/issues/411),
+  FedRAMP AC-6): the ClusterRole only granted `create`/`patch` on `events`
+  (the write-only `Recorder.Event()` pattern most controllers use). Kubernaut
+  core's `countPodCreationAttempts` (BR-WE-019/DD-WE-008,
+  `pkg/workflowexecution/executor/job.go`) lists `SuccessfulCreate` events on
+  the Job object to work around `job.Status.Failed` not incrementing for
+  `PodFailurePolicy`-tolerated failures (OOM-kill, node disruption), which
+  makes controller-runtime register a cluster-scoped watch/list cache
+  reflector on `*v1.Event`. Without the missing verbs that reflector's cache
+  never synced, blocking all WorkflowExecution reconciliation. Added
+  `get`/`list`/`watch` alongside the existing `create`/`patch`. This code
+  path is `v1.6`-only (not present in `release/v1.5`), so the gap was latent
+  until now.
+
 ## [1.6.0-rc7] - 2026-08-25
 
 ### Added
