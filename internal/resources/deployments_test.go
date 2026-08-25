@@ -1081,15 +1081,17 @@ var _ = Describe("Deployments", func() {
 			}
 		})
 
-		// #403 (BR-PLATFORM-012, AC-6): the 7 controller-runtime-managed
+		// #406 (BR-PLATFORM-012, AC-6): the 7 controller-runtime-managed
 		// services (AIAnalysis, AuthWebhook, EffectivenessMonitor,
 		// Notification, RemediationOrchestrator, SignalProcessing,
 		// WorkflowExecution) start ctrl.Options.PprofBindAddress's listener
-		// on :6060 only when spec.<component>.debug.pprofEnabled is true --
-		// the containerPort must track that toggle exactly: absent by
-		// default (secure-by-default), present only on explicit opt-in.
-		DescribeTable("debug.pprofEnabled conditionally exposes a pprof containerPort on ctrl-runtime services (#403)",
-			func(prep func(*kubernautv1alpha2.Kubernaut), fn func(*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error)) {
+		// on :6060 only when the single shared spec.debug.pprofEnabled
+		// (KubernautSpec root) is true -- there is no per-component
+		// override anymore (DD-406). The containerPort must track that one
+		// toggle exactly: absent by default (secure-by-default), present
+		// on every ctrl-runtime service simultaneously once opted in.
+		DescribeTable("debug.pprofEnabled conditionally exposes a pprof containerPort on ctrl-runtime services (#406)",
+			func(fn func(*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error)) {
 				kn := testKubernaut()
 				knV2 := testKnV2(kn)
 
@@ -1098,20 +1100,48 @@ var _ = Describe("Deployments", func() {
 				Expect(hasPprofContainerPort(depOff)).To(BeFalse(),
 					"Deployment %q should NOT expose the pprof port by default", depOff.Name)
 
-				prep(knV2)
+				knV2.Spec.Debug.PprofEnabled = true
 				depOn, err := fn(kn, knV2)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(hasPprofContainerPort(depOn)).To(BeTrue(),
-					"Deployment %q should expose containerPort 6060 named %q after debug.pprofEnabled=true", depOn.Name, "pprof")
+					"Deployment %q should expose containerPort 6060 named %q after the global debug.pprofEnabled=true", depOn.Name, "pprof")
 			},
-			Entry("aianalysis", func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.AIAnalysis.Debug.PprofEnabled = true }, AIAnalysisDeployment),
-			Entry("signalprocessing", func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.SignalProcessing.Debug.PprofEnabled = true }, SignalProcessingDeployment),
-			Entry("remediationorchestrator", func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.RemediationOrchestrator.Debug.PprofEnabled = true }, RemediationOrchestratorDeployment),
-			Entry("workflowexecution", func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.WorkflowExecution.Debug.PprofEnabled = true }, WorkflowExecutionDeployment),
-			Entry("effectivenessmonitor", func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.EffectivenessMonitor.Debug.PprofEnabled = true }, EffectivenessMonitorDeployment),
-			Entry("notification", func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.Notification.Debug.PprofEnabled = true }, NotificationDeployment),
-			Entry("authwebhook", func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.AuthWebhook.Debug.PprofEnabled = true }, AuthWebhookDeployment),
+			Entry("aianalysis", AIAnalysisDeployment),
+			Entry("signalprocessing", SignalProcessingDeployment),
+			Entry("remediationorchestrator", RemediationOrchestratorDeployment),
+			Entry("workflowexecution", WorkflowExecutionDeployment),
+			Entry("effectivenessmonitor", EffectivenessMonitorDeployment),
+			Entry("notification", NotificationDeployment),
+			Entry("authwebhook", AuthWebhookDeployment),
 		)
+
+		// #406: a single spec.debug.pprofEnabled=true must expose the pprof
+		// port on all 7 ctrl-runtime-managed deployments simultaneously --
+		// this is the business-level guarantee the global toggle exists to
+		// provide (the previous per-component design required setting the
+		// same boolean on up to 7 different component paths to get this
+		// same effect). One CR mutation is enough.
+		It("enables the pprof containerPort on all 7 ctrl-runtime deployments simultaneously from one root-level flag (#406)", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			knV2.Spec.Debug.PprofEnabled = true
+
+			builders := map[string]func(*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error){
+				"aianalysis":              AIAnalysisDeployment,
+				"signalprocessing":        SignalProcessingDeployment,
+				"remediationorchestrator": RemediationOrchestratorDeployment,
+				"workflowexecution":       WorkflowExecutionDeployment,
+				"effectivenessmonitor":    EffectivenessMonitorDeployment,
+				"notification":            NotificationDeployment,
+				"authwebhook":             AuthWebhookDeployment,
+			}
+			for component, fn := range builders {
+				dep, err := fn(kn, knV2)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasPprofContainerPort(dep)).To(BeTrue(),
+					"expected %s to expose the pprof port after enabling the single global toggle once", component)
+			}
+		})
 
 		It("pass correct config args", func() {
 			kn := testKubernaut()
