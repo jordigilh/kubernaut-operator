@@ -241,7 +241,7 @@ func AIAnalysisDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 		corev1.ContainerPort{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		corev1.ContainerPort{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 	)
-	ports = append(ports, pprofContainerPort(knV2.Spec.AIAnalysis.Debug.PprofEnabled)...)
+	ports = append(ports, pprofContainerPort(knV2.Spec.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentAIAnalysis, ImageName: "aianalysis",
 		Resources: kn.Spec.AIAnalysis.Resources, VolumeMounts: mounts, Volumes: volumes,
@@ -282,7 +282,7 @@ func SignalProcessingDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernaut
 		corev1.ContainerPort{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		corev1.ContainerPort{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 	)
-	ports = append(ports, pprofContainerPort(knV2.Spec.SignalProcessing.Debug.PprofEnabled)...)
+	ports = append(ports, pprofContainerPort(knV2.Spec.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentSignalProcessing, ImageName: "signalprocessing",
 		Resources: kn.Spec.SignalProcessing.Resources, VolumeMounts: mounts, Volumes: volumes,
@@ -304,7 +304,7 @@ func RemediationOrchestratorDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *ku
 		corev1.ContainerPort{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 		corev1.ContainerPort{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 	)
-	ports = append(ports, pprofContainerPort(knV2.Spec.RemediationOrchestrator.Debug.PprofEnabled)...)
+	ports = append(ports, pprofContainerPort(knV2.Spec.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentRemediationOrchestrator, ImageName: "remediationorchestrator",
 		Resources: kn.Spec.RemediationOrchestrator.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
@@ -372,7 +372,7 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernau
 		corev1.ContainerPort{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		corev1.ContainerPort{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 	)
-	ports = append(ports, pprofContainerPort(knV2.Spec.WorkflowExecution.Debug.PprofEnabled)...)
+	ports = append(ports, pprofContainerPort(knV2.Spec.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentWorkflowExecution, ImageName: "workflowexecution",
 		Resources: kn.Spec.WorkflowExecution.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
@@ -434,7 +434,7 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kuber
 		corev1.ContainerPort{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		corev1.ContainerPort{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 	)
-	ports = append(ports, pprofContainerPort(knV2.Spec.EffectivenessMonitor.Debug.PprofEnabled)...)
+	ports = append(ports, pprofContainerPort(knV2.Spec.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentEffectivenessMonitor, ImageName: "effectivenessmonitor",
 		Resources: kn.Spec.EffectivenessMonitor.Resources, VolumeMounts: mounts, Volumes: volumes,
@@ -503,7 +503,7 @@ func NotificationDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1al
 		corev1.ContainerPort{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
 		corev1.ContainerPort{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 	)
-	ports = append(ports, pprofContainerPort(knV2.Spec.Notification.Debug.PprofEnabled)...)
+	ports = append(ports, pprofContainerPort(knV2.Spec.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentNotification, ImageName: "notification",
 		Resources: kn.Spec.Notification.Resources, VolumeMounts: mounts, Volumes: volumes,
@@ -782,7 +782,7 @@ func AuthWebhookDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alp
 		corev1.ContainerPort{Name: "webhook", ContainerPort: PortWebhookServer, Protocol: corev1.ProtocolTCP},
 		corev1.ContainerPort{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
 	)
-	ports = append(ports, pprofContainerPort(knV2.Spec.AuthWebhook.Debug.PprofEnabled)...)
+	ports = append(ports, pprofContainerPort(knV2.Spec.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentAuthWebhook, ImageName: "authwebhook",
 		Resources: kn.Spec.AuthWebhook.Resources, VolumeMounts: mounts, Volumes: volumes,

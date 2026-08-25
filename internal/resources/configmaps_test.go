@@ -2260,19 +2260,21 @@ var _ = Describe("ConfigMaps", func() {
 			),
 		)
 
-		// #403 (BR-PLATFORM-012, AC-6): upstream kubernaut v1.6.0-rc7
-		// (kubernaut#2275/#2277) replaced each service's own ad-hoc
-		// profiling toggle with a single shared debug.pprofEnabled field,
-		// defaulting to false. Every one of the 12 components must render
-		// this field verbatim from spec.<component>.debug.pprofEnabled --
-		// secure-by-default when unset/omitted, and precisely mirroring an
-		// explicit opt-in. KubernautAgent nests the field under
-		// runtime.debug (matching its existing runtime.* layout); the
-		// other 11 render it at the config root -- ContainSubstring on the
-		// rendered value is nesting-agnostic, so one table covers both
-		// shapes.
-		DescribeTable("debug.pprofEnabled propagates to each service ConfigMap (#403)",
-			func(build func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut), prep func(*kubernautv1alpha2.Kubernaut), key string, fn func(*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error)) {
+		// #406 (BR-PLATFORM-012, AC-6): a single shared spec.debug.pprofEnabled
+		// field (KubernautSpec root) drives every one of the 12 services'
+		// rendered configs -- there is no per-component override anymore
+		// (DD-406 replaced #403's per-component DebugSpec embedding, since
+		// every observed real-world usage was all-or-nothing). Each entry
+		// below builds its own kn/knV2 fixture and renders with the flag
+		// off, then flips the single root-level knV2.Spec.Debug.PprofEnabled
+		// and renders again -- proving the global flag reaches all 12
+		// services, not per-component isolation (which no longer exists).
+		// KubernautAgent nests the rendered field under runtime.debug
+		// (matching its existing runtime.* layout); the other 11 render it
+		// at the config root -- ContainSubstring on the rendered value is
+		// nesting-agnostic, so one table covers both shapes.
+		DescribeTable("debug.pprofEnabled propagates from the single global toggle to every service ConfigMap (#406)",
+			func(build func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut), key string, fn func(*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error)) {
 				kn, knV2 := build()
 
 				cmOff, err := fn(kn, knV2)
@@ -2281,19 +2283,18 @@ var _ = Describe("ConfigMaps", func() {
 				Expect(dataOff).To(ContainSubstring("pprofEnabled: false"),
 					"expected pprofEnabled: false by default (AC-6 secure-by-default) in %s, got:\n%s", key, dataOff)
 
-				prep(knV2)
+				knV2.Spec.Debug.PprofEnabled = true
 				cmOn, err := fn(kn, knV2)
 				Expect(err).NotTo(HaveOccurred())
 				dataOn := cmOn.Data[key]
 				Expect(dataOn).To(ContainSubstring("pprofEnabled: true"),
-					"expected pprofEnabled: true after explicit opt-in in %s, got:\n%s", key, dataOn)
+					"expected pprofEnabled: true after the single global toggle is enabled in %s, got:\n%s", key, dataOn)
 			},
 			Entry("gateway",
 				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
-				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.Gateway.Debug.PprofEnabled = true },
 				"config.yaml",
 				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return GatewayConfigMap(kn, knV2)
@@ -2304,7 +2305,6 @@ var _ = Describe("ConfigMaps", func() {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
-				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.DataStorage.Debug.PprofEnabled = true },
 				"config.yaml",
 				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return DataStorageConfigMap(kn, knV2, "kubernautdb", "kubernautuser")
@@ -2312,7 +2312,6 @@ var _ = Describe("ConfigMaps", func() {
 			),
 			Entry("fleetmetadatacache",
 				testKubernautWithFMC,
-				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.FleetMetadataCache.Debug.PprofEnabled = true },
 				"config.yaml",
 				FleetMetadataCacheConfigMap,
 			),
@@ -2321,7 +2320,6 @@ var _ = Describe("ConfigMaps", func() {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
-				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.AIAnalysis.Debug.PprofEnabled = true },
 				"config.yaml",
 				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return AIAnalysisConfigMap(kn, knV2)
@@ -2332,7 +2330,6 @@ var _ = Describe("ConfigMaps", func() {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
-				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.SignalProcessing.Debug.PprofEnabled = true },
 				"config.yaml",
 				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return SignalProcessingConfigMap(kn, knV2)
@@ -2343,7 +2340,6 @@ var _ = Describe("ConfigMaps", func() {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
-				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.RemediationOrchestrator.Debug.PprofEnabled = true },
 				"remediationorchestrator.yaml",
 				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return RemediationOrchestratorConfigMap(kn, knV2)
@@ -2354,7 +2350,6 @@ var _ = Describe("ConfigMaps", func() {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
-				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.WorkflowExecution.Debug.PprofEnabled = true },
 				"workflowexecution.yaml",
 				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return WorkflowExecutionConfigMap(kn, knV2)
@@ -2365,7 +2360,6 @@ var _ = Describe("ConfigMaps", func() {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
-				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.EffectivenessMonitor.Debug.PprofEnabled = true },
 				"effectivenessmonitor.yaml",
 				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return EffectivenessMonitorConfigMap(kn, knV2)
@@ -2376,7 +2370,6 @@ var _ = Describe("ConfigMaps", func() {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
-				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.Notification.Debug.PprofEnabled = true },
 				"config.yaml",
 				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return NotificationControllerConfigMap(kn, knV2)
@@ -2387,7 +2380,6 @@ var _ = Describe("ConfigMaps", func() {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
-				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.KubernautAgent.Debug.PprofEnabled = true },
 				"config.yaml",
 				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return KubernautAgentConfigMap(kn, knV2)
@@ -2398,7 +2390,6 @@ var _ = Describe("ConfigMaps", func() {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
-				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.AuthWebhook.Debug.PprofEnabled = true },
 				"authwebhook.yaml",
 				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return AuthWebhookConfigMap(kn, knV2)
@@ -2409,13 +2400,82 @@ var _ = Describe("ConfigMaps", func() {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
-				func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.APIFrontend.Debug.PprofEnabled = true },
 				"config.yaml",
 				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
 				},
 			),
 		)
+
+		// #406: a single spec.debug.pprofEnabled=true must flip every one
+		// of the 12 services simultaneously -- this is the business-level
+		// guarantee the global toggle exists to provide (the previous
+		// per-component design required setting the same boolean in up to
+		// 12 places to get this same effect). One CR mutation is enough.
+		It("enables pprof on all 12 services simultaneously from one root-level flag (#406)", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			knV2.Spec.Debug.PprofEnabled = true
+			knFMC, knV2FMC := testKubernautWithFMC()
+			knV2FMC.Spec.Debug.PprofEnabled = true
+
+			renders := map[string]string{}
+			var err error
+
+			cm, err := GatewayConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			renders["gateway"] = cm.Data["config.yaml"]
+
+			cm, err = DataStorageConfigMap(kn, knV2, "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+			renders["datastorage"] = cm.Data["config.yaml"]
+
+			cm, err = FleetMetadataCacheConfigMap(knFMC, knV2FMC)
+			Expect(err).NotTo(HaveOccurred())
+			renders["fleetmetadatacache"] = cm.Data["config.yaml"]
+
+			cm, err = AIAnalysisConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			renders["aianalysis"] = cm.Data["config.yaml"]
+
+			cm, err = SignalProcessingConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			renders["signalprocessing"] = cm.Data["config.yaml"]
+
+			cm, err = RemediationOrchestratorConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			renders["remediationorchestrator"] = cm.Data["remediationorchestrator.yaml"]
+
+			cm, err = WorkflowExecutionConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			renders["workflowexecution"] = cm.Data["workflowexecution.yaml"]
+
+			cm, err = EffectivenessMonitorConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			renders["effectivenessmonitor"] = cm.Data["effectivenessmonitor.yaml"]
+
+			cm, err = NotificationControllerConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			renders["notification"] = cm.Data["config.yaml"]
+
+			cm, err = KubernautAgentConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			renders["kubernautagent"] = cm.Data["config.yaml"]
+
+			cm, err = AuthWebhookConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			renders["authwebhook"] = cm.Data["authwebhook.yaml"]
+
+			cm, err = APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
+			Expect(err).NotTo(HaveOccurred())
+			renders["apifrontend"] = cm.Data["config.yaml"]
+
+			Expect(renders).To(HaveLen(12), "expected all 12 components rendered")
+			for component, rendered := range renders {
+				Expect(rendered).To(ContainSubstring("pprofEnabled: true"),
+					"expected pprofEnabled: true for %s after enabling the single global toggle once, got:\n%s", component, rendered)
+			}
+		})
 	})
 })
 

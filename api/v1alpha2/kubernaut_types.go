@@ -159,6 +159,15 @@ type KubernautSpec struct {
 	// +kubebuilder:validation:MaxItems=64
 	// +listType=set
 	AdditionalClusterRoles []string `json:"additionalClusterRoles,omitempty"`
+
+	// Debug configures short-lived diagnostic toggles applied uniformly to
+	// all 12 services (DD-406) -- a single cluster-wide switch, not a
+	// per-component one, since every observed real-world usage has been
+	// all-or-nothing (enable pprof everywhere for an RC validation pass, or
+	// on a specific pair of services for a troubleshooting request that
+	// still only required setting one field, not twelve).
+	// +optional
+	Debug DebugSpec `json:"debug,omitempty"`
 }
 
 // ImageSpec configures container image policy for all services.
@@ -446,9 +455,6 @@ type FleetMetadataCacheSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
-
-	// +optional
-	Debug DebugSpec `json:"debug,omitempty"`
 }
 
 // FleetMetadataCacheEnabled returns true when the operator should deploy
@@ -535,9 +541,6 @@ type NotificationSpec struct {
 	// Resource requirements for the notification controller.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
-
-	// +optional
-	Debug DebugSpec `json:"debug,omitempty"`
 }
 
 // SlackSpec configures Slack delivery for notifications.
@@ -588,9 +591,6 @@ type AIAnalysisSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
-
-	// +optional
-	Debug DebugSpec `json:"debug,omitempty"`
 }
 
 // SignalProcessingSpec configures the SignalProcessing controller. Policy
@@ -622,9 +622,6 @@ type SignalProcessingSpec struct {
 	// spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
-
-	// +optional
-	Debug DebugSpec `json:"debug,omitempty"`
 }
 
 // RemediationOrchestratorSpec configures the RemediationOrchestrator controller.
@@ -681,9 +678,6 @@ type RemediationOrchestratorSpec struct {
 	// spec.fleet.oauth2.credentialsSecretRef when unset.
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
-
-	// +optional
-	Debug DebugSpec `json:"debug,omitempty"`
 }
 
 // ROTimeoutsSpec defines phase-level timeouts for the RemediationOrchestrator.
@@ -826,9 +820,6 @@ type WorkflowExecutionSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
-
-	// +optional
-	Debug DebugSpec `json:"debug,omitempty"`
 }
 
 // WorkflowExecutionFleetSpec configures WorkflowExecution's own write-scoped
@@ -879,9 +870,6 @@ type EffectivenessMonitorSpec struct {
 	// spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
-
-	// +optional
-	Debug DebugSpec `json:"debug,omitempty"`
 }
 
 // EMAssessmentSpec defines effectiveness assessment windows.
@@ -982,9 +970,6 @@ type KubernautAgentSpec struct {
 	// back to spec.fleet.oauth2.credentialsSecretRef when unset.
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
-
-	// +optional
-	Debug DebugSpec `json:"debug,omitempty"`
 }
 
 // KARateLimitSpec configures request rate limiting for the Kubernaut Agent server.
@@ -1437,9 +1422,6 @@ type GatewaySpec struct {
 	// See docs/installation/03-deploy.md "Configure AlertManager".
 	// +optional
 	AlertManagerTokenSecretName string `json:"alertManagerTokenSecretName,omitempty"`
-
-	// +optional
-	Debug DebugSpec `json:"debug,omitempty"`
 }
 
 // ConsoleSpec configures the standalone web console (A2A chat UI).
@@ -1663,9 +1645,6 @@ type AuthWebhookSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
-
-	// +optional
-	Debug DebugSpec `json:"debug,omitempty"`
 }
 
 // APIFrontendSpec configures the API Frontend (MCP Streamable HTTP / A2A) service.
@@ -1777,9 +1756,6 @@ type APIFrontendSpec struct {
 	// defaults match AF's own binary defaults (#258/#374).
 	// +optional
 	MCP *APIFrontendMCPSpec `json:"mcp,omitempty"`
-
-	// +optional
-	Debug DebugSpec `json:"debug,omitempty"`
 }
 
 // APIFrontendSessionSpec configures AF's MCP/A2A session lifecycle.
@@ -2006,15 +1982,17 @@ type ShutdownSpec struct {
 // APIFrontendShutdownSpec is an alias retained for CRD backward compatibility.
 type APIFrontendShutdownSpec = ShutdownSpec
 
-// DebugSpec configures short-lived diagnostic toggles shared by every
-// component (BR-PLATFORM-012, kubernaut#2275/#2277). Mirrors upstream's
-// debug.pprofEnabled field 1:1 (positive polarity, same key/shape) so the
-// operator passes this value straight through into each service's
-// rendered config with no negation-translation layer. The Go zero value
-// is the secure default (AC-6): a component with an empty/omitted debug
+// DebugSpec configures short-lived diagnostic toggles applied uniformly to
+// all 12 services from a single field on KubernautSpec root (BR-PLATFORM-012,
+// kubernaut#2275/#2277, DD-406). Mirrors upstream's debug.pprofEnabled field
+// 1:1 (positive polarity, same key/shape) so the operator passes this value
+// straight through into each service's rendered config with no
+// negation-translation layer. There is no per-component override -- every
+// observed real-world usage of this toggle has been all-or-nothing (#406).
+// The Go zero value is the secure default (AC-6): an empty/omitted debug
 // block never exposes a diagnostic surface unintentionally.
 type DebugSpec struct {
-	// PprofEnabled gates this component's /debug/pprof/* endpoints
+	// PprofEnabled gates all 12 services' /debug/pprof/* endpoints
 	// (net/http/pprof) for short-lived diagnostics. Defaults to false
 	// (profiling OFF) -- must be explicitly opted in.
 	// +kubebuilder:default=false
@@ -2088,9 +2066,6 @@ type DataStorageSpec struct {
 	// When unset, defaults match the operator's prior hardcoded behavior (#260).
 	// +optional
 	Server *DataStorageServerSpec `json:"server,omitempty"`
-
-	// +optional
-	Debug DebugSpec `json:"debug,omitempty"`
 }
 
 // DataStorageDatabaseSpec configures DataStorage's PostgreSQL connection pool.
