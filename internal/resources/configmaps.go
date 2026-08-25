@@ -75,8 +75,9 @@ type loggingYAML struct {
 // debugYAML mirrors upstream's shared internal/config.DebugConfig
 // (BR-PLATFORM-012, kubernaut#2275/#2277) field-for-field: positive
 // polarity, defaults to false (profiling OFF, AC-6 secure-by-default),
-// rendered identically across all 12 Go services so spec.<component>.debug
-// passes straight through with no negation-translation layer.
+// rendered identically across all 12 Go services from the single shared
+// spec.debug.pprofEnabled field (KubernautSpec root, DD-406) with no
+// negation-translation layer.
 type debugYAML struct {
 	PprofEnabled bool `json:"pprofEnabled" yaml:"pprofEnabled"`
 }
@@ -1240,7 +1241,7 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.K
 		},
 		Fleet:     resolveFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.Gateway.Fleet, ""), InterServiceTLSCAFile),
 		Telemetry: resolveTelemetryConfig(knV2.Spec.Gateway.Config.Telemetry),
-		Debug:     debugYAML{PprofEnabled: knV2.Spec.Gateway.Debug.PprofEnabled},
+		Debug:     debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1299,7 +1300,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 		EndpointPropagationDelay: withDefault(kn.Spec.DataStorage.EndpointPropagationDelay, "10s"),
 		Retention:                dataStorageRetentionConfig(kn),
 		Telemetry:                resolveTelemetryConfig(knV2.Spec.DataStorage.Telemetry),
-		Debug:                    debugYAML{PprofEnabled: knV2.Spec.DataStorage.Debug.PprofEnabled},
+		Debug:                    debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1412,7 +1413,7 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha
 			},
 		},
 		Rego:  rego,
-		Debug: debugYAML{PprofEnabled: knV2.Spec.AIAnalysis.Debug.PprofEnabled},
+		Debug: debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1454,7 +1455,7 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv
 			Buffer:    buf,
 		},
 		Fleet: resolveSignalProcessingFleetConfig(knV2),
-		Debug: debugYAML{PprofEnabled: knV2.Spec.SignalProcessing.Debug.PprofEnabled},
+		Debug: debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1545,7 +1546,7 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kub
 		DryRun:           ro.DryRun,
 		DryRunHoldPeriod: withDefault(ro.DryRunHoldPeriod, "1h"),
 		Fleet:            resolveFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.RemediationOrchestrator.Fleet, ""), InterServiceTLSCAFile),
-		Debug:            debugYAML{PprofEnabled: knV2.Spec.RemediationOrchestrator.Debug.PprofEnabled},
+		Debug:            debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1609,7 +1610,7 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernaut
 		cfg.Tekton = &weTektonYAML{Enabled: we.Tekton.Enabled}
 	}
 	cfg.Fleet = resolveWEFleetConfig(knV2, InterServiceTLSCAFile)
-	cfg.Debug = debugYAML{PprofEnabled: knV2.Spec.WorkflowExecution.Debug.PprofEnabled}
+	cfg.Debug = debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled}
 	data, err := marshalYAML(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("workflowexecution config: %w", err)
@@ -1644,7 +1645,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubern
 			},
 		},
 		Fleet: resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.EffectivenessMonitor.Fleet, ""), InterServiceTLSCAFile),
-		Debug: debugYAML{PprofEnabled: knV2.Spec.EffectivenessMonitor.Debug.PprofEnabled},
+		Debug: debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
 	cfg.External = &emExternalYAML{
 		PrometheusURL:       effectivePrometheusURL(knV2),
@@ -1700,7 +1701,7 @@ func NotificationControllerConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kube
 			},
 		},
 		Datastorage: ds,
-		Debug:       debugYAML{PprofEnabled: knV2.Spec.Notification.Debug.PprofEnabled},
+		Debug:       debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1903,7 +1904,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1a
 	cfg := kubernautAgentConfigYAML{
 		Runtime: kaRuntimeYAML{
 			Logging: kaLoggingYAML{Level: withDefault(ka.Logging.Level, "info"), Format: "json"},
-			Debug:   debugYAML{PprofEnabled: knV2.Spec.KubernautAgent.Debug.PprofEnabled},
+			Debug:   debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 			Server: kaRuntimeServerYAML{
 				Address:     "0.0.0.0",
 				Port:        8443,
@@ -2087,7 +2088,7 @@ func AuthWebhookConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 			HealthProbeAddr: ":8081",
 		},
 		Datastorage: ds,
-		Debug:       debugYAML{PprofEnabled: knV2.Spec.AuthWebhook.Debug.PprofEnabled},
+		Debug:       debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -2557,7 +2558,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 		Session:        afSessionConfig(knV2, ns),
 		Fleet:          resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""), apifrontendTLSCAFile),
 		Resilience:     afResilienceConfig(),
-		Debug:          debugYAML{PprofEnabled: knV2.Spec.APIFrontend.Debug.PprofEnabled},
+		Debug:          debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
 
 	data, err := marshalYAML(cfg)

@@ -142,7 +142,7 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernau
 			Scopes:         fleet.OAuth2.Scopes,
 			TLSCaFile:      InterServiceTLSCAFile,
 		},
-		Debug: debugYAML{PprofEnabled: fmc.Debug.PprofEnabled},
+		Debug: debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
 
 	data, err := marshalYAML(cfg)
