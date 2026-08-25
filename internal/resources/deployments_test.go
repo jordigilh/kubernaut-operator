@@ -49,20 +49,14 @@ func getAllDeployments(kn *kubernautv1alpha1.Kubernaut) []*appsv1.Deployment {
 		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 			return DataStorageDeployment(kn)
 		},
-		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-			return AIAnalysisDeployment(kn)
-		},
+		AIAnalysisDeployment,
 		SignalProcessingDeployment,
 		RemediationOrchestratorDeployment,
 		WorkflowExecutionDeployment,
 		EffectivenessMonitorDeployment,
-		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-			return NotificationDeployment(kn)
-		},
+		NotificationDeployment,
 		KubernautAgentDeployment,
-		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-			return AuthWebhookDeployment(kn)
-		},
+		AuthWebhookDeployment,
 	}
 	deps := make([]*appsv1.Deployment, 0, len(builders))
 	for _, b := range builders {
@@ -82,6 +76,17 @@ func expectDeploymentBasics(dep *appsv1.Deployment, imageSuffix string) {
 	container := dep.Spec.Template.Spec.Containers[0]
 	Expect(container.Image).NotTo(BeEmpty(), "Deployment %q image", dep.Name)
 	Expect(container.Image).To(ContainSubstring(imageSuffix), "Deployment %q image should contain %q", dep.Name, imageSuffix)
+}
+
+// hasPprofContainerPort reports whether dep's first container exposes the
+// pprof containerPort (name "pprof", PortPprof/6060) (#403).
+func hasPprofContainerPort(dep *appsv1.Deployment) bool {
+	for _, p := range dep.Spec.Template.Spec.Containers[0].Ports {
+		if p.Name == "pprof" && p.ContainerPort == PortPprof {
+			return true
+		}
+	}
+	return false
 }
 
 func expectHasVolume(dep *appsv1.Deployment, name string) {
@@ -200,7 +205,7 @@ var _ = Describe("Deployments", func() {
 	Context("AIAnalysis", func() {
 		It("has policy volume", func() {
 			kn := testKubernaut()
-			dep, err := AIAnalysisDeployment(kn)
+			dep, err := AIAnalysisDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			expectDeploymentBasics(dep, "aianalysis")
@@ -246,7 +251,7 @@ var _ = Describe("Deployments", func() {
 		It("mounts Slack credentials when configured", func() {
 			kn := testKubernaut()
 			kn.Spec.Notification.Slack.SecretName = "slack-secret"
-			dep, err := NotificationDeployment(kn)
+			dep, err := NotificationDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			expectHasVolume(dep, "credentials")
@@ -264,7 +269,7 @@ var _ = Describe("Deployments", func() {
 
 		It("uses emptyDir credentials when Slack is not configured", func() {
 			kn := testKubernaut()
-			dep, err := NotificationDeployment(kn)
+			dep, err := NotificationDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			found := false
@@ -279,7 +284,7 @@ var _ = Describe("Deployments", func() {
 
 		It("has notification-output emptyDir volume", func() {
 			kn := testKubernaut()
-			dep, err := NotificationDeployment(kn)
+			dep, err := NotificationDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			expectHasVolume(dep, "notification-output")
@@ -292,7 +297,7 @@ var _ = Describe("Deployments", func() {
 
 		It("has routing config mount", func() {
 			kn := testKubernaut()
-			dep, err := NotificationDeployment(kn)
+			dep, err := NotificationDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			expectHasVolume(dep, "routing-config")
@@ -303,7 +308,7 @@ var _ = Describe("Deployments", func() {
 		It("uses BYO routing config map name", func() {
 			kn := testKubernaut()
 			kn.Spec.Notification.Routing = &kubernautv1alpha1.ConfigMapRef{ConfigMapName: "my-routing"}
-			dep, err := NotificationDeployment(kn)
+			dep, err := NotificationDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			expectHasVolume(dep, "routing-config")
 			expectVolumeSourceConfigMap(dep, "routing-config", "my-routing")
@@ -339,6 +344,62 @@ var _ = Describe("Deployments", func() {
 				}
 			}
 			Expect(found).To(BeTrue(), "llm-credentials volume not found")
+		})
+
+		It("#404 [SC-8]: declares SSL_CERT_FILE exactly once, pointing at KA's own merged (system+service-ca+router) bundle -- not the narrower inter-service-only bundle", func() {
+			kn := testKubernaut()
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			container := dep.Spec.Template.Spec.Containers[0]
+
+			var sslCertValues []string
+			for _, e := range container.Env {
+				if e.Name == testEnvSSLCertFile {
+					sslCertValues = append(sslCertValues, e.Value)
+				}
+			}
+			Expect(sslCertValues).To(HaveLen(1),
+				"#404: SSL_CERT_FILE must be declared exactly once -- a second declaration silently shadows the first at runtime (confirmed via the API server's own admission warning), and Go's SSL_CERT_FILE replaces rather than extends the system trust store, so whichever value wins must be a superset of everything KA needs (system/public CAs for LLM providers + service-ca/router-CA for the fleet MCP client)")
+			Expect(sslCertValues[0]).To(Equal("/etc/ssl/combined/ca-bundle.crt"),
+				"#404: KA's own merged bundle (built by the build-ca-bundle init container) must win, not the narrower inter-service-only bundle")
+
+			// TLS_CA_FILE keeps its narrower, intentionally-scoped value --
+			// unaffected by this fix, unlike SSL_CERT_FILE above.
+			hasTLSCAFile := false
+			for _, e := range container.Env {
+				if e.Name == testEnvTLSCAFile && e.Value == InterServiceTLSCAFile {
+					hasTLSCAFile = true
+				}
+			}
+			Expect(hasTLSCAFile).To(BeTrue(), "TLS_CA_FILE must remain set to the narrower inter-service bundle")
+		})
+
+		It("#404 [SC-8]: build-ca-bundle init container merges system CA with the router-inclusive trust bundle (tls-ca), not the narrower service-ca-only bundle", func() {
+			kn := testKubernaut()
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			var initContainer *corev1.Container
+			for i := range dep.Spec.Template.Spec.InitContainers {
+				if dep.Spec.Template.Spec.InitContainers[i].Name == "build-ca-bundle" {
+					initContainer = &dep.Spec.Template.Spec.InitContainers[i]
+				}
+			}
+			Expect(initContainer).NotTo(BeNil(), "build-ca-bundle init container not found")
+
+			Expect(initContainer.Command).To(ContainElement(ContainSubstring("/etc/tls-ca/service-ca.crt")),
+				"#404: init container must read the router-inclusive trust bundle (mounted from tls-ca/TrustBundleConfigMapName), not the narrower kubernaut-agent-service-ca-only bundle")
+			Expect(initContainer.Command).NotTo(ContainElement(ContainSubstring("/service-ca/service-ca.crt")),
+				"#404: must no longer read the narrower service-ca-only bundle -- it's a strict subset of the tls-ca bundle now used")
+
+			const tlsCAMountPath = "/etc/tls-ca"
+			foundMount := false
+			for _, vm := range initContainer.VolumeMounts {
+				if vm.Name == testVolumeTLSCA && vm.MountPath == tlsCAMountPath {
+					foundMount = true
+				}
+			}
+			Expect(foundMount).To(BeTrue(), "build-ca-bundle init container must mount the tls-ca volume at %s", tlsCAMountPath)
 		})
 
 		It("KFG-022 [IA-5]: mounts a dedicated phase-credentials Secret volume when a phase's profile has a different credentialsSecretName than KA's (#233)", func() {
@@ -613,7 +674,7 @@ var _ = Describe("Deployments", func() {
 	Context("AuthWebhook", func() {
 		It("has TLS and webhook port", func() {
 			kn := testKubernaut()
-			dep, err := AuthWebhookDeployment(kn)
+			dep, err := AuthWebhookDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			expectDeploymentBasics(dep, "authwebhook")
@@ -632,7 +693,7 @@ var _ = Describe("Deployments", func() {
 
 		It("uses Recreate strategy", func() {
 			kn := testKubernaut()
-			dep, err := AuthWebhookDeployment(kn)
+			dep, err := AuthWebhookDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(dep.Spec.Strategy.Type).To(Equal(appsv1.RecreateDeploymentStrategyType))
@@ -1020,6 +1081,38 @@ var _ = Describe("Deployments", func() {
 			}
 		})
 
+		// #403 (BR-PLATFORM-012, AC-6): the 7 controller-runtime-managed
+		// services (AIAnalysis, AuthWebhook, EffectivenessMonitor,
+		// Notification, RemediationOrchestrator, SignalProcessing,
+		// WorkflowExecution) start ctrl.Options.PprofBindAddress's listener
+		// on :6060 only when spec.<component>.debug.pprofEnabled is true --
+		// the containerPort must track that toggle exactly: absent by
+		// default (secure-by-default), present only on explicit opt-in.
+		DescribeTable("debug.pprofEnabled conditionally exposes a pprof containerPort on ctrl-runtime services (#403)",
+			func(prep func(*kubernautv1alpha2.Kubernaut), fn func(*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error)) {
+				kn := testKubernaut()
+				knV2 := testKnV2(kn)
+
+				depOff, err := fn(kn, knV2)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasPprofContainerPort(depOff)).To(BeFalse(),
+					"Deployment %q should NOT expose the pprof port by default", depOff.Name)
+
+				prep(knV2)
+				depOn, err := fn(kn, knV2)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hasPprofContainerPort(depOn)).To(BeTrue(),
+					"Deployment %q should expose containerPort 6060 named %q after debug.pprofEnabled=true", depOn.Name, "pprof")
+			},
+			Entry("aianalysis", func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.AIAnalysis.Debug.PprofEnabled = true }, AIAnalysisDeployment),
+			Entry("signalprocessing", func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.SignalProcessing.Debug.PprofEnabled = true }, SignalProcessingDeployment),
+			Entry("remediationorchestrator", func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.RemediationOrchestrator.Debug.PprofEnabled = true }, RemediationOrchestratorDeployment),
+			Entry("workflowexecution", func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.WorkflowExecution.Debug.PprofEnabled = true }, WorkflowExecutionDeployment),
+			Entry("effectivenessmonitor", func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.EffectivenessMonitor.Debug.PprofEnabled = true }, EffectivenessMonitorDeployment),
+			Entry("notification", func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.Notification.Debug.PprofEnabled = true }, NotificationDeployment),
+			Entry("authwebhook", func(knV2 *kubernautv1alpha2.Kubernaut) { knV2.Spec.AuthWebhook.Debug.PprofEnabled = true }, AuthWebhookDeployment),
+		)
+
 		It("pass correct config args", func() {
 			kn := testKubernaut()
 
@@ -1104,18 +1197,30 @@ var _ = Describe("Deployments", func() {
 				}
 				Expect(hasCAMount).To(BeTrue(), "Deployment %q missing %s volume mount", dep.Name, testVolumeTLSCA)
 
+				// #404: KubernautAgent is the sole exception -- its
+				// SSL_CERT_FILE must point at its own merged (system+
+				// inter-service) bundle, a strict superset of
+				// InterServiceTLSCAFile, since KA also verifies public-CA
+				// LLM providers via the same global trust store. TLS_CA_FILE
+				// stays at the narrower InterServiceTLSCAFile for everyone,
+				// KA included.
+				wantSSLCertFile := InterServiceTLSCAFile
+				if dep.Spec.Template.Labels["app"] == ComponentKubernautAgent {
+					wantSSLCertFile = "/etc/ssl/combined/ca-bundle.crt"
+				}
+
 				hasCAEnv := false
 				hasSSLCertEnv := false
 				for _, env := range container.Env {
 					if env.Name == "TLS_CA_FILE" && env.Value == InterServiceTLSCAFile {
 						hasCAEnv = true
 					}
-					if env.Name == testEnvSSLCertFile && env.Value == InterServiceTLSCAFile {
+					if env.Name == testEnvSSLCertFile && env.Value == wantSSLCertFile {
 						hasSSLCertEnv = true
 					}
 				}
 				Expect(hasCAEnv).To(BeTrue(), "Deployment %q missing TLS_CA_FILE env var", dep.Name)
-				Expect(hasSSLCertEnv).To(BeTrue(), "Deployment %q missing SSL_CERT_FILE env var (workaround for kubernaut#TBD: MCP client base transport doesn't honor a custom CA)", dep.Name)
+				Expect(hasSSLCertEnv).To(BeTrue(), "Deployment %q missing SSL_CERT_FILE=%s env var (workaround for kubernaut#TBD: MCP client base transport doesn't honor a custom CA)", dep.Name, wantSSLCertFile)
 			}
 		})
 
@@ -1235,6 +1340,44 @@ var _ = Describe("APIFrontendDeployment", func() {
 		expectHasVolumeMount(dep, "tls-server", "/etc/apifrontend/tls")
 		expectHasVolumeMount(dep, testVolumeTLSCA, "/etc/apifrontend/tls-ca")
 		expectHasVolumeMount(dep, "tmp", "/tmp")
+	})
+
+	It("#404 [SC-8]: SSL_CERT_FILE points at a merged system+inter-service bundle built by a build-ca-bundle init container, not the narrower router/service-ca-only bundle", func() {
+		kn := testKubernautWithAF()
+		dep, err := APIFrontendDeployment(kn, testKnV2(kn), KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+		container := dep.Spec.Template.Spec.Containers[0]
+
+		var sslCertValues []string
+		var tlsCAValue string
+		for _, e := range container.Env {
+			if e.Name == testEnvSSLCertFile {
+				sslCertValues = append(sslCertValues, e.Value)
+			}
+			if e.Name == testEnvTLSCAFile {
+				tlsCAValue = e.Value
+			}
+		}
+		Expect(sslCertValues).To(HaveLen(1), "SSL_CERT_FILE must be declared exactly once")
+		Expect(sslCertValues[0]).To(Equal("/etc/ssl/combined/ca-bundle.crt"),
+			"#404: AF's severityTriage/LLM calls to public-CA providers need system CAs, which the narrower /etc/apifrontend/tls-ca/ca.crt bundle (service-ca+router only) lacks")
+		Expect(tlsCAValue).To(Equal("/etc/apifrontend/tls-ca/ca.crt"),
+			"TLS_CA_FILE keeps its narrower, intentionally-scoped inter-service value -- unaffected by this fix")
+
+		expectHasVolume(dep, testVolumeCombinedCA)
+		expectHasVolumeMount(dep, testVolumeCombinedCA, "/etc/ssl/combined")
+
+		var initContainer *corev1.Container
+		for i := range dep.Spec.Template.Spec.InitContainers {
+			if dep.Spec.Template.Spec.InitContainers[i].Name == "build-ca-bundle" {
+				initContainer = &dep.Spec.Template.Spec.InitContainers[i]
+			}
+		}
+		Expect(initContainer).NotTo(BeNil(), "AF must have a build-ca-bundle init container, mirroring KA's pattern")
+		Expect(initContainer.Command).To(ContainElement(ContainSubstring("/etc/apifrontend/tls-ca/ca.crt")),
+			"init container must merge the inter-service trust bundle (mounted at AF's existing tls-ca path) into the combined bundle")
+		Expect(initContainer.Command).To(ContainElement(ContainSubstring("/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem")),
+			"init container must also merge the base image's system CA bundle")
 	})
 
 	It("mounts llm-credentials volume from AF's own resolved profile", func() {
