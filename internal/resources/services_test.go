@@ -139,7 +139,7 @@ var _ = Describe("Services", func() {
 			Expect(found).To(BeTrue(), "gateway-service not found")
 		})
 
-		It("excludes gateway-service when Gateway is disabled", func() {
+		It("[CM-6] excludes gateway-service when Gateway is disabled", func() {
 			kn := testKubernaut()
 			disabled := false
 			kn.Spec.Gateway.Enabled = &disabled

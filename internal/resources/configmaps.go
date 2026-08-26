@@ -1653,7 +1653,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubern
 		AlertManagerURL:     effectiveAlertManagerURL(knV2),
 		AlertManagerEnabled: knV2.Spec.Monitoring.AlertManager.AlertManagerEnabled(),
 		ConnectionTimeout:   "10s",
-		TLSCaFile:           "/etc/ssl/em/service-ca.crt",
+		TLSCaFile:           effectiveEMTLSCaFile(knV2, "/etc/ssl/em/service-ca.crt"),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1799,7 +1799,14 @@ func applyKALLMProfileFields(llmCfg *kaLLMYAML, profile kubernautv1alpha1.LLMPro
 
 // kaAlignmentConfig builds the AI alignment-check config block, or nil when
 // alignment checking is disabled.
-func kaAlignmentConfig(ac kubernautv1alpha1.AlignmentCheckSpec) *kaAlignmentYAML {
+//
+// #423: llmProfileRef (v1alpha2 AlignmentCheckSpec, F5) was added to replace
+// v1alpha1's AlignmentCheckLLMSpec{Provider,Model,Endpoint} literal-field
+// pattern (same never-had-a-working-credentials-path bug class as #237),
+// but was never actually read here -- the field was entirely inert in
+// production. Wired with llmProfileRef taking precedence over the legacy
+// ac.LLM literal so existing v1alpha1 CRs keep working unchanged.
+func kaAlignmentConfig(kn *kubernautv1alpha1.Kubernaut, ac kubernautv1alpha1.AlignmentCheckSpec, llmProfileRef string) *kaAlignmentYAML {
 	if !ac.Enabled {
 		return nil
 	}
@@ -1808,7 +1815,16 @@ func kaAlignmentConfig(ac kubernautv1alpha1.AlignmentCheckSpec) *kaAlignmentYAML
 		Timeout:       withDefault(ac.Timeout, "10s"),
 		MaxStepTokens: intDefault(ac.MaxStepTokens, 500),
 	}
-	if ac.LLM != nil {
+	switch {
+	case llmProfileRef != "":
+		if profile, ok := ResolveLLMProfile(kn, llmProfileRef); ok {
+			cfg.LLM = &kaAlignLLMYAML{
+				Provider: profile.Provider,
+				Model:    profile.Model,
+				Endpoint: profile.Endpoint,
+			}
+		}
+	case ac.LLM != nil:
 		cfg.LLM = &kaAlignLLMYAML{
 			Provider: ac.LLM.Provider,
 			Model:    ac.LLM.Model,
@@ -1879,14 +1895,14 @@ func kaToolsConfig(knV2 *kubernautv1alpha2.Kubernaut) *kaIntegrationsToolsYAML {
 	return &kaIntegrationsToolsYAML{
 		Prometheus: kaIntegrationsPrometheusYAML{
 			URL:       effectivePrometheusURL(knV2),
-			TLSCaFile: "/etc/ssl/ka/service-ca.crt",
+			TLSCaFile: withDefault(knV2.Spec.Monitoring.Prometheus.TLSCaFile, "/etc/ssl/ka/service-ca.crt"),
 		},
 		// Alertmanager tools (get_alerts, get_silences) added upstream in
 		// kubernaut#1508 (#205). Follows the same SA-bearer-auth-via-service-CA
 		// pattern as Prometheus.
 		Alertmanager: &kaIntegrationsAlertmanagerYAML{
 			URL:       effectiveAlertManagerURL(knV2),
-			TLSCaFile: "/etc/ssl/ka/service-ca.crt",
+			TLSCaFile: withDefault(knV2.Spec.Monitoring.AlertManager.TLSCaFile, "/etc/ssl/ka/service-ca.crt"),
 		},
 	}
 }
@@ -1945,7 +1961,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1a
 
 	applyKALLMProfileFields(&cfg.AI.LLM, kaProfile)
 
-	cfg.AI.AlignmentCheck = kaAlignmentConfig(ka.AlignmentCheck)
+	cfg.AI.AlignmentCheck = kaAlignmentConfig(kn, ka.AlignmentCheck, knV2.Spec.KubernautAgent.AlignmentCheck.LLMProfileRef)
 
 	threshold := intDefault(ka.Summarizer.Threshold, 8000)
 	maxOutput := intDefault(ka.Summarizer.MaxToolOutputSize, 100000)
@@ -2584,7 +2600,7 @@ func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1al
 	cfg := afSeverityTriageYAML{
 		Enabled:                   true,
 		PrometheusURL:             effectivePrometheusURL(knV2),
-		PrometheusTLSCAFile:       "/etc/ssl/af/service-ca.crt",
+		PrometheusTLSCAFile:       withDefault(knV2.Spec.Monitoring.Prometheus.TLSCaFile, "/etc/ssl/af/service-ca.crt"),
 		PrometheusBearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
 		CacheTTLSeconds:           30,
 		MaxQueriesPerCall:         10,

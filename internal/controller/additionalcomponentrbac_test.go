@@ -175,4 +175,34 @@ var _ = Describe("Additional component ClusterRoleBindings (#277)", func() {
 
 		expectAdditionalCRBPruned(ctx, "shared-ecosystem-reader-3", additionalRBACTestComponents)
 	})
+
+	// #423 CONS-004: spec.additionalClusterRoles was flagged as a
+	// cross-consumer consistency gap. The 3 tests above only ever populate
+	// it via v1alpha1's deprecated, KA-nested
+	// spec.kubernautAgent.additionalClusterRoleBindings (relocated to
+	// v1alpha2's top-level field by the conversion webhook) -- none set
+	// v1alpha2's top-level spec.additionalClusterRoles directly, which is
+	// what deployAdditionalComponentRBAC actually reads. This closes that
+	// literal gap.
+	It("CONS-004 [AC-6]: binds a ClusterRole set directly via v1alpha2's top-level spec.additionalClusterRoles", func() {
+		createBYOSecrets(ctx)
+		createSharedEcosystemClusterRole(ctx, "shared-ecosystem-reader-v2")
+
+		cr := newCRWithRouteDisabled()
+		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+		reconcileToRunning(ctx)
+
+		existing := &kubernautv1alpha2.Kubernaut{}
+		Expect(k8sClient.Get(ctx, singletonKey(), existing)).To(Succeed())
+		existing.Spec.AdditionalClusterRoles = []string{"shared-ecosystem-reader-v2"}
+		Expect(k8sClient.Update(ctx, existing)).To(Succeed())
+
+		r := newReconciler()
+		for i := 0; i < 3; i++ {
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		expectAdditionalCRBBound(ctx, "shared-ecosystem-reader-v2", additionalRBACTestComponents)
+	})
 })

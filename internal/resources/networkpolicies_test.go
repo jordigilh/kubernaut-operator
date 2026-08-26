@@ -30,6 +30,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
@@ -1019,3 +1020,380 @@ var _ = Describe("Monitoring egress URL resolution tiers (#298)", func() {
 		Expect(found).To(BeTrue(), "default (unset URL) should scope to openshift-monitoring")
 	})
 })
+
+// #422: every spec.networkPolicies.* field below was accepted by the CRD
+// schema but never read by any builder in this file (kn.Spec.NetworkPolicies
+// is the v1alpha1 struct, which has none of these fields; knV2 was never
+// consulted for them either) -- a cluster-admin setting any of them got
+// silent no-op behavior with no validation error. This Describe block wires
+// and regression-tests the 21 in-scope fields (26 real leaves once IdP's
+// embedded CIDR/Port are counted); console.ingressNamespaces was carved out
+// to a follow-up issue (no consoleNetworkPolicy() builder exists) --
+// resolved as intentionally-excluded-by-design (#443, see
+// docs/security/credentials-and-tls.md's NetworkPolicy section); the
+// externalRegistry.{cidr,port} carve-out (image-pull happens at
+// kubelet/node level, outside any pod NetworkPolicy's scope) was resolved by
+// removing the two dead fields outright (#444, see docs/tests/444/TEST_PLAN.md)
+// -- see docs/tests/421/TEST_PLAN.md for the original carve-out record.
+// testIngressOverrideCIDR is the shared TEST-NET-2 (RFC 5737) CIDR literal
+// used by every ingressCIDRs override test below (Gateway/DataStorage/
+// KubernautAgent) -- extracted to satisfy goconst since the same literal
+// would otherwise appear 6 times.
+const testIngressOverrideCIDR = "198.51.100.0/24"
+
+var _ = Describe("networkPolicies.* field wiring (#422)", func() {
+	npKn := func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+		kn := testKubernaut()
+		return kn, testKnV2(kn)
+	}
+
+	Describe("apiServerCIDR / apiServerCIDRs / apiServerPort", func() {
+		It("NP-APISERVER-001: apiServerCIDR replaces the live-resolved API server egress peer", func() {
+			_, knV2 := npKn()
+			knV2.Spec.NetworkPolicies.APIServerCIDR = "203.0.113.5/32"
+			rule := apiServerEgressRule(knV2.Spec.NetworkPolicies)
+			Expect(hasIPBlockPeer(rule, "203.0.113.5/32")).To(BeTrue())
+			Expect(rule.To).To(HaveLen(1), "override should replace, not merge with, live resolution")
+		})
+
+		It("NP-APISERVER-002: apiServerCIDRs merges additional peers alongside apiServerCIDR", func() {
+			_, knV2 := npKn()
+			knV2.Spec.NetworkPolicies.APIServerCIDR = "203.0.113.5/32"
+			knV2.Spec.NetworkPolicies.APIServerCIDRs = []string{"203.0.113.6/32", "203.0.113.7/32"}
+			rule := apiServerEgressRule(knV2.Spec.NetworkPolicies)
+			Expect(hasIPBlockPeer(rule, "203.0.113.5/32")).To(BeTrue())
+			Expect(hasIPBlockPeer(rule, "203.0.113.6/32")).To(BeTrue())
+			Expect(hasIPBlockPeer(rule, "203.0.113.7/32")).To(BeTrue())
+			Expect(rule.To).To(HaveLen(3))
+		})
+
+		It("NP-APISERVER-003: apiServerPort overrides the default 6443/443 port pair", func() {
+			_, knV2 := npKn()
+			knV2.Spec.NetworkPolicies.APIServerPort = 8443
+			rule := apiServerEgressRule(knV2.Spec.NetworkPolicies)
+			Expect(rule.Ports).To(HaveLen(1))
+			Expect(rule.Ports[0].Port.IntValue()).To(Equal(8443))
+		})
+
+		It("NP-APISERVER-004: unset fields preserve today's default port pair (regression guard)", func() {
+			_, knV2 := npKn()
+			rule := apiServerEgressRule(knV2.Spec.NetworkPolicies)
+			Expect(rule.Ports).To(HaveLen(2))
+			Expect(rule.Ports[0].Port.IntValue()).To(Equal(6443))
+			Expect(rule.Ports[1].Port.IntValue()).To(Equal(443))
+		})
+	})
+
+	Describe("gateway.{ingressCIDRs,ingressNamespaceSelectors,ingressNamespaces}", func() {
+		It("NP-GW-001: ingressNamespaces adds an extra namespace-selector ingress peer", func() {
+			kn, knV2 := npKn()
+			enabled := true
+			kn.Spec.NetworkPolicies.Enabled = &enabled
+			knV2.Spec.NetworkPolicies.Gateway.IngressNamespaces = []string{"extra-ns"}
+			np := gatewayNetworkPolicy(kn, knV2)
+			Expect(ingressNamespaceNames(np.Spec.Ingress[0])["extra-ns"]).To(BeTrue())
+		})
+
+		It("NP-GW-001b: ingressCIDRs adds an extra IPBlock ingress peer", func() {
+			kn, knV2 := npKn()
+			enabled := true
+			kn.Spec.NetworkPolicies.Enabled = &enabled
+			knV2.Spec.NetworkPolicies.Gateway.IngressCIDRs = []string{testIngressOverrideCIDR}
+			np := gatewayNetworkPolicy(kn, knV2)
+			found := false
+			for _, peer := range np.Spec.Ingress[0].From {
+				if peer.IPBlock != nil && peer.IPBlock.CIDR == testIngressOverrideCIDR {
+					found = true
+				}
+			}
+			Expect(found).To(BeTrue())
+		})
+
+		It("NP-GW-002: unset preserves today's default ingress (openshift-ingress + openshift-monitoring only)", func() {
+			kn, knV2 := npKn()
+			enabled := true
+			kn.Spec.NetworkPolicies.Enabled = &enabled
+			np := gatewayNetworkPolicy(kn, knV2)
+			Expect(np.Spec.Ingress[0].From).To(HaveLen(2))
+		})
+	})
+
+	Describe("datastorage.{ingressCIDRs,ingressNamespaceSelectors}", func() {
+		It("NP-DS-001: ingressCIDRs adds an extra IPBlock ingress peer", func() {
+			kn, knV2 := npKn()
+			knV2.Spec.NetworkPolicies.DataStorage.IngressCIDRs = []string{testIngressOverrideCIDR}
+			np := dataStorageNetworkPolicy(kn, knV2)
+			found := false
+			for _, peer := range np.Spec.Ingress[0].From {
+				if peer.IPBlock != nil && peer.IPBlock.CIDR == testIngressOverrideCIDR {
+					found = true
+				}
+			}
+			Expect(found).To(BeTrue())
+		})
+
+		It("NP-DS-002: ingressNamespaceSelectors adds an extra selector-based ingress peer", func() {
+			kn, knV2 := npKn()
+			sel := metav1.LabelSelector{MatchLabels: map[string]string{"team": "platform"}}
+			knV2.Spec.NetworkPolicies.DataStorage.IngressNamespaceSelectors = []metav1.LabelSelector{sel}
+			np := dataStorageNetworkPolicy(kn, knV2)
+			found := false
+			for _, peer := range np.Spec.Ingress[0].From {
+				if peer.NamespaceSelector != nil && peer.NamespaceSelector.MatchLabels["team"] == "platform" {
+					found = true
+				}
+			}
+			Expect(found).To(BeTrue())
+		})
+
+		It("NP-DS-003: unset preserves today's default ingress peer count (regression guard)", func() {
+			kn, knV2 := npKn()
+			np := dataStorageNetworkPolicy(kn, knV2)
+			Expect(np.Spec.Ingress[0].From).To(HaveLen(10))
+		})
+	})
+
+	Describe("apifrontend.{ingressCIDRs,ingressNamespaceSelectors,ingressNamespaces}", func() {
+		It("NP-AF-ING-001: ingressNamespaces adds an extra namespace-selector ingress peer to AF's HTTPS-allow rule", func() {
+			kn := testKubernautWithAF()
+			knV2 := testKnV2(kn)
+			knV2.Spec.NetworkPolicies.APIFrontend.IngressNamespaces = []string{"extra-af-ns"}
+			np := apifrontendNetworkPolicy(kn, knV2, KagentiSidecarNone)
+			Expect(ingressNamespaceNames(np.Spec.Ingress[0])["extra-af-ns"]).To(BeTrue())
+		})
+
+		It("NP-AF-ING-002: unset preserves today's default (same-namespace only) ingress peer", func() {
+			kn := testKubernautWithAF()
+			knV2 := testKnV2(kn)
+			np := apifrontendNetworkPolicy(kn, knV2, KagentiSidecarNone)
+			Expect(np.Spec.Ingress[0].From).To(HaveLen(1))
+		})
+	})
+
+	Describe("kubernautAgent.{ingressCIDRs,ingressNamespaceSelectors}", func() {
+		It("NP-KA-ING-001: ingressCIDRs adds an extra IPBlock ingress peer", func() {
+			kn, knV2 := npKn()
+			knV2.Spec.NetworkPolicies.KubernautAgent.IngressCIDRs = []string{testIngressOverrideCIDR}
+			np := kubernautAgentNetworkPolicy(kn, knV2)
+			found := false
+			for _, peer := range np.Spec.Ingress[0].From {
+				if peer.IPBlock != nil && peer.IPBlock.CIDR == testIngressOverrideCIDR {
+					found = true
+				}
+			}
+			Expect(found).To(BeTrue())
+		})
+
+		It("NP-KA-ING-002: ingressNamespaceSelectors adds an extra selector-based ingress peer", func() {
+			kn, knV2 := npKn()
+			sel := metav1.LabelSelector{MatchLabels: map[string]string{"team": "platform"}}
+			knV2.Spec.NetworkPolicies.KubernautAgent.IngressNamespaceSelectors = []metav1.LabelSelector{sel}
+			np := kubernautAgentNetworkPolicy(kn, knV2)
+			found := false
+			for _, peer := range np.Spec.Ingress[0].From {
+				if peer.NamespaceSelector != nil && peer.NamespaceSelector.MatchLabels["team"] == "platform" {
+					found = true
+				}
+			}
+			Expect(found).To(BeTrue())
+		})
+
+		It("NP-KA-ING-003: unset preserves today's default ingress peer count (AIAnalysis + APIFrontend, testKubernaut() enables AF)", func() {
+			kn, knV2 := npKn()
+			np := kubernautAgentNetworkPolicy(kn, knV2)
+			Expect(np.Spec.Ingress[0].From).To(HaveLen(2))
+		})
+	})
+
+	Describe("idp.{cidr,port,extraPorts}", func() {
+		It("NP-IDP-001: idp.cidr scopes AF's OIDC egress rule to a specific destination", func() {
+			kn := testKubernautWithAF()
+			knV2 := testKnV2(kn)
+			knV2.Spec.NetworkPolicies.IdP.CIDR = "203.0.113.9/32"
+			np := apifrontendNetworkPolicy(kn, knV2, KagentiSidecarNone)
+			Expect(anyRuleHasIPBlockPeer(np.Spec.Egress, "203.0.113.9/32")).To(BeTrue())
+		})
+
+		It("NP-IDP-002: idp.port overrides the default 443 OIDC egress port", func() {
+			kn := testKubernautWithAF()
+			knV2 := testKnV2(kn)
+			knV2.Spec.NetworkPolicies.IdP.Port = 8443
+			np := apifrontendNetworkPolicy(kn, knV2, KagentiSidecarNone)
+			Expect(anyRuleHasPort(np.Spec.Egress, 8443)).To(BeTrue())
+		})
+
+		It("NP-IDP-003: idp.extraPorts opens additional egress ports alongside idp.port", func() {
+			kn := testKubernautWithAF()
+			knV2 := testKnV2(kn)
+			knV2.Spec.NetworkPolicies.IdP.ExtraPorts = []int32{8444}
+			np := apifrontendNetworkPolicy(kn, knV2, KagentiSidecarNone)
+			Expect(anyRuleHasPort(np.Spec.Egress, 443)).To(BeTrue(), "default port 443 must remain alongside extraPorts")
+			Expect(anyRuleHasPort(np.Spec.Egress, 8444)).To(BeTrue())
+		})
+
+		It("NP-IDP-004: unset preserves today's default (unrestricted 443) OIDC egress rule", func() {
+			kn := testKubernautWithAF()
+			knV2 := testKnV2(kn)
+			rule := idPEgressRule(knV2.Spec.NetworkPolicies.IdP)
+			Expect(rule.To).To(BeNil(), "default IdP egress must remain unrestricted (no To peer), matching pre-#422 behavior")
+			Expect(rule.Ports).To(HaveLen(1))
+			Expect(rule.Ports[0].Port.IntValue()).To(Equal(443))
+		})
+	})
+
+	Describe("llm.{cidr,port}", func() {
+		It("NP-LLM-001: llm.cidr scopes KA's LLM egress rule to a specific destination", func() {
+			kn, knV2 := npKn()
+			knV2.Spec.NetworkPolicies.LLM.CIDR = "203.0.113.10/32"
+			np := kubernautAgentNetworkPolicy(kn, knV2)
+			Expect(anyRuleHasIPBlockPeer(np.Spec.Egress, "203.0.113.10/32")).To(BeTrue())
+		})
+
+		It("NP-LLM-002: llm.port overrides the default 443 LLM egress port", func() {
+			kn, knV2 := npKn()
+			knV2.Spec.NetworkPolicies.LLM.Port = 8443
+			np := kubernautAgentNetworkPolicy(kn, knV2)
+			Expect(anyRuleHasPort(np.Spec.Egress, 8443)).To(BeTrue())
+		})
+
+		It("NP-LLM-003: unset preserves today's default (world:443) LLM egress rule (regression guard)", func() {
+			kn, knV2 := npKn()
+			np := kubernautAgentNetworkPolicy(kn, knV2)
+			Expect(hasWorldEgressOnPort443(np)).To(BeTrue())
+		})
+	})
+
+	Describe("monitoring.{namespace,prometheusPort,alertManagerPort}", func() {
+		It("NP-MON-001: monitoring.namespace scopes both the Prometheus and AlertManager egress-destination peers", func() {
+			kn, knV2 := npKn()
+			knV2.Spec.NetworkPolicies.Monitoring.Namespace = "custom-monitoring-ns"
+			np := effectivenessMonitorNetworkPolicy(kn, knV2)
+			found := 0
+			for _, rule := range np.Spec.Egress {
+				for _, peer := range rule.To {
+					if peer.NamespaceSelector != nil && peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == "custom-monitoring-ns" {
+						found++
+					}
+				}
+			}
+			Expect(found).To(BeNumerically(">=", 2), "both Prometheus and AlertManager egress rules should be scoped to the override namespace")
+		})
+
+		It("NP-MON-002: monitoring.prometheusPort/.alertManagerPort override the manual escape-hatch ports independent of the URL-based auto-detected ports", func() {
+			kn, knV2 := npKn()
+			knV2.Spec.NetworkPolicies.Monitoring.PrometheusPort = 19091
+			knV2.Spec.NetworkPolicies.Monitoring.AlertManagerPort = 19094
+			np := effectivenessMonitorNetworkPolicy(kn, knV2)
+			Expect(anyRuleHasPort(np.Spec.Egress, 19091)).To(BeTrue())
+			Expect(anyRuleHasPort(np.Spec.Egress, 19094)).To(BeTrue())
+			Expect(anyRuleHasPort(np.Spec.Egress, 9091)).To(BeFalse(), "overridden Prometheus port should replace, not merge with, the auto-detected default")
+		})
+
+		It("NP-MON-003: unset preserves today's OCP-default namespace/ports (regression guard, MON-005-equivalent)", func() {
+			kn, knV2 := npKn()
+			np := effectivenessMonitorNetworkPolicy(kn, knV2)
+			Expect(anyRuleHasPort(np.Spec.Egress, 9091)).To(BeTrue())
+			Expect(anyRuleHasPort(np.Spec.Egress, 9094)).To(BeTrue())
+		})
+
+		It("NP-MON-004: monitoring.namespace rescues a tier-3 (external/unparseable URL) destination that would otherwise get no rule at all", func() {
+			kn, knV2 := npKn()
+			knV2.Spec.Monitoring.Prometheus.URL = "https://prometheus.example.com:9091"
+			knV2.Spec.NetworkPolicies.Monitoring.Namespace = "rescued-ns"
+			np := effectivenessMonitorNetworkPolicy(kn, knV2)
+			found := false
+			for _, rule := range np.Spec.Egress {
+				for _, peer := range rule.To {
+					if peer.NamespaceSelector != nil && peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == "rescued-ns" {
+						found = true
+					}
+				}
+			}
+			Expect(found).To(BeTrue())
+		})
+	})
+
+	Describe("mcpGateway.{cidr,port}", func() {
+		It("NP-MCPGW-001: mcpGateway.port overrides Fleet's default MCP Gateway destination port", func() {
+			_, knV2 := testKubernautWithFleetMCP()
+			knV2.Spec.NetworkPolicies.MCPGateway.Port = 9080
+			rule := fleetDestinationsEgressRule(knV2)
+			Expect(anyRuleHasPort([]networkingv1.NetworkPolicyEgressRule{rule}, 9080)).To(BeTrue())
+			Expect(anyRuleHasPort([]networkingv1.NetworkPolicyEgressRule{rule}, fleetDestinationsCommonPort)).To(BeFalse())
+		})
+
+		It("NP-MCPGW-002: mcpGateway.cidr adds an additional manually-pinned destination peer", func() {
+			_, knV2 := testKubernautWithFleetMCP()
+			knV2.Spec.NetworkPolicies.MCPGateway.CIDR = "203.0.113.11/32"
+			rule := fleetDestinationsEgressRule(knV2)
+			Expect(hasIPBlockPeer(rule, "203.0.113.11/32")).To(BeTrue())
+			Expect(hasNamespaceSelectorPeer(rule)).To(BeTrue(), "manual CIDR peer must be additive, not a replacement for the namespace-wide peer")
+		})
+
+		It("NP-MCPGW-003: unset preserves today's default port (regression guard)", func() {
+			_, knV2 := testKubernautWithFleetMCP()
+			rule := fleetDestinationsEgressRule(knV2)
+			Expect(anyRuleHasPort([]networkingv1.NetworkPolicyEgressRule{rule}, fleetDestinationsCommonPort)).To(BeTrue())
+		})
+	})
+
+	Describe("prometheus.{cidr,port}", func() {
+		It("NP-PROM-001: prometheus.cidr/.port add an additional CIDR-scoped Prometheus egress rule", func() {
+			kn, knV2 := npKn()
+			knV2.Spec.NetworkPolicies.Prometheus.CIDR = "203.0.113.12/32"
+			knV2.Spec.NetworkPolicies.Prometheus.Port = 19191
+			np := effectivenessMonitorNetworkPolicy(kn, knV2)
+			Expect(anyRuleHasIPBlockPeer(np.Spec.Egress, "203.0.113.12/32")).To(BeTrue())
+			Expect(anyRuleHasPort(np.Spec.Egress, 19191)).To(BeTrue())
+			// additive, not a replacement: the namespace-scoped default rule
+			// (port 9091) must still be present.
+			Expect(anyRuleHasPort(np.Spec.Egress, 9091)).To(BeTrue())
+		})
+
+		It("NP-PROM-002: unset adds no extra Prometheus egress rule (regression guard)", func() {
+			kn, knV2 := npKn()
+			np := effectivenessMonitorNetworkPolicy(kn, knV2)
+			Expect(np.Spec.Egress).To(HaveLen(5), "dns + apiserver + ds + prometheus + alertmanager -- no extra prometheus.cidr rule when unset")
+		})
+	})
+
+	Describe("externalWebhooks.{cidr,port}", func() {
+		It("NP-WEBHOOK-001: externalWebhooks.cidr/.port override the Slack-webhook egress rule", func() {
+			kn, knV2 := npKn()
+			knV2.Spec.NetworkPolicies.ExternalWebhooks.CIDR = "203.0.113.13/32"
+			knV2.Spec.NetworkPolicies.ExternalWebhooks.Port = 8443
+			np := notificationNetworkPolicy(kn, knV2)
+			Expect(anyRuleHasIPBlockPeer(np.Spec.Egress, "203.0.113.13/32")).To(BeTrue())
+			Expect(anyRuleHasPort(np.Spec.Egress, 8443)).To(BeTrue())
+		})
+
+		It("NP-WEBHOOK-002: unset preserves today's hardcoded default (world:443)", func() {
+			kn, knV2 := npKn()
+			np := notificationNetworkPolicy(kn, knV2)
+			Expect(hasWorldEgressOnPort443(np)).To(BeTrue())
+		})
+	})
+})
+
+// anyRuleHasIPBlockPeer reports whether any rule in rules has an IPBlock
+// peer matching cidr exactly.
+func anyRuleHasIPBlockPeer(rules []networkingv1.NetworkPolicyEgressRule, cidr string) bool {
+	for _, rule := range rules {
+		if hasIPBlockPeer(rule, cidr) {
+			return true
+		}
+	}
+	return false
+}
+
+// anyRuleHasPort reports whether any rule in rules opens the given port.
+func anyRuleHasPort(rules []networkingv1.NetworkPolicyEgressRule, port int32) bool {
+	for _, rule := range rules {
+		for _, p := range rule.Ports {
+			if p.Port != nil && p.Port.IntValue() == int(port) {
+				return true
+			}
+		}
+	}
+	return false
+}

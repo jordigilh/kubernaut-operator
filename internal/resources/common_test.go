@@ -42,6 +42,13 @@ const (
 	// rendered/scoped instead of falling back to OCPPrometheusURL.
 	testCustomPrometheusURL = "https://custom-prometheus.custom-monitoring.svc:9091"
 
+	// testCustomPrometheusTLSCaFile / testCustomAlertManagerTLSCaFile are
+	// used across spec.monitoring.{prometheus,alertManager}.tlsCaFile
+	// (#424) RED/GREEN tests to verify each override is actually rendered
+	// instead of falling back to the hardcoded per-component default path.
+	testCustomPrometheusTLSCaFile   = "/etc/ssl/custom/prometheus-ca.crt"
+	testCustomAlertManagerTLSCaFile = "/etc/ssl/custom/alertmanager-ca.crt"
+
 	// Per-component fleet OAuth2 credentialsSecretRef overrides (federated
 	// IdP scenario: each fleet-aware component authenticates as a distinct
 	// OAuth2 client against the same shared token endpoint).

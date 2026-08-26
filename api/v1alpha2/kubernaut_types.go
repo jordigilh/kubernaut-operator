@@ -2250,6 +2250,8 @@ type NetworkPoliciesSpec struct {
 	// +optional
 	APIServerCIDRs []string `json:"apiServerCIDRs,omitempty"`
 
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	APIServerPort int32 `json:"apiServerPort,omitempty"`
 
@@ -2258,9 +2260,6 @@ type NetworkPoliciesSpec struct {
 
 	// +optional
 	ExternalWebhooks NetworkPolicyEgressOverride `json:"externalWebhooks,omitempty"`
-
-	// +optional
-	ExternalRegistry NetworkPolicyEgressOverride `json:"externalRegistry,omitempty"`
 
 	// +optional
 	IdP NetworkPolicyIdPEgressOverride `json:"idp,omitempty"`
@@ -2324,6 +2323,8 @@ type NetworkPolicyEgressOverride struct {
 	// +optional
 	CIDR string `json:"cidr,omitempty"`
 
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	Port int32 `json:"port,omitempty"`
 }
@@ -2345,10 +2346,14 @@ type NetworkPolicyMonitoringOverride struct {
 	Namespace string `json:"namespace,omitempty"`
 
 	// +kubebuilder:default=9090
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	PrometheusPort int32 `json:"prometheusPort,omitempty"`
 
 	// +kubebuilder:default=9093
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	AlertManagerPort int32 `json:"alertManagerPort,omitempty"`
 }
