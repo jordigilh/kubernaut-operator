@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`RELATED_IMAGE_CONSOLE`** bumped to `kubernaut-console` `1.1.0`
+  (`sha256:98f75c56b8f2a4e2ee0276e31f353175b91dec9e95478775843590c37f876062`,
+  resolved from `quay.io/kubernaut-ai/kubernaut-console:1.1.0`), picking up
+  upstream console bugfixes. No operator code or CRD changes.
+
 ### Fixed
 - **`workflowexecution-controller` RBAC missing `get`/`list`/`watch` on core
   `events`** ([#411](https://github.com/jordigilh/kubernaut-operator/issues/411),
