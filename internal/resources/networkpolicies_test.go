@@ -567,6 +567,44 @@ var _ = Describe("KubernautAgent NetworkPolicy with AF", func() {
 	})
 })
 
+// hasWorldEgressOnPort443 reports whether np has an egress rule allowing
+// 0.0.0.0/0 on port 443 -- the rule kubernautAgentNetworkPolicy adds when
+// KA's resolved LLM profile needs outbound HTTPS to an external provider.
+func hasWorldEgressOnPort443(np *networkingv1.NetworkPolicy) bool {
+	for _, rule := range np.Spec.Egress {
+		hasWorldPeer := false
+		for _, peer := range rule.To {
+			if peer.IPBlock != nil && peer.IPBlock.CIDR == "0.0.0.0/0" {
+				hasWorldPeer = true
+			}
+		}
+		if !hasWorldPeer {
+			continue
+		}
+		for _, port := range rule.Ports {
+			if port.Port != nil && port.Port.IntValue() == 443 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+var _ = Describe("KubernautAgent NetworkPolicy LLM egress", func() {
+	It("opens world:443 egress for KA's own resolved LLM profile", func() {
+		kn := testKubernaut() // explicit llmProfileRef: "primary"
+		Expect(hasWorldEgressOnPort443(kubernautAgentNetworkPolicy(kn, testKnV2(kn)))).To(BeTrue(),
+			"KA's NetworkPolicy must allow outbound HTTPS when its resolved LLM profile has a provider, or investigator LLM calls are silently blocked")
+	})
+
+	It("F10 regression (#417 coverage gap): opens world:443 egress via single-profile inference when kubernautAgent.llmProfileRef is omitted", func() {
+		kn := testKubernaut() // testKubernaut() defines exactly one profile ("primary")
+		kn.Spec.KubernautAgent.LLMProfileRef = ""
+		Expect(hasWorldEgressOnPort443(kubernautAgentNetworkPolicy(kn, testKnV2(kn)))).To(BeTrue(),
+			"kubernautAgentNetworkPolicy must resolve the sole spec.llmProfiles entry via EffectiveKALLMProfileRef (ADR-CRD-001 F10) when llmProfileRef is omitted, or KA's own LLM egress is silently blocked -- this is currently implemented correctly (networkpolicies.go:319), but until this test existed nothing verified it, the same coverage gap that let #417 hide in the ConfigMap builders")
+	})
+})
+
 var _ = Describe("APIFrontend NetworkPolicy OIDC egress", func() {
 	It("adds HTTPS egress rule when issuerURL is set", func() {
 		kn := testKubernautWithAF()
