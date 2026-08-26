@@ -7,13 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- **`RELATED_IMAGE_CONSOLE`** bumped to `kubernaut-console` `1.1.0`
-  (`sha256:98f75c56b8f2a4e2ee0276e31f353175b91dec9e95478775843590c37f876062`,
-  resolved from `quay.io/kubernaut-ai/kubernaut-console:1.1.0`), picking up
-  upstream console bugfixes. No operator code or CRD changes.
+## [1.6.0-rc8] - 2026-08-26
 
 ### Fixed
+- **24 `networkPolicies.*` fields and 2 `monitoring.*.tlsCaFile` fields**
+  accepted by the v1alpha2 CRD schema but never read by any builder -- a
+  cluster-admin setting these got silent no-op behavior with no validation
+  error ([#421](https://github.com/jordigilh/kubernaut-operator/issues/421)
+  audit, closing
+  [#422](https://github.com/jordigilh/kubernaut-operator/issues/422)-[#441](https://github.com/jordigilh/kubernaut-operator/issues/441)).
+  Wired 21 of 24 in-scope `networkPolicies.*` overrides (apiServer CIDR/port,
+  per-component ingress CIDR/namespace/selector overrides, per-destination
+  egress cidr/port overrides) into `internal/resources/networkpolicies.go`,
+  with new kubebuilder port-bound validation markers
+  (`Minimum=1`/`Maximum=65535`). Wired `monitoring.prometheus/alertManager.tlsCaFile`
+  into EM/KA/AF config builders -- EM's `external.tlsCaFile` is a single
+  combined field upstream, so it takes Prometheus's value with precedence
+  over AlertManager's.
+- **`kubernautAgent.alignmentCheck.llmProfileRef`** (v1alpha2): documented as
+  the fix for v1alpha1's broken `AlignmentCheckLLMSpec` credentials path, but
+  the config builder never actually read it -- entirely inert in production,
+  same bug class as above. Now resolves via `ResolveLLMProfile`, taking
+  precedence over the legacy `alignmentCheck.llm` literal for backward
+  compatibility.
+- Backfilled test coverage and/or FedRAMP control-tag traceability for
+  ~100 fields across 17 components; closed 7 cross-consumer consistency
+  gaps (a field tested in `internal/resources` but its `internal/controller`
+  consumer had zero sibling coverage): `image.pullSecrets`,
+  `postgresql.sslMode`, `notification.routing.configMapName`,
+  `signalProcessing.proactiveSignalMappings.configMapName`,
+  `gateway.resources`, `additionalClusterRoles`.
 - **`workflowexecution-controller` RBAC missing `get`/`list`/`watch` on core
   `events`** ([#411](https://github.com/jordigilh/kubernaut-operator/issues/411),
   FedRAMP AC-6): the ClusterRole only granted `create`/`patch` on `events`
@@ -28,6 +51,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `get`/`list`/`watch` alongside the existing `create`/`patch`. This code
   path is `v1.6`-only (not present in `release/v1.5`), so the gap was latent
   until now.
+- **OLM bundle / installer drift**: `bundle/manifests/` and `dist/install.yaml`
+  had been stale since [#409](https://github.com/jordigilh/kubernaut-operator/pull/409)
+  (which simplified `debug.pprofEnabled` from a per-component field to a
+  single cluster-wide toggle) -- neither had been regenerated since, so both
+  still shipped the old per-component `debug` schema for 12 components
+  instead of the current single top-level `spec.debug` field. Refreshed via
+  `make manifests generate bundle build-installer`.
+
+### Removed
+- **`networkPolicies.externalRegistry.{cidr,port}`**
+  ([#444](https://github.com/jordigilh/kubernaut-operator/issues/444)):
+  removed from the v1alpha2 CRD schema outright -- no pod-level
+  `NetworkPolicy` enforcement point exists for kubelet/CRI-O-level image
+  pulls, and the operator manages no in-cluster registry mirror whose
+  egress a `NetworkPolicy` rule could scope instead. v1alpha2-only field, no
+  v1alpha1 equivalent, no conversion-webhook impact.
+
+### Changed
+- **`networkPolicies.console.ingressNamespaces`** documented as
+  intentionally excluded by design
+  ([#443](https://github.com/jordigilh/kubernaut-operator/issues/443))
+  rather than wired to a new builder -- Console's ingress is browser/end-user
+  traffic through its own OCP Route, not a predictable operator-known peer
+  set like every other exposed component. See
+  `docs/security/credentials-and-tls.md`'s NetworkPolicy (SC-7) section for
+  BYO-`NetworkPolicy` guidance.
+- **`RELATED_IMAGE_CONSOLE`** bumped to `kubernaut-console` `1.1.0`
+  (`sha256:98f75c56b8f2a4e2ee0276e31f353175b91dec9e95478775843590c37f876062`,
+  resolved from `quay.io/kubernaut-ai/kubernaut-console:1.1.0`), picking up
+  upstream console bugfixes. No operator code or CRD changes.
 
 ## [1.6.0-rc7] - 2026-08-25
 
