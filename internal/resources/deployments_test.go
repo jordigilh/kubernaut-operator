@@ -24,6 +24,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
@@ -39,6 +40,7 @@ const (
 	testMTLSCertFile       = "/etc/tls/tls.crt"
 	testMTLSKeyFile        = "/etc/tls/tls.key"
 	testVolumeFleetOAuth2  = "fleet-oauth2"
+	testVolumeSecrets      = "secrets"
 )
 
 func getAllDeployments(kn *kubernautv1alpha1.Kubernaut) []*appsv1.Deployment {
@@ -163,6 +165,224 @@ var _ = Describe("Deployments", func() {
 			}
 			Expect(found).To(BeTrue(), "tls-certs volume should reference gateway-tls Secret")
 		})
+
+		// CONS-005 (#423): gateway.resources was flagged as a cross-consumer
+		// consistency gap (consumer exists in internal/resources, no test in
+		// that package). This asserts spec.gateway.resources propagates
+		// verbatim onto the rendered Gateway Deployment's container.
+		It("CONS-005 [CM-6]: propagates spec.gateway.resources verbatim onto the container", func() {
+			kn := testKubernaut()
+			kn.Spec.Gateway.Resources = corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m"), corev1.ResourceMemory: resource.MustParse("256Mi")},
+				Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m"), corev1.ResourceMemory: resource.MustParse("512Mi")},
+			}
+			dep, err := GatewayDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			got := dep.Spec.Template.Spec.Containers[0].Resources
+			Expect(got.Requests.Cpu().String()).To(Equal("250m"), "gateway container should render spec.gateway.resources.requests.cpu verbatim")
+			Expect(got.Requests.Memory().String()).To(Equal("256Mi"), "gateway container should render spec.gateway.resources.requests.memory verbatim")
+			Expect(got.Limits.Cpu().String()).To(Equal("500m"), "gateway container should render spec.gateway.resources.limits.cpu verbatim")
+			Expect(got.Limits.Memory().String()).To(Equal("512Mi"), "gateway container should render spec.gateway.resources.limits.memory verbatim")
+		})
+	})
+
+	// CONS-001 (#423): image.pullSecrets was flagged as a cross-consumer
+	// consistency gap (consumer exists in internal/resources, no test in
+	// that package). buildDeployment is the single shared builder every
+	// component's DeploymentParams flows through, so testing it via
+	// GatewayDeployment exercises the same code path for every component.
+	Context("Image.PullSecrets", func() {
+		It("CONS-001 [CM-6, SC-13]: propagates spec.image.pullSecrets verbatim onto every rendered pod spec", func() {
+			kn := testKubernaut()
+			kn.Spec.Image.PullSecrets = []corev1.LocalObjectReference{{Name: "my-registry-creds"}}
+			dep, err := GatewayDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dep.Spec.Template.Spec.ImagePullSecrets).To(Equal([]corev1.LocalObjectReference{{Name: "my-registry-creds"}}),
+				"pod spec should render spec.image.pullSecrets verbatim so private-registry image pulls succeed")
+		})
+
+		It("CONS-001b: omits imagePullSecrets from the pod spec when unset (regression guard)", func() {
+			kn := testKubernaut()
+			dep, err := GatewayDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dep.Spec.Template.Spec.ImagePullSecrets).To(BeEmpty(), "pod spec should have no imagePullSecrets when spec.image.pullSecrets is unset")
+		})
+	})
+
+	// #423 coverage backfill: image.pullPolicy had zero test references
+	// anywhere in the codebase, despite every component's buildDeployment
+	// call site propagating it onto the container's ImagePullPolicy.
+	Context("Image.PullPolicy", func() {
+		It("[CM-6] propagates a non-default spec.image.pullPolicy onto the container", func() {
+			kn := testKubernaut()
+			kn.Spec.Image.PullPolicy = corev1.PullAlways
+			dep, err := GatewayDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dep.Spec.Template.Spec.Containers[0].ImagePullPolicy).To(Equal(corev1.PullAlways),
+				"container should render spec.image.pullPolicy verbatim")
+		})
+	})
+
+	// #423 coverage backfill: the remaining 10 corev1.ResourceRequirements
+	// passthrough fields (gateway.resources was already closed as CONS-005
+	// above) had zero test references anywhere in the codebase per
+	// docs/tests/421/CRD_FIELD_COVERAGE_AUDIT.md. Each component's builder
+	// flows its own DeploymentParams.Resources through the single shared
+	// buildDeployment -> corev1.Container.Resources assignment, so one
+	// table covers all 10 with the same verbatim-passthrough assertion.
+	Describe("Component .resources passthrough (#423 coverage backfill)", func() {
+		type resourcesCase struct {
+			component string
+			newKn     func() *kubernautv1alpha1.Kubernaut
+			setRes    func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements)
+			build     func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error)
+		}
+
+		testResources := corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("111m"), corev1.ResourceMemory: resource.MustParse("111Mi")},
+			Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("222m"), corev1.ResourceMemory: resource.MustParse("222Mi")},
+		}
+
+		DescribeTable("UT-RES [CM-6]: propagates spec.<component>.resources verbatim onto the container",
+			func(tc resourcesCase) {
+				kn := tc.newKn()
+				tc.setRes(kn, testResources)
+				dep, err := tc.build(kn)
+				Expect(err).NotTo(HaveOccurred())
+				got := dep.Spec.Template.Spec.Containers[0].Resources
+				Expect(got.Requests.Cpu().String()).To(Equal("111m"), "%s container should render spec.%s.resources.requests.cpu verbatim", tc.component, tc.component)
+				Expect(got.Requests.Memory().String()).To(Equal("111Mi"), "%s container should render spec.%s.resources.requests.memory verbatim", tc.component, tc.component)
+				Expect(got.Limits.Cpu().String()).To(Equal("222m"), "%s container should render spec.%s.resources.limits.cpu verbatim", tc.component, tc.component)
+				Expect(got.Limits.Memory().String()).To(Equal("222Mi"), "%s container should render spec.%s.resources.limits.memory verbatim", tc.component, tc.component)
+			},
+			Entry("apiFrontend", resourcesCase{
+				component: "apiFrontend",
+				newKn:     testKubernautWithAF,
+				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+					kn.Spec.APIFrontend.Resources = res
+				},
+				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+					return APIFrontendDeployment(kn, testKnV2(kn), KagentiSidecarNone)
+				},
+			}),
+			Entry("kubernautAgent", resourcesCase{
+				component: "kubernautAgent",
+				newKn:     testKubernaut,
+				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+					kn.Spec.KubernautAgent.Resources = res
+				},
+				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+					return KubernautAgentDeployment(kn, testKnV2(kn))
+				},
+			}),
+			Entry("remediationOrchestrator", resourcesCase{
+				component: "remediationOrchestrator",
+				newKn:     testKubernaut,
+				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+					kn.Spec.RemediationOrchestrator.Resources = res
+				},
+				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+					return RemediationOrchestratorDeployment(kn, testKnV2(kn))
+				},
+			}),
+			Entry("dataStorage", resourcesCase{
+				component: "dataStorage",
+				newKn:     testKubernaut,
+				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+					kn.Spec.DataStorage.Resources = res
+				},
+				build: DataStorageDeployment,
+			}),
+			Entry("workflowExecution", resourcesCase{
+				component: "workflowExecution",
+				newKn:     testKubernaut,
+				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+					kn.Spec.WorkflowExecution.Resources = res
+				},
+				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+					return WorkflowExecutionDeployment(kn, testKnV2(kn))
+				},
+			}),
+			Entry("notification", resourcesCase{
+				component: "notification",
+				newKn:     testKubernaut,
+				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+					kn.Spec.Notification.Resources = res
+				},
+				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+					return NotificationDeployment(kn, testKnV2(kn))
+				},
+			}),
+			Entry("signalProcessing", resourcesCase{
+				component: "signalProcessing",
+				newKn:     testKubernaut,
+				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+					kn.Spec.SignalProcessing.Resources = res
+				},
+				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+					return SignalProcessingDeployment(kn, testKnV2(kn))
+				},
+			}),
+			Entry("effectivenessMonitor", resourcesCase{
+				component: "effectivenessMonitor",
+				newKn:     testKubernaut,
+				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+					kn.Spec.EffectivenessMonitor.Resources = res
+				},
+				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+					return EffectivenessMonitorDeployment(kn, testKnV2(kn))
+				},
+			}),
+			Entry("aiAnalysis", resourcesCase{
+				component: "aiAnalysis",
+				newKn:     testKubernaut,
+				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+					kn.Spec.AIAnalysis.Resources = res
+				},
+				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+					return AIAnalysisDeployment(kn, testKnV2(kn))
+				},
+			}),
+			Entry("authWebhook", resourcesCase{
+				component: "authWebhook",
+				newKn:     testKubernaut,
+				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+					kn.Spec.AuthWebhook.Resources = res
+				},
+				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+					return AuthWebhookDeployment(kn, testKnV2(kn))
+				},
+			}),
+		)
+
+		// kaResources (KubernautAgentDeployment's resources resolver) has a
+		// distinct, non-obvious merge rule worth its own regression test:
+		// it is all-or-nothing on the *pair* (Requests, Limits), not a
+		// per-field deep merge -- setting only one of the two still counts
+		// as "user specified" and the other stays at its zero value rather
+		// than falling back to the default for that half.
+		DescribeTable("UT-RES-KA [CM-6]: kaResources() default-merge behavior",
+			func(userSpec corev1.ResourceRequirements, expectRequestsCPU, expectLimitsCPU string) {
+				kn := testKubernaut()
+				kn.Spec.KubernautAgent.Resources = userSpec
+				dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+				Expect(err).NotTo(HaveOccurred())
+				got := dep.Spec.Template.Spec.Containers[0].Resources
+				Expect(got.Requests.Cpu().String()).To(Equal(expectRequestsCPU))
+				Expect(got.Limits.Cpu().String()).To(Equal(expectLimitsCPU))
+			},
+			Entry("unset -> documented defaults (200m request / 1000m limit)",
+				corev1.ResourceRequirements{}, "200m", "1"),
+			Entry("fully specified -> verbatim passthrough",
+				corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("300m")},
+					Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("900m")},
+				}, "300m", "900m"),
+			Entry("partially specified (Requests only) -> still verbatim, no per-field default merge for Limits",
+				corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("300m")},
+				}, "300m", "0"),
+		)
 	})
 
 	Context("DataStorage", func() {
@@ -185,12 +405,34 @@ var _ = Describe("Deployments", func() {
 
 			found := false
 			for _, v := range dep.Spec.Template.Spec.Volumes {
-				if v.Name == "secrets" && v.Projected != nil {
+				if v.Name == testVolumeSecrets && v.Projected != nil {
 					found = true
 					Expect(v.Projected.Sources).To(HaveLen(2))
 				}
 			}
 			Expect(found).To(BeTrue(), "DataStorage should have a 'secrets' projected volume")
+		})
+
+		// #423 coverage backfill: valkey.secretName had no test asserting
+		// the actual configured name reaches the projected volume (the test
+		// above only checks source count, using the default fixture value).
+		It("[IA-5, SC-28] propagates spec.valkey.secretName into the projected secrets volume", func() {
+			kn := testKubernaut()
+			kn.Spec.Valkey.SecretName = "custom-valkey-secret"
+			dep, err := DataStorageDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			var names []string
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == testVolumeSecrets && v.Projected != nil {
+					for _, src := range v.Projected.Sources {
+						if src.Secret != nil {
+							names = append(names, src.Secret.Name)
+						}
+					}
+				}
+			}
+			Expect(names).To(ContainElement("custom-valkey-secret"), "spec.valkey.secretName should be projected into the 'secrets' volume, got sources: %v", names)
 		})
 
 		It("has TLS cert volume", func() {
@@ -248,7 +490,7 @@ var _ = Describe("Deployments", func() {
 	})
 
 	Context("Notification", func() {
-		It("mounts Slack credentials when configured", func() {
+		It("[IA-5, SC-28] mounts Slack credentials when configured", func() {
 			kn := testKubernaut()
 			kn.Spec.Notification.Slack.SecretName = "slack-secret"
 			dep, err := NotificationDeployment(kn, testKnV2(kn))
@@ -752,7 +994,7 @@ var _ = Describe("Deployments", func() {
 			Expect(dep.Spec.Template.Spec.InitContainers[0].Name).To(Equal("build-ca-bundle"))
 		})
 
-		It("mounts secret volume with custom key", func() {
+		It("[IA-5, SC-12] mounts secret volume with custom key", func() {
 			kn := testKubernaut()
 			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
 				Name: "aap-ca-secret",
@@ -774,7 +1016,7 @@ var _ = Describe("Deployments", func() {
 			Expect(found).To(BeTrue(), "WFE with caCertSecretRef should have aap-ca volume")
 		})
 
-		It("uses default key ca.crt", func() {
+		It("[IA-5, SC-12] uses default key ca.crt", func() {
 			kn := testKubernaut()
 			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
 			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
@@ -1358,6 +1600,24 @@ var _ = Describe("APIFrontendDeployment", func() {
 		Expect(portMap).To(HaveKeyWithValue("metrics", PortMetrics))
 	})
 
+	// #423 coverage backfill: valkey.secretName had zero test references for
+	// the AF deployment's own valkey-secrets volume (its mount is gated only
+	// on SecretName != "", and testKubernautWithAF's fixture always sets one).
+	It("[IA-5, SC-28] mounts valkey-secrets volume from spec.valkey.secretName", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.Valkey.SecretName = "custom-af-valkey-secret"
+		dep, err := APIFrontendDeployment(kn, testKnV2(kn), KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(dep, "valkey-secrets")
+		expectHasVolumeMount(dep, "valkey-secrets", "/etc/apifrontend/valkey")
+		for _, v := range dep.Spec.Template.Spec.Volumes {
+			if v.Name == "valkey-secrets" {
+				Expect(v.Secret).NotTo(BeNil())
+				Expect(v.Secret.SecretName).To(Equal("custom-af-valkey-secret"))
+			}
+		}
+	})
+
 	It("mounts config, tls-server, tls-ca, and tmp volumes", func() {
 		kn := testKubernautWithAF()
 		dep, err := APIFrontendDeployment(kn, testKnV2(kn), KagentiSidecarNone)
@@ -1511,7 +1771,7 @@ var _ = Describe("APIFrontendDeployment", func() {
 			"#279: severityTriage's own vertex_ai credentials now flow through its dedicated apiKeyFile (rendered in the ConfigMap, resolved via its own credentials.json mount) instead of a process-wide GOOGLE_APPLICATION_CREDENTIALS redirect")
 	})
 
-	It("mounts llm-tls-client volume from AF's own resolved profile's tlsClientSecretRef", func() {
+	It("[IA-5, SC-12] mounts llm-tls-client volume from AF's own resolved profile's tlsClientSecretRef", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.LLMProfiles[testAFOnlyProfile] = kubernautv1alpha1.LLMProfileSpec{
 			Provider:              LLMProviderOpenAI,
@@ -1793,7 +2053,7 @@ var _ = Describe("DataStorageDeployment with Valkey TLS", func() {
 })
 
 var _ = Describe("DataStorage Signing Cert", func() {
-	It("mounts signing cert when configured", func() {
+	It("[IA-5, SC-12] mounts signing cert when configured", func() {
 		kn := testKubernaut()
 		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha1.SigningCertSpec{
 			SecretName: "datastorage-signing-cert",
@@ -1804,7 +2064,7 @@ var _ = Describe("DataStorage Signing Cert", func() {
 		expectHasVolumeMount(dep, "signing-cert", "/etc/certs")
 	})
 
-	It("uses custom mount path when specified", func() {
+	It("[SC-12] uses custom mount path when specified", func() {
 		kn := testKubernaut()
 		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha1.SigningCertSpec{
 			SecretName: "datastorage-signing-cert",
@@ -1867,7 +2127,7 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		}
 	})
 
-	It("mounts fleet-ca on both Gateway and RemediationOrchestrator when caSecretName is set", func() {
+	It("[IA-5, SC-12] mounts fleet-ca on both Gateway and RemediationOrchestrator when caSecretName is set", func() {
 		kn := testKubernaut()
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
@@ -1890,7 +2150,7 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		}
 	})
 
-	It("mounts fleet-token on both Gateway and RemediationOrchestrator when tokenSecretName is set", func() {
+	It("[IA-5] mounts fleet-token on both Gateway and RemediationOrchestrator when tokenSecretName is set", func() {
 		kn := testKubernaut()
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{

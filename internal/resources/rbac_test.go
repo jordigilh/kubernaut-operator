@@ -836,7 +836,7 @@ var _ = Describe("ToolClusterRoles", func() {
 		Expect(roles).To(HaveLen(6), "ToolClusterRoles() should return exactly 6 persona-based tool roles")
 	})
 
-	It("returns empty when AF is disabled", func() {
+	It("[AC-6] returns empty when AF is disabled", func() {
 		kn := testKubernautWithAF()
 		disabled := false
 		kn.Spec.APIFrontend.Enabled = &disabled
@@ -1095,13 +1095,13 @@ var _ = Describe("ConsoleAccessClusterRole", func() {
 })
 
 var _ = Describe("effectiveConsoleAccessGroups", func() {
-	It("[CA-020] returns nil when RBAC is nil", func() {
+	It("[CA-020, AC-6] returns nil when RBAC is nil", func() {
 		kn := testKubernautWithAF()
 		Expect(kn.Spec.APIFrontend.RBAC).To(BeNil())
 		Expect(effectiveConsoleAccessGroups(kn)).To(BeNil())
 	})
 
-	It("[CA-021] nil ConsoleAccessGroups derives the deduplicated union of roleBindings groups", func() {
+	It("[CA-021, AC-6] nil ConsoleAccessGroups derives the deduplicated union of roleBindings groups", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
 			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
@@ -1125,7 +1125,7 @@ var _ = Describe("effectiveConsoleAccessGroups", func() {
 		Expect(effectiveConsoleAccessGroups(kn)).To(Equal([]string{"platform-engineering"}))
 	})
 
-	It("[CA-023] explicit empty list opts out regardless of roleBindings content", func() {
+	It("[CA-023, AC-6] explicit empty list opts out regardless of roleBindings content", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
 			RoleBindings:        []kubernautv1alpha1.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
@@ -1134,7 +1134,7 @@ var _ = Describe("effectiveConsoleAccessGroups", func() {
 		Expect(effectiveConsoleAccessGroups(kn)).To(BeEmpty())
 	})
 
-	It("[CA-024] explicit non-empty list is used verbatim, ignoring roleBindings", func() {
+	It("[CA-024, AC-6] explicit non-empty list is used verbatim, ignoring roleBindings", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
 			RoleBindings:        []kubernautv1alpha1.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},

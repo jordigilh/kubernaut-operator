@@ -335,7 +335,7 @@ func fleetMetadataCacheNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kube
 	}
 	pValkey := intstr.FromInt32(valkeyPort)
 
-	egress := baseEgress(2)
+	egress := baseEgress(knV2, 2)
 	egress = append(egress,
 		networkingv1.NetworkPolicyEgressRule{
 			To:    sameNamespacePeers(),

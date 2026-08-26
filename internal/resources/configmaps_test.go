@@ -135,7 +135,7 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).NotTo(ContainSubstring("no-browser-clients"))
 		})
 
-		It("renders custom CORS credentials and maxAge", func() {
+		It("[SC-8] renders custom CORS credentials and maxAge", func() {
 			kn := testKubernaut()
 			kn.Spec.Gateway.Config.CORS.AllowCredentials = ptr.To(true)
 			kn.Spec.Gateway.Config.CORS.MaxAge = ptr.To(600)
@@ -144,6 +144,20 @@ var _ = Describe("ConfigMaps", func() {
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("allowCredentials: true"))
 			Expect(data).To(ContainSubstring("maxAge: 600"))
+		})
+
+		// #423 coverage backfill: config.cors.allowedMethods had zero test
+		// references anywhere in the codebase.
+		It("[SC-8] renders custom CORS allowedMethods, overriding the default method list", func() {
+			kn := testKubernaut()
+			kn.Spec.Gateway.Config.CORS.AllowedMethods = []string{"GET", "POST"}
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("allowedMethods:"))
+			Expect(data).To(ContainSubstring("- GET"))
+			Expect(data).To(ContainSubstring("- POST"))
+			Expect(data).NotTo(ContainSubstring("- PUT"), "custom allowedMethods should fully replace the default method list, got:\n%s", data)
 		})
 
 		It("omits the fleet block when fleet is disabled", func() {
@@ -297,7 +311,7 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("telemetry:"), "gateway config should omit telemetry when spec.gateway.config.telemetry.endpoint is unset (zero overhead when off)")
 		})
 
-		It("renders telemetry endpoint/logSink/tls from spec.gateway.config.telemetry (#323)", func() {
+		It("[SC-8, SC-12] renders telemetry endpoint/logSink/tls from spec.gateway.config.telemetry (#323)", func() {
 			kn := testKubernaut()
 			knV2 := testKnV2(kn)
 			knV2.Spec.Gateway.Config.Telemetry = telemetrySpecFixture()
@@ -402,6 +416,21 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("port: 5432"), "datastorage config should default to port 5432, got:\n%s", data)
 		})
 
+		// #423 coverage backfill: dataStorage.endpointPropagationDelay had
+		// zero test references anywhere in the codebase.
+		It("[CM-6] propagates a non-default spec.dataStorage.endpointPropagationDelay, defaulting to 10s when unset", func() {
+			kn := testKubernaut()
+			cmDefault, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cmDefault.Data["config.yaml"]).To(ContainSubstring("endpointPropagationDelay: 10s"), "unset endpointPropagationDelay should default to 10s")
+
+			kn.Spec.DataStorage.EndpointPropagationDelay = "25s"
+			cm, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("endpointPropagationDelay: 25s"), "spec.dataStorage.endpointPropagationDelay should propagate verbatim, got:\n%s", data)
+		})
+
 		It("#399 [SC-8]: renders the configured PostgreSQL/Valkey hostnames verbatim, never pre-resolved to an IP", func() {
 			// "localhost" reliably resolves via /etc/hosts in every
 			// environment (CI sandboxes included), making it a deterministic
@@ -428,7 +457,7 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("telemetry:"), "datastorage config should omit telemetry when spec.dataStorage.telemetry.endpoint is unset (zero overhead when off)")
 		})
 
-		It("renders telemetry endpoint/logSink/tls from spec.dataStorage.telemetry (#323)", func() {
+		It("[SC-8, SC-12] renders telemetry endpoint/logSink/tls from spec.dataStorage.telemetry (#323)", func() {
 			kn := testKubernaut()
 			knV2 := testKnV2(kn)
 			knV2.Spec.DataStorage.Telemetry = telemetrySpecFixture()
@@ -697,6 +726,70 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("processing: 10m"), "RO config should use custom processing timeout, got:\n%s", data)
 		})
 
+		// #423 coverage backfill: 13 fields across timeouts/routing/
+		// effectivenessAssessment/asyncPropagation had zero test references
+		// anywhere in the codebase per
+		// docs/tests/421/CRD_FIELD_COVERAGE_AUDIT.md. All are simple
+		// withDefault/intPtrDefault string-or-int passthroughs into the
+		// same flat YAML blocks, so one table covers overrides for all 13
+		// plus their documented defaults.
+		DescribeTable("[CM-6] propagates spec.remediationOrchestrator.* overrides verbatim, defaulting when unset",
+			func(setSpec func(ro *kubernautv1alpha1.RemediationOrchestratorSpec), wantSubstring, wantDefaultSubstring string) {
+				kn := testKubernaut()
+				setSpec(&kn.Spec.RemediationOrchestrator)
+				cm, err := RemediationOrchestratorConfigMap(kn, testKnV2(kn))
+				Expect(err).NotTo(HaveOccurred())
+				data := cm.Data["remediationorchestrator.yaml"]
+				Expect(data).To(ContainSubstring(wantSubstring), "override not propagated, got:\n%s", data)
+
+				knDefault := testKubernaut()
+				cmDefault, err := RemediationOrchestratorConfigMap(knDefault, testKnV2(knDefault))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(cmDefault.Data["remediationorchestrator.yaml"]).To(ContainSubstring(wantDefaultSubstring), "unset default mismatch")
+			},
+			Entry("timeouts.analyzing", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) { ro.Timeouts.Analyzing = "22m" },
+				"analyzing: 22m", "analyzing: 10m"),
+			Entry("timeouts.executing", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) { ro.Timeouts.Executing = "44m" },
+				"executing: 44m", "executing: 30m"),
+			Entry("timeouts.verifying", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) { ro.Timeouts.Verifying = "55m" },
+				"verifying: 55m", "verifying: 30m"),
+			Entry("effectivenessAssessment.stabilizationWindow", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+				ro.EffectivenessAssessment.StabilizationWindow = "7m"
+			}, "stabilizationWindow: 7m", "stabilizationWindow: 5m"),
+			Entry("routing.consecutiveFailureCooldown", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+				ro.Routing.ConsecutiveFailureCooldown = "2h"
+			}, "consecutiveFailureCooldown: 2h", "consecutiveFailureCooldown: 1h"),
+			Entry("routing.consecutiveFailureThreshold", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+				ro.Routing.ConsecutiveFailureThreshold = ptr.To(9)
+			}, "consecutiveFailureThreshold: 9", "consecutiveFailureThreshold: 3"),
+			Entry("routing.ineffectiveChainThreshold", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+				ro.Routing.IneffectiveChainThreshold = ptr.To(8)
+			}, "ineffectiveChainThreshold: 8", "ineffectiveChainThreshold: 3"),
+			Entry("routing.ineffectiveTimeWindow", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+				ro.Routing.IneffectiveTimeWindow = "9h"
+			}, "ineffectiveTimeWindow: 9h", "ineffectiveTimeWindow: 4h"),
+			Entry("routing.recentlyRemediatedCooldown", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+				ro.Routing.RecentlyRemediatedCooldown = "13m"
+			}, "recentlyRemediatedCooldown: 13m", "recentlyRemediatedCooldown: 5m"),
+			Entry("routing.recurrenceCountThreshold", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+				ro.Routing.RecurrenceCountThreshold = ptr.To(11)
+			}, "recurrenceCountThreshold: 11", "recurrenceCountThreshold: 5"),
+			Entry("asyncPropagation.gitOpsSyncDelay", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+				ro.AsyncPropagation.GitOpsSyncDelay = "6m"
+			}, "gitOpsSyncDelay: 6m", "gitOpsSyncDelay: 3m"),
+			Entry("asyncPropagation.operatorReconcileDelay", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+				ro.AsyncPropagation.OperatorReconcileDelay = "2m"
+			}, "operatorReconcileDelay: 2m", "operatorReconcileDelay: 1m"),
+			Entry("asyncPropagation.proactiveAlertDelay", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+				ro.AsyncPropagation.ProactiveAlertDelay = "8m"
+			}, "proactiveAlertDelay: 8m", "proactiveAlertDelay: 5m"),
+		)
+
+		// #423 coverage backfill: remediationOrchestrator.resources is
+		// covered by the shared "Component .resources passthrough" table in
+		// deployments_test.go (CONS-005-adjacent); no separate ConfigMap
+		// assertion needed since RO's resources aren't config-rendered.
+
 		Context("BAC requirements", func() {
 			It("BAC-2: default CR renders explicit dryRun false", func() {
 				kn := testKubernaut()
@@ -953,7 +1046,22 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("custom-wf"), "WE config should use custom workflow namespace, got:\n%s", data)
 		})
 
-		It("wires Ansible when enabled", func() {
+		// #423 coverage backfill: workflowExecution.cooldownPeriod had zero
+		// test references anywhere in the codebase.
+		It("[CM-6] propagates a non-default spec.workflowExecution.cooldownPeriod, defaulting to 1m when unset", func() {
+			kn := testKubernaut()
+			cmDefault, err := WorkflowExecutionConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cmDefault.Data["workflowexecution.yaml"]).To(ContainSubstring("cooldownPeriod: 1m"), "unset cooldownPeriod should default to 1m")
+
+			kn.Spec.WorkflowExecution.CooldownPeriod = "3m"
+			cm, err := WorkflowExecutionConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["workflowexecution.yaml"]
+			Expect(data).To(ContainSubstring("cooldownPeriod: 3m"), "spec.workflowExecution.cooldownPeriod should propagate verbatim, got:\n%s", data)
+		})
+
+		It("[AC-6, IA-5] wires Ansible when enabled", func() {
 			kn := testKubernaut()
 			kn.Spec.Ansible.Enabled = true
 			kn.Spec.Ansible.APIURL = "https://awx.example.com"
@@ -976,6 +1084,19 @@ var _ = Describe("ConfigMaps", func() {
 			} {
 				Expect(data).To(ContainSubstring(want), "WE config should contain %q when Ansible enabled, got:\n%s", want, data)
 			}
+		})
+
+		// #423 coverage backfill: ansible.tokenSecretRef.key had no default
+		// test reference (the test above always sets an explicit key).
+		It("[AC-6, IA-5] defaults ansible.tokenSecretRef.key to \"token\" when unset", func() {
+			kn := testKubernaut()
+			kn.Spec.Ansible.Enabled = true
+			kn.Spec.Ansible.APIURL = "https://awx.example.com"
+			kn.Spec.Ansible.TokenSecretRef = &kubernautv1alpha1.SecretKeyRef{Name: "awx-token"}
+			cm, err := WorkflowExecutionConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["workflowexecution.yaml"]
+			Expect(data).To(ContainSubstring("key: token"), "unset ansible.tokenSecretRef.key should default to \"token\", got:\n%s", data)
 		})
 
 		It("omits Ansible when disabled", func() {
@@ -1101,6 +1222,28 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("stabilizationWindow: 30s"), "EM config should have default stabilization window, got:\n%s", data)
 		})
 
+		// #423 coverage backfill: assessment.stabilizationWindow/
+		// validityWindow non-default overrides had zero test references
+		// (only the stabilizationWindow default was covered above).
+		It("[CM-6] propagates non-default spec.effectivenessMonitor.assessment overrides", func() {
+			kn := testKubernaut()
+			kn.Spec.EffectivenessMonitor.Assessment.StabilizationWindow = "45s"
+			kn.Spec.EffectivenessMonitor.Assessment.ValidityWindow = "600s"
+			cm, err := EffectivenessMonitorConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["effectivenessmonitor.yaml"]
+			Expect(data).To(ContainSubstring("stabilizationWindow: 45s"), "spec.effectivenessMonitor.assessment.stabilizationWindow should propagate verbatim, got:\n%s", data)
+			Expect(data).To(ContainSubstring("validityWindow: 600s"), "spec.effectivenessMonitor.assessment.validityWindow should propagate verbatim, got:\n%s", data)
+		})
+
+		It("[CM-6] defaults assessment.validityWindow to 300s when unset", func() {
+			kn := testKubernaut()
+			cm, err := EffectivenessMonitorConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["effectivenessmonitor.yaml"]
+			Expect(data).To(ContainSubstring("validityWindow: 300s"), "unset assessment.validityWindow should default to 300s, got:\n%s", data)
+		})
+
 		It("includes monitoring URLs when monitoring is enabled", func() {
 			kn := testKubernaut()
 			cm, err := EffectivenessMonitorConfigMap(kn, testKnV2(kn))
@@ -1131,6 +1274,58 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("https://custom-alertmanager.custom-monitoring.svc:9094"), "EM config should use spec.monitoring.alertManager.url override, got:\n%s", data)
 			Expect(data).NotTo(ContainSubstring(OCPPrometheusURL), "EM config should not fall back to the OCP default once overridden, got:\n%s", data)
 			Expect(data).NotTo(ContainSubstring(OCPAlertManagerURL), "EM config should not fall back to the OCP default once overridden, got:\n%s", data)
+		})
+
+		// #424: spec.monitoring.prometheus.tlsCaFile/alertManager.tlsCaFile
+		// were CRD fields with zero non-test references anywhere in the
+		// codebase -- external.tlsCaFile was always the hardcoded
+		// "/etc/ssl/em/service-ca.crt" literal regardless of either field.
+		// EM's upstream Config.External.TLSCaFile
+		// (kubernaut/internal/config/effectivenessmonitor/config.go) is a
+		// single CA bundle shared by both its Prometheus and AlertManager
+		// HTTP clients -- there is no per-destination key to wire into --
+		// so Prometheus.TLSCaFile takes precedence over
+		// AlertManager.TLSCaFile when both are set (EM's primary
+		// assessment-scoring consumer).
+		It("overrides external.tlsCaFile from spec.monitoring.prometheus.tlsCaFile (#424)", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			knV2.Spec.Monitoring.Prometheus.TLSCaFile = testCustomPrometheusTLSCaFile
+			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["effectivenessmonitor.yaml"]
+			Expect(data).To(ContainSubstring("tlsCaFile: "+testCustomPrometheusTLSCaFile), "EM config should use spec.monitoring.prometheus.tlsCaFile override, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("/etc/ssl/em/service-ca.crt"), "EM config should not fall back to the hardcoded default once overridden, got:\n%s", data)
+		})
+
+		It("falls back to spec.monitoring.alertManager.tlsCaFile when prometheus.tlsCaFile is unset (#424)", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			knV2.Spec.Monitoring.AlertManager.TLSCaFile = testCustomAlertManagerTLSCaFile
+			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["effectivenessmonitor.yaml"]
+			Expect(data).To(ContainSubstring("tlsCaFile: "+testCustomAlertManagerTLSCaFile), "EM config should fall back to spec.monitoring.alertManager.tlsCaFile when prometheus.tlsCaFile is unset, got:\n%s", data)
+		})
+
+		It("prometheus.tlsCaFile takes precedence over alertManager.tlsCaFile when both are set (#424)", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			knV2.Spec.Monitoring.Prometheus.TLSCaFile = testCustomPrometheusTLSCaFile
+			knV2.Spec.Monitoring.AlertManager.TLSCaFile = testCustomAlertManagerTLSCaFile
+			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["effectivenessmonitor.yaml"]
+			Expect(data).To(ContainSubstring("tlsCaFile: "+testCustomPrometheusTLSCaFile), "EM's single external.tlsCaFile key should prefer prometheus.tlsCaFile when both overrides are set, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring(testCustomAlertManagerTLSCaFile), "EM's single external.tlsCaFile key cannot hold both values -- alertManager.tlsCaFile must not appear, got:\n%s", data)
+		})
+
+		It("unset preserves today's hardcoded external.tlsCaFile default (regression guard, #424)", func() {
+			kn := testKubernaut()
+			cm, err := EffectivenessMonitorConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["effectivenessmonitor.yaml"]
+			Expect(data).To(ContainSubstring("tlsCaFile: /etc/ssl/em/service-ca.crt"), "EM config should preserve the hardcoded default when neither override is set, got:\n%s", data)
 		})
 
 		// #298: emExternalYAML.PrometheusEnabled/AlertManagerEnabled were
@@ -1348,7 +1543,7 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("https://custom-alertmanager.custom-monitoring.svc:9094"), "KA config should use spec.monitoring.alertManager.url override, got:\n%s", data)
 		})
 
-		It("matches expected v1.4 structure and defaults", func() {
+		It("[AU-3, AU-4] matches expected v1.4 structure and defaults", func() {
 			kn := testKubernaut()
 			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
@@ -1374,6 +1569,38 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(root.Integrations.Tools.Alertmanager).NotTo(BeNil(), "integrations.tools.alertmanager should be present when monitoring is enabled by default (#205)")
 			Expect(root.Integrations.Tools.Alertmanager.URL).To(Equal(OCPAlertManagerURL), "integrations.tools.alertmanager.url = %q, want %q", root.Integrations.Tools.Alertmanager.URL, OCPAlertManagerURL)
 			Expect(root.Integrations.Tools.Alertmanager.TLSCaFile).To(Equal("/etc/ssl/ka/service-ca.crt"), "integrations.tools.alertmanager.tlsCaFile = %q, want /etc/ssl/ka/service-ca.crt", root.Integrations.Tools.Alertmanager.TLSCaFile)
+		})
+
+		// #424: spec.monitoring.prometheus.tlsCaFile/alertManager.tlsCaFile
+		// were CRD fields with zero non-test references anywhere in the
+		// codebase -- integrations.tools.{prometheus,alertmanager}.tlsCaFile
+		// were always the hardcoded "/etc/ssl/ka/service-ca.crt" literal
+		// regardless of either field. Unlike EM, KA's upstream
+		// PrometheusToolConfig/AlertmanagerToolConfig
+		// (kubernaut/internal/kubernautagent/config/config_types.go) are
+		// genuinely separate structs/keys, so each override wires
+		// independently with no precedence collision.
+		It("overrides tools.prometheus.tlsCaFile from spec.monitoring.prometheus.tlsCaFile (#424)", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			knV2.Spec.Monitoring.Prometheus.TLSCaFile = testCustomPrometheusTLSCaFile
+			cm, err := KubernautAgentConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			var root kubernautAgentConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Integrations.Tools.Prometheus.TLSCaFile).To(Equal(testCustomPrometheusTLSCaFile), "tools.prometheus.tlsCaFile should honor spec.monitoring.prometheus.tlsCaFile override, got %q", root.Integrations.Tools.Prometheus.TLSCaFile)
+		})
+
+		It("overrides tools.alertmanager.tlsCaFile from spec.monitoring.alertManager.tlsCaFile (#424)", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			knV2.Spec.Monitoring.AlertManager.TLSCaFile = testCustomAlertManagerTLSCaFile
+			cm, err := KubernautAgentConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			var root kubernautAgentConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Integrations.Tools.Alertmanager.TLSCaFile).To(Equal(testCustomAlertManagerTLSCaFile), "tools.alertmanager.tlsCaFile should honor spec.monitoring.alertManager.tlsCaFile override, got %q", root.Integrations.Tools.Alertmanager.TLSCaFile)
+			Expect(root.Integrations.Tools.Prometheus.TLSCaFile).To(Equal("/etc/ssl/ka/service-ca.crt"), "prometheus.tlsCaFile should keep its own default, unaffected by the alertmanager override -- KA's two keys are independent, got %q", root.Integrations.Tools.Prometheus.TLSCaFile)
 		})
 
 		It("F10 regression (#417): resolves ai.llm.provider via single-profile inference when kubernautAgent.llmProfileRef is omitted", func() {
@@ -1435,7 +1662,7 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(root.Runtime.Shutdown.DrainSeconds).To(Equal(120))
 		})
 
-		It("renders custom runtime.audit tuning fields from spec.kubernautAgent.audit (#257)", func() {
+		It("[AU-3, AU-4] renders custom runtime.audit tuning fields from spec.kubernautAgent.audit (#257)", func() {
 			kn := testKubernaut()
 			knV2 := testKnV2(kn)
 			buffer := 25000
@@ -1459,7 +1686,7 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(root.Runtime.Audit.BatchSize).To(Equal(200), "runtime.audit.batchSize should honor spec.kubernautAgent.audit.batchSize override")
 		})
 
-		It("omits runtime.audit entirely when audit is disabled, even with tuning overrides set (#257)", func() {
+		It("[AU-3] omits runtime.audit entirely when audit is disabled, even with tuning overrides set (#257)", func() {
 			kn := testKubernaut()
 			disabled := false
 			kn.Spec.KubernautAgent.Audit.Enabled = &disabled
@@ -1478,7 +1705,7 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("telemetry:"), "KA config should omit telemetry when spec.kubernautAgent.telemetry.endpoint is unset (zero overhead when off)")
 		})
 
-		It("renders telemetry endpoint/logSink/tls from spec.kubernautAgent.telemetry (#323)", func() {
+		It("[SC-8, SC-12] renders telemetry endpoint/logSink/tls from spec.kubernautAgent.telemetry (#323)", func() {
 			kn := testKubernaut()
 			knV2 := testKnV2(kn)
 			knV2.Spec.KubernautAgent.Telemetry = telemetrySpecFixture()
@@ -1487,7 +1714,7 @@ var _ = Describe("ConfigMaps", func() {
 			assertTelemetryYAML(cm.Data["config.yaml"])
 		})
 
-		It("renders alignment check settings when enabled", func() {
+		It("[CM-6] renders alignment check settings when enabled", func() {
 			kn := testKubernaut()
 			kn.Spec.KubernautAgent.AlignmentCheck.Enabled = true
 			kn.Spec.KubernautAgent.AlignmentCheck.Timeout = "20s"
@@ -1514,7 +1741,45 @@ var _ = Describe("ConfigMaps", func() {
 			}
 		})
 
-		It("propagates custom LLM TLS CA file", func() {
+		// #423: kubernautAgent.alignmentCheck.llmProfileRef (v1alpha2) was
+		// found entirely inert -- kaAlignmentConfig never read it, only the
+		// legacy v1alpha1 ac.LLM literal fields. Wired with llmProfileRef
+		// taking precedence over the legacy literal for backward compat.
+		It("[CM-6] resolves alignmentCheck.llmProfileRef (v1alpha2) onto ai.alignmentCheck.llm, taking precedence over the legacy llm literal", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.AlignmentCheck.Enabled = true
+			kn.Spec.KubernautAgent.AlignmentCheck.LLM = &kubernautv1alpha1.AlignmentCheckLLMSpec{
+				Provider: LLMProviderOpenAI,
+				Model:    "should-be-overridden",
+			}
+			kn.Spec.LLMProfiles = map[string]kubernautv1alpha1.LLMProfileSpec{
+				"align-profile": {Provider: LLMProviderAnthropic, Model: "claude-3-5-sonnet", Endpoint: "https://align-profile.example/v1"},
+			}
+			knV2 := testKnV2(kn)
+			knV2.Spec.KubernautAgent.AlignmentCheck.LLMProfileRef = "align-profile"
+			cm, err := KubernautAgentConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("provider: anthropic"), "llmProfileRef-resolved provider should take precedence over the legacy llm literal, got:\n%s", data)
+			Expect(data).To(ContainSubstring("model: claude-3-5-sonnet"), "llmProfileRef-resolved model should take precedence over the legacy llm literal, got:\n%s", data)
+			Expect(data).To(ContainSubstring("endpoint: https://align-profile.example/v1"), "llmProfileRef-resolved endpoint should be propagated, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("should-be-overridden"), "legacy llm literal must be ignored once llmProfileRef is set")
+		})
+
+		It("[CM-6] falls back to the legacy alignmentCheck.llm literal when llmProfileRef is unset", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.AlignmentCheck.Enabled = true
+			kn.Spec.KubernautAgent.AlignmentCheck.LLM = &kubernautv1alpha1.AlignmentCheckLLMSpec{
+				Provider: LLMProviderOpenAI,
+				Model:    "legacy-model",
+			}
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("model: legacy-model"), "legacy llm literal should still be honored when llmProfileRef is unset (backward compat), got:\n%s", data)
+		})
+
+		It("[SC-8, SC-12] propagates custom LLM TLS CA file", func() {
 			kn := testKubernaut()
 			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.TLSCaFile = "/etc/custom-ca/llm.pem" })
 			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
@@ -1531,7 +1796,47 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(root.AI.LLM.TLSCaFile).To(Equal("/etc/custom-ca/llm.pem"), "ai.llm.tlsCaFile = %q, want /etc/custom-ca/llm.pem", root.AI.LLM.TLSCaFile)
 		})
 
-		It("renders non-default summarizer thresholds", func() {
+		// #423 coverage backfill: llmProfiles.tlsCertFile/tlsKeyFile had no
+		// tagged test reference (mirrors the tlsCaFile test just above).
+		It("[SC-8, SC-12] propagates custom LLM TLS client cert and key files", func() {
+			kn := testKubernaut()
+			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
+				p.TLSCertFile = "/etc/custom-ca/llm-client.crt"
+				p.TLSKeyFile = "/etc/custom-ca/llm-client.key"
+			})
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("tlsCertFile: /etc/custom-ca/llm-client.crt"), "llmProfiles.tlsCertFile should propagate verbatim, got:\n%s", data)
+			Expect(data).To(ContainSubstring("tlsKeyFile: /etc/custom-ca/llm-client.key"), "llmProfiles.tlsKeyFile should propagate verbatim, got:\n%s", data)
+		})
+
+		// #423 coverage backfill: llmProfiles.azureApiVersion/bedrockRegion/
+		// timeoutSeconds had zero test references anywhere in the codebase.
+		It("[CM-6] propagates llmProfiles.azureApiVersion and bedrockRegion overrides", func() {
+			kn := testKubernaut()
+			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
+				p.AzureAPIVersion = "2024-06-01"
+				p.BedrockRegion = "us-west-2"
+			})
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("azureApiVersion: \"2024-06-01\""), "llmProfiles.azureApiVersion should propagate verbatim, got:\n%s", data)
+			Expect(data).To(ContainSubstring("bedrockRegion: us-west-2"), "llmProfiles.bedrockRegion should propagate verbatim, got:\n%s", data)
+		})
+
+		It("[CM-6] propagates a non-default llmProfiles.timeoutSeconds onto the llm-runtime ConfigMap", func() {
+			kn := testKubernaut()
+			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.TimeoutSeconds = ptr.To(45) })
+			cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm).NotTo(BeNil())
+			data := cm.Data["llm-runtime.yaml"]
+			Expect(data).To(ContainSubstring("timeoutSeconds: 45"), "llmProfiles.timeoutSeconds should propagate verbatim, got:\n%s", data)
+		})
+
+		It("[SC-5] renders non-default summarizer thresholds", func() {
 			kn := testKubernaut()
 			kn.Spec.KubernautAgent.Summarizer.Threshold = 5000
 			kn.Spec.KubernautAgent.Summarizer.MaxToolOutputSize = 50000
@@ -1570,6 +1875,79 @@ var _ = Describe("ConfigMaps", func() {
 			err = yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(root.AI.Safety.Anomaly.MaxToolCallsPerTool).To(Equal(5), "ai.safety.anomaly.maxToolCallsPerTool = %d, want 5", root.AI.Safety.Anomaly.MaxToolCallsPerTool)
+		})
+
+		// #423 coverage backfill: safety.anomaly.maxTotalToolCalls/
+		// maxRepeatedFailures had zero test references anywhere in the
+		// codebase.
+		It("[SI-10] renders safety anomaly maxTotalToolCalls and maxRepeatedFailures overrides", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.Safety.Anomaly.MaxTotalToolCalls = ptr.To(77)
+			kn.Spec.KubernautAgent.Safety.Anomaly.MaxRepeatedFailures = ptr.To(9)
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("maxTotalToolCalls: 77"), "spec.kubernautAgent.safety.anomaly.maxTotalToolCalls should propagate verbatim, got:\n%s", data)
+			Expect(data).To(ContainSubstring("maxRepeatedFailures: 9"), "spec.kubernautAgent.safety.anomaly.maxRepeatedFailures should propagate verbatim, got:\n%s", data)
+		})
+
+		// #423 coverage backfill: safety.sanitization.credentialScrubEnabled/
+		// injectionPatternsEnabled had zero test references. Both default to
+		// true (secure-by-default: sanitize unless explicitly disabled).
+		It("[SI-10, SC-8] defaults safety.sanitization guardrails to enabled", func() {
+			kn := testKubernaut()
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("credentialScrubEnabled: true"), "credentialScrubEnabled should default to true (secure-by-default), got:\n%s", data)
+			Expect(data).To(ContainSubstring("injectionPatternsEnabled: true"), "injectionPatternsEnabled should default to true (secure-by-default), got:\n%s", data)
+		})
+
+		It("[SI-10, SC-8] honors explicit safety.sanitization overrides to disable guardrails", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.Safety.Sanitization.CredentialScrubEnabled = ptr.To(false)
+			kn.Spec.KubernautAgent.Safety.Sanitization.InjectionPatternsEnabled = ptr.To(false)
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("credentialScrubEnabled: false"), "explicit spec.kubernautAgent.safety.sanitization.credentialScrubEnabled=false must be honored, got:\n%s", data)
+			Expect(data).To(ContainSubstring("injectionPatternsEnabled: false"), "explicit spec.kubernautAgent.safety.sanitization.injectionPatternsEnabled=false must be honored, got:\n%s", data)
+		})
+
+		// #423 coverage backfill: kubernautAgent.maxTurns had zero test
+		// references for an explicit (non-default) override.
+		It("[CM-6] propagates a non-default spec.kubernautAgent.maxTurns onto ai.investigation.maxTurns", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.MaxTurns = 15
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("maxTurns: 15"), "spec.kubernautAgent.maxTurns should propagate verbatim, got:\n%s", data)
+		})
+
+		// #423 coverage backfill: interactive.maxConcurrentSessions/
+		// rateLimitPerUser had zero test references.
+		It("[SC-5] propagates interactive.maxConcurrentSessions and rateLimitPerUser overrides", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.Interactive = &kubernautv1alpha1.InteractiveSpec{
+				MaxConcurrentSessions: ptr.To(250),
+				RateLimitPerUser:      ptr.To(42),
+			}
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("maxConcurrentSessions: 250"), "spec.kubernautAgent.interactive.maxConcurrentSessions should propagate verbatim, got:\n%s", data)
+			Expect(data).To(ContainSubstring("rateLimitPerUser: 42"), "spec.kubernautAgent.interactive.rateLimitPerUser should propagate verbatim, got:\n%s", data)
+		})
+
+		// #423 coverage backfill: session.ttl had zero test references.
+		It("[SC-23] propagates spec.kubernautAgent.session.ttl onto runtime.session.ttl", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.Session.TTL = "45m"
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("ttl: 45m"), "spec.kubernautAgent.session.ttl should propagate verbatim, got:\n%s", data)
 		})
 
 		It("renders LLM OAuth2 block when enabled", func() {
@@ -2526,6 +2904,50 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).NotTo(ContainSubstring("issuerURL: https://"))
 	})
 
+	// #423 coverage backfill: server.healthPort/metricsPort overrides had
+	// zero test references anywhere in the codebase per
+	// docs/tests/421/CRD_FIELD_COVERAGE_AUDIT.md.
+	It("[CM-6] propagates spec.apiFrontend.healthPort and metricsPort overrides onto server config", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.HealthPort = ptr.To(int32(18081))
+		kn.Spec.APIFrontend.MetricsPort = ptr.To(int32(19090))
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("healthPort: 18081"), "spec.apiFrontend.healthPort should override the server's health port, got:\n%s", data)
+		Expect(data).To(ContainSubstring("metricsPort: 19090"), "spec.apiFrontend.metricsPort should override the server's metrics port, got:\n%s", data)
+	})
+
+	// #423 coverage backfill: all 4 rateLimit.* fields had zero test
+	// references anywhere in the codebase.
+	It("[SC-5] propagates spec.apiFrontend.rateLimit overrides onto the rendered rateLimit block", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.RateLimit = kubernautv1alpha1.APIFrontendRateLimitSpec{
+			IPRequestsPerSec:      ptr.To(12345),
+			UserRequestsPerSec:    ptr.To(234),
+			MaxConcurrentSessions: ptr.To(77),
+			ToolCallsPerMinute:    ptr.To(999),
+		}
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("ipRequestsPerSec: 12345"), "spec.apiFrontend.rateLimit.ipRequestsPerSec should propagate verbatim, got:\n%s", data)
+		Expect(data).To(ContainSubstring("userRequestsPerSec: 234"), "spec.apiFrontend.rateLimit.userRequestsPerSec should propagate verbatim, got:\n%s", data)
+		Expect(data).To(ContainSubstring("maxConcurrentSessions: 77"), "spec.apiFrontend.rateLimit.maxConcurrentSessions should propagate verbatim, got:\n%s", data)
+		Expect(data).To(ContainSubstring("toolCallsPerMinute: 999"), "spec.apiFrontend.rateLimit.toolCallsPerMinute should propagate verbatim, got:\n%s", data)
+	})
+
+	It("[SC-5] defaults spec.apiFrontend.rateLimit fields when unset", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("ipRequestsPerSec: 50"), "unset rateLimit.ipRequestsPerSec should default to 50, got:\n%s", data)
+		Expect(data).To(ContainSubstring("userRequestsPerSec: 20"), "unset rateLimit.userRequestsPerSec should default to 20, got:\n%s", data)
+		Expect(data).To(ContainSubstring("maxConcurrentSessions: 100"), "unset rateLimit.maxConcurrentSessions should default to 100, got:\n%s", data)
+		Expect(data).To(ContainSubstring("toolCallsPerMinute: 60"), "unset rateLimit.toolCallsPerMinute should default to 60, got:\n%s", data)
+	})
+
 	It("uses OCP service-ca for severity triage when monitoring is enabled", func() {
 		kn := testKubernautWithAF()
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
@@ -2991,6 +3413,43 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			"AF severityTriage.prometheusURL should use spec.monitoring.prometheus.url override, got %q", root.SeverityTriage.PrometheusURL)
 	})
 
+	// #424: spec.monitoring.prometheus.tlsCaFile was a CRD field with zero
+	// non-test references anywhere in the codebase --
+	// severityTriage.prometheusTlsCaFile was always the hardcoded
+	// "/etc/ssl/af/service-ca.crt" literal regardless of this field. AF has
+	// no AlertManager client (afSeverityTriageConfig only ever sets
+	// PrometheusURL), so spec.monitoring.alertManager.tlsCaFile has no AF
+	// counterpart to wire.
+	It("overrides severityTriage.prometheusTlsCaFile from spec.monitoring.prometheus.tlsCaFile (#424)", func() {
+		kn := testKubernautWithAF()
+		knV2 := testKnV2(kn)
+		knV2.Spec.Monitoring.Prometheus.TLSCaFile = testCustomPrometheusTLSCaFile
+		cm, err := APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		var root struct {
+			SeverityTriage struct {
+				PrometheusTLSCAFile string `yaml:"prometheusTlsCaFile"`
+			} `yaml:"severityTriage"`
+		}
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.SeverityTriage.PrometheusTLSCAFile).To(Equal(testCustomPrometheusTLSCaFile),
+			"AF severityTriage.prometheusTlsCaFile should use spec.monitoring.prometheus.tlsCaFile override, got %q", root.SeverityTriage.PrometheusTLSCAFile)
+	})
+
+	It("unset preserves today's hardcoded severityTriage.prometheusTlsCaFile default (regression guard, #424)", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		var root struct {
+			SeverityTriage struct {
+				PrometheusTLSCAFile string `yaml:"prometheusTlsCaFile"`
+			} `yaml:"severityTriage"`
+		}
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.SeverityTriage.PrometheusTLSCAFile).To(Equal("/etc/ssl/af/service-ca.crt"),
+			"AF severityTriage.prometheusTlsCaFile should preserve the hardcoded default when unset, got %q", root.SeverityTriage.PrometheusTLSCAFile)
+	})
+
 	It("severityTriage.llm is omitted by default, inheriting AF's agent.llm connection", func() {
 		kn := testKubernautWithAF()
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
@@ -3404,7 +3863,7 @@ var _ = Describe("APIFrontend SeverityTriage Cache/Confidence Config", func() {
 })
 
 var _ = Describe("APIFrontendConfigMap OIDC", func() {
-	It("IA-5: propagates jwksURL to AF config for explicit JWKS endpoint trust", func() {
+	It("[IA-5] propagates jwksURL to AF config for explicit JWKS endpoint trust", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.JWKSURL = "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/certs"
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
@@ -3414,7 +3873,7 @@ var _ = Describe("APIFrontendConfigMap OIDC", func() {
 			"IA-5: jwksURL must be propagated for explicit JWKS endpoint configuration")
 	})
 
-	It("IA-5: propagates oidcCaFile to AF config for OIDC CA verification", func() {
+	It("[IA-5, SC-8] propagates oidcCaFile to AF config for OIDC CA verification", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.OIDCCAFile = "/etc/pki/tls/certs/oidc-ca.crt"
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
@@ -3424,7 +3883,7 @@ var _ = Describe("APIFrontendConfigMap OIDC", func() {
 			"IA-5: oidcCaFile must be propagated for OIDC provider CA trust")
 	})
 
-	It("IA-5: omits allowInsecureIssuers by default (secure-by-default)", func() {
+	It("[IA-5, SC-8] omits allowInsecureIssuers by default (secure-by-default)", func() {
 		kn := testKubernautWithAF()
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -3433,7 +3892,7 @@ var _ = Describe("APIFrontendConfigMap OIDC", func() {
 			"IA-5: allowInsecureIssuers must default to false (secure-by-default)")
 	})
 
-	It("SC-8: propagates allowInsecureIssuers when explicitly enabled", func() {
+	It("[SC-8] propagates allowInsecureIssuers when explicitly enabled", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.AllowInsecureIssuers = true
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
@@ -3443,7 +3902,7 @@ var _ = Describe("APIFrontendConfigMap OIDC", func() {
 			"SC-8: allowInsecureIssuers must be propagated when explicitly set")
 	})
 
-	It("SC-23: propagates audience claim for token binding validation", func() {
+	It("[SC-23, IA-5] propagates audience claim for token binding validation", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.Audience = "custom-audience"
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
@@ -3472,7 +3931,7 @@ var _ = Describe("APIFrontendConfigMap OIDC", func() {
 })
 
 var _ = Describe("APIFrontendConfigMap kagenti OIDC auto-detection", func() {
-	It("IA-2: uses kagenti-detected issuerURL when CR field is empty", func() {
+	It("[IA-2, IA-5, SC-8] uses kagenti-detected issuerURL when CR field is empty", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.IssuerURL = ""
 		oidc := &KagentiOIDCDefaults{
@@ -3491,7 +3950,7 @@ var _ = Describe("APIFrontendConfigMap kagenti OIDC auto-detection", func() {
 			"SC-8: allowInsecureIssuers required when in-cluster JWKS uses HTTP")
 	})
 
-	It("CM-6: CR issuerURL takes precedence over kagenti-detected value", func() {
+	It("[CM-6] CR issuerURL takes precedence over kagenti-detected value", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.IssuerURL = "https://custom-idp.example.com/realms/custom"
 		oidc := &KagentiOIDCDefaults{
@@ -3507,7 +3966,7 @@ var _ = Describe("APIFrontendConfigMap kagenti OIDC auto-detection", func() {
 		Expect(data).NotTo(ContainSubstring("issuerURL: https://keycloak.example.com/realms/kagenti"))
 	})
 
-	It("CM-6: CR jwksURL takes precedence over kagenti-detected value", func() {
+	It("[CM-6, IA-5] CR jwksURL takes precedence over kagenti-detected value", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.JWKSURL = "https://custom-jwks.example.com/certs"
 		oidc := &KagentiOIDCDefaults{
@@ -3521,7 +3980,7 @@ var _ = Describe("APIFrontendConfigMap kagenti OIDC auto-detection", func() {
 			"CM-6: explicit CR jwksURL must override auto-detected value")
 	})
 
-	It("SC-8: CR allowInsecureIssuers=true overrides secure detection", func() {
+	It("[SC-8] CR allowInsecureIssuers=true overrides secure detection", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.AllowInsecureIssuers = true
 		oidc := &KagentiOIDCDefaults{
@@ -3535,7 +3994,7 @@ var _ = Describe("APIFrontendConfigMap kagenti OIDC auto-detection", func() {
 			"SC-8: explicit CR allowInsecureIssuers must be honored")
 	})
 
-	It("IA-2: nil OIDC defaults produce unchanged behavior", func() {
+	It("[IA-2, SC-8] nil OIDC defaults produce unchanged behavior", func() {
 		kn := testKubernautWithAF()
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -3546,7 +4005,7 @@ var _ = Describe("APIFrontendConfigMap kagenti OIDC auto-detection", func() {
 			"SC-8: allowInsecureIssuers must default to false without kagenti")
 	})
 
-	It("IA-2: works with envoy sidecar mode (kagenti 0.2.x)", func() {
+	It("[IA-2] works with envoy sidecar mode (kagenti 0.2.x)", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.IssuerURL = ""
 		oidc := &KagentiOIDCDefaults{
@@ -3561,7 +4020,7 @@ var _ = Describe("APIFrontendConfigMap kagenti OIDC auto-detection", func() {
 })
 
 var _ = Describe("IA-2: AF multi-provider JWT config emission", func() {
-	It("IA-2: emits jwtProviders array enabling concurrent multi-issuer token validation", func() {
+	It("[IA-2, IA-5] emits jwtProviders array enabling concurrent multi-issuer token validation", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
 			{
@@ -3596,7 +4055,7 @@ var _ = Describe("IA-2: AF multi-provider JWT config emission", func() {
 			"IA-2: spire issuerURL must be propagated")
 	})
 
-	It("IA-2: omits jwtProviders when single-provider legacy path is used", func() {
+	It("[IA-2] omits jwtProviders when single-provider legacy path is used", func() {
 		kn := testKubernautWithAF()
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -3607,7 +4066,7 @@ var _ = Describe("IA-2: AF multi-provider JWT config emission", func() {
 })
 
 var _ = Describe("AC-6: claim-based authorization config", func() {
-	It("AC-6: propagates claim mappings enabling group-based tool authorization", func() {
+	It("[AC-6] propagates claim mappings enabling group-based tool authorization", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
 			{
@@ -3629,7 +4088,7 @@ var _ = Describe("AC-6: claim-based authorization config", func() {
 			"AC-6: groups claim mapping must be propagated for tool authorization")
 	})
 
-	It("AC-6: omits claim mappings when not configured — AF falls back to default claim extraction", func() {
+	It("[AC-6] omits claim mappings when not configured — AF falls back to default claim extraction", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
 			{
@@ -3647,7 +4106,7 @@ var _ = Describe("AC-6: claim-based authorization config", func() {
 })
 
 var _ = Describe("SC-23: per-provider audience config", func() {
-	It("SC-23: emits audiences array per provider for audience-scoped token validation", func() {
+	It("[SC-23, IA-5] emits audiences array per provider for audience-scoped token validation", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
 			{
@@ -3667,7 +4126,7 @@ var _ = Describe("SC-23: per-provider audience config", func() {
 })
 
 var _ = Describe("APIFrontendConfigMap SAR", func() {
-	It("includes rbac.sarCacheTTL with default 30s", func() {
+	It("[AC-6] includes rbac.sarCacheTTL with default 30s", func() {
 		kn := testKubernautWithAF()
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -3676,7 +4135,7 @@ var _ = Describe("APIFrontendConfigMap SAR", func() {
 			"AF config should include rbac.sarCacheTTL default 30s, got:\n%s", data)
 	})
 
-	It("renders custom sarCacheTTL from spec", func() {
+	It("[AC-6] renders custom sarCacheTTL from spec", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
 			SARCacheTTL: "2m",
@@ -3688,7 +4147,7 @@ var _ = Describe("APIFrontendConfigMap SAR", func() {
 			"AF config should render custom sarCacheTTL, got:\n%s", data)
 	})
 
-	It("defaults rbac.consoleAccessAuthorizationCheckEnabled to false (#338)", func() {
+	It("[AC-6] defaults rbac.consoleAccessAuthorizationCheckEnabled to false (#338)", func() {
 		kn := testKubernautWithAF()
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -3697,7 +4156,7 @@ var _ = Describe("APIFrontendConfigMap SAR", func() {
 			"AF config should default rbac.consoleAccessAuthorizationCheckEnabled to false so zero-config installs never need RBAC set up first, got:\n%s", data)
 	})
 
-	It("renders rbac.consoleAccessAuthorizationCheckEnabled: true when explicitly enabled via spec.apiFrontend.rbac (#338)", func() {
+	It("[AC-6] renders rbac.consoleAccessAuthorizationCheckEnabled: true when explicitly enabled via spec.apiFrontend.rbac (#338)", func() {
 		kn := testKubernautWithAF()
 		knV2 := testKnV2(kn)
 		enabled := true
@@ -3725,7 +4184,7 @@ var _ = Describe("APIFrontendRBACRolesConfigMap", func() {
 })
 
 var _ = Describe("DataStorage SignerCertDir Config", func() {
-	It("renders signerCertDir when signing cert is configured", func() {
+	It("[SC-12] renders signerCertDir when signing cert is configured", func() {
 		kn := testKubernaut()
 		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha1.SigningCertSpec{
 			SecretName: "datastorage-signing-cert",
@@ -3736,7 +4195,7 @@ var _ = Describe("DataStorage SignerCertDir Config", func() {
 		Expect(data).To(ContainSubstring("signerCertDir: /etc/certs"))
 	})
 
-	It("defaults signerCertDir to /etc/certs when signing cert is not configured", func() {
+	It("[SC-12] defaults signerCertDir to /etc/certs when signing cert is not configured", func() {
 		kn := testKubernaut()
 		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
@@ -3804,7 +4263,7 @@ var _ = Describe("DataStorage Retention Config", func() {
 		Expect(data).NotTo(ContainSubstring("defaultDays: 5000"))
 	})
 
-	It("respects custom values", func() {
+	It("[SI-12, AU-11] respects custom values", func() {
 		kn := testKubernaut()
 		enabled := false
 		batch := 500

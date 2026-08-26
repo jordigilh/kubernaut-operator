@@ -49,14 +49,14 @@ func NetworkPolicies(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Ku
 		return nil
 	}
 	nps := []*networkingv1.NetworkPolicy{
-		dataStorageNetworkPolicy(kn),
-		aiAnalysisNetworkPolicy(kn),
+		dataStorageNetworkPolicy(kn, knV2),
+		aiAnalysisNetworkPolicy(kn, knV2),
 		signalProcessingNetworkPolicy(kn, knV2),
 		remediationOrchestratorNetworkPolicy(kn, knV2),
 		workflowExecutionNetworkPolicy(kn, knV2),
-		notificationNetworkPolicy(kn),
+		notificationNetworkPolicy(kn, knV2),
 		effectivenessMonitorNetworkPolicy(kn, knV2),
-		authWebhookNetworkPolicy(kn),
+		authWebhookNetworkPolicy(kn, knV2),
 		kubernautAgentNetworkPolicy(kn, knV2),
 	}
 	if kn.Spec.GatewayEnabled() {
@@ -75,10 +75,13 @@ func gatewayNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 	protoTCP := corev1.ProtocolTCP
 	p8443 := intstr.FromInt32(PortHTTPS)
 
-	ingressFrom := []networkingv1.NetworkPolicyPeer{
-		{NamespaceSelector: namespaceNameSelector(OCPIngressNamespace)},
-		{NamespaceSelector: namespaceNameSelector(OCPMonitoringNamespace)},
-	}
+	namedPeers := namedIngressPeers(knV2.Spec.NetworkPolicies.Gateway)
+	ingressFrom := make([]networkingv1.NetworkPolicyPeer, 0, 2+len(namedPeers))
+	ingressFrom = append(ingressFrom,
+		networkingv1.NetworkPolicyPeer{NamespaceSelector: namespaceNameSelector(OCPIngressNamespace)},
+		networkingv1.NetworkPolicyPeer{NamespaceSelector: namespaceNameSelector(OCPMonitoringNamespace)},
+	)
+	ingressFrom = append(ingressFrom, namedPeers...)
 
 	ingress := []networkingv1.NetworkPolicyIngressRule{
 		{
@@ -89,7 +92,7 @@ func gatewayNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 		},
 	}
 
-	egress := baseEgress(2)
+	egress := baseEgress(knV2, 2)
 	egress = append(egress, datastorageEgressRule())
 	if knV2.Spec.FleetEnabled() {
 		egress = append(egress, fleetDestinationsEgressRule(knV2))
@@ -109,7 +112,7 @@ func gatewayNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 	}
 }
 
-func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
+func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
 	protoTCP := corev1.ProtocolTCP
 	p8443 := intstr.FromInt32(PortHTTPS)
 
@@ -133,6 +136,7 @@ func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 			networkingv1.NetworkPolicyPeer{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentGateway)}},
 		)
 	}
+	dataIngressPeers = append(dataIngressPeers, ingressOverridePeers(knV2.Spec.NetworkPolicies.DataStorage)...)
 
 	ingress := []networkingv1.NetworkPolicyIngressRule{
 		{
@@ -151,7 +155,7 @@ func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 	pPG := intstr.FromInt32(PostgreSQLPort(kn))
 	pValkey := intstr.FromInt32(valkeyPort)
 
-	egress := baseEgress(1)
+	egress := baseEgress(knV2, 1)
 	egress = append(egress, networkingv1.NetworkPolicyEgressRule{
 		To: sameNamespacePeers(),
 		Ports: []networkingv1.NetworkPolicyPort{
@@ -174,12 +178,12 @@ func dataStorageNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 	}
 }
 
-func aiAnalysisNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
-	return controllerWithDataStorageAndAgentEgress(kn, ComponentAIAnalysis, metricsOnlyIngress())
+func aiAnalysisNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
+	return controllerWithDataStorageAndAgentEgress(kn, knV2, ComponentAIAnalysis, metricsOnlyIngress())
 }
 
 func signalProcessingNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
-	np := controllerWithDataStorageEgressOnly(kn, ComponentSignalProcessing, metricsOnlyIngress())
+	np := controllerWithDataStorageEgressOnly(kn, knV2, ComponentSignalProcessing, metricsOnlyIngress())
 	if knV2.Spec.FleetEnabled() {
 		np.Spec.Egress = append(np.Spec.Egress, fleetDestinationsEgressRule(knV2))
 	}
@@ -187,7 +191,7 @@ func signalProcessingNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubern
 }
 
 func remediationOrchestratorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
-	np := controllerWithDataStorageEgressOnly(kn, ComponentRemediationOrchestrator, metricsOnlyIngress())
+	np := controllerWithDataStorageEgressOnly(kn, knV2, ComponentRemediationOrchestrator, metricsOnlyIngress())
 	if knV2.Spec.FleetEnabled() {
 		np.Spec.Egress = append(np.Spec.Egress, fleetDestinationsEgressRule(knV2))
 	}
@@ -197,9 +201,9 @@ func remediationOrchestratorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 
 func workflowExecutionNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
 	var np *networkingv1.NetworkPolicy
 	if kn.Spec.Ansible.Enabled {
-		np = controllerWithDataStorageAndHTTPSEgress(kn, ComponentWorkflowExecution, metricsOnlyIngress())
+		np = controllerWithDataStorageAndHTTPSEgress(kn, knV2, ComponentWorkflowExecution, metricsOnlyIngress())
 	} else {
-		np = controllerWithDataStorageEgressOnly(kn, ComponentWorkflowExecution, metricsOnlyIngress())
+		np = controllerWithDataStorageEgressOnly(kn, knV2, ComponentWorkflowExecution, metricsOnlyIngress())
 	}
 	// WorkflowExecution is fleet-config-aware (resolveWEFleetConfig/
 	// weFleetYAML, #390) but was never granted egress to reach the MCP
@@ -213,16 +217,17 @@ func workflowExecutionNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kuber
 	return np
 }
 
-func notificationNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
+func notificationNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
 	protoTCP := corev1.ProtocolTCP
-	p443 := intstr.FromInt32(443)
+	override := knV2.Spec.NetworkPolicies.ExternalWebhooks
+	webhookPort := intstr.FromInt32(egressOverridePort(override, 443))
 
 	ingress := metricsOnlyIngress()
-	egress := baseEgress(2)
+	egress := baseEgress(knV2, 2)
 	egress = append(egress, datastorageEgressRule(), networkingv1.NetworkPolicyEgressRule{
-		To: ipWorldPeers(),
+		To: egressOverridePeers(override),
 		Ports: []networkingv1.NetworkPolicyPort{
-			{Protocol: &protoTCP, Port: &p443},
+			{Protocol: &protoTCP, Port: &webhookPort},
 		},
 	})
 
@@ -242,7 +247,7 @@ func notificationNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Ne
 
 func effectivenessMonitorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
 	ingress := metricsOnlyIngress()
-	egress := baseEgress(4)
+	egress := baseEgress(knV2, 4)
 	egress = append(egress, datastorageEgressRule())
 	egress = append(egress, monitoringEgressRules(knV2, true)...)
 	if knV2.Spec.FleetEnabled() {
@@ -263,7 +268,7 @@ func effectivenessMonitorNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *ku
 	}
 }
 
-func authWebhookNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.NetworkPolicy {
+func authWebhookNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
 	protoTCP := corev1.ProtocolTCP
 	p9443 := intstr.FromInt32(PortWebhookServer)
 
@@ -275,7 +280,7 @@ func authWebhookNetworkPolicy(kn *kubernautv1alpha1.Kubernaut) *networkingv1.Net
 		},
 	}
 
-	egress := baseEgress(1)
+	egress := baseEgress(knV2, 1)
 	egress = append(egress, datastorageEgressRule())
 
 	return &networkingv1.NetworkPolicy{
@@ -304,6 +309,7 @@ func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernau
 			networkingv1.NetworkPolicyPeer{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentAPIFrontend)}},
 		)
 	}
+	kaIngressPeers = append(kaIngressPeers, ingressOverridePeers(knV2.Spec.NetworkPolicies.KubernautAgent)...)
 
 	ingress := []networkingv1.NetworkPolicyIngressRule{
 		{
@@ -313,16 +319,17 @@ func kubernautAgentNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernau
 		*metricsIngressRule(OCPMonitoringNamespace),
 	}
 
-	egress := baseEgress(4)
+	egress := baseEgress(knV2, 4)
 	egress = append(egress, datastorageEgressRule())
 	egress = append(egress, monitoringEgressRules(knV2, true)...)
 	kaProfile, _ := ResolveLLMProfile(kn, EffectiveKALLMProfileRef(kn))
 	if kaProfile.Provider != "" {
-		p443 := intstr.FromInt32(443)
+		llmOverride := knV2.Spec.NetworkPolicies.LLM
+		llmPort := intstr.FromInt32(egressOverridePort(llmOverride, 443))
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
-			To: ipWorldPeers(),
+			To: egressOverridePeers(llmOverride),
 			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protoTCP, Port: &p443},
+				{Protocol: &protoTCP, Port: &llmPort},
 			},
 		})
 	}
@@ -348,8 +355,8 @@ func metricsOnlyIngress() []networkingv1.NetworkPolicyIngressRule {
 	return []networkingv1.NetworkPolicyIngressRule{*metricsIngressRule(OCPMonitoringNamespace)}
 }
 
-func controllerWithDataStorageEgressOnly(kn *kubernautv1alpha1.Kubernaut, component string, ingress []networkingv1.NetworkPolicyIngressRule) *networkingv1.NetworkPolicy {
-	egress := baseEgress(1)
+func controllerWithDataStorageEgressOnly(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, component string, ingress []networkingv1.NetworkPolicyIngressRule) *networkingv1.NetworkPolicy {
+	egress := baseEgress(knV2, 1)
 	egress = append(egress, datastorageEgressRule())
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: ObjectMeta(kn, component+"-netpol", component),
@@ -365,11 +372,11 @@ func controllerWithDataStorageEgressOnly(kn *kubernautv1alpha1.Kubernaut, compon
 	}
 }
 
-func controllerWithDataStorageAndHTTPSEgress(kn *kubernautv1alpha1.Kubernaut, component string, ingress []networkingv1.NetworkPolicyIngressRule) *networkingv1.NetworkPolicy {
+func controllerWithDataStorageAndHTTPSEgress(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, component string, ingress []networkingv1.NetworkPolicyIngressRule) *networkingv1.NetworkPolicy {
 	protoTCP := corev1.ProtocolTCP
 	p443 := intstr.FromInt32(443)
 
-	egress := baseEgress(2)
+	egress := baseEgress(knV2, 2)
 	egress = append(egress, datastorageEgressRule(), networkingv1.NetworkPolicyEgressRule{
 		To: ipWorldPeers(),
 		Ports: []networkingv1.NetworkPolicyPort{
@@ -390,11 +397,11 @@ func controllerWithDataStorageAndHTTPSEgress(kn *kubernautv1alpha1.Kubernaut, co
 	}
 }
 
-func controllerWithDataStorageAndAgentEgress(kn *kubernautv1alpha1.Kubernaut, component string, ingress []networkingv1.NetworkPolicyIngressRule) *networkingv1.NetworkPolicy {
+func controllerWithDataStorageAndAgentEgress(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, component string, ingress []networkingv1.NetworkPolicyIngressRule) *networkingv1.NetworkPolicy {
 	protoTCP := corev1.ProtocolTCP
 	p8443 := intstr.FromInt32(PortHTTPS)
 
-	egress := baseEgress(2)
+	egress := baseEgress(knV2, 2)
 	egress = append(egress, datastorageEgressRule(), networkingv1.NetworkPolicyEgressRule{
 		To: []networkingv1.NetworkPolicyPeer{
 			{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentKubernautAgent)}},
@@ -442,12 +449,85 @@ func sameNamespacePeers() []networkingv1.NetworkPolicyPeer {
 }
 
 // baseEgress returns the standard DNS + API server egress rules with
-// pre-allocated capacity for additional rules.
-func baseEgress(extraCap int) []networkingv1.NetworkPolicyEgressRule {
+// pre-allocated capacity for additional rules. knV2 supplies
+// spec.networkPolicies overrides (#422) that apply to every component via
+// apiServerEgressRule.
+func baseEgress(knV2 *kubernautv1alpha2.Kubernaut, extraCap int) []networkingv1.NetworkPolicyEgressRule {
 	rules := make([]networkingv1.NetworkPolicyEgressRule, 2, 2+extraCap)
 	rules[0] = dnsEgressRule()
-	rules[1] = apiServerEgressRule()
+	rules[1] = apiServerEgressRule(knV2.Spec.NetworkPolicies)
 	return rules
+}
+
+// namedIngressPeers returns extra NetworkPolicyPeers for a component
+// exposing the simple ingressNamespaces name-list override
+// (NetworkPolicyNamedIngressOverride, #422): one namespace-selector peer
+// per named namespace, plus the CIDR/selector peers from the embedded
+// NetworkPolicyIngressOverride. Returns an empty slice (no-op) when the
+// override is entirely unset, preserving today's default ingress exactly.
+func namedIngressPeers(o kubernautv1alpha2.NetworkPolicyNamedIngressOverride) []networkingv1.NetworkPolicyPeer {
+	peers := ingressOverridePeers(o.NetworkPolicyIngressOverride)
+	for _, ns := range o.IngressNamespaces {
+		peers = append(peers, networkingv1.NetworkPolicyPeer{NamespaceSelector: namespaceNameSelector(ns)})
+	}
+	return peers
+}
+
+// ingressOverridePeers returns extra NetworkPolicyPeers for a component
+// exposing CIDR/namespace-selector ingress overrides
+// (NetworkPolicyIngressOverride, #422): one IPBlock peer per CIDR (for
+// traffic not associated with any pod/namespace, e.g. NodePort-sourced host
+// traffic) and one peer per namespace selector. Returns an empty slice
+// (no-op) when the override is entirely unset.
+func ingressOverridePeers(o kubernautv1alpha2.NetworkPolicyIngressOverride) []networkingv1.NetworkPolicyPeer {
+	peers := make([]networkingv1.NetworkPolicyPeer, 0, len(o.IngressCIDRs)+len(o.IngressNamespaceSelectors))
+	for _, cidr := range o.IngressCIDRs {
+		peers = append(peers, networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: cidr}})
+	}
+	for i := range o.IngressNamespaceSelectors {
+		sel := o.IngressNamespaceSelectors[i]
+		peers = append(peers, networkingv1.NetworkPolicyPeer{NamespaceSelector: &sel})
+	}
+	return peers
+}
+
+// egressOverrideDefaultCIDR is the kubebuilder default (and the operator's
+// own long-standing hardcoded behavior) for every single-destination egress
+// override (#422's ExternalWebhooks/LLM/MCPGateway/Prometheus fields) --
+// both the empty string (unit-test in-memory conversion, no CRD admission
+// defaulting applied) and this literal string are treated as "not
+// customized" by egressOverridePeers.
+const egressOverrideDefaultCIDR = "0.0.0.0/0"
+
+// cidrIsCustomized reports whether cidr represents an administrator
+// override rather than "unset"/"today's default" -- shared by every #422
+// single-destination CIDR override check (egressOverridePeers,
+// monitoringEgressRules' Prometheus rule, idPEgressRule,
+// fleetDestinationsEgressRule's MCPGateway rule) so the "unset or still the
+// kubebuilder default" definition lives in exactly one place.
+func cidrIsCustomized(cidr string) bool {
+	return cidr != "" && cidr != egressOverrideDefaultCIDR
+}
+
+// egressOverridePeers returns the destination peer(s) for a
+// NetworkPolicyEgressOverride: the dual-stack allow-all peers
+// (ipWorldPeers, today's default) when CIDR is unset or still the
+// kubebuilder default, or a single IPBlock peer for the administrator's
+// override CIDR otherwise.
+func egressOverridePeers(o kubernautv1alpha2.NetworkPolicyEgressOverride) []networkingv1.NetworkPolicyPeer {
+	if !cidrIsCustomized(o.CIDR) {
+		return ipWorldPeers()
+	}
+	return []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: o.CIDR}}}
+}
+
+// egressOverridePort returns o.Port when set, else defaultPort -- shared by
+// every #422 single-destination egress override.
+func egressOverridePort(o kubernautv1alpha2.NetworkPolicyEgressOverride, defaultPort int32) int32 {
+	if o.Port != 0 {
+		return o.Port
+	}
+	return defaultPort
 }
 
 // dnsEgressRule allows DNS resolution to any destination.
@@ -558,20 +638,46 @@ func resolveAPIServerIPs() []string {
 	return nil
 }
 
-// apiServerEgressRule allows HTTPS to the Kubernetes API server. The
-// endpoint IPs are resolved from the "kubernetes" endpoints in the
-// default namespace (the real IPs, not the ClusterIP which is DNAT'd
+// apiServerEgressRule allows HTTPS to the Kubernetes API server. By
+// default, the endpoint IPs are resolved from the "kubernetes" endpoints in
+// the default namespace (the real IPs, not the ClusterIP which is DNAT'd
 // before NetworkPolicy evaluation on OVN-Kubernetes).
-func apiServerEgressRule() networkingv1.NetworkPolicyEgressRule {
+//
+// np.APIServerCIDR/.APIServerCIDRs (#422) let an administrator pin the
+// peer list manually instead of relying on live resolution -- e.g. for a
+// non-standard topology where the live "kubernetes" Endpoints lookup does
+// not reflect the real reachable API server address(es). When set, they
+// take priority over live resolution entirely (not merged with it) so the
+// override is unambiguous. np.APIServerPort similarly overrides the
+// standard 6443+443 port pair for non-standard API server listeners.
+func apiServerEgressRule(np kubernautv1alpha2.NetworkPoliciesSpec) networkingv1.NetworkPolicyEgressRule {
 	protoTCP := corev1.ProtocolTCP
-	p6443 := intstr.FromInt32(6443)
-	p443 := intstr.FromInt32(443)
-	rule := networkingv1.NetworkPolicyEgressRule{
-		Ports: []networkingv1.NetworkPolicyPort{
+	var ports []networkingv1.NetworkPolicyPort
+	if np.APIServerPort != 0 {
+		p := intstr.FromInt32(np.APIServerPort)
+		ports = []networkingv1.NetworkPolicyPort{{Protocol: &protoTCP, Port: &p}}
+	} else {
+		p6443 := intstr.FromInt32(6443)
+		p443 := intstr.FromInt32(443)
+		ports = []networkingv1.NetworkPolicyPort{
 			{Protocol: &protoTCP, Port: &p6443},
 			{Protocol: &protoTCP, Port: &p443},
-		},
+		}
 	}
+	rule := networkingv1.NetworkPolicyEgressRule{Ports: ports}
+
+	if np.APIServerCIDR != "" || len(np.APIServerCIDRs) > 0 {
+		peers := make([]networkingv1.NetworkPolicyPeer, 0, 1+len(np.APIServerCIDRs))
+		if np.APIServerCIDR != "" {
+			peers = append(peers, networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: np.APIServerCIDR}})
+		}
+		for _, cidr := range np.APIServerCIDRs {
+			peers = append(peers, networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: cidr}})
+		}
+		rule.To = peers
+		return rule
+	}
+
 	ips := resolveAPIServerIPs()
 	if len(ips) > 0 {
 		peers := make([]networkingv1.NetworkPolicyPeer, 0, len(ips))
@@ -643,14 +749,40 @@ var alertManagerEgressPorts = []int32{9094, 9095}
 // (afSeverityTriageConfig only ever sets PrometheusURL) -- granting AF
 // that egress would be unused, over-provisioned access.
 func monitoringEgressRules(knV2 *kubernautv1alpha2.Kubernaut, includeAlertManager bool) []networkingv1.NetworkPolicyEgressRule {
+	npMon := knV2.Spec.NetworkPolicies.Monitoring
+	promPorts := prometheusEgressPorts
+	if npMon.PrometheusPort != 0 {
+		promPorts = []int32{npMon.PrometheusPort}
+	}
+
 	var rules []networkingv1.NetworkPolicyEgressRule
-	if rule, ok := monitoringDestinationEgressRule(knV2.Spec.Monitoring.Prometheus.URL, prometheusEgressPorts); ok {
+	if rule, ok := monitoringDestinationEgressRule(knV2.Spec.Monitoring.Prometheus.URL, promPorts, npMon.Namespace); ok {
 		rules = append(rules, rule)
 	}
 	if includeAlertManager {
-		if rule, ok := monitoringDestinationEgressRule(knV2.Spec.Monitoring.AlertManager.URL, alertManagerEgressPorts); ok {
+		amPorts := alertManagerEgressPorts
+		if npMon.AlertManagerPort != 0 {
+			amPorts = []int32{npMon.AlertManagerPort}
+		}
+		if rule, ok := monitoringDestinationEgressRule(knV2.Spec.Monitoring.AlertManager.URL, amPorts, npMon.Namespace); ok {
 			rules = append(rules, rule)
 		}
+	}
+
+	// networkPolicies.prometheus.{cidr,port} (#422): a manually-pinned,
+	// additional egress rule for reaching Prometheus, independent of the
+	// namespace-scoped rule above -- for topologies where Prometheus is
+	// only reachable via a fixed CIDR (e.g. outside the cluster) rather
+	// than an in-cluster namespace. Additive: never replaces or gates the
+	// namespace-scoped rule above.
+	npProm := knV2.Spec.NetworkPolicies.Prometheus
+	if cidrIsCustomized(npProm.CIDR) || npProm.Port != 0 {
+		protoTCP := corev1.ProtocolTCP
+		port := intstr.FromInt32(egressOverridePort(npProm, prometheusEgressPorts[0]))
+		rules = append(rules, networkingv1.NetworkPolicyEgressRule{
+			To:    egressOverridePeers(npProm),
+			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protoTCP, Port: &port}},
+		})
 	}
 	return rules
 }
@@ -658,14 +790,24 @@ func monitoringEgressRules(knV2 *kubernautv1alpha2.Kubernaut, includeAlertManage
 // monitoringDestinationEgressRule builds the namespace-scoped egress rule
 // for one monitoring destination, or ok=false when tier 3 (see
 // monitoringEgressRules) applies and the rule must be omitted.
-func monitoringDestinationEgressRule(rawURL string, ports []int32) (networkingv1.NetworkPolicyEgressRule, bool) {
-	ns := OCPMonitoringNamespace
-	if rawURL != "" {
+// namespaceOverride (networkPolicies.monitoring.namespace, #422) is a
+// manual escape hatch that takes priority over every URL-based tier
+// (including tier 3, letting an administrator "rescue" an
+// external/unparseable-URL destination that would otherwise get no rule at
+// all).
+func monitoringDestinationEgressRule(rawURL string, ports []int32, namespaceOverride string) (networkingv1.NetworkPolicyEgressRule, bool) {
+	var ns string
+	switch {
+	case namespaceOverride != "":
+		ns = namespaceOverride
+	case rawURL != "":
 		parsedNS, ok := inClusterServiceNamespace(rawURL)
 		if !ok {
 			return networkingv1.NetworkPolicyEgressRule{}, false
 		}
 		ns = parsedNS
+	default:
+		ns = OCPMonitoringNamespace
 	}
 	protoTCP := corev1.ProtocolTCP
 	npPorts := make([]networkingv1.NetworkPolicyPort, 0, len(ports))
@@ -706,7 +848,7 @@ func apifrontendNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1
 				networkingv1.PolicyTypeIngress,
 				networkingv1.PolicyTypeEgress,
 			},
-			Ingress: apifrontendIngressRules(kn, healthPort, metricsPort),
+			Ingress: apifrontendIngressRules(kn, knV2, healthPort, metricsPort),
 			Egress:  apifrontendEgressRules(kn, knV2),
 		},
 	}
@@ -731,22 +873,28 @@ func apifrontendHealthAndMetricsPorts(kn *kubernautv1alpha1.Kubernaut, sidecar K
 	return healthPort, metricsPort
 }
 
-// apifrontendIngressRules builds AF's ingress rules: same-namespace HTTPS,
-// cluster-wide health probes, monitoring-namespace metrics scraping (when
-// enabled), and ingress-namespace HTTPS (when the OCP Route is enabled).
-func apifrontendIngressRules(kn *kubernautv1alpha1.Kubernaut, healthPort, metricsPort int32) []networkingv1.NetworkPolicyIngressRule {
+// apifrontendIngressRules builds AF's ingress rules: same-namespace HTTPS
+// (extendable via spec.networkPolicies.apifrontend, #422), cluster-wide
+// health probes, monitoring-namespace metrics scraping (when enabled), and
+// ingress-namespace HTTPS (when the OCP Route is enabled).
+func apifrontendIngressRules(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, healthPort, metricsPort int32) []networkingv1.NetworkPolicyIngressRule {
 	protoTCP := corev1.ProtocolTCP
 	p8443 := intstr.FromInt32(PortHTTPS)
 	pHealth := intstr.FromInt32(healthPort)
 	pMetrics := intstr.FromInt32(metricsPort)
 
+	afNamedPeers := namedIngressPeers(knV2.Spec.NetworkPolicies.APIFrontend)
+	httpsPeers := make([]networkingv1.NetworkPolicyPeer, 0, 1+len(afNamedPeers))
+	httpsPeers = append(httpsPeers, networkingv1.NetworkPolicyPeer{
+		NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+			"kubernetes.io/metadata.name": kn.Namespace,
+		}},
+	})
+	httpsPeers = append(httpsPeers, afNamedPeers...)
+
 	ingress := []networkingv1.NetworkPolicyIngressRule{
 		{
-			From: []networkingv1.NetworkPolicyPeer{
-				{NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
-					"kubernetes.io/metadata.name": kn.Namespace,
-				}}},
-			},
+			From: httpsPeers,
 			Ports: []networkingv1.NetworkPolicyPort{
 				{Protocol: &protoTCP, Port: &p8443},
 			},
@@ -786,7 +934,7 @@ func apifrontendEgressRules(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1al
 	protoTCP := corev1.ProtocolTCP
 	p8443 := intstr.FromInt32(PortHTTPS)
 
-	egress := baseEgress(5)
+	egress := baseEgress(knV2, 5)
 	egress = append(egress, networkingv1.NetworkPolicyEgressRule{
 		To: []networkingv1.NetworkPolicyPeer{
 			{PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
@@ -824,18 +972,35 @@ func apifrontendEgressRules(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1al
 	}
 
 	if hasOIDCEgress(kn) {
-		p443 := intstr.FromInt32(443)
-		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
-			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protoTCP, Port: &p443},
-			},
-		})
+		egress = append(egress, idPEgressRule(knV2.Spec.NetworkPolicies.IdP))
 	}
 
 	if knV2.Spec.FleetEnabled() {
 		egress = append(egress, fleetDestinationsEgressRule(knV2))
 	}
 	return egress
+}
+
+// idPEgressRule builds AF's OIDC/JWKS discovery egress rule. By default (o
+// entirely unset) this is unrestricted -- no `To` peer at all, matching
+// today's default behavior exactly -- on port 443. o.CIDR (#422) scopes it
+// to a specific IdP destination once set; o.Port overrides the port;
+// o.ExtraPorts (NetworkPolicyIdPEgressOverride) opens additional ports for
+// deployments that must reach two IdPs on two different ports.
+func idPEgressRule(o kubernautv1alpha2.NetworkPolicyIdPEgressOverride) networkingv1.NetworkPolicyEgressRule {
+	protoTCP := corev1.ProtocolTCP
+	p := intstr.FromInt32(egressOverridePort(o.NetworkPolicyEgressOverride, 443))
+	ports := make([]networkingv1.NetworkPolicyPort, 0, 1+len(o.ExtraPorts))
+	ports = append(ports, networkingv1.NetworkPolicyPort{Protocol: &protoTCP, Port: &p})
+	for _, extra := range o.ExtraPorts {
+		ep := intstr.FromInt32(extra)
+		ports = append(ports, networkingv1.NetworkPolicyPort{Protocol: &protoTCP, Port: &ep})
+	}
+	rule := networkingv1.NetworkPolicyEgressRule{Ports: ports}
+	if cidrIsCustomized(o.CIDR) {
+		rule.To = []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: o.CIDR}}}
+	}
+	return rule
 }
 
 // hasOIDCEgress returns true when AF needs outbound HTTPS for OIDC/JWKS
@@ -889,7 +1054,8 @@ const fleetDestinationsCommonPort int32 = 8080
 func fleetDestinationsEgressRule(knV2 *kubernautv1alpha2.Kubernaut) networkingv1.NetworkPolicyEgressRule {
 	protoTCP := corev1.ProtocolTCP
 	p443 := intstr.FromInt32(443)
-	pMCPGateway := intstr.FromInt32(fleetDestinationsCommonPort)
+	mcpGatewayOverride := knV2.Spec.NetworkPolicies.MCPGateway
+	pMCPGateway := intstr.FromInt32(egressOverridePort(mcpGatewayOverride, fleetDestinationsCommonPort))
 
 	peers := []networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{}}}
 	for _, host := range fleetDestinationHostnames(knV2) {
@@ -898,6 +1064,14 @@ func fleetDestinationsEgressRule(knV2 *kubernautv1alpha2.Kubernaut) networkingv1
 				IPBlock: &networkingv1.IPBlock{CIDR: hostIPCIDR(ip)},
 			})
 		}
+	}
+	// networkPolicies.mcpGateway.cidr (#422): an additional, manually-pinned
+	// destination peer for MCP Gateway deployments not reachable via the
+	// resolveFleetHostIPs DNS path above (e.g. a CIDR-routed destination
+	// with no stable hostname). Additive, not a replacement -- the
+	// namespaceSelector and resolved-host peers above are unaffected.
+	if cidrIsCustomized(mcpGatewayOverride.CIDR) {
+		peers = append(peers, networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: mcpGatewayOverride.CIDR}})
 	}
 
 	return networkingv1.NetworkPolicyEgressRule{

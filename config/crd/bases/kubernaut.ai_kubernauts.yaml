@@ -4673,6 +4673,8 @@ spec:
                     type: array
                   apiServerPort:
                     format: int32
+                    maximum: 65535
+                    minimum: 1
                     type: integer
                   apifrontend:
                     description: |-
@@ -4877,6 +4879,8 @@ spec:
                         type: string
                       port:
                         format: int32
+                        maximum: 65535
+                        minimum: 1
                         type: integer
                     type: object
                   externalWebhooks:
@@ -4888,6 +4892,8 @@ spec:
                         type: string
                       port:
                         format: int32
+                        maximum: 65535
+                        minimum: 1
                         type: integer
                     type: object
                   gateway:
@@ -4971,6 +4977,8 @@ spec:
                         type: array
                       port:
                         format: int32
+                        maximum: 65535
+                        minimum: 1
                         type: integer
                     type: object
                   kubernautAgent:
@@ -5047,6 +5055,8 @@ spec:
                         type: string
                       port:
                         format: int32
+                        maximum: 65535
+                        minimum: 1
                         type: integer
                     type: object
                   mcpGateway:
@@ -5058,6 +5068,8 @@ spec:
                         type: string
                       port:
                         format: int32
+                        maximum: 65535
+                        minimum: 1
                         type: integer
                     type: object
                   monitoring:
@@ -5068,12 +5080,16 @@ spec:
                       alertManagerPort:
                         default: 9093
                         format: int32
+                        maximum: 65535
+                        minimum: 1
                         type: integer
                       namespace:
                         type: string
                       prometheusPort:
                         default: 9090
                         format: int32
+                        maximum: 65535
+                        minimum: 1
                         type: integer
                     type: object
                   prometheus:
@@ -5085,6 +5101,8 @@ spec:
                         type: string
                       port:
                         format: int32
+                        maximum: 65535
+                        minimum: 1
                         type: integer
                     type: object
                 type: object

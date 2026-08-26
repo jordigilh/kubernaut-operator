@@ -95,16 +95,21 @@ var _ = Describe("MigrationJob", func() {
 		Expect(container.Resources.Requests).NotTo(BeNil(), "migration container should have resource requests")
 	})
 
-	It("loads env from the PostgreSQL secret", func() {
+	// #423 coverage backfill: this only checked the fixture's default
+	// secretName value ("postgresql-secret"), which is structurally
+	// indistinguishable from a hardcoded string -- it never proved
+	// spec.postgresql.secretName actually propagates to the migration Job.
+	It("[IA-5, SC-28] loads env from spec.postgresql.secretName", func() {
 		kn := testKubernaut()
+		kn.Spec.PostgreSQL.SecretName = "custom-pg-secret"
 		job := mustMigrationJob(kn)
 
 		container := job.Spec.Template.Spec.Containers[0]
 		Expect(container.EnvFrom).NotTo(BeEmpty(), "container should have EnvFrom for PG secret")
 
 		ref := container.EnvFrom[0].SecretRef
-		Expect(ref).NotTo(BeNil(), "EnvFrom should reference postgresql-secret, got %v", ref)
-		Expect(ref.Name).To(Equal("postgresql-secret"), "EnvFrom should reference postgresql-secret, got %v", ref)
+		Expect(ref).NotTo(BeNil(), "EnvFrom should reference spec.postgresql.secretName, got %v", ref)
+		Expect(ref.Name).To(Equal("custom-pg-secret"), "EnvFrom should reference spec.postgresql.secretName verbatim, got %v", ref)
 	})
 
 	It("mounts the migrations ConfigMap", func() {

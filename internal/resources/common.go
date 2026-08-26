@@ -274,6 +274,21 @@ func effectiveAlertManagerURL(knV2 *kubernautv1alpha2.Kubernaut) string {
 	return OCPAlertManagerURL
 }
 
+// effectiveEMTLSCaFile resolves EM's single external.tlsCaFile config key
+// (#424). EM's upstream Config.External.TLSCaFile
+// (kubernaut/internal/config/effectivenessmonitor/config.go) is, by
+// design, one CA bundle shared by both its Prometheus and AlertManager
+// HTTP clients -- there is no per-destination key to wire the two CR
+// fields into independently, unlike KA's PrometheusToolConfig/
+// AlertmanagerToolConfig, which are genuinely separate structs/keys.
+// Monitoring.Prometheus.TLSCaFile therefore takes precedence over
+// Monitoring.AlertManager.TLSCaFile when both are set (EM's primary
+// assessment-scoring consumer), falling back to the existing
+// service-ca-injected default when neither is set.
+func effectiveEMTLSCaFile(knV2 *kubernautv1alpha2.Kubernaut, defaultPath string) string {
+	return withDefault(withDefault(knV2.Spec.Monitoring.Prometheus.TLSCaFile, knV2.Spec.Monitoring.AlertManager.TLSCaFile), defaultPath)
+}
+
 // OCP well-known namespaces.
 const (
 	OCPDNSNamespace        = "openshift-dns"

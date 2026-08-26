@@ -603,6 +603,50 @@ var _ = Describe("Kubernaut Controller", func() {
 				"the trust-bundle ConfigMap must be owned by the Kubernaut CR for garbage collection, matching every other operator-managed ConfigMap")
 		})
 	})
+
+	// #423 CONS-002: spec.postgresql.sslMode was flagged as a
+	// cross-consumer consistency gap (consumer exists in
+	// internal/controller's ensureMigrationPrereqs, no test in that
+	// package). Asserts the field actually gates whether the operator
+	// creates the inter-service-ca ConfigMap ahead of the migration Job.
+	Context("PostgreSQL sslMode wiring (#423 CONS-002)", func() {
+		It("CONS-002 [CM-6, SC-8]: creates the inter-service-ca ConfigMap when sslMode defaults to verify-full", func() {
+			createBYOSecrets(ctx)
+			kn := newCRWithRouteDisabled()
+			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
+
+			r := newReconciler()
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.InterServiceCAConfigMapName, Namespace: testNamespace}, cm)).To(Succeed(),
+				"CHECKPOINT W: spec.postgresql.sslMode's default (verify-full) must create the inter-service-ca ConfigMap ahead of the migration Job")
+		})
+
+		It("CONS-002b: omits the inter-service-ca ConfigMap when sslMode is not verify-full", func() {
+			createBYOSecrets(ctx)
+			kn := newCRWithRouteDisabled()
+			// "require" is a valid, CRD-accepted enum value
+			// (kubebuilder:validation:Enum=require;verify-ca;verify-full)
+			// that is deliberately not verify-full, the one value that
+			// gates ConfigMap creation.
+			kn.Spec.PostgreSQL.SSLMode = "require"
+			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
+
+			r := newReconciler()
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			cm := &corev1.ConfigMap{}
+			getErr := k8sClient.Get(ctx, types.NamespacedName{Name: resources.InterServiceCAConfigMapName, Namespace: testNamespace}, cm)
+			Expect(errors.IsNotFound(getErr)).To(BeTrue(), "spec.postgresql.sslMode=require should skip creating the inter-service-ca ConfigMap, got err=%v", getErr)
+		})
+	})
 })
 
 // enabled is a package-level *bool for FleetSpec.Enabled (a pointer field).
