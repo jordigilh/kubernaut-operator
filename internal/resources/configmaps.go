@@ -1895,7 +1895,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1a
 	o := resolveOpts(opts)
 	ns := kn.Namespace
 	ka := &kn.Spec.KubernautAgent
-	kaProfile, _ := ResolveLLMProfile(kn, ka.LLMProfileRef)
+	kaProfile, _ := ResolveLLMProfile(kn, EffectiveKALLMProfileRef(kn))
 	maxTurns := ka.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 40
@@ -2031,7 +2031,7 @@ func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1
 		// All callers guard on a nil result before use.
 		return nil, nil //nolint:nilnil
 	}
-	kaProfile, _ := ResolveLLMProfile(kn, ka.LLMProfileRef)
+	kaProfile, _ := ResolveLLMProfile(kn, EffectiveKALLMProfileRef(kn))
 	// Temperature is only sent to the LLM API when the administrator
 	// explicitly configures it. Some models (e.g. claude-opus-4) reject an
 	// explicit temperature alongside top_p with an HTTP 400 -- silently

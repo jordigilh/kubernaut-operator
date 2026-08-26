@@ -1376,6 +1376,17 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(root.Integrations.Tools.Alertmanager.TLSCaFile).To(Equal("/etc/ssl/ka/service-ca.crt"), "integrations.tools.alertmanager.tlsCaFile = %q, want /etc/ssl/ka/service-ca.crt", root.Integrations.Tools.Alertmanager.TLSCaFile)
 		})
 
+		It("F10 regression (#417): resolves ai.llm.provider via single-profile inference when kubernautAgent.llmProfileRef is omitted", func() {
+			kn := testKubernaut() // testKubernaut() defines exactly one profile ("primary")
+			kn.Spec.KubernautAgent.LLMProfileRef = ""
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			var root kubernautAgentConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.AI.LLM.Provider).To(Equal(LLMProviderOpenAI),
+				"config.yaml must resolve the sole spec.llmProfiles entry via EffectiveKALLMProfileRef (ADR-CRD-001 F10) when llmProfileRef is omitted, not render an empty provider, got %q", root.AI.LLM.Provider)
+		})
+
 		It("renders logging format as JSON", func() {
 			kn := testKubernaut()
 			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
@@ -1659,6 +1670,18 @@ var _ = Describe("ConfigMaps", func() {
 				} {
 					Expect(data).To(ContainSubstring(want), "llm-runtime defaults should contain %q, got:\n%s", want, data)
 				}
+			})
+
+			It("F10 regression (#417): resolves model/provider via single-profile inference when kubernautAgent.llmProfileRef is omitted", func() {
+				kn := testKubernaut() // testKubernaut() defines exactly one profile ("primary")
+				kn.Spec.KubernautAgent.LLMProfileRef = ""
+				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				data := cm.Data["llm-runtime.yaml"]
+				Expect(data).To(ContainSubstring("model: gpt-4o"),
+					"llm-runtime.yaml must resolve the sole spec.llmProfiles entry via EffectiveKALLMProfileRef (ADR-CRD-001 F10) when llmProfileRef is omitted, not render an empty model, got:\n%s", data)
+				Expect(data).NotTo(ContainSubstring(`model: ""`),
+					"llm-runtime.yaml rendered an empty model -- single-profile inference was not applied, got:\n%s", data)
 			})
 
 			It("LR-030: omits temperature from llm-runtime.yaml when not configured on the profile (regression: kubernaut v1.5.5 CHANGELOG -- an explicit temperature alongside top_p causes HTTP 400 on models like claude-opus-4 that reject the combination; unset must mean 'let the provider default', not 'send 0.7')", func() {
