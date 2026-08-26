@@ -2459,24 +2459,6 @@ spec:
                       Optional confidence threshold override for the Rego policy.
                       Expressed as a decimal string, e.g. "0.85".
                     type: string
-                  debug:
-                    description: |-
-                      DebugSpec configures short-lived diagnostic toggles shared by every
-                      component (BR-PLATFORM-012, kubernaut#2275/#2277). Mirrors upstream's
-                      debug.pprofEnabled field 1:1 (positive polarity, same key/shape) so the
-                      operator passes this value straight through into each service's
-                      rendered config with no negation-translation layer. The Go zero value
-                      is the secure default (AC-6): a component with an empty/omitted debug
-                      block never exposes a diagnostic surface unintentionally.
-                    properties:
-                      pprofEnabled:
-                        default: false
-                        description: |-
-                          PprofEnabled gates this component's /debug/pprof/* endpoints
-                          (net/http/pprof) for short-lived diagnostics. Defaults to false
-                          (profiling OFF) -- must be explicitly opted in.
-                        type: boolean
-                    type: object
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -2676,24 +2658,6 @@ spec:
                           Path to CA bundle for OIDC/JWKS TLS trust (FedRAMP IA-5). When set,
                           AF uses this CA to verify the OIDC provider's certificate chain.
                         type: string
-                    type: object
-                  debug:
-                    description: |-
-                      DebugSpec configures short-lived diagnostic toggles shared by every
-                      component (BR-PLATFORM-012, kubernaut#2275/#2277). Mirrors upstream's
-                      debug.pprofEnabled field 1:1 (positive polarity, same key/shape) so the
-                      operator passes this value straight through into each service's
-                      rendered config with no negation-translation layer. The Go zero value
-                      is the secure default (AC-6): a component with an empty/omitted debug
-                      block never exposes a diagnostic surface unintentionally.
-                    properties:
-                      pprofEnabled:
-                        default: false
-                        description: |-
-                          PprofEnabled gates this component's /debug/pprof/* endpoints
-                          (net/http/pprof) for short-lived diagnostics. Defaults to false
-                          (profiling OFF) -- must be explicitly opted in.
-                        type: boolean
                     type: object
                   enabled:
                     default: true
@@ -3075,24 +3039,6 @@ spec:
               authWebhook:
                 description: AuthWebhook admission controller settings.
                 properties:
-                  debug:
-                    description: |-
-                      DebugSpec configures short-lived diagnostic toggles shared by every
-                      component (BR-PLATFORM-012, kubernaut#2275/#2277). Mirrors upstream's
-                      debug.pprofEnabled field 1:1 (positive polarity, same key/shape) so the
-                      operator passes this value straight through into each service's
-                      rendered config with no negation-translation layer. The Go zero value
-                      is the secure default (AC-6): a component with an empty/omitted debug
-                      block never exposes a diagnostic surface unintentionally.
-                    properties:
-                      pprofEnabled:
-                        default: false
-                        description: |-
-                          PprofEnabled gates this component's /debug/pprof/* endpoints
-                          (net/http/pprof) for short-lived diagnostics. Defaults to false
-                          (profiling OFF) -- must be explicitly opted in.
-                        type: boolean
-                    type: object
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -3293,24 +3239,6 @@ spec:
                         description: Maximum number of open database connections.
                         type: integer
                     type: object
-                  debug:
-                    description: |-
-                      DebugSpec configures short-lived diagnostic toggles shared by every
-                      component (BR-PLATFORM-012, kubernaut#2275/#2277). Mirrors upstream's
-                      debug.pprofEnabled field 1:1 (positive polarity, same key/shape) so the
-                      operator passes this value straight through into each service's
-                      rendered config with no negation-translation layer. The Go zero value
-                      is the secure default (AC-6): a component with an empty/omitted debug
-                      block never exposes a diagnostic surface unintentionally.
-                    properties:
-                      pprofEnabled:
-                        default: false
-                        description: |-
-                          PprofEnabled gates this component's /debug/pprof/* endpoints
-                          (net/http/pprof) for short-lived diagnostics. Defaults to false
-                          (profiling OFF) -- must be explicitly opted in.
-                        type: boolean
-                    type: object
                   endpointPropagationDelay:
                     default: 10s
                     description: |-
@@ -3494,6 +3422,23 @@ spec:
                         type: object
                     type: object
                 type: object
+              debug:
+                description: |-
+                  Debug configures short-lived diagnostic toggles applied uniformly to
+                  all 12 services (DD-406) -- a single cluster-wide switch, not a
+                  per-component one, since every observed real-world usage has been
+                  all-or-nothing (enable pprof everywhere for an RC validation pass, or
+                  on a specific pair of services for a troubleshooting request that
+                  still only required setting one field, not twelve).
+                properties:
+                  pprofEnabled:
+                    default: false
+                    description: |-
+                      PprofEnabled gates all 12 services' /debug/pprof/* endpoints
+                      (net/http/pprof) for short-lived diagnostics. Defaults to false
+                      (profiling OFF) -- must be explicitly opted in.
+                    type: boolean
+                type: object
               effectivenessMonitor:
                 description: EffectivenessMonitor controller configuration.
                 properties:
@@ -3507,24 +3452,6 @@ spec:
                       validityWindow:
                         default: 300s
                         type: string
-                    type: object
-                  debug:
-                    description: |-
-                      DebugSpec configures short-lived diagnostic toggles shared by every
-                      component (BR-PLATFORM-012, kubernaut#2275/#2277). Mirrors upstream's
-                      debug.pprofEnabled field 1:1 (positive polarity, same key/shape) so the
-                      operator passes this value straight through into each service's
-                      rendered config with no negation-translation layer. The Go zero value
-                      is the secure default (AC-6): a component with an empty/omitted debug
-                      block never exposes a diagnostic surface unintentionally.
-                    properties:
-                      pprofEnabled:
-                        default: false
-                        description: |-
-                          PprofEnabled gates this component's /debug/pprof/* endpoints
-                          (net/http/pprof) for short-lived diagnostics. Defaults to false
-                          (profiling OFF) -- must be explicitly opted in.
-                        type: boolean
                     type: object
                   fleet:
                     description: |-
@@ -3763,24 +3690,6 @@ spec:
                   deployments that enable spec.fleet use backend=acm (an existing RHACM
                   Search installation) instead of standing up FMC.
                 properties:
-                  debug:
-                    description: |-
-                      DebugSpec configures short-lived diagnostic toggles shared by every
-                      component (BR-PLATFORM-012, kubernaut#2275/#2277). Mirrors upstream's
-                      debug.pprofEnabled field 1:1 (positive polarity, same key/shape) so the
-                      operator passes this value straight through into each service's
-                      rendered config with no negation-translation layer. The Go zero value
-                      is the secure default (AC-6): a component with an empty/omitted debug
-                      block never exposes a diagnostic surface unintentionally.
-                    properties:
-                      pprofEnabled:
-                        default: false
-                        description: |-
-                          PprofEnabled gates this component's /debug/pprof/* endpoints
-                          (net/http/pprof) for short-lived diagnostics. Defaults to false
-                          (profiling OFF) -- must be explicitly opted in.
-                        type: boolean
-                    type: object
                   enabled:
                     default: false
                     description: Whether the operator deploys the FMC service.
@@ -4052,24 +3961,6 @@ spec:
                           type: string
                         type: array
                     type: object
-                  debug:
-                    description: |-
-                      DebugSpec configures short-lived diagnostic toggles shared by every
-                      component (BR-PLATFORM-012, kubernaut#2275/#2277). Mirrors upstream's
-                      debug.pprofEnabled field 1:1 (positive polarity, same key/shape) so the
-                      operator passes this value straight through into each service's
-                      rendered config with no negation-translation layer. The Go zero value
-                      is the secure default (AC-6): a component with an empty/omitted debug
-                      block never exposes a diagnostic surface unintentionally.
-                    properties:
-                      pprofEnabled:
-                        default: false
-                        description: |-
-                          PprofEnabled gates this component's /debug/pprof/* endpoints
-                          (net/http/pprof) for short-lived diagnostics. Defaults to false
-                          (profiling OFF) -- must be explicitly opted in.
-                        type: boolean
-                    type: object
                   enabled:
                     default: true
                     description: |-
@@ -4276,24 +4167,6 @@ spec:
                           Lower values reduce the audit-visibility gap after a remediation
                           action at the cost of more frequent Data Storage writes.
                         type: string
-                    type: object
-                  debug:
-                    description: |-
-                      DebugSpec configures short-lived diagnostic toggles shared by every
-                      component (BR-PLATFORM-012, kubernaut#2275/#2277). Mirrors upstream's
-                      debug.pprofEnabled field 1:1 (positive polarity, same key/shape) so the
-                      operator passes this value straight through into each service's
-                      rendered config with no negation-translation layer. The Go zero value
-                      is the secure default (AC-6): a component with an empty/omitted debug
-                      block never exposes a diagnostic surface unintentionally.
-                    properties:
-                      pprofEnabled:
-                        default: false
-                        description: |-
-                          PprofEnabled gates this component's /debug/pprof/* endpoints
-                          (net/http/pprof) for short-lived diagnostics. Defaults to false
-                          (profiling OFF) -- must be explicitly opted in.
-                        type: boolean
                     type: object
                   fleet:
                     description: |-
@@ -4808,6 +4681,8 @@ spec:
                     type: array
                   apiServerPort:
                     format: int32
+                    maximum: 65535
+                    minimum: 1
                     type: integer
                   apifrontend:
                     description: |-
@@ -5012,6 +4887,8 @@ spec:
                         type: string
                       port:
                         format: int32
+                        maximum: 65535
+                        minimum: 1
                         type: integer
                     type: object
                   gateway:
@@ -5095,6 +4972,8 @@ spec:
                         type: array
                       port:
                         format: int32
+                        maximum: 65535
+                        minimum: 1
                         type: integer
                     type: object
                   kubernautAgent:
@@ -5171,6 +5050,8 @@ spec:
                         type: string
                       port:
                         format: int32
+                        maximum: 65535
+                        minimum: 1
                         type: integer
                     type: object
                   mcpGateway:
@@ -5182,6 +5063,8 @@ spec:
                         type: string
                       port:
                         format: int32
+                        maximum: 65535
+                        minimum: 1
                         type: integer
                     type: object
                   monitoring:
@@ -5192,12 +5075,16 @@ spec:
                       alertManagerPort:
                         default: 9093
                         format: int32
+                        maximum: 65535
+                        minimum: 1
                         type: integer
                       namespace:
                         type: string
                       prometheusPort:
                         default: 9090
                         format: int32
+                        maximum: 65535
+                        minimum: 1
                         type: integer
                     type: object
                   prometheus:
@@ -5209,30 +5096,14 @@ spec:
                         type: string
                       port:
                         format: int32
+                        maximum: 65535
+                        minimum: 1
                         type: integer
                     type: object
                 type: object
               notification:
                 description: Notification controller settings.
                 properties:
-                  debug:
-                    description: |-
-                      DebugSpec configures short-lived diagnostic toggles shared by every
-                      component (BR-PLATFORM-012, kubernaut#2275/#2277). Mirrors upstream's
-                      debug.pprofEnabled field 1:1 (positive polarity, same key/shape) so the
-                      operator passes this value straight through into each service's
-                      rendered config with no negation-translation layer. The Go zero value
-                      is the secure default (AC-6): a component with an empty/omitted debug
-                      block never exposes a diagnostic surface unintentionally.
-                    properties:
-                      pprofEnabled:
-                        default: false
-                        description: |-
-                          PprofEnabled gates this component's /debug/pprof/* endpoints
-                          (net/http/pprof) for short-lived diagnostics. Defaults to false
-                          (profiling OFF) -- must be explicitly opted in.
-                        type: boolean
-                    type: object
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -5386,24 +5257,6 @@ spec:
                       proactiveAlertDelay:
                         default: 5m
                         type: string
-                    type: object
-                  debug:
-                    description: |-
-                      DebugSpec configures short-lived diagnostic toggles shared by every
-                      component (BR-PLATFORM-012, kubernaut#2275/#2277). Mirrors upstream's
-                      debug.pprofEnabled field 1:1 (positive polarity, same key/shape) so the
-                      operator passes this value straight through into each service's
-                      rendered config with no negation-translation layer. The Go zero value
-                      is the secure default (AC-6): a component with an empty/omitted debug
-                      block never exposes a diagnostic surface unintentionally.
-                    properties:
-                      pprofEnabled:
-                        default: false
-                        description: |-
-                          PprofEnabled gates this component's /debug/pprof/* endpoints
-                          (net/http/pprof) for short-lived diagnostics. Defaults to false
-                          (profiling OFF) -- must be explicitly opted in.
-                        type: boolean
                     type: object
                   dryRun:
                     default: false
@@ -5603,24 +5456,6 @@ spec:
                   SignalProcessing controller configuration. Required for the same reason
                   as AIAnalysis above -- see that field's doc comment.
                 properties:
-                  debug:
-                    description: |-
-                      DebugSpec configures short-lived diagnostic toggles shared by every
-                      component (BR-PLATFORM-012, kubernaut#2275/#2277). Mirrors upstream's
-                      debug.pprofEnabled field 1:1 (positive polarity, same key/shape) so the
-                      operator passes this value straight through into each service's
-                      rendered config with no negation-translation layer. The Go zero value
-                      is the secure default (AC-6): a component with an empty/omitted debug
-                      block never exposes a diagnostic surface unintentionally.
-                    properties:
-                      pprofEnabled:
-                        default: false
-                        description: |-
-                          PprofEnabled gates this component's /debug/pprof/* endpoints
-                          (net/http/pprof) for short-lived diagnostics. Defaults to false
-                          (profiling OFF) -- must be explicitly opted in.
-                        type: boolean
-                    type: object
                   fleet:
                     description: |-
                       Fleet overrides spec.fleet.oauth2.credentialsSecretRef for
@@ -5852,24 +5687,6 @@ spec:
                     default: 1m
                     description: Cooldown period between workflow executions.
                     type: string
-                  debug:
-                    description: |-
-                      DebugSpec configures short-lived diagnostic toggles shared by every
-                      component (BR-PLATFORM-012, kubernaut#2275/#2277). Mirrors upstream's
-                      debug.pprofEnabled field 1:1 (positive polarity, same key/shape) so the
-                      operator passes this value straight through into each service's
-                      rendered config with no negation-translation layer. The Go zero value
-                      is the secure default (AC-6): a component with an empty/omitted debug
-                      block never exposes a diagnostic surface unintentionally.
-                    properties:
-                      pprofEnabled:
-                        default: false
-                        description: |-
-                          PprofEnabled gates this component's /debug/pprof/* endpoints
-                          (net/http/pprof) for short-lived diagnostics. Defaults to false
-                          (profiling OFF) -- must be explicitly opted in.
-                        type: boolean
-                    type: object
                   fleet:
                     description: |-
                       Fleet configures WorkflowExecution's own write-scoped MCP Gateway
@@ -6640,7 +6457,7 @@ spec:
           value: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
         - name: RELATED_IMAGE_INIT_UBI_MINIMAL
           value: registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c
-        image: quay.io/kubernaut-ai/kubernaut-operator:1.6.0-rc7
+        image: quay.io/kubernaut-ai/kubernaut-operator:1.6.0-rc8
         livenessProbe:
           httpGet:
             path: /healthz

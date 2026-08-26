@@ -92,7 +92,7 @@ metadata:
     categories: AI/Machine Learning,Monitoring
     com.redhat.openshift.versions: v4.18
     containerImage: quay.io/kubernaut-ai/kubernaut-operator:1.6.0-rc7
-    createdAt: '2026-08-25T15:28:47Z'
+    createdAt: '2026-08-26T17:49:43Z'
     description: "Automated Kubernetes remediation powered by AI \u2014 detects issues, analyzes root causes, and executes verified fixes."
     documentation: https://jordigilh.github.io/kubernaut-docs/latest/
     features.operators.openshift.io/cnf: 'false'
@@ -110,7 +110,7 @@ metadata:
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     repository: https://github.com/jordigilh/kubernaut-operator
     support: jgil@redhat.com
-  name: kubernaut-operator.v1.6.0-rc7
+  name: kubernaut-operator.v1.6.0-rc8
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -480,7 +480,7 @@ spec:
                   value: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
                 - name: RELATED_IMAGE_INIT_UBI_MINIMAL
                   value: registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c
-                image: quay.io/kubernaut-ai/kubernaut-operator:1.6.0-rc7
+                image: quay.io/kubernaut-ai/kubernaut-operator:1.6.0-rc8
                 livenessProbe:
                   httpGet:
                     path: /healthz
@@ -616,7 +616,7 @@ spec:
     name: init-postgres
   - image: registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c
     name: init-ubi-minimal
-  version: 1.6.0-rc7
+  version: 1.6.0-rc8
   webhookdefinitions:
   - type: ValidatingAdmissionWebhook
     admissionReviewVersions:
