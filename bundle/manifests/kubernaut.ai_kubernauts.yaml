@@ -4995,17 +4995,6 @@ spec:
                           x-kubernetes-map-type: atomic
                         type: array
                     type: object
-                  externalRegistry:
-                    description: NetworkPolicyEgressOverride overrides a single egress
-                      allow rule's target.
-                    properties:
-                      cidr:
-                        default: 0.0.0.0/0
-                        type: string
-                      port:
-                        format: int32
-                        type: integer
-                    type: object
                   externalWebhooks:
                     description: NetworkPolicyEgressOverride overrides a single egress
                       allow rule's target.

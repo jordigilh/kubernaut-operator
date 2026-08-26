@@ -1027,11 +1027,14 @@ var _ = Describe("Monitoring egress URL resolution tiers (#298)", func() {
 // consulted for them either) -- a cluster-admin setting any of them got
 // silent no-op behavior with no validation error. This Describe block wires
 // and regression-tests the 21 in-scope fields (26 real leaves once IdP's
-// embedded CIDR/Port are counted); console.ingressNamespaces and
-// externalRegistry.{cidr,port} are carved out to follow-up issues (no
-// consoleNetworkPolicy() builder exists yet; image-pull happens at
-// kubelet/node level, outside any pod NetworkPolicy's scope) -- see
-// docs/tests/421/TEST_PLAN.md.
+// embedded CIDR/Port are counted); console.ingressNamespaces was carved out
+// to a follow-up issue (no consoleNetworkPolicy() builder exists) --
+// resolved as intentionally-excluded-by-design (#443, see
+// docs/security/credentials-and-tls.md's NetworkPolicy section); the
+// externalRegistry.{cidr,port} carve-out (image-pull happens at
+// kubelet/node level, outside any pod NetworkPolicy's scope) was resolved by
+// removing the two dead fields outright (#444, see docs/tests/444/TEST_PLAN.md)
+// -- see docs/tests/421/TEST_PLAN.md for the original carve-out record.
 // testIngressOverrideCIDR is the shared TEST-NET-2 (RFC 5737) CIDR literal
 // used by every ingressCIDRs override test below (Gateway/DataStorage/
 // KubernautAgent) -- extracted to satisfy goconst since the same literal
