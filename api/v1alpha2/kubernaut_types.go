@@ -2262,9 +2262,6 @@ type NetworkPoliciesSpec struct {
 	ExternalWebhooks NetworkPolicyEgressOverride `json:"externalWebhooks,omitempty"`
 
 	// +optional
-	ExternalRegistry NetworkPolicyEgressOverride `json:"externalRegistry,omitempty"`
-
-	// +optional
 	IdP NetworkPolicyIdPEgressOverride `json:"idp,omitempty"`
 
 	// +optional

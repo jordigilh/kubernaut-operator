@@ -1285,7 +1285,6 @@ func (in *NetworkPoliciesSpec) DeepCopyInto(out *NetworkPoliciesSpec) {
 	}
 	out.Monitoring = in.Monitoring
 	out.ExternalWebhooks = in.ExternalWebhooks
-	out.ExternalRegistry = in.ExternalRegistry
 	in.IdP.DeepCopyInto(&out.IdP)
 	out.LLM = in.LLM
 	out.MCPGateway = in.MCPGateway

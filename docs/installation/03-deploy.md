@@ -135,6 +135,9 @@ spec:
   # --- NetworkPolicies (always created, F3 -- no enabled toggle; tune only) ---
   # networkPolicies:
   #   apiServerCIDR: "10.0.0.1/32"         # override when default API server CIDR detection doesn't resolve correctly
+  #   # Console has no operator-managed NetworkPolicy (#443) -- see
+  #   # docs/security/credentials-and-tls.md's NetworkPolicy (SC-7) section
+  #   # for how to write your own if you need to restrict its ingress.
 
   # --- Policies (from Step 2: Configure Services) ---
   aiAnalysis:

@@ -72,4 +72,10 @@ Optional `NetworkPolicy` resources tighten pod-to-pod and egress traffic. They a
 
 When enabled, the operator auto-detects the Kubernetes API server IP, monitoring namespace (`openshift-monitoring`), and ingress namespace (`openshift-ingress`). Policies constrain Gateway ingress, inter-component gRPC and HTTPS paths, and monitoring egress toward Thanos and AlertManager as defined in the operator implementation.
 
+**Console is intentionally excluded** ([#443](https://github.com/jordigilh/kubernaut-operator/issues/443)): every other exposed component's ingress peers are a predictable, operator-known set (in-cluster Kubernaut components, the OCP monitoring namespace, or the OCP ingress/router namespace), so the operator can create a sensible default-allow policy for them. The Console (`internal/resources/console.go`) is a browser-facing UI reached through its own OCP `Route` -- the legitimate set of end users and their network origin is deployment- and organization-specific, not something the operator can encode a default for. The operator therefore creates no `NetworkPolicy` for Console today, regardless of `spec.networkPolicies.console`. Administrators who want to restrict Console's ingress should supply their own supplemental `NetworkPolicy` scoped to:
+
+- Pod selector: `app: kubernaut-console`
+- Ingress port: `4180/TCP` (the oauth2-proxy sidecar terminating OIDC auth in front of the console's static UI; this is also the Service's `http` port fronted by the Route)
+- Typical ingress source: the cluster's ingress/router namespace (`openshift-ingress` on OCP) plus any organization-specific allowlist (e.g. a corporate VPN egress CIDR, an internal load-balancer's namespace)
+
 For questions about this document or security practices, contact **jgil@redhat.com** on behalf of **Kubernaut AI**.
