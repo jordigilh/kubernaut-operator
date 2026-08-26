@@ -27,10 +27,13 @@ The Kuadrant **controller** watches `MCPGatewayExtension`/`MCPServerRegistration
 ## Prerequisites
 
 - Cluster-admin `oc`/`kubectl` access (installs cluster-scoped CRDs and RBAC).
-- Gateway API CRDs v1.1.0 or later, cluster-wide (`gateway.networking.k8s.io` group: `GatewayClass`, `Gateway`, `HTTPRoute`, `ReferenceGrant`).
-- Istio or OpenShift Service Mesh (OSSM, Sail Operator) installed and providing an `istio` `GatewayClass`. Both sidecar and ambient mesh modes work — the stack only relies on `EnvoyFilter` and Gateway API objects, neither of which is ambient-mode-specific.
+- Gateway API CRDs v1.1.0 or later, cluster-wide (`gateway.networking.k8s.io` group: `GatewayClass`, `Gateway`, `HTTPRoute`, `ReferenceGrant`). **v1.4+ (with `HTTPRoute.spec.rules[].name`) is not required** — see [Troubleshooting: `unknown field "spec.rules[0].name"`](#unknown-field-specrules0name-in-controller-logs). We've verified this stack end-to-end on Gateway API v1.2.1 and v1.3.0 (OCP 4.20/4.21's bundled versions).
+- Istio or OpenShift Service Mesh (OSSM, Sail Operator) installed and providing a `GatewayClass`. Both sidecar and ambient mesh modes work — the stack only relies on `EnvoyFilter` and Gateway API objects, neither of which is ambient-mode-specific. Two supported paths, with different minimum OCP versions and different follow-on config (see [Step 1](#step-1-gateway-api-gateway--route)):
+    - **Self-managed Istio/OSSM** (Sail Operator, your own `istio` `GatewayClass`) — OCP **4.14+** (OSSM 3.0 supports 4.14–4.19; OSSM 3.2/3.3 support 4.18+). This is what the rest of this guide assumes by default.
+    - **OpenShift's native `openshift-default` `GatewayClass`** (Ingress-Operator-managed, no separate Istio operator to install) — OCP **4.19+** only (Gateway API CRDs and the native controller aren't available before then). Requires one extra field on the `MCPGatewayExtension` in Step 5 — see the callout there.
 - A namespace to host the gateway and MCP components. This guide uses `gateway-system` for the `Gateway`/`Route` and `mcp-system` for everything else, matching the upstream [Kuadrant mcp-gateway](https://github.com/Kuadrant/mcp-gateway) `overlays/mcp-system` naming.
-- An OIDC identity provider (RHBK — Red Hat build of Keycloak — or upstream Keycloak) with a realm that provides: a `client_credentials` client for callers (e.g. `kubernaut-fleet-read`), a client with RFC 8693 Standard Token Exchange enabled for `kube-mcp-server` itself, and a bearer-only audience client the target Kubernetes API server validates against (e.g. `k8s-api`). The target cluster's API server must already trust this issuer as an OIDC provider (on OpenShift, via a `type: OIDC` entry in the cluster `Authentication` CR's `oidcProviders`; see your OCP version's OIDC identity provider documentation). This is required for **Step 6**'s `passthrough` mode below — the only mode validated end-to-end by kubernaut's own fleet E2E suite, and the only one that lets the target API server enforce RBAC per caller identity instead of a single blanket ServiceAccount for every fleet caller.
+- An OIDC identity provider (RHBK — Red Hat build of Keycloak — or upstream Keycloak) with a realm that provides: a `client_credentials` client for callers (e.g. `kubernaut-fleet-read`), a client with RFC 8693 Standard Token Exchange enabled for `kube-mcp-server` itself, and a bearer-only audience client the target Kubernetes API server validates against (e.g. `k8s-api`). The target cluster's API server must already trust this issuer as an OIDC provider (on OpenShift, via a `type: OIDC` entry in the cluster `Authentication` CR's `oidcProviders`). This is required for **Step 6**'s `passthrough` mode below — the only mode validated end-to-end by kubernaut's own fleet E2E suite, and the only one that lets the target API server enforce RBAC per caller identity instead of a single blanket ServiceAccount for every fleet caller.
+    - **This is a separate OCP version requirement from the Gateway/Istio one above, and the binding one for most deployments.** The `Authentication` CR's external-OIDC support (`type: OIDC`) is Tech Preview in OCP 4.19 (requires the irreversible `TechPreviewNoUpgrade` feature gate — not recommended for any cluster you might need to upgrade later) and **GA in OCP 4.20+**. Plan on **OCP 4.20+** for the full stack (Gateway/Istio + passthrough auth) regardless of which Gateway path above you pick, unless you're deliberately staying on `kubeconfig` mode (not recommended — see the callout in **Step 6**).
 
 > **Note:** if your cluster already has a `kagenti` Helm-based deployment, it may have already created a `Gateway`, `gateway-system`/`mcp-system` namespaces, and a `ReferenceGrant` for its own (unrelated) `mcp.kagenti.com/MCPGatewayExtension` CRD. See [Troubleshooting: naming collision with kagenti](#referencegrantrequired-despite-having-a-referencegrant) before assuming a pre-existing `ReferenceGrant` covers Kuadrant's.
 
@@ -48,7 +51,7 @@ metadata:
   name: mcp-gateway
   namespace: gateway-system
 spec:
-  gatewayClassName: istio
+  gatewayClassName: istio   # or "openshift-default" -- see Prerequisites
   listeners:
   - name: mcp
     port: 8080
@@ -60,7 +63,22 @@ spec:
 EOF
 ```
 
-Expose it externally with an OpenShift `Route` targeting the Istio-provisioned Service (`<gateway-name>-istio`), on the listener's named port:
+> **Using `openshift-default` instead of `istio`?** You must first create the `GatewayClass` yourself (the Ingress Operator only manages it once it exists):
+>
+> ```bash
+> oc apply -f - <<EOF
+> apiVersion: gateway.networking.k8s.io/v1
+> kind: GatewayClass
+> metadata:
+>   name: openshift-default
+> spec:
+>   controllerName: openshift.io/gateway-controller/v1
+> EOF
+> ```
+>
+> Creating this triggers the Ingress Operator to provision a lightweight Istio control plane automatically — no separate Sail Operator/OSSM install needed. The resulting Gateway-backing Service is named `<gateway-name>-openshift-default`, **not** `<gateway-name>-istio` — substitute that name in the Route step below, and see the `privateHost` callout in **Step 5**, which this naming difference directly affects.
+
+Expose it externally with an OpenShift `Route` targeting the Istio-provisioned Service (`<gateway-name>-istio`, or `<gateway-name>-openshift-default` — see callout above), on the listener's named port:
 
 ```bash
 oc apply -f - <<EOF
@@ -159,6 +177,15 @@ oc wait --for=condition=Ready mcpgatewayextension/mcp-gateway-extension \
   -n mcp-system --timeout=60s
 ```
 
+> **Using `openshift-default` (see Step 1)? Also set `spec.privateHost`.** The broker hairpins `tools/call` requests back through the gateway using an internal address, whose computed default (`<gateway>-istio.<ns>.svc.cluster.local`, see [`mcpgatewayextension_types.go`](https://github.com/Kuadrant/mcp-gateway/blob/v0.7.1/api/v1alpha1/mcpgatewayextension_types.go)) assumes the classic self-managed-Istio Service naming convention. That default is wrong for `openshift-default`, whose Gateway-backing Service is actually named `<gateway>-openshift-default` — every `tools/call` fails with a DNS lookup error (`tools/list`/`initialize` succeed regardless, since neither exercises the hairpin path) until you override it explicitly:
+>
+> ```bash
+> oc patch mcpgatewayextension mcp-gateway-extension -n mcp-system --type=merge \
+>   -p="{\"spec\":{\"privateHost\":\"mcp-gateway-openshift-default.gateway-system.svc.cluster.local:8080\"}}"
+> ```
+>
+> Not needed on the self-managed-Istio path — its default already matches.
+
 Once `Ready`, the controller creates the broker Deployment/Service (`mcp-gateway`, port 8080), an `EnvoyFilter` in `gateway-system`, and an `HTTPRoute` (`mcp-gateway-route`) in `mcp-system` with the correct hostname and backend:
 
 ```bash
@@ -210,8 +237,8 @@ stringData:
     cluster_auth_mode = "passthrough"
     sts_client_id = "<STS_CLIENT_ID>"
     sts_client_secret = "<STS_CLIENT_SECRET>"
-    sts_audience = "k8s-api"
     sts_scopes = ["<K8S_API_AUDIENCE_SCOPE>"]
+    token_exchange_strategy = "rfc8693"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -287,6 +314,22 @@ oc rollout status deployment/kube-mcp-server -n mcp-system --timeout=2m
 ```
 
 `require_oauth = true` makes kube-mcp-server validate the caller's incoming Bearer token before attempting the exchange (this is also what the broker's own discovery-connection credential in **Step 7** authenticates against). `sts_scopes` must be set explicitly even if the scope is already a default client scope — RHBK/Keycloak's token-exchange endpoint rejects an explicitly-empty `scope` parameter rather than treating it as "no filter." The `kube-mcp-server` ServiceAccount/ClusterRoleBinding above is vestigial in `passthrough` mode (RBAC is enforced against the *exchanged caller identity* on the target API server, not this ServiceAccount) but still required for the pod's own liveness/readiness probing and any fallback paths. No SCC/PSA changes are needed: this pod spec runs cleanly under the `restricted` Pod Security profile `mcp-system` enforces by default.
+
+> **`kube-mcp-server` crash-loops on OIDC discovery if it doesn't trust your Keycloak/RHBK route's TLS cert.** This is common when RHBK's Route serves a cert from an internal/self-signed CA that isn't in the container's default trust store — `kube-mcp-server` fails `authorization_url`'s OIDC discovery fetch (`.well-known/openid-configuration`) at startup and never becomes Ready, with a TLS verification error in its logs. Fix: extract the CA chain, mount it as a `ConfigMap`, and point `SSL_CERT_FILE` at it:
+>
+> ```bash
+> # Extract the serving cert chain from the Keycloak/RHBK route
+> openssl s_client -connect <RHBK-ROUTE-HOST>:443 -showcerts </dev/null 2>/dev/null \
+>   | sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' \
+>   > /tmp/keycloak-ca-bundle.crt
+>
+> oc create configmap keycloak-oidc-ca -n mcp-system \
+>   --from-file=ca-bundle.crt=/tmp/keycloak-ca-bundle.crt
+> ```
+>
+> Then add to the Deployment spec below: an `env` entry `SSL_CERT_FILE=/etc/keycloak-ca/ca-bundle.crt`, plus a `volumeMounts`/`volumes` pair mounting the `keycloak-oidc-ca` ConfigMap at `/etc/keycloak-ca` (read-only). Not needed if your OIDC issuer's cert already chains to a CA in the container's default trust store (e.g. a publicly-trusted CA, or one your cluster's default CA bundle already includes).
+
+> **Do not set `sts_audience`; use `token_exchange_strategy = "rfc8693"` + `sts_scopes` instead.** Setting `sts_audience` makes kube-mcp-server send an RFC 8693 `audience` parameter on the token-exchange request, which routes RHBK/Keycloak down its *legacy* V1 token-exchange code path (`V1TokenExchangeProvider`) regardless of the `token_exchange_strategy` setting. RHBK 26.4+ defaults to Fine-Grained Admin Permissions V2 (FGAPv2), and that legacy V1 path calls `ClientPermissionsV2.canExchangeTo()`, which is `UnsupportedOperationException("Not supported in V2")` under FGAPv2 -- Keycloak throws a 500 on every exchange attempt. This is what QE hit testing kubernaut fleet management: `tools/call` failed with a Keycloak-side crash even though `tools/list` worked, because discovery doesn't exercise the exchange path but a real `tools/call` does. The fix is audience-via-scope, not audience-via-parameter: drop `sts_audience` entirely, keep only `sts_scopes` referencing a client scope with an audience mapper (as shown above), and set `token_exchange_strategy = "rfc8693"` explicitly so kube-mcp-server uses the standard RFC 8693 V2-compatible exchange. No Keycloak-side feature-flag change is needed or recommended -- this is purely a `kube-mcp-server` config fix.
 
 ## Step 7: Register the backend with the broker
 
@@ -476,6 +519,17 @@ This is [Issue #414](https://github.com/jordigilh/kubernaut-operator/issues/414)
 - **Network path**: every E2E lane reaches the gateway via a Kind cluster's NodePort directly; none goes through an OpenShift `Route` (edge/re-encrypt TLS termination) in front of the Istio `Gateway`, as this doc's Step 1 does. If switching to `passthrough` mode doesn't resolve it, this is the next thing to isolate — try reaching the gateway's in-cluster Service directly (bypassing the `Route`) from a debug pod to see if the failure persists without the Route hop.
 
 If neither resolves it, capture the broker's `tools/call` logs (`oc logs deployment/mcp-gateway -n mcp-system`) at debug verbosity and compare against [Kuadrant's own troubleshooting guide](https://docs.kuadrant.io/dev/mcp-gateway/docs/guides/troubleshooting/) before filing upstream against `Kuadrant/mcp-gateway`.
+
+### `tools/call` fails and Keycloak/RHBK logs `UnsupportedOperationException: Not supported in V2`
+
+```
+jakarta.ws.rs.InternalServerErrorException: HTTP 500 Internal Server Error
+Caused by: java.lang.UnsupportedOperationException: Not supported in V2
+	at org.keycloak.services.resources.admin.permissions.ClientPermissionsV2.canExchangeTo(...)
+	at org.keycloak.protocol.oidc.tokenexchange.V1TokenExchangeProvider.validateAudience(...)
+```
+
+Caused by setting `sts_audience` in `kube-mcp-server`'s `config.toml` (Step 6). `sts_audience` forces the legacy Keycloak V1 token-exchange code path, which is incompatible with Fine-Grained Admin Permissions V2 (FGAPv2) -- the default in RHBK 26.4+. `tools/list`/`discover_tools`/`initialize` all succeed because none of them exercise the exchange path; only a real `tools/call` does, so this can pass every check in [Verification](#verification) up to the authenticated `tools/call` step and still fail there. Fix: remove `sts_audience` from `config.toml`, keep `sts_scopes` (pointing at a client scope with an audience mapper), and set `token_exchange_strategy = "rfc8693"` explicitly -- see the callout under **Step 6** above. Restart `kube-mcp-server` after editing the Secret (`oc rollout restart deployment/kube-mcp-server -n mcp-system`) since it only reads `config.toml` at startup.
 
 ### `unknown field "spec.rules[0].name"` in controller logs
 
