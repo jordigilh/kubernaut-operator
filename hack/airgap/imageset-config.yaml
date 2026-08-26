@@ -27,7 +27,7 @@ mirror:
     - name: quay.io/kubernaut-ai/effectivenessmonitor@sha256:b09c98a7546dc8dbfad3b777f27c4efcfa31d885526a0537dee00b1d39cd240c
     - name: quay.io/kubernaut-ai/fleetmetadatacache@sha256:9bf395cd70b36e49733437dd09c8c141497b35038b56aef8555b087612621169
     - name: quay.io/kubernaut-ai/gateway@sha256:9fe7830503d9ecbe15e503849b915e8442274249b41cded518953a9fca9b7ede
-    - name: quay.io/kubernaut-ai/kubernaut-console@sha256:01300d335dece46e8dab7a5722e6c52a85a564886f2934dcf4719d3fc363317c
+    - name: quay.io/kubernaut-ai/kubernaut-console@sha256:98f75c56b8f2a4e2ee0276e31f353175b91dec9e95478775843590c37f876062
     - name: quay.io/kubernaut-ai/kubernautagent@sha256:0afe5cec85d4d836ad1e13815b05c6e4ae513bf0b044793606d59065e254f551
     - name: quay.io/kubernaut-ai/notification@sha256:aec3d3a01e55b483e2aa245aec1032c13ed454132552313ef5dc2dd8bf06a410
     - name: quay.io/kubernaut-ai/remediationorchestrator@sha256:5c4cbe35a600ec69f092e6451068207ef2051d6b924977532ee49d4fe2a23d9c
