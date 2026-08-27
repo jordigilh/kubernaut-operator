@@ -26,7 +26,6 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
@@ -70,13 +69,11 @@ func enableFleetMetadataCache(ctx context.Context) {
 // enableFleetMetadataCacheWithFleet is like enableFleetMetadataCache but
 // lets the caller override spec.fleet (e.g. to test a missing
 // mcpGatewayEndpoint or a non-fleetmetadatacache backend) while still
-// enabling spec.fleetMetadataCache.
+// enabling FMC (fleet.enabled=true, fleet.backend=fleetmetadatacache).
 func enableFleetMetadataCacheWithFleet(ctx context.Context, fleet kubernautv1alpha2.FleetSpec) {
-	t := true
 	knV2 := &kubernautv1alpha2.Kubernaut{}
 	Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())
 	knV2.Spec.Fleet = fleet
-	knV2.Spec.FleetMetadataCache = kubernautv1alpha2.FleetMetadataCacheSpec{Enabled: &t}
 	// #235/DD-235: WorkflowExecution's own write-scoped credential is
 	// independently required whenever fleet.oauth2.enabled is true, and
 	// never falls back to the shared fleet.oauth2.credentialsSecretRef.
@@ -206,15 +203,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				Name: resources.DeploymentName(resources.ComponentFleetMetadataCache), Namespace: testNamespace,
 			}, dep)).To(Succeed(), "sanity: FMC Deployment should exist before disabling")
 
-			By("disabling fleetMetadataCache")
+			By("disabling fleet (FMC deployment is derived from fleet.enabled+backend, no separate toggle)")
 			existing := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), existing)).To(Succeed())
 			f := false
-			existing.Spec.FleetMetadataCache.Enabled = &f
-			// Also disable spec.fleet itself: backend=fleetmetadatacache with
-			// FMC no longer operator-managed would otherwise require an
-			// explicit BYO endpoint (validateFleetConfig) -- out of scope for
-			// this cleanup-on-disable test.
 			existing.Spec.Fleet.Enabled = &f
 			Expect(k8sClient.Update(ctx, existing)).To(Succeed())
 
@@ -273,52 +265,5 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseError))
 		})
 
-		It("emits a FleetMetadataCacheUnused warning event when enabled but spec.fleet.backend is not fleetmetadatacache", func() {
-			createBYOSecrets(ctx)
-			cr := newCRWithFMCEnabled()
-			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
-			fleet := defaultFMCFleetSpec()
-			fleet.Backend = "acm"
-			fleet.Endpoint = "https://search-search-api.example.com:4010"
-			fleet.TokenSecretName = "acm-search-token"
-			enableFleetMetadataCacheWithFleet(ctx, fleet)
-
-			r := reconcileToRunning(ctx)
-
-			recorder := r.Recorder.(*events.FakeRecorder)
-			var collected []string
-		drain:
-			for {
-				select {
-				case ev := <-recorder.Events:
-					collected = append(collected, ev)
-				default:
-					break drain
-				}
-			}
-			Expect(collected).To(ContainElement(ContainSubstring("FleetMetadataCacheUnused")),
-				"expected a FleetMetadataCacheUnused warning event when backend=acm, got: %v", collected)
-		})
-
-		It("does not emit FleetMetadataCacheUnused when backend=fleetmetadatacache (the consuming configuration)", func() {
-			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
-			enableFleetMetadataCache(ctx)
-
-			r := reconcileToRunning(ctx)
-
-			recorder := r.Recorder.(*events.FakeRecorder)
-			var collected []string
-		drainOK:
-			for {
-				select {
-				case ev := <-recorder.Events:
-					collected = append(collected, ev)
-				default:
-					break drainOK
-				}
-			}
-			Expect(collected).NotTo(ContainElement(ContainSubstring("FleetMetadataCacheUnused")))
-		})
 	})
 })

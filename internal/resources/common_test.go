@@ -177,7 +177,6 @@ func testKubernautWithFMC() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Ku
 			CredentialsSecretRef: "fleet-oauth2-creds",
 		},
 	}
-	knV2.Spec.FleetMetadataCache = kubernautv1alpha2.FleetMetadataCacheSpec{Enabled: &testFMCEnabled}
 	return kn, knV2
 }
 

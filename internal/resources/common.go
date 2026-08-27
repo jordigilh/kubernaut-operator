@@ -526,17 +526,16 @@ func FleetMetadataCacheURL(namespace string) string {
 }
 
 // resolveFleetEndpoint returns the effective spec.fleet.endpoint value.
-// When the user leaves it empty, backend=fleetmetadatacache, and the
-// operator is managing FMC itself (spec.fleetMetadataCache.enabled=true),
+// When the user leaves it empty and FMC is active (fleet.enabled=true,
+// backend=fleetmetadatacache -- KubernautSpec.FleetMetadataCacheEnabled()),
 // the in-cluster FMC service URL is auto-derived -- the whole point of the
 // operator deploying FMC is that Gateway/RemediationOrchestrator don't need
-// the user to separately wire up its address. BYO FMC (or backend=acm)
-// still requires an explicit endpoint (enforced in validation.go). Fleet's
-// entire CRD surface lives in v1alpha2 (Fleet v1alpha2 migration), so this
-// takes knV2 only.
+// the user to separately wire up its address. backend=acm still requires an
+// explicit endpoint (enforced in validation.go). Fleet's entire CRD surface
+// lives in v1alpha2 (Fleet v1alpha2 migration), so this takes knV2 only.
 func resolveFleetEndpoint(knV2 *kubernautv1alpha2.Kubernaut) string {
 	fleet := &knV2.Spec.Fleet
-	if fleet.Endpoint == "" && fleet.Backend == "fleetmetadatacache" && knV2.Spec.FleetMetadataCacheEnabled() {
+	if fleet.Endpoint == "" && knV2.Spec.FleetMetadataCacheEnabled() {
 		return FleetMetadataCacheURL(knV2.Namespace)
 	}
 	return fleet.Endpoint

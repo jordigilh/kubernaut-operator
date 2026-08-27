@@ -3682,10 +3682,6 @@ spec:
                   deployments that enable spec.fleet use backend=acm (an existing RHACM
                   Search installation) instead of standing up FMC.
                 properties:
-                  enabled:
-                    default: false
-                    description: Whether the operator deploys the FMC service.
-                    type: boolean
                   fleet:
                     description: |-
                       Fleet overrides spec.fleet.oauth2.credentialsSecretRef for FMC's own

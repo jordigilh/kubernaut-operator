@@ -66,11 +66,10 @@ var _ = Describe("Core cluster-scoped RBAC pruning on feature toggle-off (#341)"
 			Name: testNamespace + "-fmc-scope-check-client",
 		}, scopeCR)).To(Succeed())
 
-		By("disabling fleetMetadataCache")
+		By("disabling fleet (FMC deployment is derived from fleet.enabled+backend, no separate toggle)")
 		existing := &kubernautv1alpha2.Kubernaut{}
 		Expect(k8sClient.Get(ctx, singletonKey(), existing)).To(Succeed())
 		f := false
-		existing.Spec.FleetMetadataCache.Enabled = &f
 		existing.Spec.Fleet.Enabled = &f
 		Expect(k8sClient.Update(ctx, existing)).To(Succeed())
 

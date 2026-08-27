@@ -1359,28 +1359,6 @@ func (r *KubernautReconciler) cleanupDisabledFleetMetadataCache(ctx context.Cont
 	return nil
 }
 
-// warnIfFleetMetadataCacheUnused emits a Warning Event (not an admission
-// rejection, and never mutates spec.fleetMetadataCache) when FMC is deployed
-// but spec.fleet.enabled/backend don't actually route any component's
-// queries to it. This isn't unsafe -- unlike the fail-closed checks in
-// validateFleetConfig/validateFleetMetadataCache (missing tokenSecretName,
-// mcpGatewayEndpoint, etc. would crash-loop pods or send unauthenticated
-// requests) -- so it's surfaced the same way as NetworkPoliciesDisabled
-// below rather than blocked at admission: a deliberate shadow-deploy of FMC
-// ahead of cutting Gateway/RemediationOrchestrator over from backend=acm is
-// a legitimate use of this combination, just one worth flagging rather than
-// leaving silent.
-func (r *KubernautReconciler) warnIfFleetMetadataCacheUnused(knV2 *kubernautv1alpha2.Kubernaut) {
-	fleet := &knV2.Spec.Fleet
-	fleetEnabled := fleet.Enabled != nil && *fleet.Enabled
-	if fleetEnabled && fleet.Backend == "fleetmetadatacache" {
-		return
-	}
-	r.Recorder.Eventf(knV2, nil, corev1.EventTypeWarning, "FleetMetadataCacheUnused", "Reconcile",
-		"spec.fleetMetadataCache.enabled is true but spec.fleet.enabled=%v and spec.fleet.backend=%q -- FMC is deployed and syncing but not queried by any component (only fleet.enabled=true with backend=fleetmetadatacache routes to it)",
-		fleetEnabled, fleet.Backend)
-}
-
 // deployConfigMaps builds and ensures all service ConfigMaps. Returns a map
 // of component name to SHA-256 hash of the ConfigMap data, used to stamp pod
 // template annotations and force rolling restarts when config content changes.
@@ -1501,7 +1479,6 @@ func (r *KubernautReconciler) appendOptionalComponentConfigMaps(
 		cmHashes["apifrontend"] = resources.ConfigMapDataHash(afCM.Data)
 	}
 	if knV2.Spec.FleetMetadataCacheEnabled() {
-		r.warnIfFleetMetadataCacheUnused(knV2)
 		fmcCM, err := resources.FleetMetadataCacheConfigMap(kn, knV2)
 		if err != nil {
 			return nil, fmt.Errorf("building fleetmetadatacache ConfigMap: %w", err)
