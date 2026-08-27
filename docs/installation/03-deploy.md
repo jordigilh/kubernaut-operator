@@ -94,6 +94,10 @@ spec:
     secretName: valkey-secret
     host: valkey.kubernaut-system.svc.cluster.local
     port: 6379
+    # tls:                                  # recommended: requirepass alone is not
+    #   enabled: true                       # real authentication -- see
+    #   caSecretName: valkey-ca             # docs/installation/01-infrastructure.md#enable-mtls
+    #   clientCertSecretName: valkey-client-cert
 
   # --- LLM profiles (from Step 2: Configure Services) ---
   llmProfiles:
@@ -520,6 +524,74 @@ spec:
   apiFrontend:
     enabled: false
 ```
+
+**API Frontend rejects every console-issued token with 401, even though `issuerURL`/`audience` are set correctly:**
+
+AF does strict `aud`-claim matching with no fallback to `azp`
+(`pkg/apifrontend/auth/jwt.go`'s `validateAudience`) — setting
+`spec.apiFrontend.auth.audience` only tells AF what to check *for*; the OIDC
+client the browser/console actually authenticates with must separately be
+configured to put that value in the token's `aud` claim, which is not a
+Keycloak default. Confirm with:
+
+```bash
+# Decode a token issued to your console's OIDC client and check aud
+echo '<access_token>' | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool
+```
+
+If `aud` doesn't include your `spec.apiFrontend.auth.audience` value, add an
+audience client scope and mapper (mirrors the fleet-realm pattern in
+[Fleet: Multi-Cluster Setup, Part B1](05-fleet-multi-cluster.md#b1-k8s-api--the-bearer-only-audience-target)),
+then set it as a **default** scope on the console's OIDC client so it applies
+without the client having to request it explicitly:
+
+```bash
+curl -sk -X POST "$ISSUER_BASE/admin/realms/$REALM/client-scopes" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"kubernaut-apifrontend-audience","protocol":"openid-connect",
+       "protocolMappers":[{"name":"apifrontend-aud-mapper","protocol":"openid-connect",
+       "protocolMapper":"oidc-audience-mapper",
+       "config":{"included.custom.audience":"kubernaut-apifrontend","access.token.claim":"true"}}]}'
+# then PUT it as a default-client-scope on your console client (see linked section above for the full flow)
+```
+
+If you're also using bearer-token auth against oauth2-proxy directly (e.g. for
+API testing, not the normal browser login-redirect flow), oauth2-proxy's own
+`--skip-jwt-bearer-tokens` validates the token's audience against oauth2-proxy's
+own `--client-id` separately from AF's check above — a token missing the
+client's own ID in `aud` gets silently redirected to login (`302`) instead of
+accepted, which looks identical to "auth isn't working." Add a second
+`oidc-audience-mapper` to the same scope with `included.client.audience` set
+to your console client's own client ID to fix this case too.
+
+**AF tool calls return 403 (`kubernaut_investigate`, `kubernaut_approve`, etc.) even though login succeeds:**
+
+Login succeeding only means the coarse-grained `kubernaut.ai/console`
+access check passed (or, more likely, is simply not enabled —
+`consoleAccessAuthorizationCheckEnabled` defaults to `false`). Every actual
+tool call is authorized independently via a real Kubernetes
+`SubjectAccessReview` against `spec.apiFrontend.rbac.roleBindings`-derived
+ClusterRoleBindings. If `rbac.roleBindings` is empty or the caller's token
+carries no matching `groups` claim, standard Kubernetes RBAC denies by
+default — there is no fail-open fallback. Diagnose directly with a raw SAR,
+without needing a real token:
+
+```bash
+oc create -f - -o jsonpath='{.status}' <<EOF
+apiVersion: authorization.k8s.io/v1
+kind: SubjectAccessReview
+spec:
+  user: <test-username>
+  groups: ["<expected-oidc-group>"]
+  resourceAttributes: {group: kubernaut.ai, resource: tools, name: kubernaut_investigate, verb: use}
+EOF
+```
+
+Common causes: `spec.apiFrontend.rbac.roleBindings` references a group the
+user isn't actually a member of, or the OIDC client's tokens don't carry a
+`groups` claim at all — Keycloak requires an explicit "Group Membership"
+protocol mapper (`oidc-group-membership-mapper`) on a default client scope;
+it is not automatic just because the user belongs to a Keycloak group.
 
 **Console shows "Access Denied — You don't have permission to use Kubernaut":**
 
