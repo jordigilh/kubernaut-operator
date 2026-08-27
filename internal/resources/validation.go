@@ -521,14 +521,12 @@ func validateFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) []error {
 		errs = append(errs, fmt.Errorf("%s.backend: invalid backend %q — must be one of: fleetmetadatacache, acm", base, fleet.Backend))
 	}
 
-	// Endpoint is auto-derived (resolveFleetEndpoint) when the operator
-	// itself is managing FMC (backend=fleetmetadatacache,
-	// fleetMetadataCache.enabled=true) -- the user doesn't need to also
-	// wire up FMC's in-cluster URL by hand. BYO FMC and backend=acm still
-	// require an explicit endpoint.
-	fmcManaged := fleet.Backend == "fleetmetadatacache" && knV2.Spec.FleetMetadataCacheEnabled()
-	if fleet.Endpoint == "" && !fmcManaged {
-		errs = append(errs, fmt.Errorf("%s.endpoint: must be set when fleet.enabled is true (unless backend=fleetmetadatacache and fleetMetadataCache.enabled=true, which auto-derives the operator-managed FMC's in-cluster URL)", base))
+	// Endpoint is auto-derived (resolveFleetEndpoint) when backend is
+	// fleetmetadatacache -- FMC is operator-managed only (no BYO path), so
+	// the user doesn't need to also wire up its in-cluster URL by hand.
+	// backend=acm still requires an explicit endpoint.
+	if fleet.Endpoint == "" && !knV2.Spec.FleetMetadataCacheEnabled() {
+		errs = append(errs, fmt.Errorf("%s.endpoint: must be set when fleet.enabled is true (unless backend=fleetmetadatacache, which auto-derives the operator-managed FMC's in-cluster URL)", base))
 	}
 
 	// FedRAMP IA-5 (authenticator management): upstream pkg/fleet has no
@@ -644,49 +642,28 @@ func validateFleetOAuth2(knV2 *kubernautv1alpha2.Kubernaut, fleet *kubernautv1al
 	return errs
 }
 
-// validateFleetMetadataCache validates spec.fleetMetadataCache. When
-// Enabled is false or omitted (the default), the other fields are inert
-// and left unvalidated so users can pre-stage configuration. FMC's MCP
-// Gateway/OAuth2 requirements are checked independently of
-// spec.fleet.enabled -- that flag only gates Gateway/RemediationOrchestrator's
-// own scope-check consumption, but FMC needs the MCP Gateway address and
-// credentials to poll managed clusters regardless of whether any consumer
-// is configured to query it.
+// validateFleetMetadataCache validates spec.fleetMetadataCache. FMC has no
+// separate enable toggle (kubernaut-operator#450): it is active whenever
+// spec.fleet.enabled is true and spec.fleet.backend is
+// "fleetmetadatacache" (KubernautSpec.FleetMetadataCacheEnabled()), which
+// means validateFleetConfig/validateFleetOAuth2 already enforce FMC's
+// mcpGatewayEndpoint/mcpGatewayType/oauth2.enabled/oauth2.tokenURL
+// requirements unconditionally whenever FMC is active -- duplicating those
+// checks here would just double-report the same error. The one FMC-specific
+// requirement that isn't already covered is its own OAuth2 credential
+// override: FleetMetadataCacheSpec.Fleet isn't one of
+// validateFleetOAuth2's six components (Gateway/RemediationOrchestrator/
+// SignalProcessing/APIFrontend/EffectivenessMonitor/KubernautAgent), so it
+// needs its own effective-value check here.
 func validateFleetMetadataCache(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	if !knV2.Spec.FleetMetadataCacheEnabled() {
 		return nil
 	}
 
-	var errs []error
-	const base = "spec.fleetMetadataCache"
 	fleet := &knV2.Spec.Fleet
-
-	// Mirrors upstream's own Helm chart guard (fleetmetadatacache.yaml's
-	// "fail" checks): FMC's entire purpose is polling remote clusters via
-	// the MCP Gateway, so this is non-negotiable regardless of
-	// spec.fleet.enabled.
-	if fleet.MCPGatewayEndpoint == "" {
-		errs = append(errs, fmt.Errorf("%s: spec.fleet.mcpGatewayEndpoint must be set when fleetMetadataCache.enabled is true -- FMC polls managed clusters via the MCP Gateway", base))
-	}
-	if fleet.MCPGatewayType == "" {
-		errs = append(errs, fmt.Errorf("%s: spec.fleet.mcpGatewayType must be set when fleetMetadataCache.enabled is true -- must be one of: eaigw, kuadrant", base))
-	} else if !validMCPGatewayTypes[fleet.MCPGatewayType] {
-		errs = append(errs, fmt.Errorf("%s: spec.fleet.mcpGatewayType invalid value %q -- must be one of: eaigw, kuadrant", base, fleet.MCPGatewayType))
+	if fleet.OAuth2.Enabled && effectiveFleetOAuth2SecretRef(knV2.Spec.FleetMetadataCache.Fleet, fleet.OAuth2.CredentialsSecretRef) == "" {
+		return []error{fmt.Errorf("spec.fleetMetadataCache.fleet.oauth2CredentialsSecretRef: must be set, or spec.fleet.oauth2.credentialsSecretRef must be set, when fleetMetadataCache is active (fleet.enabled=true, backend=fleetmetadatacache)")}
 	}
 
-	// FedRAMP IA-5: upstream FMC's config.Validate() rejects a missing
-	// oauth2.tokenUrl unconditionally -- there is no unauthenticated mode
-	// for the MCP Gateway in FMC.
-	if !fleet.OAuth2.Enabled {
-		errs = append(errs, fmt.Errorf("%s: spec.fleet.oauth2.enabled must be true when fleetMetadataCache.enabled is true -- FMC has no unauthenticated mode for the MCP Gateway", base))
-	} else {
-		if fleet.OAuth2.TokenURL == "" {
-			errs = append(errs, fmt.Errorf("%s: spec.fleet.oauth2.tokenURL must be set when fleetMetadataCache.enabled is true", base))
-		}
-		if effectiveFleetOAuth2SecretRef(knV2.Spec.FleetMetadataCache.Fleet, fleet.OAuth2.CredentialsSecretRef) == "" {
-			errs = append(errs, fmt.Errorf("%s.fleet.oauth2CredentialsSecretRef: must be set, or spec.fleet.oauth2.credentialsSecretRef must be set, when fleetMetadataCache.enabled is true", base))
-		}
-	}
-
-	return errs
+	return nil
 }
