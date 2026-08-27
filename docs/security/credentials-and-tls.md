@@ -17,7 +17,8 @@ The operator and managed workloads expect Kubernetes Secret objects (bring-your-
 | Secret | Required keys | Purpose |
 |--------|---------------|---------|
 | PostgreSQL (`spec.postgresql.secretName`) | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | Database access for DataStorage and migrations |
-| Valkey or Redis (`spec.valkey.secretName`) | `password` | Cache and stream access for DataStorage |
+| Valkey or Redis (`spec.valkey.secretName`) | `password` | Cache and stream access for DataStorage. **Not sufficient authentication on its own** -- see [TLS configuration](#tls-configuration) below |
+| Valkey mTLS (optional but recommended, `spec.valkey.tls.caSecretName` / `clientCertSecretName`) | `ca.crt` / `tls.crt`, `tls.key` | Client authentication to Valkey via mutual TLS |
 | LLM credentials (`spec.llmProfiles.<name>.credentialsSecretName`) | Provider-dependent: `credentials.json` (Vertex AI), `api_key` (OpenAI or Anthropic), and similar | Authenticate to the LLM provider API |
 | OAuth2 (optional, `spec.llmProfiles.<name>.oauth2.credentialsSecretRef`) | `client_id`, `client_secret` | OAuth2 client-credentials flow for LLM access |
 | Notification Slack (optional, `spec.notification.slack.secretName`) | `webhook_url` or `bot_token` | Deliver notifications to Slack |
@@ -63,6 +64,8 @@ The following table summarizes primary east-west trust patterns for the managed 
 | Custom | Configurable | Administrator-defined |
 
 **PostgreSQL:** Use `spec.postgresql.sslMode` with values `require`, `verify-ca`, or `verify-full`. The default is **verify-full**, which enforces both server authenticity and hostname verification. The `disable` value is rejected at validation time (FedRAMP SC-8).
+
+**Valkey (IA-5, SC-8):** A `requirepass` password (`spec.valkey.secretName`) does **not** provide real client authentication -- the Go Redis client used by Kubernaut's services silently tolerates an `AUTH` failure against a server with no password configured, so a misconfigured deployment fails open rather than closed (the same gap upstream `kubernaut` closed in [kubernaut#2269](https://github.com/jordigilh/kubernaut/issues/2269)/[#2272](https://github.com/jordigilh/kubernaut/pull/2272)). Set `spec.valkey.tls.enabled: true` with `caSecretName` and `clientCertSecretName` to require mutual TLS instead: Valkey rejects any client that doesn't present a certificate signed by the trusted CA, which fails closed. DataStorage and FleetMetadataCache both already support this; a single shared client certificate is sufficient since Valkey 8 only validates the certificate chain, not the caller's identity. See [01-infrastructure.md: Enable mTLS](../installation/01-infrastructure.md#enable-mtls) for setup steps.
 
 **Admission webhooks:** TLS for the AuthWebhook admission endpoints is managed using OpenShift service CA patterns appropriate for in-cluster webhook servers.
 

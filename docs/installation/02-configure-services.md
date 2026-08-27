@@ -464,13 +464,13 @@ The standalone web Console (A2A chat UI, `spec.console.enabled`) is fronted by a
 - Redirect URI: `https://<console-route-host>/oauth2/callback`, matching `spec.console.route.host`.
 - Web origin: `https://<console-route-host>`.
 
-Build the Secret from the client's credentials plus a locally-generated cookie secret (used by oauth2-proxy to encrypt the session cookie, not an OIDC value). `spec.console.auth.secretName` requires exactly these three keys:
+Build the Secret from the client's credentials plus a locally-generated cookie secret (used by oauth2-proxy to encrypt the session cookie, not an OIDC value). `spec.console.auth.secretName` requires exactly these three keys. The cookie secret's raw value must be exactly 16, 24, or 32 bytes (oauth2-proxy uses it as an AES key) -- `head -c 32` truncates the base64 text to 32 *characters*, which is already the right raw length, so do not additionally base64-encode the result or oauth2-proxy will reject it (`cookie_secret must be 16, 24, or 32 bytes ... but is 44 bytes`):
 
 ```bash
 oc create secret generic kubernaut-console-oidc -n kubernaut-system \
   --from-literal=client-id=<CLIENT_ID> \
   --from-literal=client-secret=<CLIENT_SECRET> \
-  --from-literal=cookie-secret="$(openssl rand -base64 32 | head -c 32 | base64)"
+  --from-literal=cookie-secret="$(openssl rand -base64 32 | head -c 32)"
 ```
 
 ```yaml
