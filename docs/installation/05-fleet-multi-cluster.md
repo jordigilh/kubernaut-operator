@@ -830,6 +830,8 @@ oc annotate mcpserverregistration <name> -n mcp-system force-resync="$(date +%s)
 
 If the underlying issue keeps recurring, increase the client's `access.token.lifespan` ([Part B3](#b3-kubernaut-fleet-read--the-brokers-discovery-credential)) rather than rotating manually on a schedule.
 
+**If the rotation above doesn't clear the error** (`mcpserverregistration` stays `NotReady`, `mcpgatewayextension` reports `DeploymentNotReady`/"broker-router deployment is not ready"), don't keep re-rotating the token — this is a different, unrecoverable-without-manual-intervention failure mode, not an expired credential. A credential minted without the `Bearer ` prefix (e.g. a copy-paste of just `$BROKER_TOKEN` instead of `"Bearer ${BROKER_TOKEN}"` above) can wedge the broker/controller into a deadlock that a normal re-rotation can't escape. See [04's troubleshooting entry](04-fleet-mcp-gateway.md#broker-logs-transport-error-authorization-required-on-every-connection-attempt-and-never-recovers-even-after-fixing-the-credential) for how to confirm you're in that state and the direct-patch recovery procedure.
+
 ### `tools/call` fails with `invalid_client: Audience not found`
 
 See the callout under [Part E](#part-e-hubs-own-kube-mcp-server) — set `sts_audience` explicitly in `kube-mcp-server`'s `config.toml` rather than omitting it, on current `kube-mcp-server:latest` images. Restart the deployment after editing the Secret (it only reads `config.toml` at startup):
