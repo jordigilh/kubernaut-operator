@@ -52,6 +52,11 @@ func defaultFMCFleetSpec() kubernautv1alpha2.FleetSpec {
 	return kubernautv1alpha2.FleetSpec{
 		Enabled: &t, Backend: "fleetmetadatacache",
 		MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+		// testNamespace ("default") always exists in envtest -- these
+		// generic lifecycle fixtures aren't exercising namespace-scoped
+		// RBAC (see mcpgatewaynamespacerbac_*_test.go for that), so reusing
+		// it avoids needing an explicit ensureNamespace call per test.
+		MCPGatewayNamespace: testNamespace,
 		OAuth2: kubernautv1alpha2.OAuth2Spec{
 			Enabled: true, TokenURL: "https://keycloak.example.com/token",
 			CredentialsSecretRef: "fleet-oauth2-creds",
@@ -97,7 +102,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	})
 
 	Describe("FleetMetadataCache Lifecycle (#200)", func() {
-		It("creates FMC Deployment, Service, ConfigMap, ClusterRole, and CRB when enabled", func() {
+		It("creates FMC Deployment, Service, ConfigMap, namespace-scoped Role, and RoleBinding when enabled", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
 			enableFleetMetadataCache(ctx)
@@ -119,15 +124,20 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}, cm)).To(Succeed())
 			Expect(cm.Data).To(HaveKey("config.yaml"))
 
-			cr := &rbacv1.ClusterRole{}
+			// kubernaut-operator#455: mcpGatewayNamespace is now mandatory,
+			// so the cluster-scoped ClusterRole/CRB variant (empty
+			// namespace) is no longer a reachable state -- FMC's MCP
+			// Gateway CRD watch always grants via the namespace-scoped
+			// Role/RoleBinding instead (MCPGatewayNamespaceRBAC, DD-362).
+			role := &rbacv1.Role{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: testNamespace + "-fleetmetadatacache",
-			}, cr)).To(Succeed())
+				Name: testNamespace + "-fleetmetadatacache-mcpgateway", Namespace: testNamespace,
+			}, role)).To(Succeed())
 
-			crb := &rbacv1.ClusterRoleBinding{}
+			rb := &rbacv1.RoleBinding{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: testNamespace + "-fleetmetadatacache-binding",
-			}, crb)).To(Succeed())
+				Name: testNamespace + "-fleetmetadatacache-mcpgateway-binding", Namespace: testNamespace,
+			}, rb)).To(Succeed())
 		})
 
 		It("skips all FMC resources when fleetMetadataCache is disabled (default)", func() {

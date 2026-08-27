@@ -122,11 +122,12 @@ var _ = Describe("v1alpha2 Fleet OAuth2 admission (ADR-CRD-001 F12)", func() {
 		cr := newMinimalV1alpha2CR("f12-accept-oauth2-true")
 		t := true
 		cr.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled:            &t,
-			Backend:            "fleetmetadatacache",
-			Endpoint:           "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse",
-			MCPGatewayType:     "eaigw",
+			Enabled:             &t,
+			Backend:             "fleetmetadatacache",
+			Endpoint:            "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443",
+			MCPGatewayEndpoint:  "https://mcp-gateway.example.com/sse",
+			MCPGatewayType:      "eaigw",
+			MCPGatewayNamespace: testNamespace,
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled:              true,
 				TokenURL:             "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token",

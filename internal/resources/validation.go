@@ -557,6 +557,18 @@ func validateFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) []error {
 		errs = append(errs, fmt.Errorf("%s.mcpGatewayType: invalid value %q — must be one of: eaigw, kuadrant", base, fleet.MCPGatewayType))
 	}
 
+	// kubernaut-operator#455: leaving this empty let FleetMetadataCache's
+	// cluster registry silently default to watching its own install
+	// namespace instead of the MCP Gateway's namespace, instead of the
+	// documented cluster-wide fallback (root cause of
+	// jordigilh/kubernaut#2298's "0 clusters" symptom). Also least-privilege
+	// (CM-6): a cluster can have multiple MCP Gateways installed, so an
+	// explicit namespace scopes every fleet-aware component's CRD watch to
+	// exactly one of them instead of watching cluster-wide.
+	if fleet.MCPGatewayNamespace == "" {
+		errs = append(errs, fmt.Errorf("%s.mcpGatewayNamespace: must be set when fleet.enabled is true — scopes every fleet-aware component's MCP Gateway CRD watch to a single namespace (kubernaut-operator#455)", base))
+	}
+
 	errs = append(errs, validateFleetOAuth2(knV2, fleet)...)
 
 	return errs
