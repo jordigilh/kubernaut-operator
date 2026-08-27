@@ -645,6 +645,29 @@ subjects:
 EOF
 ```
 
+`view` also isn't enough for `FleetMetadataCache` (FMC): it lists `nodes` on every registered cluster to build per-cluster metadata (capacity, labels, taints), and the default `view` `ClusterRole` deliberately excludes cluster-scoped resources like `nodes`. Without this, FMC reports `clusters: 0` for every cluster even though the MCP Gateway registration itself is healthy — the only symptom is silence, no error surfaced anywhere obvious. Apply on every cluster in the fleet, same as above:
+
+```bash
+oc apply -f - <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubernaut-fleet-node-reader
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubernaut-fleet-read-node-reader
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: kubernaut-fleet-node-reader}
+subjects:
+- {kind: User, name: "oidc:${FLEET_CALLER_SUB}", apiGroup: rbac.authorization.k8s.io}
+EOF
+```
+
 ### F8: Replicate the workflow-execution namespace
 
 `kubernaut-operator` only provisions the `kubernaut-workflows` namespace and its `kubernaut-workflow-runner` ServiceAccount/RBAC on the cluster it's installed on (the hub) — see `deployWorkflowNamespace`/`workflowRunnerClusterRole`/`WorkflowNamespaceRBAC` in `internal/controller/kubernaut_controller.go` and `internal/resources/rbac.go`. When `RemediationRequest.ClusterID` routes a remediation Job to a spoke, that namespace and its RBAC must already exist there — nothing creates it remotely. First symptom is the spawned Job failing with `namespace not found`.
