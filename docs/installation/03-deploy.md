@@ -171,6 +171,10 @@ spec:
     auth:
       issuerURL: "https://keycloak.apps.example.com/realms/kubernaut"
       audience: "kubernaut-apifrontend"     # must match the OIDC client
+      # jwksURL is intentionally omitted -- the operator derives it from
+      # issuerURL using Keycloak's well-known JWKS path convention
+      # (kubernaut-operator#462). Only set it explicitly if your OIDC
+      # provider isn't Keycloak or uses a non-standard JWKS path.
     # REQUIRED whenever AF is enabled (default) -- there is no working
     # fallback if rbac/roleBindings is left unset: every user, including
     # cluster-admin, sees "Access Denied" on the Console and every tool
