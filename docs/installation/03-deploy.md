@@ -206,13 +206,17 @@ spec:
   # fleet backend across a fleet of clusters. All fields are inert until
   # enabled: true is set — safe to pre-stage ahead of enabling.
   #
-  # mcpGatewayEndpoint/mcpGatewayType are REQUIRED alongside backend/endpoint
-  # when enabled: Gateway and RemediationOrchestrator fail closed at startup
-  # without them (upstream Fleet.ValidateFullFederation). SignalProcessing/
+  # mcpGatewayEndpoint/mcpGatewayType/mcpGatewayNamespace are REQUIRED
+  # alongside backend/endpoint when enabled: Gateway and
+  # RemediationOrchestrator fail closed at startup without
+  # mcpGatewayEndpoint/mcpGatewayType (upstream Fleet.ValidateFullFederation),
+  # and mcpGatewayNamespace is required at admission for every fleet-aware
+  # component (kubernaut-operator#455 -- see docs/installation/
+  # 04-fleet-mcp-gateway.md#wiring-into-the-kubernaut-cr for why). SignalProcessing/
   # APIFrontend/EffectivenessMonitor/KubernautAgent only need
-  # mcpGatewayEndpoint+mcpGatewayType — they never call the Backend/Endpoint
-  # scope-check adapter, so backend/endpoint don't apply to them and are
-  # omitted from their rendered config.
+  # mcpGatewayEndpoint+mcpGatewayType+mcpGatewayNamespace — they never call
+  # the Backend/Endpoint scope-check adapter, so backend/endpoint don't apply
+  # to them and are omitted from their rendered config.
   # fleet:
   #   enabled: false
   #   backend: fleetmetadatacache          # or: acm (Red Hat ACM Search GraphQL)
@@ -221,7 +225,7 @@ spec:
   #   tokenSecretName: acm-search-token    # optional; Secret key: token (typically required for backend: acm)
   #   mcpGatewayEndpoint: "https://mcp-gateway.example.com/sse"
   #   mcpGatewayType: eaigw                # or: kuadrant
-  #   mcpGatewayNamespace: managed-clusters   # optional; scopes the MCP Gateway CRD watch (and its RBAC) to one namespace instead of cluster-wide, shared by every fleet-aware component (DD-362 -- no per-component override)
+  #   mcpGatewayNamespace: managed-clusters   # required; scopes the MCP Gateway CRD watch (and its RBAC) to one namespace instead of cluster-wide, shared by every fleet-aware component (DD-362 -- no per-component override)
   #   oauth2:
   #     enabled: true
   #     tokenURL: "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token"
@@ -246,15 +250,16 @@ spec:
   # serves federated scope-check results from Valkey over plain HTTP inside
   # the cluster (upstream's binary has no TLS server support). Most
   # deployments that enable spec.fleet use backend: acm (an existing RHACM
-  # Search installation) instead of standing up FMC — only set
-  # fleetMetadataCache.enabled: true when backend: fleetmetadatacache above
-  # and you want the operator, rather than a separately-managed FMC, to be
-  # the thing Gateway/RemediationOrchestrator query. When enabled with no
-  # fleet.endpoint set, the operator auto-derives FMC's in-cluster URL — no
-  # need to also fill in fleet.endpoint by hand.
+  # Search installation) instead of standing up FMC — FMC has no separate
+  # enable toggle (kubernaut-operator#450): it deploys automatically when
+  # fleet.enabled is true and fleet.backend is fleetmetadatacache above, so
+  # only set backend: fleetmetadatacache when you want the operator, rather
+  # than a separately-managed FMC, to be the thing Gateway/
+  # RemediationOrchestrator query. When active with no fleet.endpoint set,
+  # the operator auto-derives FMC's in-cluster URL — no need to also fill in
+  # fleet.endpoint by hand.
   #
   # fleetMetadataCache:
-  #   enabled: false
   #   fleet:
   #     oauth2CredentialsSecretRef: fmc-oauth2-creds   # optional; overrides fleet.oauth2.credentialsSecretRef for FMC only
   #   syncInterval: "30s"

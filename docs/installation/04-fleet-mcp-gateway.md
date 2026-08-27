@@ -460,7 +460,10 @@ spec:
     enabled: true
     mcpGatewayEndpoint: "https://<MCP_GATEWAY_HOST>/mcp"
     mcpGatewayType: kuadrant
+    mcpGatewayNamespace: mcp-system # required -- see note below
 ```
+
+`mcpGatewayNamespace` is mandatory (rejected at admission if empty) whenever `fleet.enabled` is `true`. Set it to the namespace holding your `MCPServerRegistration`/`Gateway` objects (`mcp-system` in this guide's examples). Every fleet-aware component's MCP Gateway CRD watch is scoped to exactly this namespace instead of cluster-wide, which matters if the cluster has more than one MCP Gateway installed. Leaving it unset used to fall back to a cluster-wide watch, but that fallback didn't work as documented for every consumer — see [jordigilh/kubernaut#2298](https://github.com/jordigilh/kubernaut/issues/2298) — so `kubernaut-operator` now requires it explicitly (kubernaut-operator#455).
 
 ## Troubleshooting
 
