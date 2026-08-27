@@ -173,7 +173,7 @@ func logLossyFleetDowngrade(s v1alpha2.KubernautSpec) {
 		"kubernautAgent":          s.KubernautAgent.Fleet != nil,
 	}
 	fleetEnabled := s.Fleet.Enabled != nil && *s.Fleet.Enabled
-	fmcEnabled := s.FleetMetadataCache.Enabled != nil && *s.FleetMetadataCache.Enabled
+	fmcEnabled := s.FleetMetadataCacheEnabled()
 	var overridden []string
 	for component, hasOverride := range fleetOverrides {
 		if hasOverride {

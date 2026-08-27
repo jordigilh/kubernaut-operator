@@ -138,26 +138,22 @@ wiring), not a rendering-only addition to two pre-existing components.
 | disabling after being enabled deletes the Deployment, Service, ConfigMap, ClusterRole, and ClusterRoleBinding | Yes |
 | enabling with `spec.fleet.mcpGatewayEndpoint` missing drives the CR to `PhaseError` | Yes |
 
-### 3.4 Unused-FMC warning (`internal/controller/fleetmetadatacache_test.go`, envtest)
+### 3.4 Unused-FMC warning (removed by #450)
 
 Added after initial review: `spec.fleetMetadataCache.enabled=true` combined
-with `spec.fleet.backend: acm` (or `spec.fleet.enabled: false`) passes both
-`validateFleetMetadataCache` and `validateFleetConfig` independently (each
-only checks its own component's requirements), but the result is FMC fully
-deployed and polling/caching while zero components query it -- Gateway and
-RemediationOrchestrator resolve `spec.fleet.endpoint` to the *other*
-backend. Not unsafe (unlike a missing `tokenSecretName`/`mcpGatewayEndpoint`,
-which crash-loops pods or sends unauthenticated requests), and not
-necessarily a mistake -- a deliberate shadow-deploy of FMC ahead of cutting
-over from `backend: acm` is legitimate. So this is surfaced as a `Warning`
-Event (`FleetMetadataCacheUnused`), the same non-blocking, non-mutating
-mechanism already used for `NetworkPoliciesDisabled`, rather than rejected
-at admission or silently stripped from the stored spec.
+with `spec.fleet.backend: acm` (or `spec.fleet.enabled: false`) used to pass
+both `validateFleetMetadataCache` and `validateFleetConfig` independently
+(each only checked its own component's requirements), but the result was FMC
+fully deployed and polling/caching while zero components queried it. That
+was surfaced as a non-blocking `Warning` Event (`FleetMetadataCacheUnused`).
 
-| Description | Automated? |
-|--------------|------------|
-| emits `FleetMetadataCacheUnused` when enabled with `backend: acm` | Yes |
-| does not emit it when enabled with `backend: fleetmetadatacache` (the consuming configuration) | Yes |
+#450 removed `spec.fleetMetadataCache.enabled` entirely: FMC now activates
+solely from `spec.fleet.enabled && spec.fleet.backend == "fleetmetadatacache"`
+(`KubernautSpec.FleetMetadataCacheEnabled()`), the same predicate every
+consuming component already uses to route to it. The contradictory state
+this warning detected can no longer be represented in the schema, so
+`warnIfFleetMetadataCacheUnused` and its two tests were deleted as dead code
+rather than kept passing.
 
 ### 3.5 Regression fix surfaced during this work
 
