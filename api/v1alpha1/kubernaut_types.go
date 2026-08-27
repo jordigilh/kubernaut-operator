@@ -1137,9 +1137,16 @@ func (s *APIFrontendRouteSpec) AFRouteEnabled() bool {
 // verified fetch. The operator creates a ClusterSPIFFEID and injects a
 // SPIRE-aware mTLS sidecar into the AF deployment.
 type APIFrontendSPIRESpec struct {
-	// Whether SPIRE mTLS sidecar injection is enabled.
-	// Defaults to true when omitted. Set explicitly to false for OCP 4.18
-	// environments without SPIRE or when running without kagenti authbridge.
+	// Whether SPIRE mTLS sidecar injection is enabled. Defaults to false
+	// (opt-in) when omitted (kubernaut-operator#459): kagenti's CRD surface
+	// is still pre-1.0 and actively churning upstream (the legacy
+	// Agent/Component CRD is being replaced by AgentRuntime, and the CRD
+	// group itself has shifted between kagenti.dev and rossoctl.dev across
+	// recent releases), so kubernaut-operator no longer assumes kagenti is
+	// present by default. Standalone console+AF with OAuth2 needs no
+	// kagenti/SPIRE involvement at all. Set explicitly to true only when
+	// kagenti is actually installed and its authbridge/envoy sidecar should
+	// terminate AF's mTLS.
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
@@ -1158,12 +1165,10 @@ type APIFrontendSPIRESpec struct {
 }
 
 // SPIREEnabled returns true when SPIRE mTLS sidecar injection is active.
-// Defaults to true when the field is nil (not specified in the CR).
+// Defaults to false (opt-in) when the field is nil (not specified in the CR)
+// -- see APIFrontendSPIRESpec.Enabled's doc comment for why (kubernaut-operator#459).
 func (s *APIFrontendSPIRESpec) SPIREEnabled() bool {
-	if s.Enabled == nil {
-		return true
-	}
-	return *s.Enabled
+	return s.Enabled != nil && *s.Enabled
 }
 
 // AuthWebhookSpec configures the AuthWebhook admission controller.

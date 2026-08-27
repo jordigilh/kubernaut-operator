@@ -596,9 +596,16 @@ spec:
                         type: string
                       enabled:
                         description: |-
-                          Whether SPIRE mTLS sidecar injection is enabled.
-                          Defaults to true when omitted. Set explicitly to false for OCP 4.18
-                          environments without SPIRE or when running without kagenti authbridge.
+                          Whether SPIRE mTLS sidecar injection is enabled. Defaults to false
+                          (opt-in) when omitted (kubernaut-operator#459): kagenti's CRD surface
+                          is still pre-1.0 and actively churning upstream (the legacy
+                          Agent/Component CRD is being replaced by AgentRuntime, and the CRD
+                          group itself has shifted between kagenti.dev and rossoctl.dev across
+                          recent releases), so kubernaut-operator no longer assumes kagenti is
+                          present by default. Standalone console+AF with OAuth2 needs no
+                          kagenti/SPIRE involvement at all. Set explicitly to true only when
+                          kagenti is actually installed and its authbridge/envoy sidecar should
+                          terminate AF's mTLS.
                         type: boolean
                       trustDomain:
                         description: |-
@@ -3014,9 +3021,16 @@ spec:
                         type: string
                       enabled:
                         description: |-
-                          Whether SPIRE mTLS sidecar injection is enabled.
-                          Defaults to true when omitted. Set explicitly to false for OCP 4.18
-                          environments without SPIRE or when running without kagenti authbridge.
+                          Whether SPIRE mTLS sidecar injection is enabled. Defaults to false
+                          (opt-in) when omitted (kubernaut-operator#459): kagenti's CRD surface
+                          is still pre-1.0 and actively churning upstream (the legacy
+                          Agent/Component CRD is being replaced by AgentRuntime, and the CRD
+                          group itself has shifted between kagenti.dev and rossoctl.dev across
+                          recent releases), so kubernaut-operator no longer assumes kagenti is
+                          present by default. Standalone console+AF with OAuth2 needs no
+                          kagenti/SPIRE involvement at all. Set explicitly to true only when
+                          kagenti is actually installed and its authbridge/envoy sidecar should
+                          terminate AF's mTLS.
                         type: boolean
                       trustDomain:
                         description: |-
