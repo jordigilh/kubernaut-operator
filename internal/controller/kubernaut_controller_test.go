@@ -524,11 +524,12 @@ var _ = Describe("Kubernaut Controller", func() {
 			knV2 := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-				Enabled:            &enabled,
-				Backend:            "fleetmetadatacache",
-				Endpoint:           "https://fmc.kubernaut.svc:8443",
-				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse",
-				MCPGatewayType:     "kuadrant",
+				Enabled:             &enabled,
+				Backend:             "fleetmetadatacache",
+				Endpoint:            "https://fmc.kubernaut.svc:8443",
+				MCPGatewayEndpoint:  "https://mcp-gateway.example.com/sse",
+				MCPGatewayType:      "kuadrant",
+				MCPGatewayNamespace: testNamespace,
 				OAuth2: kubernautv1alpha2.OAuth2Spec{
 					Enabled: true, TokenURL: "https://keycloak.example.com/token",
 					CredentialsSecretRef: "fleet-oauth2-creds",
