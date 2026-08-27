@@ -1612,15 +1612,19 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	// ======================================================================
 
 	Context("API Frontend issuerURL Enforcement", func() {
-		// SPIRE.Enabled defaults to true when nil (not specified). When the
-		// kagenti sidecar is active, the OIDC auto-detection path fires.
-		// Without an authbridge-config ConfigMap in kagenti-system, the OIDC
-		// auto-detection fails, which is the IA-2 enforcement path when
-		// kagenti is active.
+		// SPIRE.Enabled defaults to false (opt-in) since kubernaut-operator#459
+		// -- kagenti's CRD surface is still pre-1.0 and churning upstream, so
+		// kubernaut-operator no longer assumes it's present. These tests
+		// explicitly opt in (SPIRE.Enabled = true) to exercise the kagenti
+		// sidecar-active path: the OIDC auto-detection path only fires when
+		// the sidecar is active, and without an authbridge-config ConfigMap
+		// in kagenti-system, that auto-detection fails -- the IA-2
+		// enforcement path when kagenti is active.
 
 		It("should pass validation when kagenti sidecar is active without issuerURL (FedRAMP IA-2 auto-detection)", func() {
 			cr := newMinimalCR()
 			cr.Spec.APIFrontend.Auth.IssuerURL = ""
+			cr.Spec.APIFrontend.SPIRE.Enabled = ptr.To(true)
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			createBYOSecrets(ctx)
 
@@ -1642,6 +1646,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("should not create AF Deployment when OIDC auto-detection fails", func() {
 			cr := newMinimalCR()
 			cr.Spec.APIFrontend.Auth.IssuerURL = ""
+			cr.Spec.APIFrontend.SPIRE.Enabled = ptr.To(true)
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			createBYOSecrets(ctx)
 
@@ -1695,6 +1700,28 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 			}
 			_ = result
+		})
+
+		// kubernaut-operator#459: standalone console+AF (no kagenti installed,
+		// spire.enabled left unset) must work out of the box using AF's own
+		// TLS -- it must not silently assume a kagenti sidecar will
+		// terminate TLS and end up serving plain HTTP on 8443.
+		It("#459: deploys AF with its own TLS by default when spire.enabled is unset and kagenti isn't installed", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			Expect(cr.Spec.APIFrontend.SPIRE.Enabled).To(BeNil(), "test fixture must exercise the actual default (unset), not an explicit value")
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			reconcileToRunning(ctx)
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "apifrontend-config", Namespace: testNamespace,
+			}, cm)).To(Succeed())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("certDir: /etc/apifrontend/tls"),
+				"AF must terminate its own TLS by default -- no kagenti sidecar is assumed present")
+			Expect(data).To(ContainSubstring("required: true"),
+				"AF's own TLS must be required by default so console's HTTPS proxy_pass doesn't 502")
 		})
 	})
 
