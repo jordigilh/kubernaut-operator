@@ -3583,9 +3583,14 @@ spec:
                     description: |-
                       MCPGatewayNamespace restricts every fleet-aware component's MCP
                       Gateway CRD watch (Backend for Envoy AI Gateway,
-                      MCPServerRegistration for Kuadrant) to a single namespace. Empty means
-                      cluster-wide (all namespaces). Serves as the fallback for every
-                      component's own spec.<component>.fleet.namespace override (F1).
+                      MCPServerRegistration for Kuadrant) to a single namespace. Required
+                      (enforced at admission) when Enabled is true (kubernaut-operator#455):
+                      leaving it empty let FleetMetadataCache's cluster registry silently
+                      default to its own install namespace instead of the documented
+                      cluster-wide fallback (jordigilh/kubernaut#2298). It's also
+                      least-privilege — a cluster can have multiple MCP Gateways installed,
+                      so an explicit namespace scopes every fleet-aware component's watch to
+                      exactly one of them.
                     type: string
                   mcpGatewayType:
                     description: |-

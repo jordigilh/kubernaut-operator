@@ -1181,7 +1181,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1198,7 +1198,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "valkey", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1216,7 +1216,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "acm", TokenSecretName: "acm-search-token",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1233,7 +1233,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1250,7 +1250,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
 			TokenSecretName:    "acm-search-token",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1267,7 +1267,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 			CASecretName:       "fmc-ca-bundle",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1283,7 +1283,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1301,7 +1301,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1321,7 +1321,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayType: "eaigw",
+			MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 		}
 		errs := ValidateFleet(knV2)
 		Expect(errs).To(HaveLen(1),
@@ -1334,7 +1334,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1351,7 +1351,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "istio",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "istio", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1370,6 +1370,52 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: mcpGatewayTypeKuadrant,
+			MCPGatewayNamespace: "mcp-system",
+			OAuth2: kubernautv1alpha2.OAuth2Spec{
+				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				CredentialsSecretRef: "fleet-oauth2-creds",
+			},
+		}
+		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+		errs := ValidateFleet(knV2)
+		Expect(errs).To(BeEmpty())
+	})
+
+	// FL-025..FL-026 (kept adjacent to FL-012..FL-015's MCP Gateway block
+	// despite the out-of-sequence numbers -- added later by
+	// kubernaut-operator#455): mcpGatewayNamespace must be set whenever
+	// fleet is enabled. Leaving it empty let FleetMetadataCache's cluster
+	// registry silently default to watching its own install namespace
+	// instead of the MCP Gateway's namespace (root cause of
+	// jordigilh/kubernaut#2298's "0 clusters" symptom) -- fail fast at
+	// admission instead. It's also least-privilege (CM-6): a cluster can
+	// have multiple MCP Gateways installed, so an explicit namespace scopes
+	// every fleet-aware component's CRD watch to exactly one of them.
+	It("FL-025 [SC-8,CM-6]: rejects fleet enabled with no mcpGatewayNamespace", func() {
+		kn := testKubernaut()
+		knV2 := testKnV2(kn)
+		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: mcpGatewayTypeKuadrant,
+			OAuth2: kubernautv1alpha2.OAuth2Spec{
+				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				CredentialsSecretRef: "fleet-oauth2-creds",
+			},
+		}
+		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+		errs := ValidateFleet(knV2)
+		Expect(errs).To(HaveLen(1),
+			"FMC's cluster registry silently defaults to its own install namespace instead of the MCP Gateway's namespace when this is empty (jordigilh/kubernaut#2298) -- this must fail fast at admission instead")
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGatewayNamespace"))
+	})
+
+	It("FL-026 [SC-8,CM-6]: accepts fleet enabled with mcpGatewayNamespace set", func() {
+		kn := testKubernaut()
+		knV2 := testKnV2(kn)
+		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: mcpGatewayTypeKuadrant,
+			MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1389,7 +1435,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, CredentialsSecretRef: "fleet-oauth2-creds"},
 		}
 		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
@@ -1403,7 +1449,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
 		}
 		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
@@ -1418,7 +1464,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1444,7 +1490,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
 		}
 		knV2.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
@@ -1464,7 +1510,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1481,7 +1527,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
 		}
 		knV2.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
@@ -1503,7 +1549,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
 		}
 		knV2.Spec.RemediationOrchestrator.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testROFleetOAuth2SecretRef}
@@ -1528,7 +1574,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
 		}
 		knV2.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
@@ -1550,7 +1596,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
 		}
 		knV2.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
@@ -1576,7 +1622,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
 		}
 		knV2.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
@@ -1598,7 +1644,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1618,7 +1664,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1645,7 +1691,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1667,7 +1713,7 @@ var _ = Describe("Fleet Config Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1700,7 +1746,7 @@ var _ = Describe("FleetMetadataCache Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache",
-			MCPGatewayType: "eaigw",
+			MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fmc-oauth2-creds",
@@ -1717,7 +1763,7 @@ var _ = Describe("FleetMetadataCache Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{
 				Enabled: true, TokenURL: "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fmc-oauth2-creds",
@@ -1734,7 +1780,7 @@ var _ = Describe("FleetMetadataCache Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 		}
 		errs := ValidateFleet(knV2)
 		Expect(errs).To(HaveLen(1),
@@ -1747,7 +1793,7 @@ var _ = Describe("FleetMetadataCache Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, CredentialsSecretRef: "fmc-oauth2-creds"},
 		}
 		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
@@ -1767,7 +1813,7 @@ var _ = Describe("FleetMetadataCache Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
 		}
 		knV2.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
@@ -1787,7 +1833,7 @@ var _ = Describe("FleetMetadataCache Validation", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
 			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
 		}
 		knV2.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
