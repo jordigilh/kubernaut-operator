@@ -498,9 +498,15 @@ var validMCPGatewayTypes = map[string]bool{
 	mcpGatewayTypeKuadrant: true,
 }
 
+// fleetBackendACM is spec.fleet.backend's value for the BYO ACM Search
+// integration. backend=fleetmetadatacache already has a named constant
+// (ComponentFleetMetadataCache in common.go); this gives "acm" the same
+// treatment instead of repeating the bare literal.
+const fleetBackendACM = "acm"
+
 var validFleetBackends = map[string]bool{
-	"fleetmetadatacache": true,
-	"acm":                true,
+	ComponentFleetMetadataCache: true,
+	fleetBackendACM:             true,
 }
 
 // validateFleetConfig validates spec.fleet. When Enabled is false or
@@ -533,7 +539,7 @@ func validateFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	// unauthenticated mode for the ACM Search GraphQL API. Without a token,
 	// Gateway/RemediationOrchestrator crash-loop at startup instead of
 	// failing fast here at admission.
-	if fleet.Backend == "acm" && fleet.TokenSecretName == "" {
+	if fleet.Backend == fleetBackendACM && fleet.TokenSecretName == "" {
 		errs = append(errs, fmt.Errorf("%s.tokenSecretName: must be set when fleet.backend is \"acm\" — the ACM Search GraphQL API requires bearer token authentication", base))
 	}
 
