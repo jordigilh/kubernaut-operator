@@ -3873,6 +3873,30 @@ var _ = Describe("APIFrontendConfigMap OIDC", func() {
 			"IA-5: jwksURL must be propagated for explicit JWKS endpoint configuration")
 	})
 
+	It("kubernaut-operator#462: derives jwksURL from issuerURL via the Keycloak convention when jwksURL is left empty", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.IssuerURL = "https://keycloak.example.com/realms/kubernaut"
+		kn.Spec.APIFrontend.Auth.JWKSURL = ""
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("jwksURL: https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/certs"),
+			"#462: an empty jwksURL must not be left for AF's own runtime to mishandle -- AF's fallback "+
+				"treats the issuer URL itself as the JWKS endpoint, which for Keycloak silently fails every "+
+				"token's signature verification")
+	})
+
+	It("kubernaut-operator#462: strips a trailing slash from issuerURL before deriving jwksURL", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.IssuerURL = "https://keycloak.example.com/realms/kubernaut/"
+		kn.Spec.APIFrontend.Auth.JWKSURL = ""
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("jwksURL: https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/certs"))
+		Expect(data).NotTo(ContainSubstring("realms/kubernaut//protocol"))
+	})
+
 	It("[IA-5, SC-8] propagates oidcCaFile to AF config for OIDC CA verification", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.OIDCCAFile = "/etc/pki/tls/certs/oidc-ca.crt"
@@ -4062,6 +4086,25 @@ var _ = Describe("IA-2: AF multi-provider JWT config emission", func() {
 		data := cm.Data["config.yaml"]
 		Expect(data).NotTo(ContainSubstring("jwtProviders:"),
 			"IA-2: jwtProviders must not appear when no multi-provider config is set")
+	})
+
+	It("kubernaut-operator#462: does not apply the Keycloak jwksURL derivation to jwtProviders[] entries (heterogeneous IdPs, e.g. SPIRE)", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.IssuerURL = "" // isolate: only the spire provider has an issuerURL
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
+			{
+				Name:      "spire",
+				IssuerURL: "https://spire.example.com",
+				Audiences: []string{"kubernaut-workload"},
+			},
+		}
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).NotTo(ContainSubstring("protocol/openid-connect/certs"),
+			"#462: the Keycloak-convention derivation is only safe for the single-provider issuerURL/jwksURL "+
+				"fields -- jwtProviders[] entries can be non-Keycloak IdPs (e.g. SPIRE) and must be left as-is "+
+				"when their own jwksURL is empty")
 	})
 })
 

@@ -23,11 +23,14 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
+
+var configmapsLog = logf.Log.WithName("configmaps")
 
 // controllerConfig holds controller-runtime style settings shared by the
 // AIAnalysis, SignalProcessing, and Notification controllers.
@@ -2715,6 +2718,16 @@ func afAgentLLMConfig(llm kubernautv1alpha1.LLMProfileSpec) afAgentLLMYAML {
 	return cfg
 }
 
+// afKeycloakJWKSPath is the well-known JWKS path convention for a Keycloak
+// realm. See kubernaut-operator#462.
+const afKeycloakJWKSPath = "/protocol/openid-connect/certs"
+
+// deriveAFJWKSURL best-effort derives a Keycloak realm's JWKS endpoint from
+// its issuer URL (kubernaut-operator#462).
+func deriveAFJWKSURL(issuerURL string) string {
+	return strings.TrimRight(issuerURL, "/") + afKeycloakJWKSPath
+}
+
 func afAuthConfig(kn *kubernautv1alpha1.Kubernaut, oidc *KagentiOIDCDefaults) afAuthYAML {
 	af := kn.Spec.APIFrontend
 
@@ -2733,6 +2746,26 @@ func afAuthConfig(kn *kubernautv1alpha1.Kubernaut, oidc *KagentiOIDCDefaults) af
 		if !insecure {
 			insecure = oidc.AllowInsecureIssuers
 		}
+	}
+
+	// kubernaut-operator#462: an empty jwksURL isn't safe to leave for AF's
+	// own runtime to guess -- it falls back to treating the issuer URL
+	// itself as the JWKS endpoint, which for Keycloak returns the realm
+	// info document (not a JWKS), silently failing every token's signature
+	// verification with no operator-visible error (AF only logs this at
+	// DEBUG). Keycloak is the only supported IdP for this single-provider
+	// path (kagenti auto-detection above already covers the SPIRE/kagenti
+	// case), so deriving via its well-known JWKS path convention is a safe
+	// default rather than a guess. This mirrors the same convention already
+	// applied to jwtProviders[] during v1alpha1->v1alpha2 conversion
+	// (deriveJWKSURL in api/v1alpha1/kubernaut_conversion.go) -- but is
+	// intentionally NOT applied to the jwtProviders[] array itself here,
+	// since that list can mix in non-Keycloak IdPs (e.g. SPIRE) whose JWKS
+	// path this convention would get wrong.
+	if jwks == "" && issuer != "" {
+		jwks = deriveAFJWKSURL(issuer)
+		configmapsLog.Info("derived apiFrontend.auth.jwksURL from issuerURL (was empty)",
+			"issuerURL", issuer, "derivedJWKSURL", jwks)
 	}
 
 	auth := afAuthYAML{
