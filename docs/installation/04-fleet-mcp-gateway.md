@@ -504,6 +504,52 @@ If it's still `NotReady` after 2 minutes, check the broker's own logs (not the c
 oc logs deployment/mcp-gateway -n mcp-system --tail=50
 ```
 
+### Broker logs `"transport error: authorization required"` on every connection attempt, and never recovers even after fixing the credential
+
+```
+level=ERROR msg="connection failed" component=broker sub-component=mcp-manager "upstream mcp server"=mcp-system/<name>:... error="failed to connect to upstream mcp ... : transport error: authorization required"
+```
+
+Check both of these before assuming this is the same thing as [05's "returns HTTP 500 with `authorization required`"](05-fleet-multi-cluster.md#toolscall-returns-http-500-with-authorization-required-in-broker-logs) (an expired static token, the common case):
+
+```bash
+oc get mcpgatewayextension -n mcp-system -o jsonpath='{.items[*].status.conditions[0].reason}{" "}{.items[*].status.conditions[0].message}{"\n"}'
+oc get mcpserverregistration -n mcp-system
+```
+
+If the extension's reason is `DeploymentNotReady` ("broker-router deployment is not ready") and every registration's reason is `NotReady`/`"no valid mcpgatewayextensions configured"`, rotating the credential Secret **will not fix it by itself**, even if the new token is fresh. This is a self-reinforcing deadlock in Kuadrant's `MCPServerRegistration` controller (verified against `internal/controller/mcpserverregistration_controller.go` at `v0.7.1`): the controller only re-reads the `credentialRef` Secret and rewrites the broker's `config.yaml` *after* confirming a `Ready` `MCPGatewayExtension` — but the extension only becomes `Ready` once the broker Deployment passes its readiness probe, which requires its upstream connections (using whatever credential is already baked into `config.yaml`) to succeed. If a bad credential (e.g. one minted without the `Bearer ` prefix — the broker uses the `credentialRef` Secret's value verbatim as the `Authorization` header, per `internal/broker/upstream/mcp.go`) ever gets written into `config.yaml`, the loop can't self-heal: broker unhealthy → extension `NotReady` → registration reconciler exits before it reaches the code that would refresh the credential → broker stays unhealthy on the stale bad value indefinitely. This is why `kubernaut`'s own fleet E2E suite never hits it — it always provisions a correct, `Bearer `-prefixed Secret before the very first reconcile, so the extension goes `Ready` on the first try and this gate never trips.
+
+Confirm you're in the deadlock (not just an unlucky timing race) by checking whether `config.yaml`'s `credential` field actually matches your current Secret:
+
+```bash
+oc get secret kube-mcp-server-broker-cred -n mcp-system -o jsonpath='{.data.token}' | base64 -d
+oc get secret mcp-gateway-config -n mcp-system -o jsonpath='{.data.config\.yaml}' | base64 -d | grep credential
+```
+
+If the Secret has `Bearer <token>` but `config.yaml`'s `credential:` line is the bare, unprefixed token (or otherwise stale), rotating the Secret again and re-annotating the registration for `force-resync` won't help — the registration reconciler is gated out and never reaches the code that reads the Secret. Break the deadlock by patching `config.yaml` directly and forcing an immediate broker reload (don't wait on the ~60s kubelet Secret-sync mentioned above — that only helps once the controller itself is unstuck):
+
+```bash
+oc get secret mcp-gateway-config -n mcp-system -o jsonpath='{.data.config\.yaml}' | base64 -d > /tmp/mcp-gateway-config.yaml
+python3 -c "
+import re
+with open('/tmp/mcp-gateway-config.yaml') as f:
+    content = f.read()
+def fix(m):
+    val = m.group(1)
+    return m.group(0) if val.startswith('Bearer ') else 'credential: Bearer ' + val
+with open('/tmp/mcp-gateway-config-fixed.yaml', 'w') as f:
+    f.write(re.sub(r'credential: (\S+)', fix, content))
+"
+oc create secret generic mcp-gateway-config -n mcp-system \
+  --from-file=config.yaml=/tmp/mcp-gateway-config-fixed.yaml \
+  --dry-run=client -o yaml | \
+  oc label --local -f - app=mcp-gateway mcp.kuadrant.io/aggregated=true mcp.kuadrant.io/secret=true -o yaml | \
+  oc apply -f -
+oc delete pods -n mcp-system -l app.kubernetes.io/name=mcp-gateway
+```
+
+Once the broker reconnects successfully (`oc logs deployment/mcp-gateway -n mcp-system` shows `overallValid=true`), the extension flips `Ready`, which un-sticks the registration reconciler and restores normal automatic reconciliation going forward — you shouldn't need to repeat this unless a bad credential lands in `config.yaml` again.
+
 ### Tools appear in `tools/list`/`discover_tools` but `tools/call` fails with `"tool ... not found"`
 
 ```json
