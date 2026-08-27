@@ -329,8 +329,7 @@ var _ = Describe("Kubernaut v1alpha1 <-> v1alpha2 conversion webhook", func() {
 					Enabled: ptr.To(true), Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 					MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
 				},
-				FleetMetadataCache: v1alpha2.FleetMetadataCacheSpec{Enabled: ptr.To(true)},
-				Gateway:            v1alpha2.GatewaySpec{Fleet: &v1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: "gw-secret"}},
+				Gateway: v1alpha2.GatewaySpec{Fleet: &v1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: "gw-secret"}},
 			}}
 			dst := &Kubernaut{}
 			Expect(dst.ConvertFrom(hub)).To(Succeed(), "downgrading a CR with Fleet configured must not error -- Fleet is simply dropped, logged as lossy")

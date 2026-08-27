@@ -290,14 +290,16 @@ type FleetOverrideSpec struct {
 //
 // ADR-CRD-001 F12: there is no unauthenticated mode for the MCP Gateway --
 // upstream Fleet.ValidateFullFederation rejects a missing/disabled OAuth2
-// client at startup for every fleet-aware component except FleetMetadataCache
-// (which already enforces this unconditionally, independent of Enabled
-// below). The CEL rule closes that gap at admission time instead of a
-// startup crash-loop, once Fleet itself is enabled; see kubernaut#1991/#1992
-// for the equivalent upstream Helm chart fix. Gated on Enabled (like
-// AnsibleSpec's own conditional-requirement rule) to preserve this type's
-// pre-staging contract: the other fields stay inert, unvalidated, until
-// Enabled is true.
+// client at startup for every fleet-aware component, including
+// FleetMetadataCache (validateFleetMetadataCache enforces this the same
+// way, since kubernaut-operator#450 tied FMC's activation to this same
+// Enabled field via FleetMetadataCacheEnabled()). The CEL rule closes that
+// gap at admission time instead of a startup crash-loop, once Fleet itself
+// is enabled; see kubernaut#1991/#1992 for the equivalent upstream Helm
+// chart fix. Gated on Enabled (like AnsibleSpec's own
+// conditional-requirement rule) to preserve this type's pre-staging
+// contract: the other fields stay inert, unvalidated, until Enabled is
+// true.
 // +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || !has(self.mcpGatewayEndpoint) || size(self.mcpGatewayEndpoint) == 0 || (has(self.oauth2) && has(self.oauth2.enabled) && self.oauth2.enabled)",message="fleet.oauth2.enabled must be true when fleet.enabled is true and fleet.mcpGatewayEndpoint is set -- there is no unauthenticated mode for the MCP Gateway (mirrors FleetMetadataCache's existing unconditional requirement)"
 type FleetSpec struct {
 	// Whether federated scope-checking is enabled for Gateway and
@@ -418,15 +420,16 @@ type FleetResilienceSpec struct {
 // Gateway (spec.fleet.mcpGatewayEndpoint/mcpGatewayType) and serves
 // federated scope-check results from Valkey over HTTP, so Gateway and
 // RemediationOrchestrator (spec.fleet.backend=fleetmetadatacache) query
-// scope without holding federated K8s credentials themselves. Disabled by
-// default (opt-in) -- most deployments that enable spec.fleet use
-// backend=acm (an existing RHACM Search installation) instead.
+// scope without holding federated K8s credentials themselves.
+//
+// There is no separate enable toggle: FMC is not a BYO/self-hosted
+// component, so the operator deploys it automatically whenever
+// spec.fleet.enabled is true and spec.fleet.backend is
+// "fleetmetadatacache" -- see KubernautSpec.FleetMetadataCacheEnabled()
+// and kubernaut-operator#450. Most deployments that enable spec.fleet use
+// backend=acm (an existing RHACM Search installation) instead, in which
+// case this block stays inert.
 type FleetMetadataCacheSpec struct {
-	// Whether the operator deploys the FMC service.
-	// +kubebuilder:default=false
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
-
 	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for FMC's own
 	// OAuth2 client credentials (F1 -- collapses v1alpha1's bespoke
 	// FleetOAuth2CredentialsSecretRef field into the shared
@@ -458,9 +461,11 @@ type FleetMetadataCacheSpec struct {
 }
 
 // FleetMetadataCacheEnabled returns true when the operator should deploy
-// the FMC service. Defaults to false (opt-in).
+// the FMC service. There is no separate enable toggle: FMC is
+// operator-managed only (no BYO/self-hosted path), so selecting it as the
+// fleet backend is what deploys it (kubernaut-operator#450).
 func (s *KubernautSpec) FleetMetadataCacheEnabled() bool {
-	return s.FleetMetadataCache.Enabled != nil && *s.FleetMetadataCache.Enabled
+	return s.FleetEnabled() && s.Fleet.Backend == "fleetmetadatacache"
 }
 
 // FleetEnabled returns true when fleet federation (multi-cluster reads via
