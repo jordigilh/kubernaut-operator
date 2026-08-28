@@ -113,6 +113,12 @@ echo "$MCP_GATEWAY_HOST"
 >   -p="[{\"op\":\"replace\",\"path\":\"/spec/listeners/0/hostname\",\"value\":\"${MCP_GATEWAY_HOST}\"}]"
 > ```
 
+> **Set the same idle-timeout override the operator applies to its own Routes.** By default, OpenShift's router (HAProxy) closes an idle backend connection after 30s, and this `Route` gets no timeout annotation from anything in this guide. A fleet client that goes quiet between MCP calls for longer than that (e.g. `kubernaut#2305`'s SignalProcessing/Gateway session drop) can have its session silently killed mid-flight, surfacing later as session-not-found errors on `tools/call` that have nothing to do with auth or routing. `kubernaut-operator` already sets `haproxy.router.openshift.io/timeout: 3600s` on its own Console/Gateway/APIFrontend Routes for this exact reason (`internal/resources/ocp.go`, `console.go`) — apply it here too, since `kubernaut-operator` doesn't manage this Route itself:
+>
+> ```bash
+> oc annotate route mcp-gateway -n gateway-system haproxy.router.openshift.io/timeout=3600s --overwrite
+> ```
+
 ## Step 2: Install the Kuadrant MCP Gateway CRDs
 
 ```bash
