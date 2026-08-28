@@ -3632,9 +3632,11 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	// #224: AF backs the list_clusters MCP tool and routes remote reads via
 	// a ClusterRegistry, reusing the shared fleet.FleetConfig shape GW/RO
-	// already use (upstream pkg/apifrontend/config.Config.Fleet), but AF
-	// never calls the Backend/Endpoint scope-check adapter -- see
-	// FleetConfig.Validate()'s own doc comment.
+	// already use (upstream pkg/apifrontend/config.Config.Fleet). #464:
+	// upstream kubernaut#2025/#2022 added a Backend/Endpoint scope-check
+	// adapter call to AF's own checkRRScope path (every RR creation, local
+	// or fleet) -- AF now needs backend/endpoint/tlsCAFile/tokenPath
+	// rendered just like GW/RO, not stripped.
 	It("omits the fleet block when fleet is disabled", func() {
 		kn := testKubernautWithAF()
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
@@ -3643,14 +3645,13 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).NotTo(ContainSubstring("fleet:"), "apifrontend config should omit fleet block when disabled, got:\n%s", data)
 	})
 
-	It("renders mcpGatewayEndpoint/mcpGatewayType but omits backend/endpoint/tokenPath even when spec.fleet.backend/endpoint are set", func() {
+	It("[AC-3] renders the fleet block with backend/endpoint/tlsCAFile when enabled (#464)", func() {
 		kn := testKubernautWithAF()
 		enabled := true
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
 			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-			CASecretName: "fmc-ca-bundle", TokenSecretName: "acm-search-token",
 		}
 		cm, err := APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -3658,12 +3659,25 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).To(ContainSubstring("fleet:"), "apifrontend config should contain fleet block when enabled, got:\n%s", data)
 		Expect(data).To(ContainSubstring("mcpGatewayEndpoint: https://mcp-gateway.example.com/sse"), "apifrontend config should render mcpGatewayEndpoint, got:\n%s", data)
 		Expect(data).To(ContainSubstring("mcpGatewayType: eaigw"), "apifrontend config should render mcpGatewayType, got:\n%s", data)
-		// fleet:'s own keys are 2-space indented; other "backend:"/"endpoint:"
-		// substrings exist elsewhere in AF's config (e.g. auth.replayCache.backend)
-		// at deeper indentation, so match on indentation to target fleet: only.
-		Expect(data).NotTo(ContainSubstring("\n  backend:"), "apifrontend never calls the Backend/Endpoint scope-check adapter -- backend must be omitted even when spec.fleet.backend is set, got:\n%s", data)
-		Expect(data).NotTo(ContainSubstring("\n  endpoint:"), "apifrontend fleet block must omit endpoint (AF has no Backend/Endpoint adapter use), got:\n%s", data)
-		Expect(data).NotTo(ContainSubstring("\n  tokenPath:"), "apifrontend fleet block must omit tokenPath (no Backend/Endpoint adapter use), got:\n%s", data)
+		Expect(data).To(ContainSubstring("backend: fleetmetadatacache"), "apifrontend's own checkRRScope path now calls the Backend/Endpoint scope-check adapter (kubernaut#2025/#2022) -- backend must be rendered, not stripped, got:\n%s", data)
+		Expect(data).To(ContainSubstring("endpoint: https://fmc.kubernaut.svc:8443"), "apifrontend fleet block must render endpoint so the scope-check adapter can reach the backend, got:\n%s", data)
+		Expect(data).To(ContainSubstring("tlsCAFile: "+apifrontendTLSCAFile), "apifrontend fleet block should default the top-level tlsCAFile to AF's own CA mount path when no explicit CA secret is set, got:\n%s", data)
+	})
+
+	It("[IA-5, SC-12] renders tlsCAFile and tokenPath mount paths when the corresponding secrets are set (#464)", func() {
+		kn := testKubernautWithAF()
+		enabled := true
+		knV2 := testKnV2(kn)
+		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+			Enabled: &enabled, Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
+			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+			CASecretName: "fmc-ca-bundle", TokenSecretName: "acm-search-token",
+		}
+		cm, err := APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("tlsCAFile: /etc/fleet-tls/ca/ca.crt"), "apifrontend config should render the top-level tlsCAFile mount path when fleet.caSecretName is set, got:\n%s", data)
+		Expect(data).To(ContainSubstring("tokenPath: /etc/fleet-token/token"), "apifrontend config should render tokenPath mount path when fleet.tokenSecretName is set, got:\n%s", data)
 	})
 
 	It("renders fleet.oauth2 with tlsCAFile defaulting to AF's own inter-service CA path", func() {
