@@ -186,6 +186,12 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha
 			ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
 		clusterRoleBinding(p("kubernaut-agent-monitoring-view"), "cluster-monitoring-view",
 			ServiceAccountName(ComponentKubernautAgent), ns, labels),
+		// #468: KA's get_alerts/get_silences tools
+		// (pkg/kubernautagent/tools/alertmanager) call alertmanagers/api
+		// directly, the same permission EM's binding above grants --
+		// cluster-monitoring-view only covers prometheuses/api.
+		clusterRoleBinding(p("kubernaut-agent-alertmanager-view-binding"), p("alertmanager-view"),
+			ServiceAccountName(ComponentKubernautAgent), ns, labels),
 	)
 	if kn.Spec.GatewayEnabled() {
 		crbs = append(crbs,
@@ -514,6 +520,7 @@ func MonitoringCRBNames(kn *kubernautv1alpha1.Kubernaut) []string {
 		p("effectivenessmonitor-alertmanager-view-binding"),
 		p("effectivenessmonitor-monitoring-view"),
 		p("kubernaut-agent-monitoring-view"),
+		p("kubernaut-agent-alertmanager-view-binding"),
 		p("alertmanager-gateway-signal-source"),
 		p("apifrontend-monitoring-view"),
 	}
