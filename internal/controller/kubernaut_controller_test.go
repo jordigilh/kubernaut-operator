@@ -491,6 +491,15 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNamespace + "-effectivenessmonitor-alertmanager-view-binding"}, crb)).To(Succeed(),
 				"CM-6: alertmanager-view RBAC must be provisioned unconditionally now that monitoring can no longer be disabled")
 
+			// #468: kubernaut-agent-sa's get_alerts/get_silences tools call
+			// alertmanagers/api directly and need the same alertmanager-view
+			// binding EffectivenessMonitor gets -- cluster-monitoring-view
+			// (granted separately, see kubernaut-agent-monitoring-view) only
+			// covers prometheuses/api.
+			kaCRB := &rbacv1.ClusterRoleBinding{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNamespace + "-kubernaut-agent-alertmanager-view-binding"}, kaCRB)).To(Succeed(),
+				"#468: kubernaut-agent-sa needs alertmanager-view RBAC for its get_alerts/get_silences tools")
+
 			np := &networkingv1.NetworkPolicy{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.ComponentAPIFrontend + "-netpol", Namespace: testNamespace}, np)).To(Succeed())
 			found := false

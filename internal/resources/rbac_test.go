@@ -518,6 +518,23 @@ var _ = Describe("ClusterRoleBindings", func() {
 				"roleRef = %q, want %q", crb.RoleRef.Name, "cluster-monitoring-view")
 		})
 
+		// #468: KA's get_alerts/get_silences tools (pkg/kubernautagent/tools/alertmanager)
+		// call Alertmanager's alertmanagers/api subresource directly, the same
+		// permission EffectivenessMonitor already gets via alertmanager-view --
+		// cluster-monitoring-view only covers prometheuses/api, not alertmanagers/api.
+		It("binds alertmanager-view for kubernaut agent", func() {
+			crb, ok := crbMap[ns+"-kubernaut-agent-alertmanager-view-binding"]
+			Expect(ok).To(BeTrue(), "missing %s-kubernaut-agent-alertmanager-view-binding CRB", ns)
+			Expect(crb.RoleRef.Name).To(Equal(ns+"-alertmanager-view"),
+				"roleRef = %q, want %q", crb.RoleRef.Name, ns+"-alertmanager-view")
+			Expect(crb.Subjects).NotTo(BeEmpty(), "CRB has no subjects")
+			subj := crb.Subjects[0]
+			Expect(subj.Name).To(Equal(ServiceAccountName(ComponentKubernautAgent)),
+				"subject name = %q, want %q", subj.Name, ServiceAccountName(ComponentKubernautAgent))
+			Expect(subj.Namespace).To(Equal(ns),
+				"subject namespace = %q, want %q", subj.Namespace, ns)
+		})
+
 		It("binds alertmanager gateway signal source to the OCP SA", func() {
 			crb, ok := crbMap[ns+"-alertmanager-gateway-signal-source"]
 			Expect(ok).To(BeTrue(), "missing %s-alertmanager-gateway-signal-source CRB", ns)
@@ -698,10 +715,10 @@ var _ = Describe("KubernautAgentClientAPIfrontendRoleBinding", func() {
 })
 
 var _ = Describe("MonitoringCRBNames", func() {
-	It("returns all five namespace-prefixed names", func() {
+	It("returns all six namespace-prefixed names", func() {
 		kn := testKubernaut()
 		names := MonitoringCRBNames(kn)
-		Expect(names).To(HaveLen(5), "MonitoringCRBNames() count = %d, want 5", len(names))
+		Expect(names).To(HaveLen(6), "MonitoringCRBNames() count = %d, want 6", len(names))
 		ns := kn.Namespace
 		for _, name := range names {
 			Expect(name).To(HavePrefix(ns),

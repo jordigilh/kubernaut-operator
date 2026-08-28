@@ -179,26 +179,7 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha
 		)
 	}
 
-	crbs = append(crbs,
-		clusterRoleBinding(p("effectivenessmonitor-alertmanager-view-binding"), p("alertmanager-view"),
-			ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
-		clusterRoleBinding(p("effectivenessmonitor-monitoring-view"), "cluster-monitoring-view",
-			ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
-		clusterRoleBinding(p("kubernaut-agent-monitoring-view"), "cluster-monitoring-view",
-			ServiceAccountName(ComponentKubernautAgent), ns, labels),
-	)
-	if kn.Spec.GatewayEnabled() {
-		crbs = append(crbs,
-			clusterRoleBinding(p("alertmanager-gateway-signal-source"), p("gateway-signal-source"),
-				OCPAlertManagerSAName, OCPMonitoringNamespace, labels),
-		)
-	}
-	if kn.Spec.APIFrontendEnabled() {
-		crbs = append(crbs,
-			clusterRoleBinding(p("apifrontend-monitoring-view"), "cluster-monitoring-view",
-				ServiceAccountName(ComponentAPIFrontend), ns, labels),
-		)
-	}
+	crbs = append(crbs, monitoringClusterRoleBindings(kn, labels)...)
 
 	if kn.Spec.APIFrontendEnabled() {
 		crbs = append(crbs,
@@ -233,6 +214,45 @@ func ClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha
 	}
 
 	return markCoreClusterRBAC(crbs)
+}
+
+// monitoringClusterRoleBindings builds the CRBs granting monitoring-stack
+// access (Alertmanager/Thanos-Querier) to the components that poll it
+// directly. Extracted from ClusterRoleBindings (#468) to keep that
+// function under the funlen budget.
+func monitoringClusterRoleBindings(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) []*rbacv1.ClusterRoleBinding {
+	ns := kn.Namespace
+	p := func(base string) string { return clusterRoleName(kn, base) }
+
+	crbs := []*rbacv1.ClusterRoleBinding{
+		clusterRoleBinding(p("effectivenessmonitor-alertmanager-view-binding"), p("alertmanager-view"),
+			ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
+		clusterRoleBinding(p("effectivenessmonitor-monitoring-view"), "cluster-monitoring-view",
+			ServiceAccountName(ComponentEffectivenessMonitor), ns, labels),
+		clusterRoleBinding(p("kubernaut-agent-monitoring-view"), "cluster-monitoring-view",
+			ServiceAccountName(ComponentKubernautAgent), ns, labels),
+		// #468: KA's get_alerts/get_silences tools
+		// (pkg/kubernautagent/tools/alertmanager) call alertmanagers/api
+		// directly, the same permission EM's binding above grants --
+		// cluster-monitoring-view only covers prometheuses/api.
+		clusterRoleBinding(p("kubernaut-agent-alertmanager-view-binding"), p("alertmanager-view"),
+			ServiceAccountName(ComponentKubernautAgent), ns, labels),
+	}
+
+	if kn.Spec.GatewayEnabled() {
+		crbs = append(crbs,
+			clusterRoleBinding(p("alertmanager-gateway-signal-source"), p("gateway-signal-source"),
+				OCPAlertManagerSAName, OCPMonitoringNamespace, labels),
+		)
+	}
+	if kn.Spec.APIFrontendEnabled() {
+		crbs = append(crbs,
+			clusterRoleBinding(p("apifrontend-monitoring-view"), "cluster-monitoring-view",
+				ServiceAccountName(ComponentAPIFrontend), ns, labels),
+		)
+	}
+
+	return crbs
 }
 
 // DataStorageClientRoleBindings builds the RoleBindings that grant
@@ -514,6 +534,7 @@ func MonitoringCRBNames(kn *kubernautv1alpha1.Kubernaut) []string {
 		p("effectivenessmonitor-alertmanager-view-binding"),
 		p("effectivenessmonitor-monitoring-view"),
 		p("kubernaut-agent-monitoring-view"),
+		p("kubernaut-agent-alertmanager-view-binding"),
 		p("alertmanager-gateway-signal-source"),
 		p("apifrontend-monitoring-view"),
 	}
