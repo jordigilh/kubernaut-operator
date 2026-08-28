@@ -127,8 +127,9 @@ type KubernautSpec struct {
 	// +optional
 	Console ConsoleSpec `json:"console,omitempty"`
 
-	// Fleet configures federated scope-checking for Gateway and
-	// RemediationOrchestrator against a shared fleet backend (ADR-068).
+	// Fleet configures federated scope-checking for Gateway,
+	// RemediationOrchestrator, and APIFrontend against a shared fleet
+	// backend (ADR-068).
 	// +optional
 	Fleet FleetSpec `json:"fleet,omitempty"`
 
@@ -282,8 +283,9 @@ type FleetOverrideSpec struct {
 	OAuth2CredentialsSecretRef string `json:"oauth2CredentialsSecretRef,omitempty"`
 }
 
-// FleetSpec configures federated scope-checking for Gateway and
-// RemediationOrchestrator against a shared fleet backend (ADR-068). Both
+// FleetSpec configures federated scope-checking for Gateway,
+// RemediationOrchestrator, and APIFrontend against a shared fleet backend
+// (ADR-068; APIFrontend joined in #464, kubernaut#2025/#2022). All three
 // components render the same resolved fleet config; there is no per-component
 // override. When Enabled is false or omitted, the other fields are inert
 // (no validation, no rendering) so users can pre-stage configuration.
@@ -302,8 +304,8 @@ type FleetOverrideSpec struct {
 // true.
 // +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || !has(self.mcpGatewayEndpoint) || size(self.mcpGatewayEndpoint) == 0 || (has(self.oauth2) && has(self.oauth2.enabled) && self.oauth2.enabled)",message="fleet.oauth2.enabled must be true when fleet.enabled is true and fleet.mcpGatewayEndpoint is set -- there is no unauthenticated mode for the MCP Gateway (mirrors FleetMetadataCache's existing unconditional requirement)"
 type FleetSpec struct {
-	// Whether federated scope-checking is enabled for Gateway and
-	// RemediationOrchestrator.
+	// Whether federated scope-checking is enabled for Gateway,
+	// RemediationOrchestrator, and APIFrontend.
 	// +kubebuilder:default=false
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`

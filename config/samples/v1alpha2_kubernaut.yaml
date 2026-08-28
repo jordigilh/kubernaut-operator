@@ -28,11 +28,13 @@ spec:
   # true is set.
   #
   # mcpGatewayEndpoint/mcpGatewayType are REQUIRED alongside backend/endpoint:
-  # Gateway and RemediationOrchestrator fail closed at startup without them
-  # (upstream Fleet.ValidateFullFederation); SignalProcessing/APIFrontend/
-  # EffectivenessMonitor only need mcpGatewayEndpoint+mcpGatewayType (they
-  # never call the Backend/Endpoint scope-check adapter, so backend/endpoint
-  # are irrelevant to them and omitted from their rendered config).
+  # Gateway, RemediationOrchestrator, and APIFrontend fail closed at startup
+  # without them (upstream Fleet.ValidateFullFederation; APIFrontend's own
+  # checkRRScope path gained the same Backend/Endpoint scope-check adapter
+  # call in kubernaut#2025/#2022, #464); SignalProcessing/EffectivenessMonitor
+  # only need mcpGatewayEndpoint+mcpGatewayType (they never call the
+  # Backend/Endpoint scope-check adapter, so backend/endpoint are irrelevant
+  # to them and omitted from their rendered config).
   fleet:
     enabled: false
     backend: fleetmetadatacache
