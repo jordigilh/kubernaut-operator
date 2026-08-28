@@ -3555,8 +3555,9 @@ spec:
                 type: object
               fleet:
                 description: |-
-                  Fleet configures federated scope-checking for Gateway and
-                  RemediationOrchestrator against a shared fleet backend (ADR-068).
+                  Fleet configures federated scope-checking for Gateway,
+                  RemediationOrchestrator, and APIFrontend against a shared fleet
+                  backend (ADR-068).
                 properties:
                   backend:
                     description: |-
@@ -3576,8 +3577,8 @@ spec:
                   enabled:
                     default: false
                     description: |-
-                      Whether federated scope-checking is enabled for Gateway and
-                      RemediationOrchestrator.
+                      Whether federated scope-checking is enabled for Gateway,
+                      RemediationOrchestrator, and APIFrontend.
                     type: boolean
                   endpoint:
                     description: HTTP(S) endpoint of the fleet backend. Required when

@@ -2293,10 +2293,15 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 	})
 })
 
-// #224: SP/AF/EM only ever consume the MCP Gateway remote-read path (never
+// #224: SP/EM only ever consume the MCP Gateway remote-read path (never
 // Backend/Endpoint), so they must never mount fleet-ca/fleet-token --
 // those Secrets back Backend/Endpoint's ACM TLS CA / bearer token, which
-// SP/AF/EM's own upstream config schemas have no field for at all.
+// SP/EM's own upstream config schemas have no field for at all. #464: AF
+// no longer belongs to this invariant -- upstream kubernaut#2025/#2022
+// added a Backend/Endpoint scope-check adapter call to AF's own
+// checkRRScope path, so AF now needs fleet-ca/fleet-token mounted just
+// like Gateway/RemediationOrchestrator (see the dedicated AF Describe
+// block below).
 var _ = Describe("SignalProcessing/APIFrontend/EffectivenessMonitor Fleet secret mounts", func() {
 	It("does not mount any fleet- volumes when fleet is disabled", func() {
 		kn := testKubernaut()
@@ -2315,7 +2320,7 @@ var _ = Describe("SignalProcessing/APIFrontend/EffectivenessMonitor Fleet secret
 		}
 	})
 
-	It("never mounts fleet-ca or fleet-token even when caSecretName/tokenSecretName are set", func() {
+	It("never mounts fleet-ca or fleet-token on SignalProcessing/EffectivenessMonitor even when caSecretName/tokenSecretName are set", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
 		knV2.Spec.Fleet.CASecretName = "fmc-ca-bundle"
 		knV2.Spec.Fleet.TokenSecretName = "acm-search-token"
@@ -2323,12 +2328,7 @@ var _ = Describe("SignalProcessing/APIFrontend/EffectivenessMonitor Fleet secret
 		Expect(err).NotTo(HaveOccurred())
 		emDep, err := EffectivenessMonitorDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
-		kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
-			Auth: kubernautv1alpha1.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
-		}
-		afDep, err := APIFrontendDeployment(kn, knV2, KagentiSidecarNone)
-		Expect(err).NotTo(HaveOccurred())
-		for _, dep := range []*appsv1.Deployment{spDep, emDep, afDep} {
+		for _, dep := range []*appsv1.Deployment{spDep, emDep} {
 			for _, v := range dep.Spec.Template.Spec.Volumes {
 				Expect(v.Name).NotTo(Equal("fleet-ca"), "%s should never mount fleet-ca (Backend/Endpoint-only concern)", dep.Name)
 				Expect(v.Name).NotTo(Equal("fleet-token"), "%s should never mount fleet-token (Backend/Endpoint-only concern)", dep.Name)
@@ -2385,5 +2385,63 @@ var _ = Describe("SignalProcessing/APIFrontend/EffectivenessMonitor Fleet secret
 		spDep, err := SignalProcessingDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		expectHasVolumeMount(spDep, testVolumeFleetOAuth2, "/etc/signalprocessing/"+testSPFleetOAuth2SecretRef)
+	})
+})
+
+// #464: upstream kubernaut#2025/#2022 added a Backend/Endpoint scope-check
+// adapter call to AF's own checkRRScope path, so AF now needs fleet-ca/
+// fleet-token mounted just like Gateway/RemediationOrchestrator -- mirrors
+// the GW/RO tests above exactly (see "Gateway/RemediationOrchestrator Fleet
+// secret mounts" further up this file).
+var _ = Describe("APIFrontend Fleet secret mounts (#464)", func() {
+	It("[IA-5, SC-12] mounts fleet-ca on APIFrontend when caSecretName is set", func() {
+		kn, knV2 := testKubernautWithFleetMCP()
+		knV2.Spec.Fleet.CASecretName = "fmc-ca-bundle"
+		kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
+			Auth: kubernautv1alpha1.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
+		}
+		afDep, err := APIFrontendDeployment(kn, knV2, KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(afDep, "fleet-ca")
+		expectHasVolumeMount(afDep, "fleet-ca", "/etc/fleet-tls/ca")
+		for _, v := range afDep.Spec.Template.Spec.Volumes {
+			if v.Name == "fleet-ca" {
+				Expect(v.Secret).NotTo(BeNil())
+				Expect(v.Secret.SecretName).To(Equal("fmc-ca-bundle"))
+			}
+		}
+	})
+
+	It("[IA-5] mounts fleet-token on APIFrontend when tokenSecretName is set", func() {
+		kn, knV2 := testKubernautWithFleetMCP()
+		knV2.Spec.Fleet.Backend = fleetBackendACM
+		knV2.Spec.Fleet.Endpoint = "https://acm-search.example.com/graphql"
+		knV2.Spec.Fleet.TokenSecretName = "acm-search-token"
+		kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
+			Auth: kubernautv1alpha1.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
+		}
+		afDep, err := APIFrontendDeployment(kn, knV2, KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(afDep, "fleet-token")
+		expectHasVolumeMount(afDep, "fleet-token", "/etc/fleet-token")
+		for _, v := range afDep.Spec.Template.Spec.Volumes {
+			if v.Name == "fleet-token" {
+				Expect(v.Secret).NotTo(BeNil())
+				Expect(v.Secret.SecretName).To(Equal("acm-search-token"))
+			}
+		}
+	})
+
+	It("does not mount fleet-ca or fleet-token when enabled but no secret names are set", func() {
+		kn, knV2 := testKubernautWithFleetMCP()
+		kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
+			Auth: kubernautv1alpha1.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
+		}
+		afDep, err := APIFrontendDeployment(kn, knV2, KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+		for _, v := range afDep.Spec.Template.Spec.Volumes {
+			Expect(v.Name).NotTo(HavePrefix("fleet-"),
+				"apifrontend should not have fleet volume %q when no secret names are set", v.Name)
+		}
 	})
 })

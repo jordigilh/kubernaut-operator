@@ -207,12 +207,16 @@ type fleetConfigYAML struct {
 	Enabled bool `json:"enabled" yaml:"enabled"`
 
 	// Backend/Endpoint use omitempty so resolveMCPGatewayOnlyFleetConfig
-	// (AF/EM, #224) can omit them entirely -- those services never call
-	// the Backend/Endpoint scope-check adapter, so upstream's own
-	// FleetConfig.Validate() doc comment says requiring them "whenever
-	// Enabled=true would force an unused dependency." GW/RO's admission
-	// validation (validateFleetConfig) still requires non-empty values
-	// for those two components, so this is safe.
+	// (EM, #224) can omit them entirely -- EM never calls the
+	// Backend/Endpoint scope-check adapter, so upstream's own
+	// FleetConfig.Validate() doc comment says requiring it "whenever
+	// Enabled=true would force an unused dependency." AF used to be
+	// covered by the same omission, but kubernaut#2025/#2022 added a
+	// Backend/Endpoint scope-check adapter call to AF's own checkRRScope
+	// path, so AF now renders these fields via resolveAPIFrontendFleetConfig
+	// instead (#464). GW/RO's admission validation (validateFleetConfig)
+	// still requires non-empty values regardless of which components
+	// render them, so this is safe.
 	Backend            string           `json:"backend,omitempty" yaml:"backend,omitempty"`
 	Endpoint           string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
 	TLSCAFile          string           `json:"tlsCAFile,omitempty" yaml:"tlsCAFile,omitempty"`
@@ -224,9 +228,9 @@ type fleetConfigYAML struct {
 	// Namespace scopes AF/EM's ClusterRegistry to a single namespace's MCP
 	// Gateway CRDs (registry.RegistryConfig{Namespace: ...}, kubernaut#1720
 	// closing #224 Finding 4's #1686 blocker) instead of a cluster-wide
-	// watch. Only ever populated by resolveMCPGatewayOnlyFleetConfig (AF/EM,
-	// #227); GW/RO never read a ClusterRegistry, so resolveFleetConfig never
-	// sets it.
+	// watch. Only ever populated by resolveMCPGatewayOnlyFleetConfig (EM,
+	// #227) and resolveAPIFrontendFleetConfig (AF, #464); GW/RO never read
+	// a ClusterRegistry, so resolveFleetConfig itself never sets it.
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 
 	// Resilience mirrors upstream pkg/fleet.FleetConfig.Resilience (#390,
@@ -363,14 +367,16 @@ func resolveFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefO
 
 // resolveMCPGatewayOnlyFleetConfig builds the fleet: block for components
 // that only ever consume MCP Gateway remote reads, never the
-// Backend/Endpoint scope-check adapter (AF, EM -- see upstream
-// FleetConfig.Validate()'s own doc comment: "AF and EM... never call the
-// Backend/Endpoint scope-check adapter"). Reuses resolveFleetConfig's
+// Backend/Endpoint scope-check adapter (EM -- see upstream
+// FleetConfig.Validate()'s own doc comment. #464: this used to also cover
+// AF, but kubernaut#2025/#2022 added a Backend/Endpoint scope-check adapter
+// call to AF's own checkRRScope path, so AF now uses
+// resolveAPIFrontendFleetConfig below instead). Reuses resolveFleetConfig's
 // marshaling and TLSCAFile defaulting, then strips the backend/endpoint/
-// tokenPath fields those services neither need nor read. fleet.namespace is
-// always the shared spec.fleet.mcpGatewayNamespace (DD-362 -- no
-// per-component override) so AF/EM's ClusterRegistry scopes its watch to a
-// single namespace instead of cluster-wide (#227).
+// tokenPath fields EM neither needs nor reads. fleet.namespace is always the
+// shared spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component
+// override) so EM's ClusterRegistry scopes its watch to a single namespace
+// instead of cluster-wide (#227).
 func resolveMCPGatewayOnlyFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefOverride, defaultOAuth2CAFile string) *fleetConfigYAML {
 	cfg := resolveFleetConfig(knV2, credentialsSecretRefOverride, defaultOAuth2CAFile)
 	if cfg == nil {
@@ -380,6 +386,24 @@ func resolveMCPGatewayOnlyFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credent
 	cfg.Endpoint = ""
 	cfg.TLSCAFile = ""
 	cfg.TokenPath = ""
+	cfg.Namespace = knV2.Spec.Fleet.MCPGatewayNamespace
+	return cfg
+}
+
+// resolveAPIFrontendFleetConfig builds the fleet: block for AF (#464). AF's
+// upstream checkRRScope path calls the Backend/Endpoint scope-check adapter
+// on every RemediationRequest creation (kubernaut#2025/#2022), so -- unlike
+// EM above -- AF needs the full, un-stripped shape resolveFleetConfig
+// already produces for GW/RO. The one AF-specific addition on top of that
+// shared shape is fleet.namespace: always the shared
+// spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override) so
+// AF's ClusterRegistry scopes its watch to a single namespace instead of
+// cluster-wide (#227). GW/RO never set this field.
+func resolveAPIFrontendFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefOverride, defaultOAuth2CAFile string) *fleetConfigYAML {
+	cfg := resolveFleetConfig(knV2, credentialsSecretRefOverride, defaultOAuth2CAFile)
+	if cfg == nil {
+		return nil
+	}
 	cfg.Namespace = knV2.Spec.Fleet.MCPGatewayNamespace
 	return cfg
 }
@@ -2575,7 +2599,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 		},
 		SeverityTriage: afSeverityTriageConfig(kn, knV2),
 		Session:        afSessionConfig(knV2, ns),
-		Fleet:          resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""), apifrontendTLSCAFile),
+		Fleet:          resolveAPIFrontendFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""), apifrontendTLSCAFile),
 		Resilience:     afResilienceConfig(),
 		Debug:          debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}

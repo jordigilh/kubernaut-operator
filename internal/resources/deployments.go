@@ -989,7 +989,7 @@ func apifrontendPorts(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMod
 
 func APIFrontendDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode) (*appsv1.Deployment, error) {
 	volumes, mounts, env := apifrontendVolumesMountsEnv(kn, sidecar)
-	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, knV2, "/etc/apifrontend", effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""))
+	volumes, mounts = appendFleetSecretMounts(volumes, mounts, knV2, "/etc/apifrontend", effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""))
 
 	initContainers, err := afInitContainers(kn)
 	if err != nil {
@@ -1265,20 +1265,23 @@ func appendEnvIfAbsent(env []corev1.EnvVar, name, value string) []corev1.EnvVar 
 // ACM bearer token, and OAuth2 client credentials. credentialsSecretRefOverride,
 // when non-empty, overrides spec.fleet.oauth2.credentialsSecretRef for this
 // component only — see resolveFleetConfig for why (per-service OAuth2 client
-// registrations against a shared token endpoint). Used by GW/RO, the only
-// components that read the Backend/Endpoint scope-check adapter.
+// registrations against a shared token endpoint). Used by GW/RO and AF (#464
+// added AF -- kubernaut#2025/#2022 gave AF's own checkRRScope path a
+// Backend/Endpoint scope-check adapter call), the components that read the
+// Backend/Endpoint scope-check adapter.
 func appendFleetSecretMounts(volumes []corev1.Volume, mounts []corev1.VolumeMount, knV2 *kubernautv1alpha2.Kubernaut, componentEtcDir, credentialsSecretRefOverride string) ([]corev1.Volume, []corev1.VolumeMount) {
 	return appendFleetSecretMountsVariant(volumes, mounts, knV2, componentEtcDir, credentialsSecretRefOverride, true)
 }
 
 // appendMCPGatewayOnlyFleetSecretMount mounts only the fleet-oauth2
 // credentials Secret, never fleet-ca/fleet-token (#224). Used by
-// SP/AF/EM, which only ever consume MCP Gateway remote reads and never
+// SP/EM/KA, which only ever consume MCP Gateway remote reads and never
 // read the Backend/Endpoint scope-check adapter -- their upstream config
 // schemas have no field for the Backend/Endpoint TLS CA or ACM bearer
 // token at all (see resolveMCPGatewayOnlyFleetConfig /
-// resolveSignalProcessingFleetConfig), so mounting those Secrets would be
-// dead weight.
+// resolveSignalProcessingFleetConfig / resolveKAFleetConfig), so mounting
+// those Secrets would be dead weight. AF used to be in this list too, but
+// #464 moved it to appendFleetSecretMounts above (kubernaut#2025/#2022).
 func appendMCPGatewayOnlyFleetSecretMount(volumes []corev1.Volume, mounts []corev1.VolumeMount, knV2 *kubernautv1alpha2.Kubernaut, componentEtcDir, credentialsSecretRefOverride string) ([]corev1.Volume, []corev1.VolumeMount) {
 	return appendFleetSecretMountsVariant(volumes, mounts, knV2, componentEtcDir, credentialsSecretRefOverride, false)
 }

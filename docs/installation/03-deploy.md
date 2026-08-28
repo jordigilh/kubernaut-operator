@@ -203,21 +203,24 @@ spec:
     #   oauth2CredentialsSecretRef: gateway-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for Gateway only
 
   # --- Fleet federation (optional, ADR-068) ---
-  # Points Gateway/RemediationOrchestrator (scope-checking),
-  # SignalProcessing/APIFrontend/EffectivenessMonitor (cluster classification
-  # + multi-cluster reads, #224), and KubernautAgent (GatewayDiscoverer tool
-  # discovery -- list_clusters/list_tools_for_cluster, #204) at a shared
-  # fleet backend across a fleet of clusters. All fields are inert until
-  # enabled: true is set — safe to pre-stage ahead of enabling.
+  # Points Gateway/RemediationOrchestrator/APIFrontend (scope-checking --
+  # APIFrontend joined in #464, kubernaut#2025/#2022), SignalProcessing/
+  # EffectivenessMonitor (cluster classification + multi-cluster reads,
+  # #224), and KubernautAgent (GatewayDiscoverer tool discovery --
+  # list_clusters/list_tools_for_cluster, #204) at a shared fleet backend
+  # across a fleet of clusters. All fields are inert until enabled: true
+  # is set — safe to pre-stage ahead of enabling.
   #
   # mcpGatewayEndpoint/mcpGatewayType/mcpGatewayNamespace are REQUIRED
-  # alongside backend/endpoint when enabled: Gateway and
-  # RemediationOrchestrator fail closed at startup without
-  # mcpGatewayEndpoint/mcpGatewayType (upstream Fleet.ValidateFullFederation),
-  # and mcpGatewayNamespace is required at admission for every fleet-aware
+  # alongside backend/endpoint when enabled: Gateway, RemediationOrchestrator,
+  # and APIFrontend fail closed at startup without
+  # mcpGatewayEndpoint/mcpGatewayType (upstream Fleet.ValidateFullFederation;
+  # APIFrontend's own checkRRScope path gained the same Backend/Endpoint
+  # scope-check adapter call in kubernaut#2025/#2022, #464), and
+  # mcpGatewayNamespace is required at admission for every fleet-aware
   # component (kubernaut-operator#455 -- see docs/installation/
-  # 04-fleet-mcp-gateway.md#wiring-into-the-kubernaut-cr for why). SignalProcessing/
-  # APIFrontend/EffectivenessMonitor/KubernautAgent only need
+  # 04-fleet-mcp-gateway.md#wiring-into-the-kubernaut-cr for why).
+  # SignalProcessing/EffectivenessMonitor/KubernautAgent only need
   # mcpGatewayEndpoint+mcpGatewayType+mcpGatewayNamespace — they never call
   # the Backend/Endpoint scope-check adapter, so backend/endpoint don't apply
   # to them and are omitted from their rendered config.
