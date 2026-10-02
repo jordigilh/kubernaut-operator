@@ -237,7 +237,9 @@ networking:
 nodes:
   - role: control-plane
     image: %s
-`, disableDefaultCNI, podSubnet, kindNodeImage)
+  - role: worker
+    image: %s
+`, disableDefaultCNI, podSubnet, kindNodeImage, kindNodeImage)
 	if _, err := configFile.WriteString(config); err != nil {
 		_ = configFile.Close()
 		return fmt.Errorf("writing Kind config: %w", err)

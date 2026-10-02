@@ -253,8 +253,8 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 				PullPolicy: corev1.PullIfNotPresent,
 				Overrides:  kubernautImageOverrides(),
 			},
-			PostgreSQL: kubernautv1alpha2.PostgreSQLSpec{
-				SecretName: "postgresql-secret", //nolint:gosec // disposable Kind fixture secret reference
+			PostgreSQL: kubernautv1alpha2.PostgreSQLSpec{ //nolint:gosec // disposable Kind fixture secret reference
+				SecretName: "postgresql-secret",
 				Host:       "postgresql.kubernaut-system.svc.cluster.local",
 				SSLMode:    "require",
 			},
