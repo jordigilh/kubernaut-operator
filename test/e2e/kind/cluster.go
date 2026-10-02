@@ -54,7 +54,9 @@ const (
 	ciliumVersion  = "1.20.2"
 	ciliumHelmRepo = "https://helm.cilium.io/"
 
-	calicoVersion          = "v3.31.4"
+	calicoVersion             = "v3.31.4"
+	calicoOperatorCRDManifest = "https://raw.githubusercontent.com/projectcalico/calico/" +
+		"v3.31.4/manifests/operator-crds.yaml"
 	tigeraOperatorManifest = "https://raw.githubusercontent.com/projectcalico/calico/" +
 		"v3.31.4/manifests/tigera-operator.yaml"
 
@@ -163,15 +165,19 @@ func createKindCluster(ctx context.Context, provider policyProvider) error {
 	}()
 
 	disableDefaultCNI := provider != providerGeneric
+	podSubnet := "10.244.0.0/16"
+	if provider == providerCalico {
+		podSubnet = "192.168.0.0/16"
+	}
 	config := fmt.Sprintf(`kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 networking:
   disableDefaultCNI: %t
-  podSubnet: 10.244.0.0/16
+  podSubnet: %s
 nodes:
   - role: control-plane
     image: %s
-`, disableDefaultCNI, kindNodeImage)
+`, disableDefaultCNI, podSubnet, kindNodeImage)
 	if _, err := configFile.WriteString(config); err != nil {
 		_ = configFile.Close()
 		return fmt.Errorf("writing Kind config: %w", err)
@@ -264,6 +270,9 @@ func installCilium(ctx context.Context) error {
 }
 
 func installCalico(ctx context.Context) error {
+	if _, err := kubectl(ctx, "apply", "-f", calicoOperatorCRDManifest); err != nil {
+		return fmt.Errorf("installing calico operator CRDs %s: %w", calicoVersion, err)
+	}
 	if _, err := kubectl(ctx, "apply", "-f", tigeraOperatorManifest); err != nil {
 		return fmt.Errorf("installing Tigera operator %s: %w", calicoVersion, err)
 	}

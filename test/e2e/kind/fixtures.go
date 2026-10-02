@@ -279,6 +279,11 @@ func applyUnmanagedNativePolicy(ctx context.Context) error {
 				"endpointSelector": map[string]interface{}{
 					"matchLabels": map[string]string{"k8s:app": "user-owned"},
 				},
+				"ingress": []interface{}{map[string]interface{}{
+					"fromEndpoints": []interface{}{map[string]interface{}{
+						"matchLabels": map[string]string{"k8s:app": "user-owned"},
+					}},
+				}},
 			},
 		}
 	case providerCalico:
