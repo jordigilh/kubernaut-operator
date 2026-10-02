@@ -1,5 +1,11 @@
 # ADR-AUTH-001: Multi-Provider JWT Authentication for API Frontend
 
+> **Historical API-version note:** This proposal was written against the
+> pre-#488 `v1alpha1` API. Its authentication design remains background
+> context, but file paths and version references below are not the current
+> implementation contract; the clean-break branch serves and stores only
+> `kubernaut.ai/v1alpha2`.
+
 **Status**: Proposed
 **Decision Date**: 2026-06-16
 **Version**: 1.0

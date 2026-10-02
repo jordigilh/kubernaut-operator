@@ -1,5 +1,10 @@
 # DD-273: Remove `spec.monitoring` and always reconcile OCP monitoring integration
 
+> **Historical API note:** This decision was recorded against the pre-#488
+> `v1alpha1` CRD. The clean-break branch serves and stores only
+> `kubernaut.ai/v1alpha2`; the current monitoring contract is capability-aware
+> and is documented in `docs/installation/06-platform-support.md`.
+
 **Status**: Accepted
 **Decision Date**: 2026-08-02
 **Applies To**: `api/v1alpha1.KubernautSpec`, `config/crd/bases/kubernaut.ai_kubernauts.yaml`

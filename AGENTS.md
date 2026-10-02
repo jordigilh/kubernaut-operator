@@ -11,7 +11,7 @@ For Cursor-specific implementation patterns (code examples, contextual snippets)
 If you are new to the Kubernaut Operator, here is the minimum path to your first contribution:
 
 1. **Read this file** -- it defines what is mandatory and what will block your PR
-2. **Understand the operator** -- single CRD (`kubernaut.ai/v1alpha1/Kubernaut`), singleton per cluster, managed by `KubernautReconciler` in `internal/controller/`
+2. **Understand the operator** -- single CRD (`kubernaut.ai/v1alpha2/Kubernaut`), singleton per cluster, managed by `KubernautReconciler` in `internal/controller/`
 3. **Follow TDD**: write a failing test, make it pass with minimal code, then refactor
 4. **Run the checks** before submitting:
    ```bash
@@ -52,7 +52,7 @@ The Kubernaut Operator is a Kubernetes/OpenShift operator built with kubebuilder
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| CRD types | `api/v1alpha1/` | `Kubernaut` CRD definition (singleton) |
+| CRD types | `api/v1alpha2/` | `Kubernaut` CRD definition (singleton) |
 | Controller | `internal/controller/` | `KubernautReconciler` -- phase-based reconciliation |
 | Resource builders | `internal/resources/` | Generate K8s objects (Deployments, RBAC, ConfigMaps, etc.) |
 | Webhook | `internal/webhook/` | Singleton validation webhook |
@@ -83,7 +83,7 @@ Analyze the existing codebase to understand blast radius:
 - Search for existing implementations of the target component
 - Map dependencies and callers (resource builders ↔ controller ↔ cmd/main.go)
 - Identify affected reconciliation phases
-- Assess CRD schema impact (adding/changing fields in `api/v1alpha1/`)
+- Assess CRD schema impact (adding/changing fields in `api/v1alpha2/`)
 - Verify no conflicting work in progress
 
 **Gate**: Preflight confidence must reach **95%** before proceeding. If below 95%, identify what is unknown and proceed to Step 2.
@@ -147,7 +147,7 @@ After implementation:
 
 - New resource builders (Deployments, RBAC, ConfigMaps)
 - Controller reconciliation logic changes
-- CRD schema changes (`api/v1alpha1/`)
+- CRD schema changes (`api/v1alpha2/`)
 - Webhook modifications
 - Cross-component integration (controller ↔ resource builders)
 - Migration logic changes
@@ -401,7 +401,7 @@ Mandatory validation gates for AI coding agents. Human contributors should follo
 
 **Trigger**: About to reference any CRD field or struct field.
 
-**Action**: Read the type definition in `api/v1alpha1/kubernaut_types.go` BEFORE referencing fields. Verify the field exists in the struct definition.
+**Action**: Read the type definition in `api/v1alpha2/kubernaut_types.go` BEFORE referencing fields. Verify the field exists in the struct definition.
 
 **Violation**: Type reference without validation -- STOP.
 
@@ -461,7 +461,7 @@ MANDATORY USER DECISION REQUIRED: Which approach? (A/B/C)
 
 ### CHECKPOINT CRD: Schema Change Validation
 
-**Trigger**: Modifying any type in `api/v1alpha1/`.
+**Trigger**: Modifying any type in `api/v1alpha2/`.
 
 **Action**:
 1. Verify backward compatibility (new fields must be optional or have defaults)
@@ -487,7 +487,7 @@ MANDATORY USER DECISION REQUIRED: Which approach? (A/B/C)
 
 - AVOID `any` or `interface{}` unless absolutely necessary
 - Use structured field values with specific types
-- CRD types in `api/v1alpha1/` must follow kubebuilder conventions
+- CRD types in `api/v1alpha2/` must follow kubebuilder conventions
 
 ### Controller Patterns
 
@@ -498,7 +498,7 @@ MANDATORY USER DECISION REQUIRED: Which approach? (A/B/C)
 
 ### Resource Builder Patterns
 
-- Each builder function takes `*kubernautv1alpha1.Kubernaut` and returns the K8s object
+- Each builder function takes `*kubernautv1alpha2.Kubernaut` and returns the K8s object
 - Set owner references for garbage collection
 - Use `RELATED_IMAGE_*` env vars for container images (OLM disconnect support)
 - Labels: `app.kubernetes.io/managed-by: kubernaut-operator`

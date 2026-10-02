@@ -1,5 +1,11 @@
 # IEEE 829 Test Plan — Issues #422-#441: Close v1alpha2 CRD field-coverage gaps
 
+> **Historical snapshot:** this plan predates the platform-neutrality clean
+> break. Its raw Kubernetes NetworkPolicy renderer and v1alpha1 working-view
+> references are no longer implementation contracts. Current policy behavior is
+> documented in [`docs/installation/06-platform-support.md`](../../installation/06-platform-support.md)
+> and tested by `internal/policy` plus the controller integration suite.
+
 | Field              | Value                                              |
 |--------------------|-----------------------------------------------------|
 | **Test Plan ID**   | TP-421                                             |

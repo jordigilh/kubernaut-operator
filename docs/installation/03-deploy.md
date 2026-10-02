@@ -136,12 +136,11 @@ spec:
     # fleet:
     #   oauth2CredentialsSecretRef: ka-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for KubernautAgent only -- used when fleet.enabled: true, for its list_clusters/list_tools_for_cluster MCP tools (ADR-068 decision #11)
 
-  # --- NetworkPolicies (always created, F3 -- no enabled toggle; tune only) ---
+  # --- Native network-policy adapter (optional provider capability) ---
   # networkPolicies:
-  #   apiServerCIDR: "10.0.0.1/32"         # override when default API server CIDR detection doesn't resolve correctly
-  #   # Console has no operator-managed NetworkPolicy (#443) -- see
-  #   # docs/security/credentials-and-tls.md's NetworkPolicy (SC-7) section
-  #   # for how to write your own if you need to restrict its ingress.
+  #   provider: Auto                         # Auto, Cilium, Calico, or OVN
+  #   # apiServerCIDR/apiServerCIDRs are deprecated and rejected by native
+  #   # adapters; use provider-native API-server identity discovery instead.
 
   # --- Policies (from Step 2: Configure Services) ---
   aiAnalysis:
