@@ -28,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
@@ -40,7 +39,7 @@ import (
 // carries no Fleet data (v1alpha1 has no field for it); callers must create
 // it via k8sClient and then apply enableFleetMetadataCache to configure
 // Fleet on the v1alpha2 storage view.
-func newCRWithFMCEnabled() *kubernautv1alpha1.Kubernaut {
+func newCRWithFMCEnabled() *kubernautv1alpha2.Kubernaut {
 	return newCRWithRouteDisabled()
 }
 
@@ -187,9 +186,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			enableFleetMetadataCache(ctx)
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseRunning))
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha2.PhaseRunning))
 
 			found := false
 			for _, svc := range kn.Status.Services {
@@ -270,9 +269,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseError))
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha2.PhaseError))
 		})
 
 	})

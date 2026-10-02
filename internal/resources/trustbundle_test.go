@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 var _ = Describe("MergeTrustBundle", func() {
@@ -52,7 +52,7 @@ var _ = Describe("MergeTrustBundle", func() {
 })
 
 var _ = Describe("TrustBundleConfigMap", func() {
-	var kn *kubernautv1alpha1.Kubernaut
+	var kn *kubernautv1alpha2.Kubernaut
 
 	BeforeEach(func() {
 		kn = testKubernaut()

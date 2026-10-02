@@ -25,7 +25,6 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
@@ -734,7 +733,7 @@ var _ = Describe("ConfigMaps", func() {
 		// same flat YAML blocks, so one table covers overrides for all 13
 		// plus their documented defaults.
 		DescribeTable("[CM-6] propagates spec.remediationOrchestrator.* overrides verbatim, defaulting when unset",
-			func(setSpec func(ro *kubernautv1alpha1.RemediationOrchestratorSpec), wantSubstring, wantDefaultSubstring string) {
+			func(setSpec func(ro *kubernautv1alpha2.RemediationOrchestratorSpec), wantSubstring, wantDefaultSubstring string) {
 				kn := testKubernaut()
 				setSpec(&kn.Spec.RemediationOrchestrator)
 				cm, err := RemediationOrchestratorConfigMap(kn, testKnV2(kn))
@@ -747,40 +746,40 @@ var _ = Describe("ConfigMaps", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(cmDefault.Data["remediationorchestrator.yaml"]).To(ContainSubstring(wantDefaultSubstring), "unset default mismatch")
 			},
-			Entry("timeouts.analyzing", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) { ro.Timeouts.Analyzing = "22m" },
+			Entry("timeouts.analyzing", func(ro *kubernautv1alpha2.RemediationOrchestratorSpec) { ro.Timeouts.Analyzing = "22m" },
 				"analyzing: 22m", "analyzing: 10m"),
-			Entry("timeouts.executing", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) { ro.Timeouts.Executing = "44m" },
+			Entry("timeouts.executing", func(ro *kubernautv1alpha2.RemediationOrchestratorSpec) { ro.Timeouts.Executing = "44m" },
 				"executing: 44m", "executing: 30m"),
-			Entry("timeouts.verifying", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) { ro.Timeouts.Verifying = "55m" },
+			Entry("timeouts.verifying", func(ro *kubernautv1alpha2.RemediationOrchestratorSpec) { ro.Timeouts.Verifying = "55m" },
 				"verifying: 55m", "verifying: 30m"),
-			Entry("effectivenessAssessment.stabilizationWindow", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+			Entry("effectivenessAssessment.stabilizationWindow", func(ro *kubernautv1alpha2.RemediationOrchestratorSpec) {
 				ro.EffectivenessAssessment.StabilizationWindow = "7m"
 			}, "stabilizationWindow: 7m", "stabilizationWindow: 5m"),
-			Entry("routing.consecutiveFailureCooldown", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+			Entry("routing.consecutiveFailureCooldown", func(ro *kubernautv1alpha2.RemediationOrchestratorSpec) {
 				ro.Routing.ConsecutiveFailureCooldown = "2h"
 			}, "consecutiveFailureCooldown: 2h", "consecutiveFailureCooldown: 1h"),
-			Entry("routing.consecutiveFailureThreshold", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+			Entry("routing.consecutiveFailureThreshold", func(ro *kubernautv1alpha2.RemediationOrchestratorSpec) {
 				ro.Routing.ConsecutiveFailureThreshold = ptr.To(9)
 			}, "consecutiveFailureThreshold: 9", "consecutiveFailureThreshold: 3"),
-			Entry("routing.ineffectiveChainThreshold", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+			Entry("routing.ineffectiveChainThreshold", func(ro *kubernautv1alpha2.RemediationOrchestratorSpec) {
 				ro.Routing.IneffectiveChainThreshold = ptr.To(8)
 			}, "ineffectiveChainThreshold: 8", "ineffectiveChainThreshold: 3"),
-			Entry("routing.ineffectiveTimeWindow", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+			Entry("routing.ineffectiveTimeWindow", func(ro *kubernautv1alpha2.RemediationOrchestratorSpec) {
 				ro.Routing.IneffectiveTimeWindow = "9h"
 			}, "ineffectiveTimeWindow: 9h", "ineffectiveTimeWindow: 4h"),
-			Entry("routing.recentlyRemediatedCooldown", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+			Entry("routing.recentlyRemediatedCooldown", func(ro *kubernautv1alpha2.RemediationOrchestratorSpec) {
 				ro.Routing.RecentlyRemediatedCooldown = "13m"
 			}, "recentlyRemediatedCooldown: 13m", "recentlyRemediatedCooldown: 5m"),
-			Entry("routing.recurrenceCountThreshold", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+			Entry("routing.recurrenceCountThreshold", func(ro *kubernautv1alpha2.RemediationOrchestratorSpec) {
 				ro.Routing.RecurrenceCountThreshold = ptr.To(11)
 			}, "recurrenceCountThreshold: 11", "recurrenceCountThreshold: 5"),
-			Entry("asyncPropagation.gitOpsSyncDelay", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+			Entry("asyncPropagation.gitOpsSyncDelay", func(ro *kubernautv1alpha2.RemediationOrchestratorSpec) {
 				ro.AsyncPropagation.GitOpsSyncDelay = "6m"
 			}, "gitOpsSyncDelay: 6m", "gitOpsSyncDelay: 3m"),
-			Entry("asyncPropagation.operatorReconcileDelay", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+			Entry("asyncPropagation.operatorReconcileDelay", func(ro *kubernautv1alpha2.RemediationOrchestratorSpec) {
 				ro.AsyncPropagation.OperatorReconcileDelay = "2m"
 			}, "operatorReconcileDelay: 2m", "operatorReconcileDelay: 1m"),
-			Entry("asyncPropagation.proactiveAlertDelay", func(ro *kubernautv1alpha1.RemediationOrchestratorSpec) {
+			Entry("asyncPropagation.proactiveAlertDelay", func(ro *kubernautv1alpha2.RemediationOrchestratorSpec) {
 				ro.AsyncPropagation.ProactiveAlertDelay = "8m"
 			}, "proactiveAlertDelay: 8m", "proactiveAlertDelay: 5m"),
 		)
@@ -1063,10 +1062,10 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("[AC-6, IA-5] wires Ansible when enabled", func() {
 			kn := testKubernaut()
-			kn.Spec.Ansible.Enabled = true
-			kn.Spec.Ansible.APIURL = "https://awx.example.com"
-			kn.Spec.Ansible.OrganizationID = 42
-			kn.Spec.Ansible.TokenSecretRef = &kubernautv1alpha1.SecretKeyRef{
+			kn.Spec.WorkflowExecution.Ansible.Enabled = true
+			kn.Spec.WorkflowExecution.Ansible.APIURL = "https://awx.example.com"
+			kn.Spec.WorkflowExecution.Ansible.OrganizationID = 42
+			kn.Spec.WorkflowExecution.Ansible.TokenSecretRef = &kubernautv1alpha2.SecretKeyRef{
 				Name: "awx-token",
 				Key:  "api-token",
 			}
@@ -1090,9 +1089,9 @@ var _ = Describe("ConfigMaps", func() {
 		// test reference (the test above always sets an explicit key).
 		It("[AC-6, IA-5] defaults ansible.tokenSecretRef.key to \"token\" when unset", func() {
 			kn := testKubernaut()
-			kn.Spec.Ansible.Enabled = true
-			kn.Spec.Ansible.APIURL = "https://awx.example.com"
-			kn.Spec.Ansible.TokenSecretRef = &kubernautv1alpha1.SecretKeyRef{Name: "awx-token"}
+			kn.Spec.WorkflowExecution.Ansible.Enabled = true
+			kn.Spec.WorkflowExecution.Ansible.APIURL = "https://awx.example.com"
+			kn.Spec.WorkflowExecution.Ansible.TokenSecretRef = &kubernautv1alpha2.SecretKeyRef{Name: "awx-token"}
 			cm, err := WorkflowExecutionConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["workflowexecution.yaml"]
@@ -1503,7 +1502,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("routing still builds default content when Routing ConfigMap is BYO", func() {
 			kn := testKubernaut()
-			kn.Spec.Notification.Routing = &kubernautv1alpha1.ConfigMapRef{ConfigMapName: "my-routing"}
+			kn.Spec.Notification.Routing = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "my-routing"}
 			cm, err := NotificationRoutingConfigMap(kn)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cm.Name).To(Equal("notification-routing-config"), "NotificationRoutingConfigMap name = %q, want notification-routing-config (BYO affects deployment/controller, not this builder)", cm.Name)
@@ -1719,7 +1718,8 @@ var _ = Describe("ConfigMaps", func() {
 			kn.Spec.KubernautAgent.AlignmentCheck.Enabled = true
 			kn.Spec.KubernautAgent.AlignmentCheck.Timeout = "20s"
 			kn.Spec.KubernautAgent.AlignmentCheck.MaxStepTokens = 1024
-			kn.Spec.KubernautAgent.AlignmentCheck.LLM = &kubernautv1alpha1.AlignmentCheckLLMSpec{
+			kn.Spec.KubernautAgent.AlignmentCheck.LLMProfileRef = "align-profile"
+			kn.Spec.LLMProfiles["align-profile"] = kubernautv1alpha2.LLMProfileSpec{
 				Provider: LLMProviderOpenAI,
 				Model:    "gpt-4o-mini",
 				Endpoint: "https://align.example/v1",
@@ -1741,47 +1741,36 @@ var _ = Describe("ConfigMaps", func() {
 			}
 		})
 
-		// #423: kubernautAgent.alignmentCheck.llmProfileRef (v1alpha2) was
-		// found entirely inert -- kaAlignmentConfig never read it, only the
-		// legacy v1alpha1 ac.LLM literal fields. Wired with llmProfileRef
-		// taking precedence over the legacy literal for backward compat.
-		It("[CM-6] resolves alignmentCheck.llmProfileRef (v1alpha2) onto ai.alignmentCheck.llm, taking precedence over the legacy llm literal", func() {
+		// #423: alignmentCheck.llmProfileRef is the v1alpha2 clean-break source
+		// for the alignment model configuration.
+		It("[CM-6] resolves alignmentCheck.llmProfileRef onto ai.alignmentCheck.llm", func() {
 			kn := testKubernaut()
 			kn.Spec.KubernautAgent.AlignmentCheck.Enabled = true
-			kn.Spec.KubernautAgent.AlignmentCheck.LLM = &kubernautv1alpha1.AlignmentCheckLLMSpec{
-				Provider: LLMProviderOpenAI,
-				Model:    "should-be-overridden",
-			}
-			kn.Spec.LLMProfiles = map[string]kubernautv1alpha1.LLMProfileSpec{
+			kn.Spec.KubernautAgent.AlignmentCheck.LLMProfileRef = "align-profile"
+			kn.Spec.LLMProfiles = map[string]kubernautv1alpha2.LLMProfileSpec{
 				"align-profile": {Provider: LLMProviderAnthropic, Model: "claude-3-5-sonnet", Endpoint: "https://align-profile.example/v1"},
 			}
 			knV2 := testKnV2(kn)
-			knV2.Spec.KubernautAgent.AlignmentCheck.LLMProfileRef = "align-profile"
 			cm, err := KubernautAgentConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
-			Expect(data).To(ContainSubstring("provider: anthropic"), "llmProfileRef-resolved provider should take precedence over the legacy llm literal, got:\n%s", data)
-			Expect(data).To(ContainSubstring("model: claude-3-5-sonnet"), "llmProfileRef-resolved model should take precedence over the legacy llm literal, got:\n%s", data)
+			Expect(data).To(ContainSubstring("provider: anthropic"), "llmProfileRef-resolved provider should be rendered, got:\n%s", data)
+			Expect(data).To(ContainSubstring("model: claude-3-5-sonnet"), "llmProfileRef-resolved model should be rendered, got:\n%s", data)
 			Expect(data).To(ContainSubstring("endpoint: https://align-profile.example/v1"), "llmProfileRef-resolved endpoint should be propagated, got:\n%s", data)
-			Expect(data).NotTo(ContainSubstring("should-be-overridden"), "legacy llm literal must be ignored once llmProfileRef is set")
 		})
 
-		It("[CM-6] falls back to the legacy alignmentCheck.llm literal when llmProfileRef is unset", func() {
+		It("[CM-6] omits the alignment LLM when llmProfileRef is unset", func() {
 			kn := testKubernaut()
 			kn.Spec.KubernautAgent.AlignmentCheck.Enabled = true
-			kn.Spec.KubernautAgent.AlignmentCheck.LLM = &kubernautv1alpha1.AlignmentCheckLLMSpec{
-				Provider: LLMProviderOpenAI,
-				Model:    "legacy-model",
-			}
 			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
-			Expect(data).To(ContainSubstring("model: legacy-model"), "legacy llm literal should still be honored when llmProfileRef is unset (backward compat), got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("alignmentCheck:\n    llm:"), "alignment LLM should be omitted when llmProfileRef is unset, got:\n%s", data)
 		})
 
 		It("[SC-8, SC-12] propagates custom LLM TLS CA file", func() {
 			kn := testKubernaut()
-			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.TLSCaFile = "/etc/custom-ca/llm.pem" })
+			mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.TLSCaFile = "/etc/custom-ca/llm.pem" })
 			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			var root struct {
@@ -1800,7 +1789,7 @@ var _ = Describe("ConfigMaps", func() {
 		// tagged test reference (mirrors the tlsCaFile test just above).
 		It("[SC-8, SC-12] propagates custom LLM TLS client cert and key files", func() {
 			kn := testKubernaut()
-			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
+			mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) {
 				p.TLSCertFile = "/etc/custom-ca/llm-client.crt"
 				p.TLSKeyFile = "/etc/custom-ca/llm-client.key"
 			})
@@ -1815,7 +1804,7 @@ var _ = Describe("ConfigMaps", func() {
 		// timeoutSeconds had zero test references anywhere in the codebase.
 		It("[CM-6] propagates llmProfiles.azureApiVersion and bedrockRegion overrides", func() {
 			kn := testKubernaut()
-			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
+			mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) {
 				p.AzureAPIVersion = "2024-06-01"
 				p.BedrockRegion = "us-west-2"
 			})
@@ -1828,7 +1817,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("[CM-6] propagates a non-default llmProfiles.timeoutSeconds onto the llm-runtime ConfigMap", func() {
 			kn := testKubernaut()
-			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.TimeoutSeconds = ptr.To(45) })
+			mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.TimeoutSeconds = ptr.To(45) })
 			cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cm).NotTo(BeNil())
@@ -1929,7 +1918,7 @@ var _ = Describe("ConfigMaps", func() {
 		// rateLimitPerUser had zero test references.
 		It("[SC-5] propagates interactive.maxConcurrentSessions and rateLimitPerUser overrides", func() {
 			kn := testKubernaut()
-			kn.Spec.KubernautAgent.Interactive = &kubernautv1alpha1.InteractiveSpec{
+			kn.Spec.KubernautAgent.Interactive = &kubernautv1alpha2.InteractiveSpec{
 				MaxConcurrentSessions: ptr.To(250),
 				RateLimitPerUser:      ptr.To(42),
 			}
@@ -1952,9 +1941,9 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("renders LLM OAuth2 block when enabled", func() {
 			kn := testKubernaut()
-			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Enabled = true })
-			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.TokenURL = "https://idp.example/oauth/token" })
-			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Scopes = []string{"openid", "api.read"} })
+			mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.OAuth2.Enabled = true })
+			mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.OAuth2.TokenURL = "https://idp.example/oauth/token" })
+			mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.OAuth2.Scopes = []string{"openid", "api.read"} })
 			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			var root struct {
@@ -1987,8 +1976,8 @@ var _ = Describe("ConfigMaps", func() {
 		It("LR-011 [CM-6]: KA's reasoning/thinking-token policy exactly matches what the administrator configured on the profile", func() {
 			kn := testKubernaut()
 			budget := 4096
-			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
-				p.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{
+			mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) {
+				p.Reasoning = &kubernautv1alpha2.LLMReasoningSpec{
 					Enabled:            true,
 					BudgetTokens:       &budget,
 					Effort:             "high",
@@ -2072,10 +2061,10 @@ var _ = Describe("ConfigMaps", func() {
 
 			It("applies custom LLM runtime values", func() {
 				kn := testKubernaut()
-				mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Temperature = "0.5" })
-				mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = "https://llm-custom.example/v1" })
+				mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Temperature = "0.5" })
+				mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Endpoint = "https://llm-custom.example/v1" })
 				maxR := 7
-				mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.MaxRetries = &maxR })
+				mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.MaxRetries = &maxR })
 				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["llm-runtime.yaml"]
@@ -2098,7 +2087,7 @@ var _ = Describe("ConfigMaps", func() {
 
 			It("includes phaseModels when configured", func() {
 				kn := testKubernaut()
-				kn.Spec.LLMProfiles["workflow-lite"] = kubernautv1alpha1.LLMProfileSpec{
+				kn.Spec.LLMProfiles["workflow-lite"] = kubernautv1alpha2.LLMProfileSpec{
 					Provider:              "openai",
 					Model:                 "claude-haiku-4-6",
 					Endpoint:              "http://llm-gateway:8080",
@@ -2123,7 +2112,7 @@ var _ = Describe("ConfigMaps", func() {
 
 			It("propagates all override fields for a phase", func() {
 				kn := testKubernaut()
-				kn.Spec.LLMProfiles["rca-anthropic"] = kubernautv1alpha1.LLMProfileSpec{
+				kn.Spec.LLMProfiles["rca-anthropic"] = kubernautv1alpha2.LLMProfileSpec{
 					Provider:              "anthropic",
 					Model:                 "claude-sonnet-4-6",
 					Endpoint:              "https://api.anthropic.com",
@@ -2144,7 +2133,7 @@ var _ = Describe("ConfigMaps", func() {
 
 			It("LR-023 [IA-5]: emits apiKeyFile pointing at a dedicated mount when a phase's own profile has a different credentialsSecretName than KA's (#233)", func() {
 				kn := testKubernaut()
-				kn.Spec.LLMProfiles["workflow-cross-cred"] = kubernautv1alpha1.LLMProfileSpec{
+				kn.Spec.LLMProfiles["workflow-cross-cred"] = kubernautv1alpha2.LLMProfileSpec{
 					Provider:              "anthropic",
 					Model:                 "claude-haiku-4-6",
 					CredentialsSecretName: "different-secret",
@@ -2166,7 +2155,7 @@ var _ = Describe("ConfigMaps", func() {
 
 			It("LR-024 [IA-5]: emits vertexProject/vertexLocation and a credentials.json apiKeyFile for a vertex_ai phase override with its own credentials (#233)", func() {
 				kn := testKubernaut()
-				kn.Spec.LLMProfiles["rca-vertex"] = kubernautv1alpha1.LLMProfileSpec{
+				kn.Spec.LLMProfiles["rca-vertex"] = kubernautv1alpha2.LLMProfileSpec{
 					Provider:              LLMProviderVertexAI,
 					Model:                 "gemini-2.5-flash",
 					CredentialsSecretName: "vertex-phase-creds",
@@ -2194,7 +2183,7 @@ var _ = Describe("ConfigMaps", func() {
 
 			It("LR-025 [IA-5]: does not emit apiKeyFile when a phase shares KA's credentialsSecretName (regression guard, #233)", func() {
 				kn := testKubernaut()
-				kn.Spec.LLMProfiles["workflow-lite"] = kubernautv1alpha1.LLMProfileSpec{
+				kn.Spec.LLMProfiles["workflow-lite"] = kubernautv1alpha2.LLMProfileSpec{
 					Provider:              "openai",
 					Model:                 "gpt-4o-mini",
 					Endpoint:              testOpenAIEndpoint,
@@ -2210,8 +2199,8 @@ var _ = Describe("ConfigMaps", func() {
 
 			It("LR-020 [CM-6]: the base profile's reasoning policy is static-only and does not leak into the hot-reloadable runtime config", func() {
 				kn := testKubernaut()
-				mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
-					p.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "high"}
+				mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) {
+					p.Reasoning = &kubernautv1alpha2.LLMReasoningSpec{Enabled: true, Effort: "high"}
 				})
 				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 				Expect(err).NotTo(HaveOccurred())
@@ -2221,14 +2210,14 @@ var _ = Describe("ConfigMaps", func() {
 
 			It("LR-021 [CM-6]: a workflow phase's reasoning budget is independently configurable from the base agent's, so per-phase cost/latency tuning actually takes effect", func() {
 				kn := testKubernaut()
-				mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
-					p.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "high"}
+				mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) {
+					p.Reasoning = &kubernautv1alpha2.LLMReasoningSpec{Enabled: true, Effort: "high"}
 				})
-				kn.Spec.LLMProfiles["workflow_discovery_profile"] = kubernautv1alpha1.LLMProfileSpec{
+				kn.Spec.LLMProfiles["workflow_discovery_profile"] = kubernautv1alpha2.LLMProfileSpec{
 					Provider:              "anthropic",
 					Model:                 "claude-sonnet-4-6",
 					CredentialsSecretName: "llm-creds",
-					Reasoning:             &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "low"},
+					Reasoning:             &kubernautv1alpha2.LLMReasoningSpec{Enabled: true, Effort: "low"},
 				}
 				kn.Spec.KubernautAgent.PhaseModels = map[string]string{"workflow_discovery": "workflow_discovery_profile"}
 				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
@@ -2250,10 +2239,10 @@ var _ = Describe("ConfigMaps", func() {
 
 			It("LR-022 [CM-6]: a phase that opts out of reasoning stays opted out, even when the base agent has reasoning enabled", func() {
 				kn := testKubernaut()
-				mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
-					p.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "high"}
+				mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) {
+					p.Reasoning = &kubernautv1alpha2.LLMReasoningSpec{Enabled: true, Effort: "high"}
 				})
-				kn.Spec.LLMProfiles["validation_profile"] = kubernautv1alpha1.LLMProfileSpec{
+				kn.Spec.LLMProfiles["validation_profile"] = kubernautv1alpha2.LLMProfileSpec{
 					Provider:              "anthropic",
 					Model:                 "claude-sonnet-4-6",
 					CredentialsSecretName: "llm-creds",
@@ -2274,10 +2263,10 @@ var _ = Describe("ConfigMaps", func() {
 
 			It("LR-031 [#241]: a phase's own temperature is independently configurable from the base agent's, so per-phase model-compatibility tuning actually takes effect", func() {
 				kn := testKubernaut()
-				mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
+				mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) {
 					p.Temperature = "0.7"
 				})
-				kn.Spec.LLMProfiles["workflow_discovery_profile"] = kubernautv1alpha1.LLMProfileSpec{
+				kn.Spec.LLMProfiles["workflow_discovery_profile"] = kubernautv1alpha2.LLMProfileSpec{
 					Provider:              "anthropic",
 					Model:                 "claude-sonnet-4-6",
 					CredentialsSecretName: "llm-creds",
@@ -2300,10 +2289,10 @@ var _ = Describe("ConfigMaps", func() {
 
 			It("LR-032 [#241]: a phase without its own temperature omits it, even when the base agent has one configured (mirrors the primary-profile fix in #239 -- unset must mean 'let the provider default')", func() {
 				kn := testKubernaut()
-				mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
+				mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) {
 					p.Temperature = "0.7"
 				})
-				kn.Spec.LLMProfiles["validation_profile"] = kubernautv1alpha1.LLMProfileSpec{
+				kn.Spec.LLMProfiles["validation_profile"] = kubernautv1alpha2.LLMProfileSpec{
 					Provider:              "anthropic",
 					Model:                 "claude-sonnet-4-6",
 					CredentialsSecretName: "llm-creds",
@@ -2439,7 +2428,7 @@ var _ = Describe("ConfigMaps", func() {
 		})
 
 		DescribeTable("OpenShift service-ca ConfigMaps have inject-cabundle annotation",
-			func(mkCM func(*kubernautv1alpha1.Kubernaut) *corev1.ConfigMap) {
+			func(mkCM func(*kubernautv1alpha2.Kubernaut) *corev1.ConfigMap) {
 				kn := testKubernaut()
 				cm := mkCM(kn)
 				Expect(cm.Annotations["service.beta.openshift.io/inject-cabundle"]).To(Equal(injectCABundleAnnotationValue))
@@ -2471,7 +2460,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("returns nil when user provides ConfigMapName", func() {
 			kn := testKubernaut()
-			kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha1.ConfigMapRef{
+			kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha2.ConfigMapRef{
 				ConfigMapName: "user-proactive-mappings",
 			}
 
@@ -2561,7 +2550,7 @@ var _ = Describe("ConfigMaps", func() {
 		const loggingLevelAllServicesTestLevel = "error"
 
 		DescribeTable("logging level propagates to each service ConfigMap",
-			func(prep func(*kubernautv1alpha1.Kubernaut), key string, fn func(*kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error)) {
+			func(prep func(*kubernautv1alpha2.Kubernaut), key string, fn func(*kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error)) {
 				kn := testKubernaut()
 				prep(kn)
 				cm, err := fn(kn)
@@ -2570,92 +2559,92 @@ var _ = Describe("ConfigMaps", func() {
 				Expect(data).To(ContainSubstring("level: "+loggingLevelAllServicesTestLevel), "expected logging level %q in %s, got:\n%s", loggingLevelAllServicesTestLevel, key, data)
 			},
 			Entry("gateway",
-				func(kn *kubernautv1alpha1.Kubernaut) {
+				func(kn *kubernautv1alpha2.Kubernaut) {
 					kn.Spec.Gateway.Logging.Level = loggingLevelAllServicesTestLevel
 				},
 				"config.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return GatewayConfigMap(kn, testKnV2(kn))
 				},
 			),
 			Entry("datastorage",
-				func(kn *kubernautv1alpha1.Kubernaut) {
+				func(kn *kubernautv1alpha2.Kubernaut) {
 					kn.Spec.DataStorage.Logging.Level = loggingLevelAllServicesTestLevel
 				},
 				"config.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
 				},
 			),
 			Entry("aianalysis",
-				func(kn *kubernautv1alpha1.Kubernaut) {
+				func(kn *kubernautv1alpha2.Kubernaut) {
 					kn.Spec.AIAnalysis.Logging.Level = loggingLevelAllServicesTestLevel
 				},
 				"config.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return AIAnalysisConfigMap(kn, testKnV2(kn))
 				},
 			),
 			Entry("signalprocessing",
-				func(kn *kubernautv1alpha1.Kubernaut) {
+				func(kn *kubernautv1alpha2.Kubernaut) {
 					kn.Spec.SignalProcessing.Logging.Level = loggingLevelAllServicesTestLevel
 				},
 				"config.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return SignalProcessingConfigMap(kn, testKnV2(kn))
 				},
 			),
 			Entry("remediationorchestrator",
-				func(kn *kubernautv1alpha1.Kubernaut) {
+				func(kn *kubernautv1alpha2.Kubernaut) {
 					kn.Spec.RemediationOrchestrator.Logging.Level = loggingLevelAllServicesTestLevel
 				},
 				"remediationorchestrator.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return RemediationOrchestratorConfigMap(kn, testKnV2(kn))
 				},
 			),
 			Entry("workflowexecution",
-				func(kn *kubernautv1alpha1.Kubernaut) {
+				func(kn *kubernautv1alpha2.Kubernaut) {
 					kn.Spec.WorkflowExecution.Logging.Level = loggingLevelAllServicesTestLevel
 				},
 				"workflowexecution.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return WorkflowExecutionConfigMap(kn, testKnV2(kn))
 				},
 			),
 			Entry("effectivenessmonitor",
-				func(kn *kubernautv1alpha1.Kubernaut) {
+				func(kn *kubernautv1alpha2.Kubernaut) {
 					kn.Spec.EffectivenessMonitor.Logging.Level = loggingLevelAllServicesTestLevel
 				},
 				"effectivenessmonitor.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return EffectivenessMonitorConfigMap(kn, testKnV2(kn))
 				},
 			),
 			Entry("notification-controller",
-				func(kn *kubernautv1alpha1.Kubernaut) {
+				func(kn *kubernautv1alpha2.Kubernaut) {
 					kn.Spec.Notification.Logging.Level = loggingLevelAllServicesTestLevel
 				},
 				"config.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return NotificationControllerConfigMap(kn, testKnV2(kn))
 				},
 			),
 			Entry("kubernaut-agent",
-				func(kn *kubernautv1alpha1.Kubernaut) {
+				func(kn *kubernautv1alpha2.Kubernaut) {
 					kn.Spec.KubernautAgent.Logging.Level = loggingLevelAllServicesTestLevel
 				},
 				"config.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return KubernautAgentConfigMap(kn, testKnV2(kn))
 				},
 			),
 			Entry("authwebhook",
-				func(kn *kubernautv1alpha1.Kubernaut) {
+				func(kn *kubernautv1alpha2.Kubernaut) {
 					kn.Spec.AuthWebhook.Logging.Level = loggingLevelAllServicesTestLevel
 				},
 				"authwebhook.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return AuthWebhookConfigMap(kn, testKnV2(kn))
 				},
 			),
@@ -2675,7 +2664,7 @@ var _ = Describe("ConfigMaps", func() {
 		// at the config root -- ContainSubstring on the rendered value is
 		// nesting-agnostic, so one table covers both shapes.
 		DescribeTable("debug.pprofEnabled propagates from the single global toggle to every service ConfigMap (#406)",
-			func(build func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut), key string, fn func(*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error)) {
+			func(build func() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut), key string, fn func(*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error)) {
 				kn, knV2 := build()
 
 				cmOff, err := fn(kn, knV2)
@@ -2692,22 +2681,22 @@ var _ = Describe("ConfigMaps", func() {
 					"expected pprofEnabled: true after the single global toggle is enabled in %s, got:\n%s", key, dataOn)
 			},
 			Entry("gateway",
-				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+				func() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
 				"config.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return GatewayConfigMap(kn, knV2)
 				},
 			),
 			Entry("datastorage",
-				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+				func() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
 				"config.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return DataStorageConfigMap(kn, knV2, "kubernautdb", "kubernautuser")
 				},
 			),
@@ -2717,92 +2706,92 @@ var _ = Describe("ConfigMaps", func() {
 				FleetMetadataCacheConfigMap,
 			),
 			Entry("aianalysis",
-				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+				func() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
 				"config.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return AIAnalysisConfigMap(kn, knV2)
 				},
 			),
 			Entry("signalprocessing",
-				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+				func() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
 				"config.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return SignalProcessingConfigMap(kn, knV2)
 				},
 			),
 			Entry("remediationorchestrator",
-				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+				func() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
 				"remediationorchestrator.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return RemediationOrchestratorConfigMap(kn, knV2)
 				},
 			),
 			Entry("workflowexecution",
-				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+				func() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
 				"workflowexecution.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return WorkflowExecutionConfigMap(kn, knV2)
 				},
 			),
 			Entry("effectivenessmonitor",
-				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+				func() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
 				"effectivenessmonitor.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return EffectivenessMonitorConfigMap(kn, knV2)
 				},
 			),
 			Entry("notification-controller",
-				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+				func() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
 				"config.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return NotificationControllerConfigMap(kn, knV2)
 				},
 			),
 			Entry("kubernaut-agent (nested under runtime.debug)",
-				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+				func() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
 				"config.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return KubernautAgentConfigMap(kn, knV2)
 				},
 			),
 			Entry("authwebhook",
-				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+				func() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
 				"authwebhook.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return AuthWebhookConfigMap(kn, knV2)
 				},
 			),
 			Entry("apifrontend",
-				func() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+				func() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) {
 					kn := testKubernaut()
 					return kn, testKnV2(kn)
 				},
 				"config.yaml",
-				func(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+				func(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 					return APIFrontendConfigMap(kn, knV2, KagentiSidecarNone, nil)
 				},
 			),
@@ -2922,7 +2911,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	// references anywhere in the codebase.
 	It("[SC-5] propagates spec.apiFrontend.rateLimit overrides onto the rendered rateLimit block", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RateLimit = kubernautv1alpha1.APIFrontendRateLimitSpec{
+		kn.Spec.APIFrontend.RateLimit = kubernautv1alpha2.APIFrontendRateLimitSpec{
 			IPRequestsPerSec:      ptr.To(12345),
 			UserRequestsPerSec:    ptr.To(234),
 			MaxConcurrentSessions: ptr.To(77),
@@ -3126,10 +3115,10 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("#279: renders Vertex AI fields in agent.llm config with a credentials.json apiKeyFile now that kubernaut#1731 is fixed", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderVertexAI })
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Model = "gemini-2.5-pro" })
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexProject = "my-project" })
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexLocation = testVertexLocation })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Provider = LLMProviderVertexAI })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Model = "gemini-2.5-pro" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.VertexProject = "my-project" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.VertexLocation = testVertexLocation })
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
@@ -3157,8 +3146,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("UT-CM-196-001 [SI-10]: AF receives openai_compatible when CR specifies openai", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -3175,8 +3164,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("UT-CM-196-002 [CM-6]: AF endpoint gets /v1 suffix appended", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -3193,8 +3182,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("UT-CM-196-003 [CM-6]: AF endpoint not doubled when /v1 already present", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint + "/v1" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint + "/v1" })
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -3211,8 +3200,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("UT-CM-196-004 [CM-6]: AF endpoint trailing slash handled before /v1 append", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint + "/" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint + "/" })
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -3229,8 +3218,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("UT-CM-196-005 [CM-6]: KA gets raw openai provider, no endpoint mutation", func() {
 		kn := testKubernaut()
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
 		cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -3246,9 +3235,9 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("UT-CM-196-006 [CM-6]: non-OpenAI providers are not translated", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderVertexAI })
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexProject = "my-project" })
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.VertexLocation = testVertexLocation })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Provider = LLMProviderVertexAI })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.VertexProject = "my-project" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.VertexLocation = testVertexLocation })
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -3265,8 +3254,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("UT-CM-196-007 [SC-7]: AF apiKeyFile set for OpenAI provider", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Provider = LLMProviderOpenAI })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Endpoint = testOpenAIEndpoint })
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -3283,9 +3272,9 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("renders OAuth2 block in agent.llm when enabled", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Enabled = true })
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.TokenURL = "https://idp.example/oauth/token" })
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Scopes = []string{"openid", "llm.invoke"} })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.OAuth2.Enabled = true })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.OAuth2.TokenURL = "https://idp.example/oauth/token" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.OAuth2.Scopes = []string{"openid", "llm.invoke"} })
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
@@ -3328,8 +3317,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("LR-031 [CM-6]: AF's reasoning/thinking-token policy exactly matches what the administrator configured on the profile", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
-			p.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "medium", CapabilityOverride: "force_off"}
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) {
+			p.Reasoning = &kubernautv1alpha2.LLMReasoningSpec{Enabled: true, Effort: "medium", CapabilityOverride: "force_off"}
 		})
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -3353,7 +3342,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("renders AF's own resolved profile when apiFrontend.llmProfileRef differs from KA's", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.LLMProfiles[testAFOnlyProfile] = kubernautv1alpha1.LLMProfileSpec{
+		kn.Spec.LLMProfiles[testAFOnlyProfile] = kubernautv1alpha2.LLMProfileSpec{
 			Provider:              LLMProviderVertexAI,
 			Model:                 "gemini-2.5-flash",
 			VertexProject:         "af-project",
@@ -3381,7 +3370,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	It("defaults AF's LLM profile to KA's when apiFrontend.llmProfileRef is empty", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.LLMProfileRef = ""
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.Model = "gpt-4o-mini" })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.Model = "gpt-4o-mini" })
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -3466,7 +3455,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	It("severityTriage.llm is present-but-empty when llmEnabled is false, forcing the rule-based-only fallback", func() {
 		kn := testKubernautWithAF()
 		disabled := false
-		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMEnabled: &disabled}
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{LLMEnabled: &disabled}
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
@@ -3485,13 +3474,13 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("severityTriage.llm renders an independent profile when llmProfileRef is set", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.LLMProfiles["triage-profile"] = kubernautv1alpha1.LLMProfileSpec{
+		kn.Spec.LLMProfiles["triage-profile"] = kubernautv1alpha2.LLMProfileSpec{
 			Provider:              "anthropic",
 			Model:                 "claude-haiku-4-6",
 			Endpoint:              "https://api.anthropic.com",
 			CredentialsSecretName: "llm-creds",
 		}
-		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-profile"}
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-profile"}
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -3516,17 +3505,17 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("LR-032 [CM-6]: severity-triage's reasoning budget is independently configurable from AF's main agent, so triage cost/latency can be tuned separately", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
-			p.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "high"}
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) {
+			p.Reasoning = &kubernautv1alpha2.LLMReasoningSpec{Enabled: true, Effort: "high"}
 		})
-		kn.Spec.LLMProfiles["triage-profile"] = kubernautv1alpha1.LLMProfileSpec{
+		kn.Spec.LLMProfiles["triage-profile"] = kubernautv1alpha2.LLMProfileSpec{
 			Provider:              "anthropic",
 			Model:                 "claude-haiku-4-6",
 			Endpoint:              "https://api.anthropic.com",
 			CredentialsSecretName: "llm-creds",
-			Reasoning:             &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "minimal"},
+			Reasoning:             &kubernautv1alpha2.LLMReasoningSpec{Enabled: true, Effort: "minimal"},
 		}
-		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-profile"}
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-profile"}
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -3555,13 +3544,13 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("LR-033 [IA-5]: emits apiKeyFile pointing at a dedicated mount when severityTriage's own profile has a different credentialsSecretName than AF's (#234)", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.LLMProfiles["triage-other-creds"] = kubernautv1alpha1.LLMProfileSpec{
+		kn.Spec.LLMProfiles["triage-other-creds"] = kubernautv1alpha2.LLMProfileSpec{
 			Provider:              "anthropic",
 			Model:                 "claude-haiku-4-6",
 			Endpoint:              "https://api.anthropic.com",
 			CredentialsSecretName: "different-secret",
 		}
-		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-other-creds"}
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-other-creds"}
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -3579,14 +3568,14 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("LR-034 [IA-5]: emits vertexProject/vertexLocation and a dedicated credentials.json apiKeyFile for a vertex_ai severityTriage override with its own credentials (#279, kubernaut#1731 is fixed)", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.LLMProfiles["triage-vertex"] = kubernautv1alpha1.LLMProfileSpec{
+		kn.Spec.LLMProfiles["triage-vertex"] = kubernautv1alpha2.LLMProfileSpec{
 			Provider:              LLMProviderVertexAI,
 			Model:                 "gemini-2.5-flash",
 			CredentialsSecretName: "triage-vertex-creds",
 			VertexProject:         "example-gcp-project",
 			VertexLocation:        "us-central1",
 		}
-		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-vertex"}
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-vertex"}
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -3608,13 +3597,13 @@ var _ = Describe("APIFrontendConfigMap", func() {
 
 	It("LR-035 [IA-5]: emits AF's own shared apiKeyFile when severityTriage shares AF's credentialsSecretName (regression guard, #234)", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.LLMProfiles["triage-shared-creds"] = kubernautv1alpha1.LLMProfileSpec{
+		kn.Spec.LLMProfiles["triage-shared-creds"] = kubernautv1alpha2.LLMProfileSpec{
 			Provider:              "anthropic",
 			Model:                 "claude-haiku-4-6",
 			Endpoint:              "https://api.anthropic.com",
 			CredentialsSecretName: "llm-creds", // same as testKubernaut()'s "primary" profile
 		}
-		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-shared-creds"}
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-shared-creds"}
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -4060,7 +4049,7 @@ var _ = Describe("APIFrontendConfigMap kagenti OIDC auto-detection", func() {
 var _ = Describe("IA-2: AF multi-provider JWT config emission", func() {
 	It("[IA-2, IA-5] emits jwtProviders array enabling concurrent multi-issuer token validation", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{
 			{
 				Name:      "keycloak",
 				IssuerURL: "https://keycloak.example.com/realms/kubernaut",
@@ -4105,7 +4094,7 @@ var _ = Describe("IA-2: AF multi-provider JWT config emission", func() {
 	It("kubernaut-operator#462: does not apply the Keycloak jwksURL derivation to jwtProviders[] entries (heterogeneous IdPs, e.g. SPIRE)", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.IssuerURL = "" // isolate: only the spire provider has an issuerURL
-		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{
 			{
 				Name:      "spire",
 				IssuerURL: "https://spire.example.com",
@@ -4125,12 +4114,12 @@ var _ = Describe("IA-2: AF multi-provider JWT config emission", func() {
 var _ = Describe("AC-6: claim-based authorization config", func() {
 	It("[AC-6] propagates claim mappings enabling group-based tool authorization", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{
 			{
 				Name:      "keycloak",
 				IssuerURL: "https://keycloak.example.com/realms/kubernaut",
 				Audiences: []string{"kubernaut-console"},
-				ClaimMappings: &kubernautv1alpha1.ClaimMappingsSpec{
+				ClaimMappings: &kubernautv1alpha2.ClaimMappingsSpec{
 					Username: "preferred_username",
 					Groups:   "realm_roles",
 				},
@@ -4147,7 +4136,7 @@ var _ = Describe("AC-6: claim-based authorization config", func() {
 
 	It("[AC-6] omits claim mappings when not configured — AF falls back to default claim extraction", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{
 			{
 				Name:      "spire",
 				IssuerURL: "https://spire.example.com",
@@ -4165,7 +4154,7 @@ var _ = Describe("AC-6: claim-based authorization config", func() {
 var _ = Describe("SC-23: per-provider audience config", func() {
 	It("[SC-23, IA-5] emits audiences array per provider for audience-scoped token validation", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha1.JWTProviderSpec{
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{
 			{
 				Name:      "keycloak",
 				IssuerURL: "https://keycloak.example.com/realms/kubernaut",
@@ -4194,7 +4183,7 @@ var _ = Describe("APIFrontendConfigMap SAR", func() {
 
 	It("[AC-6] renders custom sarCacheTTL from spec", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
 			SARCacheTTL: "2m",
 		}
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn), KagentiSidecarNone, nil)
@@ -4243,7 +4232,7 @@ var _ = Describe("APIFrontendRBACRolesConfigMap", func() {
 var _ = Describe("DataStorage SignerCertDir Config", func() {
 	It("[SC-12] renders signerCertDir when signing cert is configured", func() {
 		kn := testKubernaut()
-		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha1.SigningCertSpec{
+		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha2.SigningCertSpec{
 			SecretName: "datastorage-signing-cert",
 		}
 		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
@@ -4286,7 +4275,7 @@ var _ = Describe("DataStorage Retention Config", func() {
 	It("renders retention block with defaults when spec is provided", func() {
 		kn := testKubernaut()
 		enabled := true
-		kn.Spec.DataStorage.Retention = &kubernautv1alpha1.RetentionSpec{
+		kn.Spec.DataStorage.Retention = &kubernautv1alpha2.RetentionSpec{
 			Enabled: &enabled,
 		}
 		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
@@ -4310,7 +4299,7 @@ var _ = Describe("DataStorage Retention Config", func() {
 	It("clamps defaultDays to 2555", func() {
 		kn := testKubernaut()
 		days := 5000
-		kn.Spec.DataStorage.Retention = &kubernautv1alpha1.RetentionSpec{
+		kn.Spec.DataStorage.Retention = &kubernautv1alpha2.RetentionSpec{
 			DefaultDays: &days,
 		}
 		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
@@ -4325,7 +4314,7 @@ var _ = Describe("DataStorage Retention Config", func() {
 		enabled := false
 		batch := 500
 		days := 365
-		kn.Spec.DataStorage.Retention = &kubernautv1alpha1.RetentionSpec{
+		kn.Spec.DataStorage.Retention = &kubernautv1alpha2.RetentionSpec{
 			Enabled:     &enabled,
 			Interval:    "12h",
 			BatchSize:   &batch,
@@ -4392,7 +4381,7 @@ var _ = Describe("kaRateLimitFromSpec", func() {
 
 	It("UT-RL-02 [SC-5, CC6.6]: partial override applies RPS only", func() {
 		rps := 10
-		rl := kaRateLimitFromSpec(&kubernautv1alpha1.KARateLimitSpec{
+		rl := kaRateLimitFromSpec(&kubernautv1alpha2.KARateLimitSpec{
 			RequestsPerSecond: &rps,
 		})
 		Expect(rl.RequestsPerSecond).To(Equal(10))
@@ -4401,7 +4390,7 @@ var _ = Describe("kaRateLimitFromSpec", func() {
 
 	It("UT-RL-03 [SC-5, CC6.6]: partial override applies burst only", func() {
 		burst := 200
-		rl := kaRateLimitFromSpec(&kubernautv1alpha1.KARateLimitSpec{
+		rl := kaRateLimitFromSpec(&kubernautv1alpha2.KARateLimitSpec{
 			Burst: &burst,
 		})
 		Expect(rl.RequestsPerSecond).To(Equal(50))
@@ -4411,7 +4400,7 @@ var _ = Describe("kaRateLimitFromSpec", func() {
 	It("UT-RL-04 [CM-6, CC8.1]: both fields set overrides all defaults", func() {
 		rps := 25
 		burst := 50
-		rl := kaRateLimitFromSpec(&kubernautv1alpha1.KARateLimitSpec{
+		rl := kaRateLimitFromSpec(&kubernautv1alpha2.KARateLimitSpec{
 			RequestsPerSecond: &rps,
 			Burst:             &burst,
 		})

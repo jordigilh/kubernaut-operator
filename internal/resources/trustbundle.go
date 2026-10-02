@@ -27,7 +27,7 @@ import (
 	"k8s.io/client-go/rest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 var trustBundleLog = logf.Log.WithName("trustbundle")
@@ -58,8 +58,7 @@ var (
 // readServiceCA reads the OCP service-ca-operator-injected CA bundle from
 // the inter-service-ca ConfigMap in the operator's own namespace. Uses a
 // direct (uncached) clientset read rather than the reconciler's cached
-// client, mirroring liveResolveAPIServerIPs (networkpolicies.go), so the
-// corresponding RBAC only needs the `get` verb.
+// client; the corresponding RBAC only needs the `get` verb.
 func readServiceCA(namespace string) (string, error) {
 	cs, err := trustBundleClientset()
 	if err != nil {
@@ -89,9 +88,8 @@ func readDefaultIngressCert() (string, error) {
 }
 
 // trustBundleClientset builds a fresh, uncached Kubernetes clientset from
-// the in-cluster config, matching the pattern already proven by
-// liveResolveAPIServerIPs (networkpolicies.go): bypassing the manager's
-// cached client keeps the RBAC surface to `get` only, no `list`/`watch`.
+// the in-cluster config. Bypassing the manager's cached client keeps the RBAC
+// surface to `get` only, no `list`/`watch`.
 func trustBundleClientset() (*kubernetes.Clientset, error) {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
@@ -126,13 +124,12 @@ func MergeTrustBundle(serviceCA, routerCA string) string {
 // clients that verify internal Service TLS can both trust a single file.
 //
 // Unlike most resource builders, this performs live (uncached) cluster
-// reads internally -- mirroring resolveAPIServerIPs/apiServerEgressRule in
-// networkpolicies.go -- because its content cannot be derived from the
-// Kubernaut spec alone. Both reads fail open: a read error or missing
+// reads internally because its content cannot be derived from the Kubernaut
+// spec alone. Both reads fail open: a read error or missing
 // ConfigMap degrades to "not included" rather than blocking reconciliation,
 // since the historical inter-service-ca-only bundle remains valid on its
 // own.
-func TrustBundleConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+func TrustBundleConfigMap(kn *kubernautv1alpha2.Kubernaut) *corev1.ConfigMap {
 	serviceCA, err := readServiceCAFunc(kn.Namespace)
 	if err != nil {
 		trustBundleLog.Info("inter-service-ca not yet available for trust bundle merge; continuing without it", "reason", err.Error())

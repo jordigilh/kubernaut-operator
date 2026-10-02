@@ -26,11 +26,12 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/yaml"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 var configmapsLog = logf.Log.WithName("configmaps")
+
+const defaultTenMinuteDuration = "10m"
 
 // controllerConfig holds controller-runtime style settings shared by the
 // AIAnalysis, SignalProcessing, and Notification controllers.
@@ -108,7 +109,7 @@ type gatewayRetryYAML struct {
 // (#259), defaulting to the operator's prior hardcoded values.
 // readTimeout/writeTimeout intentionally default to 3600s, not upstream's
 // chart default of 30s, to avoid a behavior change for existing CRs.
-func gatewayServerConfig(knV2 *kubernautv1alpha2.Kubernaut, gwCfg *kubernautv1alpha1.GatewayConfigSpec) gatewayServerYAML {
+func gatewayServerConfig(knV2 *kubernautv1alpha2.Kubernaut, gwCfg *kubernautv1alpha2.GatewayConfigSpec) gatewayServerYAML {
 	s := gatewayServerYAML{
 		ListenAddr:            ":8443",
 		HealthAddr:            ":8081",
@@ -954,7 +955,7 @@ type kaOAuth2YAML struct {
 
 // kaReasoningYAML mirrors upstream pkg/shared/types.LLMReasoningConfig's
 // shape (Provider/Model identity fields aside), so rendering from
-// kubernautv1alpha1.LLMReasoningSpec is a straight field-for-field forward.
+// kubernautv1alpha2.LLMReasoningSpec is a straight field-for-field forward.
 // Enabled always renders (matches kaOAuth2YAML's convention). BudgetTokens
 // stays a pointer, matching this CRD's existing convention for optional
 // integer fields (see LLMProfileSpec.MaxRetries/TimeoutSeconds) — upstream's
@@ -972,7 +973,7 @@ type kaReasoningYAML struct {
 // and every per-phase override (KubernautAgentLLMRuntimeConfigMap) so a
 // profile's reasoning policy renders identically regardless of which
 // ConfigMap resolves it. r may be nil (no reasoning configured).
-func kaReasoningFromSpec(r *kubernautv1alpha1.LLMReasoningSpec) *kaReasoningYAML {
+func kaReasoningFromSpec(r *kubernautv1alpha2.LLMReasoningSpec) *kaReasoningYAML {
 	if r == nil {
 		return nil
 	}
@@ -1212,7 +1213,7 @@ func marshalYAML(v any) (string, error) {
 }
 
 // GatewayConfigMap builds the gateway-config ConfigMap.
-func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func GatewayConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ns := kn.Namespace
 	gwCfg := &kn.Spec.Gateway.Config
@@ -1283,7 +1284,7 @@ func GatewayConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.K
 // DataStorageConfigMap builds the data-storage config ConfigMap. The dbName and
 // dbUser parameters must match the values written into the DataStorageDBSecret
 // to avoid a config/secret mismatch.
-func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, dbName, dbUser string, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func DataStorageConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, dbName, dbUser string, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	pgPort := PostgreSQLPort(kn)
 	pgHost := kn.Spec.PostgreSQL.Host
@@ -1301,7 +1302,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 				MaxOpenConns:    100,
 				MaxIdleConns:    20,
 				ConnMaxLifetime: "1h",
-				ConnMaxIdleTime: "10m",
+				ConnMaxIdleTime: defaultTenMinuteDuration,
 				SecretsFile:     "/etc/datastorage/secrets/db-secrets.yaml",
 				UsernameKey:     "username",
 				PasswordKey:     "password",
@@ -1339,7 +1340,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 	}, nil
 }
 
-func dataStorageRetentionConfig(kn *kubernautv1alpha1.Kubernaut) *dataStorageRetentionYAML {
+func dataStorageRetentionConfig(kn *kubernautv1alpha2.Kubernaut) *dataStorageRetentionYAML {
 	r := kn.Spec.DataStorage.Retention
 	if r == nil {
 		return nil
@@ -1356,7 +1357,7 @@ func dataStorageRetentionConfig(kn *kubernautv1alpha1.Kubernaut) *dataStorageRet
 	}
 }
 
-func dataStorageServerConfig(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) dataStorageServerYAML {
+func dataStorageServerConfig(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) dataStorageServerYAML {
 	s := dataStorageServerYAML{
 		Port:         8443,
 		Host:         "0.0.0.0",
@@ -1380,7 +1381,7 @@ func dataStorageServerConfig(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1a
 	return s
 }
 
-func dataStorageRedisConfig(kn *kubernautv1alpha1.Kubernaut) dataStorageRedisYAML {
+func dataStorageRedisConfig(kn *kubernautv1alpha2.Kubernaut) dataStorageRedisYAML {
 	valkeyHost := kn.Spec.Valkey.Host
 	valkeyPort := kn.Spec.Valkey.Port
 	if valkeyPort == 0 {
@@ -1410,7 +1411,7 @@ func dataStorageRedisConfig(kn *kubernautv1alpha1.Kubernaut) dataStorageRedisYAM
 }
 
 // AIAnalysisConfigMap builds the aianalysis-config ConfigMap.
-func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func AIAnalysisConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ns := kn.Namespace
 	rego := aiAnalysisRegoYAML{
@@ -1453,7 +1454,7 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha
 }
 
 // SignalProcessingConfigMap builds the signalprocessing-config ConfigMap.
-func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func SignalProcessingConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ns := kn.Namespace
 	buf := signalProcessingBufferYAML{
@@ -1497,7 +1498,7 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv
 // ProactiveSignalMappingsConfigMap builds the default signalprocessing-proactive-signal-mappings
 // ConfigMap with BR-SP-106 proactive signal mode mappings. Returns nil when the user
 // provides their own ConfigMap via spec.signalProcessing.proactiveSignalMappings.
-func ProactiveSignalMappingsConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+func ProactiveSignalMappingsConfigMap(kn *kubernautv1alpha2.Kubernaut) *corev1.ConfigMap {
 	if kn.Spec.SignalProcessing.ProactiveSignalMappings != nil {
 		return nil
 	}
@@ -1515,7 +1516,7 @@ func ProactiveSignalMappingsConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.C
 }
 
 // RemediationOrchestratorConfigMap builds the remediationorchestrator-config ConfigMap.
-func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func RemediationOrchestratorConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ro := &kn.Spec.RemediationOrchestrator
 	ns := kn.Namespace
@@ -1537,7 +1538,7 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kub
 		Timeouts: roTimeoutsYAML{
 			Global:           withDefault(ro.Timeouts.Global, "1h"),
 			Processing:       withDefault(ro.Timeouts.Processing, "5m"),
-			Analyzing:        withDefault(ro.Timeouts.Analyzing, "10m"),
+			Analyzing:        withDefault(ro.Timeouts.Analyzing, defaultTenMinuteDuration),
 			Executing:        withDefault(ro.Timeouts.Executing, "30m"),
 			AwaitingApproval: withDefault(ro.Timeouts.AwaitingApproval, "15m"),
 			Verifying:        withDefault(ro.Timeouts.Verifying, "30m"),
@@ -1547,7 +1548,7 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kub
 			ConsecutiveFailureCooldown:    withDefault(ro.Routing.ConsecutiveFailureCooldown, "1h"),
 			RecentlyRemediatedCooldown:    withDefault(ro.Routing.RecentlyRemediatedCooldown, "5m"),
 			ExponentialBackoffBase:        withDefault(ro.Routing.ExponentialBackoffBase, "1m"),
-			ExponentialBackoffMax:         withDefault(ro.Routing.ExponentialBackoffMax, "10m"),
+			ExponentialBackoffMax:         withDefault(ro.Routing.ExponentialBackoffMax, defaultTenMinuteDuration),
 			ExponentialBackoffMaxExponent: intPtrDefault(ro.Routing.ExponentialBackoffMaxExponent, 4),
 			ScopeBackoffBase:              withDefault(ro.Routing.ScopeBackoffBase, "5s"),
 			ScopeBackoffMax:               withDefault(ro.Routing.ScopeBackoffMax, "5m"),
@@ -1586,7 +1587,7 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kub
 }
 
 // WorkflowExecutionConfigMap builds the workflowexecution-config ConfigMap.
-func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func WorkflowExecutionConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	we := &kn.Spec.WorkflowExecution
 	wfNs := ResolveWorkflowNamespace(kn)
@@ -1619,16 +1620,16 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernaut
 			LeaderElectionID: "workflowexecution.kubernaut.ai",
 		},
 	}
-	if kn.Spec.Ansible.Enabled {
+	if we.Ansible.Enabled {
 		ansible := workflowExecutionAnsibleYAML{
-			APIURL:         kn.Spec.Ansible.APIURL,
-			OrganizationID: kn.Spec.Ansible.OrganizationID,
+			APIURL:         we.Ansible.APIURL,
+			OrganizationID: we.Ansible.OrganizationID,
 		}
-		if kn.Spec.Ansible.TokenSecretRef != nil {
+		if we.Ansible.TokenSecretRef != nil {
 			ansible.TokenSecretRef = &weTokenSecretRefYAML{
-				Name:      kn.Spec.Ansible.TokenSecretRef.Name,
+				Name:      we.Ansible.TokenSecretRef.Name,
 				Namespace: kn.Namespace,
-				Key:       withDefault(kn.Spec.Ansible.TokenSecretRef.Key, "token"),
+				Key:       withDefault(we.Ansible.TokenSecretRef.Key, "token"),
 			}
 		}
 		cfg.Ansible = &ansible
@@ -1649,7 +1650,7 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernaut
 }
 
 // EffectivenessMonitorConfigMap builds the effectivenessmonitor-config ConfigMap.
-func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func EffectivenessMonitorConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	em := &kn.Spec.EffectivenessMonitor
 	cfg := effectivenessMonitorConfigYAML{
@@ -1693,7 +1694,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubern
 }
 
 // NotificationControllerConfigMap builds the notification-controller-config ConfigMap.
-func NotificationControllerConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func NotificationControllerConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	buf := notificationBufferYAML{
 		BufferSize:    10000,
@@ -1742,7 +1743,7 @@ func NotificationControllerConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kube
 
 // NotificationRoutingConfigMap builds the notification-routing-config ConfigMap.
 // When Slack is configured, routes are generated; otherwise a console-only fallback is used.
-func NotificationRoutingConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+func NotificationRoutingConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 	slack := kn.Spec.Notification.Slack
 	channel := slack.Channel
 	if channel == "" {
@@ -1791,7 +1792,7 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.Conf
 // applyKALLMProfileFields copies the optional provider-specific and
 // credential fields from a resolved LLM profile onto llmCfg, leaving zero
 // values (and thus YAML omission) for anything the profile doesn't set.
-func applyKALLMProfileFields(llmCfg *kaLLMYAML, profile kubernautv1alpha1.LLMProfileSpec) {
+func applyKALLMProfileFields(llmCfg *kaLLMYAML, profile kubernautv1alpha2.LLMProfileSpec) {
 	if profile.VertexProject != "" {
 		llmCfg.VertexProject = profile.VertexProject
 	}
@@ -1827,13 +1828,11 @@ func applyKALLMProfileFields(llmCfg *kaLLMYAML, profile kubernautv1alpha1.LLMPro
 // kaAlignmentConfig builds the AI alignment-check config block, or nil when
 // alignment checking is disabled.
 //
-// #423: llmProfileRef (v1alpha2 AlignmentCheckSpec, F5) was added to replace
-// v1alpha1's AlignmentCheckLLMSpec{Provider,Model,Endpoint} literal-field
-// pattern (same never-had-a-working-credentials-path bug class as #237),
-// but was never actually read here -- the field was entirely inert in
-// production. Wired with llmProfileRef taking precedence over the legacy
-// ac.LLM literal so existing v1alpha1 CRs keep working unchanged.
-func kaAlignmentConfig(kn *kubernautv1alpha1.Kubernaut, ac kubernautv1alpha1.AlignmentCheckSpec, llmProfileRef string) *kaAlignmentYAML {
+// #423: llmProfileRef (v1alpha2 AlignmentCheckSpec, F5) replaces the
+// v1alpha1 AlignmentCheckLLMSpec literal-field pattern. The profile reference
+// is the only supported v1alpha2 source because it follows the same credential
+// resolution path as every other LLM consumer.
+func kaAlignmentConfig(kn *kubernautv1alpha2.Kubernaut, ac kubernautv1alpha2.AlignmentCheckSpec, llmProfileRef string) *kaAlignmentYAML {
 	if !ac.Enabled {
 		return nil
 	}
@@ -1842,20 +1841,13 @@ func kaAlignmentConfig(kn *kubernautv1alpha1.Kubernaut, ac kubernautv1alpha1.Ali
 		Timeout:       withDefault(ac.Timeout, "10s"),
 		MaxStepTokens: intDefault(ac.MaxStepTokens, 500),
 	}
-	switch {
-	case llmProfileRef != "":
+	if llmProfileRef != "" {
 		if profile, ok := ResolveLLMProfile(kn, llmProfileRef); ok {
 			cfg.LLM = &kaAlignLLMYAML{
 				Provider: profile.Provider,
 				Model:    profile.Model,
 				Endpoint: profile.Endpoint,
 			}
-		}
-	case ac.LLM != nil:
-		cfg.LLM = &kaAlignLLMYAML{
-			Provider: ac.LLM.Provider,
-			Model:    ac.LLM.Model,
-			Endpoint: ac.LLM.Endpoint,
 		}
 	}
 	return cfg
@@ -1864,7 +1856,7 @@ func kaAlignmentConfig(kn *kubernautv1alpha1.Kubernaut, ac kubernautv1alpha1.Ali
 // kaSafetyConfig builds the AI safety-guardrail config block (prompt
 // sanitization + tool-call anomaly detection) from spec, layering
 // administrator overrides onto documented defaults.
-func kaSafetyConfig(safety kubernautv1alpha1.SafetySpec) *kaSafetyYAML {
+func kaSafetyConfig(safety kubernautv1alpha2.SafetySpec) *kaSafetyYAML {
 	injEnabled := safety.Sanitization.InjectionPatternsEnabled == nil || *safety.Sanitization.InjectionPatternsEnabled
 	credEnabled := safety.Sanitization.CredentialScrubEnabled == nil || *safety.Sanitization.CredentialScrubEnabled
 	return &kaSafetyYAML{
@@ -1884,7 +1876,7 @@ func kaSafetyConfig(safety kubernautv1alpha1.SafetySpec) *kaSafetyYAML {
 // spec-provided overrides layered onto its documented defaults. A nil
 // interactive spec means interactive mode is enabled with all defaults;
 // a non-nil spec can opt out entirely via InteractiveEnabled().
-func kaInteractiveConfig(interactive *kubernautv1alpha1.InteractiveSpec) *kaInteractiveYAML {
+func kaInteractiveConfig(interactive *kubernautv1alpha2.InteractiveSpec) *kaInteractiveYAML {
 	if interactive != nil && !interactive.InteractiveEnabled() {
 		return nil
 	}
@@ -1893,7 +1885,7 @@ func kaInteractiveConfig(interactive *kubernautv1alpha1.InteractiveSpec) *kaInte
 	ic := &kaInteractiveYAML{
 		Enabled:               true,
 		SessionTTL:            "30m",
-		InactivityTimeout:     "10m",
+		InactivityTimeout:     defaultTenMinuteDuration,
 		MaxConcurrentSessions: &defaultMaxSessions,
 		RateLimitPerUser:      &defaultRateLimit,
 	}
@@ -1916,8 +1908,9 @@ func kaInteractiveConfig(interactive *kubernautv1alpha1.InteractiveSpec) *kaInte
 }
 
 // kaToolsConfig builds the Prometheus/Alertmanager tool-integration block.
-// URLs follow spec.monitoring.prometheus.url/alertManager.url (#298),
-// falling back to the built-in OCP routes when unset.
+// URLs follow spec.monitoring.prometheus.url/alertManager.url (#298). The
+// controller supplies a platform-aware view so the OpenShift fallback is not
+// used on generic Kubernetes.
 func kaToolsConfig(knV2 *kubernautv1alpha2.Kubernaut) *kaIntegrationsToolsYAML {
 	return &kaIntegrationsToolsYAML{
 		Prometheus: kaIntegrationsPrometheusYAML{
@@ -1934,7 +1927,7 @@ func kaToolsConfig(knV2 *kubernautv1alpha2.Kubernaut) *kaIntegrationsToolsYAML {
 	}
 }
 
-func KubernautAgentConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ns := kn.Namespace
 	ka := &kn.Spec.KubernautAgent
@@ -2038,7 +2031,7 @@ func parseLLMTemperature(s string) *float64 {
 // resolveKAPhaseModelOverride builds a single phase's LLM override entry,
 // resolving its own profile and layering phase-specific temperature and
 // credential handling on top of the base agent profile.
-func resolveKAPhaseModelOverride(kn *kubernautv1alpha1.Kubernaut, phase, ref string, kaProfile kubernautv1alpha1.LLMProfileSpec) llmPhaseOverrideYAML {
+func resolveKAPhaseModelOverride(kn *kubernautv1alpha2.Kubernaut, phase, ref string, kaProfile kubernautv1alpha2.LLMProfileSpec) llmPhaseOverrideYAML {
 	phaseProfile, _ := ResolveLLMProfile(kn, ref)
 	override := llmPhaseOverrideYAML{
 		Provider:       phaseProfile.Provider,
@@ -2067,7 +2060,7 @@ func resolveKAPhaseModelOverride(kn *kubernautv1alpha1.Kubernaut, phase, ref str
 	return override
 }
 
-func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 	ka := &kn.Spec.KubernautAgent
 	if ka.RuntimeConfigMapName != "" {
 		// Caller supplied their own ConfigMap: nothing to build, not an error.
@@ -2108,7 +2101,7 @@ func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1
 }
 
 // AuthWebhookConfigMap builds the authwebhook-config ConfigMap.
-func AuthWebhookConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
+func AuthWebhookConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	buf := authWebhookBufferYAML{
 		BufferSize:    1000,
@@ -2147,7 +2140,7 @@ func AuthWebhookConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 // injection that provides the shared CA trust bundle for inter-service TLS.
 // All components that communicate with Gateway or DataStorage mount this
 // ConfigMap to verify server certificates.
-func InterServiceCAConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+func InterServiceCAConfigMap(kn *kubernautv1alpha2.Kubernaut) *corev1.ConfigMap {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, InterServiceCAConfigMapName, "inter-service-tls"),
 	}
@@ -2159,23 +2152,23 @@ func InterServiceCAConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap 
 
 // EffectivenessMonitorServiceCAConfigMap returns the ConfigMap used for
 // OCP service-ca injection for EffectivenessMonitor.
-func EffectivenessMonitorServiceCAConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+func EffectivenessMonitorServiceCAConfigMap(kn *kubernautv1alpha2.Kubernaut) *corev1.ConfigMap {
 	return serviceCAConfigMap(kn, "effectivenessmonitor-service-ca", ComponentEffectivenessMonitor)
 }
 
 // KubernautAgentServiceCAConfigMap returns the ConfigMap for OCP service-ca injection
 // for Kubernaut Agent.
-func KubernautAgentServiceCAConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+func KubernautAgentServiceCAConfigMap(kn *kubernautv1alpha2.Kubernaut) *corev1.ConfigMap {
 	return serviceCAConfigMap(kn, "kubernaut-agent-service-ca", ComponentKubernautAgent)
 }
 
 // APIFrontendServiceCAConfigMap returns the ConfigMap for OCP service-ca injection
 // for API Frontend (used by severity triage to trust the Thanos Querier certificate).
-func APIFrontendServiceCAConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+func APIFrontendServiceCAConfigMap(kn *kubernautv1alpha2.Kubernaut) *corev1.ConfigMap {
 	return serviceCAConfigMap(kn, "apifrontend-service-ca", ComponentAPIFrontend)
 }
 
-func serviceCAConfigMap(kn *kubernautv1alpha1.Kubernaut, name, component string) *corev1.ConfigMap {
+func serviceCAConfigMap(kn *kubernautv1alpha2.Kubernaut, name, component string) *corev1.ConfigMap {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, name, component),
 	}
@@ -2199,7 +2192,7 @@ func intDefault(val, def int) int {
 	return def
 }
 
-func kaRateLimitFromSpec(spec *kubernautv1alpha1.KARateLimitSpec) kaRateLimitYAML {
+func kaRateLimitFromSpec(spec *kubernautv1alpha2.KARateLimitSpec) kaRateLimitYAML {
 	rl := kaRateLimitYAML{RequestsPerSecond: 50, Burst: 100}
 	if spec != nil {
 		if spec.RequestsPerSecond != nil {
@@ -2281,7 +2274,7 @@ type afSessionYAML struct {
 // compatibility.
 func afSessionConfig(knV2 *kubernautv1alpha2.Kubernaut, ns string) afSessionYAML {
 	session := knV2.Spec.APIFrontend.Session
-	disconnectTTL := "10m"
+	disconnectTTL := defaultTenMinuteDuration
 	retentionTTL := "720h"
 	if session != nil {
 		disconnectTTL = withDefault(session.DisconnectTTL, disconnectTTL)
@@ -2505,7 +2498,7 @@ type KagentiOIDCDefaults struct {
 // afServerConfig builds the top-level server block: listen port, TLS
 // settings, and metrics/health port overrides derived from the sidecar mode
 // and any administrator-supplied overrides.
-func afServerConfig(af kubernautv1alpha1.APIFrontendSpec, sidecar KagentiSidecarMode) afServerYAML {
+func afServerConfig(af kubernautv1alpha2.APIFrontendSpec, sidecar KagentiSidecarMode) afServerYAML {
 	afTLS := afTLSYAML{CertDir: "/etc/apifrontend/tls", Required: true}
 	if sidecar != KagentiSidecarNone {
 		afTLS = afTLSYAML{}
@@ -2553,7 +2546,7 @@ func afResilienceConfig() afResilienceYAML {
 	}
 }
 
-func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode, oidc *KagentiOIDCDefaults) (*corev1.ConfigMap, error) {
+func APIFrontendConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode, oidc *KagentiOIDCDefaults) (*corev1.ConfigMap, error) {
 	af := kn.Spec.APIFrontend
 	ns := kn.Namespace
 	afProfile, _ := ResolveLLMProfile(kn, AFLLMProfileRef(kn))
@@ -2623,9 +2616,9 @@ func APIFrontendConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alph
 // (severityTriageCredentialsMountPath) whenever it names a different
 // credentialsSecretName than AF's own resolved profile, mirroring #233's
 // KA phaseModels pattern, including for vertex_ai.
-func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) afSeverityTriageYAML {
+func afSeverityTriageConfig(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) afSeverityTriageYAML {
 	cfg := afSeverityTriageYAML{
-		Enabled:                   true,
+		Enabled:                   knV2.Spec.Monitoring.Prometheus.PrometheusEnabled(),
 		PrometheusURL:             effectivePrometheusURL(knV2),
 		PrometheusTLSCAFile:       withDefault(knV2.Spec.Monitoring.Prometheus.TLSCaFile, "/etc/ssl/af/service-ca.crt"),
 		PrometheusBearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
@@ -2634,9 +2627,9 @@ func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1al
 		MaxRulesEvaluated:         100,
 		LLMConfidence:             0.7,
 	}
-	// #258: CacheTTLSeconds/LLMConfidence are v1alpha2-only additions (no
-	// v1alpha1 equivalent), so they're read from knV2 while the rest of
-	// this function reads from kn (v1alpha1) for backward compatibility.
+	// #258: CacheTTLSeconds/LLMConfidence are component-specific fields, so
+	// they're read from the v1alpha2 view passed for component configuration
+	// while the shared APIFrontend fields continue to use the base view.
 	if stV2 := knV2.Spec.APIFrontend.SeverityTriage; stV2 != nil {
 		cfg.CacheTTLSeconds = intPtrDefault(stV2.CacheTTLSeconds, cfg.CacheTTLSeconds)
 		cfg.LLMConfidence = parseFloatDefault(stV2.LLMConfidence, cfg.LLMConfidence)
@@ -2679,7 +2672,7 @@ func afSeverityTriageConfig(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1al
 //   - AF expects the endpoint to include "/v1"; KA appends it internally
 //
 // This translation will be removed when upstream normalizes (kubernaut#1488).
-func afAgentLLMConfig(llm kubernautv1alpha1.LLMProfileSpec) afAgentLLMYAML {
+func afAgentLLMConfig(llm kubernautv1alpha2.LLMProfileSpec) afAgentLLMYAML {
 	provider := llm.Provider
 	if provider == "" {
 		provider = LLMProviderVertexAI
@@ -2752,7 +2745,7 @@ func deriveAFJWKSURL(issuerURL string) string {
 	return strings.TrimRight(issuerURL, "/") + afKeycloakJWKSPath
 }
 
-func afAuthConfig(kn *kubernautv1alpha1.Kubernaut, oidc *KagentiOIDCDefaults) afAuthYAML {
+func afAuthConfig(kn *kubernautv1alpha2.Kubernaut, oidc *KagentiOIDCDefaults) afAuthYAML {
 	af := kn.Spec.APIFrontend
 
 	issuer := af.Auth.IssuerURL
@@ -2781,9 +2774,8 @@ func afAuthConfig(kn *kubernautv1alpha1.Kubernaut, oidc *KagentiOIDCDefaults) af
 	// path (kagenti auto-detection above already covers the SPIRE/kagenti
 	// case), so deriving via its well-known JWKS path convention is a safe
 	// default rather than a guess. This mirrors the same convention already
-	// applied to jwtProviders[] during v1alpha1->v1alpha2 conversion
-	// (deriveJWKSURL in api/v1alpha1/kubernaut_conversion.go) -- but is
-	// intentionally NOT applied to the jwtProviders[] array itself here,
+	// applied to the single-provider v2 runtime path -- but is intentionally
+	// NOT applied to the jwtProviders[] array itself here,
 	// since that list can mix in non-Keycloak IdPs (e.g. SPIRE) whose JWKS
 	// path this convention would get wrong.
 	if jwks == "" && issuer != "" {
@@ -2853,7 +2845,7 @@ func injectConsoleAudience(providers []afJWTProviderYAML) {
 	}
 }
 
-func afRBACConfig(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) afRBACYAML {
+func afRBACConfig(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) afRBACYAML {
 	ttl := "30s"
 	if kn.Spec.APIFrontend.RBAC != nil && kn.Spec.APIFrontend.RBAC.SARCacheTTL != "" {
 		ttl = kn.Spec.APIFrontend.RBAC.SARCacheTTL
@@ -2867,7 +2859,7 @@ func afRBACConfig(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kuber
 
 // APIFrontendRBACRolesConfigMap generates the default RBAC roles mapping
 // ConfigMap. Users can override this by setting spec.apiFrontend.rbacRolesConfigMapRef.
-func APIFrontendRBACRolesConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+func APIFrontendRBACRolesConfigMap(kn *kubernautv1alpha2.Kubernaut) *corev1.ConfigMap {
 	defaultRoles := `roles:
   admin: ["*"]
   viewer: ["list_investigations", "get_investigation", "search_signals"]

@@ -19,7 +19,7 @@ package resources
 import (
 	"fmt"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -32,7 +32,7 @@ const (
 // Used by the controller to patch the authbridge ConfigMap with a concrete
 // identity value (as opposed to the {{ .TrustDomain }} template used in
 // ClusterSPIFFEID which is resolved server-side by SPIRE).
-func AFSpiffeID(kn *kubernautv1alpha1.Kubernaut) string {
+func AFSpiffeID(kn *kubernautv1alpha2.Kubernaut) string {
 	td := "localtest.me"
 	if kn.Spec.APIFrontend.SPIRE.TrustDomain != "" {
 		td = kn.Spec.APIFrontend.SPIRE.TrustDomain
@@ -48,7 +48,7 @@ func AFSpiffeID(kn *kubernautv1alpha1.Kubernaut) string {
 // the identity matches whatever trust domain the cluster's SPIRE server is
 // configured with (FedRAMP SC-8, IA-5). The path follows the standard
 // /ns/{namespace}/sa/{serviceaccount} convention used by kagenti.
-func ClusterSPIFFEID(kn *kubernautv1alpha1.Kubernaut) (*unstructured.Unstructured, error) {
+func ClusterSPIFFEID(kn *kubernautv1alpha2.Kubernaut) (*unstructured.Unstructured, error) {
 	if !kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
 		// SPIRE disabled: no identity to register, not an error. Callers
 		// guard on a nil result before use.

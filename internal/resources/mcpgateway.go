@@ -19,7 +19,7 @@ package resources
 import (
 	"fmt"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -32,7 +32,7 @@ const (
 
 // MCPGatewayHTTPRoute builds an unstructured HTTPRoute that routes MCP traffic
 // to the apifrontend Service. Returns nil if AF is not enabled.
-func MCPGatewayHTTPRoute(kn *kubernautv1alpha1.Kubernaut) (*unstructured.Unstructured, error) {
+func MCPGatewayHTTPRoute(kn *kubernautv1alpha2.Kubernaut) (*unstructured.Unstructured, error) {
 	if !kn.Spec.APIFrontendEnabled() {
 		// APIFrontend disabled: no MCP route to build, not an error. The
 		// caller guards on a nil result before use.
@@ -86,7 +86,7 @@ func MCPGatewayHTTPRoute(kn *kubernautv1alpha1.Kubernaut) (*unstructured.Unstruc
 // MCPServerRegistration builds an unstructured MCPServerRegistration CR that
 // registers the apifrontend with the kagenti MCP Gateway. Returns nil if AF
 // is not enabled.
-func MCPServerRegistration(kn *kubernautv1alpha1.Kubernaut) (*unstructured.Unstructured, error) {
+func MCPServerRegistration(kn *kubernautv1alpha2.Kubernaut) (*unstructured.Unstructured, error) {
 	if !kn.Spec.APIFrontendEnabled() {
 		// APIFrontend disabled: no MCP registration to build, not an error.
 		// The caller guards on a nil result before use.

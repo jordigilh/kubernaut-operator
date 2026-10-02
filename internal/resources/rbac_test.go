@@ -26,7 +26,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/utils/ptr"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 const (
@@ -83,6 +83,27 @@ var _ = Describe("ClusterRoles", func() {
 		}
 	})
 
+	It("does not grant legacy raw Kubernetes NetworkPolicy permissions", func() {
+		kn := testKubernaut()
+		assertNoRawNetworkPolicy := func(roleName string, rules []rbacv1.PolicyRule) {
+			for _, rule := range rules {
+				if !slices.Contains(rule.APIGroups, "networking.k8s.io") {
+					continue
+				}
+				Expect(rule.Resources).NotTo(ContainElement("networkpolicies"),
+					"%s must not grant legacy networking.k8s.io/networkpolicies", roleName)
+			}
+		}
+
+		for _, role := range ClusterRoles(kn, testKnV2(kn)) {
+			assertNoRawNetworkPolicy(role.Name, role.Rules)
+		}
+		namespacedRoles, _ := WorkflowNamespaceRBAC(kn)
+		for _, role := range namespacedRoles {
+			assertNoRawNetworkPolicy(role.Name, role.Rules)
+		}
+	})
+
 	Describe("GatewayClusterRole", func() {
 		It("has PVC and HPA rules", func() {
 			kn := testKubernaut()
@@ -124,7 +145,7 @@ var _ = Describe("ClusterRoles", func() {
 		})
 
 		// #277: ownerChainResolutionRules() shrunk to only genuinely
-		// universal, non-ecosystem-specific kinds (PDB + networking.k8s.io).
+		// universal, non-ecosystem-specific kinds (PDB + Ingress).
 		// OLM/Istio/cert-manager/ArgoCD/Routes/KubeVirt are no longer
 		// unconditionally granted -- operators needing that ecosystem
 		// coverage supply their own ClusterRole via
@@ -657,7 +678,7 @@ var _ = Describe("WorkflowNamespaceRBAC", func() {
 var _ = Describe("AnsibleRBAC", func() {
 	It("grants AWX jobs permission", func() {
 		kn := testKubernaut()
-		kn.Spec.Ansible.Enabled = true
+		kn.Spec.WorkflowExecution.Ansible.Enabled = true
 		ns := kn.Namespace
 		cr, crb := AnsibleRBAC(kn)
 
@@ -941,8 +962,8 @@ var _ = Describe("ToolClusterRoles", func() {
 var _ = Describe("ToolClusterRoleBindings", func() {
 	It("returns CRBs matching spec roleBindings", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
 				{Role: "sre", Groups: []string{"sre-team"}},
 				{Role: "cicd", Groups: []string{"ci-bots"}},
 			},
@@ -959,8 +980,8 @@ var _ = Describe("ToolClusterRoleBindings", func() {
 
 	It("CRB subjects are Group kind with correct group names", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
 				{Role: "sre", Groups: []string{"sre-team", "platform-eng"}},
 			},
 		}
@@ -978,8 +999,8 @@ var _ = Describe("ToolClusterRoleBindings", func() {
 
 	It("CRB roleRef points to namespace-prefixed tool ClusterRole", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
 				{Role: "sre", Groups: []string{"sre-team"}},
 			},
 		}
@@ -992,8 +1013,8 @@ var _ = Describe("ToolClusterRoleBindings", func() {
 
 	It("duplicate roles with different groups are merged", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
 				{Role: "sre", Groups: []string{"team-a"}},
 				{Role: "sre", Groups: []string{"team-b"}},
 			},
@@ -1009,8 +1030,8 @@ var _ = Describe("ToolClusterRoleBindings", func() {
 
 	It("ToolCRBNames returns all CRB names for finalizer cleanup", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
 				{Role: "sre", Groups: []string{"sre-team"}},
 				{Role: "cicd", Groups: []string{"ci-bots"}},
 			},
@@ -1027,8 +1048,8 @@ var _ = Describe("ToolClusterRoleBindings", func() {
 
 	It("[AC-3] creates CRB referencing user-managed ClusterRole for clusterRoleName binding", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
 				{ClusterRoleName: "my-custom-investigator", Groups: []string{"junior-sres"}},
 			},
 		}
@@ -1044,8 +1065,8 @@ var _ = Describe("ToolClusterRoleBindings", func() {
 
 	It("[AC-3] mixed persona + custom bindings coexist in same CR", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
 				{Role: "sre", Groups: []string{"senior-sres"}},
 				{ClusterRoleName: "my-custom-investigator", Groups: []string{"junior-sres"}},
 			},
@@ -1064,8 +1085,8 @@ var _ = Describe("ToolClusterRoleBindings", func() {
 
 	It("[AC-6] ToolCRBNames includes names for custom clusterRoleName bindings", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
 				{Role: "sre", Groups: []string{"sre-team"}},
 				{ClusterRoleName: "my-custom-role", Groups: []string{"custom-team"}},
 			},
@@ -1120,8 +1141,8 @@ var _ = Describe("effectiveConsoleAccessGroups", func() {
 
 	It("[CA-021, AC-6] nil ConsoleAccessGroups derives the deduplicated union of roleBindings groups", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-			RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+			RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
 				{Role: "sre", Groups: []string{"sre-team", "platform-eng"}},
 				{Role: "cicd", Groups: []string{"ci-bots"}},
 				{Role: "l3-audit", Groups: []string{"platform-eng"}},
@@ -1132,20 +1153,20 @@ var _ = Describe("effectiveConsoleAccessGroups", func() {
 
 	It("[CA-022] derivation collapses the #289 live scenario (6 roleBindings, one shared group) to a single group", func() {
 		kn := testKubernautWithAF()
-		roleBindings := make([]kubernautv1alpha1.ToolRoleBinding, 0, 6)
+		roleBindings := make([]kubernautv1alpha2.ToolRoleBinding, 0, 6)
 		for _, role := range []string{"sre", "ai-orchestrator", "cicd", "observability", "l3-audit", "remediation-approver"} {
-			roleBindings = append(roleBindings, kubernautv1alpha1.ToolRoleBinding{
+			roleBindings = append(roleBindings, kubernautv1alpha2.ToolRoleBinding{
 				Role: role, Groups: []string{"platform-engineering"},
 			})
 		}
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{RoleBindings: roleBindings}
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{RoleBindings: roleBindings}
 		Expect(effectiveConsoleAccessGroups(kn)).To(Equal([]string{"platform-engineering"}))
 	})
 
 	It("[CA-023, AC-6] explicit empty list opts out regardless of roleBindings content", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-			RoleBindings:        []kubernautv1alpha1.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+			RoleBindings:        []kubernautv1alpha2.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
 			ConsoleAccessGroups: []string{},
 		}
 		Expect(effectiveConsoleAccessGroups(kn)).To(BeEmpty())
@@ -1153,8 +1174,8 @@ var _ = Describe("effectiveConsoleAccessGroups", func() {
 
 	It("[CA-024, AC-6] explicit non-empty list is used verbatim, ignoring roleBindings", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-			RoleBindings:        []kubernautv1alpha1.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+			RoleBindings:        []kubernautv1alpha2.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
 			ConsoleAccessGroups: []string{"console-only-group"},
 		}
 		Expect(effectiveConsoleAccessGroups(kn)).To(ConsistOf("console-only-group"))
@@ -1166,7 +1187,7 @@ var _ = Describe("ConsoleAccessClusterRoleBinding", func() {
 		kn := testKubernautWithAF()
 		disabled := false
 		kn.Spec.APIFrontend.Enabled = &disabled
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
 			ConsoleAccessGroups: []string{"some-group"},
 		}
 		Expect(ConsoleAccessClusterRoleBinding(kn)).To(BeNil())
@@ -1179,7 +1200,7 @@ var _ = Describe("ConsoleAccessClusterRoleBinding", func() {
 
 	It("[CA-032] one Group-kind subject per effective group, no explicit APIGroup", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
 			ConsoleAccessGroups: []string{"group-a", "group-b"},
 		}
 		crb := ConsoleAccessClusterRoleBinding(kn)
@@ -1196,7 +1217,7 @@ var _ = Describe("ConsoleAccessClusterRoleBinding", func() {
 
 	It("[CA-033] roleRef points to the namespace-prefixed console-access ClusterRole", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
 			ConsoleAccessGroups: []string{"group-a"},
 		}
 		crb := ConsoleAccessClusterRoleBinding(kn)
@@ -1208,7 +1229,7 @@ var _ = Describe("ConsoleAccessClusterRoleBinding", func() {
 
 	It("[CA-034] CRB name is namespace-prefixed and static regardless of group count", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
+		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
 			ConsoleAccessGroups: []string{"group-a", "group-b", "group-c"},
 		}
 		crb := ConsoleAccessClusterRoleBinding(kn)
@@ -1912,8 +1933,8 @@ var _ = Describe("SignalProcessing fleet RBAC", func() {
 var _ = Describe("APIFrontend/EffectivenessMonitor fleet RBAC", func() {
 	It("apifrontendClusterRole gains MCP Gateway CRD rules when fleet enabled with mcpGatewayEndpoint set", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
-			Auth: kubernautv1alpha1.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
+		kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
+			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
 		cr := apifrontendClusterRole(kn, knV2, CommonLabels(kn))
 		apiGroups := make([]string, 0, len(cr.Rules))

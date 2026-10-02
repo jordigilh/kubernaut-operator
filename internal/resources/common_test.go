@@ -29,7 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/yaml"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
@@ -82,33 +81,33 @@ const (
 	testVertexLocation = "us-central1"
 )
 
-func testKubernaut() *kubernautv1alpha1.Kubernaut {
-	return &kubernautv1alpha1.Kubernaut{
+func testKubernaut() *kubernautv1alpha2.Kubernaut {
+	return &kubernautv1alpha2.Kubernaut{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      kubernautv1alpha1.SingletonName,
+			Name:      kubernautv1alpha2.SingletonName,
 			Namespace: testSystemNamespace,
 		},
-		Spec: kubernautv1alpha1.KubernautSpec{
-			Image: kubernautv1alpha1.ImageSpec{
+		Spec: kubernautv1alpha2.KubernautSpec{
+			Image: kubernautv1alpha2.ImageSpec{
 				PullPolicy: corev1.PullIfNotPresent,
 			},
-			PostgreSQL: kubernautv1alpha1.PostgreSQLSpec{
+			PostgreSQL: kubernautv1alpha2.PostgreSQLSpec{
 				SecretName: "postgresql-secret",
 				Host:       "pg.example.com",
 				Port:       5432,
 			},
-			Valkey: kubernautv1alpha1.ValkeySpec{
+			Valkey: kubernautv1alpha2.ValkeySpec{
 				SecretName: "valkey-secret",
 				Host:       "valkey.example.com",
 				Port:       6379,
 			},
-			APIFrontend: kubernautv1alpha1.APIFrontendSpec{
-				Auth: kubernautv1alpha1.APIFrontendAuthSpec{
+			APIFrontend: kubernautv1alpha2.APIFrontendSpec{
+				Auth: kubernautv1alpha2.APIFrontendAuthSpec{
 					IssuerURL: "https://login.kubernaut.ai/realms/kubernaut",
 					Audience:  "kubernaut-apifrontend",
 				},
 			},
-			LLMProfiles: map[string]kubernautv1alpha1.LLMProfileSpec{
+			LLMProfiles: map[string]kubernautv1alpha2.LLMProfileSpec{
 				"primary": {
 					Provider:              "openai",
 					Model:                 "gpt-4o",
@@ -116,23 +115,23 @@ func testKubernaut() *kubernautv1alpha1.Kubernaut {
 					CredentialsSecretName: "llm-creds",
 				},
 			},
-			KubernautAgent: kubernautv1alpha1.KubernautAgentSpec{
+			KubernautAgent: kubernautv1alpha2.KubernautAgentSpec{
 				LLMProfileRef: "primary",
 			},
-			AIAnalysis: kubernautv1alpha1.AIAnalysisSpec{
-				Policy: kubernautv1alpha1.PolicyConfigMapRef{ConfigMapName: "aianalysis-policy"},
+			AIAnalysis: kubernautv1alpha2.AIAnalysisSpec{
+				Policy: kubernautv1alpha2.PolicyConfigMapRef{ConfigMapName: "aianalysis-policy"},
 			},
-			SignalProcessing: kubernautv1alpha1.SignalProcessingSpec{
-				Policy: kubernautv1alpha1.PolicyConfigMapRef{ConfigMapName: "signalprocessing-policy"},
+			SignalProcessing: kubernautv1alpha2.SignalProcessingSpec{
+				Policy: kubernautv1alpha2.PolicyConfigMapRef{ConfigMapName: "signalprocessing-policy"},
 			},
 		},
 	}
 }
 
-func testKubernautWithAF() *kubernautv1alpha1.Kubernaut {
+func testKubernautWithAF() *kubernautv1alpha2.Kubernaut {
 	kn := testKubernaut()
-	kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
-		Auth: kubernautv1alpha1.APIFrontendAuthSpec{
+	kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
+		Auth: kubernautv1alpha2.APIFrontendAuthSpec{
 			IssuerURL: "https://login.kubernaut.ai/realms/kubernaut",
 			Audience:  "kubernaut-apifrontend",
 		},
@@ -148,14 +147,12 @@ var testFMCEnabled = true
 // pointer) can point at a stable true value across test helpers.
 var testFleetEnabled = true
 
-// testKubernautWithFleetMCP returns a Kubernaut plus its v1alpha2 view with
-// spec.fleet enabled for MCP Gateway remote reads only (mcpGatewayEndpoint/
-// mcpGatewayType set, no backend/endpoint) -- the shape SP/AF/EM care about
-// (#224), as opposed to testKubernautWithFMC's GW/RO/FMC-oriented
-// backend+endpoint shape. Fleet moved to v1alpha2-only (fleet-branch-remove-
-// v1alpha1), so callers needing Fleet config must use the returned knV2
-// (kn itself carries no Fleet data) wherever a resource builder takes both.
-func testKubernautWithFleetMCP() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+// testKubernautWithFleetMCP returns a base Kubernaut plus a separate v1alpha2
+// view with spec.fleet enabled for MCP Gateway remote reads only
+// (mcpGatewayEndpoint/mcpGatewayType set, no backend/endpoint) -- the shape
+// SP/AF/EM care about (#224), as opposed to testKubernautWithFMC's
+// GW/RO/FMC-oriented backend+endpoint shape.
+func testKubernautWithFleetMCP() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) {
 	kn := testKubernaut()
 	knV2 := testKnV2(kn)
 	knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
@@ -166,7 +163,7 @@ func testKubernautWithFleetMCP() (*kubernautv1alpha1.Kubernaut, *kubernautv1alph
 	return kn, knV2
 }
 
-func testKubernautWithFMC() (*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+func testKubernautWithFMC() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) {
 	kn := testKubernaut()
 	knV2 := testKnV2(kn)
 	knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
@@ -195,22 +192,18 @@ const testAFOnlyProfile = "af-only"
 // applying fn to a copy and writing it back -- map values aren't
 // addressable, so tests can't write kn.Spec.LLMProfiles["primary"].Field = v
 // directly.
-func mutateLLMProfile(kn *kubernautv1alpha1.Kubernaut, fn func(*kubernautv1alpha1.LLMProfileSpec)) {
+func mutateLLMProfile(kn *kubernautv1alpha2.Kubernaut, fn func(*kubernautv1alpha2.LLMProfileSpec)) {
 	p := kn.Spec.LLMProfiles[testPrimaryProfile]
 	fn(&p)
 	kn.Spec.LLMProfiles[testPrimaryProfile] = p
 }
 
-// testKnV2 derives the v1alpha2 view of kn via the real conversion webhook
-// logic, so test fixtures for non-Fleet fields don't need a hand-maintained
-// parallel v1alpha2 fixture. Fleet/FleetMetadataCache no longer exist on
-// v1alpha1 (moved to v1alpha2-only), so callers needing Fleet config must
-// set it directly on the returned knV2, exactly as the controller's
-// Reconcile does in production.
-func testKnV2(kn *kubernautv1alpha1.Kubernaut) *kubernautv1alpha2.Kubernaut {
-	knV2 := &kubernautv1alpha2.Kubernaut{}
-	ExpectWithOffset(1, kn.ConvertTo(knV2)).To(Succeed())
-	return knV2
+// testKnV2 returns an independent v1alpha2 fixture for callers that pass the
+// CR through resource builders accepting two historical arguments. The clean
+// break uses v1alpha2 for both arguments; DeepCopy keeps tests from sharing
+// mutable nested maps and pointers accidentally.
+func testKnV2(kn *kubernautv1alpha2.Kubernaut) *kubernautv1alpha2.Kubernaut {
+	return kn.DeepCopy()
 }
 
 // fleetNamespaceFromYAML extracts fleet.namespace from a rendered
@@ -271,9 +264,9 @@ func assertTelemetryYAML(data string) {
 	ExpectWithOffset(1, root.Telemetry.TLS.KeyFile).To(Equal("/etc/telemetry/tls.key"), "telemetry.tls.keyFile mismatch, got:\n%s", data)
 }
 
-func testKubernautWithValkeyTLS() *kubernautv1alpha1.Kubernaut {
+func testKubernautWithValkeyTLS() *kubernautv1alpha2.Kubernaut {
 	kn := testKubernaut()
-	kn.Spec.Valkey.TLS = &kubernautv1alpha1.ValkeyTLSSpec{
+	kn.Spec.Valkey.TLS = &kubernautv1alpha2.ValkeyTLSSpec{
 		Enabled:              true,
 		CASecretName:         "valkey-ca",
 		ClientCertSecretName: "valkey-client-cert",
@@ -426,11 +419,11 @@ var _ = Describe("InterServiceTLSCAFile", func() {
 
 var _ = Describe("ValkeyAddr", func() {
 	DescribeTable("formats host:port",
-		func(spec kubernautv1alpha1.ValkeySpec, want string) {
+		func(spec kubernautv1alpha2.ValkeySpec, want string) {
 			Expect(ValkeyAddr(&spec)).To(Equal(want))
 		},
-		Entry("explicit port", kubernautv1alpha1.ValkeySpec{Host: "valkey.local", Port: 6380}, "valkey.local:6380"),
-		Entry("default port", kubernautv1alpha1.ValkeySpec{Host: "valkey.local"}, "valkey.local:6379"),
+		Entry("explicit port", kubernautv1alpha2.ValkeySpec{Host: "valkey.local", Port: 6380}, "valkey.local:6380"),
+		Entry("default port", kubernautv1alpha2.ValkeySpec{Host: "valkey.local"}, "valkey.local:6379"),
 	)
 })
 
@@ -496,7 +489,7 @@ var _ = Describe("AllComponents", func() {
 var _ = Describe("SetOwnerReference", func() {
 	It("sets controller reference", func() {
 		scheme := runtime.NewScheme()
-		Expect(kubernautv1alpha1.AddToScheme(scheme)).To(Succeed())
+		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
 		Expect(corev1.AddToScheme(scheme)).To(Succeed())
 
 		kn := testKubernaut()

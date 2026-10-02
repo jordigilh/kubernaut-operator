@@ -24,10 +24,10 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
-func mustMigrationJob(kn *kubernautv1alpha1.Kubernaut) *batchv1.Job {
+func mustMigrationJob(kn *kubernautv1alpha2.Kubernaut) *batchv1.Job {
 	job, err := MigrationJob(kn)
 	Expect(err).NotTo(HaveOccurred())
 	return job

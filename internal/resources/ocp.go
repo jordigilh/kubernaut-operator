@@ -27,7 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/yaml"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 // SSE streams (live status, investigation progress) require long-lived
@@ -36,7 +36,7 @@ const routeSSETimeout = "3600s"
 
 // GatewayRoute builds the OCP Route for external access to the Gateway.
 // Returns nil if Route creation is disabled.
-func GatewayRoute(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
+func GatewayRoute(kn *kubernautv1alpha2.Kubernaut) *routev1.Route {
 	if !kn.Spec.Gateway.Route.RouteEnabled() {
 		return nil
 	}
@@ -71,7 +71,7 @@ func GatewayRoute(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 // GatewayRouteStub returns a minimal Route object suitable for deletion lookups
 // when the Route feature is disabled. It carries just enough metadata for
 // deleteIfExists to find the resource.
-func GatewayRouteStub(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
+func GatewayRouteStub(kn *kubernautv1alpha2.Kubernaut) *routev1.Route {
 	return &routev1.Route{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "gateway-route",
@@ -82,7 +82,7 @@ func GatewayRouteStub(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 
 // APIFrontendRoute builds the OCP Route for external access to the AF.
 // Returns nil if Route creation is disabled (default).
-func APIFrontendRoute(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
+func APIFrontendRoute(kn *kubernautv1alpha2.Kubernaut) *routev1.Route {
 	if !kn.Spec.APIFrontend.Route.AFRouteEnabled() {
 		return nil
 	}
@@ -116,7 +116,7 @@ func APIFrontendRoute(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 
 // APIFrontendRouteStub returns a minimal Route object suitable for deletion
 // lookups when the AF Route is disabled.
-func APIFrontendRouteStub(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
+func APIFrontendRouteStub(kn *kubernautv1alpha2.Kubernaut) *routev1.Route {
 	return &routev1.Route{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "apifrontend-route",
@@ -142,7 +142,7 @@ func APIFrontendRouteStub(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 // will be rejected by Gateway -- the controller surfaces this via the
 // ConditionAlertManagerAuthConfigured status condition rather than silently
 // referencing a Secret that may not exist.
-func GatewayAlertManagerConfig(kn *kubernautv1alpha1.Kubernaut) *monitoringv1alpha1.AlertmanagerConfig {
+func GatewayAlertManagerConfig(kn *kubernautv1alpha2.Kubernaut) *monitoringv1alpha1.AlertmanagerConfig {
 	gwURL := fmt.Sprintf("https://gateway-service.%s.svc.cluster.local:%d/api/v1/signals/prometheus",
 		kn.Namespace, PortHTTPS)
 
@@ -207,7 +207,7 @@ type dbSecretsYAML struct {
 // PostgreSQL secret. The DataStorage service expects a "db-secrets.yaml" key
 // with YAML content containing host, port, dbname, user, and password.
 // Returns an error if any required key is missing from the source secret.
-func DataStorageDBSecret(kn *kubernautv1alpha1.Kubernaut, pgSecret *corev1.Secret) (*corev1.Secret, error) {
+func DataStorageDBSecret(kn *kubernautv1alpha2.Kubernaut, pgSecret *corev1.Secret) (*corev1.Secret, error) {
 	requiredKeys := []string{"POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB"}
 	for _, key := range requiredKeys {
 		if _, ok := pgSecret.Data[key]; !ok {
@@ -244,7 +244,7 @@ func DataStorageDBSecret(kn *kubernautv1alpha1.Kubernaut, pgSecret *corev1.Secre
 const AnnotationCreatedBy = "kubernaut.ai/created-by"
 
 // WorkflowNamespace builds the Namespace resource for workflow execution.
-func WorkflowNamespace(kn *kubernautv1alpha1.Kubernaut) *corev1.Namespace {
+func WorkflowNamespace(kn *kubernautv1alpha2.Kubernaut) *corev1.Namespace {
 	labels := CommonLabels(kn)
 	for k, v := range RestrictedPSALabels() {
 		labels[k] = v

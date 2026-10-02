@@ -19,11 +19,29 @@ package resources
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 const testAuthWebhookServiceName = "authwebhook-service"
 
 var _ = Describe("Services", func() {
+	It("does not emit OpenShift service-CA annotations for generic administrator-managed TLS", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode: kubernautv1alpha2.TLSModeAdministratorManaged,
+			AdministratorManaged: &kubernautv1alpha2.AdministratorManagedTLSConfig{
+				InternalCASecretName:  "customer-ca",
+				ServiceTLSSecretNames: validServiceTLSSecretNames(),
+			},
+		}
+
+		services := Services(kn, testKnV2(kn), KagentiSidecarNone)
+		for _, service := range services {
+			Expect(service.Annotations).NotTo(HaveKey(OCPServingCertAnnotation), service.Name)
+		}
+	})
+
 	Context("Services()", func() {
 		It("returns 6 API services", func() {
 			kn := testKubernaut()

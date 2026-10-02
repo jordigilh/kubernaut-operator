@@ -23,7 +23,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
@@ -167,7 +166,7 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 
 	It("#398 [SC-8]: renders valkey.tls.* from spec.valkey.tls, mirroring DataStorage's rendering", func() {
 		kn, knV2 := testKubernautWithFMC()
-		kn.Spec.Valkey.TLS = &kubernautv1alpha1.ValkeyTLSSpec{
+		kn.Spec.Valkey.TLS = &kubernautv1alpha2.ValkeyTLSSpec{
 			Enabled:              true,
 			CASecretName:         "valkey-ca",
 			ClientCertSecretName: "valkey-client-cert",
@@ -259,7 +258,7 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 
 	It("#398 [SC-8]: mounts valkey-ca and valkey-client-cert when spec.valkey.tls is configured, mirroring DataStorageDeployment", func() {
 		kn, knV2 := testKubernautWithFMC()
-		kn.Spec.Valkey.TLS = &kubernautv1alpha1.ValkeyTLSSpec{
+		kn.Spec.Valkey.TLS = &kubernautv1alpha2.ValkeyTLSSpec{
 			Enabled:              true,
 			CASecretName:         "valkey-ca",
 			ClientCertSecretName: "valkey-client-cert",
@@ -417,49 +416,6 @@ var _ = Describe("FleetMetadataCache RBAC", func() {
 		disabledKn := testKubernaut()
 		for _, cr := range ClusterRoles(disabledKn, testKnV2(disabledKn)) {
 			Expect(cr.Name).NotTo(Equal(disabledKn.Namespace + "-fleetmetadatacache"))
-		}
-	})
-})
-
-var _ = Describe("fleetMetadataCacheNetworkPolicy", func() {
-	It("allows ingress from gateway and remediationorchestrator on the api port", func() {
-		kn, knV2 := testKubernautWithFMC()
-		np := fleetMetadataCacheNetworkPolicy(kn, knV2)
-		Expect(np.Spec.Ingress).NotTo(BeEmpty())
-
-		var selectors []map[string]string
-		for _, peer := range np.Spec.Ingress[0].From {
-			if peer.PodSelector != nil {
-				selectors = append(selectors, peer.PodSelector.MatchLabels)
-			}
-		}
-		Expect(selectors).To(ContainElement(SelectorLabels(ComponentGateway)))
-		Expect(selectors).To(ContainElement(SelectorLabels(ComponentRemediationOrchestrator)))
-	})
-
-	It("adds a metrics ingress rule", func() {
-		kn, knV2 := testKubernautWithFMC()
-		np := fleetMetadataCacheNetworkPolicy(kn, knV2)
-		Expect(len(np.Spec.Ingress)).To(BeNumerically(">=", 2))
-	})
-
-	It("is included in NetworkPolicies() only when fleetMetadataCache.enabled is true", func() {
-		kn, knV2 := testKubernautWithFMC()
-		npEnabled := true
-		kn.Spec.NetworkPolicies.Enabled = &npEnabled
-		nps := NetworkPolicies(kn, knV2, KagentiSidecarNone)
-		found := false
-		for _, np := range nps {
-			if np.Name == ComponentFleetMetadataCache+"-netpol" {
-				found = true
-			}
-		}
-		Expect(found).To(BeTrue())
-
-		disabledKn := testKubernaut()
-		disabledKn.Spec.NetworkPolicies.Enabled = &npEnabled
-		for _, np := range NetworkPolicies(disabledKn, testKnV2(disabledKn), KagentiSidecarNone) {
-			Expect(np.Name).NotTo(Equal(ComponentFleetMetadataCache + "-netpol"))
 		}
 	})
 })

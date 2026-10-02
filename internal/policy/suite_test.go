@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package policy
 
 import (
 	"testing"
@@ -23,12 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// These tests use Ginkgo (BDD-style Go testing framework), per AGENTS.md's
-// mandatory testing framework for business-logic tests -- the v1alpha1 <->
-// v1alpha2 conversion webhook logic in kubernaut_conversion.go is business
-// logic (it decides what upgraded/downgraded CRs look like), not scaffold.
-
-func TestV1alpha1(t *testing.T) {
+func TestPolicy(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "API v1alpha1 Suite")
+	RunSpecs(t, "Policy Suite")
 }
