@@ -270,7 +270,9 @@ func installCilium(ctx context.Context) error {
 }
 
 func installCalico(ctx context.Context) error {
-	if _, err := kubectl(ctx, "apply", "-f", calicoOperatorCRDManifest); err != nil {
+	// Create avoids kubectl's client-side last-applied annotation, which exceeds
+	// Kubernetes' annotation size limit for the large Installation CRD schema.
+	if _, err := kubectl(ctx, "create", "-f", calicoOperatorCRDManifest); err != nil {
 		return fmt.Errorf("installing calico operator CRDs %s: %w", calicoVersion, err)
 	}
 	if _, err := kubectl(ctx, "apply", "-f", tigeraOperatorManifest); err != nil {
