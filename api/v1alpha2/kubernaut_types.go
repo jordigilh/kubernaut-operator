@@ -1711,7 +1711,8 @@ type TLSIssuerRef struct {
 type CertManagerTLSConfig struct {
 	// Issuer used by runtime Certificate resources.
 	Issuer TLSIssuerRef `json:"issuer"`
-	// Public CA Secret containing ca.crt.
+	// Public CA Secret containing ca.crt for administrator-managed material or
+	// tls.crt for cert-manager Certificate output.
 	// +kubebuilder:validation:MinLength=1
 	InternalCASecretName string `json:"internalCASecretName"`
 	// Serving Secret names keyed by component, with the same keys as the

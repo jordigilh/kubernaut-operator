@@ -30,9 +30,11 @@ import (
 )
 
 type policyProvider string
+type tlsSource string
 
 var (
 	configuredProvider policyProvider
+	configuredTLS      tlsSource
 	clusterContext     string
 )
 
@@ -40,6 +42,9 @@ const (
 	providerGeneric policyProvider = "generic"
 	providerCilium  policyProvider = "cilium"
 	providerCalico  policyProvider = "calico"
+
+	tlsDevelopment tlsSource = "development"
+	tlsCertManager tlsSource = "certmanager"
 
 	kindNodeImage = "kindest/node:v1.35.0"
 
@@ -51,6 +56,10 @@ const (
 		"v3.31.4/manifests/operator-crds.yaml"
 	tigeraOperatorManifest = "https://raw.githubusercontent.com/projectcalico/calico/" +
 		"v3.31.4/manifests/tigera-operator.yaml"
+
+	certManagerVersion  = "v1.20.2"
+	certManagerManifest = "https://github.com/cert-manager/cert-manager/releases/download/" +
+		certManagerVersion + "/cert-manager.yaml"
 
 	operatorNamespace  = "kubernaut-operator-system"
 	kubernautNamespace = "kubernaut-system"
@@ -96,6 +105,17 @@ func providerFromEnvironment() (policyProvider, error) {
 	default:
 		return "", fmt.Errorf("invalid KUBERNAUT_E2E_PROVIDER value; expected generic, cilium, or calico")
 	}
+}
+
+func tlsSourceFromEnvironment() (tlsSource, error) {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("KUBERNAUT_E2E_TLS_SOURCE")))
+	if value == "" || value == "development" || value == "developmentsigned" || value == "developmentselfsigned" {
+		return tlsDevelopment, nil
+	}
+	if value == "certmanager" || value == "cert-manager" {
+		return tlsCertManager, nil
+	}
+	return "", fmt.Errorf("invalid KUBERNAUT_E2E_TLS_SOURCE value; expected development or certmanager")
 }
 
 func kindClusterName() string {
@@ -376,6 +396,30 @@ func installCalico(ctx context.Context) error {
 	}
 	if err := waitForCalicoAPI(ctx); err != nil {
 		return err
+	}
+	return nil
+}
+
+func installCertManager(ctx context.Context) error {
+	if _, err := kubectl(ctx, "apply", "-f", certManagerManifest); err != nil {
+		return fmt.Errorf("installing cert-manager %s: %w", certManagerVersion, err)
+	}
+	for _, deployment := range []string{"cert-manager", "cert-manager-cainjector", "cert-manager-webhook"} {
+		if _, err := kubectl(
+			ctx, "rollout", "status", "deployment/"+deployment,
+			"-n", "cert-manager", "--timeout=10m",
+		); err != nil {
+			return fmt.Errorf("waiting for cert-manager deployment %s: %w", deployment, err)
+		}
+	}
+	for _, crd := range []string{
+		"issuers.cert-manager.io",
+		"certificates.cert-manager.io",
+		"clusterissuers.cert-manager.io",
+	} {
+		if _, err := kubectl(ctx, "wait", "--for=condition=Established", "crd/"+crd, "--timeout=5m"); err != nil {
+			return fmt.Errorf("waiting for cert-manager CRD %s: %w", crd, err)
+		}
 	}
 	return nil
 }

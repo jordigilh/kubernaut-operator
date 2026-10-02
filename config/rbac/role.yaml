@@ -125,6 +125,13 @@ rules:
   - update
   - watch
 - apiGroups:
+  - cert-manager.io
+  resources:
+  - clusterissuers
+  - issuers
+  verbs:
+  - get
+- apiGroups:
   - cilium.io
   resources:
   - ciliumnetworkpolicies

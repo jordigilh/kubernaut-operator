@@ -145,16 +145,13 @@ test-integration: manifests generate fmt vet setup-envtest ## Run integration te
 			echo "Controller integration coverage is below the $(INTEGRATION_COVERAGE_THRESHOLD)% threshold"; exit 1; \
 		fi
 
+.PHONY: test-security-traceability
+test-security-traceability: ## Validate the versioned NIST/FedRAMP and OWASP ASVS evidence matrix.
+	@./hack/validate-security-traceability.sh
+
 .PHONY: test-pyramid
-test-pyramid: ## Verify the provider journey is wired through the controller and E2E harness.
-	@grep -q 'reconcileProviderPolicies' internal/controller/kubernaut_controller.go || { echo "provider policy reconciliation is not wired"; exit 1; }
-	@grep -q 'loadOperatorImage' test/e2e/kind/suite_test.go || { echo "Kind E2E does not load the operator image"; exit 1; }
-	@grep -q 'installOperator' test/e2e/kind/suite_test.go || { echo "Kind E2E does not install the operator"; exit 1; }
-	@grep -q 'applyKubernautCR' test/e2e/kind/scenarios_test.go || { echo "Kind E2E does not create a Kubernaut CR"; exit 1; }
-	@grep -q 'ProviderPolicyReady' test/e2e/kind/scenarios_test.go || { echo "Kind E2E does not assert provider policy status"; exit 1; }
-	@if grep -R -n --include='*.go' -E 'policy\.Render|liveDetection|applyNativePolicies' test/e2e/kind >/dev/null; then \
-		echo "Kind E2E must not render or apply policies outside the operator"; exit 1; \
-	fi
+test-pyramid: test-security-traceability ## Verify independent tiers, production wiring, and the real E2E journey.
+	@./hack/verify-test-pyramid.sh
 
 .PHONY: test
 test: test-unit test-integration test-pyramid ## Run all tests (unit + integration).

@@ -40,6 +40,8 @@ var _ = BeforeSuite(func() {
 	var err error
 	configuredProvider, err = providerFromEnvironment()
 	Expect(err).NotTo(HaveOccurred())
+	configuredTLS, err = tlsSourceFromEnvironment()
+	Expect(err).NotTo(HaveOccurred())
 
 	clusterContext = kubeContext()
 	SetDefaultEventuallyTimeout(3 * time.Minute)
@@ -69,6 +71,11 @@ var _ = BeforeSuite(func() {
 	By("waiting for cluster DNS")
 	Expect(waitForDNS(ctx)).To(Succeed())
 
+	if configuredTLS == tlsCertManager {
+		By("installing the pinned cert-manager source")
+		Expect(installCertManager(ctx)).To(Succeed())
+	}
+
 	By("loading the operator image into Kind")
 	Expect(loadOperatorImage(ctx)).To(Succeed())
 
@@ -80,6 +87,10 @@ var _ = BeforeSuite(func() {
 
 	By("installing the Kubernaut E2E prerequisites")
 	Expect(ensureKubernautInfrastructure(ctx)).To(Succeed())
+	if configuredTLS == tlsCertManager {
+		By("creating cert-manager-issued runtime TLS material")
+		Expect(ensureCertManagerRuntimeTLS(ctx)).To(Succeed())
+	}
 })
 
 var _ = AfterSuite(func() {

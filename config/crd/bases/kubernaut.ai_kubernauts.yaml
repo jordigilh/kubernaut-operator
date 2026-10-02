@@ -3354,7 +3354,9 @@ spec:
                       be installed; the operator never installs its CRDs or controller.
                     properties:
                       internalCASecretName:
-                        description: Public CA Secret containing ca.crt.
+                        description: |-
+                          Public CA Secret containing ca.crt for administrator-managed material or
+                          tls.crt for cert-manager Certificate output.
                         minLength: 1
                         type: string
                       issuer:

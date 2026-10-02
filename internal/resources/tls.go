@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -43,6 +44,7 @@ const (
 	TLSServiceKubernautAgent                 = "kubernautagent"
 	TLSServiceAPIFrontend                    = "apifrontend"
 	TLSServiceAuthWebhook                    = "authwebhook"
+	tlsCACertificateKey                      = "ca.crt"
 	defaultDevelopmentSelfSignedCASecretName = "kubernaut-internal-ca" //nolint:gosec // this is a Secret object name, not credential material
 )
 
@@ -147,16 +149,49 @@ func ResolveTLSMaterial(kn *kubernautv1alpha2.Kubernaut) (TLSMaterial, error) {
 // ValidateInternalCASecret validates the public CA payload referenced by an
 // administrator-managed or cert-manager TLS source.
 func ValidateInternalCASecret(secret *corev1.Secret) error {
+	return ValidateInternalCASecretForSource(secret, "")
+}
+
+// ValidateInternalCASecretForSource validates the public CA payload selected
+// by a runtime TLS source. cert-manager's self-signed bootstrap Certificate
+// stores its CA certificate under tls.crt, while administrator-managed
+// material follows the operator contract and uses ca.crt.
+func ValidateInternalCASecretForSource(secret *corev1.Secret, source string) error {
+	_, err := InternalCAPEMForSource(secret, source)
+	return err
+}
+
+// InternalCAPEMForSource returns the validated public CA bundle for a runtime
+// TLS source. The returned bytes are copied so callers cannot mutate the
+// Secret's backing data.
+func InternalCAPEMForSource(secret *corev1.Secret, source string) ([]byte, error) {
 	if secret == nil {
-		return fmt.Errorf("internal CA Secret is required")
+		return nil, fmt.Errorf("internal CA Secret is required")
 	}
-	if len(secret.Data["ca.crt"]) == 0 {
-		return fmt.Errorf("secret %q is missing ca.crt", secret.Name)
+	key := tlsCACertificateKey
+	if source == TLSMaterialSourceCertManager {
+		key = corev1.TLSCertKey
+		if len(secret.Data[key]) == 0 {
+			key = tlsCACertificateKey
+		}
 	}
-	if _, err := parseCertificate(secret.Data["ca.crt"]); err != nil {
-		return fmt.Errorf("secret %q ca.crt is invalid: %w", secret.Name, err)
+	data := secret.Data[key]
+	if len(data) == 0 {
+		if source == TLSMaterialSourceCertManager {
+			return nil, fmt.Errorf("secret %q is missing ca.crt or tls.crt", secret.Name)
+		}
+		return nil, fmt.Errorf("secret %q is missing ca.crt", secret.Name)
 	}
-	return nil
+	certificates, err := parseCertificates(data)
+	if err != nil {
+		return nil, fmt.Errorf("secret %q %s is invalid: %w", secret.Name, key, err)
+	}
+	for _, certificate := range certificates {
+		if !certificate.IsCA {
+			return nil, fmt.Errorf("secret %q %s contains a non-CA certificate", secret.Name, key)
+		}
+	}
+	return append([]byte(nil), data...), nil
 }
 
 // ValidateServingTLSSecret validates a Kubernetes TLS Secret without making
@@ -180,22 +215,34 @@ func ValidateServingTLSSecret(secret *corev1.Secret) error {
 // keeps administrator-managed and cert-manager material from being accepted
 // merely because it is a syntactically valid keypair for another workload.
 func ValidateServingTLSSecretForService(secret, ca *corev1.Secret, serviceKey, namespace string) error {
+	return ValidateServingTLSSecretForServiceWithSource(secret, ca, serviceKey, namespace, "")
+}
+
+// ValidateServingTLSSecretForServiceWithSource validates a serving Secret
+// against the CA format selected by the runtime TLS source.
+func ValidateServingTLSSecretForServiceWithSource(
+	secret, ca *corev1.Secret,
+	serviceKey, namespace, source string,
+) error {
 	if err := ValidateServingTLSSecret(secret); err != nil {
 		return err
 	}
-	if err := ValidateInternalCASecret(ca); err != nil {
+	caPEM, err := InternalCAPEMForSource(ca, source)
+	if err != nil {
 		return err
 	}
 	leaf, err := parseCertificate(secret.Data[corev1.TLSCertKey])
 	if err != nil {
 		return fmt.Errorf("secret %q certificate is invalid: %w", secret.Name, err)
 	}
-	caCert, err := parseCertificate(ca.Data["ca.crt"])
+	caCertificates, err := parseCertificates(caPEM)
 	if err != nil {
-		return fmt.Errorf("secret %q CA certificate is invalid: %w", ca.Name, err)
+		return fmt.Errorf("secret %q CA bundle is invalid: %w", ca.Name, err)
 	}
 	pool := x509.NewCertPool()
-	pool.AddCert(caCert)
+	for _, caCertificate := range caCertificates {
+		pool.AddCert(caCertificate)
+	}
 	for _, dnsName := range TLSServiceDNSNames(serviceKey, namespace) {
 		if _, err := leaf.Verify(x509.VerifyOptions{
 			Roots:     pool,
@@ -275,7 +322,7 @@ func DevelopmentSelfSignedTLSSecrets(
 		caName = defaultDevelopmentSelfSignedCASecretName
 	}
 
-	caCert, caKey, err := reusableDevelopmentCA(existing[caName], now, rotationBefore)
+	activeCACert, caKey, caBundle, err := reusableDevelopmentCA(existing[caName], now, rotationBefore)
 	if err != nil {
 		return nil, err
 	}
@@ -284,15 +331,15 @@ func DevelopmentSelfSignedTLSSecrets(
 		ObjectMeta: ObjectMeta(kn, caName, "inter-service-tls"),
 		Type:       corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
-			"ca.crt": caCert,
-			"ca.key": caKey,
+			tlsCACertificateKey: caBundle,
+			"ca.key":            caKey,
 		},
 	})
 
 	for serviceKey, serviceName := range developmentTLSServiceNames {
 		secretName := ResolveDevelopmentTLSSecretName(serviceKey)
 		secret := existing[secretName]
-		if reusableDevelopmentLeaf(secret, caCert, serviceName, kn.Namespace, now, rotationBefore) {
+		if reusableDevelopmentLeaf(secret, activeCACert, serviceName, kn.Namespace, now, rotationBefore) {
 			secrets = append(secrets, &corev1.Secret{
 				ObjectMeta: ObjectMeta(kn, secretName, developmentTLSComponent(serviceKey)),
 				Type:       corev1.SecretTypeTLS,
@@ -303,7 +350,7 @@ func DevelopmentSelfSignedTLSSecrets(
 			})
 			continue
 		}
-		cert, key, err := signDevelopmentLeaf(caCert, caKey, serviceName, kn.Namespace, now)
+		cert, key, err := signDevelopmentLeaf(activeCACert, caKey, serviceName, kn.Namespace, now)
 		if err != nil {
 			return nil, fmt.Errorf("generating %s development certificate: %w", serviceKey, err)
 		}
@@ -315,6 +362,9 @@ func DevelopmentSelfSignedTLSSecrets(
 				corev1.TLSPrivateKeyKey: key,
 			},
 		})
+	}
+	if len(parseCertificatesOrNil(caBundle)) > 1 && allDevelopmentLeavesUseCA(existing, activeCACert, kn.Namespace) {
+		secrets[0].Data[tlsCACertificateKey] = append([]byte(nil), activeCACert...)
 	}
 	return secrets, nil
 }
@@ -374,21 +424,25 @@ func TLSServiceDNSNames(serviceKey, namespace string) []string {
 	return developmentDNSNames(serviceName, namespace)
 }
 
-func reusableDevelopmentCA(secret *corev1.Secret, now time.Time, rotationBefore time.Duration) ([]byte, []byte, error) {
+func reusableDevelopmentCA(secret *corev1.Secret, now time.Time, rotationBefore time.Duration) ([]byte, []byte, []byte, error) {
 	if secret != nil {
-		cert, certErr := parseCertificate(secret.Data["ca.crt"])
-		_, keyErr := parseRSAKey(secret.Data["ca.key"])
-		if certErr == nil && keyErr == nil && cert.NotAfter.After(now.Add(rotationBefore)) {
-			return append([]byte(nil), secret.Data["ca.crt"]...), append([]byte(nil), secret.Data["ca.key"]...), nil
+		certificates, certErr := parseCertificates(secret.Data[tlsCACertificateKey])
+		key, keyErr := parseRSAKey(secret.Data["ca.key"])
+		if certErr == nil && keyErr == nil && len(certificates) > 0 &&
+			rsaKeyMatchesCertificate(key, certificates[0]) &&
+			certificates[0].NotAfter.After(now.Add(rotationBefore)) {
+			return pemEncode("CERTIFICATE", certificates[0].Raw),
+				append([]byte(nil), secret.Data["ca.key"]...),
+				append([]byte(nil), secret.Data[tlsCACertificateKey]...), nil
 		}
 	}
 	key, err := rsa.GenerateKey(rand.Reader, 3072)
 	if err != nil {
-		return nil, nil, fmt.Errorf("generating development CA key: %w", err)
+		return nil, nil, nil, fmt.Errorf("generating development CA key: %w", err)
 	}
 	serial, err := randomSerial()
 	if err != nil {
-		return nil, nil, fmt.Errorf("generating development CA serial: %w", err)
+		return nil, nil, nil, fmt.Errorf("generating development CA serial: %w", err)
 	}
 	template := &x509.Certificate{
 		SerialNumber:          serial,
@@ -401,9 +455,62 @@ func reusableDevelopmentCA(secret *corev1.Secret, now time.Time, rotationBefore 
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating development CA certificate: %w", err)
+		return nil, nil, nil, fmt.Errorf("creating development CA certificate: %w", err)
 	}
-	return pemEncode("CERTIFICATE", der), pemEncode("RSA PRIVATE KEY", x509.MarshalPKCS1PrivateKey(key)), nil
+	activePEM := pemEncode("CERTIFICATE", der)
+	bundle := append([]byte(nil), activePEM...)
+	if secret != nil {
+		if previous, err := parseCertificates(secret.Data[tlsCACertificateKey]); err == nil {
+			for _, certificate := range previous {
+				if certificate.NotAfter.After(now) && !bytes.Equal(certificate.Raw, der) {
+					bundle = append(bundle, pemEncode("CERTIFICATE", certificate.Raw)...)
+				}
+			}
+		}
+	}
+	return activePEM, pemEncode("RSA PRIVATE KEY", x509.MarshalPKCS1PrivateKey(key)), bundle, nil
+}
+
+func rsaKeyMatchesCertificate(key *rsa.PrivateKey, certificate *x509.Certificate) bool {
+	publicKey, ok := certificate.PublicKey.(*rsa.PublicKey)
+	return ok && publicKey.N.Cmp(key.N) == 0 && publicKey.E == key.E
+}
+
+func allDevelopmentLeavesUseCA(existing map[string]*corev1.Secret, caPEM []byte, namespace string) bool {
+	caCertificates, err := parseCertificates(caPEM)
+	if err != nil || len(caCertificates) != 1 {
+		return false
+	}
+	ca := caCertificates[0]
+	for serviceKey, serviceName := range developmentTLSServiceNames {
+		secret := existing[ResolveDevelopmentTLSSecretName(serviceKey)]
+		if secret == nil {
+			return false
+		}
+		certificate, err := parseCertificate(secret.Data[corev1.TLSCertKey])
+		if err != nil || certificate.CheckSignatureFrom(ca) != nil {
+			return false
+		}
+		validDNSName := false
+		for _, dnsName := range developmentDNSNames(serviceName, namespace) {
+			if certificate.VerifyHostname(dnsName) == nil {
+				validDNSName = true
+				break
+			}
+		}
+		if !validDNSName {
+			return false
+		}
+	}
+	return true
+}
+
+func parseCertificatesOrNil(data []byte) []*x509.Certificate {
+	certificates, err := parseCertificates(data)
+	if err != nil {
+		return nil
+	}
+	return certificates
 }
 
 func reusableDevelopmentLeaf(secret *corev1.Secret, caPEM []byte, serviceName, namespace string, now time.Time, rotationBefore time.Duration) bool {
@@ -485,6 +592,30 @@ func parseCertificate(data []byte) (*x509.Certificate, error) {
 		return nil, fmt.Errorf("certificate is not PEM encoded")
 	}
 	return x509.ParseCertificate(block.Bytes)
+}
+
+func parseCertificates(data []byte) ([]*x509.Certificate, error) {
+	rest := bytes.TrimSpace(data)
+	certificates := make([]*x509.Certificate, 0, 1)
+	for len(rest) > 0 {
+		block, remaining := pem.Decode(rest)
+		if block == nil {
+			return nil, fmt.Errorf("certificate bundle is not PEM encoded")
+		}
+		if block.Type != "CERTIFICATE" {
+			return nil, fmt.Errorf("certificate bundle contains PEM block %q", block.Type)
+		}
+		certificate, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		certificates = append(certificates, certificate)
+		rest = bytes.TrimSpace(remaining)
+	}
+	if len(certificates) == 0 {
+		return nil, fmt.Errorf("certificate bundle is empty")
+	}
+	return certificates, nil
 }
 
 func parseRSAKey(data []byte) (*rsa.PrivateKey, error) {

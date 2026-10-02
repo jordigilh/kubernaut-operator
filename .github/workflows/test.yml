@@ -56,7 +56,7 @@ jobs:
         run: make test
 
       - name: Shellcheck hack/ scripts
-        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh
+        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/validate-security-traceability.sh hack/verify-test-pyramid.sh
 
       - name: Run hack/ script tests
         run: make test-hack-scripts
@@ -122,6 +122,43 @@ jobs:
         env:
           KUBERNAUT_E2E_PROVIDER: generic
           KIND_CLUSTER_NAME: kubernaut-kind-generic
+        run: make test-e2e-kind
+
+  kind-certmanager:
+    name: Kind E2E (cert-manager TLS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install pinned Kind and kubectl
+        run: |
+          set -euo pipefail
+          KIND_VERSION=v0.31.0
+          KUBECTL_VERSION=v1.35.0
+          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kind version
+          kubectl version --client
+
+      - name: Pull pinned Kubernaut infrastructure images
+        run: |
+          docker pull docker.io/library/postgres:16.4
+          docker pull docker.io/valkey/valkey:8.0.2
+
+      - name: Run Kind cert-manager TLS E2E
+        env:
+          KUBERNAUT_E2E_PROVIDER: generic
+          KUBERNAUT_E2E_TLS_SOURCE: certmanager
+          KIND_CLUSTER_NAME: kubernaut-kind-certmanager
         run: make test-e2e-kind
 
   kind-cilium:

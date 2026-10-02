@@ -6,9 +6,8 @@
 
 **Status:** Core clean-break, platform-capability, TLS/exposure, monitoring,
 native-policy, RBAC, packaging, and generic/Cilium/Calico Kind qualification are
-complete on the working branch. Live OpenShift qualification remains blocked by
-the local `oc` environment; Helm bootstrap scope remains a separate unresolved
-packaging item.
+complete on the working branch. Live OpenShift qualification is explicitly
+deferred; the dedicated operator Helm bootstrap chart is a separate follow-up.
 
 **Methodology:** RED → GREEN → REFACTOR, with controller wiring verified in
 GREEN and the full unit/integration/E2E pyramid required before completion.
@@ -227,18 +226,20 @@ place to verify ownership filtering.
 | Component | Production entry point | Required integration test |
 |---|---|---|
 | Capability detector | `KubernautReconciler.Reconcile` | `IT-PLATFORM-KIND-001` |
-| OpenShift adapter | deployment/exposure/monitoring subfunctions | `IT-PLATFORM-OCP-001` |
+| OpenShift adapter | deployment/exposure/monitoring subfunctions | Deferred; `IT-PLATFORM-OCP-001` is not a release gate in this work |
 | Certificate resolver | TLS/trust reconciliation | `IT-TLS-WEBHOOK-001` |
 | Webhook CA publisher | admission reconciliation | `IT-TLS-WEBHOOK-001` |
 | Inter-service trust builder | workload deployment/rotation | `IT-TLS-TRUST-001` |
+| TLS source/rotation contract | `validateTLSConfiguration` / `ensureRuntimeTLS` | `IT-TLS-GAP-001`; `UT-TLS-ROTATION-GAP-001` |
+| cert-manager source lane | pre-created cert-manager Secrets consumed by TLS reconciliation | `E2E-TLS-CERTMANAGER-001` |
 | Common policy intent | policy reconciliation replacing raw fallback | `IT-POLICY-DETECTION-001` |
 | Provider detector | immediately before adapter selection | `IT-POLICY-DETECTION-001` |
 | Cilium adapter | provider registry/lifecycle | `IT-POLICY-CILIUM-001` |
 | Calico adapter | provider registry/lifecycle | `IT-POLICY-CALICO-001` |
-| OVN adapter | provider registry/lifecycle | `IT-POLICY-OVN-001` |
+| OVN adapter | provider registry/lifecycle | Deferred; `IT-POLICY-OVN-001` and live OCP qualification remain unverified |
 | Generic exposure | workload exposure branch | `IT-PLATFORM-KIND-001` |
 | Monitoring adapter | monitoring reconciliation | platform ITs |
-| Helm bootstrap | chart installation pipeline | `IT-HELM-BOOTSTRAP-001` |
+| Dedicated operator Helm bootstrap | chart installation pipeline | Deferred follow-up; no chart claim in this work |
 
 Checkpoint W fails if a new builder has no production caller, generic envtest
 requires an OpenShift API, raw fallback policies remain, or TLS/trust output is
@@ -246,15 +247,15 @@ not consumed by the reconciliation path that needs it.
 
 ## 6. Control-objective test traceability
 
-| Business assertion | FedRAMP/NIST | SOC 2 | OWASP ASVS |
+| Business assertion | FedRAMP/NIST | SOC 2 | OWASP ASVS 5.0.0 |
 |---|---|---|---|
-| schema/migration boundary is enforced | CM-2, CM-3, CM-6 | CC8 | V1, V5, V14 |
-| absent optional APIs do not break core lifecycle | CM-8, SI-4 | CC7, A1 | V1, V7, V14 |
-| core/provider RBAC is least privilege | AC-3, AC-6 | CC6 | V4, V13, V14 |
-| native policy has no unsafe fallback | AC-3, SI-10 | CC6, CC7 | V4, V5, V13 |
-| TLS, CA publication, rotation, and fail-closed readiness work | SC-8, SC-12, SC-13, SC-17 | CC6, CC7, A1 | V6, V8, V9, V14 |
-| actions and failures are observable | AU-2, AU-3, AU-12, SI-4 | CC7, CC8 | V7, V14 |
-| Helm ownership is deterministic and non-duplicating | CM-2, CM-6, AC-6 | CC6, CC8 | V1, V14 |
+| schema/migration boundary is enforced | CM-2, CM-3, CM-6 | CC8 | See `docs/security/ISSUE-488-CONTROL-TRACEABILITY.md` (`v5.0.0-V15.2.4`, `v5.0.0-V16.5.2`) |
+| absent optional APIs do not break core lifecycle | CM-8, SI-4 | CC7, A1 | See `docs/security/ISSUE-488-CONTROL-TRACEABILITY.md` (`v5.0.0-V16.5.2`) |
+| core/provider RBAC is least privilege | AC-3, AC-6 | CC6 | See `docs/security/ISSUE-488-CONTROL-TRACEABILITY.md` (`v5.0.0-V8.2.1`, `v5.0.0-V8.3.1`) |
+| native policy has no unsafe fallback | AC-3, SI-10 | CC6, CC7 | See `docs/security/ISSUE-488-CONTROL-TRACEABILITY.md` (`v5.0.0-V8.2.1`, `v5.0.0-V13.2.1`) |
+| TLS, CA publication, rotation, and fail-closed readiness work | SC-8, SC-12, SC-13, SC-17 | CC6, CC7, A1 | See `docs/security/ISSUE-488-CONTROL-TRACEABILITY.md` (`v5.0.0-V11.1.1`, `v5.0.0-V12.1.1`, `v5.0.0-V12.2.1`) |
+| actions and failures are observable | AU-2, AU-3, AU-12, SI-4 | CC7, CC8 | See `docs/security/ISSUE-488-CONTROL-TRACEABILITY.md` (`v5.0.0-V16.1.1`, `v5.0.0-V16.2.1`, `v5.0.0-V16.5.2`) |
+| Helm ownership is deterministic and non-duplicating | CM-2, CM-6, AC-6 | CC6, CC8 | Deferred; no Helm evidence is claimed in this work |
 
 ## 7. Completion gate
 

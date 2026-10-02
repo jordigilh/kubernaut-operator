@@ -15,13 +15,13 @@ The initiative is complete only when all of the following are true:
 
 1. A plain Kind/generic Kubernetes cluster with no OpenShift APIs, monitoring CRDs, cert-manager, or CNI policy CRDs starts the operator and reconciles the core lifecycle.
 2. A generic cluster with an explicitly configured Ingress/TLS/monitoring contract reaches the same core outcome as OpenShift without OpenShift defaults.
-3. OpenShift 4.19–4.22 with OVN-Kubernetes retains tested Route, service-CA, monitoring, TLS-profile, and OVN policy behavior through optional adapters.
+3. OpenShift 4.19–4.22 with OVN-Kubernetes remains a design target for Route, service-CA, monitoring, TLS-profile, and OVN policy adapters; live qualification is deferred and no release claim is made here.
 4. Cilium 1.19.x–1.20.x and Calico 3.31.x–3.32.x render only their supported native policy GVKs when active installation evidence and runtime compatibility checks pass.
 5. Unsupported, ambiguous, inactive, or out-of-range providers render no provider policy resources and produce actionable status/events.
 6. No provider adapter installs CRDs/operators, uses static API-server CIDRs, or falls back to raw Kubernetes `NetworkPolicy`.
 7. `v1alpha2` is the only CRD version in the redesigned API; no conversion webhook or v1alpha1 reconcile path remains.
-8. The production-ready `kubernaut-operator` Helm chart bootstraps the operator and CRD boundary, never creates a `Kubernaut` CR, and does not compete with the operator for managed workload ownership.
-9. The separate `kubernaut-dependencies` chart is explicitly limited to non-production testing, demos, and CI; it is not required by, or a dependency of, the production operator chart.
+8. The current OLM/Kustomize installation bootstraps the operator and CRD boundary, never creates a `Kubernaut` CR, and does not compete with the operator for managed workload ownership; a dedicated operator Helm chart is deferred.
+9. The separate `kubernaut-dependencies` chart is explicitly limited to non-production testing, demos, and CI; it is not required by, or a dependency of, the current production installation.
 10. Generic Kubernetes and Kind can select an approved certificate source for the manager webhook, managed AuthWebhook, inter-service leaves/trust, and external Ingress without OpenShift annotations or fixed OpenShift ConfigMaps.
 11. Certificate rotation, webhook `caBundle` publication, trust-bundle readiness, and certificate-source failures are observable and never silently downgrade required TLS to plaintext.
 12. `go build ./...`, `golangci-lint run`, `make test`, `make manifests`, and `make generate` pass, with no unexpected generated-manifest diff.
@@ -42,7 +42,7 @@ The initiative is complete only when all of the following are true:
 | Monitoring | OCP Thanos/AlertManager defaults and optional `monitoring.coreos.com` resources | Explicit endpoints and capability-gated ServiceMonitor/PrometheusRule/AlertmanagerConfig |
 | Policy | `internal/resources/networkpolicies.go` emits raw NetworkPolicy and API-server CIDRs | Common policy intent plus Cilium, Calico, and OVN adapters; no raw fallback |
 | RBAC | Core generated RBAC includes Route, OCP config, monitoring, and raw NetworkPolicy permissions | Split core and optional integration permissions; add exact provider GVK verbs |
-| Packaging | OLM/Kustomize only; no repository Helm chart | Add chart, ownership tests, chart lint/template tests, and clean-install docs |
+| Packaging | OLM/Kustomize only; no dedicated operator Helm chart | Keep current artifacts; add chart, ownership tests, chart lint/template tests, and clean-install docs in a follow-up |
 | Tests | OCP-heavy integration/E2E and Calico-specific enforcement | Add plain Kind, capability fixtures, provider rendering, and separate live enforcement lanes |
 
 ### Required preflight checks
@@ -64,7 +64,7 @@ the upstream chart's direct workload ownership:
 
 | Classification | Helm/operator surfaces | Implementation consequence |
 |---|---|---|
-| **P0 portable core** | Manager/AuthWebhook/inter-service/external TLS and trust, webhook `caBundle`, generic Ingress, explicit monitoring capabilities, Kubernaut CRD/bootstrap ownership, migration and hook ordering | Must work on plain Kubernetes and Kind without OpenShift APIs, cert-manager, monitoring CRDs, or provider CRDs unless the selected integration is explicitly enabled. The production-ready operator chart installs prerequisites only; the user/GitOps layer applies the CR. |
+| **P0 portable core** | Manager/AuthWebhook/inter-service/external TLS and trust, webhook `caBundle`, generic Ingress, explicit monitoring capabilities, Kubernaut CRD/bootstrap ownership, migration and hook ordering | Must work on plain Kubernetes and Kind without OpenShift APIs, cert-manager, monitoring CRDs, or provider CRDs unless the selected integration is explicitly enabled. The current OLM/Kustomize installation installs prerequisites only; the user/GitOps layer applies the CR. |
 | **P1 configuration/security parity** | Input policy ConfigMaps, shared application configuration and optional integrations, scaling/scheduling controls, singleton install/secret preflight, DataStorage HMAC/rate-limit/replay-cache gaps, disconnected-image and RBAC extensions | Track as operator-owned API/configuration work; do not render duplicate runtime workloads from Helm. |
 | **Intentional divergence** | Raw NetworkPolicy/static API-server CIDRs, bundled PostgreSQL/Valkey, upstream chart workload templates | Do not port as solutions. Replace policy with native adapters; retain BYO stateful infrastructure and operator runtime ownership. |
 | **Platform/provider adapter** | OpenShift Routes/service-CA/router-CA/TLS profile/monitoring, Cilium/Calico/OVN policy APIs, cert-manager integration | Capability-gated, independently observable, and owned by the platform/provider operator where applicable. |
@@ -77,7 +77,7 @@ separation must not:
 
 | Artifact | Generic source modes | Owner and readiness proof |
 |---|---|---|
-| Operator manager serving Secret and bootstrap webhook CA | Administrator-managed, cert-manager, explicit development self-signed | Helm/OLM owns bootstrap resources; manager starts only with a valid leaf, and the corresponding webhook configuration has the matching CA. |
+| Operator manager serving Secret and bootstrap webhook CA | Administrator-managed, cert-manager, explicit development self-signed | OLM/Kustomize owns bootstrap resources; manager starts only with a valid leaf, and the corresponding webhook configuration has the matching CA. A dedicated Helm path is deferred. |
 | AuthWebhook serving Secret and mutating/validating `caBundle` | Administrator-managed, cert-manager, explicit development self-signed, or OpenShift service-CA adapter | Operator owns the per-instance runtime objects; tests verify SANs, Secret keys, exact CA bytes, and fail-closed readiness. |
 | Dedicated inter-service CA, leaf Secrets, and public trust ConfigMap | Administrator-managed, cert-manager, explicit development self-signed, or OpenShift service-CA adapter | Operator owns runtime trust artifacts; tests verify every enabled TLS server has a leaf and every client mounts the matching public bundle. |
 | Ingress TLS Secret / Route termination | Administrator-managed or cert-manager; OpenShift router adapter | Exposure adapter references the configured host/Secret and reports unavailable exposure; it does not invent a generic hostname. |
@@ -254,7 +254,12 @@ Each adapter follows the same sequence: fixture-first RED, minimal GREEN rendere
 
 **Integration ID**: `IT-POLICY-LIFECYCLE-001`.
 
-### Phase 6 — Production Helm bootstrap and non-production dependencies chart
+### Phase 6 — Deferred production Helm bootstrap and non-production dependencies chart
+
+The dedicated operator Helm bootstrap chart is deferred and is not part of the
+current release claim. The current installation path remains OLM/Kustomize;
+the checks below are the follow-up acceptance contract, not completion gates
+for this work.
 
 **RED**
 
@@ -270,7 +275,7 @@ Each adapter follows the same sequence: fixture-first RED, minimal GREEN rendere
 
 **GREEN/REFACTOR**
 
-- Add the production-ready `kubernaut-operator` chart with image registry/pull-secret/operator bootstrap values.
+- When the follow-up starts, add the `kubernaut-operator` chart with image registry/pull-secret/operator bootstrap values.
 - Add the separate `kubernaut-dependencies` chart for testing, demos, and CI only, with explicit non-production documentation and no production-readiness claim.
 - Add CRD installation and document the separate user/GitOps CR application step; do not add chart values or templates that construct application configuration.
 - Add bootstrap certificate resources only for the operator manager path; delegate per-instance AuthWebhook/inter-service certificate reconciliation to the operator or the explicitly selected certificate provider.
@@ -287,9 +292,9 @@ Run the three-tier pyramid:
 |---|---|---|
 | Unit | Pure Go/Ginkgo | builder shape, schema gates, policy translation, status messages |
 | Integration | envtest with no optional CRDs; optional CRD fixtures | controller wiring, absent API behavior, lifecycle, cleanup |
-| Generic E2E | plain Kind | Helm/operator bootstrap, core lifecycle, generic TLS/exposure/monitoring, no provider policy resources |
+| Generic E2E | plain Kind | Production-manifest/operator bootstrap, core lifecycle, generic TLS/exposure/monitoring, no provider policy resources |
 | Provider E2E | Kind + qualified Cilium/Calico | native CR submission and live enforcement, separately per provider |
-| OpenShift E2E | OCP 4.19–4.22 + OVN | Route/service-CA/monitoring/TLS and ANP/BANP submission/enforcement |
+| OpenShift E2E | OCP 4.19–4.22 + OVN (deferred) | Route/service-CA/monitoring/TLS and ANP/BANP submission/enforcement; no current release claim |
 | Negative compatibility | fixtures/live as available | unsupported versions, OCP 4.23, ambiguous providers, stale CRDs, no fallback |
 
 The operator tests submission and lifecycle. Provider/platform test suites prove dataplane enforcement; those responsibilities must not be conflated.
@@ -303,7 +308,7 @@ The following production callers are mandatory before a component is considered 
 | Component | Production entry point | Wiring location | Required IT |
 |---|---|---|---|
 | Platform capability detector | `KubernautReconciler.Reconcile` | `internal/controller/kubernaut_controller.go` phase/deploy orchestration | `IT-PLATFORM-KIND-001` |
-| Optional OpenShift adapter | deploy/exposure/monitoring sub-functions | controller capability registry; no unconditional `SetupWithManager` watch | `IT-PLATFORM-OCP-001` |
+| Optional OpenShift adapter | deploy/exposure/monitoring sub-functions | controller capability registry; no unconditional `SetupWithManager` watch | Deferred; `IT-PLATFORM-OCP-001` remains unverified |
 | Certificate-source resolver/provisioner | platform/TLS reconciliation | manager bootstrap plus per-instance TLS/trust orchestration; source-specific ownership and no plaintext fallback | `IT-PLATFORM-KIND-001` and `IT-PLATFORM-OCP-001` |
 | Webhook CA-bundle publisher | admission webhook reconciliation | administrator/self-signed patch, cert-manager injection, or OpenShift service-CA adapter | `IT-TLS-WEBHOOK-001` |
 | Inter-service trust/leaf builder | workload deployment/configuration | TLS/trust orchestration before `deployWorkloads()` and on rotation | `IT-TLS-TRUST-001` |
@@ -311,10 +316,10 @@ The following production callers are mandatory before a component is considered 
 | Provider detector | policy reconciliation | immediately before adapter selection | `IT-POLICY-DETECTION-001` |
 | Cilium adapter | policy reconciliation | provider registry → Cilium renderer/lifecycle | `IT-POLICY-CILIUM-001` |
 | Calico adapter | policy reconciliation | provider registry → Calico renderer/lifecycle | `IT-POLICY-CALICO-001` |
-| OVN adapter | policy reconciliation | provider registry → OVN renderer/lifecycle | `IT-POLICY-OVN-001` |
+| OVN adapter | policy reconciliation | provider registry → OVN renderer/lifecycle | Deferred; `IT-POLICY-OVN-001` remains unverified |
 | Generic exposure builder | workload/exposure deployment | `deployWorkloads()` exposure branch | `IT-PLATFORM-KIND-001` |
 | Monitoring adapter | monitoring reconciliation | `reconcileMonitoringAndAlerts()` capability branch | `IT-PLATFORM-KIND-001` and `IT-PLATFORM-OCP-001` |
-| Helm bootstrap | installation pipeline | chart templates and CI, not controller ownership | `IT-HELM-BOOTSTRAP-001` |
+| Helm bootstrap | installation pipeline | Deferred chart templates and CI, not controller ownership | `IT-HELM-BOOTSTRAP-001` remains unverified |
 
 **Checkpoint W** fails if any provider/resource builder has no production caller, if the controller still emits raw fallback policies, if a certificate/trust builder is not wired into the reconciliation path that consumes it, or if a generic envtest needs an OpenShift API merely to start.
 

@@ -161,6 +161,9 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingwebhookconfigurations;validatingwebhookconfigurations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create;update;patch
+// CertManager mode reads an administrator-selected Issuer or ClusterIssuer;
+// it never creates or mutates cert-manager resources.
+// +kubebuilder:rbac:groups=cert-manager.io,resources=issuers;clusterissuers,verbs=get
 // +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers;ingresses;networks;clusterversions,verbs=get;list;watch
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors;prometheusrules;alertmanagerconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -3236,7 +3239,7 @@ func (r *KubernautReconciler) validateTLSConfiguration(
 	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: material.InternalCASecretName}, ca); err != nil {
 		return resources.TLSMaterial{}, fmt.Errorf("reading runtime TLS CA secret %q: %w", material.InternalCASecretName, err)
 	}
-	if err := resources.ValidateInternalCASecret(ca); err != nil {
+	if err := resources.ValidateInternalCASecretForSource(ca, material.Source); err != nil {
 		return resources.TLSMaterial{}, err
 	}
 	for serviceKey, secretName := range material.ServiceTLSSecretNames {
@@ -3244,7 +3247,7 @@ func (r *KubernautReconciler) validateTLSConfiguration(
 		if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: secretName}, secret); err != nil {
 			return resources.TLSMaterial{}, fmt.Errorf("reading runtime TLS secret %q for %s: %w", secretName, serviceKey, err)
 		}
-		if err := resources.ValidateServingTLSSecretForService(secret, ca, serviceKey, kn.Namespace); err != nil {
+		if err := resources.ValidateServingTLSSecretForServiceWithSource(secret, ca, serviceKey, kn.Namespace, material.Source); err != nil {
 			return resources.TLSMaterial{}, fmt.Errorf("validating runtime TLS secret %q for %s: %w", secretName, serviceKey, err)
 		}
 	}
@@ -3274,10 +3277,14 @@ func (r *KubernautReconciler) ensureRuntimeTLS(
 	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: material.InternalCASecretName}, ca); err != nil {
 		return resources.TLSMaterial{}, nil, fmt.Errorf("reading runtime TLS CA secret %q: %w", material.InternalCASecretName, err)
 	}
-	if err := resources.ValidateInternalCASecret(ca); err != nil {
+	if err := resources.ValidateInternalCASecretForSource(ca, material.Source); err != nil {
 		return resources.TLSMaterial{}, nil, err
 	}
-	return material, append([]byte(nil), ca.Data["ca.crt"]...), nil
+	caPEM, err := resources.InternalCAPEMForSource(ca, material.Source)
+	if err != nil {
+		return resources.TLSMaterial{}, nil, err
+	}
+	return material, caPEM, nil
 }
 
 func (r *KubernautReconciler) ensureDevelopmentSelfSignedTLS(
@@ -3344,7 +3351,7 @@ func (r *KubernautReconciler) validateCertManagerIssuer(ctx context.Context, kn 
 		plural = "clusterissuers"
 	}
 	if !r.hasCRD(ctx, plural+"."+group) {
-		return fmt.Errorf("cert-manager %s API is not installed", group)
+		return fmt.Errorf("cert-manager api is not installed: %s", group)
 	}
 	issuer := &unstructured.Unstructured{}
 	issuer.SetAPIVersion(group + "/v1")

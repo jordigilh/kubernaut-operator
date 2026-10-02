@@ -70,6 +70,221 @@ func ensureKubernautInfrastructure(ctx context.Context) error {
 	return nil
 }
 
+// ensureCertManagerRuntimeTLS creates the cert-manager objects consumed by
+// the CertManager TLS source. The operator only reads the resulting Secrets;
+// cert-manager remains the owner and rotation authority for all certificates.
+func ensureCertManagerRuntimeTLS(ctx context.Context) error {
+	if _, err := kubectlStdin(ctx, certManagerBootstrapIssuerManifest, "apply", "-f", "-"); err != nil {
+		return fmt.Errorf("applying cert-manager bootstrap issuer: %w", err)
+	}
+	if _, err := kubectlStdin(ctx, certManagerRootCertificateManifest, "apply", "-f", "-"); err != nil {
+		return fmt.Errorf("applying cert-manager root certificate: %w", err)
+	}
+	if err := waitForCertificate(ctx, "kubernaut-internal-ca"); err != nil {
+		return err
+	}
+	if err := waitForSecretTLSMaterial(ctx, "kubernaut-internal-ca"); err != nil {
+		return err
+	}
+
+	if _, err := kubectlStdin(ctx, certManagerRuntimeIssuerManifest, "apply", "-f", "-"); err != nil {
+		return fmt.Errorf("applying cert-manager runtime issuer: %w", err)
+	}
+	if _, err := kubectlStdin(ctx, certManagerLeafCertificatesManifest, "apply", "-f", "-"); err != nil {
+		return fmt.Errorf("applying cert-manager runtime certificates: %w", err)
+	}
+	for _, name := range certManagerRuntimeCertificateNames {
+		if err := waitForCertificate(ctx, name); err != nil {
+			return err
+		}
+		if err := waitForSecretTLSMaterial(ctx, certManagerSecretName(name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func waitForCertificate(ctx context.Context, name string) error {
+	if _, err := kubectl(
+		ctx, "wait", "--for=condition=Ready", "certificate/"+name,
+		"-n", kubernautNamespace, "--timeout=10m",
+	); err != nil {
+		return fmt.Errorf("waiting for cert-manager certificate %s: %w", name, err)
+	}
+	return nil
+}
+
+func waitForSecretTLSMaterial(ctx context.Context, name string) error {
+	err := pollUntilSuccess(ctx, 5*time.Minute, 2*time.Second, func() error {
+		output, err := kubectl(
+			ctx, "get", "secret", name, "-n", kubernautNamespace,
+			"-o", "jsonpath={.data.tls\\.crt}:{.data.tls\\.key}",
+		)
+		if err != nil {
+			return err
+		}
+		parts := strings.Split(strings.TrimSpace(output), ":")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return fmt.Errorf("secret %s does not yet contain tls.crt and tls.key", name)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("waiting for cert-manager secret %s: %w", name, err)
+	}
+	return nil
+}
+
+func certManagerSecretName(certificateName string) string {
+	if certificateName == "kubernaut-internal-ca" {
+		return certificateName
+	}
+	return certificateName + "-tls"
+}
+
+const certManagerBootstrapIssuerManifest = `apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: kubernaut-bootstrap
+  namespace: kubernaut-system
+spec:
+  selfSigned: {}
+`
+
+const certManagerRootCertificateManifest = `apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kubernaut-internal-ca
+  namespace: kubernaut-system
+spec:
+  isCA: true
+  commonName: kubernaut-internal-ca
+  secretName: kubernaut-internal-ca
+  duration: 8760h
+  renewBefore: 720h
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  issuerRef:
+    name: kubernaut-bootstrap
+    kind: Issuer
+    group: cert-manager.io
+`
+
+const certManagerRuntimeIssuerManifest = `apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: kubernaut-ca
+  namespace: kubernaut-system
+spec:
+  ca:
+    secretName: kubernaut-internal-ca
+`
+
+const certManagerLeafCertificatesManifest = `apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gateway
+  namespace: kubernaut-system
+spec:
+  secretName: gateway-tls
+  duration: 8760h
+  renewBefore: 720h
+  dnsNames:
+  - gateway-service
+  - gateway-service.kubernaut-system
+  - gateway-service.kubernaut-system.svc
+  - gateway-service.kubernaut-system.svc.cluster.local
+  issuerRef:
+    name: kubernaut-ca
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: datastorage
+  namespace: kubernaut-system
+spec:
+  secretName: datastorage-tls
+  duration: 8760h
+  renewBefore: 720h
+  dnsNames:
+  - data-storage-service
+  - data-storage-service.kubernaut-system
+  - data-storage-service.kubernaut-system.svc
+  - data-storage-service.kubernaut-system.svc.cluster.local
+  issuerRef:
+    name: kubernaut-ca
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kubernautagent
+  namespace: kubernaut-system
+spec:
+  secretName: kubernautagent-tls
+  duration: 8760h
+  renewBefore: 720h
+  dnsNames:
+  - kubernaut-agent
+  - kubernaut-agent.kubernaut-system
+  - kubernaut-agent.kubernaut-system.svc
+  - kubernaut-agent.kubernaut-system.svc.cluster.local
+  issuerRef:
+    name: kubernaut-ca
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: apifrontend
+  namespace: kubernaut-system
+spec:
+  secretName: apifrontend-tls
+  duration: 8760h
+  renewBefore: 720h
+  dnsNames:
+  - apifrontend
+  - apifrontend.kubernaut-system
+  - apifrontend.kubernaut-system.svc
+  - apifrontend.kubernaut-system.svc.cluster.local
+  issuerRef:
+    name: kubernaut-ca
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: authwebhook
+  namespace: kubernaut-system
+spec:
+  secretName: authwebhook-tls
+  duration: 8760h
+  renewBefore: 720h
+  dnsNames:
+  - authwebhook-service
+  - authwebhook-service.kubernaut-system
+  - authwebhook-service.kubernaut-system.svc
+  - authwebhook-service.kubernaut-system.svc.cluster.local
+  issuerRef:
+    name: kubernaut-ca
+    kind: Issuer
+    group: cert-manager.io
+`
+
+var certManagerRuntimeCertificateNames = []string{
+	"gateway",
+	"datastorage",
+	"kubernautagent",
+	"apifrontend",
+	"authwebhook",
+}
+
 func ensureNamespace(ctx context.Context, namespace string) error {
 	output, err := kubectl(ctx, "create", "namespace", namespace)
 	if err != nil && !strings.Contains(output, "AlreadyExists") {
@@ -245,6 +460,30 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 	case providerCalico:
 		provider = kubernautv1alpha2.NetworkPolicyProviderCalico
 	}
+	tls := kubernautv1alpha2.TLSConfigSpec{
+		Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
+		DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
+	}
+	if configuredTLS == tlsCertManager {
+		tls = kubernautv1alpha2.TLSConfigSpec{
+			Mode: kubernautv1alpha2.TLSModeCertManager,
+			CertManager: &kubernautv1alpha2.CertManagerTLSConfig{ //nolint:gosec // disposable Kind fixture Secret references
+				Issuer: kubernautv1alpha2.TLSIssuerRef{
+					Name:  "kubernaut-ca",
+					Kind:  "Issuer",
+					Group: "cert-manager.io",
+				},
+				InternalCASecretName: "kubernaut-internal-ca",
+				ServiceTLSSecretNames: map[string]string{
+					"gateway":        "gateway-tls",
+					"datastorage":    "datastorage-tls",
+					"kubernautagent": "kubernautagent-tls",
+					"apifrontend":    "apifrontend-tls",
+					"authwebhook":    "authwebhook-tls",
+				},
+			},
+		}
+	}
 	return &kubernautv1alpha2.Kubernaut{
 		TypeMeta:   metav1.TypeMeta{APIVersion: kubernautv1alpha2.GroupVersion.String(), Kind: "Kubernaut"},
 		ObjectMeta: metav1.ObjectMeta{Name: kubernautv1alpha2.SingletonName, Namespace: kubernautNamespace},
@@ -276,13 +515,10 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 					CredentialsSecretName: "llm-credentials",
 				},
 			},
-			KubernautAgent: kubernautv1alpha2.KubernautAgentSpec{LLMProfileRef: "primary"},
-			Gateway:        kubernautv1alpha2.GatewaySpec{Enabled: ptr.To(false)},
-			APIFrontend:    kubernautv1alpha2.APIFrontendSpec{Enabled: ptr.To(false)},
-			TLS: kubernautv1alpha2.TLSConfigSpec{
-				Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
-				DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
-			},
+			KubernautAgent:  kubernautv1alpha2.KubernautAgentSpec{LLMProfileRef: "primary"},
+			Gateway:         kubernautv1alpha2.GatewaySpec{Enabled: ptr.To(false)},
+			APIFrontend:     kubernautv1alpha2.APIFrontendSpec{Enabled: ptr.To(false)},
+			TLS:             tls,
 			NetworkPolicies: kubernautv1alpha2.NetworkPoliciesSpec{Provider: provider},
 		},
 	}
@@ -319,6 +555,62 @@ func kubernautPhase(ctx context.Context) (string, error) {
 	output, err := kubectl(ctx, "get", "kubernaut", kubernautv1alpha2.SingletonName, "-n", kubernautNamespace,
 		"-o", "jsonpath={.status.phase}")
 	return strings.TrimSpace(output), err
+}
+
+func secretTLSMaterialPresent(ctx context.Context, name string) (bool, error) {
+	jsonPath := "jsonpath={.data.tls\\.crt}:{.data.tls\\.key}"
+	if name == "kubernaut-internal-ca" && configuredTLS == tlsDevelopment {
+		jsonPath = "jsonpath={.data.ca\\.crt}:{.data.ca\\.key}"
+	}
+	output, err := kubectl(
+		ctx, "get", "secret", name, "-n", kubernautNamespace,
+		"-o", jsonPath,
+	)
+	if err != nil {
+		return false, err
+	}
+	parts := strings.Split(strings.TrimSpace(output), ":")
+	return len(parts) == 2 && parts[0] != "" && parts[1] != "", nil
+}
+
+func secretTLSCertificate(ctx context.Context, name string) (string, error) {
+	output, err := kubectl(
+		ctx, "get", "secret", name, "-n", kubernautNamespace,
+		"-o", "jsonpath={.data.tls\\.crt}",
+	)
+	return strings.TrimSpace(output), err
+}
+
+func patchCertificateForRotation(ctx context.Context, name string) error {
+	patch := `{"spec":{"duration":"2h","renewBefore":"1h"}}`
+	if _, err := kubectl(
+		ctx, "patch", "certificate/"+name, "-n", kubernautNamespace,
+		"--type=merge", "-p", patch,
+	); err != nil {
+		return fmt.Errorf("requesting cert-manager certificate rotation: %w", err)
+	}
+	return nil
+}
+
+func secretOwnerKind(ctx context.Context, name string) (string, error) {
+	output, err := kubectl(
+		ctx, "get", "secret", name, "-n", kubernautNamespace,
+		"-o", "jsonpath={.metadata.ownerReferences[0].kind}",
+	)
+	return strings.TrimSpace(output), err
+}
+
+func webhookCABundlePresent(ctx context.Context, webhookType string) (bool, error) {
+	resource := webhookType + "webhookconfiguration"
+	name := kubernautNamespace + "-authwebhook-" + webhookType
+	output, err := kubectl(
+		ctx, "get", resource, name,
+		"-o", "jsonpath={.webhooks[0].clientConfig.caBundle}",
+	)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(output) != "", nil
 }
 
 func deleteKubernautCR(ctx context.Context) error {

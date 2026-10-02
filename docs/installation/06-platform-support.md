@@ -2,7 +2,7 @@
 
 This document is the compatibility contract for the platform-neutral operator work tracked by [#486](https://github.com/jordigilh/kubernaut-operator/issues/486) and documented by [#487](https://github.com/jordigilh/kubernaut-operator/issues/487).
 
-> **Implementation status:** the core platform-neutral path and capability-gated adapters are implemented on this branch. Provider dataplane enforcement and live OpenShift qualification remain environment-dependent validation work; check the release notes and test results for the version you are installing.
+> **Implementation status:** the core platform-neutral path and the Cilium/Calico capability-gated adapters are implemented and covered by their pinned Kind lanes on this branch. OpenShift/OVN live qualification is deferred and explicitly unverified; this document makes no OpenShift/OVN release claim.
 
 ## Platform outcomes
 
@@ -11,11 +11,14 @@ The operator's core lifecycle is intended to work on both generic Kubernetes and
 | Platform profile | Core lifecycle | Optional integrations |
 |---|---|---|
 | Generic Kubernetes / Kind | Singleton CR, workloads, Services, ConfigMaps, Secrets, RBAC, PDBs, status, cleanup | Kubernetes Ingress, administrator/cert-manager TLS, explicitly configured Prometheus/AlertManager, supported Cilium or Calico policy adapter |
-| OpenShift 4.19–4.22 with OVN-Kubernetes | The same core lifecycle | OpenShift Routes, service-CA/router CA, TLS security profile, OpenShift monitoring, and OVN admin policies |
+| OpenShift 4.19–4.22 with OVN-Kubernetes | Design target; not live-qualified by this work | OpenShift Routes, service-CA/router CA, TLS security profile, OpenShift monitoring, and OVN admin policies remain unverified |
 
 OpenShift is not required for the generic profile. A plain Kind cluster with no policy provider may run the core lifecycle without creating provider-policy resources. It must report that provider policy enforcement is not active; it must not silently claim equivalent network enforcement.
 
-OpenShift 4.23 and later are **not** covered by the initial OVN policy contract. They require a new compatibility review, qualified payloads, and enforcement testing before being added.
+OpenShift 4.19–4.22 with OVN-Kubernetes is also **not live-qualified by this
+work**. It requires the deferred compatibility review, qualified payloads, and
+enforcement testing before any release claim is made. OpenShift 4.23 and later
+are outside the initial OVN policy contract as well.
 
 ## Initial policy-provider matrix
 
@@ -23,7 +26,7 @@ OpenShift 4.23 and later are **not** covered by the initial OVN policy contract.
 |---|---|---|---|
 | Cilium | 1.19.x–1.20.x | `cilium.io/v2` `CiliumNetworkPolicy`; `CiliumClusterwideNetworkPolicy` where cluster scope is required | Cilium 1.19 with Kubernetes 1.32–1.35; Cilium 1.20 with Kubernetes 1.33–1.36 |
 | Calico | 3.31.x–3.32.x | `projectcalico.org/v3` `NetworkPolicy`; `GlobalNetworkPolicy` where cluster scope is required | Calico 3.31 with Kubernetes 1.32–1.35; Calico 3.32 with Kubernetes 1.34–1.36 |
-| OpenShift OVN-Kubernetes | OpenShift 4.19–4.22 | `policy.networking.k8s.io/v1alpha1` `AdminNetworkPolicy` and `BaselineAdminNetworkPolicy` | OpenShift `Network` configuration must positively identify `OVNKubernetes` |
+| OpenShift OVN-Kubernetes | OpenShift 4.19–4.22 (deferred qualification) | `policy.networking.k8s.io/v1alpha1` `AdminNetworkPolicy` and `BaselineAdminNetworkPolicy` | OpenShift `Network` configuration must positively identify `OVNKubernetes`; no live qualification or release claim in this work |
 
 The three version numbers are different contracts and must not be conflated:
 
@@ -123,12 +126,12 @@ retain an overlap window or perform a coordinated restart. DataStorage signing
 and audit-HMAC material are integrity keys, not network certificates, and are
 managed as separate prerequisites.
 
-The repository-owned Helm chart/OLM package owns the operator manager's
-serving-certificate prerequisites. The operator owns per-instance AuthWebhook,
-inter-service, and runtime trust artifacts once a `Kubernaut` instance is
-reconciled. Helm and the operator must never co-own the same Secret or
-ConfigMap. Exact v1alpha2 field names and the development bootstrap mechanism
-remain part of the approval-gated implementation design.
+The dedicated operator Helm chart is deferred to a follow-up. The current
+production installation artifacts are the repository's Kustomize/OLM
+manifests; they own the operator manager's serving-certificate prerequisites.
+The operator owns per-instance AuthWebhook, inter-service, and runtime trust
+artifacts once a `Kubernaut` instance is reconciled. A future Helm chart and the
+operator must never co-own the same Secret or ConfigMap.
 
 ## OpenShift integrations
 
@@ -144,12 +147,10 @@ Missing OpenShift APIs must not prevent the generic operator manager from starti
 
 ## Helm and ownership
 
-The production-ready `kubernaut-operator` Helm chart is a bootstrap path for
-the operator, CRDs, RBAC, and manager certificate/webhook prerequisites. It
-does **not** render or create a `Kubernaut` CR and does not duplicate the
-application configuration schema in Helm values. The
-`kubernaut.ai/v1alpha2` CRD is the sole application schema; users or GitOps
-controllers apply the CR separately.
+The dedicated `kubernaut-operator` Helm chart is deferred to a follow-up and is
+not a supported installation path in this work. The `kubernaut.ai/v1alpha2` CRD
+remains the sole application schema; users or GitOps controllers apply the CR
+separately after installing the current production manifests.
 
 The separate `kubernaut-dependencies` chart is an explicitly non-production
 convenience chart for testing, demos, and CI. It may deploy single-replica,
@@ -158,9 +159,9 @@ backup, or upgrade solution and is never installed as a dependency of the
 operator chart. Production users should provide managed PostgreSQL and Valkey
 outside this chart.
 
-The intended installation sequence is:
+The current installation sequence is:
 
-1. Install the operator chart/OLM package.
+1. Install the repository's Kustomize/OLM package.
 2. Wait for the operator manager and CRD to become ready.
 3. For testing/demo/CI only, optionally install `kubernaut-dependencies`; in
    production, provision managed PostgreSQL and Valkey externally.
@@ -170,8 +171,8 @@ The intended installation sequence is:
 6. Observe the operator's status conditions and events as it reconciles the
    application workloads and optional integrations.
 
-Helm chart schema validation therefore covers bootstrap values only. CR
-validation is performed by the Kubernetes CRD schema and the operator's
+The deferred Helm chart, when implemented, must validate bootstrap values only.
+CR validation is performed by the Kubernetes CRD schema and the operator's
 admission/reconciliation paths.
 
 Do not use Helm and the operator to manage the same Deployments, Services, ConfigMaps, Secrets, RBAC objects, exposure objects, or policy objects. The initial migration contract is clean install/reinstall; in-place adoption of old Helm-owned workloads requires a separate readiness-gated design.
