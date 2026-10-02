@@ -60,6 +60,8 @@ const (
 	certManagerVersion  = "v1.20.2"
 	certManagerManifest = "https://github.com/cert-manager/cert-manager/releases/download/" +
 		certManagerVersion + "/cert-manager.yaml"
+	certManagerOwnerReferencePatch = `[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":` +
+		`"--enable-certificate-owner-ref=true"}]`
 
 	operatorNamespace  = "kubernaut-operator-system"
 	kubernautNamespace = "kubernaut-system"
@@ -403,6 +405,15 @@ func installCalico(ctx context.Context) error {
 func installCertManager(ctx context.Context) error {
 	if _, err := kubectl(ctx, "apply", "-f", certManagerManifest); err != nil {
 		return fmt.Errorf("installing cert-manager %s: %w", certManagerVersion, err)
+	}
+	// The release manifest leaves certificate owner references disabled by
+	// default. Enable them so the E2E can verify that cert-manager, rather than
+	// the Kubernaut operator, owns the generated TLS Secrets.
+	if _, err := kubectl(
+		ctx, "patch", "deployment/cert-manager", "-n", "cert-manager",
+		"--type=json", "-p", certManagerOwnerReferencePatch,
+	); err != nil {
+		return fmt.Errorf("enabling cert-manager Certificate owner references: %w", err)
 	}
 	for _, deployment := range []string{"cert-manager", "cert-manager-cainjector", "cert-manager-webhook"} {
 		if _, err := kubectl(
