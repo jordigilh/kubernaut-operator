@@ -73,3 +73,102 @@ jobs:
             echo "::error::Internal coverage ${COVERAGE}% is below the ${THRESHOLD}% threshold"
             exit 1
           fi
+
+  # These jobs intentionally have no `needs` relationship with `test`: each
+  # provisions an isolated Kind cluster and runs in parallel with the IT lane.
+  kind-generic:
+    name: Kind E2E (generic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install pinned Kind and kubectl
+        run: |
+          set -euo pipefail
+          KIND_VERSION=v0.31.0
+          KUBECTL_VERSION=v1.35.0
+          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kind version
+          kubectl version --client
+
+      - name: Run generic Kind E2E
+        env:
+          KUBERNAUT_E2E_PROVIDER: generic
+          KIND_CLUSTER_NAME: kubernaut-kind-generic
+        run: make test-e2e-kind
+
+  kind-cilium:
+    name: Kind E2E (Cilium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install pinned Kind, kubectl, and Helm
+        run: |
+          set -euo pipefail
+          KIND_VERSION=v0.31.0
+          KUBECTL_VERSION=v1.35.0
+          HELM_VERSION=v3.17.3
+          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz -C /tmp
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          kind version
+          kubectl version --client
+          helm version
+
+      - name: Run Kind+Cilium E2E
+        env:
+          KUBERNAUT_E2E_PROVIDER: cilium
+          KIND_CLUSTER_NAME: kubernaut-kind-cilium
+        run: make test-e2e-kind
+
+  kind-calico:
+    name: Kind E2E (Calico)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install pinned Kind and kubectl
+        run: |
+          set -euo pipefail
+          KIND_VERSION=v0.31.0
+          KUBECTL_VERSION=v1.35.0
+          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kind version
+          kubectl version --client
+
+      - name: Run Kind+Calico E2E
+        env:
+          KUBERNAUT_E2E_PROVIDER: calico
+          KIND_CLUSTER_NAME: kubernaut-kind-calico
+        run: make test-e2e-kind

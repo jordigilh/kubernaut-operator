@@ -109,8 +109,8 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 # Unit-test packages that do NOT need envtest (fast, no API server).
-# api/... covers the v1alpha1<->v1alpha2 conversion webhook logic
-# (api/v1alpha1/kubernaut_conversion.go); pure Go, no API server needed.
+# api/... covers the v1alpha2 API schema and clean-break contract; pure Go, no
+# API server needed.
 UT_PKGS := ./internal/resources/... ./internal/webhook/... ./api/...
 
 .PHONY: test-unit
@@ -143,15 +143,12 @@ test-e2e: manifests generate fmt vet ## Run the e2e tests against a live OCP clu
 	@oc whoami >/dev/null 2>&1 || { echo "Not logged in to OCP. Run 'oc login' first."; exit 1; }
 	go test ./test/e2e/ -v -ginkgo.v -timeout 30m
 
-# NetworkPolicy e2e proves internal/resources.NetworkPolicies() actually
-# allows/denies traffic on a real CNI (#342) -- UT (rendered-shape-only) and
-# envtest IT (no CNI) both structurally cannot catch enforcement bugs. This
-# self-provisions its own throwaway kind+Calico cluster; no oc login needed.
-.PHONY: test-e2e-networkpolicy
-test-e2e-networkpolicy: ## Run the NetworkPolicy e2e suite. Requires: kind, kubectl, a container runtime.
+.PHONY: test-e2e-kind
+test-e2e-kind: fmt vet ## Run the isolated generic/Cilium/Calico Kind E2E suite.
 	@command -v kind >/dev/null 2>&1 || { echo "kind CLI not found. Install: https://kind.sigs.k8s.io/docs/user/quick-start/"; exit 1; }
 	@command -v kubectl >/dev/null 2>&1 || { echo "kubectl CLI not found."; exit 1; }
-	go test ./test/e2e/networkpolicy/... -v -ginkgo.v -timeout 25m
+	@if [ "$${KUBERNAUT_E2E_PROVIDER:-generic}" = "cilium" ]; then command -v helm >/dev/null 2>&1 || { echo "helm CLI not found. Install Helm for the Cilium lane."; exit 1; }; fi
+	go test ./test/e2e/kind/ -v -ginkgo.v -timeout 30m
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
