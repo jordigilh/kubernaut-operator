@@ -21,20 +21,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
-
-	"github.com/jordigilh/kubernaut-operator/internal/policy"
 )
 
 type policyProvider string
@@ -60,7 +52,14 @@ const (
 	tigeraOperatorManifest = "https://raw.githubusercontent.com/projectcalico/calico/" +
 		"v3.31.4/manifests/tigera-operator.yaml"
 
-	probeNamespace = "kubernaut-provider-e2e"
+	operatorNamespace  = "kubernaut-operator-system"
+	kubernautNamespace = "kubernaut-system"
+	// Provider probes run in the Kubernaut namespace so the operator's
+	// namespace-scoped policy selectors are exercised by the real workload.
+	probeNamespace = kubernautNamespace
+
+	defaultOperatorImage   = "kubernaut-operator:1.6.0-rc20"
+	operatorDeploymentName = "kubernaut-operator-controller-manager"
 
 	managedPolicyLabel = "kubernaut.ai/managed-policy=true"
 )
@@ -152,6 +151,67 @@ func helm(ctx context.Context, args ...string) (string, error) {
 func helmInCluster(ctx context.Context, args ...string) (string, error) {
 	fullArgs := append([]string{"--kube-context", clusterContext}, args...)
 	return runCmd(ctx, "helm", fullArgs...)
+}
+
+func operatorImage() string {
+	if image := strings.TrimSpace(os.Getenv("KUBERNAUT_OPERATOR_IMAGE")); image != "" {
+		return image
+	}
+	return defaultOperatorImage
+}
+
+func kustomizeBinary() string {
+	if binary := strings.TrimSpace(os.Getenv("KUSTOMIZE_BIN")); binary != "" {
+		return binary
+	}
+	return "kustomize"
+}
+
+func loadOperatorImage(ctx context.Context) error {
+	if _, err := runCmd(ctx, "kind", "load", "docker-image", operatorImage(), "--name", kindClusterName()); err != nil {
+		return fmt.Errorf("loading operator image %q into Kind: %w", operatorImage(), err)
+	}
+	return nil
+}
+
+func loadInfrastructureImages(ctx context.Context) error {
+	for _, image := range []string{postgresImage, valkeyImage} {
+		if _, err := runCmd(ctx, "kind", "load", "docker-image", image, "--name", kindClusterName()); err != nil {
+			return fmt.Errorf("loading infrastructure image %q into Kind: %w", image, err)
+		}
+	}
+	return nil
+}
+
+func installOperator(ctx context.Context) error {
+	manifests, err := runCmd(ctx, kustomizeBinary(), "build", filepath.Join(repositoryRoot(), "config", "kind-e2e"))
+	if err != nil {
+		return fmt.Errorf("building Kind operator manifests: %w", err)
+	}
+	if _, err := kubectlStdin(ctx, manifests, "apply", "-f", "-"); err != nil {
+		return fmt.Errorf("installing Kind operator manifests: %w", err)
+	}
+	if _, err := kubectl(
+		ctx, "set", "image", "deployment/"+operatorDeploymentName,
+		"manager="+operatorImage(), "-n", operatorNamespace,
+	); err != nil {
+		return fmt.Errorf("selecting operator image %q: %w", operatorImage(), err)
+	}
+	if _, err := kubectl(
+		ctx, "rollout", "status", "deployment/"+operatorDeploymentName,
+		"-n", operatorNamespace, "--timeout=10m",
+	); err != nil {
+		return fmt.Errorf("waiting for operator deployment: %w", err)
+	}
+	return nil
+}
+
+func repositoryRoot() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		return "."
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
 }
 
 func createKindCluster(ctx context.Context, provider policyProvider) error {
@@ -385,51 +445,10 @@ func pollUntilSuccess(ctx context.Context, timeout, interval time.Duration, fn f
 	return nil
 }
 
-func liveDetection(ctx context.Context, requested policy.Provider) (policy.DetectionResult, error) {
-	config, err := kubeClientConfig()
-	if err != nil {
-		return policy.DetectionResult{}, err
-	}
-	httpClient, err := rest.HTTPClientFor(config)
-	if err != nil {
-		return policy.DetectionResult{}, fmt.Errorf("creating Kubernetes HTTP client: %w", err)
-	}
-	restMapper, err := apiutil.NewDynamicRESTMapper(config, httpClient)
-	if err != nil {
-		return policy.DetectionResult{}, fmt.Errorf("creating Kubernetes REST mapper: %w", err)
-	}
-
-	scheme := runtime.NewScheme()
-	for _, addToScheme := range []func(*runtime.Scheme) error{
-		corev1.AddToScheme,
-		appsv1.AddToScheme,
-		apiextensionsv1.AddToScheme,
-	} {
-		if err := addToScheme(scheme); err != nil {
-			return policy.DetectionResult{}, fmt.Errorf("registering Kubernetes scheme: %w", err)
-		}
-	}
-	kubeClient, err := client.New(config, client.Options{Scheme: scheme})
-	if err != nil {
-		return policy.DetectionResult{}, fmt.Errorf("creating Kubernetes client: %w", err)
-	}
-	detector := policy.Detector{Client: kubeClient, RESTMapper: restMapper}
-	return policy.Detect(detector.Discover(ctx), requested), nil
-}
-
-func kubeClientConfig() (*rest.Config, error) {
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	overrides := &clientcmd.ConfigOverrides{CurrentContext: clusterContext}
-	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
-	if err != nil {
-		return nil, fmt.Errorf("loading kubeconfig for %s: %w", clusterContext, err)
-	}
-	return config, nil
-}
-
 func collectDiagnostics(ctx context.Context) {
-	_, _ = kubectl(ctx, "get", "pods", "-A", "-o", "wide")                 //nolint:errcheck
-	_, _ = kubectl(ctx, "get", "events", "-A", "--sort-by=.lastTimestamp") //nolint:errcheck
+	_, _ = kubectl(ctx, "get", "pods", "-A", "-o", "wide")                          //nolint:errcheck
+	_, _ = kubectl(ctx, "get", "events", "-A", "--sort-by=.lastTimestamp")          //nolint:errcheck
+	_, _ = kubectl(ctx, "get", "kubernaut", "-n", kubernautNamespace, "-o", "yaml") //nolint:errcheck
 	if configuredProvider == providerCilium {
 		_, _ = kubectl(ctx, "get", "ciliumnetworkpolicies.cilium.io", "-A", "-o", "yaml") //nolint:errcheck
 	}
@@ -438,10 +457,8 @@ func collectDiagnostics(ctx context.Context) {
 	}
 }
 
-func cleanupProbeNamespace(ctx context.Context) {
-	if _, err := kubectl(
-		ctx, "delete", "namespace", probeNamespace, "--ignore-not-found=true", "--wait=false",
-	); err != nil {
-		_, _ = fmt.Fprintf(GinkgoWriter, "warning: deleting probe namespace failed: %v\n", err) //nolint:errcheck
+func cleanupProbeWorkloads(ctx context.Context) {
+	if err := deleteProbeWorkloads(ctx); err != nil {
+		_, _ = fmt.Fprintf(GinkgoWriter, "warning: deleting probe workloads failed: %v\n", err) //nolint:errcheck
 	}
 }

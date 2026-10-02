@@ -1681,7 +1681,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubern
 		AlertManagerURL:     effectiveAlertManagerURL(knV2),
 		AlertManagerEnabled: knV2.Spec.Monitoring.AlertManager.AlertManagerEnabled(),
 		ConnectionTimeout:   "10s",
-		TLSCaFile:           effectiveEMTLSCaFile(knV2, "/etc/ssl/em/service-ca.crt"),
+		TLSCaFile:           effectiveEMTLSCaFile(knV2, effectiveEMDefaultTLSCAFile(kn)),
 	}
 	data, err := marshalYAML(cfg)
 	if err != nil {

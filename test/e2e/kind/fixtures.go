@@ -27,17 +27,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/yaml"
-
-	"github.com/jordigilh/kubernaut-operator/internal/policy"
 )
 
 const (
-	probeClientRole = "client"
-	probeTargetRole = "target"
-	blockedRole     = "blocked"
-	probeImage      = "docker.io/curlimages/curl:8.11.1"
-	serverImage     = "docker.io/hashicorp/http-echo:1.0.0"
-	userPolicyName  = "user-owned-policy"
+	probeClientRole          = "client"
+	probeUnmanagedClientRole = "unmanaged-client"
+	probeTargetRole          = "target"
+	probeImage               = "docker.io/curlimages/curl:8.11.1"
+	serverImage              = "docker.io/hashicorp/http-echo:1.0.0"
+	userPolicyName           = "user-owned-policy"
+	policyProbeComponent     = "aianalysis"
 )
 
 func ensureProbeWorkloads(ctx context.Context) error {
@@ -46,13 +45,12 @@ func ensureProbeWorkloads(ctx context.Context) error {
 		return fmt.Errorf("creating probe namespace: %w", err)
 	}
 
-	clientLabels := probeLabels(probeClientRole)
-	targetLabels := probeLabels(probeTargetRole)
-	blockedLabels := map[string]string{
-		"app":       "blocked",
-		"e2e-role":  blockedRole,
-		"component": "unmanaged",
+	clientLabels := managedProbeLabels(probeClientRole)
+	unmanagedClientLabels := map[string]string{
+		"app":      "probe",
+		"e2e-role": probeUnmanagedClientRole,
 	}
+	targetLabels := managedProbeLabels(probeTargetRole)
 
 	objects := []interface{}{
 		probeDeployment(
@@ -60,20 +58,19 @@ func ensureProbeWorkloads(ctx context.Context) error {
 			[]string{"sh", "-c"}, []string{"while true; do sleep 3600; done"},
 		),
 		probeDeployment(
+			probeNamespace, "probe-unmanaged-client", unmanagedClientLabels, probeImage,
+			[]string{"sh", "-c"}, []string{"while true; do sleep 3600; done"},
+		),
+		probeDeployment(
 			probeNamespace, "probe-target", targetLabels, serverImage,
 			nil, []string{"-listen=:8080", "-text=ok"},
 		),
-		probeDeployment(
-			probeNamespace, "probe-blocked", blockedLabels, serverImage,
-			nil, []string{"-listen=:8080", "-text=blocked"},
-		),
 		probeService(probeNamespace, "probe-target", targetLabels),
-		probeService(probeNamespace, "probe-blocked", blockedLabels),
 	}
 	if err := applyYAML(ctx, objects...); err != nil {
 		return err
 	}
-	for _, name := range []string{"probe-client", "probe-target", "probe-blocked"} {
+	for _, name := range []string{"probe-client", "probe-unmanaged-client", "probe-target"} {
 		if _, err := kubectl(
 			ctx, "wait", "--for=condition=Available", "deployment/"+name,
 			"-n", probeNamespace, "--timeout=5m",
@@ -86,12 +83,18 @@ func ensureProbeWorkloads(ctx context.Context) error {
 
 func probeLabels(role string) map[string]string {
 	return map[string]string{
-		"app":                          "probe",
-		"e2e-role":                     role,
-		"app.kubernetes.io/managed-by": "kubernaut-operator",
-		"app.kubernetes.io/instance":   probeNamespace,
-		"app.kubernetes.io/component":  "probe",
+		"app":      "probe",
+		"e2e-role": role,
 	}
+}
+
+func managedProbeLabels(role string) map[string]string {
+	labels := probeLabels(role)
+	labels["app"] = policyProbeComponent
+	labels["app.kubernetes.io/managed-by"] = "kubernaut-operator"
+	labels["app.kubernetes.io/instance"] = "kubernaut"
+	labels["app.kubernetes.io/component"] = policyProbeComponent
+	return labels
 }
 
 func probeDeployment(
@@ -159,22 +162,13 @@ func applyYAML(ctx context.Context, objects ...interface{}) error {
 	return nil
 }
 
-func applyNativePolicies(ctx context.Context, objects []policy.RenderedPolicy) error {
-	for _, rendered := range objects {
-		encoded, err := yaml.Marshal(rendered.Object.Object)
-		if err != nil {
-			return fmt.Errorf("marshalling %s/%s: %w", rendered.Object.GetKind(), rendered.Object.GetName(), err)
-		}
-		if _, err := kubectlStdin(ctx, string(encoded), "apply", "-f", "-"); err != nil {
-			return fmt.Errorf("applying %s/%s: %w", rendered.Object.GetKind(), rendered.Object.GetName(), err)
-		}
-	}
-	return nil
+func probeHTTP(ctx context.Context, serviceName string) (bool, error) {
+	return probeHTTPFromRole(ctx, serviceName, probeClientRole)
 }
 
-func probeHTTP(ctx context.Context, serviceName string) (bool, error) {
+func probeHTTPFromRole(ctx context.Context, serviceName, role string) (bool, error) {
 	podOutput, err := kubectl(
-		ctx, "get", "pods", "-n", probeNamespace, "-l", "e2e-role="+probeClientRole,
+		ctx, "get", "pods", "-n", probeNamespace, "-l", "e2e-role="+role,
 		"-o", "jsonpath={.items[0].metadata.name}",
 	)
 	if err != nil {
@@ -204,19 +198,6 @@ func nativePolicyResource(provider policyProvider) string {
 	default:
 		return ""
 	}
-}
-
-func deleteManagedNativePolicies(ctx context.Context) error {
-	resource := nativePolicyResource(configuredProvider)
-	if resource == "" {
-		return nil
-	}
-	if _, err := kubectl(
-		ctx, "delete", resource, "-n", probeNamespace, "-l", managedPolicyLabel, "--ignore-not-found=true",
-	); err != nil {
-		return fmt.Errorf("deleting managed native policies: %w", err)
-	}
-	return nil
 }
 
 func noManagedPolicies(ctx context.Context) error {
@@ -271,8 +252,8 @@ func applyUnmanagedNativePolicy(ctx context.Context) error {
 				"name":      userPolicyName,
 				"namespace": probeNamespace,
 				"labels": map[string]string{
-					policy.ManagedPolicyLabel: "false",
-					policy.ManagedByLabel:     "user",
+					"kubernaut.ai/managed-policy":  "false",
+					"app.kubernetes.io/managed-by": "user",
 				},
 			},
 			"spec": map[string]interface{}{
@@ -294,8 +275,8 @@ func applyUnmanagedNativePolicy(ctx context.Context) error {
 				"name":      userPolicyName,
 				"namespace": probeNamespace,
 				"labels": map[string]string{
-					policy.ManagedPolicyLabel: "false",
-					policy.ManagedByLabel:     "user",
+					"kubernaut.ai/managed-policy":  "false",
+					"app.kubernetes.io/managed-by": "user",
 				},
 			},
 			"spec": map[string]interface{}{
@@ -329,24 +310,51 @@ func unmanagedNativePolicyExists(ctx context.Context) error {
 	return nil
 }
 
-func deleteProbeNamespace(ctx context.Context) error {
-	if _, err := kubectl(
-		ctx, "delete", "namespace", probeNamespace, "--ignore-not-found=true", "--wait=false",
-	); err != nil {
-		return err
+// deleteProbeWorkloads removes only the fixtures created by this suite.
+// probeNamespace intentionally aliases kubernautNamespace so provider-native
+// selectors see the same namespace as the reconciled Kubernaut workloads; the
+// namespace also contains operator-managed resources and must never be deleted
+// as probe cleanup.
+func deleteProbeWorkloads(ctx context.Context) error {
+	for _, resource := range []string{
+		"deployment/probe-client",
+		"deployment/probe-unmanaged-client",
+		"deployment/probe-target",
+		"service/probe-target",
+	} {
+		if _, err := kubectl(
+			ctx, "delete", resource, "-n", probeNamespace,
+			"--ignore-not-found=true", "--wait=false",
+		); err != nil {
+			return fmt.Errorf("deleting probe %s: %w", resource, err)
+		}
 	}
+	if resource := nativePolicyResource(configuredProvider); resource != "" {
+		if _, err := kubectl(
+			ctx, "delete", resource, userPolicyName, "-n", probeNamespace,
+			"--ignore-not-found=true", "--wait=false",
+		); err != nil {
+			return fmt.Errorf("deleting user-owned provider policy: %w", err)
+		}
+	}
+
 	return pollUntilSuccess(ctx, 2*time.Minute, 2*time.Second, func() error {
-		output, err := kubectl(ctx, "get", "namespace", probeNamespace)
-		if err != nil && (strings.Contains(output, "NotFound") || strings.Contains(output, "not found")) {
-			return nil
+		for _, resource := range []string{
+			"deployment/probe-client",
+			"deployment/probe-unmanaged-client",
+			"deployment/probe-target",
+			"service/probe-target",
+		} {
+			output, err := kubectl(ctx, "get", resource, "-n", probeNamespace)
+			if err != nil && (strings.Contains(output, "NotFound") || strings.Contains(output, "not found")) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("checking probe %s deletion: %w", resource, err)
+			}
+			return fmt.Errorf("probe %s still exists", resource)
 		}
-		if err != nil {
-			return fmt.Errorf("checking probe namespace deletion: %w", err)
-		}
-		if strings.TrimSpace(output) != "" {
-			return fmt.Errorf("probe namespace still exists")
-		}
-		return fmt.Errorf("probe namespace still exists")
+		return nil
 	})
 }
 
@@ -363,21 +371,6 @@ func ensureNoRawNetworkPolicy(ctx context.Context) error {
 		return fmt.Errorf("raw Kubernetes NetworkPolicy fallback exists: %s", strings.TrimSpace(output))
 	}
 	return nil
-}
-
-func intentForProbe() (policy.Intent, error) {
-	return policy.BuildIntent(probeNamespace, []string{"probe"}, nil)
-}
-
-func policyProviderForTest() policy.Provider {
-	switch configuredProvider {
-	case providerCilium:
-		return policy.ProviderCilium
-	case providerCalico:
-		return policy.ProviderCalico
-	default:
-		return policy.ProviderAuto
-	}
 }
 
 func collectProbeDiagnostics(ctx context.Context) {

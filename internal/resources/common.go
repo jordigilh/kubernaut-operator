@@ -297,6 +297,13 @@ func effectiveEMTLSCaFile(knV2 *kubernautv1alpha2.Kubernaut, defaultPath string)
 	return withDefault(withDefault(knV2.Spec.Monitoring.Prometheus.TLSCaFile, knV2.Spec.Monitoring.AlertManager.TLSCaFile), defaultPath)
 }
 
+func effectiveEMDefaultTLSCAFile(kn *kubernautv1alpha2.Kubernaut) string {
+	if usesOpenShiftServiceCA(kn) {
+		return "/etc/ssl/em/service-ca.crt"
+	}
+	return InterServiceTLSCAFile
+}
+
 // OCP well-known namespaces.
 const (
 	OCPDNSNamespace        = "openshift-dns"
@@ -352,6 +359,14 @@ func ActiveComponents(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.K
 		}
 	}
 	return active
+}
+
+// usesOpenShiftServiceCA reports whether the legacy empty TLS mode is in use.
+// The controller admits that mode only after discovering the OpenShift
+// service-CA capability; every explicit TLS mode is portable and must not
+// render OpenShift-only CA volumes or init containers.
+func usesOpenShiftServiceCA(kn *kubernautv1alpha2.Kubernaut) bool {
+	return kn != nil && kn.Spec.TLS.Mode == ""
 }
 
 // CommonLabels returns the base label set applied to every managed resource.

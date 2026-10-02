@@ -17,6 +17,8 @@ limitations under the License.
 package resources
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -25,6 +27,7 @@ import (
 
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
@@ -102,6 +105,31 @@ var _ = Describe("ClusterRoles", func() {
 		for _, role := range namespacedRoles {
 			assertNoRawNetworkPolicy(role.Name, role.Rules)
 		}
+	})
+
+	It("grants Calico tier and tiered-policy access in the generated manager role", func() {
+		manifest, err := os.ReadFile(filepath.Join("..", "..", "config", "rbac", "role.yaml"))
+		Expect(err).NotTo(HaveOccurred())
+
+		role := &rbacv1.ClusterRole{}
+		Expect(yaml.Unmarshal(manifest, role)).To(Succeed())
+
+		var tierRule *rbacv1.PolicyRule
+		var tierPolicyRule *rbacv1.PolicyRule
+		for i := range role.Rules {
+			rule := &role.Rules[i]
+			if slices.Contains(rule.APIGroups, "projectcalico.org") && slices.Contains(rule.Resources, "tiers") {
+				tierRule = rule
+			}
+			if slices.Contains(rule.APIGroups, "projectcalico.org") && slices.Contains(rule.Resources, "tier.networkpolicies") {
+				tierPolicyRule = rule
+			}
+		}
+
+		Expect(tierRule).NotTo(BeNil(), "manager role must read Calico tiers for native NetworkPolicy authorization")
+		Expect(tierRule.Verbs).To(ConsistOf("get", "list", "watch"))
+		Expect(tierPolicyRule).NotTo(BeNil(), "manager role must manage Calico tiered NetworkPolicies")
+		Expect(tierPolicyRule.Verbs).To(ConsistOf("create", "delete", "get", "list", "patch", "update", "watch"))
 	})
 
 	Describe("GatewayClusterRole", func() {

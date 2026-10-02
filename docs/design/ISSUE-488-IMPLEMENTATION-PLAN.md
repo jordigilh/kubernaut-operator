@@ -5,9 +5,10 @@
 **Parent initiative:** [#486](https://github.com/jordigilh/kubernaut-operator/issues/486)
 
 **Status:** Core clean-break, platform-capability, TLS/exposure, monitoring,
-native-policy, RBAC, and packaging implementation complete on the working
-branch; live provider/OpenShift qualification and final repository checks remain
-environment-dependent validation.
+native-policy, RBAC, packaging, and generic/Cilium/Calico Kind qualification are
+complete on the working branch. Live OpenShift qualification remains blocked by
+the local `oc` environment; Helm bootstrap scope remains a separate unresolved
+packaging item.
 
 **Methodology:** RED → GREEN → REFACTOR, with controller wiring verified in
 GREEN and the full unit/integration/E2E pyramid required before completion.
@@ -56,15 +57,16 @@ operator must:
 Current baseline checks already completed:
 
 - `go build ./...`
+- `golangci-lint run`
+- `make test` (88.1% internal unit coverage; 78.0% controller integration coverage)
+- `go test ./... -run=^$ -timeout=30s`
+- `make manifests generate`, with no CRD or webhook drift
 - `git diff --check`
-- uncached `go test` for all non-E2E packages; the full `go test ./... -count=1`
-  run reaches the live E2E package and is blocked only by its environment
-  preflight
+- uncached unit and integration tests for all implemented non-E2E packages
 
 Live OpenShift E2E remains environment-blocked because the local OCP kubeconfig
-is incomplete. Provider dataplane lanes require a privileged Docker-backed Kind
-runtime; the generic lane passes locally, while rootless Podman cannot start
-Calico's privileged node agent.
+is incomplete. The Cilium and Calico dataplane lanes require a privileged
+runtime; they were qualified locally with the rootful Podman connection.
 
 ## 3. Approval gates
 
@@ -280,4 +282,8 @@ The initiative is complete only when:
 | 2026-10-01 | Phase 1 RED/GREEN/REFACTOR | v1alpha2-only controller/resource/webhook path; conversion registration and v1alpha1 API/sample surface removed |
 | 2026-10-01 | Phase 1 CHECK | `make test-unit` passed; `make test-integration` passed; controller coverage 79.1%; generated CRD has only v1alpha2 |
 | 2026-10-01 | Final repository CHECK | `make test`, `go build ./...`, `go vet ./...`, `golangci-lint run`, `make manifests generate`, `make bundle`, `make build-installer`, and `git diff --check` passed; uncached non-E2E packages passed. Live OCP E2E and provider dataplane enforcement remain blocked by the unavailable `oc` kubeconfig/provider APIs. |
-| 2026-10-01 | Kind lane CHECK | Generic Kind passed locally. Cilium and Calico lanes are pinned as independent CI jobs; local rootless Podman cannot qualify their privileged dataplanes. |
+| 2026-10-01 | Kind lane CHECK | The production-manifest harness reached the real operator and component images. The first generic lifecycle run exposed OpenShift-only CA init wiring in explicit generic TLS; the adapter split was fixed. Cilium and Calico remain pinned as independent CI jobs; local rootless Podman cannot qualify their privileged dataplanes. |
+| 2026-10-02 | Provider/wiring CHECK | Cilium deployment-phase envtest wiring passed; manager startup, monitoring resource creation, and stale-route cleanup coverage raised the controller suite to 78.0%. `make test-integration` now enforces the 78% floor. |
+| 2026-10-02 | Unit/static CHECK | `make test-unit` passed at 88.1% internal unit coverage; `go build ./...`, `go vet ./...`, `golangci-lint run`, Kind package compile/vet, `make test-pyramid`, and `git diff --check` passed. |
+| 2026-10-02 | Calico RBAC CHECK | Calico's extension API required `projectcalico.org` tier read access and the `tier.networkpolicies` pseudo-resource. Generated manager RBAC now grants only `get/list/watch` on tiers and the existing NetworkPolicy CRUD verbs on the pseudo-resource; a regression test covers both rules. |
+| 2026-10-02 | Kind provider CHECK | Fresh production-manifest lanes passed with `kubernaut-operator:1.6.0-rc20` and matching component images: generic (3/3), Cilium 1.20.2 (3/3), and Calico 3.31.4 (3/3). Each verified CR lifecycle/status, native enforcement where applicable, finalizer cleanup, and preservation of an unmanaged provider policy. Rootless Podman cannot mount Cilium BPF; the successful provider runs used the rootful Podman connection. OCP E2E remains blocked by the incomplete local `oc` kubeconfig. |

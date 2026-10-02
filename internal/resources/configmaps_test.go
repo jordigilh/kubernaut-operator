@@ -1255,6 +1255,16 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("tlsCaFile: /etc/ssl/em/service-ca.crt"), "EM config should contain external.tlsCaFile when monitoring enabled, got:\n%s", data)
 		})
 
+		It("uses the shared trust-bundle path for explicit generic TLS", func() {
+			kn := testKubernautWithDevelopmentTLS()
+			cm, err := EffectivenessMonitorConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			data := cm.Data["effectivenessmonitor.yaml"]
+			Expect(data).To(ContainSubstring("tlsCaFile: " + InterServiceTLSCAFile))
+			Expect(data).NotTo(ContainSubstring("/etc/ssl/em/service-ca.crt"))
+		})
+
 		// #298: spec.monitoring.prometheus.url/spec.monitoring.alertManager.url
 		// were CRD fields with zero non-test references anywhere in the
 		// codebase -- setting them had no effect on the rendered config. This

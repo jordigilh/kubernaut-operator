@@ -383,47 +383,50 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernau
 }
 
 // EffectivenessMonitorDeployment builds the effectivenessmonitor Deployment.
-// When OCP monitoring is enabled, a wait-for-service-ca init container is
-// included to block startup until the service-CA ConfigMap is populated,
-// preventing CrashLoopBackOff on fresh installs where the CA injection is
-// asynchronous.
+// When the legacy OpenShift service-CA mode is selected, a wait-for-service-ca
+// init container is included to block startup until the injected ConfigMap is
+// populated. Explicit generic TLS modes do not render this OpenShift adapter.
 func EffectivenessMonitorDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	volumes := []corev1.Volume{
 		configMapVolume("config", "effectivenessmonitor-config"),
-		configMapVolume("service-ca", "effectivenessmonitor-service-ca"),
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: "config", MountPath: "/etc/effectivenessmonitor", ReadOnly: true},
-		{Name: "service-ca", MountPath: "/etc/ssl/em", ReadOnly: true},
 	}
 
-	emUbiImage, emErr := ResolveImage(kn, "init-ubi-minimal")
-	if emErr != nil {
-		return nil, emErr
+	var initContainers []corev1.Container
+	if usesOpenShiftServiceCA(kn) {
+		volumes = append(volumes, configMapVolume("service-ca", "effectivenessmonitor-service-ca"))
+		mounts = append(mounts, corev1.VolumeMount{Name: "service-ca", MountPath: "/etc/ssl/em", ReadOnly: true})
+
+		emUbiImage, emErr := ResolveImage(kn, "init-ubi-minimal")
+		if emErr != nil {
+			return nil, emErr
+		}
+		initContainers = []corev1.Container{{
+			Name:            "wait-for-service-ca",
+			Image:           emUbiImage,
+			ImagePullPolicy: kn.Spec.Image.PullPolicy,
+			Command:         []string{"sh", "-c"},
+			Args: []string{
+				`while [ ! -s /etc/ssl/em/service-ca.crt ]; do echo "waiting for service-ca.crt..."; sleep 2; done`,
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: "service-ca", MountPath: "/etc/ssl/em", ReadOnly: true},
+			},
+			SecurityContext: ContainerSecurityContext(),
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("10m"),
+					corev1.ResourceMemory: resource.MustParse("16Mi"),
+				},
+				Limits: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("50m"),
+					corev1.ResourceMemory: resource.MustParse("32Mi"),
+				},
+			},
+		}}
 	}
-	initContainers := []corev1.Container{{
-		Name:            "wait-for-service-ca",
-		Image:           emUbiImage,
-		ImagePullPolicy: kn.Spec.Image.PullPolicy,
-		Command:         []string{"sh", "-c"},
-		Args: []string{
-			`while [ ! -s /etc/ssl/em/service-ca.crt ]; do echo "waiting for service-ca.crt..."; sleep 2; done`,
-		},
-		VolumeMounts: []corev1.VolumeMount{
-			{Name: "service-ca", MountPath: "/etc/ssl/em", ReadOnly: true},
-		},
-		SecurityContext: ContainerSecurityContext(),
-		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("10m"),
-				corev1.ResourceMemory: resource.MustParse("16Mi"),
-			},
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("50m"),
-				corev1.ResourceMemory: resource.MustParse("32Mi"),
-			},
-		},
-	}}
 
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
@@ -599,18 +602,24 @@ func kaCoreVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut, kaProfile kubernaut
 		corev1.EnvVar{Name: "GOOGLE_APPLICATION_CREDENTIALS", Value: "/etc/kubernaut-agent/credentials/credentials.json"},
 	)
 
-	volumes = append(volumes,
-		configMapVolume("service-ca", "kubernaut-agent-service-ca"),
-		corev1.Volume{Name: "combined-ca", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-	)
-	mounts = append(mounts,
-		corev1.VolumeMount{Name: "service-ca", MountPath: "/etc/ssl/ka", ReadOnly: true},
-		corev1.VolumeMount{Name: "combined-ca", MountPath: "/etc/ssl/combined", ReadOnly: true},
-	)
-	envVars = append(envVars,
-		corev1.EnvVar{Name: "IS_OPENSHIFT", Value: "True"},
-		corev1.EnvVar{Name: "SSL_CERT_FILE", Value: "/etc/ssl/combined/ca-bundle.crt"},
-	)
+	if usesOpenShiftServiceCA(kn) {
+		volumes = append(volumes,
+			configMapVolume("service-ca", "kubernaut-agent-service-ca"),
+			corev1.Volume{Name: "combined-ca", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		)
+		mounts = append(mounts,
+			corev1.VolumeMount{Name: "service-ca", MountPath: "/etc/ssl/ka", ReadOnly: true},
+			corev1.VolumeMount{Name: "combined-ca", MountPath: "/etc/ssl/combined", ReadOnly: true},
+		)
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "IS_OPENSHIFT", Value: "True"},
+			corev1.EnvVar{Name: "SSL_CERT_FILE", Value: "/etc/ssl/combined/ca-bundle.crt"},
+		)
+	} else {
+		// Explicit generic TLS uses TLS_CA_FILE for operator-managed service
+		// trust and does not render the OpenShift-only CA adapter volumes.
+		envVars = append(envVars, corev1.EnvVar{Name: "IS_OPENSHIFT", Value: "False"})
+	}
 	return volumes, mounts, envVars
 }
 
@@ -687,6 +696,9 @@ func kaResources(kn *kubernautv1alpha2.Kubernaut) corev1.ResourceRequirements {
 // than kubernaut-agent-service-ca's own narrower service-ca-only bundle,
 // since tls-ca's content is a strict superset (service-ca + router CA).
 func kaInitContainers(kn *kubernautv1alpha2.Kubernaut) ([]corev1.Container, error) {
+	if !usesOpenShiftServiceCA(kn) {
+		return nil, nil
+	}
 	kaUbiImage, err := ResolveImage(kn, "init-ubi-minimal")
 	if err != nil {
 		return nil, err
@@ -725,7 +737,6 @@ func kaServiceAccountTokenVolume() (corev1.Volume, corev1.VolumeMount) {
 						ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
 							Path:              "token",
 							ExpirationSeconds: ptr.To[int64](3600),
-							Audience:          "https://kubernetes.default.svc",
 						},
 					},
 					{
@@ -822,14 +833,13 @@ func apifrontendBaseVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut, sidecar Ka
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
 		{Name: "TLS_CA_FILE", Value: "/etc/apifrontend/tls-ca/ca.crt"},
+	}
+	if usesOpenShiftServiceCA(kn) {
 		// SSL_CERT_FILE points at AF's own merged (system+inter-service)
 		// bundle, not the narrower /etc/apifrontend/tls-ca/ca.crt above
-		// (#404) -- Go's SSL_CERT_FILE replaces rather than extends the
-		// system trust store, and AF's severityTriage/LLM profile can point
-		// at a public-CA provider (Vertex AI/Anthropic/OpenAI), which that
-		// narrower, router+service-ca-only file doesn't cover. Built by the
-		// build-ca-bundle init container below (mirrors KA's pattern).
-		{Name: "SSL_CERT_FILE", Value: "/etc/ssl/combined/ca-bundle.crt"},
+		// (#404). Go's SSL_CERT_FILE replaces rather than extends the system
+		// trust store, so the OpenShift path must use the merged bundle.
+		env = append(env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: "/etc/ssl/combined/ca-bundle.crt"})
 	}
 	if sidecar != KagentiSidecarNone {
 		noProxy := fmt.Sprintf("127.0.0.1,localhost,kubernaut-agent.%s.svc.cluster.local,data-storage-service.%s.svc.cluster.local", ns, ns)
@@ -847,16 +857,22 @@ func apifrontendBaseVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut, sidecar Ka
 				Optional:             ptr.To(true),
 			},
 		}},
-		configMapVolume("service-ca", "apifrontend-service-ca"),
-		{Name: "combined-ca", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: "tmp", MountPath: "/tmp"},
 		{Name: "config", MountPath: "/etc/apifrontend", ReadOnly: true},
 		{Name: "tls-server", MountPath: "/etc/apifrontend/tls", ReadOnly: true},
 		{Name: "tls-ca", MountPath: "/etc/apifrontend/tls-ca", ReadOnly: true},
-		{Name: "service-ca", MountPath: "/etc/ssl/af", ReadOnly: true},
-		{Name: "combined-ca", MountPath: "/etc/ssl/combined", ReadOnly: true},
+	}
+	if usesOpenShiftServiceCA(kn) {
+		volumes = append(volumes,
+			configMapVolume("service-ca", "apifrontend-service-ca"),
+			corev1.Volume{Name: "combined-ca", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		)
+		mounts = append(mounts,
+			corev1.VolumeMount{Name: "service-ca", MountPath: "/etc/ssl/af", ReadOnly: true},
+			corev1.VolumeMount{Name: "combined-ca", MountPath: "/etc/ssl/combined", ReadOnly: true},
+		)
 	}
 	return volumes, mounts, env
 }
@@ -868,6 +884,9 @@ func apifrontendBaseVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut, sidecar Ka
 // SSL_CERT_FILE (apifrontendBaseVolumesMountsEnv) points at this merged
 // bundle rather than the narrower, router+service-ca-only tls-ca file.
 func afInitContainers(kn *kubernautv1alpha2.Kubernaut) ([]corev1.Container, error) {
+	if !usesOpenShiftServiceCA(kn) {
+		return nil, nil
+	}
 	afUbiImage, err := ResolveImage(kn, "init-ubi-minimal")
 	if err != nil {
 		return nil, err

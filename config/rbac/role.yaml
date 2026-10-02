@@ -228,6 +228,7 @@ rules:
   - projectcalico.org
   resources:
   - networkpolicies
+  - tier.networkpolicies
   verbs:
   - create
   - delete
@@ -235,6 +236,14 @@ rules:
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - projectcalico.org
+  resources:
+  - tiers
+  verbs:
+  - get
+  - list
   - watch
 - apiGroups:
   - rbac.authorization.k8s.io

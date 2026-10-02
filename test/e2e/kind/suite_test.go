@@ -68,12 +68,24 @@ var _ = BeforeSuite(func() {
 
 	By("waiting for cluster DNS")
 	Expect(waitForDNS(ctx)).To(Succeed())
+
+	By("loading the operator image into Kind")
+	Expect(loadOperatorImage(ctx)).To(Succeed())
+
+	By("loading the Kubernaut infrastructure images into Kind")
+	Expect(loadInfrastructureImages(ctx)).To(Succeed())
+
+	By("installing the operator from the production manifests")
+	Expect(installOperator(ctx)).To(Succeed())
+
+	By("installing the Kubernaut E2E prerequisites")
+	Expect(ensureKubernautInfrastructure(ctx)).To(Succeed())
 })
 
 var _ = AfterSuite(func() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	cleanupProbeNamespace(ctx)
+	cleanupProbeWorkloads(ctx)
 	deleteKindCluster(ctx)
 })

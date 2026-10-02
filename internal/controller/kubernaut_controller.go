@@ -149,6 +149,12 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=cilium.io,resources=ciliumnetworkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=projectcalico.org,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+// Calico authorizes namespaced NetworkPolicy access through the referenced tier.
+// Read-only tier access is sufficient for policy reconciliation and cleanup.
+// +kubebuilder:rbac:groups=projectcalico.org,resources=tiers,verbs=get;list;watch
+// Calico's extension API maps CRUD access to the tiered pseudo-resource rather
+// than the ordinary NetworkPolicy resource.
+// +kubebuilder:rbac:groups=projectcalico.org,resources=tier.networkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=policy.networking.k8s.io,resources=adminnetworkpolicies;baselineadminnetworkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes/custom-host,verbs=create;update

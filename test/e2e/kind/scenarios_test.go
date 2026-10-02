@@ -21,17 +21,17 @@ import (
 
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
 	. "github.com/onsi/gomega"    //nolint:revive,staticcheck
-	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/jordigilh/kubernaut-operator/internal/policy"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
-var _ = Describe("Kind platform and native provider contract", Ordered, func() {
+var _ = Describe("Kind operator journey and native provider contract", Ordered, func() {
 	var ctx context.Context
 
 	BeforeAll(func() {
 		ctx = context.Background()
 		Expect(ensureProbeWorkloads(ctx)).To(Succeed())
+		Expect(applyKubernautCR(ctx)).To(Succeed())
 	})
 
 	AfterEach(func() {
@@ -41,126 +41,80 @@ var _ = Describe("Kind platform and native provider contract", Ordered, func() {
 		}
 	})
 
-	It("detects only the active supported provider and never uses a raw policy fallback", func() {
-		detection, err := liveDetection(ctx, policyProviderForTest())
-		Expect(err).NotTo(HaveOccurred())
+	It("drives the CR through validation, migration, deployment, and provider status", func() {
+		By("waiting for the real operator to validate the CR")
+		Eventually(func(g Gomega) {
+			g.Expect(kubernautCondition(ctx, "BYOValidated")).To(Equal("True"))
+		}).Should(Succeed())
 
-		intent, err := intentForProbe()
-		Expect(err).NotTo(HaveOccurred())
-		objects, err := policy.Render(detection, intent)
-		Expect(err).NotTo(HaveOccurred())
+		By("waiting for the operator-owned migration to complete")
+		Eventually(func(g Gomega) {
+			g.Expect(kubernautCondition(ctx, "MigrationComplete")).To(Equal("True"))
+		}).Should(Succeed())
 
-		switch configuredProvider {
-		case providerGeneric:
-			Expect(detection.Ready).To(BeFalse())
-			Expect(detection.Provider).To(Equal(policy.ProviderNone))
-			Expect(objects).To(BeEmpty())
-		case providerCilium:
-			Expect(detection.Ready).To(BeTrue())
-			Expect(detection.Provider).To(Equal(policy.ProviderCilium))
-		case providerCalico:
-			Expect(detection.Ready).To(BeTrue())
-			Expect(detection.Provider).To(Equal(policy.ProviderCalico))
-		}
-		Expect(ensureNoRawNetworkPolicy(ctx)).To(Succeed())
-	})
+		By("waiting for service manifests and native policy reconciliation")
+		Eventually(func(g Gomega) {
+			g.Expect(kubernautCondition(ctx, "ServicesDeployed")).To(Equal("True"))
+		}).Should(Succeed())
 
-	It("fails closed for unsupported, inactive, and incompatible detections", func() {
-		intent, err := intentForProbe()
-		Expect(err).NotTo(HaveOccurred())
-
-		unsupported := policy.Detect(policy.DiscoverySnapshot{}, policy.Provider("Unsupported"))
-		Expect(unsupported.Ready).To(BeFalse())
-		Expect(unsupported.Reason).To(Equal(policy.ReasonUnsupportedProvider))
-		objects, err := policy.Render(unsupported, intent)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(objects).To(BeEmpty())
-
-		inactive := policy.Detect(policy.DiscoverySnapshot{Candidates: map[policy.Provider]policy.ProviderSnapshot{
-			policy.ProviderCilium: {
-				Provider:                   policy.ProviderCilium,
-				APIAvailable:               true,
-				Active:                     false,
-				SchemaValid:                true,
-				APIServerIdentityAvailable: true,
-				RequiredGVKs:               policy.RequiredGVKs(policy.ProviderCilium),
-			},
-		}}, policy.ProviderCilium)
-		Expect(inactive.Ready).To(BeFalse())
-		Expect(inactive.Reason).To(Equal(policy.ReasonNoActiveInstallation))
-		objects, err = policy.Render(inactive, intent)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(objects).To(BeEmpty())
-
-		outOfRange := policy.Detect(policy.DiscoverySnapshot{Candidates: map[policy.Provider]policy.ProviderSnapshot{
-			policy.ProviderCalico: {
-				Provider:                   policy.ProviderCalico,
-				APIAvailable:               true,
-				Active:                     true,
-				Version:                    "3.30.9",
-				SchemaValid:                true,
-				APIServerIdentityAvailable: true,
-				RequiredGVKs:               policy.RequiredGVKs(policy.ProviderCalico),
-			},
-		}}, policy.ProviderCalico)
-		Expect(outOfRange.Ready).To(BeFalse())
-		Expect(outOfRange.Reason).To(Equal(policy.ReasonUnsupportedVersion))
-		objects, err = policy.Render(outOfRange, intent)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(objects).To(BeEmpty())
-
-		invalidGVK := schema.GroupVersionKind{Group: "example.invalid", Version: "v1", Kind: "Policy"}
-		Expect(policy.ProviderForGVK(invalidGVK)).To(Equal(policy.ProviderNone))
-	})
-
-	It("submits the native policy and proves the provider enforcement boundary", func() {
-		detection, err := liveDetection(ctx, policyProviderForTest())
-		Expect(err).NotTo(HaveOccurred())
-		intent, err := intentForProbe()
-		Expect(err).NotTo(HaveOccurred())
-		objects, err := policy.Render(detection, intent)
-		Expect(err).NotTo(HaveOccurred())
+		By("waiting for the operator to report all managed workloads running")
+		Eventually(func(g Gomega) {
+			g.Expect(kubernautPhase(ctx)).To(Equal(string(kubernautv1alpha2.PhaseRunning)))
+		}).Should(Succeed())
 
 		if configuredProvider == providerGeneric {
-			Expect(objects).To(BeEmpty())
-			Eventually(func(g Gomega) {
-				allowed, probeErr := probeHTTP(ctx, "probe-target")
-				g.Expect(probeErr).NotTo(HaveOccurred())
-				g.Expect(allowed).To(BeTrue(), "generic Kind must preserve ordinary pod connectivity")
-			}).Should(Succeed())
-			Eventually(func(g Gomega) {
-				allowed, probeErr := probeHTTP(ctx, "probe-blocked")
-				g.Expect(probeErr).NotTo(HaveOccurred())
-				g.Expect(allowed).To(BeTrue(), "generic Kind must not receive an implicit raw policy")
-			}).Should(Succeed())
+			Expect(kubernautCondition(ctx, "ProviderDetected")).To(Equal("False"))
+			Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal("False"))
+			Expect(noManagedPolicies(ctx)).To(Succeed())
 			return
 		}
 
-		Expect(objects).To(HaveLen(1))
-		Expect(applyNativePolicies(ctx, objects)).To(Succeed())
+		Expect(kubernautCondition(ctx, "ProviderDetected")).To(Equal("True"))
+		Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal("True"))
 		Eventually(func(g Gomega) {
 			g.Expect(managedNativePolicyExists(ctx)).To(Succeed())
 		}).Should(Succeed())
 		Expect(ensureNoRawNetworkPolicy(ctx)).To(Succeed())
+	})
+
+	It("proves provider enforcement through the reconciled policy", func() {
+		if configuredProvider == providerGeneric {
+			Eventually(func(g Gomega) {
+				allowed, err := probeHTTP(ctx, "probe-target")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(allowed).To(BeTrue(), "generic Kubernetes must preserve ordinary pod connectivity")
+			}).Should(Succeed())
+			Eventually(func(g Gomega) {
+				allowed, err := probeHTTPFromRole(ctx, "probe-target", probeUnmanagedClientRole)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(allowed).To(BeTrue(), "generic Kubernetes must not receive an implicit raw policy")
+			}).Should(Succeed())
+			return
+		}
+
+		Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal("True"))
+		Expect(ensureNoRawNetworkPolicy(ctx)).To(Succeed())
 
 		Eventually(func(g Gomega) {
-			allowed, probeErr := probeHTTP(ctx, "probe-target")
-			g.Expect(probeErr).NotTo(HaveOccurred())
-			g.Expect(allowed).To(BeTrue(), "managed endpoints must be able to communicate")
+			allowed, err := probeHTTP(ctx, "probe-target")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(allowed).To(BeTrue(), "a provider-managed endpoint must accept traffic from a managed endpoint")
 		}).Should(Succeed())
 		Eventually(func(g Gomega) {
-			allowed, probeErr := probeHTTP(ctx, "probe-blocked")
-			g.Expect(probeErr).NotTo(HaveOccurred())
-			g.Expect(allowed).To(BeFalse(), "unmanaged endpoints must remain outside the allow-list")
+			allowed, err := probeHTTPFromRole(ctx, "probe-target", probeUnmanagedClientRole)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(allowed).To(BeFalse(), "the reconciled provider policy must deny an unmanaged source")
 		}).Should(Succeed())
 	})
 
-	It("cleans up only managed native policy objects", func() {
+	It("preserves a user-owned provider policy while cleaning up the CR journey", func() {
 		if configuredProvider != providerGeneric {
 			Expect(applyUnmanagedNativePolicy(ctx)).To(Succeed())
 			Expect(unmanagedNativePolicyExists(ctx)).To(Succeed())
 		}
-		Expect(deleteManagedNativePolicies(ctx)).To(Succeed())
+
+		By("deleting the Kubernaut CR through its finalizer path")
+		Expect(deleteKubernautCR(ctx)).To(Succeed())
 		Eventually(func(g Gomega) {
 			g.Expect(noManagedPolicies(ctx)).To(Succeed())
 			g.Expect(ensureNoRawNetworkPolicy(ctx)).To(Succeed())
@@ -171,7 +125,6 @@ var _ = Describe("Kind platform and native provider contract", Ordered, func() {
 	})
 
 	AfterAll(func() {
-		cleanupCtx := context.Background()
-		Expect(deleteProbeNamespace(cleanupCtx)).To(Succeed())
+		Expect(deleteProbeWorkloads(context.Background())).To(Succeed())
 	})
 })

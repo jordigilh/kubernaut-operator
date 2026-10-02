@@ -101,6 +101,12 @@ func expectHasVolume(dep *appsv1.Deployment, name string) {
 	Expect(found).To(BeTrue(), "Deployment %q should have volume %q", dep.Name, name)
 }
 
+func expectNoVolume(dep *appsv1.Deployment, name string) {
+	for _, v := range dep.Spec.Template.Spec.Volumes {
+		Expect(v.Name).NotTo(Equal(name), "Deployment %q should not have volume %q", dep.Name, name)
+	}
+}
+
 func expectVolumeSourceConfigMap(dep *appsv1.Deployment, volumeName, expectedCMName string) {
 	for _, v := range dep.Spec.Template.Spec.Volumes {
 		if v.Name == volumeName {
@@ -568,6 +574,27 @@ var _ = Describe("Deployments", func() {
 			expectHasVolumeMount(dep, "llm-credentials", "/etc/kubernaut-agent/credentials")
 		})
 
+		It("uses the API server default audience for the projected service-account token", func() {
+			kn := testKubernaut()
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			for _, volume := range dep.Spec.Template.Spec.Volumes {
+				if volume.Name != "sa-token" {
+					continue
+				}
+				Expect(volume.Projected).NotTo(BeNil())
+				Expect(volume.Projected.Sources).NotTo(BeEmpty())
+				tokenProjection := volume.Projected.Sources[0].ServiceAccountToken
+				Expect(tokenProjection).NotTo(BeNil())
+				Expect(tokenProjection.Audience).To(BeEmpty(), "the API server must select its own portable service-account audience")
+				Expect(tokenProjection.ExpirationSeconds).NotTo(BeNil())
+				Expect(*tokenProjection.ExpirationSeconds).To(Equal(int64(3600)))
+				return
+			}
+			Fail("sa-token projected volume was not rendered")
+		})
+
 		It("infers the sole spec.llmProfiles entry when kubernautAgent.llmProfileRef is empty", func() {
 			kn := testKubernaut() // exactly one profile ("primary")
 			kn.Spec.KubernautAgent.LLMProfileRef = ""
@@ -641,6 +668,24 @@ var _ = Describe("Deployments", func() {
 				}
 			}
 			Expect(foundMount).To(BeTrue(), "build-ca-bundle init container must mount the tls-ca volume at %s", tlsCAMountPath)
+		})
+
+		It("uses a generic TLS security context and does not advertise OpenShift", func() {
+			kn := testKubernautWithDevelopmentTLS()
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(dep.Spec.Template.Spec.InitContainers).To(BeEmpty())
+			expectNoVolume(dep, "service-ca")
+			expectNoVolume(dep, "combined-ca")
+
+			for _, env := range dep.Spec.Template.Spec.Containers[0].Env {
+				if env.Name == "IS_OPENSHIFT" {
+					Expect(env.Value).To(Equal("False"))
+					return
+				}
+			}
+			Fail("IS_OPENSHIFT environment variable was not rendered")
 		})
 
 		It("KFG-022 [IA-5]: mounts a dedicated phase-credentials Secret volume when a phase's profile has a different credentialsSecretName than KA's (#233)", func() {
@@ -908,6 +953,14 @@ var _ = Describe("Deployments", func() {
 				}
 			}
 			Expect(hasMount).To(BeTrue(), "init container should mount service-ca at /etc/ssl/em")
+		})
+
+		It("does not wait for an OpenShift service CA with generic TLS", func() {
+			kn := testKubernautWithDevelopmentTLS()
+			dep, err := EffectivenessMonitorDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dep.Spec.Template.Spec.InitContainers).To(BeEmpty())
+			expectNoVolume(dep, "service-ca")
 		})
 
 	})
@@ -1629,6 +1682,23 @@ var _ = Describe("APIFrontendDeployment", func() {
 		expectHasVolumeMount(dep, "tls-server", "/etc/apifrontend/tls")
 		expectHasVolumeMount(dep, testVolumeTLSCA, "/etc/apifrontend/tls-ca")
 		expectHasVolumeMount(dep, "tmp", "/tmp")
+	})
+
+	It("does not render OpenShift CA wiring for explicit generic TLS", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
+			DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
+		}
+		dep, err := APIFrontendDeployment(kn, testKnV2(kn), KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(dep.Spec.Template.Spec.InitContainers).To(BeEmpty())
+		expectNoVolume(dep, "service-ca")
+		expectNoVolume(dep, "combined-ca")
+		for _, env := range dep.Spec.Template.Spec.Containers[0].Env {
+			Expect(env.Name).NotTo(Equal(testEnvSSLCertFile))
+		}
 	})
 
 	It("#404 [SC-8]: SSL_CERT_FILE points at a merged system+inter-service bundle built by a build-ca-bundle init container, not the narrower router/service-ca-only bundle", func() {

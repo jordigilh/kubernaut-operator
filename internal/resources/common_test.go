@@ -128,6 +128,15 @@ func testKubernaut() *kubernautv1alpha2.Kubernaut {
 	}
 }
 
+func testKubernautWithDevelopmentTLS() *kubernautv1alpha2.Kubernaut {
+	kn := testKubernaut()
+	kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+		Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
+		DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
+	}
+	return kn
+}
+
 func testKubernautWithAF() *kubernautv1alpha2.Kubernaut {
 	kn := testKubernaut()
 	kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
