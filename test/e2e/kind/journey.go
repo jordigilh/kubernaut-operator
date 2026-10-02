@@ -254,7 +254,7 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 				Overrides:  kubernautImageOverrides(),
 			},
 			PostgreSQL: kubernautv1alpha2.PostgreSQLSpec{
-				SecretName: "postgresql-secret",
+				SecretName: "postgresql-secret", //nolint:gosec // disposable Kind fixture secret reference
 				Host:       "postgresql.kubernaut-system.svc.cluster.local",
 				SSLMode:    "require",
 			},

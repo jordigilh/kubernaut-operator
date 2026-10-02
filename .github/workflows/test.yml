@@ -113,6 +113,11 @@ jobs:
           kind version
           kubectl version --client
 
+      - name: Pull pinned Kubernaut infrastructure images
+        run: |
+          docker pull docker.io/library/postgres:16.4
+          docker pull docker.io/valkey/valkey:8.0.2
+
       - name: Run generic Kind E2E
         env:
           KUBERNAUT_E2E_PROVIDER: generic
@@ -148,6 +153,11 @@ jobs:
           kubectl version --client
           helm version
 
+      - name: Pull pinned Kubernaut infrastructure images
+        run: |
+          docker pull docker.io/library/postgres:16.4
+          docker pull docker.io/valkey/valkey:8.0.2
+
       - name: Run Kind+Cilium E2E
         env:
           KUBERNAUT_E2E_PROVIDER: cilium
@@ -178,6 +188,11 @@ jobs:
           sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
           kind version
           kubectl version --client
+
+      - name: Pull pinned Kubernaut infrastructure images
+        run: |
+          docker pull docker.io/library/postgres:16.4
+          docker pull docker.io/valkey/valkey:8.0.2
 
       - name: Run Kind+Calico E2E
         env:
