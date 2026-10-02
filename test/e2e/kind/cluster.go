@@ -234,6 +234,11 @@ apiVersion: kind.x-k8s.io/v1alpha4
 networking:
   disableDefaultCNI: %t
   podSubnet: %s
+kubeadmConfigPatches:
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      taints: []
 nodes:
   - role: control-plane
     image: %s
