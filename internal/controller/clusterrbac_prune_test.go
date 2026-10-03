@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
+	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
 // Business acceptance criteria (#341, SC-7/AC-6 least-privilege): a
@@ -171,5 +172,80 @@ var _ = Describe("Core cluster-scoped RBAC pruning on feature toggle-off (#341)"
 		err := k8sClient.Get(ctx, types.NamespacedName{Name: testNamespace + "-console-access"}, caCR)
 		Expect(errors.IsNotFound(err)).To(BeTrue(),
 			"console-access ClusterRole should be pruned after apiFrontend.enabled=false, got: %v", err)
+	})
+
+	It("creates hub Fleet caller group RBAC and prunes it when Fleet remote access is disabled (#457)", func() {
+		createBYOSecrets(ctx)
+		Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
+		enableFleetMetadataCache(ctx)
+		reconcileToRunning(ctx)
+
+		By("verifying the operator-created Fleet caller roles and group bindings")
+		nodeRole := &rbacv1.ClusterRole{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{
+			Name: testNamespace + "-fleet-caller-node-reader",
+		}, nodeRole)).To(Succeed())
+		executionRole := &rbacv1.ClusterRole{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{
+			Name: testNamespace + "-fleet-caller-workflow-execution",
+		}, executionRole)).To(Succeed())
+
+		readViewBinding := &rbacv1.ClusterRoleBinding{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{
+			Name: testNamespace + "-fleet-caller-read-view-binding",
+		}, readViewBinding)).To(Succeed())
+		Expect(readViewBinding.RoleRef.Name).To(Equal("view"))
+		Expect(readViewBinding.Subjects).To(ConsistOf(rbacv1.Subject{
+			Kind:     rbacv1.GroupKind,
+			APIGroup: rbacv1.GroupName,
+			Name:     resources.FleetReadGroup,
+		}))
+
+		readNodeBinding := &rbacv1.ClusterRoleBinding{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{
+			Name: testNamespace + "-fleet-caller-read-node-reader-binding",
+		}, readNodeBinding)).To(Succeed())
+		Expect(readNodeBinding.RoleRef.Name).To(Equal(nodeRole.Name))
+
+		executionBinding := &rbacv1.ClusterRoleBinding{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{
+			Name: testNamespace + "-fleet-caller-execution-binding",
+		}, executionBinding)).To(Succeed())
+		Expect(executionBinding.RoleRef.Name).To(Equal(executionRole.Name))
+		Expect(executionBinding.Subjects).To(ConsistOf(rbacv1.Subject{
+			Kind:     rbacv1.GroupKind,
+			APIGroup: rbacv1.GroupName,
+			Name:     resources.FleetExecutionGroup,
+		}))
+
+		By("disabling Fleet remote access")
+		existing := &kubernautv1alpha2.Kubernaut{}
+		Expect(k8sClient.Get(ctx, singletonKey(), existing)).To(Succeed())
+		f := false
+		existing.Spec.Fleet.Enabled = &f
+		Expect(k8sClient.Update(ctx, existing)).To(Succeed())
+
+		r := newReconciler()
+		for i := 0; i < 3; i++ {
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		By("verifying the Fleet caller roles and bindings are pruned")
+		for _, name := range []string{
+			testNamespace + "-fleet-caller-node-reader",
+			testNamespace + "-fleet-caller-workflow-execution",
+		} {
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, &rbacv1.ClusterRole{})
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "ClusterRole %s should be pruned", name)
+		}
+		for _, name := range []string{
+			testNamespace + "-fleet-caller-read-view-binding",
+			testNamespace + "-fleet-caller-read-node-reader-binding",
+			testNamespace + "-fleet-caller-execution-binding",
+		} {
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, &rbacv1.ClusterRoleBinding{})
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "ClusterRoleBinding %s should be pruned", name)
+		}
 	})
 })

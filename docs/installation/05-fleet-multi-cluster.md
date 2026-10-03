@@ -11,7 +11,9 @@ Read this if you're setting up Fleet for the first time and don't already have R
   ┌───────────────────────────────────────────────────────┐
   │  RHBK (Keycloak) -- realm: kubernaut-fleet             │
   │    clients: kube-mcp-server-sts, k8s-api,               │
-  │             kubernaut-fleet-read, console, oc-cli       │
+  │             kubernaut-fleet-read,                       │
+  │             kubernaut-fleet-workflow-execution,         │
+  │             console, oc-cli                             │
   │       ▲ issues/validates tokens for  ▲                  │
   │       │                              │                  │
   │  kube-apiserver (hub)          Kuadrant Gateway/broker   │
@@ -300,6 +302,39 @@ kc_create_client '{
 
 `86400` (24h) is itself capped by the realm's `accessTokenLifespan`-independent per-client override support — verify the issued token's actual `exp` and re-run [04, Step 7](04-fleet-mcp-gateway.md#step-7-register-the-backend-with-the-broker)'s token mint + Secret rotation before it expires (see [Troubleshooting](#toolscall-returns-http-500-with-authorization-required-in-broker-logs)).
 
+### B4: Fixed Fleet caller groups and credentials
+
+Create two groups in the `$REALM` and expose them in the access token's
+`groups` claim:
+
+| Identity-provider group claim | Kubernetes group subject | Members |
+|---|---|---|
+| `kubernaut-fleet-read` | `oidc:kubernaut-fleet-read` | Every read-only Fleet client: Gateway, RemediationOrchestrator, SignalProcessing, APIFrontend, EffectivenessMonitor, KubernautAgent, and FleetMetadataCache |
+| `kubernaut-fleet-workflow-execution` | `oidc:kubernaut-fleet-workflow-execution` | WorkflowExecution's dedicated write client only |
+
+The `oidc:` form is deliberate. Part C configures the OpenShift API server's
+OIDC group prefix as `oidc:`; the operator binds these exact Kubernetes group
+subjects. Keep that prefix and the group names unchanged on every cluster.
+WorkflowExecution's client must be a member of **both** groups so it retains
+read access while it creates and observes workflow resources. Other Fleet
+clients belong only to `kubernaut-fleet-read`.
+
+The operator's Secret contract is also intentionally split:
+
+- `spec.fleet.oauth2.credentialsSecretRef` is the shared read credential used
+  by the Fleet-aware services. Component-specific read credentials may still
+  be used where required by an installation, but they must map to the read
+  group only.
+- `spec.workflowExecution.fleet.oauth2CredentialsSecretRef` is WorkflowExecution's
+  dedicated write credential. It is required when Fleet OAuth2 is enabled and
+  never falls back to the shared read Secret. Do not reuse the read Secret for
+  WorkflowExecution.
+
+The group mapper and client-to-group membership are IdP configuration, not CRD
+fields. The operator deliberately has no caller-group or role-name override:
+the fixed contract keeps the hub RBAC declarative and prevents an accidental
+identity from receiving execution permissions.
+
 ## Part C: Trust the realm from every cluster's `kube-apiserver`
 
 Repeat this on **every** cluster (hub and every spoke) that will run a `kube-mcp-server` in `passthrough` mode.
@@ -498,7 +533,11 @@ Run [Part C](#part-c-trust-the-realm-from-every-clusters-kube-apiserver) on the 
 
 ### F3: Grant RBAC on the spoke
 
-Same as [Part D3](#d3-grant-rbac-on-every-cluster), same `oidc:<sub>` — same person, same cluster-admin grant, different cluster.
+The human administrator's `cluster-admin` grant in [Part D3](#d3-grant-rbac-on-every-cluster)
+is separate from Fleet service authorization. Apply the spoke-side Fleet
+caller RBAC from [F7](#f7-operator-managed-rbac-for-exchanged-fleet-caller-groups)
+before verifying the spoke registration. The operator cannot apply it to a
+spoke because it only reconciles the cluster where the Kubernaut CR runs.
 
 ### F4: Deploy `kube-mcp-server` on the spoke
 
@@ -583,72 +622,33 @@ curl ... -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"spo
 
 F6 only proves read-only tool calls work. Real remediation needs two more things, below — without them every fleet tool call is a 403 (F7), or a remediation Job dispatched to a spoke fails with "namespace not found" (F8).
 
-### F7: Grant RBAC to the exchanged fleet-caller identity
+### F7: Operator-managed RBAC for exchanged Fleet caller groups
 
-RFC 8693 token exchange preserves the *original* caller's `sub` claim — the identity `kube-apiserver` sees is not `kube-mcp-server-sts`'s own identity, it's whichever fleet-aware component's client (e.g. `kubernaut-fleet-read`) minted the original token. Until you grant RBAC to that exact `oidc:<sub>`, every fleet tool call 403s on every cluster, including the hub. This is separate from, and happens after, the `kube-mcp-server` ServiceAccount/ClusterRoleBinding in [04, Step 6](04-fleet-mcp-gateway.md#step-6-deploy-a-backend-mcp-server-kube-mcp-server) — that binding only covers the pod's own probes, not the RFC 8693-exchanged caller identity the target API server actually authorizes against.
+RFC 8693 token exchange preserves the original caller's claims. The target
+`kube-apiserver` therefore authorizes the exchanged token using the caller's
+OIDC groups, not the `kube-mcp-server` ServiceAccount. The operator reconciles
+the following objects on the **hub**, where the Kubernaut CR runs, whenever
+`spec.fleet.enabled=true` and `spec.fleet.mcpGatewayEndpoint` is configured:
 
-Find the identity by reproducing `kube-mcp-server`'s own exchange manually, using the same clients from Part B:
+| Object | Hub name (`<HUB_NS>` is the operator namespace) | Permission |
+|---|---|---|
+| ClusterRole | `<HUB_NS>-fleet-caller-node-reader` | `nodes`: `get`, `list`, `watch` |
+| ClusterRole | `<HUB_NS>-fleet-caller-workflow-execution` | Jobs and Tekton PipelineRuns: create/get/list/watch/delete/patch/update; Tekton TaskRuns: get |
+| ClusterRoleBinding | `<HUB_NS>-fleet-caller-read-view-binding` | `oidc:kubernaut-fleet-read` → `view` |
+| ClusterRoleBinding | `<HUB_NS>-fleet-caller-read-node-reader-binding` | `oidc:kubernaut-fleet-read` → node reader |
+| ClusterRoleBinding | `<HUB_NS>-fleet-caller-execution-binding` | `oidc:kubernaut-fleet-workflow-execution` → workflow execution |
 
-```bash
-# 1. Mint the caller's own token (same client_credentials grant FMC/Gateway/RO use)
-FLEET_READ_UUID=$(kc_client_uuid kubernaut-fleet-read)
-FLEET_READ_SECRET=$(curl -sk "$ISSUER_BASE/admin/realms/$REALM/clients/$FLEET_READ_UUID/client-secret" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["value"])')
-CALLER_TOKEN=$(curl -sk -X POST "$ISSUER_BASE/realms/$REALM/protocol/openid-connect/token" \
-  -d grant_type=client_credentials -d client_id=kubernaut-fleet-read -d client_secret=$FLEET_READ_SECRET \
-  -d scope=kube-mcp-server-audience | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
+The bindings are labeled and reconciled with the operator's core RBAC set, so
+disabling remote Fleet access removes the roles and bindings on the next
+reconcile. `view` is the cluster's existing read role; the operator does not
+replace or broaden it.
 
-# 2. Exchange it the same way kube-mcp-server does internally (RFC 8693, via the STS client from B2)
-EXCHANGED_TOKEN=$(curl -sk -X POST "$ISSUER_BASE/realms/$REALM/protocol/openid-connect/token" \
-  -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
-  -d client_id=kube-mcp-server-sts -d client_secret=$STS_SECRET \
-  -d subject_token=$CALLER_TOKEN -d scope=k8s-api-audience \
-  | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
-
-# 3. Decode the exchanged JWT's "sub" claim -- this is the identity kube-apiserver sees
-export FLEET_CALLER_SUB=$(python3 -c "
-import base64, json
-payload = '$EXCHANGED_TOKEN'.split('.')[1]
-payload += '=' * (-len(payload) % 4)
-print(json.loads(base64.urlsafe_b64decode(payload))['sub'])
-")
-```
-
-`view` alone isn't enough — WorkflowExecution dispatching a remediation Job to a remote cluster additionally needs `batch/jobs` create/get/list/watch/delete/patch/update. Apply both **on every cluster in the fleet** (hub and every spoke) using the same `$FLEET_CALLER_SUB` everywhere — token exchange preserves identity, so it's the same `oidc:<sub>` regardless of which cluster the exchange targets:
+On each **spoke**, apply the equivalent group bindings and neutral roles
+manually (or through the site's bootstrap/GitOps package). The spoke has no
+Kubernaut operator, so it is intentionally outside this reconciliation path:
 
 ```bash
-oc apply -f - <<EOF
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: kubernaut-fleet-job-write
-rules:
-- apiGroups: ["batch"]
-  resources: ["jobs"]
-  verbs: ["create", "get", "list", "watch", "delete", "patch", "update"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: kubernaut-fleet-read-job-write
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: kubernaut-fleet-job-write}
-subjects:
-- {kind: User, name: "oidc:${FLEET_CALLER_SUB}", apiGroup: rbac.authorization.k8s.io}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: kubernaut-fleet-read-view
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view}
-subjects:
-- {kind: User, name: "oidc:${FLEET_CALLER_SUB}", apiGroup: rbac.authorization.k8s.io}
-EOF
-```
-
-`view` also isn't enough for `FleetMetadataCache` (FMC): it lists `nodes` on every registered cluster to build per-cluster metadata (capacity, labels, taints), and the default `view` `ClusterRole` deliberately excludes cluster-scoped resources like `nodes`. Without this, FMC reports `clusters: 0` for every cluster even though the MCP Gateway registration itself is healthy — the only symptom is silence, no error surfaced anywhere obvious. Apply on every cluster in the fleet, same as above:
-
-```bash
-oc apply -f - <<EOF
+oc apply -f - <<'EOF'
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -659,14 +659,64 @@ rules:
   verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubernaut-fleet-workflow-execution
+rules:
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "list", "watch", "delete", "patch", "update"]
+- apiGroups: ["tekton.dev"]
+  resources: ["pipelineruns"]
+  verbs: ["create", "get", "list", "watch", "delete", "patch", "update"]
+- apiGroups: ["tekton.dev"]
+  resources: ["taskruns"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubernaut-fleet-read-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: oidc:kubernaut-fleet-read
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: kubernaut-fleet-read-node-reader
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: kubernaut-fleet-node-reader}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubernaut-fleet-node-reader
 subjects:
-- {kind: User, name: "oidc:${FLEET_CALLER_SUB}", apiGroup: rbac.authorization.k8s.io}
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: oidc:kubernaut-fleet-read
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubernaut-fleet-workflow-execution
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubernaut-fleet-workflow-execution
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: oidc:kubernaut-fleet-workflow-execution
 EOF
 ```
+
+The same caller groups must be present on every spoke's API server. Do not
+decode an opaque `sub` claim or bind a `User` subject for this contract; group
+membership is the stable identity boundary across hub and spokes.
 
 ### F8: Replicate the workflow-execution namespace
 

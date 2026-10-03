@@ -27,6 +27,18 @@ import (
 )
 
 const (
+	// FleetReadGroup is the Kubernetes group emitted by the OIDC provider for
+	// read-only Fleet callers. The "oidc:" prefix is part of the Kubernetes
+	// group identity because the supported OpenShift/OIDC configuration uses
+	// that fixed group-claim prefix (see docs/installation/05-fleet-multi-cluster.md).
+	FleetReadGroup = "oidc:kubernaut-fleet-read"
+
+	// FleetExecutionGroup is the Kubernetes group emitted by the OIDC provider
+	// for the dedicated WorkflowExecution caller identity. WorkflowExecution
+	// must be a member of both FleetReadGroup and FleetExecutionGroup; other
+	// Fleet callers should only be members of FleetReadGroup.
+	FleetExecutionGroup = "oidc:kubernaut-fleet-workflow-execution"
+
 	// LabelAdditionalComponentRBAC marks CRBs created for user-specified
 	// additional ClusterRoles (spec.additionalClusterRoles) so the
 	// controller can list-and-diff-prune them generically. Renamed from
@@ -142,12 +154,21 @@ func ClusterRoles(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kuber
 		)
 	}
 
+	if fleetCallerRBACEnabled(knV2) {
+		roles = append(roles,
+			fleetCallerNodeReaderClusterRole(kn, labels),
+			fleetCallerWorkflowExecutionClusterRole(kn, labels),
+		)
+	}
+
 	return markCoreClusterRBAC(roles)
 }
 
-// ClusterRoleBindings builds all CRBs, binding SAs in the CR namespace.
-// All names are namespace-prefixed for multi-instance safety. knV2 supplies
-// FleetMetadataCache's gating (Fleet v1alpha2 migration).
+// ClusterRoleBindings builds all CRBs, binding service accounts in the CR
+// namespace and, when remote Fleet access is enabled, the fixed Fleet caller
+// groups. All operator-generated names are namespace-prefixed for
+// multi-instance safety. knV2 supplies FleetMetadataCache's gating (Fleet
+// v1alpha2 migration).
 func ClusterRoleBindings(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []*rbacv1.ClusterRoleBinding {
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
@@ -209,6 +230,14 @@ func ClusterRoleBindings(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha
 		crbs = append(crbs,
 			clusterRoleBinding(p("remediationorchestrator-fmc-scope-check-client"), p("fmc-scope-check-client"),
 				ServiceAccountName(ComponentRemediationOrchestrator), ns, labels),
+		)
+	}
+
+	if fleetCallerRBACEnabled(knV2) {
+		crbs = append(crbs,
+			groupClusterRoleBinding(p("fleet-caller-read-view-binding"), "view", FleetReadGroup, labels),
+			groupClusterRoleBinding(p("fleet-caller-read-node-reader-binding"), p("fleet-caller-node-reader"), FleetReadGroup, labels),
+			groupClusterRoleBinding(p("fleet-caller-execution-binding"), p("fleet-caller-workflow-execution"), FleetExecutionGroup, labels),
 		)
 	}
 
@@ -972,6 +1001,22 @@ func clusterRoleBinding(name, roleName, saName, saNamespace string, labels map[s
 	}
 }
 
+func groupClusterRoleBinding(name, roleName, groupName string, labels map[string]string) *rbacv1.ClusterRoleBinding {
+	return &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName,
+			Kind:     "ClusterRole",
+			Name:     roleName,
+		},
+		Subjects: []rbacv1.Subject{{
+			Kind:     rbacv1.GroupKind,
+			APIGroup: rbacv1.GroupName,
+			Name:     groupName,
+		}},
+	}
+}
+
 // --- ClusterRole definitions (namespace-prefixed for multi-instance safety) ---
 
 func gatewayClusterRole(kn *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
@@ -1157,6 +1202,36 @@ func mcpGatewayCRDPolicyRules(gatewayType string) []rbacv1.PolicyRule {
 func mcpGatewayRemoteReadsEnabled(knV2 *kubernautv1alpha2.Kubernaut) bool {
 	fleet := &knV2.Spec.Fleet
 	return fleet.Enabled != nil && *fleet.Enabled && fleet.MCPGatewayEndpoint != ""
+}
+
+// fleetCallerRBACEnabled reports whether the operator should provision the
+// hub-side group bindings used by identities exchanged through the MCP
+// Gateway. Backend-only Fleet configuration does not cause remote Kubernetes
+// calls, so it must not receive these additional cluster-wide permissions.
+func fleetCallerRBACEnabled(knV2 *kubernautv1alpha2.Kubernaut) bool {
+	return mcpGatewayRemoteReadsEnabled(knV2)
+}
+
+func fleetCallerNodeReaderClusterRole(kn *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
+	return &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "fleet-caller-node-reader"), Labels: labels},
+		Rules: []rbacv1.PolicyRule{{
+			APIGroups: []string{""},
+			Resources: []string{"nodes"},
+			Verbs:     []string{"get", "list", "watch"},
+		}},
+	}
+}
+
+func fleetCallerWorkflowExecutionClusterRole(kn *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
+	return &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "fleet-caller-workflow-execution"), Labels: labels},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"create", "get", "list", "watch", "delete", "patch", "update"}},
+			{APIGroups: []string{"tekton.dev"}, Resources: []string{"pipelineruns"}, Verbs: []string{"create", "get", "list", "watch", "delete", "patch", "update"}},
+			{APIGroups: []string{"tekton.dev"}, Resources: []string{"taskruns"}, Verbs: []string{"get"}},
+		},
+	}
 }
 
 func signalprocessingClusterRole(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
