@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Kubernaut Agent Fleet OAuth2 credentials mount** ([#413](https://github.com/jordigilh/kubernaut-operator/issues/413)) now uses KA's current `/etc/kubernaut-agent/<credentialsSecretRef>` path, preventing silent fallback to local-only tools.
+- **Fresh-install migration trust bundle ordering** ([#452](https://github.com/jordigilh/kubernaut-operator/issues/452)) now creates `inter-service-trust-bundle` before the database migration Job when PostgreSQL uses the default `verify-full` TLS mode.
+
 ## [1.6.0-rc8] - 2026-08-26
 
 ### Fixed

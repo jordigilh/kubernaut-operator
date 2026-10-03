@@ -25,9 +25,11 @@ user-visible error (fail-open).
 
 ### Preflight evidence (direct source reads, no inference from the issue text)
 
-1. `kubernaut-operator`'s [internal/resources/deployments.go](../../../internal/resources/deployments.go)
-   still mounted the fleet-oauth2 Secret at the unhyphenated
-   `/etc/kubernautagent` (the #204 contract).
+1. Before this fix, `kubernaut-operator`'s
+   [internal/resources/deployments.go](../../../internal/resources/deployments.go)
+   mounted the fleet-oauth2 Secret at the unhyphenated `/etc/kubernautagent`
+   path established by #204. The implementation now follows upstream KA's
+   current hyphenated convention.
 2. `kubernaut` repo (`main` @ `10a6e10e`, 2026-08-23) confirms the new,
    hyphenated convention in three independent, mutually-consistent places:
    - `cmd/kubernautagent/toolregistry.go`'s `fleetOAuth2CredentialsBasePath()`

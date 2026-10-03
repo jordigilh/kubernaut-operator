@@ -392,6 +392,10 @@ func (r *KubernautReconciler) ensureMigrationPrereqs(ctx context.Context, kn *ku
 		if err := r.ensureNamespaced(ctx, kn, caCM); err != nil {
 			return fmt.Errorf("ensuring inter-service-ca configmap: %w", err)
 		}
+		trustBundleCM := resources.TrustBundleConfigMap(kn)
+		if err := r.ensureNamespaced(ctx, kn, trustBundleCM); err != nil {
+			return fmt.Errorf("ensuring inter-service-trust-bundle configmap: %w", err)
+		}
 	}
 	return nil
 }

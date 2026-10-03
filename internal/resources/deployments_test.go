@@ -879,7 +879,7 @@ var _ = Describe("Deployments", func() {
 			Expect(*dep.Spec.Template.Spec.TerminationGracePeriodSeconds).To(Equal(int64(125)))
 		})
 
-		Context("Fleet OAuth2 credentials mount (#204)", func() {
+		Context("Fleet OAuth2 credentials mount (#204, #413)", func() {
 			It("KFG-020 [IA-5]: no fleet-oauth2 volume/mount when fleet OAuth2 is disabled", func() {
 				kn, knV2 := testKubernautWithFleetMCP()
 				dep, err := KubernautAgentDeployment(kn, knV2)
@@ -889,7 +889,7 @@ var _ = Describe("Deployments", func() {
 				}
 			})
 
-			It("KFG-021 [IA-5]: mounts the fleet-oauth2 Secret at the unhyphenated /etc/kubernautagent path KA's registerFleetTools() hardcodes, not /etc/kubernaut-agent", func() {
+			It("KFG-021 [IA-5]: mounts the fleet-oauth2 Secret at KA's current hyphenated path, not the obsolete unhyphenated path", func() {
 				kn, knV2 := testKubernautWithFleetMCP()
 				knV2.Spec.Fleet.OAuth2 = kubernautv1alpha2.OAuth2Spec{
 					Enabled: true, TokenURL: "https://keycloak.example.com/token",
@@ -898,7 +898,7 @@ var _ = Describe("Deployments", func() {
 				dep, err := KubernautAgentDeployment(kn, knV2)
 				Expect(err).NotTo(HaveOccurred())
 				expectHasVolume(dep, testVolumeFleetOAuth2)
-				expectHasVolumeMount(dep, testVolumeFleetOAuth2, "/etc/kubernautagent/fleet-oauth2-creds")
+				expectHasVolumeMount(dep, testVolumeFleetOAuth2, "/etc/kubernaut-agent/fleet-oauth2-creds")
 				for _, v := range dep.Spec.Template.Spec.Volumes {
 					if v.Name == testVolumeFleetOAuth2 {
 						Expect(v.Secret).NotTo(BeNil())
@@ -917,7 +917,7 @@ var _ = Describe("Deployments", func() {
 				dep, err := KubernautAgentDeployment(kn, knV2)
 				Expect(err).NotTo(HaveOccurred())
 				expectHasVolume(dep, testVolumeFleetOAuth2)
-				expectHasVolumeMount(dep, testVolumeFleetOAuth2, "/etc/kubernautagent/ka-oauth2-creds")
+				expectHasVolumeMount(dep, testVolumeFleetOAuth2, "/etc/kubernaut-agent/ka-oauth2-creds")
 				for _, v := range dep.Spec.Template.Spec.Volumes {
 					if v.Name == testVolumeFleetOAuth2 {
 						Expect(v.Secret).NotTo(BeNil())

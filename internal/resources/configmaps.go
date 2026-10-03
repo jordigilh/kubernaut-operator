@@ -1045,8 +1045,8 @@ type kaFleetYAML struct {
 // kaFleetOAuth2YAML mirrors upstream internal/kubernautagent/config.FleetOAuth2.
 // CredentialsSecretRef is rendered as the bare Secret name, matching every
 // other fleet-aware component's convention (deployments.go builds the
-// actual mount path, which for KA is the hardcoded, unhyphenated
-// "/etc/kubernautagent/<credentialsSecretRef>" -- see
+// actual mount path, which for KA is the hardcoded, hyphenated
+// "/etc/kubernaut-agent/<credentialsSecretRef>" -- see
 // appendMCPGatewayOnlyFleetSecretMount's call site in KubernautAgentDeployment).
 type kaFleetOAuth2YAML struct {
 	Enabled              bool     `json:"enabled" yaml:"enabled"`
