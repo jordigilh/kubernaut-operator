@@ -508,6 +508,11 @@ var _ = Describe("ClusterRoleBindings", func() {
 		for _, crb := range crbs {
 			Expect(crb.Subjects).NotTo(BeEmpty(), "CRB %q has no subjects", crb.Name)
 			for _, subj := range crb.Subjects {
+				if subj.Kind == rbacv1.GroupKind {
+					Expect(subj.Namespace).To(BeEmpty(),
+						"CRB %q group subject %q must not set a namespace", crb.Name, subj.Name)
+					continue
+				}
 				Expect(allowedNamespaces[subj.Namespace]).To(BeTrue(),
 					"CRB %q subject %q has namespace %q, want one of %v",
 					crb.Name, subj.Name, subj.Namespace, allowedNamespaces)
@@ -605,6 +610,109 @@ var _ = Describe("ClusterRoleBindings", func() {
 		})
 	})
 
+})
+
+var _ = Describe("Fleet caller RBAC (#457)", func() {
+	It("creates fixed read and execution groups with least-privilege roles when Fleet remote access is enabled", func() {
+		kn, knV2 := testKubernautWithFleetMCP()
+		roles := ClusterRoles(kn, knV2)
+		bindings := ClusterRoleBindings(kn, knV2)
+
+		roleByName := make(map[string]*rbacv1.ClusterRole, len(roles))
+		for _, role := range roles {
+			roleByName[role.Name] = role
+		}
+		bindingByName := make(map[string]*rbacv1.ClusterRoleBinding, len(bindings))
+		for _, binding := range bindings {
+			bindingByName[binding.Name] = binding
+		}
+
+		nodeRole := roleByName[clusterRoleName(kn, "fleet-caller-node-reader")]
+		Expect(nodeRole).NotTo(BeNil(), "Fleet read group node role should be rendered")
+		Expect(nodeRole.Rules).To(ConsistOf(rbacv1.PolicyRule{
+			APIGroups: []string{""},
+			Resources: []string{"nodes"},
+			Verbs:     []string{"get", "list", "watch"},
+		}))
+
+		executionRole := roleByName[clusterRoleName(kn, "fleet-caller-workflow-execution")]
+		Expect(executionRole).NotTo(BeNil(), "Fleet execution group role should be rendered")
+		Expect(executionRole.Rules).To(ConsistOf(
+			rbacv1.PolicyRule{
+				APIGroups: []string{"batch"},
+				Resources: []string{"jobs"},
+				Verbs:     []string{"create", "get", "list", "watch", "delete", "patch", "update"},
+			},
+			rbacv1.PolicyRule{
+				APIGroups: []string{"tekton.dev"},
+				Resources: []string{"pipelineruns"},
+				Verbs:     []string{"create", "get", "list", "watch", "delete", "patch", "update"},
+			},
+			rbacv1.PolicyRule{
+				APIGroups: []string{"tekton.dev"},
+				Resources: []string{"taskruns"},
+				Verbs:     []string{"get"},
+			},
+		))
+
+		readViewBinding := bindingByName[clusterRoleName(kn, "fleet-caller-read-view-binding")]
+		Expect(readViewBinding).NotTo(BeNil(), "Fleet read group view binding should be rendered")
+		Expect(readViewBinding.RoleRef.Name).To(Equal("view"))
+		Expect(readViewBinding.Subjects).To(ConsistOf(rbacv1.Subject{
+			Kind:     rbacv1.GroupKind,
+			APIGroup: rbacv1.GroupName,
+			Name:     FleetReadGroup,
+		}))
+
+		readNodeBinding := bindingByName[clusterRoleName(kn, "fleet-caller-read-node-reader-binding")]
+		Expect(readNodeBinding).NotTo(BeNil(), "Fleet read group node binding should be rendered")
+		Expect(readNodeBinding.RoleRef.Name).To(Equal(nodeRole.Name))
+		Expect(readNodeBinding.Subjects).To(ConsistOf(rbacv1.Subject{
+			Kind:     rbacv1.GroupKind,
+			APIGroup: rbacv1.GroupName,
+			Name:     FleetReadGroup,
+		}))
+
+		executionBinding := bindingByName[clusterRoleName(kn, "fleet-caller-execution-binding")]
+		Expect(executionBinding).NotTo(BeNil(), "Fleet execution group binding should be rendered")
+		Expect(executionBinding.RoleRef.Name).To(Equal(executionRole.Name))
+		Expect(executionBinding.Subjects).To(ConsistOf(rbacv1.Subject{
+			Kind:     rbacv1.GroupKind,
+			APIGroup: rbacv1.GroupName,
+			Name:     FleetExecutionGroup,
+		}))
+	})
+
+	It("does not render Fleet caller RBAC when Fleet remote access is disabled", func() {
+		kn := testKubernaut()
+		roles := ClusterRoles(kn, testKnV2(kn))
+		bindings := ClusterRoleBindings(kn, testKnV2(kn))
+
+		for _, role := range roles {
+			Expect(role.Name).NotTo(Equal(clusterRoleName(kn, "fleet-caller-node-reader")))
+			Expect(role.Name).NotTo(Equal(clusterRoleName(kn, "fleet-caller-workflow-execution")))
+		}
+		for _, binding := range bindings {
+			Expect(binding.Name).NotTo(Equal(clusterRoleName(kn, "fleet-caller-read-view-binding")))
+			Expect(binding.Name).NotTo(Equal(clusterRoleName(kn, "fleet-caller-read-node-reader-binding")))
+			Expect(binding.Name).NotTo(Equal(clusterRoleName(kn, "fleet-caller-execution-binding")))
+		}
+	})
+
+	It("does not render Fleet caller RBAC for backend-only Fleet configuration", func() {
+		kn, knV2 := testKubernautWithFleetMCP()
+		knV2.Spec.Fleet.MCPGatewayEndpoint = ""
+
+		for _, role := range ClusterRoles(kn, knV2) {
+			Expect(role.Name).NotTo(Equal(clusterRoleName(kn, "fleet-caller-node-reader")))
+			Expect(role.Name).NotTo(Equal(clusterRoleName(kn, "fleet-caller-workflow-execution")))
+		}
+		for _, binding := range ClusterRoleBindings(kn, knV2) {
+			Expect(binding.Name).NotTo(Equal(clusterRoleName(kn, "fleet-caller-read-view-binding")))
+			Expect(binding.Name).NotTo(Equal(clusterRoleName(kn, "fleet-caller-read-node-reader-binding")))
+			Expect(binding.Name).NotTo(Equal(clusterRoleName(kn, "fleet-caller-execution-binding")))
+		}
+	})
 })
 
 var _ = Describe("DataStorageClientRoleBindings", func() {
