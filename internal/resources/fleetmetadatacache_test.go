@@ -118,7 +118,7 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 		Expect(cm.Data["config.yaml"]).To(ContainSubstring("tlsCaFile: " + InterServiceTLSCAFile))
 	})
 
-	It("renders chart-compatible server TLS and OAuth2 CA paths", func() {
+	It("UT-TLS-491-009 [SC-8; SOC2 CC6, CC7; ASVS v5.0.0-V12.1.3, v5.0.0-V13.2.1] renders chart-compatible server TLS and OAuth2 CA paths", func() {
 		kn, knV2 := testKubernautWithFMC()
 		knV2.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
 		knV2.Spec.TLS.InterService = &kubernautv1alpha2.InterServiceTLSConfig{

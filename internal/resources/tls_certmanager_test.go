@@ -25,7 +25,7 @@ import (
 )
 
 var _ = Describe("cert-manager TLS provisioning", func() {
-	It("does not build operator-owned cert-manager resources when provisioning is disabled", func() {
+	It("UT-TLS-491-004 [AC-6, CM-6, SC-12; SOC2 CC6, CC8; ASVS v5.0.0-V13.3.1, v5.0.0-V15.2.4] does not build operator-owned cert-manager resources when provisioning is disabled", func() {
 		kn := testKubernaut()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
 			Mode: kubernautv1alpha2.TLSModeCertManager,
@@ -41,7 +41,7 @@ var _ = Describe("cert-manager TLS provisioning", func() {
 		Expect(objects).To(BeEmpty())
 	})
 
-	It("builds the dedicated CA, service leaves, webhook certificate, and RSA signing certificate", func() {
+	It("UT-TLS-491-005 [IA-5, SC-8, SC-12, SC-13, SC-17; SOC2 CC6, CC7; ASVS v5.0.0-V11.1.1, v5.0.0-V11.1.2, v5.0.0-V12.1.1, v5.0.0-V12.1.2, v5.0.0-V12.1.3, v5.0.0-V13.2.1] builds the dedicated CA, service leaves, webhook certificate, and RSA signing certificate", func() {
 		kn := testKubernaut()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
 			Mode: kubernautv1alpha2.TLSModeCertManager,
@@ -126,7 +126,7 @@ var _ = Describe("cert-manager TLS provisioning", func() {
 		Expect(signingSpec["privateKey"]).To(Equal(map[string]interface{}{"algorithm": "RSA", "size": int64(2048)}))
 	})
 
-	It("uses configured output names and does not include disabled optional components", func() {
+	It("UT-TLS-491-006 [CM-6, SC-8; SOC2 CC6, CC8; ASVS v5.0.0-V13.3.1, v5.0.0-V15.2.4] uses configured output names and does not include disabled optional components", func() {
 		kn := testKubernaut()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
 			Mode: kubernautv1alpha2.TLSModeCertManager,

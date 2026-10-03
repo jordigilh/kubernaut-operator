@@ -102,6 +102,9 @@ rotated implicitly by TLS reconciliation.
   cert-manager/Kind/kubectl versions and verifies Certificate-owned output
   Secrets, rotation, webhook trust, and cleanup ownership.
 - Documentation parity matrix and migration examples for each Helm mode.
+- Control-objective traceability in
+  `docs/security/ISSUE-491-TLS-CONTROL-ATTESTATION.md`, mapping each business
+  assertion to NIST/FedRAMP, SOC 2, and versioned OWASP ASVS 5.0.0 evidence.
 
 ## Deferred or excluded
 
@@ -110,3 +113,13 @@ rotated implicitly by TLS reconciliation.
 - OpenShift/OVN live qualification beyond the platform adapter evidence in
   #488.
 - Ownership of PostgreSQL/Valkey workloads or their server PKI.
+
+## Control-objective traceability
+
+The implementation-level attestation is maintained separately from this
+architecture decision so that the design remains stable while test and CI
+results change. The attestation explicitly distinguishes repository-verified
+behavior from formal FedRAMP, SOC 2, and OWASP ASVS evidence that requires
+independent assessment or deployment qualification:
+
+`docs/security/ISSUE-491-TLS-CONTROL-ATTESTATION.md`

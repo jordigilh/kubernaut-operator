@@ -235,7 +235,7 @@ var _ = Describe("WebhookConfigurations", func() {
 		}
 	})
 
-	It("publishes the cert-manager CA injection contract alongside the validated bundle", func() {
+	It("UT-TLS-491-010 [SC-8, SC-13, SC-17, SI-4; SOC2 CC6, CC7; ASVS v5.0.0-V12.1.3, v5.0.0-V13.2.1] publishes the cert-manager CA injection contract alongside the validated bundle", func() {
 		kn := testKubernaut()
 		ca := []byte("cert-manager-ca")
 		mwc := MutatingWebhookConfigurationWithCertManagerCA(kn, ca)
@@ -253,7 +253,7 @@ var _ = Describe("WebhookConfigurations", func() {
 		}
 	})
 
-	It("leaves the cert-manager caBundle field to cainjector", func() {
+	It("UT-TLS-491-011 [AC-6, SC-8, SC-17; SOC2 CC6, CC7; ASVS v5.0.0-V13.2.1, v5.0.0-V13.3.1] leaves the cert-manager caBundle field to cainjector", func() {
 		kn := testKubernaut()
 		mwc := MutatingWebhookConfigurationWithCertManagerInjection(kn)
 		vwc := ValidatingWebhookConfigurationWithCertManagerInjection(kn)

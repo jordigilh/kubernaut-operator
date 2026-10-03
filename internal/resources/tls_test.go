@@ -92,7 +92,7 @@ var _ = Describe("runtime TLS source", func() {
 		Expect(err).To(MatchError(ContainSubstring("issuer.name")))
 	})
 
-	It("resolves the lower-case Helm cert-manager mode with chart-compatible defaults", func() {
+	It("UT-TLS-491-001 [SC-8, CM-6; SOC2 CC6, CC8; ASVS v5.0.0-V12.1.1, v5.0.0-V15.2.4] resolves the lower-case Helm cert-manager mode with chart-compatible defaults", func() {
 		kn := testKubernaut()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
 			Mode: kubernautv1alpha2.TLSModeHelmCertManager,
@@ -113,7 +113,7 @@ var _ = Describe("runtime TLS source", func() {
 		Expect(CertManagerTLSProvisioningEnabled(kn)).To(BeTrue())
 	})
 
-	It("resolves the lower-case Helm hook mode as explicit self-signed TLS", func() {
+	It("UT-TLS-491-002 [SC-8, SC-12, SC-13; SOC2 CC6, CC7; ASVS v5.0.0-V12.2.1, v5.0.0-V13.2.1] resolves the lower-case Helm hook mode as explicit self-signed TLS", func() {
 		kn := testKubernaut()
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
 
@@ -124,7 +124,7 @@ var _ = Describe("runtime TLS source", func() {
 		Expect(material.OwnsSecrets).To(BeTrue())
 	})
 
-	It("reconciles Helm hook-compatible extra SANs and the separate RSA signing certificate", func() {
+	It("UT-TLS-491-003 [IA-5, SC-8, SC-12, SC-13, SC-17; SOC2 CC6, CC7; ASVS v5.0.0-V11.1.1, v5.0.0-V12.1.1, v5.0.0-V12.1.3, v5.0.0-V13.2.1] reconciles Helm hook-compatible extra SANs and the separate RSA signing certificate", func() {
 		kn := testKubernaut()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
 			Mode: kubernautv1alpha2.TLSModeHook,

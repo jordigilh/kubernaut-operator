@@ -319,7 +319,7 @@ var _ = Describe("Console Resources", func() {
 				"oauth2-proxy container must mount tls-ca at %s to back --provider-ca-file", tlsCAMountPath)
 		})
 
-		It("uses the Helm TLS paths and preserves the system trust store", func() {
+		It("UT-TLS-491-008 [SC-8; SOC2 CC6; ASVS v5.0.0-V12.2.1, v5.0.0-V13.2.1] uses the Helm TLS paths and preserves the system trust store", func() {
 			kn := testKubernautWithConsole()
 			kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
 			dep, err := ConsoleDeployment(kn, testIngressDomain)
