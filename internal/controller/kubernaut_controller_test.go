@@ -22,6 +22,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -57,6 +58,7 @@ const (
 	// this -- WE's credential is independently required and never falls
 	// back to the shared spec.fleet.oauth2.credentialsSecretRef.
 	testWEFleetOAuth2SecretRef = "we-write-oauth2-creds"
+	testFleetOAuth2VolumeName  = "fleet-oauth2"
 )
 
 func singletonKey() types.NamespacedName {
@@ -702,7 +704,7 @@ var _ = Describe("Kubernaut Controller", func() {
 	// the runtime TLS source. Generic TLS now supplies the trust ConfigMap
 	// before migration without OpenShift service-CA annotations.
 	Context("PostgreSQL sslMode wiring (#423 CONS-002)", func() {
-		It("CONS-002 [CM-6, SC-8]: creates the inter-service-ca ConfigMap when sslMode defaults to verify-full", func() {
+		It("CONS-002 [CM-6, SC-8]: creates the inter-service-ca and trust-bundle ConfigMaps before migration when sslMode defaults to verify-full", func() {
 			createBYOSecrets(ctx)
 			kn := newCRWithRouteDisabled()
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
@@ -716,6 +718,8 @@ var _ = Describe("Kubernaut Controller", func() {
 			cm := &corev1.ConfigMap{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.InterServiceCAConfigMapName, Namespace: testNamespace}, cm)).To(Succeed(),
 				"CHECKPOINT W: spec.postgresql.sslMode's default (verify-full) must create the inter-service-ca ConfigMap ahead of the migration Job")
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.TrustBundleConfigMapName, Namespace: testNamespace}, cm)).To(Succeed(),
+				"CHECKPOINT W: spec.postgresql.sslMode's default (verify-full) must create the trust-bundle ConfigMap ahead of the migration Job")
 		})
 
 		It("CONS-002b: uses generic trust material when sslMode is not verify-full", func() {
@@ -742,6 +746,51 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(getErr).NotTo(HaveOccurred())
 			Expect(cm.Data["service-ca.crt"]).NotTo(BeEmpty())
 			Expect(cm.Annotations).NotTo(HaveKey("service.beta.openshift.io/inject-cabundle"))
+		})
+	})
+
+	Context("KubernautAgent Fleet OAuth2 mount (#413)", func() {
+		It("KFG-061 [IA-5]: reconciles KA's fleet OAuth2 Secret at the hyphenated mount path", func() {
+			createBYOSecrets(ctx)
+			kn := newCRWithRouteDisabled()
+			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
+
+			knV2 := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+				Enabled:             &enabled,
+				Backend:             "fleetmetadatacache",
+				Endpoint:            "https://fmc.kubernaut.svc:8443",
+				MCPGatewayEndpoint:  "https://mcp-gateway.example.com/sse",
+				MCPGatewayType:      "eaigw",
+				MCPGatewayNamespace: testNamespace,
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
+					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+					CredentialsSecretRef: "fleet-oauth2-creds",
+				},
+			}
+			knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+			knV2.Spec.KubernautAgent.Fleet = &kubernautv1alpha2.FleetOverrideSpec{
+				OAuth2CredentialsSecretRef: "ka-oauth2-creds",
+			}
+			Expect(k8sClient.Update(ctx, knV2)).To(Succeed(),
+				"the Fleet configuration must be accepted end-to-end")
+
+			reconcileToDeployPhase(ctx)
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: resources.DeploymentName(resources.ComponentKubernautAgent), Namespace: testNamespace,
+			}, dep)).To(Succeed())
+			container := dep.Spec.Template.Spec.Containers[0]
+			found := false
+			for _, mount := range container.VolumeMounts {
+				if mount.Name == testFleetOAuth2VolumeName {
+					found = true
+					Expect(mount.MountPath).To(Equal("/etc/kubernaut-agent/ka-oauth2-creds"))
+				}
+			}
+			Expect(found).To(BeTrue(), "KA Deployment must mount its fleet OAuth2 Secret")
 		})
 	})
 })

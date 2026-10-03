@@ -533,13 +533,10 @@ func KubernautAgentDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1
 	volumes, mounts, envVars := kaCoreVolumesMountsEnv(kn, kaProfile)
 	volumes, mounts, envVars = appendInterServiceTLSCA(kn, volumes, mounts, envVars)
 	volumes, mounts = kaCredentialVolumesAndMounts(kn, kaProfile, volumes, mounts)
-	// #204: componentEtcDir is deliberately "/etc/kubernautagent"
-	// (unhyphenated), NOT "/etc/kubernaut-agent" like every other mount
-	// above. Upstream's registerFleetTools() hardcodes the fleet-oauth2
-	// credentials lookup to "/etc/kubernautagent/<credentialsSecretRef>"
-	// literally -- it is not derived from KA's -config flag directory, so
-	// the mount path here must match that hardcoded string exactly.
-	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, knV2, "/etc/kubernautagent", effectiveFleetOAuth2SecretRef(knV2.Spec.KubernautAgent.Fleet, ""))
+	// #413: upstream KA now reads fleet OAuth2 credentials from the
+	// hyphenated /etc/kubernaut-agent path (kubernaut#1729), matching the
+	// rest of this Deployment's configuration and credential mounts.
+	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, knV2, "/etc/kubernaut-agent", effectiveFleetOAuth2SecretRef(knV2.Spec.KubernautAgent.Fleet, ""))
 
 	initContainers, err := kaInitContainers(kn)
 	if err != nil {
