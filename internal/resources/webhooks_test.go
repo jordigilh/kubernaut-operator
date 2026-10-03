@@ -217,6 +217,24 @@ var _ = Describe("ValidatingWebhookConfiguration", func() {
 })
 
 var _ = Describe("WebhookConfigurations", func() {
+	It("publishes an explicit CA bundle for generic clusters without OpenShift annotations", func() {
+		kn := testKubernaut()
+		ca := []byte("generic-ca")
+		mwc := MutatingWebhookConfigurationWithCABundle(kn, ca)
+		vwc := ValidatingWebhookConfigurationWithCABundle(kn, ca)
+
+		Expect(mwc.Annotations).NotTo(HaveKey(OCPServiceCAInjectAnnotation))
+		Expect(vwc.Annotations).NotTo(HaveKey(OCPServiceCAInjectAnnotation))
+		for _, webhook := range mwc.Webhooks {
+			Expect(webhook.ClientConfig.CABundle).To(Equal(ca))
+			Expect(webhook.Rules[0].APIVersions).To(Equal([]string{"v1alpha2"}))
+		}
+		for _, webhook := range vwc.Webhooks {
+			Expect(webhook.ClientConfig.CABundle).To(Equal(ca))
+			Expect(webhook.Rules[0].APIVersions).To(Equal([]string{"v1alpha2"}))
+		}
+	})
+
 	It("use FailurePolicy=Fail", func() {
 		kn := testKubernaut()
 		mwc := MutatingWebhookConfiguration(kn)

@@ -24,7 +24,6 @@ import (
 
 	"sigs.k8s.io/yaml"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
@@ -59,10 +58,7 @@ var _ = Describe("Quickstart minimal sample CR [BR-UX-001, CM-6]", func() {
 	It("passes ValidateKubernaut and ValidateFleet with zero errors", func() {
 		knV2 := loadMinimalSampleCR()
 
-		kn := &kubernautv1alpha1.Kubernaut{}
-		Expect(kn.ConvertFrom(knV2)).To(Succeed(), "the v1alpha2 sample must convert cleanly to the v1alpha1 spoke view")
-
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(knV2, KagentiSidecarNone)
 		Expect(errs).To(BeEmpty(), "the quickstart doc's minimal sample must be a genuinely valid CR")
 
 		errs = ValidateFleet(knV2)

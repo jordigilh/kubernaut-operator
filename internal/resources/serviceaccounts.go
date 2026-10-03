@@ -20,7 +20,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/ptr"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 // serviceAccountNames maps components to their ServiceAccount names,
@@ -48,7 +48,7 @@ func ServiceAccountName(component string) string {
 }
 
 // ServiceAccount builds a ServiceAccount for the given component.
-func ServiceAccount(kn *kubernautv1alpha1.Kubernaut, component string) *corev1.ServiceAccount {
+func ServiceAccount(kn *kubernautv1alpha2.Kubernaut, component string) *corev1.ServiceAccount {
 	sa := &corev1.ServiceAccount{
 		ObjectMeta: ObjectMeta(kn, ServiceAccountName(component), component),
 	}
@@ -60,7 +60,7 @@ func ServiceAccount(kn *kubernautv1alpha1.Kubernaut, component string) *corev1.S
 
 // WorkflowRunnerServiceAccount returns the SA used by workflow Jobs/PipelineRuns
 // in the workflow namespace.
-func WorkflowRunnerServiceAccount(kn *kubernautv1alpha1.Kubernaut) *corev1.ServiceAccount {
+func WorkflowRunnerServiceAccount(kn *kubernautv1alpha2.Kubernaut) *corev1.ServiceAccount {
 	sa := &corev1.ServiceAccount{
 		ObjectMeta: ObjectMeta(kn, "kubernaut-workflow-runner", ComponentWorkflowExecution),
 	}

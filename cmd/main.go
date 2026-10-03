@@ -42,9 +42,7 @@ import (
 	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
-	"sigs.k8s.io/controller-runtime/pkg/webhook/conversion"
 
-	kubernautaiv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautaiv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/controller"
 	"github.com/jordigilh/kubernaut-operator/internal/webhook"
@@ -67,7 +65,6 @@ func init() {
 	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
 	utilruntime.Must(configv1.Install(scheme))
 	utilruntime.Must(routev1.Install(scheme))
-	utilruntime.Must(kubernautaiv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(monitoringv1.AddToScheme(scheme))
 	utilruntime.Must(monitoringv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(kubernautaiv1alpha2.AddToScheme(scheme))
@@ -104,7 +101,6 @@ func main() {
 		os.Exit(1)
 	}
 	registerSingletonWebhook(mgr)
-	registerConversionWebhook(mgr)
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {
@@ -228,21 +224,6 @@ func registerSingletonWebhook(mgr ctrl.Manager) {
 	mgr.GetWebhookServer().Register("/validate-kubernaut-singleton", &admission.Webhook{
 		Handler: webhook.NewSingletonValidator(mgr.GetClient(), mgr.GetScheme()),
 	})
-}
-
-// registerConversionWebhook registers the CRD conversion webhook handler
-// (v1alpha1 <-> v1alpha2, hub-and-spoke via api/v1alpha1/kubernaut_conversion.go
-// and api/v1alpha2/kubernaut_conversion.go; see ADR-CRD-001) when webhook
-// serving certs are present on disk. Uses the same cert dir and gating as
-// registerSingletonWebhook, since both share the manager's webhook server.
-func registerConversionWebhook(mgr ctrl.Manager) {
-	webhookCertDir := filepath.Join(os.TempDir(), "k8s-webhook-server", "serving-certs")
-	if _, err := os.Stat(filepath.Join(webhookCertDir, "tls.crt")); err != nil {
-		setupLog.Info("webhook TLS certs not found, skipping conversion webhook registration")
-		return
-	}
-	setupLog.Info("webhook TLS certs found, registering Kubernaut conversion webhook")
-	mgr.GetWebhookServer().Register("/convert", conversion.NewWebhookHandler(mgr.GetScheme(), mgr.GetConverterRegistry()))
 }
 
 // setupHealthChecks registers the liveness and readiness probes on mgr.

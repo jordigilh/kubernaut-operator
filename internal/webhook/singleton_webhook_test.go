@@ -29,13 +29,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 // createRequestFor builds an admission.Request for a CREATE of the given
 // Kubernaut CR, matching the shape the kube-apiserver sends in production.
-func createRequestFor(kn *kubernautv1alpha1.Kubernaut) admission.Request {
-	kn.TypeMeta = metav1.TypeMeta{APIVersion: "kubernaut.ai/v1alpha1", Kind: "Kubernaut"}
+func createRequestFor(kn *kubernautv1alpha2.Kubernaut) admission.Request {
+	kn.TypeMeta = metav1.TypeMeta{APIVersion: "kubernaut.ai/v1alpha2", Kind: "Kubernaut"}
 	raw, err := json.Marshal(kn)
 	Expect(err).NotTo(HaveOccurred())
 	return admission.Request{
@@ -51,7 +51,7 @@ var _ = Describe("NewSingletonValidator wiring", func() {
 
 	BeforeEach(func() {
 		scheme = runtime.NewScheme()
-		Expect(kubernautv1alpha1.AddToScheme(scheme)).To(Succeed())
+		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
 	})
 
 	// This test constructs SingletonValidator exactly the way cmd/main.go's
@@ -67,8 +67,8 @@ var _ = Describe("NewSingletonValidator wiring", func() {
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 		wh := &admission.Webhook{Handler: NewSingletonValidator(fakeClient, scheme)}
 
-		req := createRequestFor(&kubernautv1alpha1.Kubernaut{
-			ObjectMeta: metav1.ObjectMeta{Name: kubernautv1alpha1.SingletonName},
+		req := createRequestFor(&kubernautv1alpha2.Kubernaut{
+			ObjectMeta: metav1.ObjectMeta{Name: kubernautv1alpha2.SingletonName},
 		})
 
 		resp := wh.Handle(context.Background(), req)
@@ -82,7 +82,7 @@ var _ = Describe("NewSingletonValidator wiring", func() {
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 		wh := &admission.Webhook{Handler: NewSingletonValidator(fakeClient, scheme)}
 
-		req := createRequestFor(&kubernautv1alpha1.Kubernaut{
+		req := createRequestFor(&kubernautv1alpha2.Kubernaut{
 			ObjectMeta: metav1.ObjectMeta{Name: "not-the-singleton"},
 		})
 
@@ -92,14 +92,14 @@ var _ = Describe("NewSingletonValidator wiring", func() {
 	})
 
 	It("denies a second Kubernaut CR when one already exists", func() {
-		existing := &kubernautv1alpha1.Kubernaut{
-			ObjectMeta: metav1.ObjectMeta{Name: kubernautv1alpha1.SingletonName, Namespace: "kubernaut-system"},
+		existing := &kubernautv1alpha2.Kubernaut{
+			ObjectMeta: metav1.ObjectMeta{Name: kubernautv1alpha2.SingletonName, Namespace: "kubernaut-system"},
 		}
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
 		wh := &admission.Webhook{Handler: NewSingletonValidator(fakeClient, scheme)}
 
-		req := createRequestFor(&kubernautv1alpha1.Kubernaut{
-			ObjectMeta: metav1.ObjectMeta{Name: kubernautv1alpha1.SingletonName, Namespace: "other-namespace"},
+		req := createRequestFor(&kubernautv1alpha2.Kubernaut{
+			ObjectMeta: metav1.ObjectMeta{Name: kubernautv1alpha2.SingletonName, Namespace: "other-namespace"},
 		})
 
 		resp := wh.Handle(context.Background(), req)

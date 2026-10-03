@@ -56,20 +56,183 @@ jobs:
         run: make test
 
       - name: Shellcheck hack/ scripts
-        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh
+        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/validate-security-traceability.sh hack/verify-test-pyramid.sh
 
       - name: Run hack/ script tests
         run: make test-hack-scripts
 
       - name: Check coverage threshold
         run: |
-          # cover.out is produced by `make test` (Makefile: -coverprofile cover.out)
+          # Check the merged pyramid coverage and the independent unit lane.
+          # The latter prevents integration coverage from masking a unit-test gap.
+          grep 'internal/' cover-unit.out > cover-unit-internal.out || true
+          echo "mode: set" | cat - cover-unit-internal.out > cover-unit-internal-final.out
+          UNIT_COVERAGE=$(go tool cover -func=cover-unit-internal-final.out | grep '^total:' | awk '{print $3}' | tr -d '%')
+          echo "Internal unit coverage: ${UNIT_COVERAGE}%"
+          UNIT_THRESHOLD=80
+          if awk -v coverage="${UNIT_COVERAGE}" -v threshold="${UNIT_THRESHOLD}" 'BEGIN { exit !(coverage < threshold) }'; then
+            echo "::error::Internal unit coverage ${UNIT_COVERAGE}% is below the ${UNIT_THRESHOLD}% threshold"
+            exit 1
+          fi
+
+          # cover.out is produced by `make test` (Makefile: merged profile)
           grep 'internal/' cover.out > cover-internal.out || true
           echo "mode: set" | cat - cover-internal.out > cover-internal-final.out
           COVERAGE=$(go tool cover -func=cover-internal-final.out | grep '^total:' | awk '{print $3}' | tr -d '%')
           echo "Internal package coverage: ${COVERAGE}%"
           THRESHOLD=80
-          if [ "$(echo "${COVERAGE} < ${THRESHOLD}" | bc -l)" -eq 1 ]; then
+          if awk -v coverage="${COVERAGE}" -v threshold="${THRESHOLD}" 'BEGIN { exit !(coverage < threshold) }'; then
             echo "::error::Internal coverage ${COVERAGE}% is below the ${THRESHOLD}% threshold"
             exit 1
           fi
+
+  # These jobs intentionally have no `needs` relationship with `test`: each
+  # provisions an isolated Kind cluster and runs in parallel with the IT lane.
+  kind-generic:
+    name: Kind E2E (generic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install pinned Kind and kubectl
+        run: |
+          set -euo pipefail
+          KIND_VERSION=v0.31.0
+          KUBECTL_VERSION=v1.35.0
+          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kind version
+          kubectl version --client
+
+      - name: Pull pinned Kubernaut infrastructure images
+        run: |
+          docker pull docker.io/library/postgres:16.4
+          docker pull docker.io/valkey/valkey:8.0.2
+
+      - name: Run generic Kind E2E
+        env:
+          KUBERNAUT_E2E_PROVIDER: generic
+          KIND_CLUSTER_NAME: kubernaut-kind-generic
+        run: make test-e2e-kind
+
+  kind-certmanager:
+    name: Kind E2E (cert-manager TLS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install pinned Kind and kubectl
+        run: |
+          set -euo pipefail
+          KIND_VERSION=v0.31.0
+          KUBECTL_VERSION=v1.35.0
+          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kind version
+          kubectl version --client
+
+      - name: Pull pinned Kubernaut infrastructure images
+        run: |
+          docker pull docker.io/library/postgres:16.4
+          docker pull docker.io/valkey/valkey:8.0.2
+
+      - name: Run Kind cert-manager TLS E2E
+        env:
+          KUBERNAUT_E2E_PROVIDER: generic
+          KUBERNAUT_E2E_TLS_SOURCE: certmanager
+          KIND_CLUSTER_NAME: kubernaut-kind-certmanager
+        run: make test-e2e-kind
+
+  kind-cilium:
+    name: Kind E2E (Cilium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install pinned Kind, kubectl, and Helm
+        run: |
+          set -euo pipefail
+          KIND_VERSION=v0.31.0
+          KUBECTL_VERSION=v1.35.0
+          HELM_VERSION=v3.17.3
+          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz -C /tmp
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          kind version
+          kubectl version --client
+          helm version
+
+      - name: Pull pinned Kubernaut infrastructure images
+        run: |
+          docker pull docker.io/library/postgres:16.4
+          docker pull docker.io/valkey/valkey:8.0.2
+
+      - name: Run Kind+Cilium E2E
+        env:
+          KUBERNAUT_E2E_PROVIDER: cilium
+          KIND_CLUSTER_NAME: kubernaut-kind-cilium
+        run: make test-e2e-kind
+
+  kind-calico:
+    name: Kind E2E (Calico)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install pinned Kind and kubectl
+        run: |
+          set -euo pipefail
+          KIND_VERSION=v0.31.0
+          KUBECTL_VERSION=v1.35.0
+          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kind version
+          kubectl version --client
+
+      - name: Pull pinned Kubernaut infrastructure images
+        run: |
+          docker pull docker.io/library/postgres:16.4
+          docker pull docker.io/valkey/valkey:8.0.2
+
+      - name: Run Kind+Calico E2E
+        env:
+          KUBERNAUT_E2E_PROVIDER: calico
+          KIND_CLUSTER_NAME: kubernaut-kind-calico
+        run: make test-e2e-kind

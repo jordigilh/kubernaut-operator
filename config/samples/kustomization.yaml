@@ -10,6 +10,5 @@
 # never via `kubectl apply -k` or OLM's alm-examples, so omitting it from
 # this kustomization has no effect on its actual use.
 resources:
-- v1alpha1_kubernaut.yaml
 - v1alpha2_kubernaut.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

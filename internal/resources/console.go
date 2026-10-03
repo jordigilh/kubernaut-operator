@@ -27,7 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 const (
@@ -38,7 +38,7 @@ const (
 // ConsoleDeployment builds the Deployment for the standalone web console.
 // ingressDomain is the cluster's ingress domain (e.g. "apps.dev.example.com")
 // used to derive the oauth2-proxy redirect URL when console.route.host is empty.
-func ConsoleDeployment(kn *kubernautv1alpha1.Kubernaut, ingressDomain string) (*appsv1.Deployment, error) {
+func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*appsv1.Deployment, error) {
 	consoleImage, err := ResolveImage(kn, "console")
 	if err != nil {
 		return nil, err
@@ -185,7 +185,7 @@ func consoleOAuth2ProxyContainer(image string, args []string, secretName string)
 
 // consoleAppContainer builds the static nginx container that serves the
 // console SPA and proxies /a2a, /mcp, and /.well-known to API Frontend.
-func consoleAppContainer(kn *kubernautv1alpha1.Kubernaut, image string) corev1.Container {
+func consoleAppContainer(kn *kubernautv1alpha2.Kubernaut, image string) corev1.Container {
 	return corev1.Container{
 		Name:            "console",
 		Image:           image,
@@ -220,7 +220,7 @@ func consoleAppContainer(kn *kubernautv1alpha1.Kubernaut, image string) corev1.C
 }
 
 // ConsoleService builds the Service for the console.
-func ConsoleService(kn *kubernautv1alpha1.Kubernaut) *corev1.Service {
+func ConsoleService(kn *kubernautv1alpha2.Kubernaut) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: ObjectMeta(kn, ComponentConsole, ComponentConsole),
 		Spec: corev1.ServiceSpec{
@@ -233,14 +233,14 @@ func ConsoleService(kn *kubernautv1alpha1.Kubernaut) *corev1.Service {
 }
 
 // ConsoleNginxConfigMap builds the nginx configuration ConfigMap for the console.
-func ConsoleNginxConfigMap(kn *kubernautv1alpha1.Kubernaut) *corev1.ConfigMap {
+func ConsoleNginxConfigMap(kn *kubernautv1alpha2.Kubernaut) *corev1.ConfigMap {
 	afURL := fmt.Sprintf("https://%s.%s.svc:%d", ComponentAPIFrontend, kn.Namespace, PortHTTPS)
 
 	return &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, ComponentConsole+"-nginx", ComponentConsole),
 		Data: map[string]string{
 			"http.conf":   consoleNginxHTTPConf(),
-			"server.conf": consoleNginxServerConf(afURL, kn.Spec.Console.EnableRawThinkingValue()),
+			"server.conf": consoleNginxServerConf(afURL, true),
 		},
 	}
 }
@@ -337,7 +337,7 @@ location / {
 }
 
 // ConsoleRoute builds the OCP Route for external access to the console.
-func ConsoleRoute(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
+func ConsoleRoute(kn *kubernautv1alpha2.Kubernaut) *routev1.Route {
 	if kn.Spec.Console.Route.Enabled != nil && !*kn.Spec.Console.Route.Enabled {
 		return nil
 	}
@@ -378,7 +378,7 @@ func ConsoleRoute(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 }
 
 // ConsoleRouteStub returns a minimal Route for deletion lookups.
-func ConsoleRouteStub(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
+func ConsoleRouteStub(kn *kubernautv1alpha2.Kubernaut) *routev1.Route {
 	return &routev1.Route{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ComponentConsole,
@@ -387,7 +387,7 @@ func ConsoleRouteStub(kn *kubernautv1alpha1.Kubernaut) *routev1.Route {
 	}
 }
 
-func consoleRedirectURL(kn *kubernautv1alpha1.Kubernaut, ingressDomain string) string {
+func consoleRedirectURL(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) string {
 	if kn.Spec.Console.Route.Host != "" {
 		return fmt.Sprintf("https://%s/oauth2/callback", kn.Spec.Console.Route.Host)
 	}
@@ -398,7 +398,7 @@ func consoleRedirectURL(kn *kubernautv1alpha1.Kubernaut, ingressDomain string) s
 		ComponentConsole, kn.Namespace, ingressDomain)
 }
 
-func consoleContainerResources(kn *kubernautv1alpha1.Kubernaut) corev1.ResourceRequirements {
+func consoleContainerResources(kn *kubernautv1alpha2.Kubernaut) corev1.ResourceRequirements {
 	if len(kn.Spec.Console.Resources.Requests) > 0 || len(kn.Spec.Console.Resources.Limits) > 0 {
 		return kn.Spec.Console.Resources
 	}

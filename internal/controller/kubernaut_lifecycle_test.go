@@ -18,7 +18,13 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
@@ -46,7 +52,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
@@ -155,22 +160,17 @@ func setDeploymentReady(ctx context.Context, name string) {
 	Expect(k8sClient.Status().Update(ctx, dep)).To(Succeed())
 }
 
-// fetchKnV2 fetches the singleton Kubernaut CR as its v1alpha2 storage
-// representation, for use alongside a v1alpha1 fetch when a test needs both
-// views (e.g. to call resources functions that take knV2).
+// fetchKnV2 fetches the singleton Kubernaut CR as an independent v1alpha2
+// value for resource builders that retain a two-argument compatibility shape.
 func fetchKnV2(ctx context.Context) *kubernautv1alpha2.Kubernaut {
 	knV2 := &kubernautv1alpha2.Kubernaut{}
 	Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())
 	return knV2
 }
 
-// testKnV2 derives a v1alpha2.Kubernaut from an in-memory (not
-// API-server-backed) v1alpha1 fixture, reusing the real conversion webhook
-// logic so test fixtures don't need to be duplicated in both API versions.
-func testKnV2(kn *kubernautv1alpha1.Kubernaut) *kubernautv1alpha2.Kubernaut {
-	knV2 := &kubernautv1alpha2.Kubernaut{}
-	Expect(kn.ConvertTo(knV2)).To(Succeed())
-	return knV2
+// testKnV2 returns an independent copy of an in-memory v1alpha2 fixture.
+func testKnV2(kn *kubernautv1alpha2.Kubernaut) *kubernautv1alpha2.Kubernaut {
+	return kn.DeepCopy()
 }
 
 // setAllDeploymentsReady marks every active service Deployment as ready.
@@ -179,7 +179,7 @@ func testKnV2(kn *kubernautv1alpha1.Kubernaut) *kubernautv1alpha2.Kubernaut {
 // when disabled, and most callers' CRs leave FleetMetadataCache at its
 // default (disabled).
 func setAllDeploymentsReady(ctx context.Context) {
-	kn := &kubernautv1alpha1.Kubernaut{}
+	kn := &kubernautv1alpha2.Kubernaut{}
 	Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 	for _, c := range resources.ActiveComponents(kn, fetchKnV2(ctx)) {
 		setDeploymentReady(ctx, resources.DeploymentName(c))
@@ -188,11 +188,11 @@ func setAllDeploymentsReady(ctx context.Context) {
 
 // newCRWithAnsibleEnabled returns a minimal CR with Ansible enabled and a
 // tokenSecretRef pointing to the given secret name.
-func newCRWithAnsibleEnabled(secretName string) *kubernautv1alpha1.Kubernaut {
+func newCRWithAnsibleEnabled(secretName string) *kubernautv1alpha2.Kubernaut {
 	cr := newCRWithRouteDisabled()
-	cr.Spec.Ansible.Enabled = true
-	cr.Spec.Ansible.APIURL = testAwxAPIURL
-	cr.Spec.Ansible.TokenSecretRef = &kubernautv1alpha1.SecretKeyRef{
+	cr.Spec.WorkflowExecution.Ansible.Enabled = true
+	cr.Spec.WorkflowExecution.Ansible.APIURL = testAwxAPIURL
+	cr.Spec.WorkflowExecution.Ansible.TokenSecretRef = &kubernautv1alpha2.SecretKeyRef{
 		Name: secretName,
 		Key:  "token",
 	}
@@ -235,7 +235,7 @@ func reconcileToDeployPhase(ctx context.Context) *KubernautReconciler {
 
 // newCRWithRouteDisabled returns a minimal CR with the OCP route disabled
 // to avoid needing routev1 in the test scheme.
-func newCRWithRouteDisabled() *kubernautv1alpha1.Kubernaut {
+func newCRWithRouteDisabled() *kubernautv1alpha2.Kubernaut {
 	cr := newMinimalCR()
 	f := false
 	cr.Spec.Gateway.Route.Enabled = &f
@@ -388,6 +388,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 	AfterEach(func() {
 		cleanupNamespacedResources(ctx)
+		deleteIngressTLSSecret(ctx)
 		deleteCRIfExists(ctx)
 		deleteBYOSecrets(ctx)
 		cleanupClusterScoped(ctx)
@@ -398,6 +399,54 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	// ======================================================================
 
 	Context("Phase Progression", func() {
+		It("IT-TLS-GAP-003 deploys generic TLS, trust, webhook, and Ingress resources without OpenShift annotations", func() {
+			createBYOSecrets(ctx)
+			createIngressTLSSecret(ctx, "gateway.example.test")
+			cr := newCRWithRouteDisabled()
+			cr.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+				Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
+				DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
+			}
+			cr.Spec.Gateway.Ingress = kubernautv1alpha2.IngressSpec{
+				Enabled:          ptr.To(true),
+				IngressClassName: "nginx",
+				Host:             "gateway.example.test",
+				TLSSecretName:    "gateway-ingress-tls",
+			}
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			reconcileToDeployPhase(ctx)
+
+			ca := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "kubernaut-internal-ca", Namespace: testNamespace}, ca)).To(Succeed())
+			Expect(ca.Data["ca.crt"]).NotTo(BeEmpty())
+
+			trust := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.TrustBundleConfigMapName, Namespace: testNamespace}, trust)).To(Succeed())
+			Expect(trust.Data["service-ca.crt"]).To(Equal(string(ca.Data["ca.crt"])))
+			Expect(trust.Annotations).NotTo(HaveKey(resources.OCPServiceCAInjectAnnotation))
+
+			service := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "gateway-service", Namespace: testNamespace}, service)).To(Succeed())
+			Expect(service.Annotations).NotTo(HaveKey(resources.OCPServingCertAnnotation))
+
+			mwc := &admissionregistrationv1.MutatingWebhookConfiguration{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNamespace + "-authwebhook-mutating", Namespace: ""}, mwc)).To(Succeed())
+			Expect(mwc.Annotations).NotTo(HaveKey(resources.OCPServiceCAInjectAnnotation))
+			Expect(mwc.Webhooks[0].ClientConfig.CABundle).To(Equal(ca.Data["ca.crt"]))
+			Expect(mwc.Webhooks[0].Rules[0].APIVersions).To(Equal([]string{"v1alpha2"}))
+
+			ingress := &networkingv1.Ingress{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "gateway-ingress", Namespace: testNamespace}, ingress)).To(Succeed())
+			Expect(*ingress.Spec.IngressClassName).To(Equal("nginx"))
+			Expect(ingress.Spec.TLS[0].SecretName).To(Equal("gateway-ingress-tls"))
+
+			kn := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionTLSReady).Status).To(Equal(metav1.ConditionTrue))
+			Expect(findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionExposureReady).Status).To(Equal(metav1.ConditionTrue))
+		})
+
 		It("should transition from Validating through Migrating to Deploying", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
@@ -412,10 +461,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionBYOValidated)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 
@@ -427,7 +476,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			migCond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionMigrationComplete)
+			migCond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionMigrationComplete)
 			Expect(migCond).NotTo(BeNil())
 			Expect(migCond.Status).To(Equal(metav1.ConditionTrue))
 		})
@@ -438,11 +487,11 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseRunning))
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha2.PhaseRunning))
 
-			deployCond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionServicesDeployed)
+			deployCond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionServicesDeployed)
 			Expect(deployCond).NotTo(BeNil())
 			Expect(deployCond.Status).To(Equal(metav1.ConditionTrue))
 		})
@@ -452,7 +501,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(kn.Status.Services).To(HaveLen(11))
 
@@ -485,7 +534,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			r := reconcileToDeployPhase(ctx)
 
 			By("marking all except gateway as ready")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			for _, c := range resources.ActiveComponents(kn, fetchKnV2(ctx)) {
 				if c != resources.ComponentGateway {
@@ -500,7 +549,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				"should requeue after 15s when degraded")
 
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseDegraded))
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha2.PhaseDegraded))
 
 			for _, svc := range kn.Status.Services {
 				if svc.Name == resources.ComponentGateway {
@@ -515,7 +564,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			r := reconcileToDeployPhase(ctx)
 
 			By("driving to degraded")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			for _, c := range resources.ActiveComponents(kn, fetchKnV2(ctx)) {
 				if c != resources.ComponentGateway {
@@ -526,7 +575,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseDegraded))
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha2.PhaseDegraded))
 
 			By("marking the gateway as ready")
 			setDeploymentReady(ctx, "gateway")
@@ -536,7 +585,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseRunning))
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha2.PhaseRunning))
 		})
 	})
 
@@ -559,11 +608,11 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(result.RequeueAfter).To(BeNumerically("==", 10_000_000_000),
 				"should requeue after 10s while migration is in progress")
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseMigrating))
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha2.PhaseMigrating))
 
-			migCond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionMigrationComplete)
+			migCond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionMigrationComplete)
 			Expect(migCond).NotTo(BeNil())
 			Expect(migCond.Reason).To(Equal("MigrationInProgress"))
 		})
@@ -586,10 +635,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			migCond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionMigrationComplete)
+			migCond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionMigrationComplete)
 			Expect(migCond).NotTo(BeNil())
 			Expect(migCond.Reason).To(Equal("MigrationFailed"))
 		})
@@ -698,7 +747,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		// NOTE (#273): "should delete monitoring RBAC and service-CA CMs when
 		// monitoring is disabled" was removed here. As of v1.6, spec.monitoring
-		// is removed from the CRD entirely (api/v1alpha1/kubernaut_types.go) --
+		// is removed from the v1alpha2 CRD entirely --
 		// there is no field left to disable, monitoring integration is always
 		// reconciled, and the pruneStaleMonitoringRBAC toggle-cleanup path it
 		// exercised was deleted along with the field. See MON-001/MON-002 in
@@ -708,8 +757,8 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("should create AWX RBAC when ansible is enabled", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			cr.Spec.Ansible.Enabled = true
-			cr.Spec.Ansible.APIURL = testAwxAPIURL
+			cr.Spec.WorkflowExecution.Ansible.Enabled = true
+			cr.Spec.WorkflowExecution.Ansible.APIURL = testAwxAPIURL
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			reconcileToRunning(ctx)
 
@@ -720,15 +769,15 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("should delete AWX RBAC when ansible is disabled", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			cr.Spec.Ansible.Enabled = true
-			cr.Spec.Ansible.APIURL = testAwxAPIURL
+			cr.Spec.WorkflowExecution.Ansible.Enabled = true
+			cr.Spec.WorkflowExecution.Ansible.APIURL = testAwxAPIURL
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			r := reconcileToRunning(ctx)
 
 			By("disabling ansible")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			kn.Spec.Ansible.Enabled = false
+			kn.Spec.WorkflowExecution.Ansible.Enabled = false
 			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
 
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -848,11 +897,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				"Console Deployment should not exist when console is disabled")
 		})
 
-		It("[SC-7] should create NetworkPolicies when networkPolicies.enabled is true", func() {
+		It("[SC-7] reports unavailable native policy without creating a raw fallback", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			t := true
-			cr.Spec.NetworkPolicies.Enabled = &t
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			reconcileToRunning(ctx)
 
@@ -860,56 +907,40 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.List(ctx, npList, client.InNamespace(testNamespace), client.MatchingLabels{
 				"app.kubernetes.io/managed-by": "kubernaut-operator",
 			})).To(Succeed())
-			Expect(npList.Items).NotTo(BeEmpty(),
-				"NetworkPolicies should be created when networkPolicies.enabled is true")
+			Expect(npList.Items).To(BeEmpty(), "native policy adapters must not create raw Kubernetes NetworkPolicy")
+			kn := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady).Status).To(Equal(metav1.ConditionFalse))
 		})
 
-		It("[SC-7] ADR-CRD-001 F3: networkPolicies.enabled=false no longer deletes NetworkPolicies (mandatory, matches Helm/OLM)", func() {
-			// v1alpha2 is the storage version and dropped NetworkPoliciesSpec.Enabled
-			// entirely (ADR-CRD-001 F3: NetworkPolicies became unconditional, matching
-			// the Helm chart -- which has no enabled toggle -- and Red Hat OLM
-			// certification's olm.required_network_policy_rbac_for_operands policy).
-			// The v1alpha1<->v1alpha2 conversion webhook (api/v1alpha1/kubernaut_conversion.go)
-			// preserves round-trip *shape* for v1alpha1 clients by always reporting
-			// Enabled=true on ConvertFrom, so toggling it to false is silently a no-op
-			// once the object round-trips through v1alpha2 storage -- this replaces the
-			// pre-v1alpha2 "toggle off deletes NetworkPolicies" test, which asserted
-			// behavior the ADR deliberately retired.
+		It("[SC-7] keeps the no-fallback policy result after a CR update", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			t := true
-			cr.Spec.NetworkPolicies.Enabled = &t
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			r := reconcileToRunning(ctx)
 
-			By("verifying NPs exist after deploy")
+			By("verifying raw NPs are absent after deploy")
 			npList := &networkingv1.NetworkPolicyList{}
 			Expect(k8sClient.List(ctx, npList, client.InNamespace(testNamespace), client.MatchingLabels{
 				"app.kubernetes.io/managed-by": "kubernaut-operator",
 			})).To(Succeed())
-			Expect(npList.Items).NotTo(BeEmpty(), "NPs should exist before toggle")
+			Expect(npList.Items).To(BeEmpty(), "raw Kubernetes NetworkPolicy must not be used as a fallback")
 
-			By("attempting to disable networkPolicies")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			By("updating an unrelated v1alpha2 field")
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			f := false
-			kn.Spec.NetworkPolicies.Enabled = &f
+			kn.Spec.WorkflowExecution.CooldownPeriod = "2m"
 			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
 
-			By("verifying the CR reads back with Enabled coerced to true post round-trip")
-			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Spec.NetworkPolicies.Enabled).To(HaveValue(BeTrue()),
-				"conversion webhook must always report NetworkPolicies as enabled to v1alpha1 clients (F3)")
-
-			By("reconciling after the no-op toggle")
+			By("reconciling after the update")
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(k8sClient.List(ctx, npList, client.InNamespace(testNamespace), client.MatchingLabels{
 				"app.kubernetes.io/managed-by": "kubernaut-operator",
 			})).To(Succeed())
-			Expect(npList.Items).NotTo(BeEmpty(),
-				"NetworkPolicies must remain -- they are mandatory as of v1alpha2 (ADR-CRD-001 F3)")
+			Expect(npList.Items).To(BeEmpty(),
+				"raw Kubernetes NetworkPolicy must remain absent after the update")
 		})
 	})
 
@@ -1086,7 +1117,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(cm.Data["remediationorchestrator.yaml"]).To(ContainSubstring("global: 1h"))
 
 			By("updating the spec")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			kn.Spec.RemediationOrchestrator.Timeouts.Global = "2h"
 			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
@@ -1114,7 +1145,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(dep.Spec.Template.Spec.Containers[0].Image).To(ContainSubstring(":test"))
 
 			By("setting an image override for gateway")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			kn.Spec.Image.Overrides = map[string]string{
 				"gateway": "myregistry.example.com/gateway:v2.0.0",
@@ -1136,7 +1167,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
 			dep := &appsv1.Deployment{}
@@ -1191,7 +1222,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			stripWorkflowNamespaceCreatedByAnnotation(ctx)
 
 			By("deleting the CR")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
 
@@ -1222,7 +1253,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			stripWorkflowNamespaceCreatedByAnnotation(ctx)
 
 			By("deleting the CR")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
 
@@ -1253,8 +1284,8 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("should always attempt AWX cleanup even when ansible is disabled", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			cr.Spec.Ansible.Enabled = true
-			cr.Spec.Ansible.APIURL = testAwxAPIURL
+			cr.Spec.WorkflowExecution.Ansible.Enabled = true
+			cr.Spec.WorkflowExecution.Ansible.APIURL = testAwxAPIURL
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			r := reconcileToRunning(ctx)
 
@@ -1263,9 +1294,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: awxName}, awxCR)).To(Succeed())
 
 			By("disabling ansible and deleting CR")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			kn.Spec.Ansible.Enabled = false
+			kn.Spec.WorkflowExecution.Ansible.Enabled = false
 			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
 
 			stripWorkflowNamespaceCreatedByAnnotation(ctx)
@@ -1294,7 +1325,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("modifying spec between reconcile cycles (simulating concurrent edit)")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			kn.Spec.RemediationOrchestrator.Timeouts.Global = "3h"
 			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
@@ -1304,7 +1335,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionBYOValidated)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 		})
@@ -1328,7 +1359,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			result := &kubernautv1alpha1.Kubernaut{}
+			result := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "not-kubernaut-2", Namespace: testNamespace}, result)).To(Succeed())
 			Expect(result.Finalizers).To(BeEmpty())
 			Expect(result.Status.Phase).To(BeEmpty())
@@ -1365,9 +1396,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			crdCond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionCRDsInstalled)
+			crdCond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionCRDsInstalled)
 			Expect(crdCond).NotTo(BeNil(), "ConditionCRDsInstalled should be set")
 			Expect(crdCond.Status).To(Equal(metav1.ConditionTrue))
 		})
@@ -1472,9 +1503,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			cr := newMinimalCR()
 			knV2 := testKnV2(cr)
 
-			for _, build := range []func(*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error){
+			for _, build := range []func(*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error){
 				resources.GatewayDeployment,
-				func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+				func(kn *kubernautv1alpha2.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 					return resources.DataStorageDeployment(kn)
 				},
 				resources.AIAnalysisDeployment,
@@ -1502,13 +1533,13 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		})
 
 		It("should use default Valkey port 6379 when not specified", func() {
-			spec := &kubernautv1alpha1.ValkeySpec{Host: "valkey", Port: 0}
+			spec := &kubernautv1alpha2.ValkeySpec{Host: "valkey", Port: 0}
 			addr := resources.ValkeyAddr(spec)
 			Expect(addr).To(Equal("valkey:6379"))
 		})
 
 		It("should use custom Valkey port when specified", func() {
-			spec := &kubernautv1alpha1.ValkeySpec{Host: "valkey", Port: 6380}
+			spec := &kubernautv1alpha2.ValkeySpec{Host: "valkey", Port: 6380}
 			addr := resources.ValkeyAddr(spec)
 			Expect(addr).To(Equal("valkey:6380"))
 		})
@@ -1574,7 +1605,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("CONS-006 [CM-6]: does not create the auto-generated proactive-signal-mappings CM when the user supplies their own", func() {
 			createBYOSecrets(ctx)
 			kn := newCRWithRouteDisabled()
-			kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha1.ConfigMapRef{ConfigMapName: "my-proactive-signal-mappings"}
+			kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "my-proactive-signal-mappings"}
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 			reconcileToRunning(ctx)
 
@@ -1595,7 +1626,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("CONS-003 [CM-6]: does not create the auto-generated notification-routing-config CM when the user supplies their own", func() {
 			createBYOSecrets(ctx)
 			kn := newCRWithRouteDisabled()
-			kn.Spec.Notification.Routing = &kubernautv1alpha1.ConfigMapRef{ConfigMapName: "my-notification-routing"}
+			kn.Spec.Notification.Routing = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "my-notification-routing"}
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 			reconcileToRunning(ctx)
 
@@ -1637,9 +1668,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).NotTo(Equal(kubernautv1alpha1.PhaseError),
+			Expect(kn.Status.Phase).NotTo(Equal(kubernautv1alpha2.PhaseError),
 				"IA-2: with kagenti sidecar active, missing issuerURL should not block validation — OIDC auto-detection fills it in during deploy")
 		})
 
@@ -1690,12 +1721,12 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).NotTo(Equal(kubernautv1alpha1.PhaseError),
+			Expect(kn.Status.Phase).NotTo(Equal(kubernautv1alpha2.PhaseError),
 				"CR with valid issuerURL should not be in PhaseError")
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionBYOValidated)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
 			if cond != nil {
 				Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 			}
@@ -1832,7 +1863,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			oldHash := cm.Annotations[resources.AnnotationSpecHash]
 
 			By("changing the CR spec")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			kn.Spec.RemediationOrchestrator.Timeouts.Global = "5h"
 			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
@@ -1884,7 +1915,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(oldHash).NotTo(BeEmpty())
 
 			By("changing a spec field that alters the RO ConfigMap")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			kn.Spec.RemediationOrchestrator.Timeouts.Global = "99h"
 			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
@@ -1957,7 +1988,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			stripWorkflowNamespaceCreatedByAnnotation(ctx)
 
 			By("deleting the CR")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
 
@@ -2099,15 +2130,15 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("A1: should set AnsibleReady=True/Disabled when ansible is not enabled", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			cr.Spec.Ansible.Enabled = false
+			cr.Spec.WorkflowExecution.Ansible.Enabled = false
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAnsibleReady)
 			Expect(cond).NotTo(BeNil(), "AnsibleReady condition should be present")
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 			Expect(cond.Reason).To(Equal("Disabled"))
@@ -2121,10 +2152,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAnsibleReady)
 			Expect(cond).NotTo(BeNil(), "AnsibleReady condition should be present")
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 			Expect(cond.Reason).To(Equal("Ready"))
@@ -2137,10 +2168,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAnsibleReady)
 			Expect(cond).NotTo(BeNil(), "AnsibleReady condition should be present")
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal("TokenSecretNotFound"))
@@ -2154,10 +2185,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAnsibleReady)
 			Expect(cond).NotTo(BeNil(), "AnsibleReady condition should be present")
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal("TokenKeyMissing"))
@@ -2166,17 +2197,17 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("A5: should set AnsibleReady=False/TokenSecretNotFound when tokenSecretRef is nil", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			cr.Spec.Ansible.Enabled = true
-			cr.Spec.Ansible.APIURL = testAwxAPIURL
-			cr.Spec.Ansible.TokenSecretRef = nil
+			cr.Spec.WorkflowExecution.Ansible.Enabled = true
+			cr.Spec.WorkflowExecution.Ansible.APIURL = testAwxAPIURL
+			cr.Spec.WorkflowExecution.Ansible.TokenSecretRef = nil
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAnsibleReady)
 			Expect(cond).NotTo(BeNil(), "AnsibleReady condition should be present")
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal("TokenSecretNotFound"))
@@ -2190,9 +2221,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			r := reconcileToRunning(ctx)
 
 			By("verifying initially False")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAnsibleReady)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 
@@ -2205,7 +2236,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			By("verifying recovery")
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			cond = findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			cond = findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAnsibleReady)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 			Expect(cond.Reason).To(Equal("Ready"))
@@ -2218,12 +2249,12 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseRunning),
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha2.PhaseRunning),
 				"PhaseRunning must be reached even when AnsibleReady is False")
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAnsibleReady)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 		})
@@ -2237,9 +2268,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			r := reconcileToRunning(ctx)
 
 			By("verifying initially True/Ready")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAnsibleReady)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 
@@ -2252,7 +2283,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			By("verifying condition flipped to False")
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			cond = findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAnsibleReady)
+			cond = findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAnsibleReady)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal("TokenSecretNotFound"))
@@ -2301,10 +2332,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAlertManagerAuthConfigured)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAlertManagerAuthConfigured)
 			Expect(cond).NotTo(BeNil(), "AlertManagerAuthConfigured condition should be present")
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal("SecretNameNotConfigured"))
@@ -2320,10 +2351,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAlertManagerAuthConfigured)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAlertManagerAuthConfigured)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 			Expect(cond.Reason).To(Equal("Ready"))
@@ -2338,10 +2369,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAlertManagerAuthConfigured)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAlertManagerAuthConfigured)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal("TokenSecretNotFound"))
@@ -2357,10 +2388,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAlertManagerAuthConfigured)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAlertManagerAuthConfigured)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal("TokenKeyMissing"))
@@ -2373,12 +2404,12 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseRunning),
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha2.PhaseRunning),
 				"PhaseRunning must be reached even when AlertManagerAuthConfigured is False")
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAlertManagerAuthConfigured)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAlertManagerAuthConfigured)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 		})
@@ -2410,11 +2441,11 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseError))
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha2.PhaseError))
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionBYOValidated)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal("PostgreSQLHostInvalid"))
@@ -2434,11 +2465,11 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseError))
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha2.PhaseError))
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionBYOValidated)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal("ValkeyHostInvalid"))
@@ -2514,7 +2545,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			By("preventing namespace deletion for envtest stability")
 			stripWorkflowNamespaceCreatedByAnnotation(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
 
@@ -2562,7 +2593,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			r.Client = &deleteFailingClient{Client: k8sClient}
 
 			By("deleting the CR")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
 			stripWorkflowNamespaceCreatedByAnnotation(ctx)
@@ -2640,10 +2671,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			By("restoring real client to read status")
 			r.Client = k8sClient
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionRBACProvisioned)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionRBACProvisioned)
 			Expect(cond).NotTo(BeNil(), "RBACProvisioned condition should exist")
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal(ReasonRBACApplyFailed))
@@ -2673,15 +2704,15 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("should set AdditionalRBACBound=False when referenced ClusterRoles do not exist", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			cr.Spec.KubernautAgent.AdditionalClusterRoleBindings = []string{"nonexistent-cluster-role"}
+			cr.Spec.AdditionalClusterRoles = []string{"nonexistent-cluster-role"}
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
 			reconcileToDeployPhase(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAdditionalRBACBound)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAdditionalRBACBound)
 			Expect(cond).NotTo(BeNil(), "AdditionalRBACBound condition should exist")
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal(ReasonAdditionalRBACPartialBound))
@@ -2698,15 +2729,15 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			defer func() { _ = k8sClient.Delete(ctx, existingCR) }()
 
 			cr := newCRWithRouteDisabled()
-			cr.Spec.KubernautAgent.AdditionalClusterRoleBindings = []string{"test-extra-role"}
+			cr.Spec.AdditionalClusterRoles = []string{"test-extra-role"}
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
 			reconcileToDeployPhase(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionAdditionalRBACBound)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAdditionalRBACBound)
 			Expect(cond).NotTo(BeNil(), "AdditionalRBACBound condition should exist")
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 			Expect(cond.Reason).To(Equal(ReasonAdditionalRBACFullyBound))
@@ -2764,11 +2795,11 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseError))
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha2.PhaseError))
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionMigrationComplete)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionMigrationComplete)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal("MigrationFailed"))
@@ -2832,7 +2863,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
 			found := false
@@ -2855,7 +2886,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crName}, cr)).To(Succeed())
 
 			By("deleting the CR")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
 			stripWorkflowNamespaceCreatedByAnnotation(ctx)
@@ -2875,7 +2906,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 			reconcileToDeployPhase(ctx)
 
-			toolRoleNames := resources.ToolClusterRoleNames(&kubernautv1alpha1.Kubernaut{
+			toolRoleNames := resources.ToolClusterRoleNames(&kubernautv1alpha2.Kubernaut{
 				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
 			})
 			Expect(toolRoleNames).To(HaveLen(6), "should have 6 tool ClusterRole names")
@@ -2889,15 +2920,15 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("creates tool CRBs when roleBindings are specified in CR", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-				RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
 					{Role: "sre", Groups: []string{"sre-team"}},
 				},
 			}
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			reconcileToDeployPhase(ctx)
 
-			crbNames := resources.ToolCRBNames(&kubernautv1alpha1.Kubernaut{
+			crbNames := resources.ToolCRBNames(&kubernautv1alpha2.Kubernaut{
 				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
 				Spec:       cr.Spec,
 			})
@@ -2910,8 +2941,8 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("prunes stale CRBs when roleBindings removed from spec", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-				RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
 					{Role: "sre", Groups: []string{"sre-team"}},
 					{Role: "cicd", Groups: []string{"ci-bots"}},
 				},
@@ -2920,9 +2951,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			r := reconcileToRunning(ctx)
 
 			By("removing cicd role binding from spec")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			kn.Spec.APIFrontend.RBAC.RoleBindings = []kubernautv1alpha1.ToolRoleBinding{
+			kn.Spec.APIFrontend.RBAC.RoleBindings = []kubernautv1alpha2.ToolRoleBinding{
 				{Role: "sre", Groups: []string{"sre-team"}},
 			}
 			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
@@ -2940,20 +2971,20 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("sets ConditionToolRBACBound True when all bindings active", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-				RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
 					{Role: "sre", Groups: []string{"sre-team"}},
 				},
 			}
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
 			found := false
 			for _, c := range kn.Status.Conditions {
-				if c.Type == kubernautv1alpha1.ConditionToolRBACBound {
+				if c.Type == kubernautv1alpha2.ConditionToolRBACBound {
 					found = true
 					Expect(c.Status).To(Equal(metav1.ConditionTrue))
 				}
@@ -2966,11 +2997,11 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 			reconcileToRunning(ctx)
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
 			for _, c := range kn.Status.Conditions {
-				Expect(c.Type).NotTo(Equal(kubernautv1alpha1.ConditionToolRBACBound),
+				Expect(c.Type).NotTo(Equal(kubernautv1alpha2.ConditionToolRBACBound),
 					"ConditionToolRBACBound should not be present when no bindings specified")
 			}
 		})
@@ -3002,15 +3033,15 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("deletes tool ClusterRoles and CRBs by finalizer", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-				RoleBindings: []kubernautv1alpha1.ToolRoleBinding{
+			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
 					{Role: "sre", Groups: []string{"sre-team"}},
 				},
 			}
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			r := reconcileToRunning(ctx)
 
-			toolRoleNames := resources.ToolClusterRoleNames(&kubernautv1alpha1.Kubernaut{
+			toolRoleNames := resources.ToolClusterRoleNames(&kubernautv1alpha2.Kubernaut{
 				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
 			})
 			Expect(toolRoleNames).NotTo(BeEmpty())
@@ -3020,7 +3051,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}
 
 			By("deleting the CR")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
 			stripWorkflowNamespaceCreatedByAnnotation(ctx)
@@ -3070,7 +3101,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			reconcileToDeployPhase(ctx)
 
 			cr := &rbacv1.ClusterRole{}
-			err := k8sClient.Get(ctx, types.NamespacedName{Name: resources.ConsoleAccessClusterRoleName(&kubernautv1alpha1.Kubernaut{
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: resources.ConsoleAccessClusterRoleName(&kubernautv1alpha2.Kubernaut{
 				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
 			})}, cr)
 			Expect(err).NotTo(HaveOccurred(), "console-access ClusterRole should exist after deploy")
@@ -3083,17 +3114,17 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("IT-CONSOLE-002: creates the console-access CRB with derived groups matching the #289 live scenario", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			roleBindings := make([]kubernautv1alpha1.ToolRoleBinding, 0, 6)
+			roleBindings := make([]kubernautv1alpha2.ToolRoleBinding, 0, 6)
 			for _, role := range []string{"sre", "ai-orchestrator", "cicd", "observability", "l3-audit", "remediation-approver"} {
-				roleBindings = append(roleBindings, kubernautv1alpha1.ToolRoleBinding{
+				roleBindings = append(roleBindings, kubernautv1alpha2.ToolRoleBinding{
 					Role: role, Groups: []string{"platform-engineering"},
 				})
 			}
-			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{RoleBindings: roleBindings}
+			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{RoleBindings: roleBindings}
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			reconcileToDeployPhase(ctx)
 
-			crbName := resources.ConsoleAccessCRBName(&kubernautv1alpha1.Kubernaut{
+			crbName := resources.ConsoleAccessCRBName(&kubernautv1alpha2.Kubernaut{
 				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
 			})
 			crb := &rbacv1.ClusterRoleBinding{}
@@ -3107,14 +3138,14 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("IT-CONSOLE-003: reflects an explicit consoleAccessGroups override, independent of roleBindings", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-				RoleBindings:        []kubernautv1alpha1.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
+			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+				RoleBindings:        []kubernautv1alpha2.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
 				ConsoleAccessGroups: []string{"console-admins"},
 			}
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			reconcileToDeployPhase(ctx)
 
-			crbName := resources.ConsoleAccessCRBName(&kubernautv1alpha1.Kubernaut{
+			crbName := resources.ConsoleAccessCRBName(&kubernautv1alpha2.Kubernaut{
 				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
 			})
 			crb := &rbacv1.ClusterRoleBinding{}
@@ -3127,13 +3158,13 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("IT-CONSOLE-004: removes the console-access CRB after switching to consoleAccessGroups: []", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-				RoleBindings: []kubernautv1alpha1.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
+			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
 			}
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			r := reconcileToRunning(ctx)
 
-			crbName := resources.ConsoleAccessCRBName(&kubernautv1alpha1.Kubernaut{
+			crbName := resources.ConsoleAccessCRBName(&kubernautv1alpha2.Kubernaut{
 				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
 			})
 			crb := &rbacv1.ClusterRoleBinding{}
@@ -3141,7 +3172,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				"precondition: console-access CRB derived from roleBindings should exist")
 
 			By("explicitly opting out via consoleAccessGroups: []")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			kn.Spec.APIFrontend.RBAC.ConsoleAccessGroups = []string{}
 			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
@@ -3157,13 +3188,13 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("IT-CONSOLE-005: deletes the console-access ClusterRole and CRB by finalizer", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha1.APIFrontendRBACSpec{
-				RoleBindings: []kubernautv1alpha1.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
+			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
 			}
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			r := reconcileToRunning(ctx)
 
-			knForNames := &kubernautv1alpha1.Kubernaut{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}}
+			knForNames := &kubernautv1alpha2.Kubernaut{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}}
 			crName := resources.ConsoleAccessClusterRoleName(knForNames)
 			crbName := resources.ConsoleAccessCRBName(knForNames)
 
@@ -3171,7 +3202,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crbName}, &rbacv1.ClusterRoleBinding{})).To(Succeed())
 
 			By("deleting the CR")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
 			stripWorkflowNamespaceCreatedByAnnotation(ctx)
@@ -3431,7 +3462,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				Data:       data,
 			}
 		}
-		oidcCR := func(issuerURL string) *kubernautv1alpha1.Kubernaut {
+		oidcCR := func(issuerURL string) *kubernautv1alpha2.Kubernaut {
 			kn := unitTestKubernautCR(true, true)
 			kn.Spec.APIFrontend.Auth.IssuerURL = issuerURL
 			return kn
@@ -3630,6 +3661,39 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	})
 })
 
+func createIngressTLSSecret(ctx context.Context, host string) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	Expect(err).NotTo(HaveOccurred())
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 120))
+	Expect(err).NotTo(HaveOccurred())
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: host},
+		DNSNames:     []string{host},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	Expect(err).NotTo(HaveOccurred())
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "gateway-ingress-tls", Namespace: testNamespace},
+		Type:       corev1.SecretTypeTLS,
+		Data: map[string][]byte{
+			corev1.TLSCertKey:       pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+			corev1.TLSPrivateKeyKey: pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}),
+		},
+	}
+	Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+}
+
+func deleteIngressTLSSecret(ctx context.Context) {
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "gateway-ingress-tls", Namespace: testNamespace}}
+	err := k8sClient.Delete(ctx, secret)
+	Expect(err == nil || errors.IsNotFound(err)).To(BeTrue())
+}
+
 // ---------------------------------------------------------------------------
 // Shared helpers for unit tests migrated from testing.T files
 // ---------------------------------------------------------------------------
@@ -3657,15 +3721,15 @@ func unitTestNamespace(labels map[string]string) *corev1.Namespace {
 	}
 }
 
-func unitTestKubernautCR(afEnabled bool, spireEnabled bool) *kubernautv1alpha1.Kubernaut {
-	kn := &kubernautv1alpha1.Kubernaut{
+func unitTestKubernautCR(afEnabled bool, spireEnabled bool) *kubernautv1alpha2.Kubernaut {
+	kn := &kubernautv1alpha2.Kubernaut{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "kubernaut",
 			Namespace: testNamespace,
 		},
-		Spec: kubernautv1alpha1.KubernautSpec{
-			APIFrontend: kubernautv1alpha1.APIFrontendSpec{
-				SPIRE: kubernautv1alpha1.APIFrontendSPIRESpec{
+		Spec: kubernautv1alpha2.KubernautSpec{
+			APIFrontend: kubernautv1alpha2.APIFrontendSpec{
+				SPIRE: kubernautv1alpha2.APIFrontendSPIRESpec{
 					Enabled: ptr.To(spireEnabled),
 				},
 			},

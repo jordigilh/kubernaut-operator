@@ -1,11 +1,22 @@
 # ADR-CRD-001: `kubernaut.ai/v1alpha2` CRD Redesign and v1alpha1 Deprecation
 
-**Status**: Accepted (CHECKPOINT DD sign-off obtained 2026-08-06)
+> **Superseded migration boundary:** Issue #488 approved a v1alpha2 clean
+> break. The conversion-webhook design documented below is historical context;
+> the platform-neutrality branch serves/stores only v1alpha2 and uses the
+> export/transform/recreate procedure in
+> `docs/upgrade-v1alpha1-to-v1alpha2.md`.
+
+> **Do not implement the conversion design below.** It records the earlier
+> hub-and-spoke proposal for the v1alpha2 redesign. Issue #488 supersedes that
+> proposal with a clean break: no v1alpha1 API package, conversion webhook,
+> conversion registration, or v1alpha1 reconcile view remains in this branch.
+
+**Status**: Superseded by issue #488 (historical design record)
 **Decision Date**: 2026-08-06
 **Version**: 1.6
 **Confidence**: 93%
 **Deciders**: Kubernaut Operator Team
-**Applies To**: `api/v1alpha1` -> `api/v1alpha2` CRD migration, conversion webhook, all `internal/resources/*.go` builders, `internal/controller/`, OLM bundle
+**Historical Scope**: `api/v1alpha1` -> `api/v1alpha2` CRD migration, proposed conversion webhook, all `internal/resources/*.go` builders, `internal/controller/`, OLM bundle
 
 **Related Business Requirements**:
 - BR-API-001: CRD API surface alignment with the upstream Helm chart's `values.schema.json`

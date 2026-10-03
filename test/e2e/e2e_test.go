@@ -205,7 +205,7 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			createBYOSecrets()
 
 			By("applying the Kubernaut CR from config/samples")
-			cmd := exec.Command("kubectl", "apply", "-f", "config/samples/v1alpha1_kubernaut.yaml")
+			cmd := exec.Command("kubectl", "apply", "-f", "config/samples/v1alpha2_kubernaut.yaml")
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to apply Kubernaut CR")
 		})

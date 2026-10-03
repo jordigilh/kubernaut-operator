@@ -1,5 +1,11 @@
 # DD-277: Generalize `additionalClusterRoleBindings`, shrink built-in owner-chain rules, and fix orphaned-CRB leaks
 
+> **Historical v1alpha1 compatibility note:** This decision predates issue
+> #488's clean-break rollout. References below to a served v1alpha1 view and
+> conversion mapping describe the historical implementation contract; the
+> current branch serves and stores only `kubernaut.ai/v1alpha2`. See
+> `docs/upgrade-v1alpha1-to-v1alpha2.md` for migration guidance.
+
 **Status**: Accepted
 **Decision Date**: 2026-08-15
 **Applies To**: `api/v1alpha2.KubernautSpec`/`KubernautAgentSpec`, `internal/resources/rbac.go`, `internal/controller/kubernaut_controller.go`

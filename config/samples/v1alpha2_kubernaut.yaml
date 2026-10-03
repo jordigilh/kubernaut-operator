@@ -75,11 +75,10 @@ spec:
   #   syncInterval: "30s"
   #   keyTTL: "45s"
 
-  # Monitoring configures the Prometheus/Thanos Querier endpoint used by
-  # EffectivenessMonitor and API Frontend severity-triage (F2 -- new in
-  # v1alpha2). Left unset here: this preserves v1alpha1's only behavior --
-  # OCP's built-in Thanos Querier at a well-known in-cluster URL,
-  # auto-detected, no user action needed.
+  # Monitoring endpoints are explicit on generic Kubernetes. On OpenShift,
+  # an unset endpoint uses the platform monitoring adapter only after
+  # capability discovery; optional monitoring APIs remain independently
+  # gated.
   # monitoring:
   #   prometheus:
   #     enabled: true
@@ -314,13 +313,12 @@ spec:
     logging:
       level: INFO
 
-  # v1alpha2/F3: networkPolicies has no enabled toggle -- NetworkPolicies are
-  # always created (matching the upstream Helm chart's actual behavior and
-  # Red Hat's OpenShift Hardening requirements). Every field below only
-  # tunes the already-created policy set; leave the whole block out entirely
-  # to accept the defaults.
+  # Native policy selection is capability-gated. Auto is the safe default: a
+  # provider must be positively identified before any provider policy object
+  # is submitted. No raw Kubernetes NetworkPolicy or static API-server CIDR
+  # fallback is used.
   # networkPolicies:
-  #   apiServerCIDR: "10.0.0.1/32"
+  #   provider: Auto
 
   console:
     enabled: true

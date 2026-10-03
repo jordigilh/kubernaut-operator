@@ -1,5 +1,12 @@
 # Upgrade Guide: 1.5 → 1.6
 
+> **Historical guide notice:** this document describes the earlier 1.5 → 1.6
+> transition and its temporary conversion-webhook behavior. For the clean-break
+> API shipped by the platform-neutrality work, use
+> [`upgrade-v1alpha1-to-v1alpha2.md`](upgrade-v1alpha1-to-v1alpha2.md). The
+> current release serves/stores only `v1alpha2` and requires export,
+> transform, delete, and recreate; do not rely on the conversion claims below.
+
 ## Prerequisites
 
 - OpenShift 4.17+ cluster
@@ -150,15 +157,13 @@ separately-backported NetworkPolicy fix that applies to both lines.
 
 `spec.kubernautAgent.additionalClusterRoleBindings` is removed from the
 `v1alpha2` schema; the equivalent field is now the top-level
-`spec.additionalClusterRoles`. Unlike the previous two entries in this
-section, **this has an automated conversion** — `v1alpha1` still accepts
-`spec.kubernautAgent.additionalClusterRoleBindings` at its original location
-and the operator's conversion webhook maps it losslessly to `v1alpha2`'s
-`spec.additionalClusterRoles` on your behalf. If you author `v1alpha2`
-manifests directly, move the field yourself:
+`spec.additionalClusterRoles`. The current clean-break release has no
+conversion webhook and does not accept `v1alpha1` objects. Move the field
+yourself as part of the export/transform/recreate procedure described in
+[`upgrade-v1alpha1-to-v1alpha2.md`](upgrade-v1alpha1-to-v1alpha2.md):
 
 ```yaml
-# Before (1.5, or v1alpha1 on 1.6 -- still works, no change needed)
+# Before (1.5)
 spec:
   kubernautAgent:
     additionalClusterRoleBindings:

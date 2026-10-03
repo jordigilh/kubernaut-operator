@@ -347,7 +347,7 @@ spec:
 
 If your AAP uses a publicly trusted CA (e.g., Let's Encrypt), omit `caCertSecretRef` — the system trust store handles it automatically.
 
-If you do not use Ansible, omit the `ansible` block entirely (it defaults to disabled). Note: v1alpha1 modeled this as a top-level `spec.ansible` block; v1alpha2 relocates it under `spec.workflowExecution.ansible` (F4 -- WorkflowExecution is Ansible's only consumer). The v1alpha1 API still accepts the old location and converts it losslessly.
+If you do not use Ansible, omit the `ansible` block entirely (it defaults to disabled). The clean-break v1alpha2 API models this under `spec.workflowExecution.ansible`; manifests using the retired top-level `spec.ansible` field must be transformed before recreation. See `docs/upgrade-v1alpha1-to-v1alpha2.md`.
 
 ## Gateway Configuration (optional)
 
@@ -643,11 +643,11 @@ entries with Gateway enabled produce 6 ClusterRoleBindings, not 2. It does
 **not** create or manage the ClusterRoles themselves — you must create them
 separately.
 
-> **Migrating from v1alpha1 / pre-#277 operators**: the field was previously
+> **Migrating from pre-#277 operators**: the field was previously
 > `spec.kubernautAgent.additionalClusterRoleBindings` and only bound KA. The
-> v1alpha1 API still accepts it (converted losslessly to the new top-level
-> field on the v1alpha2 storage version), but the Gateway/EM binding is new
-> behavior on upgrade -- review the ClusterRoles you list for whether it's
+> v1alpha2 uses the top-level `spec.additionalClusterRoles`; transform the old
+> field during the export/transform/recreate migration. Gateway/EM binding is
+> new behavior -- review the ClusterRoles you list for whether it is
 > appropriate for Gateway/EM to hold them too.
 
 The `AdditionalRBACBound` status condition reports whether all referenced

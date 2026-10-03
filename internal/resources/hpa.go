@@ -20,7 +20,7 @@ import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	"k8s.io/utils/ptr"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 // HPASpec configures the common HPA parameters.
@@ -32,7 +32,7 @@ type HPASpec struct {
 	MemoryTargetPercent int32
 }
 
-func buildHPA(kn *kubernautv1alpha1.Kubernaut, spec HPASpec) *autoscalingv2.HorizontalPodAutoscaler {
+func buildHPA(kn *kubernautv1alpha2.Kubernaut, spec HPASpec) *autoscalingv2.HorizontalPodAutoscaler {
 	metrics := []autoscalingv2.MetricSpec{
 		{
 			Type: autoscalingv2.ResourceMetricSourceType,
@@ -75,7 +75,7 @@ func buildHPA(kn *kubernautv1alpha1.Kubernaut, spec HPASpec) *autoscalingv2.Hori
 }
 
 // DataStorageHPA builds the HPA for the DataStorage component.
-func DataStorageHPA(kn *kubernautv1alpha1.Kubernaut) *autoscalingv2.HorizontalPodAutoscaler {
+func DataStorageHPA(kn *kubernautv1alpha2.Kubernaut) *autoscalingv2.HorizontalPodAutoscaler {
 	return buildHPA(kn, HPASpec{
 		Component:           ComponentDataStorage,
 		MinReplicas:         1,
@@ -86,7 +86,7 @@ func DataStorageHPA(kn *kubernautv1alpha1.Kubernaut) *autoscalingv2.HorizontalPo
 }
 
 // APIFrontendHPA builds the HPA for the APIFrontend component.
-func APIFrontendHPA(kn *kubernautv1alpha1.Kubernaut) *autoscalingv2.HorizontalPodAutoscaler {
+func APIFrontendHPA(kn *kubernautv1alpha2.Kubernaut) *autoscalingv2.HorizontalPodAutoscaler {
 	return buildHPA(kn, HPASpec{
 		Component:           ComponentAPIFrontend,
 		MinReplicas:         1,

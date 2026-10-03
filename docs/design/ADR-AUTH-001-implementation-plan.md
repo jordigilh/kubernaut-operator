@@ -1,5 +1,10 @@
 # ADR-AUTH-001 Implementation Plan (APDC)
 
+> **Historical implementation plan:** This plan predates issue #488's
+> v1alpha2 clean break. References to `api/v1alpha1` and its migration steps
+> describe the former implementation path; current API work must target
+> `api/v1alpha2`, and no v1alpha1 conversion path remains.
+
 **Issue**: [kubernaut-operator#174](https://github.com/jordigilh/kubernaut-operator/issues/174)
 **ADR**: [ADR-AUTH-001-multi-provider-jwt-apifrontend.md](ADR-AUTH-001-multi-provider-jwt-apifrontend.md)
 **Methodology**: APDC (Analysis-Plan-Do-Check)

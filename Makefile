@@ -52,6 +52,13 @@ OPERATOR_SDK_VERSION ?= v1.42.2
 # Image URL to use all building/pushing image targets
 IMG ?= $(IMAGE_TAG_BASE):$(VERSION)
 
+# Kind E2E uses a locally loaded operator image and the matching Kubernaut
+# component release. Keep this explicit because the release tag is part of the
+# image-validation contract exercised by the journey suite.
+KIND_OPERATOR_VERSION ?= 1.6.0-rc20
+KIND_OPERATOR_IMAGE ?= kubernaut-operator:$(KIND_OPERATOR_VERSION)
+KIND_KUBERNAUT_IMAGE_TAG ?= $(KIND_OPERATOR_VERSION)
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -109,23 +116,45 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 # Unit-test packages that do NOT need envtest (fast, no API server).
-# api/... covers the v1alpha1<->v1alpha2 conversion webhook logic
-# (api/v1alpha1/kubernaut_conversion.go); pure Go, no API server needed.
-UT_PKGS := ./internal/resources/... ./internal/webhook/... ./api/...
+# api/... covers the v1alpha2 API schema and clean-break contract; pure Go, no
+# API server needed.
+UT_PKGS := ./internal/resources/... ./internal/webhook/... ./internal/policy/... ./api/...
+UNIT_COVERAGE_THRESHOLD ?= 80
 
 .PHONY: test-unit
 test-unit: fmt vet ## Run unit tests (no envtest, no API server).
 	go test $(UT_PKGS) -coverprofile cover-unit.out
+	@grep 'internal/' cover-unit.out > cover-unit-internal.out || true
+	@{ echo "mode: set"; cat cover-unit-internal.out; } > cover-unit-internal-final.out
+	@coverage=$$(go tool cover -func=cover-unit-internal-final.out | grep '^total:' | awk '{print $$3}' | tr -d '%'); \
+		echo "Internal unit coverage: $${coverage}% (threshold $(UNIT_COVERAGE_THRESHOLD)%)"; \
+		if awk -v coverage="$${coverage}" -v threshold="$(UNIT_COVERAGE_THRESHOLD)" 'BEGIN { exit !(coverage < threshold) }'; then \
+			echo "Internal unit coverage is below the $(UNIT_COVERAGE_THRESHOLD)% threshold"; exit 1; \
+		fi
 
 # Integration-test packages that DO need envtest (controller reconciler).
 IT_PKGS := ./internal/controller/...
+INTEGRATION_COVERAGE_THRESHOLD ?= 78
 
 .PHONY: test-integration
 test-integration: manifests generate fmt vet setup-envtest ## Run integration tests (envtest API server).
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $(IT_PKGS) -coverprofile cover-integration.out
+	@coverage=$$(go tool cover -func=cover-integration.out | grep '^total:' | awk '{print $$3}' | tr -d '%'); \
+		echo "Controller integration coverage: $${coverage}% (threshold $(INTEGRATION_COVERAGE_THRESHOLD)%)"; \
+		if awk -v coverage="$${coverage}" -v threshold="$(INTEGRATION_COVERAGE_THRESHOLD)" 'BEGIN { exit !(coverage < threshold) }'; then \
+			echo "Controller integration coverage is below the $(INTEGRATION_COVERAGE_THRESHOLD)% threshold"; exit 1; \
+		fi
+
+.PHONY: test-security-traceability
+test-security-traceability: ## Validate the versioned NIST/FedRAMP and OWASP ASVS evidence matrix.
+	@./hack/validate-security-traceability.sh
+
+.PHONY: test-pyramid
+test-pyramid: test-security-traceability ## Verify independent tiers, production wiring, and the real E2E journey.
+	@./hack/verify-test-pyramid.sh
 
 .PHONY: test
-test: test-unit test-integration ## Run all tests (unit + integration).
+test: test-unit test-integration test-pyramid ## Run all tests (unit + integration).
 	@echo "mode: set" > cover.out
 	@tail -n +2 cover-unit.out >> cover.out 2>/dev/null || true
 	@tail -n +2 cover-integration.out >> cover.out 2>/dev/null || true
@@ -143,15 +172,14 @@ test-e2e: manifests generate fmt vet ## Run the e2e tests against a live OCP clu
 	@oc whoami >/dev/null 2>&1 || { echo "Not logged in to OCP. Run 'oc login' first."; exit 1; }
 	go test ./test/e2e/ -v -ginkgo.v -timeout 30m
 
-# NetworkPolicy e2e proves internal/resources.NetworkPolicies() actually
-# allows/denies traffic on a real CNI (#342) -- UT (rendered-shape-only) and
-# envtest IT (no CNI) both structurally cannot catch enforcement bugs. This
-# self-provisions its own throwaway kind+Calico cluster; no oc login needed.
-.PHONY: test-e2e-networkpolicy
-test-e2e-networkpolicy: ## Run the NetworkPolicy e2e suite. Requires: kind, kubectl, a container runtime.
+.PHONY: test-e2e-kind
+test-e2e-kind: fmt vet kustomize ## Run the isolated generic/Cilium/Calico Kind E2E suite.
 	@command -v kind >/dev/null 2>&1 || { echo "kind CLI not found. Install: https://kind.sigs.k8s.io/docs/user/quick-start/"; exit 1; }
 	@command -v kubectl >/dev/null 2>&1 || { echo "kubectl CLI not found."; exit 1; }
-	go test ./test/e2e/networkpolicy/... -v -ginkgo.v -timeout 25m
+	@command -v $(CONTAINER_TOOL) >/dev/null 2>&1 || { echo "$(CONTAINER_TOOL) CLI not found."; exit 1; }
+	@if [ "$${KUBERNAUT_E2E_PROVIDER:-generic}" = "cilium" ]; then command -v helm >/dev/null 2>&1 || { echo "helm CLI not found. Install Helm for the Cilium lane."; exit 1; }; fi
+	$(CONTAINER_TOOL) build --build-arg VERSION=$(KIND_OPERATOR_VERSION) --build-arg GIT_COMMIT=$(GIT_COMMIT) -t $(KIND_OPERATOR_IMAGE) .
+	KUBERNAUT_OPERATOR_IMAGE=$(KIND_OPERATOR_IMAGE) KUBERNAUT_IMAGE_TAG=$(KIND_KUBERNAUT_IMAGE_TAG) KUSTOMIZE_BIN=$(KUSTOMIZE) go test ./test/e2e/kind/ -v -ginkgo.v -timeout 30m
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter

@@ -30,7 +30,6 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
@@ -246,28 +245,37 @@ const TrustBundleConfigMapName = "inter-service-trust-bundle"
 // explicitly configured in the CR.
 const DefaultSSLMode = "verify-full"
 
-// OCP monitoring stack endpoints. These are always available on OCP clusters
-// and are hardcoded rather than discovered (OCP-only operator).
+// OpenShift monitoring adapter endpoints. The controller uses these constants
+// only after positively discovering the OpenShift capability; generic
+// Kubernetes disables an unset monitoring endpoint before invoking builders.
 // Thanos Querier federates both cluster Prometheus and User Workload
 // Monitoring Prometheus, providing a unified view of all metrics including
-// user-namespace ServiceMonitors (Istio, app metrics, etc.).
+// user-namespace ServiceMonitors.
 const (
 	OCPPrometheusURL   = "https://thanos-querier.openshift-monitoring.svc:9091"
 	OCPAlertManagerURL = "https://alertmanager-main.openshift-monitoring.svc:9094"
 )
 
-// effectivePrometheusURL returns spec.monitoring.prometheus.url when set,
-// falling back to the built-in OCP Thanos Querier route (#298).
+// effectivePrometheusURL returns the configured endpoint, or the OpenShift
+// adapter endpoint when monitoring is enabled with no explicit override. The
+// controller disables an unset endpoint on generic Kubernetes before it
+// reaches the resource builders.
 func effectivePrometheusURL(knV2 *kubernautv1alpha2.Kubernaut) string {
+	if !knV2.Spec.Monitoring.Prometheus.PrometheusEnabled() {
+		return ""
+	}
 	if u := knV2.Spec.Monitoring.Prometheus.URL; u != "" {
 		return u
 	}
 	return OCPPrometheusURL
 }
 
-// effectiveAlertManagerURL returns spec.monitoring.alertManager.url when
-// set, falling back to the built-in OCP AlertManager route (#298).
+// effectiveAlertManagerURL returns the configured endpoint, or the OpenShift
+// adapter endpoint when monitoring is enabled with no explicit override.
 func effectiveAlertManagerURL(knV2 *kubernautv1alpha2.Kubernaut) string {
+	if !knV2.Spec.Monitoring.AlertManager.AlertManagerEnabled() {
+		return ""
+	}
 	if u := knV2.Spec.Monitoring.AlertManager.URL; u != "" {
 		return u
 	}
@@ -287,6 +295,13 @@ func effectiveAlertManagerURL(knV2 *kubernautv1alpha2.Kubernaut) string {
 // service-ca-injected default when neither is set.
 func effectiveEMTLSCaFile(knV2 *kubernautv1alpha2.Kubernaut, defaultPath string) string {
 	return withDefault(withDefault(knV2.Spec.Monitoring.Prometheus.TLSCaFile, knV2.Spec.Monitoring.AlertManager.TLSCaFile), defaultPath)
+}
+
+func effectiveEMDefaultTLSCAFile(kn *kubernautv1alpha2.Kubernaut) string {
+	if usesOpenShiftServiceCA(kn) {
+		return "/etc/ssl/em/service-ca.crt"
+	}
+	return InterServiceTLSCAFile
 }
 
 // OCP well-known namespaces.
@@ -319,7 +334,7 @@ func AllComponents() []string {
 // Always-on components return true; opt-in components check their spec gate.
 // knV2 is only consulted for FleetMetadataCache -- Fleet's CRD surface lives
 // exclusively in v1alpha2 (Fleet v1alpha2 migration).
-func isComponentActive(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, component string) bool {
+func isComponentActive(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, component string) bool {
 	switch component {
 	case ComponentAPIFrontend:
 		return kn.Spec.APIFrontendEnabled()
@@ -336,7 +351,7 @@ func isComponentActive(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.
 
 // ActiveComponents returns the list of components that should be deployed
 // for the given CR spec.
-func ActiveComponents(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []string {
+func ActiveComponents(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []string {
 	var active []string
 	for _, c := range AllComponents() {
 		if isComponentActive(kn, knV2, c) {
@@ -346,9 +361,17 @@ func ActiveComponents(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.K
 	return active
 }
 
+// usesOpenShiftServiceCA reports whether the legacy empty TLS mode is in use.
+// The controller admits that mode only after discovering the OpenShift
+// service-CA capability; every explicit TLS mode is portable and must not
+// render OpenShift-only CA volumes or init containers.
+func usesOpenShiftServiceCA(kn *kubernautv1alpha2.Kubernaut) bool {
+	return kn != nil && kn.Spec.TLS.Mode == ""
+}
+
 // CommonLabels returns the base label set applied to every managed resource.
 // Mirrors the Helm chart's kubernaut.labels helper.
-func CommonLabels(kn *kubernautv1alpha1.Kubernaut) map[string]string {
+func CommonLabels(kn *kubernautv1alpha2.Kubernaut) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/managed-by": "kubernaut-operator",
 		"app.kubernetes.io/part-of":    "kubernaut",
@@ -359,7 +382,7 @@ func CommonLabels(kn *kubernautv1alpha1.Kubernaut) map[string]string {
 // ComponentLabels returns labels for a specific component, including the
 // common labels plus an app.kubernetes.io/component and the legacy "app" label
 // used by Helm chart selectors.
-func ComponentLabels(kn *kubernautv1alpha1.Kubernaut, component string) map[string]string {
+func ComponentLabels(kn *kubernautv1alpha2.Kubernaut, component string) map[string]string {
 	labels := CommonLabels(kn)
 	labels["app.kubernetes.io/component"] = component
 	labels["app"] = component
@@ -399,7 +422,7 @@ var componentEnvSuffix = map[string]string{
 //  1. CR spec.image.overrides[imageName]  (user override)
 //  2. RELATED_IMAGE_<SUFFIX> env var       (set by OLM / manager.yaml)
 //  3. Error
-func ResolveImage(kn *kubernautv1alpha1.Kubernaut, imageName string) (string, error) {
+func ResolveImage(kn *kubernautv1alpha2.Kubernaut, imageName string) (string, error) {
 	if kn.Spec.Image.Overrides != nil {
 		if img, ok := kn.Spec.Image.Overrides[imageName]; ok && img != "" {
 			return img, nil
@@ -419,7 +442,7 @@ func ResolveImage(kn *kubernautv1alpha1.Kubernaut, imageName string) (string, er
 }
 
 // ObjectMeta returns a standard ObjectMeta for namespaced resources.
-func ObjectMeta(kn *kubernautv1alpha1.Kubernaut, name, component string) metav1.ObjectMeta {
+func ObjectMeta(kn *kubernautv1alpha2.Kubernaut, name, component string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{
 		Name:      name,
 		Namespace: kn.Namespace,
@@ -429,7 +452,7 @@ func ObjectMeta(kn *kubernautv1alpha1.Kubernaut, name, component string) metav1.
 
 // SetOwnerReference sets the owner reference on a namespaced resource
 // so it is garbage-collected when the Kubernaut CR is deleted.
-func SetOwnerReference(kn *kubernautv1alpha1.Kubernaut, obj metav1.Object, scheme *runtime.Scheme) error {
+func SetOwnerReference(kn *kubernautv1alpha2.Kubernaut, obj metav1.Object, scheme *runtime.Scheme) error {
 	return controllerutil.SetControllerReference(kn, obj, scheme)
 }
 
@@ -518,9 +541,10 @@ func GatewayURL(namespace string) string {
 // constructs a bare http.Server) and its own Helm chart serves the api port
 // unencrypted, so there is no server-side cert for the operator to
 // provision here either. FMC is only reachable from Gateway/
-// RemediationOrchestrator pods in the same namespace (enforced by
-// fleetMetadataCacheNetworkPolicy), the same trust boundary already
-// accepted for unencrypted Valkey traffic elsewhere in this operator.
+// RemediationOrchestrator pods in the same namespace (enforced by the
+// selected native policy provider or an administrator-supplied policy), the
+// same trust boundary already accepted for unencrypted Valkey traffic
+// elsewhere in this operator.
 func FleetMetadataCacheURL(namespace string) string {
 	return fmt.Sprintf("http://fleetmetadatacache-service.%s.svc.cluster.local:8080", namespace)
 }
@@ -554,7 +578,7 @@ func effectiveFleetOAuth2SecretRef(override *kubernautv1alpha2.FleetOverrideSpec
 }
 
 // PostgreSQLPort returns the effective PostgreSQL port, defaulting to 5432.
-func PostgreSQLPort(kn *kubernautv1alpha1.Kubernaut) int32 {
+func PostgreSQLPort(kn *kubernautv1alpha2.Kubernaut) int32 {
 	if kn.Spec.PostgreSQL.Port != 0 {
 		return kn.Spec.PostgreSQL.Port
 	}
@@ -562,7 +586,7 @@ func PostgreSQLPort(kn *kubernautv1alpha1.Kubernaut) int32 {
 }
 
 // ResolveWorkflowNamespace returns the effective workflow namespace name.
-func ResolveWorkflowNamespace(kn *kubernautv1alpha1.Kubernaut) string {
+func ResolveWorkflowNamespace(kn *kubernautv1alpha2.Kubernaut) string {
 	if kn.Spec.WorkflowExecution.WorkflowNamespace != "" {
 		return kn.Spec.WorkflowExecution.WorkflowNamespace
 	}
@@ -576,7 +600,7 @@ func ResolveWorkflowNamespace(kn *kubernautv1alpha1.Kubernaut) string {
 // multiplicity to justify a plural name (was "aianalysis-policies" before
 // this rename; see ADR-CRD-001 F11 for the upstream Helm chart's identical
 // inconsistency and the corresponding proposal filed there).
-func AIAnalysisPolicyName(kn *kubernautv1alpha1.Kubernaut) string {
+func AIAnalysisPolicyName(kn *kubernautv1alpha2.Kubernaut) string {
 	if kn.Spec.AIAnalysis.Policy.ConfigMapName != "" {
 		return kn.Spec.AIAnalysis.Policy.ConfigMapName
 	}
@@ -585,7 +609,7 @@ func AIAnalysisPolicyName(kn *kubernautv1alpha1.Kubernaut) string {
 
 // SignalProcessingPolicyName returns the signal processing policy ConfigMap name,
 // defaulting to "signalprocessing-policy" when not overridden.
-func SignalProcessingPolicyName(kn *kubernautv1alpha1.Kubernaut) string {
+func SignalProcessingPolicyName(kn *kubernautv1alpha2.Kubernaut) string {
 	if kn.Spec.SignalProcessing.Policy.ConfigMapName != "" {
 		return kn.Spec.SignalProcessing.Policy.ConfigMapName
 	}
@@ -594,7 +618,7 @@ func SignalProcessingPolicyName(kn *kubernautv1alpha1.Kubernaut) string {
 
 // KubernautAgentLLMRuntimeConfigName returns the Kubernaut Agent LLM runtime
 // ConfigMap name, defaulting to "kubernaut-agent-llm-runtime" when not overridden.
-func KubernautAgentLLMRuntimeConfigName(kn *kubernautv1alpha1.Kubernaut) string {
+func KubernautAgentLLMRuntimeConfigName(kn *kubernautv1alpha2.Kubernaut) string {
 	if kn.Spec.KubernautAgent.RuntimeConfigMapName != "" {
 		return kn.Spec.KubernautAgent.RuntimeConfigMapName
 	}
@@ -605,9 +629,9 @@ func KubernautAgentLLMRuntimeConfigName(kn *kubernautv1alpha1.Kubernaut) string 
 // Returns the zero-value profile and false when ref is empty or does not
 // match any key. Callers that already validated the CR (ValidateKubernaut)
 // can treat a false ok as unreachable; renderers still guard defensively.
-func ResolveLLMProfile(kn *kubernautv1alpha1.Kubernaut, ref string) (kubernautv1alpha1.LLMProfileSpec, bool) {
+func ResolveLLMProfile(kn *kubernautv1alpha2.Kubernaut, ref string) (kubernautv1alpha2.LLMProfileSpec, bool) {
 	if ref == "" {
-		return kubernautv1alpha1.LLMProfileSpec{}, false
+		return kubernautv1alpha2.LLMProfileSpec{}, false
 	}
 	p, ok := kn.Spec.LLMProfiles[ref]
 	return p, ok
@@ -630,7 +654,7 @@ func ResolveLLMProfile(kn *kubernautv1alpha1.Kubernaut, ref string) (kubernautv1
 // llmProfiles has zero or 2+ entries and no explicit ref was given —
 // validateLLMProfileRefs turns that into a descriptive error rather than
 // silently guessing.
-func EffectiveKALLMProfileRef(kn *kubernautv1alpha1.Kubernaut) string {
+func EffectiveKALLMProfileRef(kn *kubernautv1alpha2.Kubernaut) string {
 	if kn.Spec.KubernautAgent.LLMProfileRef != "" {
 		return kn.Spec.KubernautAgent.LLMProfileRef
 	}
@@ -665,7 +689,7 @@ func phaseCredentialsMountPath(phase string) string {
 // This gives AF an independent LLM identity while preserving today's
 // default behavior of implicitly sharing KA's profile -- including KA's own
 // single-profile inference -- when AF doesn't specify its own.
-func AFLLMProfileRef(kn *kubernautv1alpha1.Kubernaut) string {
+func AFLLMProfileRef(kn *kubernautv1alpha2.Kubernaut) string {
 	if kn.Spec.APIFrontend.LLMProfileRef != "" {
 		return kn.Spec.APIFrontend.LLMProfileRef
 	}
@@ -691,7 +715,7 @@ func severityTriageCredentialsMountPath() string {
 }
 
 // ValkeyAddr returns the Valkey address in host:port format.
-func ValkeyAddr(spec *kubernautv1alpha1.ValkeySpec) string {
+func ValkeyAddr(spec *kubernautv1alpha2.ValkeySpec) string {
 	port := spec.Port
 	if port == 0 {
 		port = DefaultValkeyPort

@@ -26,7 +26,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
@@ -43,12 +42,12 @@ const (
 	testVolumeSecrets      = "secrets"
 )
 
-func getAllDeployments(kn *kubernautv1alpha1.Kubernaut) []*appsv1.Deployment {
+func getAllDeployments(kn *kubernautv1alpha2.Kubernaut) []*appsv1.Deployment {
 	knV2 := testKnV2(kn)
-	type builder func(*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error)
+	type builder func(*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error)
 	builders := []builder{
 		GatewayDeployment,
-		func(kn *kubernautv1alpha1.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+		func(kn *kubernautv1alpha2.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 			return DataStorageDeployment(kn)
 		},
 		AIAnalysisDeployment,
@@ -100,6 +99,12 @@ func expectHasVolume(dep *appsv1.Deployment, name string) {
 		}
 	}
 	Expect(found).To(BeTrue(), "Deployment %q should have volume %q", dep.Name, name)
+}
+
+func expectNoVolume(dep *appsv1.Deployment, name string) {
+	for _, v := range dep.Spec.Template.Spec.Volumes {
+		Expect(v.Name).NotTo(Equal(name), "Deployment %q should not have volume %q", dep.Name, name)
+	}
 }
 
 func expectVolumeSourceConfigMap(dep *appsv1.Deployment, volumeName, expectedCMName string) {
@@ -233,9 +238,9 @@ var _ = Describe("Deployments", func() {
 	Describe("Component .resources passthrough (#423 coverage backfill)", func() {
 		type resourcesCase struct {
 			component string
-			newKn     func() *kubernautv1alpha1.Kubernaut
-			setRes    func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements)
-			build     func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error)
+			newKn     func() *kubernautv1alpha2.Kubernaut
+			setRes    func(kn *kubernautv1alpha2.Kubernaut, res corev1.ResourceRequirements)
+			build     func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error)
 		}
 
 		testResources := corev1.ResourceRequirements{
@@ -258,37 +263,37 @@ var _ = Describe("Deployments", func() {
 			Entry("apiFrontend", resourcesCase{
 				component: "apiFrontend",
 				newKn:     testKubernautWithAF,
-				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+				setRes: func(kn *kubernautv1alpha2.Kubernaut, res corev1.ResourceRequirements) {
 					kn.Spec.APIFrontend.Resources = res
 				},
-				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+				build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 					return APIFrontendDeployment(kn, testKnV2(kn), KagentiSidecarNone)
 				},
 			}),
 			Entry("kubernautAgent", resourcesCase{
 				component: "kubernautAgent",
 				newKn:     testKubernaut,
-				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+				setRes: func(kn *kubernautv1alpha2.Kubernaut, res corev1.ResourceRequirements) {
 					kn.Spec.KubernautAgent.Resources = res
 				},
-				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+				build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 					return KubernautAgentDeployment(kn, testKnV2(kn))
 				},
 			}),
 			Entry("remediationOrchestrator", resourcesCase{
 				component: "remediationOrchestrator",
 				newKn:     testKubernaut,
-				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+				setRes: func(kn *kubernautv1alpha2.Kubernaut, res corev1.ResourceRequirements) {
 					kn.Spec.RemediationOrchestrator.Resources = res
 				},
-				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+				build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 					return RemediationOrchestratorDeployment(kn, testKnV2(kn))
 				},
 			}),
 			Entry("dataStorage", resourcesCase{
 				component: "dataStorage",
 				newKn:     testKubernaut,
-				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+				setRes: func(kn *kubernautv1alpha2.Kubernaut, res corev1.ResourceRequirements) {
 					kn.Spec.DataStorage.Resources = res
 				},
 				build: DataStorageDeployment,
@@ -296,60 +301,60 @@ var _ = Describe("Deployments", func() {
 			Entry("workflowExecution", resourcesCase{
 				component: "workflowExecution",
 				newKn:     testKubernaut,
-				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+				setRes: func(kn *kubernautv1alpha2.Kubernaut, res corev1.ResourceRequirements) {
 					kn.Spec.WorkflowExecution.Resources = res
 				},
-				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+				build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 					return WorkflowExecutionDeployment(kn, testKnV2(kn))
 				},
 			}),
 			Entry("notification", resourcesCase{
 				component: "notification",
 				newKn:     testKubernaut,
-				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+				setRes: func(kn *kubernautv1alpha2.Kubernaut, res corev1.ResourceRequirements) {
 					kn.Spec.Notification.Resources = res
 				},
-				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+				build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 					return NotificationDeployment(kn, testKnV2(kn))
 				},
 			}),
 			Entry("signalProcessing", resourcesCase{
 				component: "signalProcessing",
 				newKn:     testKubernaut,
-				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+				setRes: func(kn *kubernautv1alpha2.Kubernaut, res corev1.ResourceRequirements) {
 					kn.Spec.SignalProcessing.Resources = res
 				},
-				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+				build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 					return SignalProcessingDeployment(kn, testKnV2(kn))
 				},
 			}),
 			Entry("effectivenessMonitor", resourcesCase{
 				component: "effectivenessMonitor",
 				newKn:     testKubernaut,
-				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+				setRes: func(kn *kubernautv1alpha2.Kubernaut, res corev1.ResourceRequirements) {
 					kn.Spec.EffectivenessMonitor.Resources = res
 				},
-				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+				build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 					return EffectivenessMonitorDeployment(kn, testKnV2(kn))
 				},
 			}),
 			Entry("aiAnalysis", resourcesCase{
 				component: "aiAnalysis",
 				newKn:     testKubernaut,
-				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+				setRes: func(kn *kubernautv1alpha2.Kubernaut, res corev1.ResourceRequirements) {
 					kn.Spec.AIAnalysis.Resources = res
 				},
-				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+				build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 					return AIAnalysisDeployment(kn, testKnV2(kn))
 				},
 			}),
 			Entry("authWebhook", resourcesCase{
 				component: "authWebhook",
 				newKn:     testKubernaut,
-				setRes: func(kn *kubernautv1alpha1.Kubernaut, res corev1.ResourceRequirements) {
+				setRes: func(kn *kubernautv1alpha2.Kubernaut, res corev1.ResourceRequirements) {
 					kn.Spec.AuthWebhook.Resources = res
 				},
-				build: func(kn *kubernautv1alpha1.Kubernaut) (*appsv1.Deployment, error) {
+				build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 					return AuthWebhookDeployment(kn, testKnV2(kn))
 				},
 			}),
@@ -470,7 +475,7 @@ var _ = Describe("Deployments", func() {
 
 		It("uses custom proactive signal mappings", func() {
 			kn := testKubernaut()
-			kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha1.ConfigMapRef{ConfigMapName: "my-mappings"}
+			kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "my-mappings"}
 			dep, err := SignalProcessingDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
@@ -549,7 +554,7 @@ var _ = Describe("Deployments", func() {
 
 		It("uses BYO routing config map name", func() {
 			kn := testKubernaut()
-			kn.Spec.Notification.Routing = &kubernautv1alpha1.ConfigMapRef{ConfigMapName: "my-routing"}
+			kn.Spec.Notification.Routing = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "my-routing"}
 			dep, err := NotificationDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			expectHasVolume(dep, "routing-config")
@@ -567,6 +572,27 @@ var _ = Describe("Deployments", func() {
 			expectDeploymentBasics(dep, "kubernautagent")
 			expectHasVolume(dep, "llm-credentials")
 			expectHasVolumeMount(dep, "llm-credentials", "/etc/kubernaut-agent/credentials")
+		})
+
+		It("uses the API server default audience for the projected service-account token", func() {
+			kn := testKubernaut()
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			for _, volume := range dep.Spec.Template.Spec.Volumes {
+				if volume.Name != "sa-token" {
+					continue
+				}
+				Expect(volume.Projected).NotTo(BeNil())
+				Expect(volume.Projected.Sources).NotTo(BeEmpty())
+				tokenProjection := volume.Projected.Sources[0].ServiceAccountToken
+				Expect(tokenProjection).NotTo(BeNil())
+				Expect(tokenProjection.Audience).To(BeEmpty(), "the API server must select its own portable service-account audience")
+				Expect(tokenProjection.ExpirationSeconds).NotTo(BeNil())
+				Expect(*tokenProjection.ExpirationSeconds).To(Equal(int64(3600)))
+				return
+			}
+			Fail("sa-token projected volume was not rendered")
 		})
 
 		It("infers the sole spec.llmProfiles entry when kubernautAgent.llmProfileRef is empty", func() {
@@ -644,9 +670,27 @@ var _ = Describe("Deployments", func() {
 			Expect(foundMount).To(BeTrue(), "build-ca-bundle init container must mount the tls-ca volume at %s", tlsCAMountPath)
 		})
 
+		It("uses a generic TLS security context and does not advertise OpenShift", func() {
+			kn := testKubernautWithDevelopmentTLS()
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(dep.Spec.Template.Spec.InitContainers).To(BeEmpty())
+			expectNoVolume(dep, "service-ca")
+			expectNoVolume(dep, "combined-ca")
+
+			for _, env := range dep.Spec.Template.Spec.Containers[0].Env {
+				if env.Name == "IS_OPENSHIFT" {
+					Expect(env.Value).To(Equal("False"))
+					return
+				}
+			}
+			Fail("IS_OPENSHIFT environment variable was not rendered")
+		})
+
 		It("KFG-022 [IA-5]: mounts a dedicated phase-credentials Secret volume when a phase's profile has a different credentialsSecretName than KA's (#233)", func() {
 			kn := testKubernaut()
-			kn.Spec.LLMProfiles["workflow-cross-cred"] = kubernautv1alpha1.LLMProfileSpec{
+			kn.Spec.LLMProfiles["workflow-cross-cred"] = kubernautv1alpha2.LLMProfileSpec{
 				Provider:              "anthropic",
 				Model:                 "claude-haiku-4-6",
 				CredentialsSecretName: "different-secret",
@@ -671,7 +715,7 @@ var _ = Describe("Deployments", func() {
 
 		It("KFG-023 [IA-5]: does not mount a dedicated phase-credentials volume when a phase shares KA's credentialsSecretName (regression guard, #233)", func() {
 			kn := testKubernaut()
-			kn.Spec.LLMProfiles["workflow-lite"] = kubernautv1alpha1.LLMProfileSpec{
+			kn.Spec.LLMProfiles["workflow-lite"] = kubernautv1alpha2.LLMProfileSpec{
 				Provider:              "openai",
 				Model:                 "gpt-4o-mini",
 				Endpoint:              testOpenAIEndpoint,
@@ -689,12 +733,12 @@ var _ = Describe("Deployments", func() {
 
 		It("KFG-024 [IA-5]: mounts phase-credentials volumes in deterministic (sorted-by-phase) order across multiple cross-credential phase overrides (#233)", func() {
 			kn := testKubernaut()
-			kn.Spec.LLMProfiles["rca-vertex"] = kubernautv1alpha1.LLMProfileSpec{
+			kn.Spec.LLMProfiles["rca-vertex"] = kubernautv1alpha2.LLMProfileSpec{
 				Provider: LLMProviderVertexAI, Model: "gemini-2.5-flash",
 				CredentialsSecretName: "secret-a",
 				VertexProject:         "example-gcp-project", VertexLocation: "us-central1",
 			}
-			kn.Spec.LLMProfiles["workflow-cross-cred"] = kubernautv1alpha1.LLMProfileSpec{
+			kn.Spec.LLMProfiles["workflow-cross-cred"] = kubernautv1alpha2.LLMProfileSpec{
 				Provider: "anthropic", Model: "claude-haiku-4-6",
 				CredentialsSecretName: "secret-b",
 			}
@@ -754,8 +798,8 @@ var _ = Describe("Deployments", func() {
 
 		It("mounts OAuth2 credentials when enabled", func() {
 			kn := testKubernaut()
-			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Enabled = true })
-			mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.CredentialsSecretRef = "oauth2-credentials-secret" })
+			mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.OAuth2.Enabled = true })
+			mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.OAuth2.CredentialsSecretRef = "oauth2-credentials-secret" })
 			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
@@ -911,6 +955,14 @@ var _ = Describe("Deployments", func() {
 			Expect(hasMount).To(BeTrue(), "init container should mount service-ca at /etc/ssl/em")
 		})
 
+		It("does not wait for an OpenShift service CA with generic TLS", func() {
+			kn := testKubernautWithDevelopmentTLS()
+			dep, err := EffectivenessMonitorDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dep.Spec.Template.Spec.InitContainers).To(BeEmpty())
+			expectNoVolume(dep, "service-ca")
+		})
+
 	})
 
 	Context("AuthWebhook", func() {
@@ -969,7 +1021,7 @@ var _ = Describe("Deployments", func() {
 			// combined bundle, not just the inter-service one) so the Go
 			// runtime's system cert pool also trusts the AAP CA.
 			kn := testKubernaut()
-			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "aap-ca-secret"}
 			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
@@ -986,7 +1038,7 @@ var _ = Describe("Deployments", func() {
 
 		It("has init container with caCertSecretRef", func() {
 			kn := testKubernaut()
-			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "aap-ca-secret"}
 			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
@@ -996,7 +1048,7 @@ var _ = Describe("Deployments", func() {
 
 		It("[IA-5, SC-12] mounts secret volume with custom key", func() {
 			kn := testKubernaut()
-			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{
+			kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{
 				Name: "aap-ca-secret",
 				Key:  "custom-ca.pem",
 			}
@@ -1018,7 +1070,7 @@ var _ = Describe("Deployments", func() {
 
 		It("[IA-5, SC-12] uses default key ca.crt", func() {
 			kn := testKubernaut()
-			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "aap-ca-secret"}
 			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1034,7 +1086,7 @@ var _ = Describe("Deployments", func() {
 
 		It("has combined-ca emptyDir volume", func() {
 			kn := testKubernaut()
-			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "aap-ca-secret"}
 			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1049,7 +1101,7 @@ var _ = Describe("Deployments", func() {
 
 		It("overrides TLS_CA_FILE", func() {
 			kn := testKubernaut()
-			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "aap-ca-secret"}
 			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1065,7 +1117,7 @@ var _ = Describe("Deployments", func() {
 
 		It("init container concatenates correct sources", func() {
 			kn := testKubernaut()
-			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "aap-ca-secret"}
 			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1079,7 +1131,7 @@ var _ = Describe("Deployments", func() {
 
 		It("init container has required volume mounts", func() {
 			kn := testKubernaut()
-			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "aap-ca-secret"}
 			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1095,7 +1147,7 @@ var _ = Describe("Deployments", func() {
 
 		It("main container mounts combined-ca", func() {
 			kn := testKubernaut()
-			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "aap-ca-secret"}
 			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1112,7 +1164,7 @@ var _ = Describe("Deployments", func() {
 
 		It("init container has restricted security context", func() {
 			kn := testKubernaut()
-			kn.Spec.Ansible.CACertSecretRef = &kubernautv1alpha1.CACertSecretRef{Name: "aap-ca-secret"}
+			kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "aap-ca-secret"}
 			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1333,7 +1385,7 @@ var _ = Describe("Deployments", func() {
 		// toggle exactly: absent by default (secure-by-default), present
 		// on every ctrl-runtime service simultaneously once opted in.
 		DescribeTable("debug.pprofEnabled conditionally exposes a pprof containerPort on ctrl-runtime services (#406)",
-			func(fn func(*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error)) {
+			func(fn func(*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error)) {
 				kn := testKubernaut()
 				knV2 := testKnV2(kn)
 
@@ -1368,7 +1420,7 @@ var _ = Describe("Deployments", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Debug.PprofEnabled = true
 
-			builders := map[string]func(*kubernautv1alpha1.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error){
+			builders := map[string]func(*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error){
 				"aianalysis":              AIAnalysisDeployment,
 				"signalprocessing":        SignalProcessingDeployment,
 				"remediationorchestrator": RemediationOrchestratorDeployment,
@@ -1632,6 +1684,23 @@ var _ = Describe("APIFrontendDeployment", func() {
 		expectHasVolumeMount(dep, "tmp", "/tmp")
 	})
 
+	It("does not render OpenShift CA wiring for explicit generic TLS", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
+			DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
+		}
+		dep, err := APIFrontendDeployment(kn, testKnV2(kn), KagentiSidecarNone)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(dep.Spec.Template.Spec.InitContainers).To(BeEmpty())
+		expectNoVolume(dep, "service-ca")
+		expectNoVolume(dep, "combined-ca")
+		for _, env := range dep.Spec.Template.Spec.Containers[0].Env {
+			Expect(env.Name).NotTo(Equal(testEnvSSLCertFile))
+		}
+	})
+
 	It("#404 [SC-8]: SSL_CERT_FILE points at a merged system+inter-service bundle built by a build-ca-bundle init container, not the narrower router/service-ca-only bundle", func() {
 		kn := testKubernautWithAF()
 		dep, err := APIFrontendDeployment(kn, testKnV2(kn), KagentiSidecarNone)
@@ -1672,7 +1741,7 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("mounts llm-credentials volume from AF's own resolved profile", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.LLMProfiles[testAFOnlyProfile] = kubernautv1alpha1.LLMProfileSpec{
+		kn.Spec.LLMProfiles[testAFOnlyProfile] = kubernautv1alpha2.LLMProfileSpec{
 			Provider:              LLMProviderVertexAI,
 			Model:                 "gemini-2.5-flash",
 			CredentialsSecretName: "af-llm-creds",
@@ -1696,12 +1765,12 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("KFG-025 [IA-5]: mounts a dedicated severity-triage-credentials Secret volume when severityTriage's profile has a different credentialsSecretName than AF's own (#234)", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.LLMProfiles["triage-other-creds"] = kubernautv1alpha1.LLMProfileSpec{
+		kn.Spec.LLMProfiles["triage-other-creds"] = kubernautv1alpha2.LLMProfileSpec{
 			Provider:              "anthropic",
 			Model:                 "claude-haiku-4-6",
 			CredentialsSecretName: "different-secret",
 		}
-		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-other-creds"}
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-other-creds"}
 		dep, err := APIFrontendDeployment(kn, testKnV2(kn), KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -1721,12 +1790,12 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("KFG-026 [IA-5]: does not mount a dedicated severity-triage-credentials volume when severityTriage shares AF's credentialsSecretName (regression guard, #234)", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.LLMProfiles["triage-shared-creds"] = kubernautv1alpha1.LLMProfileSpec{
+		kn.Spec.LLMProfiles["triage-shared-creds"] = kubernautv1alpha2.LLMProfileSpec{
 			Provider:              "anthropic",
 			Model:                 "claude-haiku-4-6",
 			CredentialsSecretName: "llm-creds", // same as testKubernaut()'s "primary" profile
 		}
-		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-shared-creds"}
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-shared-creds"}
 		dep, err := APIFrontendDeployment(kn, testKnV2(kn), KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -1738,20 +1807,20 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("KFG-027 [IA-5]: mounts the dedicated severity-triage-credentials Secret without redirecting GOOGLE_APPLICATION_CREDENTIALS when severityTriage's profile is vertex_ai with a different credentialsSecretName than AF's non-vertex_ai own profile (#279, kubernaut#1731 is fixed)", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.LLMProfiles[testAFOnlyProfile] = kubernautv1alpha1.LLMProfileSpec{
+		kn.Spec.LLMProfiles[testAFOnlyProfile] = kubernautv1alpha2.LLMProfileSpec{
 			Provider:              LLMProviderOpenAI,
 			Model:                 "gpt-4o",
 			Endpoint:              testOpenAIEndpoint,
 			CredentialsSecretName: "af-llm-creds",
 		}
 		kn.Spec.APIFrontend.LLMProfileRef = testAFOnlyProfile
-		kn.Spec.LLMProfiles["triage-vertex"] = kubernautv1alpha1.LLMProfileSpec{
+		kn.Spec.LLMProfiles["triage-vertex"] = kubernautv1alpha2.LLMProfileSpec{
 			Provider:              LLMProviderVertexAI,
 			Model:                 "gemini-2.5-flash",
 			CredentialsSecretName: "triage-vertex-creds",
 			VertexProject:         "example-gcp-project", VertexLocation: "us-central1",
 		}
-		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha1.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-vertex"}
+		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{LLMProfileRef: "triage-vertex"}
 		dep, err := APIFrontendDeployment(kn, testKnV2(kn), KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -1773,7 +1842,7 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("[IA-5, SC-12] mounts llm-tls-client volume from AF's own resolved profile's tlsClientSecretRef", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.LLMProfiles[testAFOnlyProfile] = kubernautv1alpha1.LLMProfileSpec{
+		kn.Spec.LLMProfiles[testAFOnlyProfile] = kubernautv1alpha2.LLMProfileSpec{
 			Provider:              LLMProviderOpenAI,
 			Model:                 "gpt-4o",
 			Endpoint:              testOpenAIEndpoint,
@@ -1801,8 +1870,8 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("mounts OAuth2 credentials when enabled on AF's resolved profile (regression: pre-existing crash-loop)", func() {
 		kn := testKubernautWithAF()
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) { p.OAuth2.Enabled = true })
-		mutateLLMProfile(kn, func(p *kubernautv1alpha1.LLMProfileSpec) {
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) { p.OAuth2.Enabled = true })
+		mutateLLMProfile(kn, func(p *kubernautv1alpha2.LLMProfileSpec) {
 			p.OAuth2.CredentialsSecretRef = "af-oauth2-credentials-secret"
 		})
 		dep, err := APIFrontendDeployment(kn, testKnV2(kn), KagentiSidecarNone)
@@ -1866,7 +1935,7 @@ var _ = Describe("APIFrontendDeployment", func() {
 
 	It("ignores deprecated rbacRolesConfigMapRef (volume is plain ConfigMap)", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBACRolesConfigMapRef = &kubernautv1alpha1.ConfigMapRef{ //nolint:staticcheck // exercising deprecated-field backward compat
+		kn.Spec.APIFrontend.RBACRolesConfigMapRef = &kubernautv1alpha2.ConfigMapRef{ //nolint:staticcheck // exercising deprecated-field backward compat
 			ConfigMapName: "my-custom-rbac",
 		}
 		dep, err := APIFrontendDeployment(kn, testKnV2(kn), KagentiSidecarNone)
@@ -2055,7 +2124,7 @@ var _ = Describe("DataStorageDeployment with Valkey TLS", func() {
 var _ = Describe("DataStorage Signing Cert", func() {
 	It("[IA-5, SC-12] mounts signing cert when configured", func() {
 		kn := testKubernaut()
-		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha1.SigningCertSpec{
+		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha2.SigningCertSpec{
 			SecretName: "datastorage-signing-cert",
 		}
 		dep, err := DataStorageDeployment(kn)
@@ -2066,7 +2135,7 @@ var _ = Describe("DataStorage Signing Cert", func() {
 
 	It("[SC-12] uses custom mount path when specified", func() {
 		kn := testKubernaut()
-		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha1.SigningCertSpec{
+		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha2.SigningCertSpec{
 			SecretName: "datastorage-signing-cert",
 			MountPath:  "/custom/certs",
 		}
@@ -2354,8 +2423,8 @@ var _ = Describe("SignalProcessing/APIFrontend/EffectivenessMonitor Fleet secret
 			Enabled: true, TokenURL: "https://keycloak.example.com/token",
 			CredentialsSecretRef: "fleet-oauth2-creds",
 		}
-		kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
-			Auth: kubernautv1alpha1.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
+		kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
+			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
 		afDep, err := APIFrontendDeployment(kn, knV2, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
@@ -2397,8 +2466,8 @@ var _ = Describe("APIFrontend Fleet secret mounts (#464)", func() {
 	It("[IA-5, SC-12] mounts fleet-ca on APIFrontend when caSecretName is set", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
 		knV2.Spec.Fleet.CASecretName = "fmc-ca-bundle"
-		kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
-			Auth: kubernautv1alpha1.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
+		kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
+			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
 		afDep, err := APIFrontendDeployment(kn, knV2, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
@@ -2417,8 +2486,8 @@ var _ = Describe("APIFrontend Fleet secret mounts (#464)", func() {
 		knV2.Spec.Fleet.Backend = fleetBackendACM
 		knV2.Spec.Fleet.Endpoint = "https://acm-search.example.com/graphql"
 		knV2.Spec.Fleet.TokenSecretName = "acm-search-token"
-		kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
-			Auth: kubernautv1alpha1.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
+		kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
+			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
 		afDep, err := APIFrontendDeployment(kn, knV2, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
@@ -2434,8 +2503,8 @@ var _ = Describe("APIFrontend Fleet secret mounts (#464)", func() {
 
 	It("does not mount fleet-ca or fleet-token when enabled but no secret names are set", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		kn.Spec.APIFrontend = kubernautv1alpha1.APIFrontendSpec{
-			Auth: kubernautv1alpha1.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
+		kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
+			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
 		afDep, err := APIFrontendDeployment(kn, knV2, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())

@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"net/http"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	admissionv1 "k8s.io/api/admission/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -58,18 +58,18 @@ func (v *SingletonValidator) Handle(ctx context.Context, req admission.Request) 
 		return admission.Allowed("only CREATE is gated")
 	}
 
-	kn := &kubernautv1alpha1.Kubernaut{}
+	kn := &kubernautv1alpha2.Kubernaut{}
 	if err := v.decoder.Decode(req, kn); err != nil {
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	if kn.Name != kubernautv1alpha1.SingletonName {
+	if kn.Name != kubernautv1alpha2.SingletonName {
 		return admission.Denied(fmt.Sprintf(
 			"Kubernaut CR name must be %q; got %q",
-			kubernautv1alpha1.SingletonName, kn.Name))
+			kubernautv1alpha2.SingletonName, kn.Name))
 	}
 
-	existing := &kubernautv1alpha1.KubernautList{}
+	existing := &kubernautv1alpha2.KubernautList{}
 	if err := v.Client.List(ctx, existing); err != nil {
 		log.Error(err, "failed to list Kubernaut CRs for singleton check")
 		return admission.Errored(http.StatusInternalServerError, fmt.Errorf("listing Kubernaut CRs: %w", err))

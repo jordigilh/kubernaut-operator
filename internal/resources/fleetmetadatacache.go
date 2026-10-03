@@ -21,12 +21,9 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
@@ -112,7 +109,7 @@ type fleetMetadataCacheConfigYAML struct {
 // are guaranteed non-empty. Fleet's entire CRD surface lives in v1alpha2
 // (Fleet v1alpha2 migration); kn is still needed for object metadata/labels
 // and non-Fleet fields (Valkey).
-func FleetMetadataCacheConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+func FleetMetadataCacheConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 	fleet := &knV2.Spec.Fleet
 	fmc := &knV2.Spec.FleetMetadataCache
 
@@ -160,7 +157,7 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernau
 // disabled, CAFile only when an explicit CA secret is configured, CertFile/
 // KeyFile only when an explicit client-cert secret is configured. Paths must
 // stay in sync with the volume mounts FleetMetadataCacheDeployment adds.
-func resolveFleetMetadataCacheValkeyTLS(kn *kubernautv1alpha1.Kubernaut) *fleetMetadataCacheValkeyTLSYAML {
+func resolveFleetMetadataCacheValkeyTLS(kn *kubernautv1alpha2.Kubernaut) *fleetMetadataCacheValkeyTLSYAML {
 	if !kn.Spec.Valkey.ValkeyTLSEnabled() {
 		return nil
 	}
@@ -190,7 +187,7 @@ func fleetMetadataCacheEffectiveOAuth2SecretRef(knV2 *kubernautv1alpha2.Kubernau
 // credentials mount is independent of spec.fleet.enabled/appendFleetSecretMounts
 // (which gate Gateway/RemediationOrchestrator's own scope-check consumption)
 // -- FMC always requires it, enforced by ValidateFleet.
-func FleetMetadataCacheDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+func FleetMetadataCacheDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	credRef := fleetMetadataCacheEffectiveOAuth2SecretRef(knV2)
 
 	volumes := []corev1.Volume{
@@ -256,7 +253,7 @@ func FleetMetadataCacheDeployment(kn *kubernautv1alpha1.Kubernaut, knV2 *kuberna
 // FleetMetadataCacheService builds the Service fronting FMC's api and
 // metrics ports. Plain ClusterIP, no TLS -- see FleetMetadataCacheURL for
 // why (upstream's binary has no TLS server support).
-func FleetMetadataCacheService(kn *kubernautv1alpha1.Kubernaut) *corev1.Service {
+func FleetMetadataCacheService(kn *kubernautv1alpha2.Kubernaut) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: ObjectMeta(kn, fleetMetadataCacheServiceName, ComponentFleetMetadataCache),
 		Spec: corev1.ServiceSpec{
@@ -286,7 +283,7 @@ func FleetMetadataCacheService(kn *kubernautv1alpha1.Kubernaut) *corev1.Service 
 // Namespace-scoped watches (cmd/fleetmetadatacache/main.go passes
 // cfg.MCPGateway.Namespace straight into
 // registry.RegistryConfig{Namespace: ...}).
-func fleetMetadataCacheClusterRole(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
+func fleetMetadataCacheClusterRole(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	var rules []rbacv1.PolicyRule
 	if knV2.Spec.Fleet.MCPGatewayNamespace == "" {
 		rules = mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGatewayType)
@@ -301,59 +298,10 @@ func fleetMetadataCacheClusterRole(kn *kubernautv1alpha1.Kubernaut, knV2 *kubern
 }
 
 // FleetMetadataCacheClusterRoleBinding binds FMC's SA to its ClusterRole.
-func fleetMetadataCacheClusterRoleBinding(kn *kubernautv1alpha1.Kubernaut, labels map[string]string) *rbacv1.ClusterRoleBinding {
+func fleetMetadataCacheClusterRoleBinding(kn *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRoleBinding {
 	return clusterRoleBinding(
 		clusterRoleName(kn, "fleetmetadatacache-binding"),
 		clusterRoleName(kn, "fleetmetadatacache"),
 		ServiceAccountName(ComponentFleetMetadataCache), kn.Namespace, labels,
 	)
-}
-
-// --- NetworkPolicy ---
-
-// fleetMetadataCacheNetworkPolicy allows Gateway/RemediationOrchestrator to
-// reach FMC's api port, monitoring to scrape metrics, and FMC itself to
-// reach Valkey plus the MCP Gateway/OAuth2 token endpoint egress.
-func fleetMetadataCacheNetworkPolicy(kn *kubernautv1alpha1.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) *networkingv1.NetworkPolicy {
-	protoTCP := corev1.ProtocolTCP
-	pAPI := intstr.FromInt32(fleetMetadataCacheAPIPort)
-
-	ingress := []networkingv1.NetworkPolicyIngressRule{
-		{
-			From: []networkingv1.NetworkPolicyPeer{
-				{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentGateway)}},
-				{PodSelector: &metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentRemediationOrchestrator)}},
-			},
-			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protoTCP, Port: &pAPI}},
-		},
-		*metricsIngressRule(OCPMonitoringNamespace),
-	}
-
-	valkeyPort := kn.Spec.Valkey.Port
-	if valkeyPort == 0 {
-		valkeyPort = DefaultValkeyPort
-	}
-	pValkey := intstr.FromInt32(valkeyPort)
-
-	egress := baseEgress(knV2, 2)
-	egress = append(egress,
-		networkingv1.NetworkPolicyEgressRule{
-			To:    sameNamespacePeers(),
-			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protoTCP, Port: &pValkey}},
-		},
-		fleetDestinationsEgressRule(knV2),
-	)
-
-	return &networkingv1.NetworkPolicy{
-		ObjectMeta: ObjectMeta(kn, ComponentFleetMetadataCache+"-netpol", ComponentFleetMetadataCache),
-		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{MatchLabels: SelectorLabels(ComponentFleetMetadataCache)},
-			PolicyTypes: []networkingv1.PolicyType{
-				networkingv1.PolicyTypeIngress,
-				networkingv1.PolicyTypeEgress,
-			},
-			Ingress: ingress,
-			Egress:  egress,
-		},
-	}
 }
