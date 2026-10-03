@@ -27,7 +27,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
@@ -43,7 +42,7 @@ var additionalRBACTestComponents = []string{
 // and role name, using the same helper the controller/builder use, scoped
 // to testNamespace like every other test CR in this package.
 func additionalCRBName(component, crName string) string {
-	kn := &kubernautv1alpha1.Kubernaut{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}}
+	kn := &kubernautv1alpha2.Kubernaut{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}}
 	return resources.AdditionalComponentCRBName(kn, component, crName)
 }
 
@@ -112,9 +111,7 @@ var _ = Describe("Additional component ClusterRoleBindings (#277)", func() {
 		createSharedEcosystemClusterRole(ctx, "shared-ecosystem-reader")
 
 		cr := newCRWithRouteDisabled()
-		// v1alpha1's KA-nested field still works -- conversion relocates it
-		// to v1alpha2's top-level spec.additionalClusterRoles (#277).
-		cr.Spec.KubernautAgent.AdditionalClusterRoleBindings = []string{"shared-ecosystem-reader"}
+		cr.Spec.AdditionalClusterRoles = []string{"shared-ecosystem-reader"}
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 		reconcileToRunning(ctx)
 
@@ -126,7 +123,7 @@ var _ = Describe("Additional component ClusterRoleBindings (#277)", func() {
 		createSharedEcosystemClusterRole(ctx, "shared-ecosystem-reader-2")
 
 		cr := newCRWithRouteDisabled()
-		cr.Spec.KubernautAgent.AdditionalClusterRoleBindings = []string{"shared-ecosystem-reader-2"}
+		cr.Spec.AdditionalClusterRoles = []string{"shared-ecosystem-reader-2"}
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 		reconcileToRunning(ctx)
 
@@ -157,14 +154,14 @@ var _ = Describe("Additional component ClusterRoleBindings (#277)", func() {
 		createSharedEcosystemClusterRole(ctx, "shared-ecosystem-reader-3")
 
 		cr := newCRWithRouteDisabled()
-		cr.Spec.KubernautAgent.AdditionalClusterRoleBindings = []string{"shared-ecosystem-reader-3"}
+		cr.Spec.AdditionalClusterRoles = []string{"shared-ecosystem-reader-3"}
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 		r := reconcileToRunning(ctx)
 
 		expectAdditionalCRBBound(ctx, "shared-ecosystem-reader-3", additionalRBACTestComponents)
 
 		By("deleting the CR")
-		kn := &kubernautv1alpha1.Kubernaut{}
+		kn := &kubernautv1alpha2.Kubernaut{}
 		Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 		Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
 		stripWorkflowNamespaceCreatedByAnnotation(ctx)
@@ -177,13 +174,9 @@ var _ = Describe("Additional component ClusterRoleBindings (#277)", func() {
 	})
 
 	// #423 CONS-004: spec.additionalClusterRoles was flagged as a
-	// cross-consumer consistency gap. The 3 tests above only ever populate
-	// it via v1alpha1's deprecated, KA-nested
-	// spec.kubernautAgent.additionalClusterRoleBindings (relocated to
-	// v1alpha2's top-level field by the conversion webhook) -- none set
-	// v1alpha2's top-level spec.additionalClusterRoles directly, which is
-	// what deployAdditionalComponentRBAC actually reads. This closes that
-	// literal gap.
+	// cross-consumer consistency gap. The 3 tests above cover the v2 top-level
+	// field through the lifecycle path; this case keeps direct v2 construction
+	// explicit, which is what deployAdditionalComponentRBAC actually reads.
 	It("CONS-004 [AC-6]: binds a ClusterRole set directly via v1alpha2's top-level spec.additionalClusterRoles", func() {
 		createBYOSecrets(ctx)
 		createSharedEcosystemClusterRole(ctx, "shared-ecosystem-reader-v2")

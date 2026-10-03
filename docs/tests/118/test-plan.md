@@ -135,7 +135,7 @@ against ClusterRoles provisioned by the operator.
 | Tier | Scope | Framework | Target Coverage |
 |------|-------|-----------|-----------------|
 | 1 (Unit) | Resource builders in `internal/resources/` | Ginkgo/Gomega | >= 80% of new/modified functions |
-| 2 (Integration) | Controller reconciliation in `internal/controller/` | envtest + Ginkgo/Gomega | >= 80% of new/modified methods |
+| 2 (Integration) | Controller reconciliation in `internal/controller/` | envtest + Ginkgo/Gomega | >= 78% overall package coverage and >= 80% of new/modified methods |
 | 3 (Validation) | CRD validation helpers | Ginkgo/Gomega | >= 80% of validation paths |
 
 ### 4.2 TDD Methodology

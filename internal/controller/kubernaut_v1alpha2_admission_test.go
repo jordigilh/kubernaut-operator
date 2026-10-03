@@ -32,8 +32,7 @@ import (
 // CR with Fleet unset (inert). Individual tests mutate spec.fleet to exercise
 // ADR-CRD-001 F12's CEL rule directly against the real apiserver via envtest
 // -- CEL rules are only enforced by the apiserver, not by any Go code path,
-// so this is admission-level coverage that api/v1alpha1's pure-Go conversion
-// tests cannot provide.
+// so this is admission-level coverage that pure-Go schema tests cannot provide.
 func newMinimalV1alpha2CR(name string) *kubernautv1alpha2.Kubernaut {
 	return &kubernautv1alpha2.Kubernaut{
 		ObjectMeta: metav1.ObjectMeta{

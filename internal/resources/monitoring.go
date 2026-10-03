@@ -21,11 +21,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 // APIFrontendServiceMonitor builds the ServiceMonitor for the apifrontend service.
-func APIFrontendServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+func APIFrontendServiceMonitor(kn *kubernautv1alpha2.Kubernaut) *monitoringv1.ServiceMonitor {
 	return &monitoringv1.ServiceMonitor{
 		ObjectMeta: ObjectMeta(kn, "apifrontend-monitor", ComponentAPIFrontend),
 		Spec: monitoringv1.ServiceMonitorSpec{
@@ -56,7 +56,7 @@ func APIFrontendServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.Se
 }
 
 // APIFrontendPrometheusRule builds the PrometheusRule with alert rules for AF.
-func APIFrontendPrometheusRule(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.PrometheusRule {
+func APIFrontendPrometheusRule(kn *kubernautv1alpha2.Kubernaut) *monitoringv1.PrometheusRule {
 	return &monitoringv1.PrometheusRule{
 		ObjectMeta: ObjectMeta(kn, "apifrontend-rules", ComponentAPIFrontend),
 		Spec: monitoringv1.PrometheusRuleSpec{
@@ -177,7 +177,7 @@ func afToolsRuleGroup() monitoringv1.RuleGroup {
 }
 
 // DataStorageServiceMonitor builds the ServiceMonitor for the DataStorage service.
-func DataStorageServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+func DataStorageServiceMonitor(kn *kubernautv1alpha2.Kubernaut) *monitoringv1.ServiceMonitor {
 	return &monitoringv1.ServiceMonitor{
 		ObjectMeta: ObjectMeta(kn, "datastorage-monitor", ComponentDataStorage),
 		Spec: monitoringv1.ServiceMonitorSpec{
@@ -208,7 +208,7 @@ func DataStorageServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.Se
 }
 
 // DataStoragePrometheusRule builds the PrometheusRule with DLQ and health alerts for DS.
-func DataStoragePrometheusRule(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.PrometheusRule {
+func DataStoragePrometheusRule(kn *kubernautv1alpha2.Kubernaut) *monitoringv1.PrometheusRule {
 	return &monitoringv1.PrometheusRule{
 		ObjectMeta: ObjectMeta(kn, "datastorage-rules", ComponentDataStorage),
 		Spec: monitoringv1.PrometheusRuleSpec{
@@ -274,7 +274,7 @@ func DataStoragePrometheusRule(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.Pr
 }
 
 // KubernautAgentServiceMonitor builds the ServiceMonitor for the kubernaut-agent service.
-func KubernautAgentServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+func KubernautAgentServiceMonitor(kn *kubernautv1alpha2.Kubernaut) *monitoringv1.ServiceMonitor {
 	return &monitoringv1.ServiceMonitor{
 		ObjectMeta: ObjectMeta(kn, "kubernautagent-monitor", ComponentKubernautAgent),
 		Spec: monitoringv1.ServiceMonitorSpec{
@@ -305,7 +305,7 @@ func KubernautAgentServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1
 }
 
 // KubernautAgentPrometheusRule builds the PrometheusRule with alert rules for KA.
-func KubernautAgentPrometheusRule(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.PrometheusRule {
+func KubernautAgentPrometheusRule(kn *kubernautv1alpha2.Kubernaut) *monitoringv1.PrometheusRule {
 	return &monitoringv1.PrometheusRule{
 		ObjectMeta: ObjectMeta(kn, "kubernautagent-rules", ComponentKubernautAgent),
 		Spec: monitoringv1.PrometheusRuleSpec{
@@ -378,46 +378,46 @@ func KubernautAgentPrometheusRule(kn *kubernautv1alpha1.Kubernaut) *monitoringv1
 }
 
 // GatewayServiceMonitor builds the ServiceMonitor for the gateway service.
-func GatewayServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+func GatewayServiceMonitor(kn *kubernautv1alpha2.Kubernaut) *monitoringv1.ServiceMonitor {
 	return componentServiceMonitor(kn, ComponentGateway, "gateway")
 }
 
 // AIAnalysisServiceMonitor builds the ServiceMonitor for the aianalysis service.
-func AIAnalysisServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+func AIAnalysisServiceMonitor(kn *kubernautv1alpha2.Kubernaut) *monitoringv1.ServiceMonitor {
 	return componentServiceMonitor(kn, ComponentAIAnalysis, "aianalysis")
 }
 
 // SignalProcessingServiceMonitor builds the ServiceMonitor for the signalprocessing service.
-func SignalProcessingServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+func SignalProcessingServiceMonitor(kn *kubernautv1alpha2.Kubernaut) *monitoringv1.ServiceMonitor {
 	return componentServiceMonitor(kn, ComponentSignalProcessing, "signalprocessing")
 }
 
 // RemediationOrchestratorServiceMonitor builds the ServiceMonitor for the remediation orchestrator.
-func RemediationOrchestratorServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+func RemediationOrchestratorServiceMonitor(kn *kubernautv1alpha2.Kubernaut) *monitoringv1.ServiceMonitor {
 	return componentServiceMonitor(kn, ComponentRemediationOrchestrator, "remediationorchestrator")
 }
 
 // WorkflowExecutionServiceMonitor builds the ServiceMonitor for the workflow execution engine.
-func WorkflowExecutionServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+func WorkflowExecutionServiceMonitor(kn *kubernautv1alpha2.Kubernaut) *monitoringv1.ServiceMonitor {
 	return componentServiceMonitor(kn, ComponentWorkflowExecution, "workflowexecution")
 }
 
 // EffectivenessMonitorServiceMonitor builds the ServiceMonitor for the effectiveness monitor.
-func EffectivenessMonitorServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+func EffectivenessMonitorServiceMonitor(kn *kubernautv1alpha2.Kubernaut) *monitoringv1.ServiceMonitor {
 	return componentServiceMonitor(kn, ComponentEffectivenessMonitor, "effectivenessmonitor")
 }
 
 // NotificationServiceMonitor builds the ServiceMonitor for the notification service.
-func NotificationServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+func NotificationServiceMonitor(kn *kubernautv1alpha2.Kubernaut) *monitoringv1.ServiceMonitor {
 	return componentServiceMonitor(kn, ComponentNotification, "notification")
 }
 
 // AuthWebhookServiceMonitor builds the ServiceMonitor for the authwebhook service.
-func AuthWebhookServiceMonitor(kn *kubernautv1alpha1.Kubernaut) *monitoringv1.ServiceMonitor {
+func AuthWebhookServiceMonitor(kn *kubernautv1alpha2.Kubernaut) *monitoringv1.ServiceMonitor {
 	return componentServiceMonitor(kn, ComponentAuthWebhook, "authwebhook")
 }
 
-func componentServiceMonitor(kn *kubernautv1alpha1.Kubernaut, component, jobName string) *monitoringv1.ServiceMonitor {
+func componentServiceMonitor(kn *kubernautv1alpha2.Kubernaut, component, jobName string) *monitoringv1.ServiceMonitor {
 	return &monitoringv1.ServiceMonitor{
 		ObjectMeta: ObjectMeta(kn, component+"-monitor", component),
 		Spec: monitoringv1.ServiceMonitorSpec{

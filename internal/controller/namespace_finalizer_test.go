@@ -27,7 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
@@ -85,7 +85,7 @@ var _ = Describe("envtest namespace-termination lifecycle (#358, #359)", func() 
 				"delete path (deleteOperatorManagedWorkflowNamespace) to trigger below")
 
 		By("deleting the CR WITHOUT stripping the created-by annotation, exercising the real namespace-delete path")
-		kn := &kubernautv1alpha1.Kubernaut{}
+		kn := &kubernautv1alpha2.Kubernaut{}
 		Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 		Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
 

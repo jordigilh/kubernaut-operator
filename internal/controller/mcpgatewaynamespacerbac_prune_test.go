@@ -30,7 +30,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
@@ -321,10 +320,10 @@ var _ = Describe("Namespace-scoped MCP Gateway RBAC pruning on namespace change 
 
 			By("restoring the real client to read status")
 			r.Client = k8sClient
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionRBACProvisioned)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionRBACProvisioned)
 			Expect(cond).NotTo(BeNil(), "RBACProvisioned condition should exist")
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal(ReasonRBACApplyFailed))
@@ -358,10 +357,10 @@ var _ = Describe("Namespace-scoped MCP Gateway RBAC pruning on namespace change 
 
 			By("restoring the real client to read status")
 			r.Client = k8sClient
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionRBACProvisioned)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionRBACProvisioned)
 			Expect(cond).NotTo(BeNil(), "RBACProvisioned condition should exist")
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal(ReasonRBACApplyFailed))

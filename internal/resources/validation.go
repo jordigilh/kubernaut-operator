@@ -22,7 +22,6 @@ import (
 	"strings"
 	"time"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
@@ -31,7 +30,7 @@ const maxJWKSURLLength = 2048
 // ValidateKubernaut runs all CR-level validations and returns accumulated errors.
 // sidecar indicates whether kagenti is active; when it is, issuerURL is not
 // required because the operator auto-detects it from kagenti's authbridge-config.
-func ValidateKubernaut(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) []error {
+func ValidateKubernaut(kn *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode) []error {
 	errs := make([]error, 0, 4)
 	errs = append(errs, validatePostgreSQLSSLMode(kn)...)
 	errs = append(errs, validatePolicyPrerequisites(kn)...)
@@ -43,10 +42,9 @@ func ValidateKubernaut(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMo
 	return errs
 }
 
-// ValidateFleet runs Fleet-specific validations against the v1alpha2 view of
-// the CR. Fleet's entire CRD surface lives in v1alpha2 (Fleet v1alpha2
-// migration) -- called alongside, not merged into, ValidateKubernaut so the
-// latter's v1alpha1-only signature stays stable for its other callers.
+// ValidateFleet runs Fleet-specific validations against the v1alpha2 CR. It is
+// called alongside, rather than merged into, ValidateKubernaut so Fleet
+// validation remains independently testable and scoped.
 func ValidateFleet(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	errs := make([]error, 0, 2)
 	errs = append(errs, validateFleetConfig(knV2)...)
@@ -54,7 +52,7 @@ func ValidateFleet(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	return errs
 }
 
-func validatePostgreSQLSSLMode(kn *kubernautv1alpha1.Kubernaut) []error {
+func validatePostgreSQLSSLMode(kn *kubernautv1alpha2.Kubernaut) []error {
 	mode := strings.ToLower(kn.Spec.PostgreSQL.SSLMode)
 	if mode == "disable" {
 		return []error{fmt.Errorf(
@@ -63,14 +61,14 @@ func validatePostgreSQLSSLMode(kn *kubernautv1alpha1.Kubernaut) []error {
 	return nil
 }
 
-func validatePolicyPrerequisites(_ *kubernautv1alpha1.Kubernaut) []error {
+func validatePolicyPrerequisites(_ *kubernautv1alpha2.Kubernaut) []error {
 	return nil
 }
 
 // validateLLMProfiles validates every named profile's own content, then the
 // referential integrity and same-credentialsSecretName constraints for every
 // component that references a profile by name.
-func validateLLMProfiles(kn *kubernautv1alpha1.Kubernaut) []error {
+func validateLLMProfiles(kn *kubernautv1alpha2.Kubernaut) []error {
 	errs := make([]error, 0, len(kn.Spec.LLMProfiles))
 	for name, profile := range kn.Spec.LLMProfiles {
 		errs = append(errs, validateLLMProfileContent(name, &profile)...)
@@ -82,7 +80,7 @@ func validateLLMProfiles(kn *kubernautv1alpha1.Kubernaut) []error {
 // validateLLMProfileContent validates a single named profile's own fields.
 // These checks mirror the pre-refactor validateLLMPrerequisites, now scoped
 // per-profile instead of to the single spec.kubernautAgent.llm block.
-func validateLLMProfileContent(name string, llm *kubernautv1alpha1.LLMProfileSpec) []error {
+func validateLLMProfileContent(name string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
 	var errs []error
 	base := fmt.Sprintf("spec.llmProfiles[%q]", name)
 	if llm.Provider == "" {
@@ -126,7 +124,7 @@ func validateLLMProfileContent(name string, llm *kubernautv1alpha1.LLMProfileSpe
 // rejects out-of-set values at admission, before this function ever runs.
 //
 // r may be nil (no reasoning configured on this profile).
-func validateLLMReasoning(base string, r *kubernautv1alpha1.LLMReasoningSpec, provider string) error {
+func validateLLMReasoning(base string, r *kubernautv1alpha2.LLMReasoningSpec, provider string) error {
 	if r == nil {
 		return nil
 	}
@@ -156,7 +154,7 @@ var validPhaseModelKeys = map[string]bool{
 // apiFrontend.llmProfileRef fall back to another profile when empty (not an
 // error), while phaseModels values name no profile at all when empty and
 // are rejected the same as any other non-matching name.
-func lookupProfileRef(profiles map[string]kubernautv1alpha1.LLMProfileSpec, ref, fieldPath string, allowEmpty bool) error {
+func lookupProfileRef(profiles map[string]kubernautv1alpha2.LLMProfileSpec, ref, fieldPath string, allowEmpty bool) error {
 	if ref == "" && allowEmpty {
 		return nil
 	}
@@ -182,7 +180,7 @@ func lookupProfileRef(profiles map[string]kubernautv1alpha1.LLMProfileSpec, ref,
 // would silently misauthenticate. kubernaut#1728 fixed that by resolving
 // each phase's own APIKeyFile independently, so cross-credential (and
 // cross-provider) phase overrides are now safe to accept.
-func validateLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut) []error {
+func validateLLMProfileRefs(kn *kubernautv1alpha2.Kubernaut) []error {
 	var errs []error
 	profiles := kn.Spec.LLMProfiles
 
@@ -237,7 +235,7 @@ func validateLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut) []error {
 // explicit apiKeyFile for vertex_ai profiles too, mirroring every other
 // provider -- cross-credential vertex_ai-vs-vertex_ai overrides are safe
 // like any other combination.
-func validateAFLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut, profiles map[string]kubernautv1alpha1.LLMProfileSpec) []error {
+func validateAFLLMProfileRefs(kn *kubernautv1alpha2.Kubernaut, profiles map[string]kubernautv1alpha2.LLMProfileSpec) []error {
 	var errs []error
 
 	if err := lookupProfileRef(profiles, kn.Spec.APIFrontend.LLMProfileRef, "spec.apiFrontend.llmProfileRef", true); err != nil {
@@ -257,7 +255,7 @@ func validateAFLLMProfileRefs(kn *kubernautv1alpha1.Kubernaut, profiles map[stri
 // audiences, name uniqueness, and JWKS URL validity. The insecureFlagPath
 // parameter is used in error messages to reference the correct parent flag
 // (e.g. "spec.apiFrontend.auth.allowInsecureIssuers").
-func validateJWTProviderList(providers []kubernautv1alpha1.JWTProviderSpec, basePath string, allowInsecure bool, insecureFlagPath string) []error {
+func validateJWTProviderList(providers []kubernautv1alpha2.JWTProviderSpec, basePath string, allowInsecure bool, insecureFlagPath string) []error {
 	var errs []error
 	seen := make(map[string]bool, len(providers))
 
@@ -305,7 +303,7 @@ func validateJWTProviderList(providers []kubernautv1alpha1.JWTProviderSpec, base
 	return errs
 }
 
-func validateAPIFrontend(kn *kubernautv1alpha1.Kubernaut, sidecar KagentiSidecarMode) []error {
+func validateAPIFrontend(kn *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode) []error {
 	if !kn.Spec.APIFrontendEnabled() {
 		return nil
 	}
@@ -355,7 +353,7 @@ var validToolPersonas = map[string]bool{
 	"observability": true, "l3-audit": true, "remediation-approver": true,
 }
 
-func validateToolRoleBindings(kn *kubernautv1alpha1.Kubernaut) []error {
+func validateToolRoleBindings(kn *kubernautv1alpha2.Kubernaut) []error {
 	rbac := kn.Spec.APIFrontend.RBAC
 	if rbac == nil {
 		return nil
@@ -383,7 +381,7 @@ func validateToolRoleBindings(kn *kubernautv1alpha1.Kubernaut) []error {
 // entry: exactly one of role/clusterRoleName must be set, it must not
 // duplicate an earlier entry (tracked via seen), and a persona-based role
 // must be a known persona.
-func validateToolRoleBinding(rb kubernautv1alpha1.ToolRoleBinding, index int, seen map[string]bool) error {
+func validateToolRoleBinding(rb kubernautv1alpha2.ToolRoleBinding, index int, seen map[string]bool) error {
 	if rb.Role != "" && rb.ClusterRoleName != "" {
 		return fmt.Errorf("spec.apiFrontend.rbac.roleBindings[%d]: role and clusterRoleName are mutually exclusive", index)
 	}
@@ -414,7 +412,7 @@ const (
 	alignmentCheckTimeoutMax = 60 * time.Second
 )
 
-func validateAlignmentCheck(kn *kubernautv1alpha1.Kubernaut) []error {
+func validateAlignmentCheck(kn *kubernautv1alpha2.Kubernaut) []error {
 	ac := &kn.Spec.KubernautAgent.AlignmentCheck
 	if !ac.Enabled {
 		return nil
@@ -436,19 +434,10 @@ func validateAlignmentCheck(kn *kubernautv1alpha1.Kubernaut) []error {
 		errs = append(errs, fmt.Errorf("%s.maxStepTokens: must be positive, got %d", base, ac.MaxStepTokens))
 	}
 
-	if llm := ac.LLM; llm != nil {
-		if llm.Provider == "" {
-			errs = append(errs, fmt.Errorf("%s.llm.provider: must not be empty when llm is set", base))
-		}
-		if llm.Model == "" {
-			errs = append(errs, fmt.Errorf("%s.llm.model: must not be empty when llm is set", base))
-		}
-	}
-
 	return errs
 }
 
-func validateDryRun(kn *kubernautv1alpha1.Kubernaut) []error {
+func validateDryRun(kn *kubernautv1alpha2.Kubernaut) []error {
 	ro := &kn.Spec.RemediationOrchestrator
 	if !ro.DryRun {
 		return nil
@@ -464,7 +453,7 @@ func validateDryRun(kn *kubernautv1alpha1.Kubernaut) []error {
 	return nil
 }
 
-func validateInteractive(kn *kubernautv1alpha1.Kubernaut) []error {
+func validateInteractive(kn *kubernautv1alpha2.Kubernaut) []error {
 	interactive := kn.Spec.KubernautAgent.Interactive
 	if interactive == nil || !interactive.InteractiveEnabled() {
 		return nil

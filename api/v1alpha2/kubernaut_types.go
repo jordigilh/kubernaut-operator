@@ -21,14 +21,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// KubernautSpec defines the desired state of a Kubernaut deployment on OCP.
-// The operator deploys all Kubernaut services into the CR's namespace and
-// auto-derives OCP platform configuration (monitoring, service-ca, Routes).
+// KubernautSpec defines the desired state of a Kubernaut deployment on
+// Kubernetes. The operator deploys all Kubernaut services into the CR's
+// namespace; OpenShift monitoring, service-CA, and Routes are optional
+// capability-gated adapters.
 //
-// v1alpha2 is the storage version and conversion.Hub for this CRD; v1alpha1
-// converts to/from this shape via the conversion webhook. See
-// docs/design/ADR-CRD-001-v1alpha2-redesign.md for the full rationale
-// behind every diff from v1alpha1 (referenced as F1-F9 below).
+// v1alpha2 is the sole served/storage shape for this CRD. Older objects must
+// follow the documented export/transform/recreate migration procedure. See
+// docs/upgrade-v1alpha1-to-v1alpha2.md for the migration contract.
 type KubernautSpec struct {
 	// Image pull policy, pull secrets, and optional per-component overrides.
 	// +optional
@@ -74,11 +74,12 @@ type KubernautSpec struct {
 	// +optional
 	EffectivenessMonitor EffectivenessMonitorSpec `json:"effectivenessMonitor,omitempty"`
 
-	// Monitoring configures the Prometheus/AlertManager endpoint used by
-	// EffectivenessMonitor and API Frontend severity-triage (F2 -- new in
-	// v1alpha2). Unset (the default) preserves v1alpha1's only behavior:
-	// OCP's built-in Thanos Querier at a well-known in-cluster URL,
-	// auto-detected, no user action needed.
+	// Monitoring configures the Prometheus/AlertManager endpoints used by
+	// EffectivenessMonitor, KubernautAgent, and API Frontend severity-triage.
+	// On OpenShift, an unset endpoint may use the discovered platform monitoring
+	// adapter. On generic Kubernetes, each enabled integration must provide an
+	// explicit endpoint; an absent optional monitoring API is reported in status
+	// and does not prevent the core lifecycle from starting.
 	// +optional
 	Monitoring MonitoringSpec `json:"monitoring,omitempty"`
 
@@ -109,16 +110,19 @@ type KubernautSpec struct {
 	// +optional
 	DataStorage DataStorageSpec `json:"dataStorage,omitempty"`
 
-	// NetworkPolicies tunes the always-on Kubernetes NetworkPolicy resources
-	// the operator creates for every component (F3 -- v1alpha1's
-	// networkPolicies.enabled opt-out is removed in v1alpha2; NetworkPolicies
-	// are unconditional, matching the upstream Helm chart's actual behavior
-	// and Red Hat's OpenShift Hardening requirements). A default-deny
-	// posture is applied with explicit allow rules matching the upstream
-	// Helm chart's traffic matrix; every field below only tunes that
-	// already-created policy set.
+	// NetworkPolicies selects and tunes the supported native policy adapter.
+	// Provider policy resources are created only after active installation and
+	// runtime GVK/schema compatibility are positively identified; no raw
+	// Kubernetes NetworkPolicy or static API-server CIDR fallback is used.
 	// +optional
 	NetworkPolicies NetworkPoliciesSpec `json:"networkPolicies,omitempty"`
+
+	// TLS selects the explicit source for runtime service certificates and the
+	// shared internal trust bundle. An empty mode lets an OpenShift capability
+	// adapter retain the service-CA behavior; generic clusters must select one
+	// of the documented source modes before TLS-backed workloads are ready.
+	// +optional
+	TLS TLSConfigSpec `json:"tls,omitempty"`
 
 	// APIFrontend configures the API Frontend (MCP/A2A gateway) service.
 	APIFrontend APIFrontendSpec `json:"apiFrontend,omitempty"`
@@ -1400,6 +1404,11 @@ type GatewaySpec struct {
 	// +optional
 	Route RouteSpec `json:"route,omitempty"`
 
+	// Ingress configures portable Kubernetes exposure. It is independent from
+	// the optional OpenShift Route above.
+	// +optional
+	Ingress IngressSpec `json:"ingress,omitempty"`
+
 	// Gateway server and middleware configuration.
 	// +optional
 	Config GatewayConfigSpec `json:"config,omitempty"`
@@ -1452,6 +1461,12 @@ type ConsoleSpec struct {
 	// OCP Route configuration for external access.
 	// +optional
 	Route ConsoleRouteSpec `json:"route,omitempty"`
+
+	// Ingress configures portable Kubernetes exposure. It is independent from
+	// the optional OpenShift Route above and is disabled unless explicitly
+	// enabled.
+	// +optional
+	Ingress IngressSpec `json:"ingress,omitempty"`
 
 	// Resource requirements for the console container.
 	// +optional
@@ -1597,6 +1612,126 @@ type RouteSpec struct {
 	Hostname string `json:"hostname,omitempty"`
 }
 
+// IngressSpec configures portable Kubernetes Ingress exposure for a service.
+// An enabled Ingress requires an explicit class, host, and TLS Secret; the
+// operator never infers these values from OpenShift cluster settings.
+type IngressSpec struct {
+	// Whether to create the Ingress. Defaults to false.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// IngressClassName identifies the installed ingress controller.
+	// +optional
+	IngressClassName string `json:"ingressClassName,omitempty"`
+
+	// External DNS name covered by TLSSecretName.
+	// +optional
+	Host string `json:"host,omitempty"`
+
+	// Existing Secret containing tls.crt and tls.key.
+	// +optional
+	TLSSecretName string `json:"tlsSecretName,omitempty"`
+
+	// Optional controller-specific annotations. The operator does not add
+	// OpenShift Route annotations to this object.
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+// IngressEnabled returns true only for an explicit opt-in.
+func (s *IngressSpec) IngressEnabled() bool {
+	return s != nil && s.Enabled != nil && *s.Enabled
+}
+
+// TLSMode identifies the source of runtime certificate and trust material.
+// The empty value means that an optional OpenShift service-CA adapter may be
+// selected; it is not a generic-cluster plaintext fallback.
+// +kubebuilder:validation:Enum=AdministratorManaged;CertManager;DevelopmentSelfSigned
+type TLSMode string
+
+const (
+	TLSModeAdministratorManaged  TLSMode = "AdministratorManaged"
+	TLSModeCertManager           TLSMode = "CertManager"
+	TLSModeDevelopmentSelfSigned TLSMode = "DevelopmentSelfSigned"
+)
+
+// TLSConfigSpec defines the explicit runtime certificate source contract.
+// Exactly one mode-specific block must be populated when Mode is set.
+type TLSConfigSpec struct {
+	// Source mode. Empty selects only a positively discovered OpenShift
+	// service-CA adapter; generic clusters must not treat it as plaintext.
+	// +optional
+	Mode TLSMode `json:"mode,omitempty"`
+
+	// References administrator-owned internal CA and service serving Secrets.
+	// The operator validates these objects but does not mutate or delete them.
+	// +optional
+	AdministratorManaged *AdministratorManagedTLSConfig `json:"administratorManaged,omitempty"`
+
+	// References cert-manager issuer output Secrets. cert-manager must already
+	// be installed; the operator never installs its CRDs or controller.
+	// +optional
+	CertManager *CertManagerTLSConfig `json:"certManager,omitempty"`
+
+	// Configures the explicit development-only self-signed provisioner.
+	// +optional
+	DevelopmentSelfSigned *DevelopmentSelfSignedTLSConfig `json:"developmentSelfSigned,omitempty"`
+}
+
+// AdministratorManagedTLSConfig references administrator-owned TLS material.
+type AdministratorManagedTLSConfig struct {
+	// Secret containing the public internal CA under ca.crt.
+	// +kubebuilder:validation:MinLength=1
+	InternalCASecretName string `json:"internalCASecretName"`
+
+	// Serving Secret names keyed by component: gateway, datastorage,
+	// kubernautagent, apifrontend, and authwebhook. Each Secret contains
+	// tls.crt and tls.key with SANs covering its Service DNS names.
+	// +kubebuilder:validation:MinProperties=1
+	ServiceTLSSecretNames map[string]string `json:"serviceTLSSecretNames"`
+}
+
+// TLSIssuerRef identifies an existing cert-manager issuer.
+type TLSIssuerRef struct {
+	// Issuer name.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// Issuer kind, normally Issuer or ClusterIssuer.
+	// +kubebuilder:default="Issuer"
+	// +optional
+	Kind string `json:"kind,omitempty"`
+	// API group, normally cert-manager.io.
+	// +kubebuilder:default="cert-manager.io"
+	// +optional
+	Group string `json:"group,omitempty"`
+}
+
+// CertManagerTLSConfig references cert-manager-managed runtime Secrets.
+type CertManagerTLSConfig struct {
+	// Issuer used by runtime Certificate resources.
+	Issuer TLSIssuerRef `json:"issuer"`
+	// Public CA Secret containing ca.crt for administrator-managed material or
+	// tls.crt for cert-manager Certificate output.
+	// +kubebuilder:validation:MinLength=1
+	InternalCASecretName string `json:"internalCASecretName"`
+	// Serving Secret names keyed by component, with the same keys as the
+	// administrator-managed mode.
+	// +kubebuilder:validation:MinProperties=1
+	ServiceTLSSecretNames map[string]string `json:"serviceTLSSecretNames"`
+}
+
+// DevelopmentSelfSignedTLSConfig configures namespace-scoped development TLS.
+type DevelopmentSelfSignedTLSConfig struct {
+	// Secret name for the generated CA. Defaults to kubernaut-internal-ca.
+	// +optional
+	CASecretName string `json:"caSecretName,omitempty"`
+	// How long before expiry the operator should rotate generated leaves.
+	// +kubebuilder:default="168h"
+	// +optional
+	RotationBefore string `json:"rotationBefore,omitempty"`
+}
+
 // APIFrontendRouteSpec configures the OCP Route for the API Frontend.
 // Unlike GatewayRouteSpec, defaults to disabled (opt-in external access).
 type APIFrontendRouteSpec struct {
@@ -1679,6 +1814,11 @@ type APIFrontendSpec struct {
 	// OpenShift Route with reencrypt TLS termination.
 	// +optional
 	Route APIFrontendRouteSpec `json:"route,omitempty"`
+
+	// Ingress configures portable Kubernetes exposure. It is independent from
+	// the optional OpenShift Route above.
+	// +optional
+	Ingress IngressSpec `json:"ingress,omitempty"`
 
 	// SPIRE mTLS identity configuration for kagenti agent card discovery
 	// (FedRAMP SC-8, IA-5). When enabled, a ClusterSPIFFEID is created and
@@ -2163,10 +2303,8 @@ type RetentionSpec struct {
 
 // LoggingSpec configures the log level for a service.
 type LoggingSpec struct {
-	// Log level. One of: DEBUG, INFO, WARN, ERROR (F8 -- narrowed to
-	// uppercase-only in v1alpha2, matching upstream ADR-030; v1alpha1
-	// accepted both cases). The conversion webhook uppercases any
-	// lowercase v1alpha1 value on ConvertFrom rather than rejecting it.
+	// Log level. One of: DEBUG, INFO, WARN, ERROR (narrowed to
+	// uppercase-only in v1alpha2, matching upstream ADR-030).
 	// +kubebuilder:default="INFO"
 	// +kubebuilder:validation:Enum=DEBUG;INFO;WARN;ERROR
 	// +optional
@@ -2175,20 +2313,13 @@ type LoggingSpec struct {
 
 // MonitoringSpec configures the Prometheus and AlertManager endpoints used
 // by EffectivenessMonitor, KubernautAgent, and API Frontend severity-triage
-// (F2 -- new in v1alpha2; AlertManager added #298). Unset (the default)
-// preserves v1alpha1's only behavior: OCP's built-in Thanos Querier and
-// AlertManager routes at well-known in-cluster URLs, auto-detected, no user
-// action needed.
+// (F2 -- new in v1alpha2; AlertManager added #298). On OpenShift, an unset
+// endpoint may use the discovered platform monitoring adapter. On generic
+// Kubernetes, each enabled integration must provide an explicit endpoint.
 //
-// When overriding either URL to point outside the cluster's own
-// openshift-monitoring namespace, remember that the operator's own
-// NetworkPolicy egress rule can only scope itself automatically when the
-// URL resolves to an in-cluster Service host
-// (<service>.<namespace>.svc[.cluster.local]) -- for any other host
-// (external DNS, load balancer, etc.), the operator omits its own egress
-// rule for that destination, and the platform operator must supply a
-// supplemental NetworkPolicy to permit that traffic. See the operator's
-// NetworkPolicy documentation for the corresponding pod selectors.
+// Explicit endpoints may be in-cluster Services or externally managed
+// endpoints; the platform/provider policy layer remains responsible for any
+// additional egress authorization required by the selected destination.
 type MonitoringSpec struct {
 	// +optional
 	Prometheus PrometheusSpec `json:"prometheus,omitempty"`
@@ -2197,16 +2328,18 @@ type MonitoringSpec struct {
 	AlertManager AlertManagerSpec `json:"alertManager,omitempty"`
 }
 
-// PrometheusSpec configures the Prometheus/Thanos Querier endpoint.
+// PrometheusSpec configures a Prometheus-compatible endpoint.
 type PrometheusSpec struct {
 	// Whether Prometheus-backed features (EM assessment, AF severity-triage)
-	// are active. Defaults to true (auto-detected OCP monitoring stack).
+	// are active. Defaults to true; generic Kubernetes requires URL when
+	// enabled.
 	// +kubebuilder:default=true
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// Prometheus/Thanos Querier URL. Defaults to the OCP Thanos Querier
-	// route when empty.
+	// Prometheus-compatible URL. On OpenShift, an empty URL may use the
+	// capability-gated platform endpoint; generic Kubernetes requires this
+	// field when Prometheus-backed features are enabled.
 	// +optional
 	URL string `json:"url,omitempty"`
 
@@ -2216,23 +2349,28 @@ type PrometheusSpec struct {
 }
 
 // PrometheusEnabled returns true when Prometheus-backed features should be
-// active. Defaults to true (nil Enabled) -- auto-detected OCP monitoring.
+// active. Defaults to true; the controller resolves an unset URL through the
+// discovered platform adapter or disables the integration on generic
+// Kubernetes.
 func (s *PrometheusSpec) PrometheusEnabled() bool {
 	return s.Enabled == nil || *s.Enabled
 }
 
 // AlertManagerSpec configures the AlertManager endpoint used by
-// EffectivenessMonitor and KubernautAgent alert correlation (#298 --
-// mirrors PrometheusSpec's shape and defaults for a consistent DX).
+// EffectivenessMonitor and KubernautAgent alert correlation. On OpenShift, an
+// empty URL may use the capability-gated platform endpoint; generic
+// Kubernetes requires this field when AlertManager-backed features are
+// enabled.
 type AlertManagerSpec struct {
 	// Whether AlertManager-backed features (EM assessment, KA alert
-	// correlation) are active. Defaults to true (auto-detected OCP
-	// monitoring stack).
+	// correlation) are active. Defaults to true; generic Kubernetes requires
+	// URL when enabled.
 	// +kubebuilder:default=true
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// AlertManager URL. Defaults to the OCP AlertManager route when empty.
+	// AlertManager URL. On generic Kubernetes this field is required when
+	// AlertManager-backed features are enabled.
 	// +optional
 	URL string `json:"url,omitempty"`
 
@@ -2242,28 +2380,45 @@ type AlertManagerSpec struct {
 }
 
 // AlertManagerEnabled returns true when AlertManager-backed features should
-// be active. Defaults to true (nil Enabled) -- auto-detected OCP monitoring.
+// be active. Defaults to true; the controller resolves an unset URL through
+// the discovered platform adapter or disables the integration on generic
+// Kubernetes.
 func (s *AlertManagerSpec) AlertManagerEnabled() bool {
 	return s.Enabled == nil || *s.Enabled
 }
 
-// NetworkPoliciesSpec configures the always-on NetworkPolicies the operator
-// creates for every component (F3 -- v1alpha1's Enabled *bool opt-out is
-// removed; NetworkPolicies are unconditional in v1alpha2, matching the
-// upstream Helm chart's actual behavior -- it has no enable/disable toggle
-// at all -- and Red Hat's OpenShift Hardening requirements. See
-// docs/design/ADR-CRD-001-v1alpha2-redesign.md F3 for the full rationale
-// and field-by-field mapping to values.schema.json's networkPolicies.*
-// tree). Every field below tunes an already-created default-deny +
-// explicit-allow policy set; none of them gate existence.
+type NetworkPolicyProvider string
+
+const (
+	NetworkPolicyProviderAuto   NetworkPolicyProvider = "Auto"
+	NetworkPolicyProviderCilium NetworkPolicyProvider = "Cilium"
+	NetworkPolicyProviderCalico NetworkPolicyProvider = "Calico"
+	NetworkPolicyProviderOVN    NetworkPolicyProvider = "OVN"
+)
+
 type NetworkPoliciesSpec struct {
+	// NetworkPoliciesSpec configures the common traffic intent submitted to a
+	// positively identified native policy provider. Provider resources are
+	// created only when the selected provider is active, schema-compatible, and
+	// within the supported release range; generic Kubernetes without a supported
+	// provider fails closed without a raw NetworkPolicy fallback.
+	// Provider selects the native policy provider. Auto requires exactly one
+	// active, supported provider installation; an explicit provider is still
+	// validated against its discovered GVK, schema, and release range.
+	// +kubebuilder:validation:Enum=Auto;Cilium;Calico;OVN
+	// +kubebuilder:default=Auto
+	// +optional
+	Provider NetworkPolicyProvider `json:"provider,omitempty"`
+
 	// Primary K8s API server backend CIDR, for environments where default
-	// detection doesn't resolve correctly.
+	// detection doesn't resolve correctly. Deprecated: native policy adapters
+	// use provider-native API-server identity and reject static CIDRs.
 	// +optional
 	APIServerCIDR string `json:"apiServerCIDR,omitempty"`
 
 	// Additional API server backend endpoint IPs as /32 CIDRs, for HA
-	// clusters with multiple control-plane nodes. Merged with APIServerCIDR.
+	// clusters with multiple control-plane nodes. Deprecated: native policy
+	// adapters do not accept static API-server CIDRs.
 	// +optional
 	APIServerCIDRs []string `json:"apiServerCIDRs,omitempty"`
 
@@ -2336,7 +2491,9 @@ type NetworkPolicyNamedIngressOverride struct {
 
 // NetworkPolicyEgressOverride overrides a single egress allow rule's target.
 type NetworkPolicyEgressOverride struct {
-	// +kubebuilder:default="0.0.0.0/0"
+	// Legacy field: native provider adapters do not render arbitrary CIDR
+	// destinations. Non-empty values are rejected during reconciliation rather
+	// than becoming an unsafe allow-all policy or being silently ignored.
 	// +optional
 	CIDR string `json:"cidr,omitempty"`
 
@@ -2362,13 +2519,11 @@ type NetworkPolicyMonitoringOverride struct {
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
 
-	// +kubebuilder:default=9090
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	PrometheusPort int32 `json:"prometheusPort,omitempty"`
 
-	// +kubebuilder:default=9093
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	// +optional
@@ -2447,16 +2602,23 @@ type ConditionType = string
 
 // Condition types used in KubernautStatus.Conditions.
 const (
-	ConditionBYOValidated        ConditionType = "BYOValidated"
-	ConditionMigrationComplete   ConditionType = "MigrationComplete"
-	ConditionCRDsInstalled       ConditionType = "CRDsInstalled"
-	ConditionRBACProvisioned     ConditionType = "RBACProvisioned"
-	ConditionWebhooksConfigured  ConditionType = "WebhooksConfigured"
-	ConditionServicesDeployed    ConditionType = "ServicesDeployed"
-	ConditionRouteReady          ConditionType = "RouteReady"
-	ConditionAnsibleReady        ConditionType = "AnsibleReady"
-	ConditionAdditionalRBACBound ConditionType = "AdditionalRBACBound"
-	ConditionToolRBACBound       ConditionType = "ToolRBACBound"
+	ConditionBYOValidated               ConditionType = "BYOValidated"
+	ConditionMigrationComplete          ConditionType = "MigrationComplete"
+	ConditionCRDsInstalled              ConditionType = "CRDsInstalled"
+	ConditionRBACProvisioned            ConditionType = "RBACProvisioned"
+	ConditionWebhooksConfigured         ConditionType = "WebhooksConfigured"
+	ConditionServicesDeployed           ConditionType = "ServicesDeployed"
+	ConditionRouteReady                 ConditionType = "RouteReady"
+	ConditionAnsibleReady               ConditionType = "AnsibleReady"
+	ConditionAlertManagerAuthConfigured ConditionType = "AlertManagerAuthConfigured"
+	ConditionAdditionalRBACBound        ConditionType = "AdditionalRBACBound"
+	ConditionToolRBACBound              ConditionType = "ToolRBACBound"
+	ConditionPlatformCapabilitiesReady  ConditionType = "PlatformCapabilitiesReady"
+	ConditionTLSReady                   ConditionType = "TLSReady"
+	ConditionExposureReady              ConditionType = "ExposureReady"
+	ConditionMonitoringReady            ConditionType = "MonitoringReady"
+	ConditionProviderDetected           ConditionType = "ProviderDetected"
+	ConditionProviderPolicyReady        ConditionType = "ProviderPolicyReady"
 )
 
 // Finalizer used for cluster-scoped resource cleanup.
@@ -2477,9 +2639,8 @@ const SingletonName = "kubernaut"
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
-// Kubernaut is the Schema for the kubernauts API. v1alpha2 is the storage
-// version and conversion.Hub; v1alpha1 converts to/from this shape via the
-// conversion webhook (see api/v1alpha1/kubernaut_conversion.go).
+// Kubernaut is the Schema for the kubernauts API. v1alpha2 is the sole
+// served/storage version for this CRD.
 // It declares a single Kubernaut deployment within the namespace it is created in.
 type Kubernaut struct {
 	metav1.TypeMeta   `json:",inline"`

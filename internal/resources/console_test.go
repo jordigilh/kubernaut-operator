@@ -29,15 +29,15 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
-func testKubernautWithConsole() *kubernautv1alpha1.Kubernaut {
+func testKubernautWithConsole() *kubernautv1alpha2.Kubernaut {
 	kn := testKubernaut()
-	kn.Spec.Console = kubernautv1alpha1.ConsoleSpec{
+	kn.Spec.Console = kubernautv1alpha2.ConsoleSpec{
 		Enabled: ptr.To(true),
-		Auth:    kubernautv1alpha1.ConsoleAuthSpec{SecretName: "console-oidc-creds"},
-		Route:   kubernautv1alpha1.ConsoleRouteSpec{Enabled: ptr.To(true)},
+		Auth:    kubernautv1alpha2.ConsoleAuthSpec{SecretName: "console-oidc-creds"},
+		Route:   kubernautv1alpha2.ConsoleRouteSpec{Enabled: ptr.To(true)},
 	}
 	return kn
 }
@@ -259,25 +259,6 @@ var _ = Describe("Console Resources", func() {
 				"must serve /runtime-config.js as an exact-match location so the console's unconditional script tag load resolves")
 			Expect(serverConf).To(ContainSubstring("window.__KUBERNAUT_CONFIG__ = { enableRawThinking: true };"),
 				"default must match the console's own default (enabled) to avoid a behavior change for existing deployments")
-		})
-
-		It("UT-CN-314-002 [CM-6, CC8.1]: honors spec.console.enableRawThinking=false", func() {
-			kn := testKubernautWithConsole()
-			kn.Spec.Console.EnableRawThinking = ptr.To(false)
-			cm := ConsoleNginxConfigMap(kn)
-			serverConf := cm.Data["server.conf"]
-
-			Expect(serverConf).To(ContainSubstring("window.__KUBERNAUT_CONFIG__ = { enableRawThinking: false };"),
-				"explicit false must disable the raw-thinking panel, e.g. for release/v1.5-targeted backends")
-		})
-
-		It("UT-CN-314-003 [CM-6, CC8.1]: honors spec.console.enableRawThinking=true explicitly", func() {
-			kn := testKubernautWithConsole()
-			kn.Spec.Console.EnableRawThinking = ptr.To(true)
-			cm := ConsoleNginxConfigMap(kn)
-			serverConf := cm.Data["server.conf"]
-
-			Expect(serverConf).To(ContainSubstring("window.__KUBERNAUT_CONFIG__ = { enableRawThinking: true };"))
 		})
 
 		It("UT-CN-314-004 [SC-8]: serves runtime-config.js with a JavaScript content type and no-cache", func() {

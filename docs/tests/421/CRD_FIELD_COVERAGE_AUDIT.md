@@ -1,5 +1,10 @@
 # v1alpha2 CRD Field Coverage Audit
 
+> **Historical snapshot:** this audit was written before the platform-neutrality
+> clean break. Findings about `internal/resources/networkpolicies.go`, raw
+> NetworkPolicy rendering, and static API-server CIDRs describe the superseded
+> implementation; native provider-policy behavior is authoritative now.
+
 Tracking issue: #421
 
 > **Snapshot as of 2026-08-26.** This report is a point-in-time audit

@@ -20,7 +20,7 @@ import (
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 // MutatingWebhookConfiguration builds the AuthWebhook MutatingWebhookConfiguration.
@@ -28,7 +28,7 @@ import (
 // webhooks for workflowexecution, remediationapprovalrequest, and
 // remediationrequest status mutations (audit attribution).
 // OCP service-CA injects the caBundle via the inject-cabundle annotation.
-func MutatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut) *admissionregistrationv1.MutatingWebhookConfiguration {
+func MutatingWebhookConfiguration(kn *kubernautv1alpha2.Kubernaut) *admissionregistrationv1.MutatingWebhookConfiguration {
 	namespacedScope := admissionregistrationv1.NamespacedScope
 
 	return &admissionregistrationv1.MutatingWebhookConfiguration{
@@ -50,7 +50,7 @@ func MutatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut) *admissionreg
 					Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Update},
 					Rule: admissionregistrationv1.Rule{
 						APIGroups:   []string{"kubernaut.ai"},
-						APIVersions: []string{"v1alpha1"},
+						APIVersions: []string{"v1alpha2"},
 						Resources:   []string{"workflowexecutions/status"},
 						Scope:       &namespacedScope,
 					},
@@ -68,7 +68,7 @@ func MutatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut) *admissionreg
 					Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Update},
 					Rule: admissionregistrationv1.Rule{
 						APIGroups:   []string{"kubernaut.ai"},
-						APIVersions: []string{"v1alpha1"},
+						APIVersions: []string{"v1alpha2"},
 						Resources:   []string{"remediationapprovalrequests/status"},
 						Scope:       &namespacedScope,
 					},
@@ -86,7 +86,7 @@ func MutatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut) *admissionreg
 					Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Update},
 					Rule: admissionregistrationv1.Rule{
 						APIGroups:   []string{"kubernaut.ai"},
-						APIVersions: []string{"v1alpha1"},
+						APIVersions: []string{"v1alpha2"},
 						Resources:   []string{"remediationrequests/status"},
 						Scope:       &namespacedScope,
 					},
@@ -102,7 +102,7 @@ func MutatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut) *admissionreg
 // CUD (schema validation), actiontype CUD (schema validation), and
 // agentsession CREATE (existence gate, kubernaut#2244).
 // OCP service-CA injects the caBundle via the inject-cabundle annotation.
-func ValidatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut) *admissionregistrationv1.ValidatingWebhookConfiguration {
+func ValidatingWebhookConfiguration(kn *kubernautv1alpha2.Kubernaut) *admissionregistrationv1.ValidatingWebhookConfiguration {
 	return &admissionregistrationv1.ValidatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        kn.Namespace + "-authwebhook-validating",
@@ -118,7 +118,33 @@ func ValidatingWebhookConfiguration(kn *kubernautv1alpha1.Kubernaut) *admissionr
 	}
 }
 
-func notificationRequestValidatingWebhook(kn *kubernautv1alpha1.Kubernaut) admissionregistrationv1.ValidatingWebhook {
+// MutatingWebhookConfigurationWithCABundle builds the generic-cluster form of
+// the AuthWebhook configuration. It removes the OpenShift service-CA
+// injection annotation and publishes the validated CA directly in every
+// webhook client configuration. The caller must fail closed before invoking
+// this helper when caBundle is empty.
+func MutatingWebhookConfigurationWithCABundle(kn *kubernautv1alpha2.Kubernaut, caBundle []byte) *admissionregistrationv1.MutatingWebhookConfiguration {
+	configuration := MutatingWebhookConfiguration(kn)
+	delete(configuration.Annotations, OCPServiceCAInjectAnnotation)
+	for index := range configuration.Webhooks {
+		configuration.Webhooks[index].ClientConfig.CABundle = append([]byte(nil), caBundle...)
+	}
+	return configuration
+}
+
+// ValidatingWebhookConfigurationWithCABundle is the generic-cluster form of
+// ValidatingWebhookConfiguration. It follows the same explicit CA contract
+// as MutatingWebhookConfigurationWithCABundle.
+func ValidatingWebhookConfigurationWithCABundle(kn *kubernautv1alpha2.Kubernaut, caBundle []byte) *admissionregistrationv1.ValidatingWebhookConfiguration {
+	configuration := ValidatingWebhookConfiguration(kn)
+	delete(configuration.Annotations, OCPServiceCAInjectAnnotation)
+	for index := range configuration.Webhooks {
+		configuration.Webhooks[index].ClientConfig.CABundle = append([]byte(nil), caBundle...)
+	}
+	return configuration
+}
+
+func notificationRequestValidatingWebhook(kn *kubernautv1alpha2.Kubernaut) admissionregistrationv1.ValidatingWebhook {
 	namespacedScope := admissionregistrationv1.NamespacedScope
 	return admissionregistrationv1.ValidatingWebhook{
 		Name:                    "notificationrequest.validate.kubernaut.ai",
@@ -132,7 +158,7 @@ func notificationRequestValidatingWebhook(kn *kubernautv1alpha1.Kubernaut) admis
 			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Delete},
 			Rule: admissionregistrationv1.Rule{
 				APIGroups:   []string{"kubernaut.ai"},
-				APIVersions: []string{"v1alpha1"},
+				APIVersions: []string{"v1alpha2"},
 				Resources:   []string{"notificationrequests"},
 				Scope:       &namespacedScope,
 			},
@@ -140,7 +166,7 @@ func notificationRequestValidatingWebhook(kn *kubernautv1alpha1.Kubernaut) admis
 	}
 }
 
-func remediationWorkflowValidatingWebhook(kn *kubernautv1alpha1.Kubernaut) admissionregistrationv1.ValidatingWebhook {
+func remediationWorkflowValidatingWebhook(kn *kubernautv1alpha2.Kubernaut) admissionregistrationv1.ValidatingWebhook {
 	namespacedScope := admissionregistrationv1.NamespacedScope
 	return admissionregistrationv1.ValidatingWebhook{
 		Name:                    "remediationworkflow.validate.kubernaut.ai",
@@ -163,7 +189,7 @@ func remediationWorkflowValidatingWebhook(kn *kubernautv1alpha1.Kubernaut) admis
 			},
 			Rule: admissionregistrationv1.Rule{
 				APIGroups:   []string{"kubernaut.ai"},
-				APIVersions: []string{"v1alpha1"},
+				APIVersions: []string{"v1alpha2"},
 				Resources:   []string{"remediationworkflows"},
 				Scope:       &namespacedScope,
 			},
@@ -171,7 +197,7 @@ func remediationWorkflowValidatingWebhook(kn *kubernautv1alpha1.Kubernaut) admis
 	}
 }
 
-func actionTypeValidatingWebhook(kn *kubernautv1alpha1.Kubernaut) admissionregistrationv1.ValidatingWebhook {
+func actionTypeValidatingWebhook(kn *kubernautv1alpha2.Kubernaut) admissionregistrationv1.ValidatingWebhook {
 	namespacedScope := admissionregistrationv1.NamespacedScope
 	return admissionregistrationv1.ValidatingWebhook{
 		Name:                    "actiontype.validate.kubernaut.ai",
@@ -194,7 +220,7 @@ func actionTypeValidatingWebhook(kn *kubernautv1alpha1.Kubernaut) admissionregis
 			},
 			Rule: admissionregistrationv1.Rule{
 				APIGroups:   []string{"kubernaut.ai"},
-				APIVersions: []string{"v1alpha1"},
+				APIVersions: []string{"v1alpha2"},
 				Resources:   []string{"actiontypes"},
 				Scope:       &namespacedScope,
 			},
@@ -207,7 +233,7 @@ func actionTypeValidatingWebhook(kn *kubernautv1alpha1.Kubernaut) admissionregis
 // when Spec.RemediationRequestRef does not resolve to a real
 // RemediationRequest in the same namespace. No UPDATE/DELETE gate is needed
 // since AgentSessionSpec is CEL-immutable.
-func agentSessionValidatingWebhook(kn *kubernautv1alpha1.Kubernaut) admissionregistrationv1.ValidatingWebhook {
+func agentSessionValidatingWebhook(kn *kubernautv1alpha2.Kubernaut) admissionregistrationv1.ValidatingWebhook {
 	namespacedScope := admissionregistrationv1.NamespacedScope
 	return admissionregistrationv1.ValidatingWebhook{
 		Name:                    "agentsession.validate.kubernaut.ai",
@@ -228,7 +254,7 @@ func agentSessionValidatingWebhook(kn *kubernautv1alpha1.Kubernaut) admissionreg
 			},
 			Rule: admissionregistrationv1.Rule{
 				APIGroups:   []string{"kubernaut.ai"},
-				APIVersions: []string{"v1alpha1"},
+				APIVersions: []string{"v1alpha2"},
 				Resources:   []string{"agentsessions"},
 				Scope:       &namespacedScope,
 			},
@@ -270,7 +296,7 @@ func SingletonValidatingWebhookConfiguration(namespace string, labels map[string
 					Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
 					Rule: admissionregistrationv1.Rule{
 						APIGroups:   []string{"kubernaut.ai"},
-						APIVersions: []string{"v1alpha1"},
+						APIVersions: []string{"v1alpha2"},
 						Resources:   []string{"kubernauts"},
 						Scope:       &clusterScope,
 					},
@@ -280,7 +306,7 @@ func SingletonValidatingWebhookConfiguration(namespace string, labels map[string
 	}
 }
 
-func webhookClientConfig(kn *kubernautv1alpha1.Kubernaut, path string) admissionregistrationv1.WebhookClientConfig {
+func webhookClientConfig(kn *kubernautv1alpha2.Kubernaut, path string) admissionregistrationv1.WebhookClientConfig {
 	port := PortAuthWebhookService
 	return admissionregistrationv1.WebhookClientConfig{
 		Service: &admissionregistrationv1.ServiceReference{

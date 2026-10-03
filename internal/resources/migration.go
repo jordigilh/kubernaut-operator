@@ -24,14 +24,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut/pkg/shared/assets"
 )
 
 const migrationJobName = "kubernaut-db-migration"
 
 // MigrationConfigMap builds the ConfigMap containing all embedded SQL migration files.
-func MigrationConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, error) {
+func MigrationConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 	entries, err := fs.ReadDir(assets.MigrationsFS, "migrations")
 	if err != nil {
 		return nil, fmt.Errorf("reading embedded migrations: %w", err)
@@ -58,7 +58,7 @@ func MigrationConfigMap(kn *kubernautv1alpha1.Kubernaut) (*corev1.ConfigMap, err
 // MigrationJob builds the database migration Job.
 // It uses the db-migrate image which bundles the goose CLI and runs
 // migrations from the mounted ConfigMap.
-func MigrationJob(kn *kubernautv1alpha1.Kubernaut) (*batchv1.Job, error) {
+func MigrationJob(kn *kubernautv1alpha2.Kubernaut) (*batchv1.Job, error) {
 	pgPort := PostgreSQLPort(kn)
 
 	img, err := ResolveImage(kn, "db-migrate")

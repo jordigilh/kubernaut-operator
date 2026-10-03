@@ -20,7 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -154,7 +154,7 @@ var _ = Describe("ClusterSPIFFEID", func() {
 
 	It("IA-5: returns nil when SPIRE spec is explicitly disabled", func() {
 		kn := testKubernaut()
-		kn.Spec.APIFrontend.SPIRE = kubernautv1alpha1.APIFrontendSPIRESpec{Enabled: boolPtr(false)}
+		kn.Spec.APIFrontend.SPIRE = kubernautv1alpha2.APIFrontendSPIRESpec{Enabled: boolPtr(false)}
 		obj, err := ClusterSPIFFEID(kn)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(obj).To(BeNil())

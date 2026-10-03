@@ -1,5 +1,10 @@
 # DD-362: Remove `FleetOverrideSpec.Namespace` -- all fleet-aware components use the shared `spec.fleet.mcpGatewayNamespace` directly
 
+> **Historical v1alpha1 compatibility note:** This decision predates issue
+> #488's clean-break rollout. The conversion-file references below describe
+> the former compatibility implementation; no v1alpha1 conversion path is
+> present in the current branch.
+
 **Status**: Accepted
 **Decision Date**: 2026-08-16
 **Applies To**: `api/v1alpha2.FleetOverrideSpec`, `internal/resources/rbac.go`, `internal/resources/fleetmetadatacache.go`, `internal/resources/configmaps.go`, `internal/resources/common.go`, `api/v1alpha1/kubernaut_conversion.go`

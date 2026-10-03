@@ -92,7 +92,7 @@ var _ = Describe("SpecHash", func() {
 		cm2 := cm1.DeepCopy()
 		cm2.OwnerReferences = []metav1.OwnerReference{
 			{
-				APIVersion: "kubernaut.ai/v1alpha1",
+				APIVersion: "kubernaut.ai/v1alpha2",
 				Kind:       "Kubernaut",
 				Name:       "my-kubernaut",
 				UID:        types.UID("new-uid"),

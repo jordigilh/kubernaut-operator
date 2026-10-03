@@ -29,13 +29,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	kubernautv1alpha1 "github.com/jordigilh/kubernaut-operator/api/v1alpha1"
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
+	"github.com/jordigilh/kubernaut-operator/internal/policy"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
@@ -57,34 +60,74 @@ const (
 )
 
 func singletonKey() types.NamespacedName {
-	return types.NamespacedName{Name: kubernautv1alpha1.SingletonName, Namespace: testNamespace}
+	return types.NamespacedName{Name: kubernautv1alpha2.SingletonName, Namespace: testNamespace}
 }
 
-func newMinimalCR() *kubernautv1alpha1.Kubernaut {
-	return &kubernautv1alpha1.Kubernaut{
+func nativePolicyOwnershipFixture() *unstructured.Unstructured {
+	object := &unstructured.Unstructured{}
+	object.SetGroupVersionKind(schema.GroupVersionKind{Group: "cilium.io", Version: "v2", Kind: "CiliumNetworkPolicy"})
+	object.SetName("kubernaut-gateway")
+	object.SetLabels(map[string]string{
+		policy.ManagedPolicyLabel:    "true",
+		policy.ManagedByLabel:        "kubernaut-operator",
+		policy.PolicyNamespaceLabel:  testNamespace,
+		"app.kubernetes.io/instance": kubernautv1alpha2.SingletonName,
+		policy.ProviderLabel:         "Cilium",
+	})
+	return object
+}
+
+type racedProviderPolicyClient struct {
+	client.Client
+	raceObject *unstructured.Unstructured
+	firstGet   bool
+	created    bool
+}
+
+func (c *racedProviderPolicyClient) Get(ctx context.Context, key client.ObjectKey, object client.Object, opts ...client.GetOption) error {
+	if !c.firstGet {
+		c.firstGet = true
+		return errors.NewNotFound(schema.GroupResource{Group: "cilium.io", Resource: "ciliumnetworkpolicies"}, key.Name)
+	}
+	return c.Client.Get(ctx, key, object, opts...)
+}
+
+func (c *racedProviderPolicyClient) Create(ctx context.Context, object client.Object, opts ...client.CreateOption) error {
+	if !c.created {
+		c.created = true
+		if err := c.Client.Create(ctx, c.raceObject); err != nil {
+			return err
+		}
+		return errors.NewAlreadyExists(schema.GroupResource{Group: "cilium.io", Resource: "ciliumnetworkpolicies"}, object.GetName())
+	}
+	return c.Client.Create(ctx, object, opts...)
+}
+
+func newMinimalCR() *kubernautv1alpha2.Kubernaut {
+	return &kubernautv1alpha2.Kubernaut{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      kubernautv1alpha1.SingletonName,
+			Name:      kubernautv1alpha2.SingletonName,
 			Namespace: testNamespace,
 		},
-		Spec: kubernautv1alpha1.KubernautSpec{
-			Image: kubernautv1alpha1.ImageSpec{
+		Spec: kubernautv1alpha2.KubernautSpec{
+			Image: kubernautv1alpha2.ImageSpec{
 				PullPolicy: corev1.PullIfNotPresent,
 			},
-			PostgreSQL: kubernautv1alpha1.PostgreSQLSpec{
+			PostgreSQL: kubernautv1alpha2.PostgreSQLSpec{
 				SecretName: pgSecretName,
 				Host:       "postgresql",
 			},
-			Valkey: kubernautv1alpha1.ValkeySpec{
+			Valkey: kubernautv1alpha2.ValkeySpec{
 				SecretName: vkSecretName,
 				Host:       "valkey",
 			},
-			APIFrontend: kubernautv1alpha1.APIFrontendSpec{
-				Auth: kubernautv1alpha1.APIFrontendAuthSpec{
+			APIFrontend: kubernautv1alpha2.APIFrontendSpec{
+				Auth: kubernautv1alpha2.APIFrontendAuthSpec{
 					IssuerURL: "https://login.kubernaut.ai/realms/kubernaut",
 					Audience:  "kubernaut-apifrontend",
 				},
 			},
-			LLMProfiles: map[string]kubernautv1alpha1.LLMProfileSpec{
+			LLMProfiles: map[string]kubernautv1alpha2.LLMProfileSpec{
 				"primary": {
 					Provider:              "openai",
 					Model:                 "gpt-4o",
@@ -92,14 +135,14 @@ func newMinimalCR() *kubernautv1alpha1.Kubernaut {
 					CredentialsSecretName: llmSecretName,
 				},
 			},
-			KubernautAgent: kubernautv1alpha1.KubernautAgentSpec{
+			KubernautAgent: kubernautv1alpha2.KubernautAgentSpec{
 				LLMProfileRef: "primary",
 			},
-			AIAnalysis: kubernautv1alpha1.AIAnalysisSpec{
-				Policy: kubernautv1alpha1.PolicyConfigMapRef{ConfigMapName: "aianalysis-policy"},
+			AIAnalysis: kubernautv1alpha2.AIAnalysisSpec{
+				Policy: kubernautv1alpha2.PolicyConfigMapRef{ConfigMapName: "aianalysis-policy"},
 			},
-			SignalProcessing: kubernautv1alpha1.SignalProcessingSpec{
-				Policy: kubernautv1alpha1.PolicyConfigMapRef{ConfigMapName: "signalprocessing-policy"},
+			SignalProcessing: kubernautv1alpha2.SignalProcessingSpec{
+				Policy: kubernautv1alpha2.PolicyConfigMapRef{ConfigMapName: "signalprocessing-policy"},
 			},
 		},
 	}
@@ -158,16 +201,61 @@ func deleteBYOSecrets(ctx context.Context) {
 }
 
 func deleteCRIfExists(ctx context.Context) {
-	cr := &kubernautv1alpha1.Kubernaut{}
+	cr := &kubernautv1alpha2.Kubernaut{}
 	err := k8sClient.Get(ctx, singletonKey(), cr)
 	if err == nil {
-		controllerutil.RemoveFinalizer(cr, kubernautv1alpha1.FinalizerName)
+		controllerutil.RemoveFinalizer(cr, kubernautv1alpha2.FinalizerName)
 		_ = k8sClient.Update(ctx, cr)
 		_ = k8sClient.Delete(ctx, cr)
 	}
 }
 
 var _ = Describe("Kubernaut Controller", func() {
+	Describe("native policy ownership", func() {
+		It("rejects managed objects with missing or mismatched ownership labels", func() {
+			desired := nativePolicyOwnershipFixture()
+			existing := desired.DeepCopy()
+			labels := existing.GetLabels()
+			labels[policy.ManagedByLabel] = "another-controller"
+			existing.SetLabels(labels)
+			Expect(providerPolicyOwnershipError(existing, desired)).To(MatchError(ContainSubstring("different")))
+
+			labels[policy.ManagedByLabel] = "kubernaut-operator"
+			delete(labels, policy.PolicyNamespaceLabel)
+			existing.SetLabels(labels)
+
+			Expect(providerPolicyOwnershipError(existing, desired)).To(MatchError(ContainSubstring("different")))
+
+			labels[policy.PolicyNamespaceLabel] = "other"
+			existing.SetLabels(labels)
+			Expect(providerPolicyOwnershipError(existing, desired)).To(MatchError(ContainSubstring("different")))
+		})
+
+		It("accepts a fully matching operator-owned object", func() {
+			desired := nativePolicyOwnershipFixture()
+
+			Expect(providerPolicyOwnershipError(desired.DeepCopy(), desired)).NotTo(HaveOccurred())
+		})
+
+		It("rejects an unmanaged object created during the create race", func() {
+			desired := nativePolicyOwnershipFixture()
+			traced := desired.DeepCopy()
+			labels := traced.GetLabels()
+			labels[policy.ManagedByLabel] = "another-controller"
+			traced.SetLabels(labels)
+			base := fake.NewClientBuilder().Build()
+			reconciler := &KubernautReconciler{
+				Client: &racedProviderPolicyClient{Client: base, raceObject: traced},
+			}
+
+			err := reconciler.ensureProviderPolicy(context.Background(), desired)
+			Expect(err).To(MatchError(ContainSubstring("different")))
+			live := &unstructured.Unstructured{}
+			live.SetGroupVersionKind(desired.GroupVersionKind())
+			Expect(base.Get(context.Background(), client.ObjectKeyFromObject(desired), live)).To(Succeed())
+			Expect(live.GetLabels()).To(HaveKeyWithValue(policy.ManagedByLabel, "another-controller"))
+		})
+	})
 
 	ctx := context.Background()
 
@@ -193,7 +281,7 @@ var _ = Describe("Kubernaut Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			result := &kubernautv1alpha1.Kubernaut{}
+			result := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "not-kubernaut", Namespace: testNamespace}, result)).To(Succeed())
 			Expect(result.Finalizers).To(BeEmpty(), "non-singleton CR should not get a finalizer")
 		})
@@ -206,9 +294,9 @@ var _ = Describe("Kubernaut Controller", func() {
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
-			result := &kubernautv1alpha1.Kubernaut{}
+			result := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), result)).To(Succeed())
-			Expect(result.Finalizers).To(ContainElement(kubernautv1alpha1.FinalizerName))
+			Expect(result.Finalizers).To(ContainElement(kubernautv1alpha2.FinalizerName))
 		})
 	})
 
@@ -223,9 +311,9 @@ var _ = Describe("Kubernaut Controller", func() {
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(controllerutil.ContainsFinalizer(kn, kubernautv1alpha1.FinalizerName)).To(BeTrue())
+			Expect(controllerutil.ContainsFinalizer(kn, kubernautv1alpha2.FinalizerName)).To(BeTrue())
 		})
 
 		It("should remove the finalizer on deletion", func() {
@@ -239,7 +327,7 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("deleting the CR")
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
 			stripWorkflowNamespaceCreatedByAnnotation(ctx)
@@ -270,11 +358,11 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(BeNumerically(">", 0), "should requeue on validation failure")
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha1.PhaseError))
+			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha2.PhaseError))
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionBYOValidated)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal("PostgreSQLSecretInvalid"))
@@ -299,10 +387,10 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionBYOValidated)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal("ValkeySecretInvalid"))
@@ -331,10 +419,10 @@ var _ = Describe("Kubernaut Controller", func() {
 			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionBYOValidated)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Message).To(ContainSubstring("missing required key"))
@@ -350,10 +438,10 @@ var _ = Describe("Kubernaut Controller", func() {
 			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 
-			cond := findCondition(kn.Status.Conditions, kubernautv1alpha1.ConditionBYOValidated)
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 		})
@@ -384,7 +472,7 @@ var _ = Describe("Kubernaut Controller", func() {
 			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
-			kn := &kubernautv1alpha1.Kubernaut{}
+			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(kn.Status.Conditions).NotTo(BeEmpty(),
 				"conditions should not be empty after reconciliation")
@@ -398,7 +486,7 @@ var _ = Describe("Kubernaut Controller", func() {
 
 	// ---- LLM Reasoning CRD Schema (#211) ----
 	//
-	// Unit tests construct kubernautv1alpha1.LLMReasoningSpec Go values
+	// Unit tests construct kubernautv1alpha2.LLMReasoningSpec Go values
 	// directly and never touch the generated OpenAPI schema, so they cannot
 	// prove the kubebuilder Enum/default markers on Effort/CapabilityOverride
 	// are correct. Only a real envtest apiserver round-trip can (Pyramid
@@ -408,7 +496,7 @@ var _ = Describe("Kubernaut Controller", func() {
 			createBYOSecrets(ctx)
 			kn := newMinimalCR()
 			profile := kn.Spec.LLMProfiles["primary"]
-			profile.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "high"}
+			profile.Reasoning = &kubernautv1alpha2.LLMReasoningSpec{Enabled: true, Effort: "high"}
 			kn.Spec.LLMProfiles["primary"] = profile
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed(),
 				"CM-6: the regenerated CRD schema must accept a legitimate, non-default reasoning block")
@@ -422,9 +510,9 @@ var _ = Describe("Kubernaut Controller", func() {
 			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
-			result := &kubernautv1alpha1.Kubernaut{}
+			result := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), result)).To(Succeed())
-			cond := findCondition(result.Status.Conditions, kubernautv1alpha1.ConditionBYOValidated)
+			cond := findCondition(result.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue),
 				"CM-6: setting reasoning on a profile must not itself break reconciliation")
@@ -433,7 +521,7 @@ var _ = Describe("Kubernaut Controller", func() {
 		It("LR-061 [SI-10]: the API server itself rejects an out-of-enum reasoning.effort value, before any reconciler logic runs", func() {
 			kn := newMinimalCR()
 			profile := kn.Spec.LLMProfiles["primary"]
-			profile.Reasoning = &kubernautv1alpha1.LLMReasoningSpec{Enabled: true, Effort: "extreme"}
+			profile.Reasoning = &kubernautv1alpha2.LLMReasoningSpec{Enabled: true, Effort: "extreme"}
 			kn.Spec.LLMProfiles["primary"] = profile
 
 			err := k8sClient.Create(ctx, kn)
@@ -466,7 +554,7 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(unstructured.SetNestedMap(u, map[string]interface{}{"enabled": false}, "spec", "monitoring")).To(Succeed())
 			legacyCR := &unstructured.Unstructured{Object: u}
-			legacyCR.SetGroupVersionKind(kubernautv1alpha1.GroupVersion.WithKind("Kubernaut"))
+			legacyCR.SetGroupVersionKind(kubernautv1alpha2.GroupVersion.WithKind("Kubernaut"))
 
 			Expect(k8sClient.Create(ctx, legacyCR)).To(Succeed(),
 				"CM-6: a legacy manifest carrying the removed monitoring.enabled field must not be rejected -- structural schema pruning silently drops it")
@@ -479,10 +567,9 @@ var _ = Describe("Kubernaut Controller", func() {
 				"CM-6: severityTriage must still reconcile against Thanos Querier even though the legacy manifest tried to disable monitoring -- there is no spec field left that can turn it off")
 		})
 
-		It("MON-002 [CM-6]: monitoring RBAC and NetworkPolicy egress to openshift-monitoring are provisioned even without any monitoring spec field present", func() {
+		It("MON-002 [CM-6]: monitoring RBAC is independent and no raw policy fallback is created", func() {
 			createBYOSecrets(ctx)
 			kn := newCRWithRouteDisabled()
-			kn.Spec.NetworkPolicies.Enabled = &enabled
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 
 			reconcileToDeployPhase(ctx)
@@ -500,18 +587,16 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNamespace + "-kubernaut-agent-alertmanager-view-binding"}, kaCRB)).To(Succeed(),
 				"#468: kubernaut-agent-sa needs alertmanager-view RBAC for its get_alerts/get_silences tools")
 
-			np := &networkingv1.NetworkPolicy{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.ComponentAPIFrontend + "-netpol", Namespace: testNamespace}, np)).To(Succeed())
-			found := false
-			for _, rule := range np.Spec.Egress {
-				for _, peer := range rule.To {
-					if peer.NamespaceSelector != nil &&
-						peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == resources.OCPMonitoringNamespace {
-						found = true
-					}
-				}
-			}
-			Expect(found).To(BeTrue(), "CM-6: AF's NetworkPolicy must always egress to openshift-monitoring, since severityTriage's Prometheus calls can no longer be disabled")
+			npList := &networkingv1.NetworkPolicyList{}
+			Expect(k8sClient.List(ctx, npList, client.InNamespace(testNamespace), client.MatchingLabels{
+				"app.kubernetes.io/managed-by": "kubernaut-operator",
+			})).To(Succeed())
+			Expect(npList.Items).To(BeEmpty(), "native policy adapters must not fall back to raw Kubernetes NetworkPolicy")
+
+			status := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), status)).To(Succeed())
+			condition := findCondition(status.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady)
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
 		})
 	})
 
@@ -527,9 +612,8 @@ var _ = Describe("Kubernaut Controller", func() {
 			kn := newCRWithRouteDisabled()
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 
-			// Fleet moved to v1alpha2-only (fleet-branch-remove-v1alpha1):
-			// set it via the v1alpha2 storage view rather than the
-			// v1alpha1 create payload.
+			// Apply the Fleet-specific fields through the v1alpha2 object after
+			// creating the minimal base object.
 			knV2 := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
@@ -595,8 +679,8 @@ var _ = Describe("Kubernaut Controller", func() {
 	// calls it and persists an owned ConfigMap -- envtest has no real
 	// in-cluster environment (no SA token/CA mount), so
 	// rest.InClusterConfig() inside TrustBundleConfigMap's live reads always
-	// fails here, same as the already-shipped liveResolveAPIServerIPs
-	// (networkpolicies.go); this is expected and does not indicate a bug.
+	// fails here, same as other optional live platform reads; this is expected
+	// and does not indicate a bug.
 	Context("Trust-bundle ConfigMap wiring", func() {
 		It("TB-001 [CM-6]: the reconcile loop creates an owned inter-service-trust-bundle ConfigMap with the service-ca.crt key present", func() {
 			createBYOSecrets(ctx)
@@ -614,11 +698,9 @@ var _ = Describe("Kubernaut Controller", func() {
 		})
 	})
 
-	// #423 CONS-002: spec.postgresql.sslMode was flagged as a
-	// cross-consumer consistency gap (consumer exists in
-	// internal/controller's ensureMigrationPrereqs, no test in that
-	// package). Asserts the field actually gates whether the operator
-	// creates the inter-service-ca ConfigMap ahead of the migration Job.
+	// #423 CONS-002: spec.postgresql.sslMode remains valid independently from
+	// the runtime TLS source. Generic TLS now supplies the trust ConfigMap
+	// before migration without OpenShift service-CA annotations.
 	Context("PostgreSQL sslMode wiring (#423 CONS-002)", func() {
 		It("CONS-002 [CM-6, SC-8]: creates the inter-service-ca ConfigMap when sslMode defaults to verify-full", func() {
 			createBYOSecrets(ctx)
@@ -636,14 +718,17 @@ var _ = Describe("Kubernaut Controller", func() {
 				"CHECKPOINT W: spec.postgresql.sslMode's default (verify-full) must create the inter-service-ca ConfigMap ahead of the migration Job")
 		})
 
-		It("CONS-002b: omits the inter-service-ca ConfigMap when sslMode is not verify-full", func() {
+		It("CONS-002b: uses generic trust material when sslMode is not verify-full", func() {
 			createBYOSecrets(ctx)
 			kn := newCRWithRouteDisabled()
 			// "require" is a valid, CRD-accepted enum value
 			// (kubebuilder:validation:Enum=require;verify-ca;verify-full)
-			// that is deliberately not verify-full, the one value that
-			// gates ConfigMap creation.
+			// that is deliberately not verify-full. Generic runtime TLS is
+			// explicit now, so use the development source to verify that the
+			// OpenShift service-CA ConfigMap is not created for this path.
 			kn.Spec.PostgreSQL.SSLMode = "require"
+			kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeDevelopmentSelfSigned
+			kn.Spec.TLS.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 
 			r := newReconciler()
@@ -654,7 +739,9 @@ var _ = Describe("Kubernaut Controller", func() {
 
 			cm := &corev1.ConfigMap{}
 			getErr := k8sClient.Get(ctx, types.NamespacedName{Name: resources.InterServiceCAConfigMapName, Namespace: testNamespace}, cm)
-			Expect(errors.IsNotFound(getErr)).To(BeTrue(), "spec.postgresql.sslMode=require should skip creating the inter-service-ca ConfigMap, got err=%v", getErr)
+			Expect(getErr).NotTo(HaveOccurred())
+			Expect(cm.Data["service-ca.crt"]).NotTo(BeEmpty())
+			Expect(cm.Annotations).NotTo(HaveKey("service.beta.openshift.io/inject-cabundle"))
 		})
 	})
 })

@@ -14,10 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package v1alpha2 contains API Schema definitions for the v1alpha2 API
-// group. This is the storage version and conversion.Hub for Kubernaut;
-// v1alpha1 converts to/from this version via the conversion webhook (see
-// ADR-CRD-001, docs/design/ADR-CRD-001-v1alpha2-redesign.md).
+// Package v1alpha2 contains the sole served API schema for the Kubernaut
+// resource. It is the storage version for the clean-break CRD; older API
+// objects must be exported, transformed, and recreated by the administrator.
 // +kubebuilder:object:generate=true
 // +groupName=kubernaut.ai
 package v1alpha2
@@ -36,8 +35,7 @@ var (
 	// Implemented directly against k8s.io/apimachinery rather than the
 	// deprecated sigs.k8s.io/controller-runtime/pkg/scheme.Builder, per that
 	// package's own migration guidance -- api packages should depend on
-	// only the standard library, k8s.io/apimachinery, and other api
-	// packages. Mirrors api/v1alpha1/groupversion_info.go.
+	// only the standard library, k8s.io/apimachinery, and other api packages.
 	SchemeBuilder = &schemeBuilder{}
 
 	// AddToScheme adds the types in this group-version to the given scheme.

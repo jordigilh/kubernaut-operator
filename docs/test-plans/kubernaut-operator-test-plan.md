@@ -63,7 +63,7 @@ manages is correct, idempotent, and privilege-minimal.
 |-----------|------|-------------|
 | Controller | `internal/controller/kubernaut_controller.go` | Reconciliation loop: phases, status, finalizer |
 | Resource Builders | `internal/resources/*.go` | RBAC, Deployments, Services, ConfigMaps, TLS, Webhooks, PDBs, Routes, CRDs |
-| API Types | `api/v1alpha1/kubernaut_types.go` | CRD spec/status definitions |
+| API Types | `api/v1alpha2/kubernaut_types.go` | CRD spec/status definitions |
 
 ### 2.2 Version
 
@@ -413,7 +413,7 @@ A test passes when:
 - **Runtime**: envtest (embedded etcd + kube-apiserver)
 - **Dependencies**: `bin/k8s/` binaries (installed via `make setup-envtest`)
 - **CRDs**: Loaded from `config/crd/bases/`
-- **Schemes**: `kubernautaiv1alpha1`, `apiextensionsv1`, `clientgoscheme`
+- **Schemes**: `kubernautaiv1alpha2`, `apiextensionsv1`, `clientgoscheme`
 - **Execution time**: ~30 seconds
 
 ### 9.3 E2E Tests (`test/e2e`)
