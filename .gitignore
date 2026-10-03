@@ -34,3 +34,4 @@ index-check.db
 .cursor/*
 !.cursor/rules/
 !.cursor/skills/
+.zvec-grep/
