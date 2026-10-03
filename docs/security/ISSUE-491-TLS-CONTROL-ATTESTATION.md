@@ -1,10 +1,10 @@
 # Issue #491 TLS parity control-objective attestation
 
 **Matrix ID:** `KO-SEC-AT-491-001`  
-**Version:** `0.1`  
+**Version:** `0.2`  
 **Date:** `2026-10-03`  
 **Scope:** Kubernaut Operator Issue #491 / PR #493  
-**Status:** repository evidence complete; runtime and external-assessment evidence pending
+**Status:** repository and hosted Kind runtime evidence complete; OpenShift qualification and external-assessment evidence pending
 
 ## Attestation boundary
 
@@ -55,11 +55,11 @@ The ASVS source is the versioned official CSV:
 |---|---|---|---|---|---|---|
 | `BA-491-TLS-01` Source selection is explicit and safe | `hook`, lower-case `cert-manager`, legacy reference-only `CertManager`, and `manual` resolve to distinct ownership paths; unsupported values do not fall back to plaintext. | `AC-6`, `SC-8`, `CM-6`, `SI-10` | `CC6`, `CC8` | `V12.2.1`, `V13.3.1`, `V16.5.2` | `UT-TLS-GAP-002`; `UT-TLS-491-001`; `UT-TLS-491-002`; `IT-TLS-GAP-002` | verified |
 | `BA-491-TLS-02` Administrator material is read-only | Manual trust ConfigMaps, serving Secrets, signing material, and webhook bundles are validated and consumed without adoption, owner references, overwrite, or deletion. | `AC-6`, `IA-5`, `SC-8`, `SC-17` | `CC6`, `CC7` | `V12.1.3`, `V13.3.1`, `V13.3.2` | `IT-TLS-MANUAL-001`; `IT-TLS-MANUAL-002`; `IT-TLS-WEBHOOK-001`; existing `UT-TLS-GAP-001` | verified |
-| `BA-491-TLS-03` cert-manager owns generated Secrets | The operator creates only the intended Issuer/Certificate resources, owner-references Certificates to the Kubernaut CR, never adopts output Secrets, and waits for every Certificate to become Ready. | `AC-6`, `CM-6`, `SC-12`, `SC-13`, `SI-4` | `CC6`, `CC7`, `CC8` | `V11.1.1`, `V12.1.1`, `V13.3.1`, `V13.3.2`, `V16.5.2` | `IT-TLS-PARITY-001`; `IT-TLS-CERTMANAGER-READY-001`; `IT-TLS-GAP-001`; `UT-TLS-491-003`; `UT-TLS-491-004`; `UT-TLS-491-005`; `E2E-TLS-CERTMANAGER-001` | verified locally; live lane pending |
+| `BA-491-TLS-03` cert-manager owns generated Secrets | The operator creates only the intended Issuer/Certificate resources, owner-references Certificates to the Kubernaut CR, never adopts output Secrets, and waits for every Certificate to become Ready. | `AC-6`, `CM-6`, `SC-12`, `SC-13`, `SI-4` | `CC6`, `CC7`, `CC8` | `V11.1.1`, `V12.1.1`, `V13.3.1`, `V13.3.2`, `V16.5.2` | `IT-TLS-PARITY-001`; `IT-TLS-CERTMANAGER-READY-001`; `IT-TLS-GAP-001`; `UT-TLS-491-003`; `UT-TLS-491-004`; `UT-TLS-491-005`; `E2E-TLS-CERTMANAGER-001` | verified |
 | `BA-491-TLS-04` Cryptography and identity are correct | Inter-service CA/leaves use ECDSA, DataStorage signing uses RSA-2048, server/client usages are explicit, stable service DNS SANs are present, and configured extra SANs plus loopback are honored. | `IA-5`, `SC-8`, `SC-12`, `SC-13`, `SC-17` | `CC6`, `CC7` | `V11.1.1`, `V11.1.2`, `V12.1.1`, `V12.1.2`, `V12.1.3`, `V13.2.1` | `UT-TLS-491-002`; `UT-TLS-491-004`; `IT-TLS-MANUAL-002`; `test/e2e/kind/scenarios_test.go` | verified |
 | `BA-491-TLS-05` Trust reaches every consumer | Dynamic certificate/CA paths are propagated to workloads, Console, Fleet Metadata Cache, migration, generic trust ConfigMaps, webhooks, and Ingress without OpenShift-only annotations in generic mode. | `SC-8`, `SC-17`, `SI-4` | `CC6`, `CC7`, `A1` | `V12.1.3`, `V13.2.1`, `V16.5.2` | `UT-TLS-491-007`; `UT-TLS-491-008`; `UT-TLS-491-009`; `IT-TLS-GAP-003`; `test/e2e/kind/scenarios_test.go` | verified |
 | `BA-491-TLS-06` Webhook trust fails closed | Provisioned webhook configurations use cert-manager cainjector metadata; manually injected bundles are preserved; readiness is not reported until a usable bundle exists. | `SC-8`, `SC-13`, `SC-17`, `SI-4`, `SI-10` | `CC6`, `CC7` | `V12.1.3`, `V12.2.1`, `V13.2.1`, `V16.5.2` | `UT-TLS-491-010`; `UT-TLS-491-011`; `IT-TLS-WEBHOOK-001`; `IT-TLS-CERTMANAGER-READY-001`; `test/e2e/kind/scenarios_test.go` | verified |
-| `BA-491-TLS-07` Rotation preserves service availability | Development rotation retains the previous root until consumers move; cert-manager leaf reissuance preserves Certificate ownership, TLS readiness, and webhook trust; failed writes preserve the last working root. | `SC-8`, `SC-12`, `SC-13`, `SI-4` | `CC7`, `A1` | `V11.1.1`, `V11.1.2`, `V12.1.1`, `V16.5.2` | `UT-TLS-ROTATION-GAP-001`; `UT-TLS-ROTATION-GAP-002`; `IT-TLS-ROTATION-GAP-001`; `E2E-TLS-CERTMANAGER-002` | verified locally; live lane pending |
+| `BA-491-TLS-07` Rotation preserves service availability | Development rotation retains the previous root until consumers move; cert-manager leaf reissuance preserves Certificate ownership, TLS readiness, and webhook trust; failed writes preserve the last working root. | `SC-8`, `SC-12`, `SC-13`, `SI-4` | `CC7`, `A1` | `V11.1.1`, `V11.1.2`, `V12.1.1`, `V16.5.2` | `UT-TLS-ROTATION-GAP-001`; `UT-TLS-ROTATION-GAP-002`; `IT-TLS-ROTATION-GAP-001`; `E2E-TLS-CERTMANAGER-002` | verified |
 | `BA-491-TLS-08` Configuration remains compatible and bounded | Helm defaults, issuer precedence, stable names, legacy aliases, optional component selection, and explicit exclusion of PostgreSQL/Valkey server PKI remain deterministic and migration-safe. | `AC-6`, `CM-6`, `SI-10` | `CC6`, `CC8` | `V13.3.1`, `V15.2.4`, `V16.5.2` | `UT-TLS-491-001`; `UT-TLS-491-005`; `UT-TLS-491-006`; migration/resource tests; generated CRD/RBAC; `make manifests generate` | verified |
 
 ## Test-tier and wiring evidence
@@ -89,17 +89,19 @@ The control assertions are wired through these production entry points:
 The following repository gates passed for the implementation and the evidence
 gate:
 
-- `make test`: unit coverage `87.0%`; controller integration coverage `78.3%`.
+- `make test`: unit coverage `87.3%`; controller integration coverage `78.4%`.
 - `make test-pyramid`: passed, including `make test-security-traceability`.
 - `go build ./...` and `golangci-lint run` passed.
 - `make manifests generate` produced no unexpected generated-artifact drift.
 - `git diff --check` passed.
 
 The hosted PR checks are the authoritative live execution record for the
-production image and Kind lanes. At matrix publication time, lint, image build,
-and SBOM/vulnerability scanning had passed; the Unit/Integration, generic Kind,
-cert-manager Kind, Cilium, and Calico jobs were still running. They must not be
-described as passed until GitHub reports success.
+production image and Kind lanes. On corrected revision `dc3b812`, GitHub Actions
+run `37126833855` passed Unit/Integration, generic Kind, cert-manager Kind,
+Cilium, Calico, and SBOM/vulnerability scanning; the separate build/push run
+`37126833854` and Go Lint run `37126833852` also passed. The hosted Kind lanes
+therefore provide runtime evidence for the supported generic and provider
+scenarios, including the cert-manager source path.
 
 ## Residual evidence required for a formal claim
 
@@ -113,8 +115,7 @@ The repository evidence does not establish the following:
    deployment environment.
 4. Enterprise PKI, HSM/key-management, Vault/External Secrets, and cluster RBAC
    review evidence.
-5. OpenShift/OVN live qualification and the hosted cert-manager/Kind execution
-   result for PR #493.
+5. OpenShift/OVN live qualification for the target deployment environment.
 
 Until those artifacts exist, the defensible conclusion is **repository control
 objectives verified; overall formal assurance partially verified**. No formal
