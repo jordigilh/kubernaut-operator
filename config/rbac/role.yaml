@@ -127,10 +127,23 @@ rules:
 - apiGroups:
   - cert-manager.io
   resources:
-  - clusterissuers
+  - certificates
   - issuers
   verbs:
+  - create
   - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - cert-manager.io
+  resources:
+  - clusterissuers
+  verbs:
+  - get
+  - list
+  - watch
 - apiGroups:
   - cilium.io
   resources:

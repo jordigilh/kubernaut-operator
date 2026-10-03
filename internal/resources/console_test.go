@@ -318,6 +318,32 @@ var _ = Describe("Console Resources", func() {
 			Expect(found).To(BeTrue(),
 				"oauth2-proxy container must mount tls-ca at %s to back --provider-ca-file", tlsCAMountPath)
 		})
+
+		It("uses the Helm TLS paths and preserves the system trust store", func() {
+			kn := testKubernautWithConsole()
+			kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
+			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			Expect(err).NotTo(HaveOccurred())
+
+			oauth2 := dep.Spec.Template.Spec.Containers[0]
+			Expect(oauth2.Args).To(ContainElement("--provider-ca-file=/etc/tls-ca/ca.crt"))
+			Expect(oauth2.Args).To(ContainElement("--use-system-trust-store=true"))
+			Expect(oauth2.VolumeMounts).To(ContainElement(corev1.VolumeMount{
+				Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true,
+			}))
+
+			var tlsCA corev1.Volume
+			for _, volume := range dep.Spec.Template.Spec.Volumes {
+				if volume.Name == "tls-ca" {
+					tlsCA = volume
+					break
+				}
+			}
+			Expect(tlsCA.ConfigMap).NotTo(BeNil())
+			Expect(tlsCA.ConfigMap.Name).To(Equal(TrustBundleConfigMapName))
+			Expect(tlsCA.ConfigMap.Items).To(ConsistOf(corev1.KeyToPath{Key: "ca.crt", Path: "ca.crt"}))
+			Expect(ConsoleNginxConfigMap(kn).Data["server.conf"]).To(ContainSubstring("proxy_ssl_trusted_certificate /etc/tls-ca/ca.crt;"))
+		})
 	})
 
 	Context("ConsoleRoute", func() {

@@ -29,6 +29,7 @@ import (
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 	"golang.org/x/time/rate"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
@@ -63,10 +64,12 @@ import (
 
 // Requeue intervals for different reconciliation states.
 const (
-	requeueMigrationPoll = 10 * time.Second
-	requeueDegraded      = 15 * time.Second
-	requeueError         = 30 * time.Second
-	requeueRunning       = 60 * time.Second
+	requeueMigrationPoll         = 10 * time.Second
+	requeueDegraded              = 15 * time.Second
+	requeueError                 = 30 * time.Second
+	requeueRunning               = 60 * time.Second
+	certManagerIssuerKind        = "Issuer"
+	certManagerClusterIssuerKind = "ClusterIssuer"
 )
 
 // maxMigrationRetries caps the number of times a failed migration Job is
@@ -161,9 +164,13 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingwebhookconfigurations;validatingwebhookconfigurations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create;update;patch
-// CertManager mode reads an administrator-selected Issuer or ClusterIssuer;
-// it never creates or mutates cert-manager resources.
-// +kubebuilder:rbac:groups=cert-manager.io,resources=issuers;clusterissuers,verbs=get
+// CertManager mode reads an administrator-selected Issuer or ClusterIssuer.
+// When CR-configured provisioning is enabled, the operator also creates and
+// updates its namespaced Issuer/Certificate resources; cert-manager owns the
+// generated output Secrets.
+// +kubebuilder:rbac:groups=cert-manager.io,resources=issuers,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=cert-manager.io,resources=clusterissuers,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers;ingresses;networks;clusterversions,verbs=get;list;watch
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors;prometheusrules;alertmanagerconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -1658,21 +1665,106 @@ func (r *KubernautReconciler) deployAdmissionWebhooks(
 	tlsMaterial resources.TLSMaterial,
 	tlsBundle []byte,
 ) error {
-	mwc := resources.MutatingWebhookConfiguration(kn)
-	if tlsMaterial.Source != resources.TLSMaterialSourceOpenShiftServiceCA {
-		mwc = resources.MutatingWebhookConfigurationWithCABundle(kn, tlsBundle)
-	}
-	if err := r.ensureUnowned(ctx, mwc); err != nil {
+	mwc := mutatingWebhookConfigurationForTLS(kn, tlsMaterial, tlsBundle)
+	if err := r.ensureWebhookConfiguration(ctx, mwc); err != nil {
 		return fmt.Errorf("ensuring MutatingWebhookConfiguration: %w", err)
 	}
-	vwc := resources.ValidatingWebhookConfiguration(kn)
-	if tlsMaterial.Source != resources.TLSMaterialSourceOpenShiftServiceCA {
-		vwc = resources.ValidatingWebhookConfigurationWithCABundle(kn, tlsBundle)
-	}
-	if err := r.ensureUnowned(ctx, vwc); err != nil {
+	vwc := validatingWebhookConfigurationForTLS(kn, tlsMaterial, tlsBundle)
+	if err := r.ensureWebhookConfiguration(ctx, vwc); err != nil {
 		return fmt.Errorf("ensuring ValidatingWebhookConfiguration: %w", err)
 	}
 	return nil
+}
+
+func mutatingWebhookConfigurationForTLS(
+	kn *kubernautv1alpha2.Kubernaut,
+	tlsMaterial resources.TLSMaterial,
+	tlsBundle []byte,
+) *admissionregistrationv1.MutatingWebhookConfiguration {
+	if tlsMaterial.Source == resources.TLSMaterialSourceOpenShiftServiceCA {
+		return resources.MutatingWebhookConfiguration(kn)
+	}
+	if tlsMaterial.Source == resources.TLSMaterialSourceCertManager && resources.CertManagerTLSProvisioningEnabled(kn) {
+		return resources.MutatingWebhookConfigurationWithCertManagerInjection(kn)
+	}
+	if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual {
+		configuration := resources.MutatingWebhookConfiguration(kn)
+		delete(configuration.Annotations, resources.OCPServiceCAInjectAnnotation)
+		return configuration
+	}
+	return resources.MutatingWebhookConfigurationWithCABundle(kn, tlsBundle)
+}
+
+func validatingWebhookConfigurationForTLS(
+	kn *kubernautv1alpha2.Kubernaut,
+	tlsMaterial resources.TLSMaterial,
+	tlsBundle []byte,
+) *admissionregistrationv1.ValidatingWebhookConfiguration {
+	if tlsMaterial.Source == resources.TLSMaterialSourceOpenShiftServiceCA {
+		return resources.ValidatingWebhookConfiguration(kn)
+	}
+	if tlsMaterial.Source == resources.TLSMaterialSourceCertManager && resources.CertManagerTLSProvisioningEnabled(kn) {
+		return resources.ValidatingWebhookConfigurationWithCertManagerInjection(kn)
+	}
+	if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual {
+		configuration := resources.ValidatingWebhookConfiguration(kn)
+		delete(configuration.Annotations, resources.OCPServiceCAInjectAnnotation)
+		return configuration
+	}
+	return resources.ValidatingWebhookConfigurationWithCABundle(kn, tlsBundle)
+}
+
+// ensureWebhookConfiguration preserves fields written by the platform or by
+// an external TLS controller. In particular, OpenShift service-ca, cert-manager
+// cainjector, and manual administrators all own webhook clientConfig.caBundle;
+// a normal desired-object update would erase that field on every reconcile.
+func (r *KubernautReconciler) ensureWebhookConfiguration(ctx context.Context, desired client.Object) error {
+	live := desired.DeepCopyObject().(client.Object)
+	key := client.ObjectKey{Name: desired.GetName(), Namespace: desired.GetNamespace()}
+	err := r.Get(ctx, key, live)
+	if apierrors.IsNotFound(err) {
+		return r.ensureUnowned(ctx, desired)
+	}
+	if err != nil {
+		return fmt.Errorf("getting webhook configuration %s: %w", key, err)
+	}
+
+	desiredAnnotations := desired.GetAnnotations()
+	annotations := mergeStringMap(live.GetAnnotations(), desiredAnnotations)
+	if _, managed := desiredAnnotations[resources.OCPServiceCAInjectAnnotation]; !managed {
+		delete(annotations, resources.OCPServiceCAInjectAnnotation)
+	}
+	if _, managed := desiredAnnotations["cert-manager.io/inject-ca-from"]; !managed {
+		delete(annotations, "cert-manager.io/inject-ca-from")
+	}
+	desired.SetAnnotations(annotations)
+	preserveWebhookCABundle(desired, live)
+	return r.ensureUnowned(ctx, desired)
+}
+
+func preserveWebhookCABundle(desired, live client.Object) {
+	switch desiredConfig := desired.(type) {
+	case *admissionregistrationv1.MutatingWebhookConfiguration:
+		liveConfig, ok := live.(*admissionregistrationv1.MutatingWebhookConfiguration)
+		if !ok {
+			return
+		}
+		for index := range desiredConfig.Webhooks {
+			if index < len(liveConfig.Webhooks) && len(desiredConfig.Webhooks[index].ClientConfig.CABundle) == 0 {
+				desiredConfig.Webhooks[index].ClientConfig.CABundle = append([]byte(nil), liveConfig.Webhooks[index].ClientConfig.CABundle...)
+			}
+		}
+	case *admissionregistrationv1.ValidatingWebhookConfiguration:
+		liveConfig, ok := live.(*admissionregistrationv1.ValidatingWebhookConfiguration)
+		if !ok {
+			return
+		}
+		for index := range desiredConfig.Webhooks {
+			if index < len(liveConfig.Webhooks) && len(desiredConfig.Webhooks[index].ClientConfig.CABundle) == 0 {
+				desiredConfig.Webhooks[index].ClientConfig.CABundle = append([]byte(nil), liveConfig.Webhooks[index].ClientConfig.CABundle...)
+			}
+		}
+	}
 }
 
 // componentCMHashKey maps a deployment component name to its corresponding
@@ -3219,39 +3311,114 @@ func (r *KubernautReconciler) validateTLSConfiguration(
 	if err != nil {
 		return resources.TLSMaterial{}, err
 	}
-	if material.Source == resources.TLSMaterialSourceOpenShiftServiceCA {
+	switch material.Source {
+	case resources.TLSMaterialSourceOpenShiftServiceCA:
 		if !r.openShiftPlatformDetected(ctx) {
 			return resources.TLSMaterial{}, fmt.Errorf("tls.mode is unset and OpenShift service-CA capability was not discovered; select AdministratorManaged, CertManager, or DevelopmentSelfSigned")
 		}
+	case resources.TLSMaterialSourceDevelopmentSelfSigned:
 		return material, nil
-	}
-	if material.Source == resources.TLSMaterialSourceDevelopmentSelfSigned {
-		return material, nil
-	}
-
-	if material.Source == resources.TLSMaterialSourceCertManager {
-		if err := r.validateCertManagerIssuer(ctx, kn); err != nil {
+	default:
+		if err := r.validateExplicitTLS(ctx, kn, material); err != nil {
 			return resources.TLSMaterial{}, err
 		}
 	}
+	return material, nil
+}
 
-	ca := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: material.InternalCASecretName}, ca); err != nil {
-		return resources.TLSMaterial{}, fmt.Errorf("reading runtime TLS CA secret %q: %w", material.InternalCASecretName, err)
+func (r *KubernautReconciler) validateExplicitTLS(
+	ctx context.Context,
+	kn *kubernautv1alpha2.Kubernaut,
+	material resources.TLSMaterial,
+) error {
+	if material.Source == resources.TLSMaterialSourceCertManager {
+		if err := r.validateCertManagerTLS(ctx, kn); err != nil {
+			return err
+		}
+	}
+	ca, err := r.readRuntimeTLSCA(ctx, kn, material)
+	if err != nil {
+		return err
 	}
 	if err := resources.ValidateInternalCASecretForSource(ca, material.Source); err != nil {
-		return resources.TLSMaterial{}, err
+		return err
 	}
+	if err := r.validateRuntimeTLSSecrets(ctx, kn, material, ca); err != nil {
+		return err
+	}
+	if err := r.validateDataStorageSigningCertificate(ctx, kn); err != nil {
+		return err
+	}
+	return r.validateTLSWebhookReadiness(ctx, kn, material)
+}
+
+func (r *KubernautReconciler) validateCertManagerTLS(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	if resources.CertManagerTLSProvisioningEnabled(kn) {
+		if err := r.ensureCertManagerTLSResources(ctx, kn); err != nil {
+			return err
+		}
+		return r.validateCertManagerCertificatesReady(ctx, kn)
+	}
+	return r.validateCertManagerIssuer(ctx, kn)
+}
+
+func (r *KubernautReconciler) validateRuntimeTLSSecrets(
+	ctx context.Context,
+	kn *kubernautv1alpha2.Kubernaut,
+	material resources.TLSMaterial,
+	ca *corev1.Secret,
+) error {
 	for serviceKey, secretName := range material.ServiceTLSSecretNames {
-		secret := &corev1.Secret{}
-		if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: secretName}, secret); err != nil {
-			return resources.TLSMaterial{}, fmt.Errorf("reading runtime TLS secret %q for %s: %w", secretName, serviceKey, err)
-		}
-		if err := resources.ValidateServingTLSSecretForServiceWithSource(secret, ca, serviceKey, kn.Namespace, material.Source); err != nil {
-			return resources.TLSMaterial{}, fmt.Errorf("validating runtime TLS secret %q for %s: %w", secretName, serviceKey, err)
+		if err := r.validateRuntimeTLSSecret(ctx, kn, material, ca, serviceKey, secretName); err != nil {
+			return err
 		}
 	}
-	return material, nil
+	return nil
+}
+
+func (r *KubernautReconciler) validateRuntimeTLSSecret(
+	ctx context.Context,
+	kn *kubernautv1alpha2.Kubernaut,
+	material resources.TLSMaterial,
+	ca *corev1.Secret,
+	serviceKey, secretName string,
+) error {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: secretName}, secret); err != nil {
+		return fmt.Errorf("reading runtime TLS secret %q for %s: %w", secretName, serviceKey, err)
+	}
+	if serviceKey == resources.TLSServiceAuthWebhook &&
+		((material.Source == resources.TLSMaterialSourceCertManager && resources.CertManagerTLSProvisioningEnabled(kn)) ||
+			kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual) {
+		if err := resources.ValidateAuthWebhookTLSSecret(secret, kn.Namespace); err != nil {
+			return fmt.Errorf("validating AuthWebhook TLS secret %q: %w", secretName, err)
+		}
+		return nil
+	}
+	if err := resources.ValidateServingTLSSecretForServiceWithSource(secret, ca, serviceKey, kn.Namespace, material.Source); err != nil {
+		return fmt.Errorf("validating runtime TLS secret %q for %s: %w", secretName, serviceKey, err)
+	}
+	return nil
+}
+
+func (r *KubernautReconciler) validateTLSWebhookReadiness(
+	ctx context.Context,
+	kn *kubernautv1alpha2.Kubernaut,
+	material resources.TLSMaterial,
+) error {
+	if material.Source == resources.TLSMaterialSourceCertManager && resources.CertManagerTLSProvisioningEnabled(kn) {
+		if err := r.ensureCertManagerWebhookConfigurations(ctx, kn); err != nil {
+			return err
+		}
+		return r.validateWebhookCABundles(ctx, kn)
+	}
+	if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual {
+		if err := r.ensureManualWebhookConfigurations(ctx, kn); err != nil {
+			return err
+		}
+		return r.validateWebhookCABundles(ctx, kn)
+	}
+	return nil
 }
 
 // ensureRuntimeTLS resolves the selected source for deployment wiring. The
@@ -3272,10 +3439,15 @@ func (r *KubernautReconciler) ensureRuntimeTLS(
 	if material.Source == resources.TLSMaterialSourceDevelopmentSelfSigned {
 		return r.ensureDevelopmentSelfSignedTLS(ctx, kn, material)
 	}
+	if material.Source == resources.TLSMaterialSourceCertManager && resources.CertManagerTLSProvisioningEnabled(kn) {
+		if err := r.ensureCertManagerTLSResources(ctx, kn); err != nil {
+			return resources.TLSMaterial{}, nil, err
+		}
+	}
 
-	ca := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: material.InternalCASecretName}, ca); err != nil {
-		return resources.TLSMaterial{}, nil, fmt.Errorf("reading runtime TLS CA secret %q: %w", material.InternalCASecretName, err)
+	ca, err := r.readRuntimeTLSCA(ctx, kn, material)
+	if err != nil {
+		return resources.TLSMaterial{}, nil, err
 	}
 	if err := resources.ValidateInternalCASecretForSource(ca, material.Source); err != nil {
 		return resources.TLSMaterial{}, nil, err
@@ -3284,7 +3456,177 @@ func (r *KubernautReconciler) ensureRuntimeTLS(
 	if err != nil {
 		return resources.TLSMaterial{}, nil, err
 	}
+	if err := r.validateDataStorageSigningCertificate(ctx, kn); err != nil {
+		return resources.TLSMaterial{}, nil, err
+	}
 	return material, caPEM, nil
+}
+
+func (r *KubernautReconciler) validateDataStorageSigningCertificate(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	secretName := resources.DataStorageSigningSecretName(kn)
+	if secretName == "" {
+		return nil
+	}
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: secretName}, secret); err != nil {
+		return fmt.Errorf("reading DataStorage signing certificate Secret %q: %w", secretName, err)
+	}
+	if err := resources.ValidateDataStorageSigningTLSSecret(secret); err != nil {
+		return fmt.Errorf("validating DataStorage signing certificate Secret %q: %w", secretName, err)
+	}
+	return nil
+}
+
+func (r *KubernautReconciler) validateCertManagerCertificatesReady(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	certificates, err := resources.CertManagerTLSResources(kn)
+	if err != nil {
+		return fmt.Errorf("building cert-manager readiness set: %w", err)
+	}
+	for _, desired := range certificates {
+		if desired.GetKind() != "Certificate" {
+			continue
+		}
+		certificate := &unstructured.Unstructured{}
+		certificate.SetAPIVersion(desired.GetAPIVersion())
+		certificate.SetKind(desired.GetKind())
+		key := client.ObjectKey{Name: desired.GetName(), Namespace: desired.GetNamespace()}
+		if err := r.Get(ctx, key, certificate); err != nil {
+			return fmt.Errorf("reading cert-manager Certificate %q: %w", key, err)
+		}
+
+		conditions, found, err := unstructured.NestedSlice(certificate.Object, "status", "conditions")
+		if err != nil {
+			return fmt.Errorf("reading cert-manager Certificate %q conditions: %w", key, err)
+		}
+		if !found {
+			return fmt.Errorf("cert-manager Certificate %q is not ready: Ready condition is absent", key)
+		}
+		ready, reason, message := certManagerReadyCondition(conditions)
+		if !ready {
+			status := "unknown"
+			if reason != "" {
+				status = reason
+			}
+			if message != "" {
+				status += ": " + message
+			}
+			return fmt.Errorf("cert-manager Certificate %q is not ready (%s)", key, status)
+		}
+	}
+	return nil
+}
+
+func certManagerReadyCondition(conditions []interface{}) (bool, string, string) {
+	for _, rawCondition := range conditions {
+		condition, ok := rawCondition.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		conditionType, _, _ := unstructured.NestedString(condition, "type")
+		if conditionType != "Ready" {
+			continue
+		}
+		status, _, _ := unstructured.NestedString(condition, "status")
+		reason, _, _ := unstructured.NestedString(condition, "reason")
+		message, _, _ := unstructured.NestedString(condition, "message")
+		return status == "True", reason, message
+	}
+	return false, "Ready condition is absent", ""
+}
+
+// ensureCertManagerWebhookConfigurations bootstraps the webhook objects
+// before TLS readiness is reported. This gives cert-manager cainjector an
+// object to patch while keeping caBundle outside the operator's ownership.
+func (r *KubernautReconciler) ensureCertManagerWebhookConfigurations(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	if err := r.ensureWebhookConfiguration(ctx, resources.MutatingWebhookConfigurationWithCertManagerInjection(kn)); err != nil {
+		return fmt.Errorf("ensuring cert-manager MutatingWebhookConfiguration: %w", err)
+	}
+	if err := r.ensureWebhookConfiguration(ctx, resources.ValidatingWebhookConfigurationWithCertManagerInjection(kn)); err != nil {
+		return fmt.Errorf("ensuring cert-manager ValidatingWebhookConfiguration: %w", err)
+	}
+	return nil
+}
+
+func (r *KubernautReconciler) ensureManualWebhookConfigurations(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	mwc := resources.MutatingWebhookConfiguration(kn)
+	delete(mwc.Annotations, resources.OCPServiceCAInjectAnnotation)
+	if err := r.ensureWebhookConfiguration(ctx, mwc); err != nil {
+		return fmt.Errorf("ensuring manual MutatingWebhookConfiguration: %w", err)
+	}
+	vwc := resources.ValidatingWebhookConfiguration(kn)
+	delete(vwc.Annotations, resources.OCPServiceCAInjectAnnotation)
+	if err := r.ensureWebhookConfiguration(ctx, vwc); err != nil {
+		return fmt.Errorf("ensuring manual ValidatingWebhookConfiguration: %w", err)
+	}
+	return nil
+}
+
+func (r *KubernautReconciler) validateWebhookCABundles(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	mwc := &admissionregistrationv1.MutatingWebhookConfiguration{}
+	if err := r.Get(ctx, client.ObjectKey{Name: kn.Namespace + "-authwebhook-mutating"}, mwc); err != nil {
+		return fmt.Errorf("reading AuthWebhook MutatingWebhookConfiguration for CA injection: %w", err)
+	}
+	if err := webhookCABundleReadyMutating(mwc.Webhooks); err != nil {
+		return fmt.Errorf("AuthWebhook MutatingWebhookConfiguration CA bundle is not ready: %w", err)
+	}
+	vwc := &admissionregistrationv1.ValidatingWebhookConfiguration{}
+	if err := r.Get(ctx, client.ObjectKey{Name: kn.Namespace + "-authwebhook-validating"}, vwc); err != nil {
+		return fmt.Errorf("reading AuthWebhook ValidatingWebhookConfiguration for CA injection: %w", err)
+	}
+	if err := webhookCABundleReadyValidating(vwc.Webhooks); err != nil {
+		return fmt.Errorf("AuthWebhook ValidatingWebhookConfiguration CA bundle is not ready: %w", err)
+	}
+	return nil
+}
+
+func webhookCABundleReadyMutating(webhooks []admissionregistrationv1.MutatingWebhook) error {
+	if len(webhooks) == 0 {
+		return fmt.Errorf("no webhook entries exist")
+	}
+	for index, webhook := range webhooks {
+		if len(webhook.ClientConfig.CABundle) == 0 {
+			return fmt.Errorf("webhook %d has an empty caBundle", index)
+		}
+	}
+	return nil
+}
+
+func webhookCABundleReadyValidating(webhooks []admissionregistrationv1.ValidatingWebhook) error {
+	if len(webhooks) == 0 {
+		return fmt.Errorf("no webhook entries exist")
+	}
+	for index, webhook := range webhooks {
+		if len(webhook.ClientConfig.CABundle) == 0 {
+			return fmt.Errorf("webhook %d has an empty caBundle", index)
+		}
+	}
+	return nil
+}
+
+func (r *KubernautReconciler) readRuntimeTLSCA(
+	ctx context.Context,
+	kn *kubernautv1alpha2.Kubernaut,
+	material resources.TLSMaterial,
+) (*corev1.Secret, error) {
+	if material.InternalCAConfigMapName != "" {
+		configMap := &corev1.ConfigMap{}
+		if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: material.InternalCAConfigMapName}, configMap); err != nil {
+			return nil, fmt.Errorf("reading runtime TLS CA ConfigMap %q: %w", material.InternalCAConfigMapName, err)
+		}
+		caPEM := configMap.Data["ca.crt"]
+		if caPEM == "" {
+			caPEM = configMap.Data["service-ca.crt"]
+		}
+		return &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: material.InternalCAConfigMapName, Namespace: kn.Namespace},
+			Data:       map[string][]byte{"ca.crt": []byte(caPEM)},
+		}, nil
+	}
+	ca := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: material.InternalCASecretName}, ca); err != nil {
+		return nil, fmt.Errorf("reading runtime TLS CA secret %q: %w", material.InternalCASecretName, err)
+	}
+	return ca, nil
 }
 
 func (r *KubernautReconciler) ensureDevelopmentSelfSignedTLS(
@@ -3297,6 +3639,9 @@ func (r *KubernautReconciler) ensureDevelopmentSelfSignedTLS(
 	names = append(names, material.InternalCASecretName)
 	for _, name := range material.ServiceTLSSecretNames {
 		names = append(names, name)
+	}
+	if signingName := resources.DataStorageSigningSecretName(kn); signingName != "" {
+		names = append(names, signingName)
 	}
 	for _, name := range names {
 		secret := &corev1.Secret{}
@@ -3322,6 +3667,12 @@ func (r *KubernautReconciler) ensureDevelopmentSelfSignedTLS(
 }
 
 func (r *KubernautReconciler) ensureGenericTLSConfigMaps(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, caBundle []byte) error {
+	// Helm manual mode deliberately uses the administrator-owned
+	// inter-service-ca ConfigMap as-is. Creating a derived ConfigMap with the
+	// same stable name would adopt and overwrite user-managed trust material.
+	if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual {
+		return nil
+	}
 	if len(caBundle) == 0 {
 		return fmt.Errorf("generic runtime TLS CA bundle is empty")
 	}
@@ -3333,37 +3684,178 @@ func (r *KubernautReconciler) ensureGenericTLSConfigMaps(ctx context.Context, kn
 	return nil
 }
 
+type certManagerIssuerReference struct {
+	name  string
+	kind  string
+	group string
+}
+
+// ensureCertManagerTLSResources creates the operator-owned cert-manager
+// Issuer/Certificate resources for Helm-compatible cert-manager mode. It does
+// not create, update, or delete the output Secrets; those remain cert-manager's
+// ownership boundary.
+func (r *KubernautReconciler) ensureCertManagerTLSResources(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	if !resources.CertManagerTLSProvisioningEnabled(kn) {
+		return nil
+	}
+	issuerRef, err := r.resolveCertManagerIssuer(ctx, kn)
+	if err != nil {
+		return err
+	}
+	if !r.hasCRD(ctx, "certificates.cert-manager.io") {
+		return fmt.Errorf("cert-manager api is not installed: certificates")
+	}
+
+	desiredKn := kn.DeepCopy()
+	if desiredKn.Spec.TLS.CertManager == nil {
+		desiredKn.Spec.TLS.CertManager = &kubernautv1alpha2.CertManagerTLSConfig{}
+	}
+	desiredKn.Spec.TLS.CertManager.IssuerRef = kubernautv1alpha2.TLSIssuerRef{
+		Name:  issuerRef.name,
+		Kind:  issuerRef.kind,
+		Group: issuerRef.group,
+	}
+
+	objects, err := resources.CertManagerTLSResources(desiredKn)
+	if err != nil {
+		return fmt.Errorf("building cert-manager TLS resources: %w", err)
+	}
+	for _, object := range objects {
+		if err := r.ensureCertManagerResource(ctx, kn, object); err != nil {
+			return fmt.Errorf("ensuring cert-manager %s %q: %w", object.GetKind(), object.GetName(), err)
+		}
+	}
+	return nil
+}
+
+// ensureCertManagerResource preserves cert-manager annotations and status
+// metadata when reconciling an existing resource. This is intentionally not
+// the generic ensureResource path: cert-manager adds transient annotations
+// while it issues and renews Certificates, and the operator must not erase
+// them on its next reconcile.
+func (r *KubernautReconciler) ensureCertManagerResource(
+	ctx context.Context,
+	kn *kubernautv1alpha2.Kubernaut,
+	desired *unstructured.Unstructured,
+) error {
+	if err := resources.SetOwnerReference(kn, desired, r.Scheme); err != nil {
+		return err
+	}
+	setHashAnnotation(desired, resources.SpecHash(desired))
+
+	live := &unstructured.Unstructured{}
+	live.SetAPIVersion(desired.GetAPIVersion())
+	live.SetKind(desired.GetKind())
+	key := client.ObjectKey{Name: desired.GetName(), Namespace: desired.GetNamespace()}
+	if err := r.Get(ctx, key, live); apierrors.IsNotFound(err) {
+		if err := r.Create(ctx, desired); err != nil {
+			if apierrors.IsAlreadyExists(err) {
+				return nil
+			}
+			return err
+		}
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("getting %s: %w", key, err)
+	}
+
+	desired.SetResourceVersion(live.GetResourceVersion())
+	desired.SetOwnerReferences(live.GetOwnerReferences())
+	desired.SetLabels(mergeStringMap(live.GetLabels(), desired.GetLabels()))
+	desired.SetAnnotations(mergeStringMap(live.GetAnnotations(), desired.GetAnnotations()))
+	if err := resources.SetOwnerReference(kn, desired, r.Scheme); err != nil {
+		return fmt.Errorf("setting cert-manager resource owner reference: %w", err)
+	}
+	return r.Update(ctx, desired)
+}
+
+func mergeStringMap(existing, desired map[string]string) map[string]string {
+	merged := make(map[string]string, len(existing)+len(desired))
+	for key, value := range existing {
+		merged[key] = value
+	}
+	for key, value := range desired {
+		merged[key] = value
+	}
+	return merged
+}
+
 func (r *KubernautReconciler) validateCertManagerIssuer(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	_, err := r.resolveCertManagerIssuer(ctx, kn)
+	return err
+}
+
+func (r *KubernautReconciler) resolveCertManagerIssuer(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (certManagerIssuerReference, error) {
 	cfg := kn.Spec.TLS.CertManager
 	if cfg == nil {
-		return fmt.Errorf("tls.certManager is required")
+		if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeHelmCertManager {
+			cfg = &kubernautv1alpha2.CertManagerTLSConfig{}
+		} else {
+			return certManagerIssuerReference{}, fmt.Errorf("tls.certManager is required")
+		}
 	}
-	group := cfg.Issuer.Group
+	issuerConfig := cfg.EffectiveIssuerRef()
+	group := issuerConfig.Group
 	if group == "" {
 		group = "cert-manager.io"
 	}
-	kind := cfg.Issuer.Kind
+	kind := issuerConfig.Kind
 	if kind == "" {
-		kind = "Issuer"
+		kind = certManagerClusterIssuerKind
+		if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeCertManager {
+			kind = certManagerIssuerKind
+		}
+	}
+	if kind != certManagerIssuerKind && kind != certManagerClusterIssuerKind {
+		return certManagerIssuerReference{}, fmt.Errorf("tls.certManager.issuer.kind %q is unsupported", kind)
 	}
 	plural := "issuers"
-	if kind == "ClusterIssuer" {
+	if kind == certManagerClusterIssuerKind {
 		plural = "clusterissuers"
 	}
 	if !r.hasCRD(ctx, plural+"."+group) {
-		return fmt.Errorf("cert-manager api is not installed: %s", group)
+		return certManagerIssuerReference{}, fmt.Errorf("cert-manager api is not installed: %s", group)
+	}
+
+	name := issuerConfig.Name
+	var err error
+	if name == "" {
+		name, err = r.selectSingleCertManagerIssuer(ctx, kn.Namespace, group, kind)
+		if err != nil {
+			return certManagerIssuerReference{}, err
+		}
 	}
 	issuer := &unstructured.Unstructured{}
 	issuer.SetAPIVersion(group + "/v1")
 	issuer.SetKind(kind)
-	key := client.ObjectKey{Name: cfg.Issuer.Name}
-	if kind != "ClusterIssuer" {
+	key := client.ObjectKey{Name: name}
+	if kind != certManagerClusterIssuerKind {
 		key.Namespace = kn.Namespace
 	}
 	if err := r.Get(ctx, key, issuer); err != nil {
-		return fmt.Errorf("reading cert-manager %s %q: %w", kind, cfg.Issuer.Name, err)
+		return certManagerIssuerReference{}, fmt.Errorf("reading cert-manager %s %q: %w", kind, name, err)
 	}
-	return nil
+	return certManagerIssuerReference{name: name, kind: kind, group: group}, nil
+}
+
+func (r *KubernautReconciler) selectSingleCertManagerIssuer(ctx context.Context, namespace, group, kind string) (string, error) {
+	list := &unstructured.UnstructuredList{}
+	list.SetAPIVersion(group + "/v1")
+	list.SetKind(kind + "List")
+	var options []client.ListOption
+	if kind == certManagerIssuerKind {
+		options = append(options, client.InNamespace(namespace))
+	}
+	if err := r.List(ctx, list, options...); err != nil {
+		return "", fmt.Errorf("listing cert-manager %s resources: %w", kind, err)
+	}
+	if len(list.Items) == 0 {
+		return "", fmt.Errorf("no cert-manager %s found for automatic issuer selection", kind)
+	}
+	if len(list.Items) > 1 {
+		return "", fmt.Errorf("multiple cert-manager %s resources found; set tls.certManager.issuer.name", kind)
+	}
+	return list.Items[0].GetName(), nil
 }
 
 func (r *KubernautReconciler) currentTime() time.Time {

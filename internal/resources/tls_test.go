@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"crypto/ecdsa"
 	"crypto/x509"
 	"time"
 
@@ -89,6 +90,75 @@ var _ = Describe("runtime TLS source", func() {
 
 		_, err := ResolveTLSMaterial(kn)
 		Expect(err).To(MatchError(ContainSubstring("issuer.name")))
+	})
+
+	It("resolves the lower-case Helm cert-manager mode with chart-compatible defaults", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode: kubernautv1alpha2.TLSModeHelmCertManager,
+			CertManager: &kubernautv1alpha2.CertManagerTLSConfig{
+				Issuer: kubernautv1alpha2.TLSIssuerRef{Name: "customer-issuer"},
+			},
+		}
+
+		material, err := ResolveTLSMaterial(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(material.Source).To(Equal(TLSMaterialSourceCertManager))
+		Expect(material.InternalCASecretName).To(Equal("kubernaut-interservice-ca-secret"))
+		Expect(material.ServiceTLSSecretNames).To(HaveKey(TLSServiceGateway))
+		Expect(material.ServiceTLSSecretNames).To(HaveKey(TLSServiceDataStorage))
+		Expect(material.ServiceTLSSecretNames).To(HaveKey(TLSServiceKubernautAgent))
+		Expect(material.ServiceTLSSecretNames).To(HaveKey(TLSServiceAPIFrontend))
+		Expect(material.ServiceTLSSecretNames).To(HaveKey(TLSServiceAuthWebhook))
+		Expect(CertManagerTLSProvisioningEnabled(kn)).To(BeTrue())
+	})
+
+	It("resolves the lower-case Helm hook mode as explicit self-signed TLS", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
+
+		material, err := ResolveTLSMaterial(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(material.Source).To(Equal(TLSMaterialSourceDevelopmentSelfSigned))
+		Expect(material.InternalCASecretName).To(Equal("kubernaut-internal-ca"))
+		Expect(material.OwnsSecrets).To(BeTrue())
+	})
+
+	It("reconciles Helm hook-compatible extra SANs and the separate RSA signing certificate", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode: kubernautv1alpha2.TLSModeHook,
+			Hooks: &kubernautv1alpha2.TLSHooksConfig{TLSCerts: kubernautv1alpha2.TLSCertsConfig{
+				ExtraSANs: []string{"localhost", "gateway.example.test"},
+			}},
+		}
+
+		secrets, err := DevelopmentSelfSignedTLSSecrets(kn, nil, time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(secrets).To(HaveLen(7))
+
+		byName := secretsByName(secrets)
+		gateway, err := parseCertificate(byName[GatewayTLSSecretName].Data[corev1.TLSCertKey])
+		Expect(err).NotTo(HaveOccurred())
+		_, isECDSA := gateway.PublicKey.(*ecdsa.PublicKey)
+		Expect(isECDSA).To(BeTrue(), "Helm hook inter-service leaves must use ECDSA P-256")
+		Expect(gateway.VerifyHostname("localhost")).To(Succeed())
+		Expect(gateway.VerifyHostname("gateway.example.test")).To(Succeed())
+		authwebhook, err := parseCertificate(byName["authwebhook-tls"].Data[corev1.TLSCertKey])
+		Expect(err).NotTo(HaveOccurred())
+		Expect(authwebhook.VerifyHostname("authwebhook-service." + kn.Namespace + ".svc")).To(Succeed())
+		Expect(authwebhook.VerifyHostname("authwebhook." + kn.Namespace + ".svc")).To(Succeed())
+		Expect(AuthWebhookCABundle(byName["authwebhook-tls"])).To(Equal(byName["kubernaut-internal-ca"].Data["ca.crt"]))
+
+		signing := byName["datastorage-signing-cert"]
+		Expect(signing).NotTo(BeNil())
+		signingCertificate, err := parseCertificate(signing.Data[corev1.TLSCertKey])
+		Expect(err).NotTo(HaveOccurred())
+		Expect(signingCertificate.Subject.CommonName).To(Equal("datastorage-signing-cert"))
+		signingKey, err := parseRSAKey(signing.Data[corev1.TLSPrivateKeyKey])
+		Expect(err).NotTo(HaveOccurred())
+		Expect(signingKey.N.BitLen()).To(Equal(2048))
+		Expect(ValidateDataStorageSigningTLSSecret(signing)).To(Succeed())
 	})
 
 	It("keeps the legacy OpenShift source explicit and never calls it a generic source", func() {

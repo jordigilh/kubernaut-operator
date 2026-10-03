@@ -80,9 +80,9 @@ func MigrationJob(kn *kubernautv1alpha2.Kubernaut) (*batchv1.Job, error) {
 	}}
 
 	if sslMode == DefaultSSLMode {
-		dsn += " sslrootcert=" + InterServiceTLSCAFile
-		volumes = append(volumes, optionalConfigMapVolume("tls-ca", TrustBundleConfigMapName))
-		mounts = append(mounts, corev1.VolumeMount{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true})
+		dsn += " sslrootcert=" + InterServiceTLSCAFileFor(kn)
+		volumes = append(volumes, InterServiceTLSCAVolume(kn))
+		mounts = append(mounts, InterServiceTLSCAMount(kn))
 	}
 
 	backoffLimit := MigrationBackoffLimit

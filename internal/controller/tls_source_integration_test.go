@@ -24,6 +24,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,6 +40,170 @@ import (
 )
 
 var _ = Describe("runtime TLS source wiring", func() {
+	It("IT-TLS-MANUAL-001 leaves the administrator-owned trust ConfigMap unchanged", func() {
+		ctx := context.Background()
+		kn := newMinimalCR()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeManual}
+		trust := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: resources.InterServiceCAConfigMapName, Namespace: kn.Namespace},
+			Data:       map[string]string{"ca.crt": "administrator-ca"},
+		}
+		r := newReconcilerWithCRDScheme(trust)
+
+		Expect(r.ensureGenericTLSConfigMaps(ctx, kn, []byte("operator-ca"))).To(Succeed())
+		live := &corev1.ConfigMap{}
+		Expect(r.Get(ctx, client.ObjectKeyFromObject(trust), live)).To(Succeed())
+		Expect(live.Data).To(Equal(map[string]string{"ca.crt": "administrator-ca"}))
+		Expect(live.OwnerReferences).To(BeEmpty())
+
+		volume := resources.InterServiceTLSCAVolume(kn)
+		Expect(volume.ConfigMap).NotTo(BeNil())
+		Expect(volume.ConfigMap.Name).To(Equal(resources.InterServiceCAConfigMapName))
+	})
+
+	It("IT-TLS-MANUAL-002 validates administrator-owned serving, signing, and webhook material", func() {
+		ctx := context.Background()
+		kn := newMinimalCR()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeManual}
+
+		generatedCR := kn.DeepCopy()
+		generatedCR.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeHook}
+		generated, err := resources.DevelopmentSelfSignedTLSSecrets(generatedCR, nil, time.Now().UTC())
+		Expect(err).NotTo(HaveOccurred())
+
+		trust := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: resources.InterServiceCAConfigMapName, Namespace: kn.Namespace},
+			Data:       map[string]string{"ca.crt": string(generated[0].Data["ca.crt"])},
+		}
+		mwc := resources.MutatingWebhookConfiguration(kn)
+		vwc := resources.ValidatingWebhookConfiguration(kn)
+		for index := range mwc.Webhooks {
+			mwc.Webhooks[index].ClientConfig.CABundle = []byte("administrator-webhook-ca")
+		}
+		for index := range vwc.Webhooks {
+			vwc.Webhooks[index].ClientConfig.CABundle = []byte("administrator-webhook-ca")
+		}
+
+		objects := make([]runtime.Object, 0, len(generated)+3)
+		objects = append(objects, trust, mwc, vwc)
+		for _, secret := range generated[1:] {
+			objects = append(objects, secret.DeepCopy())
+		}
+		r := newReconcilerWithCRDScheme(objects...)
+
+		material, err := r.validateTLSConfiguration(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(material.Source).To(Equal(resources.TLSMaterialSourceAdministratorManaged))
+		Expect(material.InternalCAConfigMapName).To(Equal(resources.InterServiceCAConfigMapName))
+
+		resolved, caPEM, err := r.ensureRuntimeTLS(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved.Source).To(Equal(resources.TLSMaterialSourceAdministratorManaged))
+		Expect(caPEM).To(Equal(generated[0].Data["ca.crt"]))
+	})
+
+	It("IT-TLS-WEBHOOK-001 preserves manual webhook CA bundles", func() {
+		ctx := context.Background()
+		kn := newMinimalCR()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeManual}
+		mwc := resources.MutatingWebhookConfiguration(kn)
+		vwc := resources.ValidatingWebhookConfiguration(kn)
+		for index := range mwc.Webhooks {
+			mwc.Webhooks[index].ClientConfig.CABundle = []byte("administrator-webhook-ca")
+		}
+		for index := range vwc.Webhooks {
+			vwc.Webhooks[index].ClientConfig.CABundle = []byte("administrator-webhook-ca")
+		}
+		r := newReconcilerWithCRDScheme(mwc, vwc)
+		material := resources.TLSMaterial{
+			Source:                resources.TLSMaterialSourceAdministratorManaged,
+			ServiceTLSSecretNames: certManagerServiceTLSSecretNames(),
+		}
+
+		Expect(r.deployAdmissionWebhooks(ctx, kn, material, []byte("wrong-inter-service-ca"))).To(Succeed())
+		updatedMWC := &admissionregistrationv1.MutatingWebhookConfiguration{}
+		Expect(r.Get(ctx, client.ObjectKey{Name: mwc.Name}, updatedMWC)).To(Succeed())
+		Expect(updatedMWC.Annotations).NotTo(HaveKey(resources.OCPServiceCAInjectAnnotation))
+		Expect(updatedMWC.Webhooks[0].ClientConfig.CABundle).To(Equal([]byte("administrator-webhook-ca")))
+		updatedVWC := &admissionregistrationv1.ValidatingWebhookConfiguration{}
+		Expect(r.Get(ctx, client.ObjectKey{Name: vwc.Name}, updatedVWC)).To(Succeed())
+		Expect(updatedVWC.Webhooks[0].ClientConfig.CABundle).To(Equal([]byte("administrator-webhook-ca")))
+	})
+
+	It("IT-TLS-PARITY-001 provisions chart-compatible cert-manager resources and owns only those resources", func() {
+		ctx := context.Background()
+		kn := newMinimalCR()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode: kubernautv1alpha2.TLSModeHelmCertManager,
+			CertManager: &kubernautv1alpha2.CertManagerTLSConfig{
+				Issuer: kubernautv1alpha2.TLSIssuerRef{
+					Name:  "customer-issuer",
+					Kind:  "Issuer",
+					Group: "cert-manager.io",
+				},
+			},
+		}
+		objects := []runtime.Object{
+			&unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "cert-manager.io/v1",
+				"kind":       "Issuer",
+				"metadata": map[string]interface{}{
+					"name":      "customer-issuer",
+					"namespace": testNamespace,
+				},
+			}},
+			&apiextensionsv1.CustomResourceDefinition{ObjectMeta: metav1.ObjectMeta{Name: "issuers.cert-manager.io"}},
+			&apiextensionsv1.CustomResourceDefinition{ObjectMeta: metav1.ObjectMeta{Name: "certificates.cert-manager.io"}},
+		}
+		r := newReconcilerWithCRDScheme(objects...)
+		Expect(kubernautv1alpha2.AddToScheme(r.Scheme)).To(Succeed())
+
+		Expect(r.ensureCertManagerTLSResources(ctx, kn)).To(Succeed())
+
+		certificate := &unstructured.Unstructured{}
+		certificate.SetAPIVersion("cert-manager.io/v1")
+		certificate.SetKind("Certificate")
+		Expect(r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: "gateway-tls"}, certificate)).To(Succeed())
+		Expect(certificate.GetOwnerReferences()).To(HaveLen(1))
+		Expect(certificate.GetOwnerReferences()[0].UID).To(Equal(kn.UID))
+
+		outputSecret := &corev1.Secret{}
+		Expect(r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: "gateway-tls"}, outputSecret)).To(MatchError(ContainSubstring("not found")))
+	})
+
+	It("IT-TLS-CERTMANAGER-READY-001 waits for every Certificate Ready condition", func() {
+		kn := newMinimalCR()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeHelmCertManager}
+		certificates, err := resources.CertManagerTLSResources(kn)
+		Expect(err).NotTo(HaveOccurred())
+
+		objects := make([]runtime.Object, 0, len(certificates))
+		for _, certificate := range certificates {
+			if certificate.GetKind() == "Certificate" {
+				certificate.Object["status"] = map[string]interface{}{
+					"conditions": []interface{}{map[string]interface{}{
+						"type": "Ready", "status": "True",
+					}},
+				}
+			}
+			objects = append(objects, certificate)
+		}
+		r := newReconcilerWithCRDScheme(objects...)
+		Expect(r.validateCertManagerCertificatesReady(context.Background(), kn)).To(Succeed())
+
+		firstCertificate := &unstructured.Unstructured{}
+		firstCertificate.SetAPIVersion(certificates[1].GetAPIVersion())
+		firstCertificate.SetKind(certificates[1].GetKind())
+		Expect(r.Get(context.Background(), client.ObjectKey{Namespace: kn.Namespace, Name: certificates[1].GetName()}, firstCertificate)).To(Succeed())
+		firstCertificate.Object["status"] = map[string]interface{}{
+			"conditions": []interface{}{map[string]interface{}{
+				"type": "Ready", "status": "False", "reason": "Pending", "message": "waiting for issuer",
+			}},
+		}
+		Expect(r.Update(context.Background(), firstCertificate)).To(Succeed())
+		Expect(r.validateCertManagerCertificatesReady(context.Background(), kn)).To(MatchError(ContainSubstring("Pending")))
+	})
+
 	It("IT-TLS-GAP-001 validates cert-manager output and issuer discovery without adopting Secrets", func() {
 		ctx := context.Background()
 		kn := newMinimalCR()

@@ -168,7 +168,7 @@ var _ = Describe("MigrationJob", func() {
 
 		mountFound := false
 		for _, vm := range container.VolumeMounts {
-			if vm.Name == "tls-ca" && vm.MountPath == "/etc/tls-ca" {
+			if vm.Name == testVolumeTLSCA && vm.MountPath == "/etc/tls-ca" {
 				mountFound = true
 			}
 		}
@@ -176,7 +176,7 @@ var _ = Describe("MigrationJob", func() {
 
 		volFound := false
 		for _, v := range job.Spec.Template.Spec.Volumes {
-			if v.Name == "tls-ca" && v.ConfigMap != nil && v.ConfigMap.Name == TrustBundleConfigMapName {
+			if v.Name == testVolumeTLSCA && v.ConfigMap != nil && v.ConfigMap.Name == TrustBundleConfigMapName {
 				volFound = true
 				Expect(v.ConfigMap.Optional).NotTo(BeNil())
 				Expect(*v.ConfigMap.Optional).To(BeTrue(), "tls-ca volume should be optional")

@@ -235,6 +235,41 @@ var _ = Describe("WebhookConfigurations", func() {
 		}
 	})
 
+	It("publishes the cert-manager CA injection contract alongside the validated bundle", func() {
+		kn := testKubernaut()
+		ca := []byte("cert-manager-ca")
+		mwc := MutatingWebhookConfigurationWithCertManagerCA(kn, ca)
+		vwc := ValidatingWebhookConfigurationWithCertManagerCA(kn, ca)
+
+		Expect(mwc.Annotations).NotTo(HaveKey(OCPServiceCAInjectAnnotation))
+		Expect(mwc.Annotations).To(HaveKeyWithValue("cert-manager.io/inject-ca-from", kn.Namespace+"/authwebhook-cert"))
+		Expect(vwc.Annotations).NotTo(HaveKey(OCPServiceCAInjectAnnotation))
+		Expect(vwc.Annotations).To(HaveKeyWithValue("cert-manager.io/inject-ca-from", kn.Namespace+"/authwebhook-cert"))
+		for _, webhook := range mwc.Webhooks {
+			Expect(webhook.ClientConfig.CABundle).To(Equal(ca))
+		}
+		for _, webhook := range vwc.Webhooks {
+			Expect(webhook.ClientConfig.CABundle).To(Equal(ca))
+		}
+	})
+
+	It("leaves the cert-manager caBundle field to cainjector", func() {
+		kn := testKubernaut()
+		mwc := MutatingWebhookConfigurationWithCertManagerInjection(kn)
+		vwc := ValidatingWebhookConfigurationWithCertManagerInjection(kn)
+
+		Expect(mwc.Annotations).NotTo(HaveKey(OCPServiceCAInjectAnnotation))
+		Expect(mwc.Annotations).To(HaveKeyWithValue("cert-manager.io/inject-ca-from", kn.Namespace+"/authwebhook-cert"))
+		Expect(vwc.Annotations).NotTo(HaveKey(OCPServiceCAInjectAnnotation))
+		Expect(vwc.Annotations).To(HaveKeyWithValue("cert-manager.io/inject-ca-from", kn.Namespace+"/authwebhook-cert"))
+		for _, webhook := range mwc.Webhooks {
+			Expect(webhook.ClientConfig.CABundle).To(BeEmpty())
+		}
+		for _, webhook := range vwc.Webhooks {
+			Expect(webhook.ClientConfig.CABundle).To(BeEmpty())
+		}
+	})
+
 	It("use FailurePolicy=Fail", func() {
 		kn := testKubernaut()
 		mwc := MutatingWebhookConfiguration(kn)

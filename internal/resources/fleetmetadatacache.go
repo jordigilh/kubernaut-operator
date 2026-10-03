@@ -47,9 +47,14 @@ const (
 // --- ConfigMap ---
 
 type fleetMetadataCacheServerYAML struct {
-	APIAddr     string `json:"apiAddr" yaml:"apiAddr"`
-	HealthAddr  string `json:"healthAddr" yaml:"healthAddr"`
-	MetricsAddr string `json:"metricsAddr" yaml:"metricsAddr"`
+	APIAddr     string                          `json:"apiAddr" yaml:"apiAddr"`
+	HealthAddr  string                          `json:"healthAddr" yaml:"healthAddr"`
+	MetricsAddr string                          `json:"metricsAddr" yaml:"metricsAddr"`
+	TLS         fleetMetadataCacheServerTLSYAML `json:"tls" yaml:"tls"`
+}
+
+type fleetMetadataCacheServerTLSYAML struct {
+	CertDir string `json:"certDir" yaml:"certDir"`
 }
 
 type fleetMetadataCacheMCPGatewayYAML struct {
@@ -118,6 +123,7 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernau
 			APIAddr:     fmt.Sprintf(":%d", fleetMetadataCacheAPIPort),
 			HealthAddr:  fmt.Sprintf(":%d", PortHealthProbe),
 			MetricsAddr: fmt.Sprintf(":%d", PortMetrics),
+			TLS:         fleetMetadataCacheServerTLSYAML{CertDir: InterServiceTLSCertDirFor(knV2)},
 		},
 		MCPGateway: fleetMetadataCacheMCPGatewayYAML{
 			Endpoint:    fleet.MCPGatewayEndpoint,
@@ -137,7 +143,7 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernau
 			TokenURL:       fleet.OAuth2.TokenURL,
 			CredentialsDir: fleetMetadataCacheOAuth2Dir,
 			Scopes:         fleet.OAuth2.Scopes,
-			TLSCaFile:      InterServiceTLSCAFile,
+			TLSCaFile:      InterServiceTLSCAFileFor(knV2),
 		},
 		Debug: debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
@@ -193,12 +199,12 @@ func FleetMetadataCacheDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuberna
 	volumes := []corev1.Volume{
 		configMapVolume("config", fleetMetadataCacheConfigMapName),
 		secretVolume("fleet-oauth2", credRef),
-		optionalConfigMapVolume("tls-ca", TrustBundleConfigMapName),
+		InterServiceTLSCAVolume(kn),
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: "config", MountPath: "/etc/fleetmetadatacache", ReadOnly: true},
 		{Name: "fleet-oauth2", MountPath: fleetMetadataCacheOAuth2Dir, ReadOnly: true},
-		{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
+		InterServiceTLSCAMount(kn),
 	}
 	// #398: mirrors DataStorageDeployment's identical spec.valkey.tls volume
 	// wiring -- without this, FMC's rendered valkey.tls.caFile/certFile/
@@ -223,7 +229,7 @@ func FleetMetadataCacheDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuberna
 	// still scanned) to also trust this bundle, closing that gap without
 	// an upstream kubernaut-core code change. Tracked upstream for a proper
 	// fix (WithHTTPClient wiring in cmd/fleetmetadatacache/main.go).
-	env := []corev1.EnvVar{{Name: "SSL_CERT_FILE", Value: InterServiceTLSCAFile}}
+	env := []corev1.EnvVar{{Name: "SSL_CERT_FILE", Value: InterServiceTLSCAFileFor(kn)}}
 
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentFleetMetadataCache, ImageName: "fleetmetadatacache",

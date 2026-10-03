@@ -34,7 +34,13 @@ const (
 // controller supplies the validated CA PEM after reading or generating the
 // selected source.
 func GenericTLSConfigMaps(kn *kubernautv1alpha2.Kubernaut, caPEM []byte) []*corev1.ConfigMap {
-	data := map[string]string{"service-ca.crt": string(caPEM)}
+	// Keep the historical service-ca.crt key for title-case operator modes and
+	// publish the Helm-compatible ca.crt alias for lower-case TLS modes. This
+	// lets the same operator-managed trust bundle serve both migration paths.
+	data := map[string]string{
+		"service-ca.crt": string(caPEM),
+		"ca.crt":         string(caPEM),
+	}
 	definitions := []struct {
 		name      string
 		component string
