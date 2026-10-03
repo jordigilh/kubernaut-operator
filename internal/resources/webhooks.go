@@ -144,6 +144,43 @@ func ValidatingWebhookConfigurationWithCABundle(kn *kubernautv1alpha2.Kubernaut,
 	return configuration
 }
 
+// MutatingWebhookConfigurationWithCertManagerCA publishes the cert-manager
+// cainjector annotation while retaining the currently validated bundle. The
+// direct bundle prevents a readiness gap before cainjector observes the newly
+// created Certificate; cainjector remains the rotation authority afterwards.
+func MutatingWebhookConfigurationWithCertManagerCA(kn *kubernautv1alpha2.Kubernaut, caBundle []byte) *admissionregistrationv1.MutatingWebhookConfiguration {
+	configuration := MutatingWebhookConfigurationWithCABundle(kn, caBundle)
+	configuration.Annotations["cert-manager.io/inject-ca-from"] = kn.Namespace + "/authwebhook-cert"
+	return configuration
+}
+
+// MutatingWebhookConfigurationWithCertManagerInjection builds the chart
+// cert-manager form without claiming ownership of clientConfig.caBundle.
+// cert-manager cainjector writes and rotates that field from authwebhook-cert.
+func MutatingWebhookConfigurationWithCertManagerInjection(kn *kubernautv1alpha2.Kubernaut) *admissionregistrationv1.MutatingWebhookConfiguration {
+	configuration := MutatingWebhookConfiguration(kn)
+	delete(configuration.Annotations, OCPServiceCAInjectAnnotation)
+	configuration.Annotations["cert-manager.io/inject-ca-from"] = kn.Namespace + "/authwebhook-cert"
+	return configuration
+}
+
+// ValidatingWebhookConfigurationWithCertManagerCA is the validating-webhook
+// counterpart of MutatingWebhookConfigurationWithCertManagerCA.
+func ValidatingWebhookConfigurationWithCertManagerCA(kn *kubernautv1alpha2.Kubernaut, caBundle []byte) *admissionregistrationv1.ValidatingWebhookConfiguration {
+	configuration := ValidatingWebhookConfigurationWithCABundle(kn, caBundle)
+	configuration.Annotations["cert-manager.io/inject-ca-from"] = kn.Namespace + "/authwebhook-cert"
+	return configuration
+}
+
+// ValidatingWebhookConfigurationWithCertManagerInjection is the validating
+// counterpart of MutatingWebhookConfigurationWithCertManagerInjection.
+func ValidatingWebhookConfigurationWithCertManagerInjection(kn *kubernautv1alpha2.Kubernaut) *admissionregistrationv1.ValidatingWebhookConfiguration {
+	configuration := ValidatingWebhookConfiguration(kn)
+	delete(configuration.Annotations, OCPServiceCAInjectAnnotation)
+	configuration.Annotations["cert-manager.io/inject-ca-from"] = kn.Namespace + "/authwebhook-cert"
+	return configuration
+}
+
 func notificationRequestValidatingWebhook(kn *kubernautv1alpha2.Kubernaut) admissionregistrationv1.ValidatingWebhook {
 	namespacedScope := admissionregistrationv1.NamespacedScope
 	return admissionregistrationv1.ValidatingWebhook{

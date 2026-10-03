@@ -468,7 +468,7 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 		tls = kubernautv1alpha2.TLSConfigSpec{
 			Mode: kubernautv1alpha2.TLSModeCertManager,
 			CertManager: &kubernautv1alpha2.CertManagerTLSConfig{ //nolint:gosec // disposable Kind fixture Secret references
-				Issuer: kubernautv1alpha2.TLSIssuerRef{
+				IssuerRef: kubernautv1alpha2.TLSIssuerRef{
 					Name:  "kubernaut-ca",
 					Kind:  "Issuer",
 					Group: "cert-manager.io",

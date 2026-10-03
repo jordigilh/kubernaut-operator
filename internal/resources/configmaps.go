@@ -119,7 +119,7 @@ func gatewayServerConfig(knV2 *kubernautv1alpha2.Kubernaut, gwCfg *kubernautv1al
 		WriteTimeout:          "3600s",
 		IdleTimeout:           "120s",
 		K8sRequestTimeout:     withDefault(gwCfg.K8sRequestTimeout, "15s"),
-		TLS:                   tlsConfigYAML{CertDir: InterServiceTLSCertDir},
+		TLS:                   tlsConfigYAML{CertDir: InterServiceTLSCertDirFor(knV2)},
 	}
 	if srv := knV2.Spec.Gateway.Config.Server; srv != nil {
 		s.MaxConcurrentRequests = intPtrDefault(srv.MaxConcurrentRequests, s.MaxConcurrentRequests)
@@ -599,7 +599,7 @@ func resolveSignalProcessingFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) *sign
 			TokenURL:             fleet.OAuth2.TokenURL,
 			CredentialsSecretRef: effectiveFleetOAuth2SecretRef(override, fleet.OAuth2.CredentialsSecretRef),
 			Scopes:               fleet.OAuth2.Scopes,
-			TLSCAFile:            InterServiceTLSCAFile,
+			TLSCAFile:            InterServiceTLSCAFileFor(knV2),
 		}
 	}
 	return cfg
@@ -1267,7 +1267,7 @@ func GatewayConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.K
 			Timeout:   "10s",
 			Buffer:    dataStorageBufferYAML{BufferSize: 10000, BatchSize: 100, FlushInterval: "1s", MaxRetries: 3},
 		},
-		Fleet:     resolveFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.Gateway.Fleet, ""), InterServiceTLSCAFile),
+		Fleet:     resolveFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.Gateway.Fleet, ""), InterServiceTLSCAFileFor(knV2)),
 		Telemetry: resolveTelemetryConfig(knV2.Spec.Gateway.Config.Telemetry),
 		Debug:     debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
@@ -1316,7 +1316,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 				db.ConnMaxIdleTime = withDefault(dbCfg.ConnMaxIdleTime, db.ConnMaxIdleTime)
 			}
 			if sslMode == DefaultSSLMode {
-				db.SSLRootCert = InterServiceTLSCAFile
+				db.SSLRootCert = InterServiceTLSCAFileFor(knV2)
 			}
 			return db
 		}(),
@@ -1365,7 +1365,7 @@ func dataStorageServerConfig(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1a
 		MetricsPort:  9090,
 		ReadTimeout:  "30s",
 		WriteTimeout: "30s",
-		TLS:          tlsConfigYAML{CertDir: InterServiceTLSCertDir},
+		TLS:          tlsConfigYAML{CertDir: InterServiceTLSCertDirFor(knV2)},
 	}
 	// #260: v1alpha2-only addition, defaulting to the operator's prior
 	// hardcoded values above.
@@ -1573,7 +1573,7 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kub
 		},
 		DryRun:           ro.DryRun,
 		DryRunHoldPeriod: withDefault(ro.DryRunHoldPeriod, "1h"),
-		Fleet:            resolveFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.RemediationOrchestrator.Fleet, ""), InterServiceTLSCAFile),
+		Fleet:            resolveFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.RemediationOrchestrator.Fleet, ""), InterServiceTLSCAFileFor(knV2)),
 		Debug:            debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
 	data, err := marshalYAML(cfg)
@@ -1637,7 +1637,7 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernaut
 	if we.Tekton.Enabled != nil {
 		cfg.Tekton = &weTektonYAML{Enabled: we.Tekton.Enabled}
 	}
-	cfg.Fleet = resolveWEFleetConfig(knV2, InterServiceTLSCAFile)
+	cfg.Fleet = resolveWEFleetConfig(knV2, InterServiceTLSCAFileFor(knV2))
 	cfg.Debug = debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled}
 	data, err := marshalYAML(cfg)
 	if err != nil {
@@ -1672,7 +1672,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubern
 				MaxRetries:    3,
 			},
 		},
-		Fleet: resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.EffectivenessMonitor.Fleet, ""), InterServiceTLSCAFile),
+		Fleet: resolveMCPGatewayOnlyFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.EffectivenessMonitor.Fleet, ""), InterServiceTLSCAFileFor(knV2)),
 		Debug: debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
 	cfg.External = &emExternalYAML{
@@ -1946,7 +1946,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1a
 				Port:        8443,
 				HealthAddr:  ":8081",
 				MetricsAddr: ":9090",
-				TLS:         kubernautAgentServerTLSYAML{CertDir: InterServiceTLSCertDir},
+				TLS:         kubernautAgentServerTLSYAML{CertDir: InterServiceTLSCertDirFor(knV2)},
 				TLSProfile:  o.tlsProfile,
 				RateLimit:   kaRateLimitFromSpec(ka.ServerRateLimit),
 			},

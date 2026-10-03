@@ -44,19 +44,19 @@ func GatewayDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.
 		{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
-		{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile},
-		{Name: "SSL_CERT_FILE", Value: InterServiceTLSCAFile},
+		{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFileFor(kn)},
+		{Name: "SSL_CERT_FILE", Value: InterServiceTLSCAFileFor(kn)},
 	}
 
 	volumes := []corev1.Volume{
 		configMapVolume("config", "gateway-config"),
 		secretVolume("tls-certs", TLSSecretName(kn, TLSServiceGateway)),
-		optionalConfigMapVolume("tls-ca", TrustBundleConfigMapName),
+		InterServiceTLSCAVolume(kn),
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: "config", MountPath: "/etc/gateway", ReadOnly: true},
-		{Name: "tls-certs", MountPath: InterServiceTLSCertDir, ReadOnly: true},
-		{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
+		{Name: "tls-certs", MountPath: InterServiceTLSCertDirFor(kn), ReadOnly: true},
+		InterServiceTLSCAMount(kn),
 	}
 	volumes, mounts = appendFleetSecretMounts(volumes, mounts, knV2, "/etc/gateway", effectiveFleetOAuth2SecretRef(knV2.Spec.Gateway.Fleet, ""))
 
@@ -89,11 +89,11 @@ func DataStorageDeployment(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment,
 		{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
-		{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile},
-		{Name: "SSL_CERT_FILE", Value: InterServiceTLSCAFile},
+		{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFileFor(kn)},
+		{Name: "SSL_CERT_FILE", Value: InterServiceTLSCAFileFor(kn)},
 	}
 	if sslMode == DefaultSSLMode {
-		env = append(env, corev1.EnvVar{Name: "PGSSLROOTCERT", Value: InterServiceTLSCAFile})
+		env = append(env, corev1.EnvVar{Name: "PGSSLROOTCERT", Value: InterServiceTLSCAFileFor(kn)})
 	}
 
 	var gracePeriod int64 = 60
@@ -177,7 +177,7 @@ func dataStorageVolumesAndMounts(kn *kubernautv1alpha2.Kubernaut) ([]corev1.Volu
 
 	volumes = append(volumes,
 		secretVolume("tls-certs", TLSSecretName(kn, TLSServiceDataStorage)),
-		configMapVolume("tls-ca", TrustBundleConfigMapName),
+		InterServiceTLSCAVolume(kn),
 		corev1.Volume{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		corev1.Volume{Name: "data", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	)
@@ -185,8 +185,8 @@ func dataStorageVolumesAndMounts(kn *kubernautv1alpha2.Kubernaut) ([]corev1.Volu
 	mounts := []corev1.VolumeMount{
 		{Name: "config", MountPath: "/etc/datastorage", ReadOnly: true},
 		{Name: "secrets", MountPath: "/etc/datastorage/secrets", ReadOnly: true},
-		{Name: "tls-certs", MountPath: InterServiceTLSCertDir, ReadOnly: true},
-		{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
+		{Name: "tls-certs", MountPath: InterServiceTLSCertDirFor(kn), ReadOnly: true},
+		InterServiceTLSCAMount(kn),
 		{Name: "tmp", MountPath: "/tmp"},
 		{Name: "data", MountPath: "/data"},
 	}
@@ -210,9 +210,14 @@ func dataStorageVolumesAndMounts(kn *kubernautv1alpha2.Kubernaut) ([]corev1.Volu
 		volumes = append(volumes, secretVolume("signing-cert", sc.SecretName))
 		mounts = append(mounts, corev1.VolumeMount{Name: "signing-cert", MountPath: mountPath, ReadOnly: true})
 	} else {
-		// When no explicit signing cert is configured, reuse the service-ca
-		// serving cert so the data-storage binary finds a cert at /etc/certs.
-		volumes = append(volumes, secretVolume("signing-cert", TLSSecretName(kn, TLSServiceDataStorage)))
+		// Chart-compatible hook and cert-manager modes provision a dedicated
+		// RSA signing Secret. Legacy operator modes retain the historical
+		// service-certificate fallback when no explicit signing Secret exists.
+		signingSecretName := DataStorageSigningSecretName(kn)
+		if signingSecretName == "" {
+			signingSecretName = TLSSecretName(kn, TLSServiceDataStorage)
+		}
+		volumes = append(volumes, secretVolume("signing-cert", signingSecretName))
 		mounts = append(mounts, corev1.VolumeMount{Name: "signing-cert", MountPath: "/etc/certs", ReadOnly: true})
 	}
 
@@ -233,7 +238,7 @@ func AIAnalysisDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 	env := []corev1.EnvVar{
 		{Name: "CONFIG_PATH", Value: "/etc/aianalysis/config.yaml"},
 	}
-	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
+	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
 	ports := make([]corev1.ContainerPort, 0, 4)
 	ports = append(ports,
 		corev1.ContainerPort{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
@@ -274,7 +279,7 @@ func SignalProcessingDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernaut
 	})
 
 	var env []corev1.EnvVar
-	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
+	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
 	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, knV2, "/etc/signalprocessing", effectiveFleetOAuth2SecretRef(knV2.Spec.SignalProcessing.Fleet, ""))
 	ports := make([]corev1.ContainerPort, 0, 3)
 	ports = append(ports,
@@ -296,7 +301,7 @@ func RemediationOrchestratorDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *ku
 	volumes := []corev1.Volume{configMapVolume("config", "remediationorchestrator-config")}
 	mounts := []corev1.VolumeMount{{Name: "config", MountPath: "/etc/config", ReadOnly: true}}
 	var env []corev1.EnvVar
-	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
+	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
 	volumes, mounts = appendFleetSecretMounts(volumes, mounts, knV2, "/etc/remediationorchestrator", effectiveFleetOAuth2SecretRef(knV2.Spec.RemediationOrchestrator.Fleet, ""))
 	ports := make([]corev1.ContainerPort, 0, 3)
 	ports = append(ports,
@@ -320,7 +325,7 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernau
 	var env []corev1.EnvVar
 	var initContainers []corev1.Container
 
-	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
+	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
 	volumes, mounts = appendWorkflowExecutionFleetSecretMount(volumes, mounts, knV2, "/etc/workflowexecution")
 
 	if ref := kn.Spec.WorkflowExecution.Ansible.CACertSecretRef; ref != nil {
@@ -355,9 +360,9 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernau
 			Image:           ubiImage,
 			ImagePullPolicy: kn.Spec.Image.PullPolicy,
 			Command:         []string{"sh", "-c"},
-			Args:            []string{"cat /etc/tls-ca/service-ca.crt /aap-ca/aap-ca.crt > /combined/ca-bundle.crt"},
+			Args:            []string{"cat " + InterServiceTLSCAFileFor(kn) + " /aap-ca/aap-ca.crt > /combined/ca-bundle.crt"},
 			VolumeMounts: []corev1.VolumeMount{
-				{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
+				InterServiceTLSCAMount(kn),
 				{Name: "aap-ca", MountPath: "/aap-ca", ReadOnly: true},
 				{Name: "combined-ca", MountPath: "/combined"},
 			},
@@ -429,7 +434,7 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuber
 	}
 
 	var env []corev1.EnvVar
-	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
+	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
 	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, knV2, "/etc/effectivenessmonitor", effectiveFleetOAuth2SecretRef(knV2.Spec.EffectivenessMonitor.Fleet, ""))
 	ports := make([]corev1.ContainerPort, 0, 3)
 	ports = append(ports,
@@ -499,7 +504,7 @@ func NotificationDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1al
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
 	}
-	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
+	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
 	ports := make([]corev1.ContainerPort, 0, 3)
 	ports = append(ports,
 		corev1.ContainerPort{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
@@ -526,7 +531,7 @@ func KubernautAgentDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1
 	}
 
 	volumes, mounts, envVars := kaCoreVolumesMountsEnv(kn, kaProfile)
-	volumes, mounts, envVars = appendInterServiceTLSCA(volumes, mounts, envVars)
+	volumes, mounts, envVars = appendInterServiceTLSCA(kn, volumes, mounts, envVars)
 	volumes, mounts = kaCredentialVolumesAndMounts(kn, kaProfile, volumes, mounts)
 	// #204: componentEtcDir is deliberately "/etc/kubernautagent"
 	// (unhyphenated), NOT "/etc/kubernaut-agent" like every other mount
@@ -595,7 +600,7 @@ func kaCoreVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut, kaProfile kubernaut
 		corev1.VolumeMount{Name: "config", MountPath: "/etc/kubernaut-agent", ReadOnly: true},
 		corev1.VolumeMount{Name: "llm-runtime", MountPath: "/etc/kubernaut-agent/llm-runtime", ReadOnly: true},
 		corev1.VolumeMount{Name: "llm-credentials", MountPath: "/etc/kubernaut-agent/credentials", ReadOnly: true},
-		corev1.VolumeMount{Name: "tls-certs", MountPath: InterServiceTLSCertDir, ReadOnly: true},
+		corev1.VolumeMount{Name: "tls-certs", MountPath: InterServiceTLSCertDirFor(kn), ReadOnly: true},
 	)
 	envVars := make([]corev1.EnvVar, 0, 3)
 	envVars = append(envVars,
@@ -785,7 +790,7 @@ func AuthWebhookDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alp
 		{Name: "webhook-certs", MountPath: "/tmp/k8s-webhook-server/serving-certs", ReadOnly: true},
 	}
 	var env []corev1.EnvVar
-	volumes, mounts, env = appendInterServiceTLSCA(volumes, mounts, env)
+	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
 
 	ports := make([]corev1.ContainerPort, 0, 3)
 	ports = append(ports,
@@ -1220,19 +1225,6 @@ func configMapVolume(name, cmName string) corev1.Volume {
 	}
 }
 
-func optionalConfigMapVolume(name, cmName string) corev1.Volume {
-	optional := true
-	return corev1.Volume{
-		Name: name,
-		VolumeSource: corev1.VolumeSource{
-			ConfigMap: &corev1.ConfigMapVolumeSource{
-				LocalObjectReference: corev1.LocalObjectReference{Name: cmName},
-				Optional:             &optional,
-			},
-		},
-	}
-}
-
 func secretVolume(name, secretName string) corev1.Volume {
 	return corev1.Volume{
 		Name: name,
@@ -1251,11 +1243,12 @@ func secretVolume(name, secretName string) corev1.Volume {
 // must keep its own, broader value rather than have it silently shadowed by
 // this narrower, inter-service-only one. TLS_CA_FILE has no such conflict
 // (no caller pre-sets it) so it keeps unconditional-append semantics.
-func appendInterServiceTLSCA(volumes []corev1.Volume, mounts []corev1.VolumeMount, env []corev1.EnvVar) ([]corev1.Volume, []corev1.VolumeMount, []corev1.EnvVar) {
-	volumes = append(volumes, configMapVolume("tls-ca", TrustBundleConfigMapName))
-	mounts = append(mounts, corev1.VolumeMount{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true})
-	env = append(env, corev1.EnvVar{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFile})
-	env = appendEnvIfAbsent(env, "SSL_CERT_FILE", InterServiceTLSCAFile)
+func appendInterServiceTLSCA(kn *kubernautv1alpha2.Kubernaut, volumes []corev1.Volume, mounts []corev1.VolumeMount, env []corev1.EnvVar) ([]corev1.Volume, []corev1.VolumeMount, []corev1.EnvVar) {
+	volumes = append(volumes, InterServiceTLSCAVolume(kn))
+	mounts = append(mounts, InterServiceTLSCAMount(kn))
+	caFile := InterServiceTLSCAFileFor(kn)
+	env = append(env, corev1.EnvVar{Name: "TLS_CA_FILE", Value: caFile})
+	env = appendEnvIfAbsent(env, "SSL_CERT_FILE", caFile)
 	return volumes, mounts, env
 }
 

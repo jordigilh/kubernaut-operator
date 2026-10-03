@@ -235,6 +235,41 @@ var _ = Describe("WebhookConfigurations", func() {
 		}
 	})
 
+	It("UT-TLS-491-010 [SC-8, SC-13, SC-17, SI-4; SOC2 CC6, CC7; ASVS v5.0.0-V12.1.3, v5.0.0-V13.2.1] publishes the cert-manager CA injection contract alongside the validated bundle", func() {
+		kn := testKubernaut()
+		ca := []byte("cert-manager-ca")
+		mwc := MutatingWebhookConfigurationWithCertManagerCA(kn, ca)
+		vwc := ValidatingWebhookConfigurationWithCertManagerCA(kn, ca)
+
+		Expect(mwc.Annotations).NotTo(HaveKey(OCPServiceCAInjectAnnotation))
+		Expect(mwc.Annotations).To(HaveKeyWithValue("cert-manager.io/inject-ca-from", kn.Namespace+"/authwebhook-cert"))
+		Expect(vwc.Annotations).NotTo(HaveKey(OCPServiceCAInjectAnnotation))
+		Expect(vwc.Annotations).To(HaveKeyWithValue("cert-manager.io/inject-ca-from", kn.Namespace+"/authwebhook-cert"))
+		for _, webhook := range mwc.Webhooks {
+			Expect(webhook.ClientConfig.CABundle).To(Equal(ca))
+		}
+		for _, webhook := range vwc.Webhooks {
+			Expect(webhook.ClientConfig.CABundle).To(Equal(ca))
+		}
+	})
+
+	It("UT-TLS-491-011 [AC-6, SC-8, SC-17; SOC2 CC6, CC7; ASVS v5.0.0-V13.2.1, v5.0.0-V13.3.1] leaves the cert-manager caBundle field to cainjector", func() {
+		kn := testKubernaut()
+		mwc := MutatingWebhookConfigurationWithCertManagerInjection(kn)
+		vwc := ValidatingWebhookConfigurationWithCertManagerInjection(kn)
+
+		Expect(mwc.Annotations).NotTo(HaveKey(OCPServiceCAInjectAnnotation))
+		Expect(mwc.Annotations).To(HaveKeyWithValue("cert-manager.io/inject-ca-from", kn.Namespace+"/authwebhook-cert"))
+		Expect(vwc.Annotations).NotTo(HaveKey(OCPServiceCAInjectAnnotation))
+		Expect(vwc.Annotations).To(HaveKeyWithValue("cert-manager.io/inject-ca-from", kn.Namespace+"/authwebhook-cert"))
+		for _, webhook := range mwc.Webhooks {
+			Expect(webhook.ClientConfig.CABundle).To(BeEmpty())
+		}
+		for _, webhook := range vwc.Webhooks {
+			Expect(webhook.ClientConfig.CABundle).To(BeEmpty())
+		}
+	})
+
 	It("use FailurePolicy=Fail", func() {
 		kn := testKubernaut()
 		mwc := MutatingWebhookConfiguration(kn)

@@ -399,7 +399,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	// ======================================================================
 
 	Context("Phase Progression", func() {
-		It("IT-TLS-GAP-003 deploys generic TLS, trust, webhook, and Ingress resources without OpenShift annotations", func() {
+		It("IT-TLS-GAP-003 [SC-8, SC-17, SI-4; SOC2 CC6, CC7, A1; ASVS v5.0.0-V12.1.3, v5.0.0-V13.2.1, v5.0.0-V16.5.2] deploys generic TLS, trust, webhook, and Ingress resources without OpenShift annotations", func() {
 			createBYOSecrets(ctx)
 			createIngressTLSSecret(ctx, "gateway.example.test")
 			cr := newCRWithRouteDisabled()

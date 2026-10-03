@@ -1645,12 +1645,24 @@ func (s *IngressSpec) IngressEnabled() bool {
 }
 
 // TLSMode identifies the source of runtime certificate and trust material.
+// The lower-case values are the one-to-one Helm chart contract. The title-case
+// values are retained as backward-compatible operator aliases introduced by
+// the platform-neutral API.
 // The empty value means that an optional OpenShift service-CA adapter may be
 // selected; it is not a generic-cluster plaintext fallback.
-// +kubebuilder:validation:Enum=AdministratorManaged;CertManager;DevelopmentSelfSigned
+// +kubebuilder:validation:Enum=hook;cert-manager;manual;AdministratorManaged;CertManager;DevelopmentSelfSigned
 type TLSMode string
 
 const (
+	// TLSModeHook mirrors Helm tls.mode=hook.
+	TLSModeHook TLSMode = "hook"
+	// TLSModeHelmCertManager mirrors Helm tls.mode=cert-manager. Unlike the
+	// legacy title-case alias, this mode enables operator provisioning by
+	// default.
+	TLSModeHelmCertManager TLSMode = "cert-manager"
+	// TLSModeManual mirrors Helm tls.mode=manual.
+	TLSModeManual TLSMode = "manual"
+
 	TLSModeAdministratorManaged  TLSMode = "AdministratorManaged"
 	TLSModeCertManager           TLSMode = "CertManager"
 	TLSModeDevelopmentSelfSigned TLSMode = "DevelopmentSelfSigned"
@@ -1663,6 +1675,17 @@ type TLSConfigSpec struct {
 	// service-CA adapter; generic clusters must not treat it as plaintext.
 	// +optional
 	Mode TLSMode `json:"mode,omitempty"`
+
+	// InterService mirrors Helm tls.interService. The defaults are /etc/tls and
+	// /etc/tls-ca/ca.crt, matching the chart's values.schema.json contract.
+	// +optional
+	InterService *InterServiceTLSConfig `json:"interService,omitempty"`
+
+	// Hooks mirrors Helm hooks.tlsCerts. Helm hook Jobs are replaced by the
+	// operator's reconciliation loop, while the extra SAN input remains the
+	// same migration-compatible configuration surface.
+	// +optional
+	Hooks *TLSHooksConfig `json:"hooks,omitempty"`
 
 	// References administrator-owned internal CA and service serving Secrets.
 	// The operator validates these objects but does not mutate or delete them.
@@ -1682,23 +1705,58 @@ type TLSConfigSpec struct {
 // AdministratorManagedTLSConfig references administrator-owned TLS material.
 type AdministratorManagedTLSConfig struct {
 	// Secret containing the public internal CA under ca.crt.
-	// +kubebuilder:validation:MinLength=1
+	// Required when mode=AdministratorManaged. In other modes this field is
+	// ignored unless it is used as an explicit output-name override.
+	// +optional
 	InternalCASecretName string `json:"internalCASecretName"`
 
 	// Serving Secret names keyed by component: gateway, datastorage,
 	// kubernautagent, apifrontend, and authwebhook. Each Secret contains
 	// tls.crt and tls.key with SANs covering its Service DNS names.
-	// +kubebuilder:validation:MinProperties=1
+	// Required when mode=AdministratorManaged. Provisioned cert-manager mode
+	// fills omitted entries with the stable operator defaults.
+	// +optional
 	ServiceTLSSecretNames map[string]string `json:"serviceTLSSecretNames"`
+}
+
+// InterServiceTLSConfig mirrors the upstream Helm tls.interService values.
+type InterServiceTLSConfig struct {
+	// Directory containing tls.crt and tls.key for server-side TLS.
+	// +kubebuilder:default="/etc/tls"
+	// +optional
+	CertDir string `json:"certDir,omitempty"`
+
+	// Path to the CA certificate used by client-side trust.
+	// +kubebuilder:default="/etc/tls-ca/ca.crt"
+	// +optional
+	CAFile string `json:"caFile,omitempty"`
+}
+
+// TLSHooksConfig mirrors the upstream Helm hooks values relevant to TLS.
+type TLSHooksConfig struct {
+	// TLSCerts configures the self-signed certificate SAN additions used by the
+	// Helm tls-cert-job. The operator reconciles the equivalent Secrets directly.
+	// +optional
+	TLSCerts TLSCertsConfig `json:"tlsCerts,omitempty"`
+}
+
+// TLSCertsConfig mirrors hooks.tlsCerts in the upstream chart.
+type TLSCertsConfig struct {
+	// Additional DNS SANs for inter-service certificates. When non-empty, the
+	// loopback IP 127.0.0.1 is also included, matching the chart behavior.
+	// +optional
+	ExtraSANs []string `json:"extraSANs,omitempty"`
 }
 
 // TLSIssuerRef identifies an existing cert-manager issuer.
 type TLSIssuerRef struct {
-	// Issuer name.
-	// +kubebuilder:validation:MinLength=1
-	Name string `json:"name"`
-	// Issuer kind, normally Issuer or ClusterIssuer.
-	// +kubebuilder:default="Issuer"
+	// Issuer name. When empty in Helm-compatible cert-manager mode, the
+	// controller selects the sole Issuer/ClusterIssuer in scope, matching the
+	// chart's live-cluster lookup behavior.
+	// +optional
+	Name string `json:"name,omitempty"`
+	// Issuer kind, normally Issuer or ClusterIssuer. The lower-case Helm mode
+	// defaults to ClusterIssuer; legacy title-case mode defaults to Issuer.
 	// +optional
 	Kind string `json:"kind,omitempty"`
 	// API group, normally cert-manager.io.
@@ -1709,16 +1767,103 @@ type TLSIssuerRef struct {
 
 // CertManagerTLSConfig references cert-manager-managed runtime Secrets.
 type CertManagerTLSConfig struct {
-	// Issuer used by runtime Certificate resources.
-	Issuer TLSIssuerRef `json:"issuer"`
+	// Issuer is the legacy operator spelling for the cert-manager issuer
+	// reference. It remains accepted for existing CRs.
+	// +optional
+	Issuer TLSIssuerRef `json:"issuer,omitempty"`
+	// IssuerRef mirrors Helm tls.certManager.issuerRef. When populated it takes
+	// precedence over the legacy Issuer field.
+	// +optional
+	IssuerRef TLSIssuerRef `json:"issuerRef,omitempty"`
 	// Public CA Secret containing ca.crt for administrator-managed material or
 	// tls.crt for cert-manager Certificate output.
-	// +kubebuilder:validation:MinLength=1
+	// Required for reference-only mode. Provisioning mode defaults this to the
+	// dedicated inter-service CA Secret unless an override is supplied here or
+	// in Provisioning.
+	// +optional
 	InternalCASecretName string `json:"internalCASecretName"`
 	// Serving Secret names keyed by component, with the same keys as the
-	// administrator-managed mode.
-	// +kubebuilder:validation:MinProperties=1
+	// administrator-managed mode. Required for reference-only mode;
+	// provisioning mode fills omitted entries with stable defaults.
+	// +optional
 	ServiceTLSSecretNames map[string]string `json:"serviceTLSSecretNames"`
+	// Provisioning enables operator-owned cert-manager Issuer and Certificate
+	// resources. cert-manager remains the owner of generated output Secrets.
+	// When omitted, the existing reference-only contract is preserved.
+	// +optional
+	Provisioning *CertManagerTLSProvisioning `json:"provisioning,omitempty"`
+}
+
+// EffectiveIssuerRef returns the Helm-compatible issuerRef when supplied and
+// otherwise falls back to the legacy operator issuer field.
+func (c *CertManagerTLSConfig) EffectiveIssuerRef() TLSIssuerRef {
+	if c == nil {
+		return TLSIssuerRef{}
+	}
+	// The API server defaults issuerRef.group even when issuerRef was
+	// submitted as an empty object. Name or kind is therefore the reliable
+	// signal that the Helm-compatible field was actually supplied; a
+	// group-only value must not hide the legacy issuer reference.
+	if c.IssuerRef.Name != "" || c.IssuerRef.Kind != "" {
+		return c.IssuerRef
+	}
+	return c.Issuer
+}
+
+// CertManagerTLSProvisioning configures cert-manager resource provisioning for
+// the runtime TLS identities. The operator never installs cert-manager or
+// mutates the Secrets produced by these resources.
+type CertManagerTLSProvisioning struct {
+	// Explicitly enables provisioning. A nil value is treated as true when the
+	// provisioning block is present, so `provisioning: {}` is a useful concise
+	// opt-in while an explicit false preserves reference-only behavior.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Names of the operator-owned bootstrap Issuer, CA Certificate, and
+	// CA-backed Issuer. Defaults match the upstream Helm chart.
+	// +kubebuilder:default="kubernaut-interservice-bootstrap-issuer"
+	// +optional
+	BootstrapIssuerName string `json:"bootstrapIssuerName,omitempty"`
+	// +kubebuilder:default="kubernaut-interservice-ca"
+	// +optional
+	InternalCACertificateName string `json:"internalCACertificateName,omitempty"`
+	// +kubebuilder:default="kubernaut-interservice-ca-issuer"
+	// +optional
+	InternalCAIssuerName string `json:"internalCAIssuerName,omitempty"`
+	// Optional output Secret override. The parent CertManager
+	// InternalCASecretName takes precedence when it is set for migration.
+	// +optional
+	InternalCASecretName string `json:"internalCASecretName,omitempty"`
+
+	// Lifetime and renewal window for leaf and externally-issued certificates.
+	// The internal root uses a ten-year default unless InternalCADuration is
+	// explicitly set.
+	// +kubebuilder:default="8760h"
+	// +optional
+	Duration string `json:"duration,omitempty"`
+	// +kubebuilder:default="720h"
+	// +optional
+	RenewBefore string `json:"renewBefore,omitempty"`
+	// +kubebuilder:default="87600h"
+	// +optional
+	InternalCADuration string `json:"internalCADuration,omitempty"`
+
+	// Extra DNS SANs are added to inter-service leaves. When non-empty, the
+	// loopback IP 127.0.0.1 is also included for host-based development clients,
+	// matching the upstream chart contract.
+	// +optional
+	ExtraSANs []string `json:"extraSANs,omitempty"`
+
+	// Certificate and output Secret names for DataStorage's RSA audit-signing
+	// key. Defaults to datastorage-signing-cert.
+	// +kubebuilder:default="datastorage-signing-cert"
+	// +optional
+	SigningCertificateName string `json:"signingCertificateName,omitempty"`
+	// +kubebuilder:default="datastorage-signing-cert"
+	// +optional
+	SigningCertificateSecretName string `json:"signingCertificateSecretName,omitempty"`
 }
 
 // DevelopmentSelfSignedTLSConfig configures namespace-scoped development TLS.

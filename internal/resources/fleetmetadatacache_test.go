@@ -118,6 +118,21 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 		Expect(cm.Data["config.yaml"]).To(ContainSubstring("tlsCaFile: " + InterServiceTLSCAFile))
 	})
 
+	It("UT-TLS-491-009 [SC-8; SOC2 CC6, CC7; ASVS v5.0.0-V12.1.3, v5.0.0-V13.2.1] renders chart-compatible server TLS and OAuth2 CA paths", func() {
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
+		knV2.Spec.TLS.InterService = &kubernautv1alpha2.InterServiceTLSConfig{
+			CertDir: "/custom/tls",
+			CAFile:  "/custom/ca/ca.pem",
+		}
+
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("certDir: /custom/tls"))
+		Expect(data).To(ContainSubstring("tlsCaFile: /custom/ca/ca.pem"))
+	})
+
 	// #390: mcpGateway.resilience mirrors upstream pkg/fleet.MCPGatewayConfig.Resilience
 	// (kubernaut#2262 Phase 2, kubernaut PR #2268) -- FMC's
 	// fmcconfig.ServiceConfig.MCPGateway is typed directly as
@@ -161,7 +176,7 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 		kn, knV2 := testKubernautWithFMC()
 		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("tls:"), "FMC config should omit valkey.tls when spec.valkey.tls is unset, got:\n%s", cm.Data["config.yaml"])
+		Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("valkey:\n    tls:"), "FMC config should omit valkey.tls when spec.valkey.tls is unset, got:\n%s", cm.Data["config.yaml"])
 	})
 
 	It("#398 [SC-8]: renders valkey.tls.* from spec.valkey.tls, mirroring DataStorage's rendering", func() {

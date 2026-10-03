@@ -59,6 +59,8 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*
 	}
 
 	redirectURL := consoleRedirectURL(kn, ingressDomain)
+	caFile := InterServiceTLSCAFileFor(kn)
+	caDir := InterServiceTLSCADirFor(kn)
 
 	oauthArgs := []string{
 		"--provider=oidc",
@@ -78,7 +80,8 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*
 		// #309: verify the OIDC issuer's TLS certificate rather than skip
 		// verification; trust the cluster's service-ca bundle (mounted
 		// below) so internal/self-signed issuers still validate.
-		"--provider-ca-file=/etc/tls-ca/service-ca.crt",
+		"--provider-ca-file=" + caFile,
+		"--use-system-trust-store=true",
 		"--ping-path=/oauth2/ping",
 	}
 
@@ -102,7 +105,7 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*
 						},
 					},
 					Containers: []corev1.Container{
-						consoleOAuth2ProxyContainer(oauth2ProxyImage, oauthArgs, secretName),
+						consoleOAuth2ProxyContainer(oauth2ProxyImage, oauthArgs, secretName, caDir),
 						consoleAppContainer(kn, consoleImage),
 					},
 					Volumes: []corev1.Volume{
@@ -110,7 +113,7 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*
 						{Name: "nginx-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 							LocalObjectReference: corev1.LocalObjectReference{Name: ComponentConsole + "-nginx"},
 						}}},
-						configMapVolume("tls-ca", TrustBundleConfigMapName),
+						InterServiceTLSCAVolume(kn),
 					},
 				},
 			},
@@ -122,13 +125,13 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*
 
 // consoleOAuth2ProxyContainer builds the oauth2-proxy sidecar container that
 // terminates OIDC auth in front of the static console container.
-func consoleOAuth2ProxyContainer(image string, args []string, secretName string) corev1.Container {
+func consoleOAuth2ProxyContainer(image string, args []string, secretName, caDir string) corev1.Container {
 	return corev1.Container{
 		Name:  "oauth2-proxy",
 		Image: image,
 		Args:  args,
 		VolumeMounts: []corev1.VolumeMount{
-			{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
+			{Name: "tls-ca", MountPath: caDir, ReadOnly: true},
 		},
 		Env: []corev1.EnvVar{
 			{Name: "OAUTH2_PROXY_CLIENT_ID", ValueFrom: &corev1.EnvVarSource{
@@ -214,7 +217,7 @@ func consoleAppContainer(kn *kubernautv1alpha2.Kubernaut, image string) corev1.C
 			{Name: "nginx-tmp", MountPath: "/tmp"},
 			{Name: "nginx-config", MountPath: "/opt/app-root/etc/nginx.d/kubernaut-http.conf", SubPath: "http.conf", ReadOnly: true},
 			{Name: "nginx-config", MountPath: "/opt/app-root/etc/nginx.default.d/kubernaut-server.conf", SubPath: "server.conf", ReadOnly: true},
-			{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
+			InterServiceTLSCAMount(kn),
 		},
 	}
 }
@@ -240,7 +243,7 @@ func ConsoleNginxConfigMap(kn *kubernautv1alpha2.Kubernaut) *corev1.ConfigMap {
 		ObjectMeta: ObjectMeta(kn, ComponentConsole+"-nginx", ComponentConsole),
 		Data: map[string]string{
 			"http.conf":   consoleNginxHTTPConf(),
-			"server.conf": consoleNginxServerConf(afURL, true),
+			"server.conf": consoleNginxServerConf(afURL, true, InterServiceTLSCAFileFor(kn)),
 		},
 	}
 }
@@ -262,7 +265,11 @@ gzip_vary on;
 // headers, TLS trust for the AF upstream, and the location blocks proxying
 // /a2a/, /mcp, /.well-known/, static assets, /runtime-config.js (#314), and
 // the SPA fallback.
-func consoleNginxServerConf(afURL string, enableRawThinking bool) string {
+func consoleNginxServerConf(afURL string, enableRawThinking bool, caFiles ...string) string {
+	caFile := InterServiceTLSCAFile
+	if len(caFiles) > 0 && caFiles[0] != "" {
+		caFile = caFiles[0]
+	}
 	return fmt.Sprintf(`add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; connect-src 'self'; font-src 'self' https://fonts.gstatic.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
 add_header X-Content-Type-Options "nosniff" always;
 add_header X-Frame-Options "DENY" always;
@@ -270,7 +277,7 @@ add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
 add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
-proxy_ssl_trusted_certificate /etc/tls-ca/service-ca.crt;
+proxy_ssl_trusted_certificate %s;
 proxy_ssl_verify on;
 proxy_ssl_server_name on;
 
@@ -333,7 +340,7 @@ location / {
   add_header Cache-Control "no-cache, must-revalidate";
   try_files $uri $uri/ /index.html;
 }
-`, afURL, afURL, afURL, enableRawThinking)
+`, caFile, afURL, afURL, afURL, enableRawThinking)
 }
 
 // ConsoleRoute builds the OCP Route for external access to the console.

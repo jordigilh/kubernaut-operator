@@ -424,6 +424,23 @@ var _ = Describe("InterServiceTLSCAFile", func() {
 	It("matches OCP service-ca path", func() {
 		Expect(InterServiceTLSCAFile).To(Equal("/etc/tls-ca/service-ca.crt"))
 	})
+
+	It("UT-TLS-491-007 [SC-8, SC-12; SOC2 CC6, CC8; ASVS v5.0.0-V12.1.1, v5.0.0-V13.2.1] resolves the Helm TLS path contract from the Kubernaut CR", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
+		Expect(InterServiceTLSCertDirFor(kn)).To(Equal("/etc/tls"))
+		Expect(InterServiceTLSCAFileFor(kn)).To(Equal("/etc/tls-ca/ca.crt"))
+
+		kn.Spec.TLS.InterService = &kubernautv1alpha2.InterServiceTLSConfig{
+			CertDir: "/custom/tls",
+			CAFile:  "/custom/ca/ca.pem",
+		}
+		Expect(InterServiceTLSCertDirFor(kn)).To(Equal("/custom/tls"))
+		Expect(InterServiceTLSCAFileFor(kn)).To(Equal("/custom/ca/ca.pem"))
+		volume := InterServiceTLSCAVolume(kn)
+		Expect(volume.ConfigMap.Items).To(ConsistOf(corev1.KeyToPath{Key: "ca.crt", Path: "ca.pem"}))
+		Expect(InterServiceTLSCAMount(kn).MountPath).To(Equal("/custom/ca"))
+	})
 })
 
 var _ = Describe("ValkeyAddr", func() {

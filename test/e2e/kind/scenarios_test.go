@@ -42,7 +42,9 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 	})
 
 	It(
-		"E2E-TLS-GAP-001 / E2E-TLS-CERTMANAGER-001 drives the CR through validation, migration, deployment, "+
+		"E2E-TLS-GAP-001 / E2E-TLS-CERTMANAGER-001 [SC-8, SC-13, SC-17, SI-4; "+
+			"SOC2 CC6, CC7, A1; ASVS v5.0.0-V12.1.3, v5.0.0-V13.2.1, v5.0.0-V16.5.2] drives the CR through "+
+			"validation, migration, deployment, "+
 			"TLS source, and provider status",
 		func() {
 			By("waiting for the real operator to validate the CR")
@@ -132,7 +134,9 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 		}).Should(Succeed())
 	})
 
-	It("E2E-TLS-CERTMANAGER-002 rotates a cert-manager leaf without losing operator trust", func() {
+	It("E2E-TLS-CERTMANAGER-002 [SC-8, SC-12, SC-13, SI-4; SOC2 CC7, A1; "+
+		"ASVS v5.0.0-V11.1.1, v5.0.0-V11.1.2, v5.0.0-V12.1.1, v5.0.0-V16.5.2] rotates a cert-manager leaf "+
+		"without losing operator trust", func() {
 		if configuredTLS != tlsCertManager {
 			return
 		}

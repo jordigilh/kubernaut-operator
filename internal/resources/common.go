@@ -19,6 +19,7 @@ package resources
 import (
 	"fmt"
 	"os"
+	"path"
 	"regexp"
 	"strings"
 
@@ -229,6 +230,123 @@ const InterServiceTLSCertDir = "/etc/tls"
 // clients to verify inter-service TLS connections. OCP service-ca injects
 // the bundle under the key "service-ca.crt".
 const InterServiceTLSCAFile = "/etc/tls-ca/service-ca.crt"
+
+const (
+	chartInterServiceTLSCertDir = "/etc/tls"
+	chartInterServiceTLSCAFile  = "/etc/tls-ca/ca.crt"
+)
+
+// InterServiceTLSCertDirFor resolves the chart-compatible inter-service server
+// certificate directory when a lower-case Helm TLS mode or explicit
+// interService block is selected. Legacy title-case modes retain the
+// platform-neutral default for backward compatibility.
+func InterServiceTLSCertDirFor(kn *kubernautv1alpha2.Kubernaut) string {
+	if kn != nil && kn.Spec.TLS.InterService != nil {
+		if kn.Spec.TLS.InterService.CertDir != "" {
+			return kn.Spec.TLS.InterService.CertDir
+		}
+		return chartInterServiceTLSCertDir
+	}
+	if isHelmTLSMode(kn) {
+		return chartInterServiceTLSCertDir
+	}
+	return InterServiceTLSCertDir
+}
+
+// InterServiceTLSCAFileFor resolves the chart-compatible inter-service client
+// trust path using the same compatibility rules as InterServiceTLSCertDirFor.
+func InterServiceTLSCAFileFor(kn *kubernautv1alpha2.Kubernaut) string {
+	if kn != nil && kn.Spec.TLS.InterService != nil {
+		if kn.Spec.TLS.InterService.CAFile != "" {
+			return kn.Spec.TLS.InterService.CAFile
+		}
+		return chartInterServiceTLSCAFile
+	}
+	if isHelmTLSMode(kn) {
+		return chartInterServiceTLSCAFile
+	}
+	return InterServiceTLSCAFile
+}
+
+// InterServiceTLSCADirFor returns the directory in which the selected
+// inter-service CA file must be mounted. The Helm chart treats caFile as a
+// complete path, so custom filenames must not be discarded when creating the
+// ConfigMap volume mount.
+func InterServiceTLSCADirFor(kn *kubernautv1alpha2.Kubernaut) string {
+	return path.Dir(InterServiceTLSCAFileFor(kn))
+}
+
+// InterServiceTLSCAKeyFor returns the source ConfigMap key for the selected
+// runtime TLS contract. OpenShift's injected ConfigMaps use service-ca.crt;
+// the generic/Helm-compatible contract publishes ca.crt.
+func InterServiceTLSCAKeyFor(kn *kubernautv1alpha2.Kubernaut) string {
+	if kn == nil || kn.Spec.TLS.Mode == "" {
+		return "service-ca.crt"
+	}
+	return "ca.crt"
+}
+
+// InterServiceTLSCAVolume returns the selected trust-material volume and maps
+// its source key to the exact chart-compatible caFile basename. Manual mode is
+// special: the chart's inter-service-ca ConfigMap is administrator-owned and
+// must be mounted directly rather than replaced by an operator-generated copy.
+func InterServiceTLSCAVolume(kn *kubernautv1alpha2.Kubernaut) corev1.Volume {
+	caPath := path.Base(InterServiceTLSCAFileFor(kn))
+	if kn != nil && kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual {
+		if cfg := kn.Spec.TLS.AdministratorManaged; cfg != nil && cfg.InternalCASecretName != "" {
+			return corev1.Volume{
+				Name: "tls-ca",
+				VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+					SecretName: cfg.InternalCASecretName,
+					Items:      []corev1.KeyToPath{{Key: "ca.crt", Path: caPath}},
+				}},
+			}
+		}
+		return corev1.Volume{
+			Name: "tls-ca",
+			VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: InterServiceCAConfigMapName},
+				Items:                []corev1.KeyToPath{{Key: "ca.crt", Path: caPath}},
+			}},
+		}
+	}
+
+	return corev1.Volume{
+		Name: "tls-ca",
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: TrustBundleConfigMapName},
+				Items: []corev1.KeyToPath{{
+					Key:  InterServiceTLSCAKeyFor(kn),
+					Path: caPath,
+				}},
+				Optional: ptr.To(true),
+			},
+		},
+	}
+}
+
+// InterServiceTLSCAMount returns the ConfigMap volume mount corresponding to
+// InterServiceTLSCAVolume.
+func InterServiceTLSCAMount(kn *kubernautv1alpha2.Kubernaut) corev1.VolumeMount {
+	return corev1.VolumeMount{
+		Name:      "tls-ca",
+		MountPath: InterServiceTLSCADirFor(kn),
+		ReadOnly:  true,
+	}
+}
+
+func isHelmTLSMode(kn *kubernautv1alpha2.Kubernaut) bool {
+	if kn == nil {
+		return false
+	}
+	switch kn.Spec.TLS.Mode {
+	case kubernautv1alpha2.TLSModeHook, kubernautv1alpha2.TLSModeHelmCertManager, kubernautv1alpha2.TLSModeManual:
+		return true
+	default:
+		return false
+	}
+}
 
 // TrustBundleConfigMapName is the operator-managed ConfigMap that merges the
 // OCP service-ca bundle (from InterServiceCAConfigMapName) with the
