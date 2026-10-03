@@ -1800,7 +1800,11 @@ func (c *CertManagerTLSConfig) EffectiveIssuerRef() TLSIssuerRef {
 	if c == nil {
 		return TLSIssuerRef{}
 	}
-	if c.IssuerRef.Name != "" || c.IssuerRef.Kind != "" || c.IssuerRef.Group != "" {
+	// The API server defaults issuerRef.group even when issuerRef was
+	// submitted as an empty object. Name or kind is therefore the reliable
+	// signal that the Helm-compatible field was actually supplied; a
+	// group-only value must not hide the legacy issuer reference.
+	if c.IssuerRef.Name != "" || c.IssuerRef.Kind != "" {
 		return c.IssuerRef
 	}
 	return c.Issuer

@@ -25,6 +25,21 @@ import (
 )
 
 var _ = Describe("cert-manager TLS provisioning", func() {
+	It("uses the legacy issuer when issuerRef contains only the API-defaulted group", func() {
+		cfg := &kubernautv1alpha2.CertManagerTLSConfig{
+			Issuer: kubernautv1alpha2.TLSIssuerRef{
+				Name:  "legacy-issuer",
+				Kind:  "Issuer",
+				Group: "cert-manager.io",
+			},
+			// The Kubernetes API applies this default even when issuerRef was
+			// submitted as an empty object. It must not hide the legacy field.
+			IssuerRef: kubernautv1alpha2.TLSIssuerRef{Group: "cert-manager.io"},
+		}
+
+		Expect(cfg.EffectiveIssuerRef()).To(Equal(cfg.Issuer))
+	})
+
 	It("UT-TLS-491-004 [AC-6, CM-6, SC-12; SOC2 CC6, CC8; ASVS v5.0.0-V13.3.1, v5.0.0-V15.2.4] does not build operator-owned cert-manager resources when provisioning is disabled", func() {
 		kn := testKubernaut()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{

@@ -161,6 +161,21 @@ var _ = Describe("runtime TLS source", func() {
 		Expect(ValidateDataStorageSigningTLSSecret(signing)).To(Succeed())
 	})
 
+	It("generates a separate RSA-2048 DataStorage signing certificate in development self-signed mode", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
+			DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
+		}
+
+		secrets, err := DevelopmentSelfSignedTLSSecrets(kn, nil, time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC))
+		Expect(err).NotTo(HaveOccurred())
+
+		byName := secretsByName(secrets)
+		Expect(byName).To(HaveKey(defaultCertManagerSigningSecretName))
+		Expect(ValidateDataStorageSigningTLSSecret(byName[defaultCertManagerSigningSecretName])).To(Succeed())
+	})
+
 	It("keeps the legacy OpenShift source explicit and never calls it a generic source", func() {
 		material, err := ResolveTLSMaterial(testKubernaut())
 		Expect(err).NotTo(HaveOccurred())
@@ -168,7 +183,7 @@ var _ = Describe("runtime TLS source", func() {
 		Expect(material.OwnsSecrets).To(BeFalse())
 	})
 
-	It("generates and reuses a complete development CA and serving-certificate set", func() {
+	It("generates and reuses a complete development CA, serving-certificate, and signing-certificate set", func() {
 		kn := testKubernaut()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
 			Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
@@ -178,12 +193,16 @@ var _ = Describe("runtime TLS source", func() {
 
 		first, err := DevelopmentSelfSignedTLSSecrets(kn, nil, now)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(first).To(HaveLen(6))
+		Expect(first).To(HaveLen(7))
 		existing := make(map[string]*corev1.Secret, len(first))
 		for _, secret := range first {
 			existing[secret.Name] = secret
 			if secret.Name == "kubernaut-internal-ca" {
 				Expect(ValidateInternalCASecret(secret)).To(Succeed())
+				continue
+			}
+			if secret.Name == defaultCertManagerSigningSecretName {
+				Expect(ValidateDataStorageSigningTLSSecret(secret)).To(Succeed())
 				continue
 			}
 			Expect(ValidateServingTLSSecret(secret)).To(Succeed())

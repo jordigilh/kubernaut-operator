@@ -73,8 +73,9 @@ func CertManagerTLSProvisioningEnabled(kn *kubernautv1alpha2.Kubernaut) bool {
 }
 
 // DataStorageSigningSecretName resolves the chart-compatible AU-9 signing
-// Secret name. Legacy title-case modes retain the prior service-certificate
-// fallback unless an explicit SigningCert is configured.
+// Secret name. Explicit development and Helm hook modes use the dedicated
+// RSA signing Secret; legacy OpenShift/cert-manager reference modes retain the
+// prior service-certificate fallback unless an explicit SigningCert is set.
 func DataStorageSigningSecretName(kn *kubernautv1alpha2.Kubernaut) string {
 	if kn == nil {
 		return ""
@@ -89,7 +90,9 @@ func DataStorageSigningSecretName(kn *kubernautv1alpha2.Kubernaut) string {
 		}
 		return certManagerProvisioningValuesFor(kn, cfg).signingSecretName
 	}
-	if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeHook || kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual {
+	if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeHook ||
+		kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeDevelopmentSelfSigned ||
+		kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual {
 		return defaultCertManagerSigningSecretName
 	}
 	return ""

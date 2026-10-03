@@ -502,11 +502,13 @@ func developmentTLSSettingsFor(kn *kubernautv1alpha2.Kubernaut) (developmentTLSS
 		return developmentTLSSettings{}, fmt.Errorf("tls.developmentSelfSigned is required")
 	}
 	settings := developmentTLSSettings{
-		rotationBefore:            defaultDevelopmentTLSRotation,
-		caName:                    defaultDevelopmentSelfSignedCASecretName,
-		extraSANs:                 developmentExtraSANs(kn),
-		includeSigningCertificate: kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeHook,
-		signingSecretName:         DataStorageSigningSecretName(kn),
+		rotationBefore: defaultDevelopmentTLSRotation,
+		caName:         defaultDevelopmentSelfSignedCASecretName,
+		extraSANs:      developmentExtraSANs(kn),
+		includeSigningCertificate: (kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeHook ||
+			kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeDevelopmentSelfSigned) &&
+			(kn.Spec.DataStorage.SigningCert == nil || kn.Spec.DataStorage.SigningCert.SecretName == ""),
+		signingSecretName: DataStorageSigningSecretName(kn),
 	}
 	if cfg != nil {
 		if cfg.RotationBefore != "" {
