@@ -112,10 +112,20 @@ Supported source modes are:
 
 | Source | Generic Kubernetes / Kind | OpenShift |
 |---|---|---|
-| Administrator-managed | Reference pre-created Secrets/ConfigMaps; the operator validates keys, CA consistency, and SANs without overwriting them | Supported where the referenced material satisfies the same contract |
+| `hook` | Explicit Helm-compatible hook mode; the operator provisions and owns the generated CA, leaves, trust bundle, webhook trust, and signing material | Not live-qualified by the current generic Kind evidence |
+| `manual` | Reference pre-created Secrets/ConfigMaps; the operator validates keys, CA consistency, and SANs without overwriting them | Supported where the referenced material satisfies the same contract, but not live-qualified here |
+| `AdministratorManaged` | Reference pre-created administrator-owned Secrets; the operator validates and publishes trust without adopting or deleting the inputs | Supported where the referenced material satisfies the same contract, but not live-qualified here |
 | cert-manager | Requires a pre-installed cert-manager, configured issuer, and its output Secrets; the operator never installs cert-manager or its CRDs | Optional; not installed by Kubernaut |
 | Development self-signed | Explicit opt-in for Kind/development; creates a dedicated CA and leaves and reports non-production status | Available only if explicitly selected; service-CA remains the preferred platform adapter |
 | OpenShift service-CA/router-CA | Not available | Optional adapter for Service leaves, webhook CA injection, Routes, and router trust |
+
+The generic Kind acceptance matrix runs isolated `development`, `hook`,
+`manual-admin`, and `certmanager` selectors. The `manual-admin` lane exercises
+both the lower-case `manual` mode and the title-case `AdministratorManaged`
+mode against pre-created administrator-owned material. These hosted journeys
+are implementation evidence rather than a FedRAMP, SOC 2, or OWASP ASVS
+certification claim. OpenShift service-CA and router-CA qualification remains
+deferred until an OCP-capable runner is available.
 
 The operator must not silently fall back from a missing or invalid production
 source to plaintext HTTP, an empty webhook `caBundle`, or a fixed OpenShift
@@ -129,9 +139,12 @@ managed as separate prerequisites.
 The dedicated operator Helm chart is deferred to a follow-up. The current
 production installation artifacts are the repository's Kustomize/OLM
 manifests; they own the operator manager's serving-certificate prerequisites.
-The operator owns per-instance AuthWebhook, inter-service, and runtime trust
-artifacts once a `Kubernaut` instance is reconciled. A future Helm chart and the
-operator must never co-own the same Secret or ConfigMap.
+For generated `DevelopmentSelfSigned` and `hook` modes, the operator owns
+per-instance AuthWebhook, inter-service, and runtime trust artifacts once a
+`Kubernaut` instance is reconciled. In `manual` and `AdministratorManaged`
+modes, the referenced Secrets remain administrator-owned and survive operator
+cleanup. A future Helm chart and the operator must never co-own the same Secret
+or ConfigMap.
 
 ## OpenShift integrations
 

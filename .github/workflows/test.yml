@@ -121,7 +121,82 @@ jobs:
       - name: Run generic Kind E2E
         env:
           KUBERNAUT_E2E_PROVIDER: generic
+          KUBERNAUT_E2E_TLS_SOURCE: development
           KIND_CLUSTER_NAME: kubernaut-kind-generic
+        run: make test-e2e-kind
+
+  kind-hook:
+    name: Kind E2E (hook TLS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install pinned Kind and kubectl
+        run: |
+          set -euo pipefail
+          KIND_VERSION=v0.31.0
+          KUBECTL_VERSION=v1.35.0
+          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kind version
+          kubectl version --client
+
+      - name: Pull pinned Kubernaut infrastructure images
+        run: |
+          docker pull docker.io/library/postgres:16.4
+          docker pull docker.io/valkey/valkey:8.0.2
+
+      - name: Run Kind hook TLS E2E
+        env:
+          KUBERNAUT_E2E_PROVIDER: generic
+          KUBERNAUT_E2E_TLS_SOURCE: hook
+          KIND_CLUSTER_NAME: kubernaut-kind-hook
+        run: make test-e2e-kind
+
+  kind-manual-admin:
+    name: Kind E2E (manual/administrator-managed TLS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install pinned Kind and kubectl
+        run: |
+          set -euo pipefail
+          KIND_VERSION=v0.31.0
+          KUBECTL_VERSION=v1.35.0
+          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kind version
+          kubectl version --client
+
+      - name: Pull pinned Kubernaut infrastructure images
+        run: |
+          docker pull docker.io/library/postgres:16.4
+          docker pull docker.io/valkey/valkey:8.0.2
+
+      - name: Run Kind manual/admin TLS E2E
+        env:
+          KUBERNAUT_E2E_PROVIDER: generic
+          KUBERNAUT_E2E_TLS_SOURCE: manual-admin
+          KIND_CLUSTER_NAME: kubernaut-kind-manual-admin
         run: make test-e2e-kind
 
   kind-certmanager:

@@ -118,7 +118,7 @@ vet: ## Run go vet against code.
 # Unit-test packages that do NOT need envtest (fast, no API server).
 # api/... covers the v1alpha2 API schema and clean-break contract; pure Go, no
 # API server needed.
-UT_PKGS := ./internal/resources/... ./internal/webhook/... ./internal/policy/... ./api/...
+UT_PKGS := ./internal/resources/... ./internal/webhook/... ./internal/policy/... ./api/... ./test/e2e/kind/contract/...
 UNIT_COVERAGE_THRESHOLD ?= 80
 
 .PHONY: test-unit
