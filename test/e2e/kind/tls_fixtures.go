@@ -46,6 +46,7 @@ const (
 	manualTLSSelectionAdmin  manualTLSSelection = "administrator-managed"
 	manualTLSAdminPrefix                        = "admin"
 	tlsCACertificateKey                         = "ca.crt"
+	tlsTrustProbeRole                           = "tls-probe"
 )
 
 type manualTLSFixture struct {
@@ -78,6 +79,14 @@ func setActiveManualTLSSelection(selection manualTLSSelection) {
 
 func activeManualTLSFixture() (manualTLSFixture, error) {
 	return manualTLSFixtureFor(activeManualTLSSelection)
+}
+
+// TLSProbeLabels returns labels that make the disposable TLS trust probe an
+// allowed peer of operator-managed provider policies.
+func TLSProbeLabels() map[string]string {
+	labels := managedProbeLabels(tlsTrustProbeRole)
+	labels["kubernaut.ai/tls-probe"] = "true"
+	return labels
 }
 
 func ensureManualAdminTLSFixtures(ctx context.Context) error {
@@ -249,7 +258,7 @@ func verifyTLSWorkloadTrust(ctx context.Context, caKey string) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      probeName,
 			Namespace: kubernautNamespace,
-			Labels:    map[string]string{"kubernaut.ai/tls-probe": "true"},
+			Labels:    TLSProbeLabels(),
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever,

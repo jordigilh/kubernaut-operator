@@ -94,4 +94,12 @@ var _ = Describe("Kind TLS source selector", func() {
 			Expect(overrides).To(HaveKeyWithValue(name, image), name)
 		}
 	})
+
+	It("UT-TLS-498-006 labels the TLS trust probe as an allowed managed policy peer", func() {
+		labels := kind.TLSProbeLabels()
+
+		Expect(labels).To(HaveKeyWithValue("kubernaut.ai/tls-probe", "true"))
+		Expect(labels).To(HaveKeyWithValue("app.kubernetes.io/managed-by", "kubernaut-operator"))
+		Expect(labels).To(HaveKeyWithValue("app.kubernetes.io/instance", "kubernaut"))
+	})
 })
