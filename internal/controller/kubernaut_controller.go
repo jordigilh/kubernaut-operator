@@ -3680,7 +3680,21 @@ func (r *KubernautReconciler) ensureGenericTLSConfigMaps(ctx context.Context, kn
 	if len(caBundle) == 0 {
 		return fmt.Errorf("generic runtime TLS CA bundle is empty")
 	}
-	for _, configMap := range resources.GenericTLSConfigMaps(kn, caBundle) {
+	configMaps := resources.GenericTLSConfigMaps(kn, caBundle)
+	if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeAdministratorManaged {
+		// Explicit administrator-managed mode reads the CA from the named Secret
+		// but still mounts the operator-owned derived trust bundle. The stable
+		// inter-service-ca ConfigMap remains external input when it already
+		// exists, so never adopt or overwrite it.
+		filtered := make([]*corev1.ConfigMap, 0, len(configMaps)-1)
+		for _, configMap := range configMaps {
+			if configMap.Name != resources.InterServiceCAConfigMapName {
+				filtered = append(filtered, configMap)
+			}
+		}
+		configMaps = filtered
+	}
+	for _, configMap := range configMaps {
 		if err := r.ensureNamespaced(ctx, kn, configMap); err != nil {
 			return fmt.Errorf("ensuring generic TLS ConfigMap %s: %w", configMap.Name, err)
 		}

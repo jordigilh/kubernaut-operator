@@ -49,6 +49,7 @@ var _ = Describe("runtime TLS source wiring", func() {
 			Data:       map[string]string{"ca.crt": "administrator-ca"},
 		}
 		r := newReconcilerWithCRDScheme(trust)
+		Expect(kubernautv1alpha2.AddToScheme(r.Scheme)).To(Succeed())
 
 		Expect(r.ensureGenericTLSConfigMaps(ctx, kn, []byte("operator-ca"))).To(Succeed())
 		live := &corev1.ConfigMap{}
@@ -59,6 +60,90 @@ var _ = Describe("runtime TLS source wiring", func() {
 		volume := resources.InterServiceTLSCAVolume(kn)
 		Expect(volume.ConfigMap).NotTo(BeNil())
 		Expect(volume.ConfigMap.Name).To(Equal(resources.InterServiceCAConfigMapName))
+	})
+
+	It("IT-TLS-ADMIN-001 [AC-6, IA-5, SC-8, SC-17; SOC2 CC6, CC7; ASVS v5.0.0-V12.1.3, v5.0.0-V13.3.1, v5.0.0-V13.3.2] leaves the explicit administrator-managed trust ConfigMap unchanged", func() {
+		ctx := context.Background()
+		kn := newMinimalCR()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode: kubernautv1alpha2.TLSModeAdministratorManaged,
+			AdministratorManaged: &kubernautv1alpha2.AdministratorManagedTLSConfig{
+				InternalCASecretName:  "administrator-internal-ca",
+				ServiceTLSSecretNames: certManagerServiceTLSSecretNames(),
+			},
+		}
+		trust := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: resources.InterServiceCAConfigMapName, Namespace: kn.Namespace},
+			Data:       map[string]string{"ca.crt": "administrator-ca", "custom.crt": "must-survive"},
+		}
+		r := newReconcilerWithCRDScheme(trust)
+		Expect(kubernautv1alpha2.AddToScheme(r.Scheme)).To(Succeed())
+
+		Expect(r.ensureGenericTLSConfigMaps(ctx, kn, []byte("operator-ca"))).To(Succeed())
+		live := &corev1.ConfigMap{}
+		Expect(r.Get(ctx, client.ObjectKeyFromObject(trust), live)).To(Succeed())
+		Expect(live.Data).To(Equal(map[string]string{"ca.crt": "administrator-ca", "custom.crt": "must-survive"}))
+		Expect(live.OwnerReferences).To(BeEmpty())
+
+		derived := &corev1.ConfigMap{}
+		Expect(r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.TrustBundleConfigMapName}, derived)).To(Succeed())
+		Expect(derived.Data["ca.crt"]).To(Equal("operator-ca"))
+	})
+
+	It("IT-TLS-DEV-001 [AC-6, SC-8, SC-12, SC-13; SOC2 CC6, CC7; ASVS v5.0.0-V11.1.1, v5.0.0-V12.1.1, v5.0.0-V13.2.1] wires development TLS through the reconciler", func() {
+		ctx := context.Background()
+		kn := newMinimalCR()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
+			DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
+		}
+		r := newReconcilerWithCRDScheme()
+		Expect(kubernautv1alpha2.AddToScheme(r.Scheme)).To(Succeed())
+
+		material, caPEM, err := r.ensureRuntimeTLS(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(material.Source).To(Equal(resources.TLSMaterialSourceDevelopmentSelfSigned))
+		Expect(material.OwnsSecrets).To(BeTrue())
+		Expect(caPEM).NotTo(BeEmpty())
+		Expect(r.ensureGenericTLSConfigMaps(ctx, kn, caPEM)).To(Succeed())
+		Expect(r.deployAdmissionWebhooks(ctx, kn, material, caPEM)).To(Succeed())
+
+		gateway := &corev1.Secret{}
+		Expect(r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.GatewayTLSSecretName}, gateway)).To(Succeed())
+		Expect(resources.ValidateServingTLSSecret(gateway)).To(Succeed())
+		trust := &corev1.ConfigMap{}
+		Expect(r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.TrustBundleConfigMapName}, trust)).To(Succeed())
+		Expect(trust.Data["ca.crt"]).To(Equal(string(caPEM)))
+	})
+
+	It("IT-TLS-HOOK-001 [AC-6, SC-8, SC-12, SC-13; SOC2 CC6, CC7, A1; ASVS v5.0.0-V11.1.1, v5.0.0-V12.1.1, v5.0.0-V13.2.1] wires hook TLS through the reconciler", func() {
+		ctx := context.Background()
+		kn := newMinimalCR()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode: kubernautv1alpha2.TLSModeHook,
+			Hooks: &kubernautv1alpha2.TLSHooksConfig{TLSCerts: kubernautv1alpha2.TLSCertsConfig{
+				ExtraSANs: []string{"localhost"},
+			}},
+		}
+		r := newReconcilerWithCRDScheme()
+		Expect(kubernautv1alpha2.AddToScheme(r.Scheme)).To(Succeed())
+
+		material, caPEM, err := r.ensureRuntimeTLS(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(material.Source).To(Equal(resources.TLSMaterialSourceDevelopmentSelfSigned))
+		Expect(material.OwnsSecrets).To(BeTrue())
+		Expect(caPEM).NotTo(BeEmpty())
+		Expect(r.ensureGenericTLSConfigMaps(ctx, kn, caPEM)).To(Succeed())
+		Expect(r.deployAdmissionWebhooks(ctx, kn, material, caPEM)).To(Succeed())
+
+		gateway := &corev1.Secret{}
+		Expect(r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.GatewayTLSSecretName}, gateway)).To(Succeed())
+		Expect(resources.ValidateServingTLSSecretForService(gateway, &corev1.Secret{
+			Data: map[string][]byte{"ca.crt": caPEM},
+		}, resources.TLSServiceGateway, kn.Namespace)).To(Succeed())
+		mwc := &admissionregistrationv1.MutatingWebhookConfiguration{}
+		Expect(r.Get(ctx, client.ObjectKey{Name: kn.Namespace + "-authwebhook-mutating"}, mwc)).To(Succeed())
+		Expect(mwc.Webhooks[0].ClientConfig.CABundle).To(Equal(caPEM))
 	})
 
 	It("IT-TLS-MANUAL-002 [IA-5, SC-8, SC-13, SC-17; SOC2 CC6, CC7; ASVS v5.0.0-V11.1.1, v5.0.0-V12.1.3, v5.0.0-V13.3.1] validates administrator-owned serving, signing, and webhook material", func() {
