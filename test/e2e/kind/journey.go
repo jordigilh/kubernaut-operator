@@ -39,6 +39,8 @@ const (
 	postgresPassword = "kind-postgres-password" //nolint:gosec // disposable Kind fixture credential
 	postgresDB       = "kubernaut"
 	valkeyPassword   = "kind-valkey-password"
+	// This is a disposable Secret name, not credential material.
+	defaultInternalCASecretName = "kubernaut-internal-ca" //nolint:gosec
 )
 
 func ensureKubernautInfrastructure(ctx context.Context) error {
@@ -80,10 +82,10 @@ func ensureCertManagerRuntimeTLS(ctx context.Context) error {
 	if _, err := kubectlStdin(ctx, certManagerRootCertificateManifest, "apply", "-f", "-"); err != nil {
 		return fmt.Errorf("applying cert-manager root certificate: %w", err)
 	}
-	if err := waitForCertificate(ctx, "kubernaut-internal-ca"); err != nil {
+	if err := waitForCertificate(ctx, defaultInternalCASecretName); err != nil {
 		return err
 	}
-	if err := waitForSecretTLSMaterial(ctx, "kubernaut-internal-ca"); err != nil {
+	if err := waitForSecretTLSMaterial(ctx, defaultInternalCASecretName); err != nil {
 		return err
 	}
 
@@ -136,7 +138,7 @@ func waitForSecretTLSMaterial(ctx context.Context, name string) error {
 }
 
 func certManagerSecretName(certificateName string) string {
-	if certificateName == "kubernaut-internal-ca" {
+	if certificateName == defaultInternalCASecretName {
 		return certificateName
 	}
 	return certificateName + "-tls"
@@ -460,11 +462,29 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 	case providerCalico:
 		provider = kubernautv1alpha2.NetworkPolicyProviderCalico
 	}
-	tls := kubernautv1alpha2.TLSConfigSpec{
-		Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
-		DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
+	tlsMode, err := TLSModeForSource(string(configuredTLS), string(activeManualTLSSelection))
+	if err != nil {
+		panic(fmt.Sprintf("resolving configured TLS fixture mode: %v", err))
 	}
-	if configuredTLS == tlsCertManager {
+	tls := kubernautv1alpha2.TLSConfigSpec{Mode: tlsMode}
+	dataStorage := kubernautv1alpha2.DataStorageSpec{}
+	switch configuredTLS {
+	case tlsDevelopment:
+		tls.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}
+	case tlsHook:
+		tls.Hooks = &kubernautv1alpha2.TLSHooksConfig{TLSCerts: kubernautv1alpha2.TLSCertsConfig{
+			ExtraSANs: []string{"localhost"},
+		}}
+	case tlsManualAdmin:
+		tls = manualAdminTLSConfig(activeManualTLSSelection)
+		prefix := string(manualTLSSelectionManual)
+		if activeManualTLSSelection == manualTLSSelectionAdmin {
+			prefix = manualTLSAdminPrefix
+		}
+		dataStorage.SigningCert = &kubernautv1alpha2.SigningCertSpec{
+			SecretName: manualTLSSigningSecretName(prefix),
+		}
+	case tlsCertManager:
 		tls = kubernautv1alpha2.TLSConfigSpec{
 			Mode: kubernautv1alpha2.TLSModeCertManager,
 			CertManager: &kubernautv1alpha2.CertManagerTLSConfig{ //nolint:gosec // disposable Kind fixture Secret references
@@ -473,7 +493,7 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 					Kind:  "Issuer",
 					Group: "cert-manager.io",
 				},
-				InternalCASecretName: "kubernaut-internal-ca",
+				InternalCASecretName: defaultInternalCASecretName,
 				ServiceTLSSecretNames: map[string]string{
 					"gateway":        "gateway-tls",
 					"datastorage":    "datastorage-tls",
@@ -501,6 +521,7 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 				SecretName: "valkey-secret",
 				Host:       "valkey.kubernaut-system.svc.cluster.local",
 			},
+			DataStorage: dataStorage,
 			AIAnalysis: kubernautv1alpha2.AIAnalysisSpec{
 				Policy: kubernautv1alpha2.PolicyConfigMapRef{ConfigMapName: "aianalysis-policy"},
 			},
@@ -521,6 +542,27 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 			TLS:             tls,
 			NetworkPolicies: kubernautv1alpha2.NetworkPoliciesSpec{Provider: provider},
 		},
+	}
+}
+
+func manualAdminTLSConfig(selection manualTLSSelection) kubernautv1alpha2.TLSConfigSpec {
+	mode, err := TLSModeForSource(string(tlsManualAdmin), string(selection))
+	if err != nil {
+		panic(fmt.Sprintf("resolving manual/admin TLS fixture mode: %v", err))
+	}
+	prefix := string(manualTLSSelectionManual)
+	if selection == manualTLSSelectionAdmin {
+		prefix = manualTLSAdminPrefix
+	}
+	config := &kubernautv1alpha2.AdministratorManagedTLSConfig{
+		ServiceTLSSecretNames: manualTLSServiceSecretNames(prefix),
+	}
+	if selection == manualTLSSelectionAdmin {
+		config.InternalCASecretName = manualTLSCASecretName(prefix)
+	}
+	return kubernautv1alpha2.TLSConfigSpec{
+		Mode:                 mode,
+		AdministratorManaged: config,
 	}
 }
 
@@ -559,8 +601,25 @@ func kubernautPhase(ctx context.Context) (string, error) {
 
 func secretTLSMaterialPresent(ctx context.Context, name string) (bool, error) {
 	jsonPath := "jsonpath={.data.tls\\.crt}:{.data.tls\\.key}"
-	if name == "kubernaut-internal-ca" && configuredTLS == tlsDevelopment {
+	expectsPair := true
+	if name == defaultInternalCASecretName && configuredTLS != tlsCertManager {
 		jsonPath = "jsonpath={.data.ca\\.crt}:{.data.ca\\.key}"
+	}
+	if configuredTLS == tlsManualAdmin {
+		fixture, err := activeManualTLSFixture()
+		if err != nil {
+			return false, err
+		}
+		if activeManualTLSSelection == manualTLSSelectionManual {
+			output, getErr := kubectl(
+				ctx, "get", "configmap", fixture.caConfigMapName, "-n", kubernautNamespace,
+				"-o", "jsonpath={.data.ca\\.crt}",
+			)
+			return strings.TrimSpace(output) != "", getErr
+		}
+		name = fixture.caSecretName
+		jsonPath = "jsonpath={.data.ca\\.crt}"
+		expectsPair = false
 	}
 	output, err := kubectl(
 		ctx, "get", "secret", name, "-n", kubernautNamespace,
@@ -569,16 +628,186 @@ func secretTLSMaterialPresent(ctx context.Context, name string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if !expectsPair {
+		return strings.TrimSpace(output) != "", nil
+	}
 	parts := strings.Split(strings.TrimSpace(output), ":")
 	return len(parts) == 2 && parts[0] != "" && parts[1] != "", nil
 }
 
-func secretTLSCertificate(ctx context.Context, name string) (string, error) {
+func selectedTrustBundlePresent(ctx context.Context) (bool, error) {
+	if configuredTLS == tlsManualAdmin && activeManualTLSSelection == manualTLSSelectionManual {
+		fixture, err := activeManualTLSFixture()
+		if err != nil {
+			return false, err
+		}
+		output, err := kubectl(
+			ctx, "get", "configmap", fixture.caConfigMapName, "-n", kubernautNamespace,
+			"-o", "jsonpath={.data.ca\\.crt}",
+		)
+		return strings.TrimSpace(output) != "", err
+	}
 	output, err := kubectl(
-		ctx, "get", "secret", name, "-n", kubernautNamespace,
+		ctx, "get", "configmap", "inter-service-trust-bundle", "-n", kubernautNamespace,
+		"-o", "jsonpath={.data.ca\\.crt}",
+	)
+	return strings.TrimSpace(output) != "", err
+}
+
+func secretTLSCertificate(ctx context.Context) (string, error) {
+	output, err := kubectl(
+		ctx, "get", "secret", "gateway-tls", "-n", kubernautNamespace,
 		"-o", "jsonpath={.data.tls\\.crt}",
 	)
 	return strings.TrimSpace(output), err
+}
+
+func tlsProbeCAKey() (string, error) {
+	if configuredTLS == tlsManualAdmin {
+		if _, err := activeManualTLSFixture(); err != nil {
+			return "", err
+		}
+	}
+	return tlsCACertificateKey, nil
+}
+
+func hookTLSSecretNames() []string {
+	return []string{
+		defaultInternalCASecretName,
+		"gateway-tls",
+		"datastorage-tls",
+		"kubernautagent-tls",
+		"apifrontend-tls",
+		"authwebhook-tls",
+		"datastorage-signing-cert",
+	}
+}
+
+func exerciseManualAdminAliases(ctx context.Context) error {
+	if activeManualTLSSelection != manualTLSSelectionManual {
+		return fmt.Errorf("manual/admin lane must start with the manual mode")
+	}
+	if err := verifyTLSWorkloadTrust(ctx, tlsCACertificateKey); err != nil {
+		return err
+	}
+	if err := deleteKubernautCR(ctx); err != nil {
+		return err
+	}
+	if err := assertManualTLSFixtureUnchanged(ctx, manualTLSSelectionManual); err != nil {
+		return err
+	}
+
+	setActiveManualTLSSelection(manualTLSSelectionAdmin)
+	if err := ensureManualTLSWebhookFixtures(ctx, manualTLSSelectionAdmin); err != nil {
+		return err
+	}
+	if err := applyKubernautCR(ctx); err != nil {
+		return err
+	}
+	if err := waitForKubernautReady(ctx); err != nil {
+		return err
+	}
+	if err := assertManualTLSFixtureUnchanged(ctx, manualTLSSelectionAdmin); err != nil {
+		return err
+	}
+	adminFixture, err := manualTLSFixtureFor(manualTLSSelectionAdmin)
+	if err != nil {
+		return err
+	}
+	if err := assertManualTLSWebhookBundlesUnchanged(ctx, adminFixture); err != nil {
+		return err
+	}
+	if present, err := webhookOpenShiftCAInjectionPresent(ctx, "mutating"); err != nil || present {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("administrator-managed mutating webhook uses OpenShift CA injection")
+	}
+	return verifyTLSWorkloadTrust(ctx, tlsCACertificateKey)
+}
+
+func waitForKubernautReady(ctx context.Context) error {
+	if err := pollUntilSuccess(ctx, 10*time.Minute, 2*time.Second, func() error {
+		if condition, err := kubernautCondition(ctx, "BYOValidated"); err != nil {
+			return fmt.Errorf("reading BYOValidated condition: %w", err)
+		} else if condition != conditionTrue {
+			return fmt.Errorf("BYOValidated is not True: %s", condition)
+		}
+		if condition, err := kubernautCondition(ctx, "MigrationComplete"); err != nil {
+			return fmt.Errorf("reading MigrationComplete condition: %w", err)
+		} else if condition != conditionTrue {
+			return fmt.Errorf("MigrationComplete is not True: %s", condition)
+		}
+		if condition, err := kubernautCondition(ctx, "ServicesDeployed"); err != nil {
+			return fmt.Errorf("reading ServicesDeployed condition: %w", err)
+		} else if condition != conditionTrue {
+			return fmt.Errorf("ServicesDeployed is not True: %s", condition)
+		}
+		if condition, err := kubernautCondition(ctx, "TLSReady"); err != nil {
+			return fmt.Errorf("reading TLSReady condition: %w", err)
+		} else if condition != conditionTrue {
+			return fmt.Errorf("TLSReady is not True: %s", condition)
+		}
+		phase, err := kubernautPhase(ctx)
+		if err != nil {
+			return fmt.Errorf("reading Kubernaut phase: %w", err)
+		}
+		if phase != string(kubernautv1alpha2.PhaseRunning) {
+			return fmt.Errorf("kubernaut phase is not Running: %s", phase)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func deleteTLSSecret(ctx context.Context, name string) error {
+	if _, err := kubectl(ctx, "delete", "secret", name, "-n", kubernautNamespace, "--ignore-not-found=true"); err != nil {
+		return fmt.Errorf("deleting TLS Secret %q: %w", name, err)
+	}
+	return nil
+}
+
+func secretPresent(ctx context.Context, name string) (bool, error) {
+	output, err := kubectl(ctx, "get", "secret", name, "-n", kubernautNamespace)
+	if err != nil && (strings.Contains(output, "NotFound") || strings.Contains(output, "not found")) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func serviceHasNoPlaintextPort(ctx context.Context, name string) (bool, error) {
+	output, err := kubectl(
+		ctx, "get", "service", name, "-n", kubernautNamespace,
+		"-o", `jsonpath={range .spec.ports[*]}{.name}{"\n"}{end}`,
+	)
+	if err != nil {
+		return false, err
+	}
+	hasHTTPS := false
+	for _, portName := range strings.Fields(output) {
+		if portName == "http" {
+			return false, nil
+		}
+		if portName == "https" {
+			hasHTTPS = true
+		}
+	}
+	return hasHTTPS, nil
+}
+
+func webhookOpenShiftCAInjectionPresent(ctx context.Context, webhookType string) (bool, error) {
+	resource := webhookType + "webhookconfiguration"
+	name := kubernautNamespace + "-authwebhook-" + webhookType
+	output, err := kubectl(ctx, "get", resource, name, "-o", "json")
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(output, "service.beta.openshift.io/inject-cabundle"), nil
 }
 
 func patchCertificateForRotation(ctx context.Context, name string) error {

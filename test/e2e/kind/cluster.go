@@ -27,6 +27,8 @@ import (
 	"time"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
+
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 type policyProvider string
@@ -44,6 +46,8 @@ const (
 	providerCalico  policyProvider = "calico"
 
 	tlsDevelopment tlsSource = "development"
+	tlsHook        tlsSource = "hook"
+	tlsManualAdmin tlsSource = "manual-admin"
 	tlsCertManager tlsSource = "certmanager"
 
 	kindNodeImage = "kindest/node:v1.35.0"
@@ -65,6 +69,7 @@ const (
 
 	operatorNamespace  = "kubernaut-operator-system"
 	kubernautNamespace = "kubernaut-system"
+	conditionTrue      = "True"
 	// Provider probes run in the Kubernaut namespace so the operator's
 	// namespace-scoped policy selectors are exercised by the real workload.
 	probeNamespace = kubernautNamespace
@@ -110,14 +115,64 @@ func providerFromEnvironment() (policyProvider, error) {
 }
 
 func tlsSourceFromEnvironment() (tlsSource, error) {
-	value := strings.ToLower(strings.TrimSpace(os.Getenv("KUBERNAUT_E2E_TLS_SOURCE")))
-	if value == "" || value == "development" || value == "developmentsigned" || value == "developmentselfsigned" {
+	return tlsSourceForValue(os.Getenv("KUBERNAUT_E2E_TLS_SOURCE"))
+}
+
+// TLSSourceForValue is the pure source-selector contract used by the Kind
+// harness and its unit tests. The returned values intentionally describe the
+// infrastructure lane rather than an API mode: manual and
+// AdministratorManaged share one isolated lane but are exercised separately by
+// the journey.
+func TLSSourceForValue(value string) (string, error) {
+	source, err := tlsSourceForValue(value)
+	return string(source), err
+}
+
+// TLSModeForSource maps a Kind lane selector and manual/admin scenario
+// selection to the exact v1alpha2 TLS mode emitted by the production CR
+// fixture. Keeping this pure makes it possible to test that a lane cannot
+// silently fall back to DevelopmentSelfSigned.
+func TLSModeForSource(source, manualSelection string) (kubernautv1alpha2.TLSMode, error) {
+	lane, err := tlsSourceForValue(source)
+	if err != nil {
+		return "", err
+	}
+	switch lane {
+	case tlsDevelopment:
+		return kubernautv1alpha2.TLSModeDevelopmentSelfSigned, nil
+	case tlsHook:
+		return kubernautv1alpha2.TLSModeHook, nil
+	case tlsCertManager:
+		return kubernautv1alpha2.TLSModeCertManager, nil
+	case tlsManualAdmin:
+		switch strings.ToLower(strings.TrimSpace(manualSelection)) {
+		case "", string(manualTLSSelectionManual):
+			return kubernautv1alpha2.TLSModeManual, nil
+		case string(manualTLSSelectionAdmin), "administratormanaged":
+			return kubernautv1alpha2.TLSModeAdministratorManaged, nil
+		default:
+			return "", fmt.Errorf("invalid manual TLS selection %q; expected manual or administrator-managed", manualSelection)
+		}
+	default:
+		return "", fmt.Errorf("unsupported TLS lane %q", lane)
+	}
+}
+
+func tlsSourceForValue(value string) (tlsSource, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "development", "developmentsigned", "developmentselfsigned", "development-self-signed":
 		return tlsDevelopment, nil
-	}
-	if value == "certmanager" || value == "cert-manager" {
+	case "hook":
+		return tlsHook, nil
+	case "manual-admin", string(manualTLSSelectionManual), "administrator-managed", "administratormanaged":
+		return tlsManualAdmin, nil
+	case "certmanager", "cert-manager":
 		return tlsCertManager, nil
+	default:
+		return "", fmt.Errorf(
+			"invalid KUBERNAUT_E2E_TLS_SOURCE value; expected development, hook, manual-admin, or certmanager",
+		)
 	}
-	return "", fmt.Errorf("invalid KUBERNAUT_E2E_TLS_SOURCE value; expected development or certmanager")
 }
 
 func kindClusterName() string {
@@ -472,7 +527,7 @@ func waitForCalicoAPI(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if strings.TrimSpace(output) != "True" {
+		if strings.TrimSpace(output) != conditionTrue {
 			return fmt.Errorf("calico apiservice is not available: %q", strings.TrimSpace(output))
 		}
 		if _, err := kubectl(ctx, "get", "networkpolicies.projectcalico.org", "-A"); err != nil {

@@ -87,6 +87,10 @@ var _ = BeforeSuite(func() {
 
 	By("installing the Kubernaut E2E prerequisites")
 	Expect(ensureKubernautInfrastructure(ctx)).To(Succeed())
+	if configuredTLS == tlsManualAdmin {
+		By("creating administrator-owned manual TLS fixtures before the CR")
+		Expect(ensureManualAdminTLSFixtures(ctx)).To(Succeed())
+	}
 	if configuredTLS == tlsCertManager {
 		By("creating cert-manager-issued runtime TLS material")
 		Expect(ensureCertManagerRuntimeTLS(ctx)).To(Succeed())
