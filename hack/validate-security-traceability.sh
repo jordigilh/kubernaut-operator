@@ -84,8 +84,11 @@ for artifact in \
 	'internal/controller/kubernaut_lifecycle_test.go' \
 	'internal/resources/webhooks_test.go' \
 	'test/e2e/kind/' \
+	'test/e2e/kind/tls_fixtures.go' \
+	'test/e2e/kind/contract/selector_test.go' \
 	'.github/workflows/test.yml' \
-	'hack/verify-test-pyramid.sh'; do
+	'hack/verify-test-pyramid.sh' \
+	'docs/tests/498/TEST_PLAN.md'; do
 	grep -Fq "${artifact}" "${tls_matrix}" || fail "TLS matrix is missing evidence artifact ${artifact}"
 done
 
@@ -113,7 +116,17 @@ for test_id in \
 	'IT-TLS-ROTATION-GAP-001' \
 	'IT-TLS-GAP-003' \
 	'E2E-TLS-CERTMANAGER-001' \
-	'E2E-TLS-CERTMANAGER-002'; do
+	'E2E-TLS-CERTMANAGER-002' \
+	'UT-TLS-498-001' \
+	'UT-TLS-498-002' \
+	'UT-TLS-498-003' \
+	'UT-TLS-498-004' \
+	'E2E-TLS-HOOK-001' \
+	'E2E-TLS-HOOK-002' \
+	'E2E-TLS-MANUAL-001' \
+	'E2E-TLS-ADMIN-001' \
+	'E2E-TLS-CLEANUP-001' \
+	'E2E-TLS-FAIL-CLOSED-001'; do
 	grep -R -n --include='*_test.go' -F "${test_id}" "${repo_root}/internal" "${repo_root}/test" >/dev/null \
 		|| fail "TLS evidence ID ${test_id} has no executable test"
 	grep -Fq "${test_id}" "${tls_matrix}" || fail "TLS matrix omits evidence ID ${test_id}"

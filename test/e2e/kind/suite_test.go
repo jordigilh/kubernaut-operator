@@ -79,7 +79,7 @@ var _ = BeforeSuite(func() {
 	By("loading the operator image into Kind")
 	Expect(loadOperatorImage(ctx)).To(Succeed())
 
-	By("loading the Kubernaut infrastructure images into Kind")
+	By("loading the contract and dependency images into Kind")
 	Expect(loadInfrastructureImages(ctx)).To(Succeed())
 
 	By("installing the operator from the production manifests")
@@ -87,6 +87,10 @@ var _ = BeforeSuite(func() {
 
 	By("installing the Kubernaut E2E prerequisites")
 	Expect(ensureKubernautInfrastructure(ctx)).To(Succeed())
+	if configuredTLS == tlsManualAdmin {
+		By("creating administrator-owned manual TLS fixtures before the CR")
+		Expect(ensureManualAdminTLSFixtures(ctx)).To(Succeed())
+	}
 	if configuredTLS == tlsCertManager {
 		By("creating cert-manager-issued runtime TLS material")
 		Expect(ensureCertManagerRuntimeTLS(ctx)).To(Succeed())

@@ -62,6 +62,28 @@ The ASVS source is the versioned official CSV:
 | `BA-491-TLS-07` Rotation preserves service availability | Development rotation retains the previous root until consumers move; cert-manager leaf reissuance preserves Certificate ownership, TLS readiness, and webhook trust; failed writes preserve the last working root. | `SC-8`, `SC-12`, `SC-13`, `SI-4` | `CC7`, `A1` | `V11.1.1`, `V11.1.2`, `V12.1.1`, `V16.5.2` | `UT-TLS-ROTATION-GAP-001`; `UT-TLS-ROTATION-GAP-002`; `IT-TLS-ROTATION-GAP-001`; `E2E-TLS-CERTMANAGER-002` | verified |
 | `BA-491-TLS-08` Configuration remains compatible and bounded | Helm defaults, issuer precedence, stable names, legacy aliases, optional component selection, and explicit exclusion of PostgreSQL/Valkey server PKI remain deterministic and migration-safe. | `AC-6`, `CM-6`, `SI-10` | `CC6`, `CC8` | `V13.3.1`, `V15.2.4`, `V16.5.2` | `UT-TLS-491-001`; `UT-TLS-491-005`; `UT-TLS-491-006`; migration/resource tests; generated CRD/RBAC; `make manifests generate` | verified |
 
+## Issue #498 dedicated Kind-lane evidence
+
+Issue #498 extends the #491 repository contract with production-manifest Kind
+journeys for every generic TLS source. The status below is intentionally
+`partially verified` until the hosted #498 jobs execute; local unit and
+integration evidence does not substitute for that runtime evidence.
+
+| Assertion | Business behavior verified | FedRAMP/NIST | SOC 2 | OWASP ASVS 5.0.0 | Automated evidence | Repository status |
+|---|---|---|---|---|---|---|
+| `BA-498-TLS-01` Source selectors are explicit | Development, hook, manual/admin, and cert-manager selectors map deterministically; unsupported input never falls back to plaintext. | `AC-6`, `SC-8`, `CM-6`, `SI-10` | `CC6`, `CC8` | `V12.2.1`, `V13.3.1`, `V16.5.2` | `UT-TLS-498-001`; `UT-TLS-498-002`; `UT-TLS-498-003`; `UT-TLS-498-004`; `E2E-TLS-HOOK-001`; `E2E-TLS-MANUAL-001`; `E2E-TLS-ADMIN-001`; `E2E-TLS-FAIL-CLOSED-001`; `test/e2e/kind/contract/selector_test.go`; `.github/workflows/test.yml` | partially verified |
+| `BA-498-TLS-02` Hook material is operator-owned | The real `hook` CR mode generates usable CA/leaves/signing material, publishes trust, rotates a leaf, and removes only operator-owned TLS Secrets during cleanup. | `AC-6`, `SC-8`, `SC-12`, `SC-13`, `SI-4` | `CC6`, `CC7`, `A1` | `V11.1.1`, `V11.1.2`, `V12.1.1`, `V16.5.2` | `E2E-TLS-HOOK-001`; `E2E-TLS-HOOK-002`; `internal/resources/tls_test.go`; `internal/controller/tls_source_integration_test.go`; `test/e2e/kind/scenarios_test.go` | partially verified |
+| `BA-498-TLS-03` Manual/admin material is read-only | Both `manual` and `AdministratorManaged` CR selections consume pre-created CA, serving, webhook, and signing material without owner references, mutation, OpenShift CA injection, or cleanup deletion. | `AC-6`, `IA-5`, `SC-8`, `SC-17` | `CC6`, `CC7` | `V12.1.3`, `V13.3.1`, `V13.3.2` | `IT-TLS-MANUAL-001`; `IT-TLS-MANUAL-002`; `IT-TLS-WEBHOOK-001`; `E2E-TLS-MANUAL-001`; `E2E-TLS-ADMIN-001`; `E2E-TLS-CLEANUP-001`; `test/e2e/kind/tls_fixtures.go` | partially verified |
+| `BA-498-TLS-04` Trust and failure behavior are observable | Each lane proves TLS readiness, webhook CA trust, a real workload handshake, invalid-source fail-closed status, and source-specific cleanup. | `SC-8`, `SC-13`, `SI-4`, `SI-10` | `CC7`, `A1` | `V12.1.3`, `V12.2.1`, `V13.2.1`, `V16.5.2` | `E2E-TLS-HOOK-001`; `E2E-TLS-MANUAL-001`; `E2E-TLS-ADMIN-001`; `E2E-TLS-FAIL-CLOSED-001`; `hack/verify-test-pyramid.sh` | partially verified |
+
+The issue-specific design and gate artifacts are
+`docs/tests/498/TEST_PLAN.md`, `test/e2e/kind/tls_fixtures.go`,
+`test/e2e/kind/scenarios_test.go`, `.github/workflows/test.yml`, and
+`hack/verify-test-pyramid.sh`. Platform-facing source support and residual-risk
+wording is maintained in `docs/installation/06-platform-support.md`. OpenShift
+service-CA/router-CA qualification is explicitly deferred and is not counted as
+passing evidence for these rows.
+
 ## Test-tier and wiring evidence
 
 ### Production artifacts

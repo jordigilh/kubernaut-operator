@@ -42,24 +42,28 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 	})
 
 	It(
-		"E2E-TLS-GAP-001 / E2E-TLS-CERTMANAGER-001 [SC-8, SC-13, SC-17, SI-4; "+
+		"E2E-TLS-GAP-001 / E2E-TLS-DEV-001 / E2E-TLS-CERTMANAGER-001 / E2E-TLS-HOOK-001 / "+
+			"E2E-TLS-MANUAL-001 / E2E-TLS-ADMIN-001 / E2E-TLS-CLEANUP-001 [SC-8, SC-13, SC-17, SI-4; "+
 			"SOC2 CC6, CC7, A1; ASVS v5.0.0-V12.1.3, v5.0.0-V13.2.1, v5.0.0-V16.5.2] drives the CR through "+
 			"validation, migration, deployment, "+
 			"TLS source, and provider status",
 		func() {
 			By("waiting for the real operator to validate the CR")
 			Eventually(func(g Gomega) {
-				g.Expect(kubernautCondition(ctx, "BYOValidated")).To(Equal("True"))
+				g.Expect(kubernautCondition(ctx, "BYOValidated")).To(Equal(conditionTrue))
 			}).Should(Succeed())
+
+			By("injecting completion for the contract migration Job")
+			Expect(completeMigrationJob(ctx)).To(Succeed())
 
 			By("waiting for the operator-owned migration to complete")
 			Eventually(func(g Gomega) {
-				g.Expect(kubernautCondition(ctx, "MigrationComplete")).To(Equal("True"))
+				g.Expect(kubernautCondition(ctx, "MigrationComplete")).To(Equal(conditionTrue))
 			}).Should(Succeed())
 
 			By("waiting for service manifests and native policy reconciliation")
 			Eventually(func(g Gomega) {
-				g.Expect(kubernautCondition(ctx, "ServicesDeployed")).To(Equal("True"))
+				g.Expect(kubernautCondition(ctx, "ServicesDeployed")).To(Equal(conditionTrue))
 			}).Should(Succeed())
 
 			By("waiting for the operator to report all managed workloads running")
@@ -68,10 +72,36 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			}).Should(Succeed())
 
 			By("verifying the selected runtime TLS source and non-empty webhook trust")
-			Expect(kubernautCondition(ctx, "TLSReady")).To(Equal("True"))
-			Expect(secretTLSMaterialPresent(ctx, "kubernaut-internal-ca")).To(BeTrue())
+			Expect(kubernautCondition(ctx, "TLSReady")).To(Equal(conditionTrue))
+			Expect(secretTLSMaterialPresent(ctx, defaultInternalCASecretName)).To(BeTrue())
+			Expect(selectedTrustBundlePresent(ctx)).To(BeTrue())
 			Expect(webhookCABundlePresent(ctx, "mutating")).To(BeTrue())
 			Expect(webhookCABundlePresent(ctx, "validating")).To(BeTrue())
+			caKey, err := tlsProbeCAKey()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(verifyTLSWorkloadTrust(ctx, caKey)).To(Succeed())
+
+			switch configuredTLS {
+			case tlsHook:
+				By("proving hook-mode material is operator-owned")
+				for _, name := range hookTLSSecretNames() {
+					Eventually(func(g Gomega) {
+						owner, ownerErr := secretOwnerKind(ctx, name)
+						g.Expect(ownerErr).NotTo(HaveOccurred(), name)
+						g.Expect(owner).To(Equal("Kubernaut"), name)
+					}).Should(Succeed())
+				}
+			case tlsManualAdmin:
+				By("proving manual TLS material is administrator-owned and unchanged")
+				Expect(assertManualTLSFixtureUnchanged(ctx, activeManualTLSSelection)).To(Succeed())
+				fixture, err := activeManualTLSFixture()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(assertManualTLSWebhookBundlesUnchanged(ctx, fixture)).To(Succeed())
+				Expect(webhookOpenShiftCAInjectionPresent(ctx, "mutating")).To(BeFalse())
+				Expect(webhookOpenShiftCAInjectionPresent(ctx, "validating")).To(BeFalse())
+				Expect(exerciseManualAdminAliases(ctx)).To(Succeed())
+			}
+
 			if configuredTLS == tlsCertManager {
 				Eventually(func(g Gomega) {
 					for _, name := range []string{
@@ -96,13 +126,74 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 				return
 			}
 
-			Expect(kubernautCondition(ctx, "ProviderDetected")).To(Equal("True"))
-			Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal("True"))
+			Expect(kubernautCondition(ctx, "ProviderDetected")).To(Equal(conditionTrue))
+			Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal(conditionTrue))
 			Eventually(func(g Gomega) {
 				g.Expect(managedNativePolicyExists(ctx)).To(Succeed())
 			}).Should(Succeed())
 			Expect(ensureNoRawNetworkPolicy(ctx)).To(Succeed())
 		})
+
+	It(
+		"E2E-TLS-FAIL-CLOSED-001 [SC-8, SC-13, SI-4, SI-10; SOC2 CC6, CC7; "+
+			"ASVS v5.0.0-V12.2.1, v5.0.0-V16.5.2] refuses invalid administrator "+
+			"material without a plaintext fallback",
+		func() {
+			if configuredTLS != tlsManualAdmin {
+				return
+			}
+
+			fixture, err := activeManualTLSFixture()
+			Expect(err).NotTo(HaveOccurred())
+			corrupt, err := corruptManualTLSSecret(fixture, "gateway")
+			Expect(err).NotTo(HaveOccurred())
+			By("invalidating an administrator-owned serving certificate")
+			Expect(applyYAML(ctx, corrupt)).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				g.Expect(kubernautCondition(ctx, "TLSReady")).To(Equal("False"))
+			}).Should(Succeed())
+			Expect(serviceHasNoPlaintextPort(ctx, "data-storage-service")).To(BeTrue())
+
+			By("restoring the administrator-owned material")
+			Expect(applyYAML(ctx, fixture.secrets[fixture.serviceTLSSecretNames["gateway"]])).To(Succeed())
+			Eventually(func(g Gomega) {
+				g.Expect(kubernautCondition(ctx, "TLSReady")).To(Equal(conditionTrue))
+				g.Expect(assertManualTLSFixtureUnchanged(ctx, activeManualTLSSelection)).To(Succeed())
+				fixture, fixtureErr := activeManualTLSFixture()
+				g.Expect(fixtureErr).NotTo(HaveOccurred())
+				g.Expect(assertManualTLSWebhookBundlesUnchanged(ctx, fixture)).To(Succeed())
+			}).Should(Succeed())
+		},
+	)
+
+	It(
+		"E2E-TLS-HOOK-002 [SC-8, SC-12, SC-13, SI-4; SOC2 CC7, A1; "+
+			"ASVS v5.0.0-V11.1.1, v5.0.0-V11.1.2, v5.0.0-V12.1.1, "+
+			"v5.0.0-V16.5.2] rotates a hook leaf without losing trust",
+		func() {
+			if configuredTLS != tlsHook {
+				return
+			}
+
+			before, err := secretTLSCertificate(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			By("deleting one operator-owned hook leaf to request reissuance")
+			Expect(deleteTLSSecret(ctx, "gateway-tls")).To(Succeed())
+			Eventually(func(g Gomega) {
+				current, getErr := secretTLSCertificate(ctx)
+				g.Expect(getErr).NotTo(HaveOccurred())
+				g.Expect(current).NotTo(Equal(before))
+				owner, ownerErr := secretOwnerKind(ctx, "gateway-tls")
+				g.Expect(ownerErr).NotTo(HaveOccurred())
+				g.Expect(owner).To(Equal("Kubernaut"))
+				g.Expect(kubernautCondition(ctx, "TLSReady")).To(Equal(conditionTrue))
+			}).Should(Succeed())
+			caKey, caErr := tlsProbeCAKey()
+			Expect(caErr).NotTo(HaveOccurred())
+			Expect(verifyTLSWorkloadTrust(ctx, caKey)).To(Succeed())
+		},
+	)
 
 	It("proves provider enforcement through the reconciled policy", func() {
 		if configuredProvider == providerGeneric {
@@ -119,7 +210,7 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			return
 		}
 
-		Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal("True"))
+		Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal(conditionTrue))
 		Expect(ensureNoRawNetworkPolicy(ctx)).To(Succeed())
 
 		Eventually(func(g Gomega) {
@@ -141,18 +232,18 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			return
 		}
 
-		before, err := secretTLSCertificate(ctx, "gateway-tls")
+		before, err := secretTLSCertificate(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		By("requesting a cert-manager reissuance through the Certificate spec")
 		Expect(patchCertificateForRotation(ctx, "gateway")).To(Succeed())
 
 		Eventually(func(g Gomega) {
-			current, getErr := secretTLSCertificate(ctx, "gateway-tls")
+			current, getErr := secretTLSCertificate(ctx)
 			g.Expect(getErr).NotTo(HaveOccurred())
 			g.Expect(current).NotTo(Equal(before))
 		}).Should(Succeed())
 		Eventually(func(g Gomega) {
-			g.Expect(kubernautCondition(ctx, "TLSReady")).To(Equal("True"))
+			g.Expect(kubernautCondition(ctx, "TLSReady")).To(Equal(conditionTrue))
 			owner, ownerErr := secretOwnerKind(ctx, "gateway-tls")
 			g.Expect(ownerErr).NotTo(HaveOccurred())
 			g.Expect(owner).To(Equal("Certificate"))
@@ -174,6 +265,16 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			g.Expect(ensureNoRawNetworkPolicy(ctx)).To(Succeed())
 			if configuredProvider != providerGeneric {
 				g.Expect(unmanagedNativePolicyExists(ctx)).To(Succeed())
+			}
+			if configuredTLS == tlsManualAdmin {
+				g.Expect(assertManualTLSFixtureUnchanged(ctx, activeManualTLSSelection)).To(Succeed())
+			}
+			if configuredTLS == tlsHook {
+				for _, name := range hookTLSSecretNames() {
+					present, secretErr := secretPresent(ctx, name)
+					g.Expect(secretErr).NotTo(HaveOccurred(), name)
+					g.Expect(present).To(BeFalse(), name)
+				}
 			}
 		}).Should(Succeed())
 	})
