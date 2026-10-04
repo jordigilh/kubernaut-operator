@@ -80,4 +80,18 @@ var _ = Describe("Kind TLS source selector", func() {
 		_, err := kind.TLSModeForSource("manual-admin", "unexpected")
 		Expect(err).To(MatchError(ContainSubstring("expected manual or administrator-managed")))
 	})
+
+	It("UT-TLS-498-005 maps every generated workload image to the local contract image", func() {
+		const image = "kind.local/kubernaut-contract:test"
+
+		overrides := kind.ContractImageOverrides(image)
+		Expect(overrides).To(HaveLen(16))
+		for _, name := range []string{
+			"gateway", "datastorage", "aianalysis", "signalprocessing", "remediationorchestrator",
+			"workflowexecution", "effectivenessmonitor", "notification", "kubernautagent", "authwebhook",
+			"apifrontend", "db-migrate", "console", "fleetmetadatacache", "init-ubi-minimal", "oauth2-proxy",
+		} {
+			Expect(overrides).To(HaveKeyWithValue(name, image), name)
+		}
+	})
 })

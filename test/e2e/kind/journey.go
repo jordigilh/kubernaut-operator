@@ -19,7 +19,6 @@ package kind
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -43,6 +42,9 @@ const (
 	defaultInternalCASecretName = "kubernaut-internal-ca" //nolint:gosec
 )
 
+// ensureKubernautInfrastructure installs only disposable dependency and input
+// fixtures. The managed application image references are replaced with the
+// local contract image; no upstream Kubernaut image is deployed by this suite.
 func ensureKubernautInfrastructure(ctx context.Context) error {
 	if err := ensureNamespace(ctx, kubernautNamespace); err != nil {
 		return err
@@ -510,7 +512,7 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 		Spec: kubernautv1alpha2.KubernautSpec{
 			Image: kubernautv1alpha2.ImageSpec{
 				PullPolicy: corev1.PullIfNotPresent,
-				Overrides:  kubernautImageOverrides(),
+				Overrides:  ContractImageOverrides(contractImage()),
 			},
 			PostgreSQL: kubernautv1alpha2.PostgreSQLSpec{ //nolint:gosec // disposable Kind fixture secret reference
 				SecretName: "postgresql-secret",
@@ -566,23 +568,19 @@ func manualAdminTLSConfig(selection manualTLSSelection) kubernautv1alpha2.TLSCon
 	}
 }
 
-func kubernautImageOverrides() map[string]string {
-	tag := strings.TrimSpace(os.Getenv("KUBERNAUT_IMAGE_TAG"))
-	if tag == "" {
-		tag = "1.6.0-rc20"
-	}
-	repository := strings.TrimRight(strings.TrimSpace(os.Getenv("KUBERNAUT_IMAGE_REPOSITORY")), "/")
-	if repository == "" {
-		repository = "quay.io/kubernaut-ai"
-	}
-	images := []string{
+// ContractImageOverrides returns a complete image override map for the
+// operator-only Kind harness. Keeping every resolved image on one local
+// fixture prevents an accidental fallback to RELATED_IMAGE_* or an upstream
+// Kubernaut registry image.
+func ContractImageOverrides(image string) map[string]string {
+	imageNames := []string{
 		"gateway", "datastorage", "aianalysis", "signalprocessing", "remediationorchestrator",
 		"workflowexecution", "effectivenessmonitor", "notification", "kubernautagent", "authwebhook",
-		"apifrontend", "db-migrate", "console", "fleetmetadatacache",
+		"apifrontend", "db-migrate", "console", "fleetmetadatacache", "init-ubi-minimal", "oauth2-proxy",
 	}
-	overrides := make(map[string]string, len(images))
-	for _, image := range images {
-		overrides[image] = fmt.Sprintf("%s/%s:%s", repository, image, tag)
+	overrides := make(map[string]string, len(imageNames))
+	for _, imageName := range imageNames {
+		overrides[imageName] = image
 	}
 	return overrides
 }
@@ -704,7 +702,7 @@ func exerciseManualAdminAliases(ctx context.Context) error {
 	if err := applyKubernautCR(ctx); err != nil {
 		return err
 	}
-	if err := waitForKubernautReady(ctx); err != nil {
+	if err := waitForContractReady(ctx); err != nil {
 		return err
 	}
 	if err := assertManualTLSFixtureUnchanged(ctx, manualTLSSelectionAdmin); err != nil {
@@ -726,7 +724,59 @@ func exerciseManualAdminAliases(ctx context.Context) error {
 	return verifyTLSWorkloadTrust(ctx, tlsCACertificateKey)
 }
 
-func waitForKubernautReady(ctx context.Context) error {
+func completeMigrationJob(ctx context.Context) error {
+	const migrationJobName = "kubernaut-db-migration"
+	return pollUntilSuccess(ctx, 5*time.Minute, 2*time.Second, func() error {
+		migrationCondition, err := kubernautCondition(ctx, "MigrationComplete")
+		if err != nil {
+			return fmt.Errorf("reading MigrationComplete condition: %w", err)
+		}
+		if migrationCondition == conditionTrue {
+			return nil
+		}
+		if _, err := kubectl(ctx, "get", "job", migrationJobName, "-n", kubernautNamespace); err != nil {
+			return fmt.Errorf("waiting for contract migration Job: %w", err)
+		}
+		completionTime := time.Now().UTC().Format(time.RFC3339)
+		patch := fmt.Sprintf(
+			`{
+				"status": {
+					"conditions": [
+						{
+							"type": "SuccessCriteriaMet",
+							"status": "True",
+							"reason": "ContractFixture",
+							"message": "operator contract fixture completed migration"
+						},
+						{
+							"type": "Complete",
+							"status": "True",
+							"reason": "ContractFixture",
+							"message": "operator contract fixture completed migration"
+						}
+					],
+					"succeeded": 1,
+					"active": 0,
+					"ready": 0,
+					"completionTime": "%s"
+				}
+			}`,
+			completionTime,
+		)
+		if output, err := kubectl(
+			ctx, "patch", "job", migrationJobName, "-n", kubernautNamespace,
+			"--subresource=status", "--type=merge", "-p", patch,
+		); err != nil {
+			return fmt.Errorf("completing contract migration Job: %w: %s", err, strings.TrimSpace(output))
+		}
+		return nil
+	})
+}
+
+func waitForContractReady(ctx context.Context) error {
+	if err := completeMigrationJob(ctx); err != nil {
+		return err
+	}
 	if err := pollUntilSuccess(ctx, 10*time.Minute, 2*time.Second, func() error {
 		if condition, err := kubernautCondition(ctx, "BYOValidated"); err != nil {
 			return fmt.Errorf("reading BYOValidated condition: %w", err)

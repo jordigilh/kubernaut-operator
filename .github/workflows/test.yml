@@ -113,7 +113,7 @@ jobs:
           kind version
           kubectl version --client
 
-      - name: Pull pinned Kubernaut infrastructure images
+      - name: Pull pinned dependency images
         run: |
           docker pull docker.io/library/postgres:16.4
           docker pull docker.io/valkey/valkey:8.0.2
@@ -150,7 +150,7 @@ jobs:
           kind version
           kubectl version --client
 
-      - name: Pull pinned Kubernaut infrastructure images
+      - name: Pull pinned dependency images
         run: |
           docker pull docker.io/library/postgres:16.4
           docker pull docker.io/valkey/valkey:8.0.2
@@ -187,7 +187,7 @@ jobs:
           kind version
           kubectl version --client
 
-      - name: Pull pinned Kubernaut infrastructure images
+      - name: Pull pinned dependency images
         run: |
           docker pull docker.io/library/postgres:16.4
           docker pull docker.io/valkey/valkey:8.0.2
@@ -224,7 +224,7 @@ jobs:
           kind version
           kubectl version --client
 
-      - name: Pull pinned Kubernaut infrastructure images
+      - name: Pull pinned dependency images
         run: |
           docker pull docker.io/library/postgres:16.4
           docker pull docker.io/valkey/valkey:8.0.2
@@ -265,7 +265,7 @@ jobs:
           kubectl version --client
           helm version
 
-      - name: Pull pinned Kubernaut infrastructure images
+      - name: Pull pinned dependency images
         run: |
           docker pull docker.io/library/postgres:16.4
           docker pull docker.io/valkey/valkey:8.0.2
@@ -301,7 +301,7 @@ jobs:
           kind version
           kubectl version --client
 
-      - name: Pull pinned Kubernaut infrastructure images
+      - name: Pull pinned dependency images
         run: |
           docker pull docker.io/library/postgres:16.4
           docker pull docker.io/valkey/valkey:8.0.2

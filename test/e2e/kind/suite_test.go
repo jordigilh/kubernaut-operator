@@ -79,7 +79,7 @@ var _ = BeforeSuite(func() {
 	By("loading the operator image into Kind")
 	Expect(loadOperatorImage(ctx)).To(Succeed())
 
-	By("loading the Kubernaut infrastructure images into Kind")
+	By("loading the contract and dependency images into Kind")
 	Expect(loadInfrastructureImages(ctx)).To(Succeed())
 
 	By("installing the operator from the production manifests")

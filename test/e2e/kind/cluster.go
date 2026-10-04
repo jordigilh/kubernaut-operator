@@ -74,7 +74,8 @@ const (
 	// namespace-scoped policy selectors are exercised by the real workload.
 	probeNamespace = kubernautNamespace
 
-	defaultOperatorImage   = "kubernaut-operator:1.6.0-rc20"
+	defaultOperatorImage   = "localhost/kubernaut-operator:1.6.0-rc20"
+	defaultContractImage   = "localhost/kubernaut-operator-e2e-contract:1.6.0-rc20"
 	operatorDeploymentName = "kubernaut-operator-controller-manager"
 
 	managedPolicyLabel = "kubernaut.ai/managed-policy=true"
@@ -237,6 +238,13 @@ func operatorImage() string {
 	return defaultOperatorImage
 }
 
+func contractImage() string {
+	if image := strings.TrimSpace(os.Getenv("KUBERNAUT_E2E_CONTRACT_IMAGE")); image != "" {
+		return image
+	}
+	return defaultContractImage
+}
+
 func kustomizeBinary() string {
 	if binary := strings.TrimSpace(os.Getenv("KUSTOMIZE_BIN")); binary != "" {
 		return binary
@@ -252,9 +260,9 @@ func loadOperatorImage(ctx context.Context) error {
 }
 
 func loadInfrastructureImages(ctx context.Context) error {
-	for _, image := range []string{postgresImage, valkeyImage} {
+	for _, image := range []string{contractImage(), postgresImage, valkeyImage} {
 		if _, err := runCmd(ctx, "kind", "load", "docker-image", image, "--name", kindClusterName()); err != nil {
-			return fmt.Errorf("loading infrastructure image %q into Kind: %w", image, err)
+			return fmt.Errorf("loading contract or dependency image %q into Kind: %w", image, err)
 		}
 	}
 	return nil

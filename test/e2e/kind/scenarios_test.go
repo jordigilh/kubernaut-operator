@@ -53,6 +53,9 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 				g.Expect(kubernautCondition(ctx, "BYOValidated")).To(Equal(conditionTrue))
 			}).Should(Succeed())
 
+			By("injecting completion for the contract migration Job")
+			Expect(completeMigrationJob(ctx)).To(Succeed())
+
 			By("waiting for the operator-owned migration to complete")
 			Eventually(func(g Gomega) {
 				g.Expect(kubernautCondition(ctx, "MigrationComplete")).To(Equal(conditionTrue))

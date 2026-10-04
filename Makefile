@@ -52,12 +52,12 @@ OPERATOR_SDK_VERSION ?= v1.42.2
 # Image URL to use all building/pushing image targets
 IMG ?= $(IMAGE_TAG_BASE):$(VERSION)
 
-# Kind E2E uses a locally loaded operator image and the matching Kubernaut
-# component release. Keep this explicit because the release tag is part of the
-# image-validation contract exercised by the journey suite.
+# Kind E2E uses a locally loaded operator image and a local contract image.
+# The operator CI harness must not pull or deploy upstream Kubernaut images;
+# full application qualification belongs to upstream/release validation.
 KIND_OPERATOR_VERSION ?= 1.6.0-rc20
-KIND_OPERATOR_IMAGE ?= kubernaut-operator:$(KIND_OPERATOR_VERSION)
-KIND_KUBERNAUT_IMAGE_TAG ?= $(KIND_OPERATOR_VERSION)
+KIND_OPERATOR_IMAGE ?= localhost/kubernaut-operator:$(KIND_OPERATOR_VERSION)
+KIND_CONTRACT_IMAGE ?= localhost/kubernaut-operator-e2e-contract:$(KIND_OPERATOR_VERSION)
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -173,13 +173,14 @@ test-e2e: manifests generate fmt vet ## Run the e2e tests against a live OCP clu
 	go test ./test/e2e/ -v -ginkgo.v -timeout 30m
 
 .PHONY: test-e2e-kind
-test-e2e-kind: fmt vet kustomize ## Run the isolated generic/Cilium/Calico Kind E2E suite.
+test-e2e-kind: fmt vet kustomize ## Run the isolated operator contract Kind E2E suite.
 	@command -v kind >/dev/null 2>&1 || { echo "kind CLI not found. Install: https://kind.sigs.k8s.io/docs/user/quick-start/"; exit 1; }
 	@command -v kubectl >/dev/null 2>&1 || { echo "kubectl CLI not found."; exit 1; }
 	@command -v $(CONTAINER_TOOL) >/dev/null 2>&1 || { echo "$(CONTAINER_TOOL) CLI not found."; exit 1; }
 	@if [ "$${KUBERNAUT_E2E_PROVIDER:-generic}" = "cilium" ]; then command -v helm >/dev/null 2>&1 || { echo "helm CLI not found. Install Helm for the Cilium lane."; exit 1; }; fi
 	$(CONTAINER_TOOL) build --build-arg VERSION=$(KIND_OPERATOR_VERSION) --build-arg GIT_COMMIT=$(GIT_COMMIT) -t $(KIND_OPERATOR_IMAGE) .
-	KUBERNAUT_OPERATOR_IMAGE=$(KIND_OPERATOR_IMAGE) KUBERNAUT_IMAGE_TAG=$(KIND_KUBERNAUT_IMAGE_TAG) KUSTOMIZE_BIN=$(KUSTOMIZE) go test ./test/e2e/kind/ -v -ginkgo.v -timeout 30m
+	$(CONTAINER_TOOL) build -f test/e2e/kind/contract/Dockerfile -t $(KIND_CONTRACT_IMAGE) test/e2e/kind/contract
+	KUBERNAUT_OPERATOR_IMAGE=$(KIND_OPERATOR_IMAGE) KUBERNAUT_E2E_CONTRACT_IMAGE=$(KIND_CONTRACT_IMAGE) KUSTOMIZE_BIN=$(KUSTOMIZE) go test ./test/e2e/kind/ -v -ginkgo.v -timeout 30m
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
