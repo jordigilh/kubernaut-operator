@@ -120,14 +120,22 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			}
 
 			if configuredProvider == providerGeneric {
-				Expect(kubernautCondition(ctx, "ProviderDetected")).To(Equal("False"))
-				Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal("False"))
+				Eventually(func(g Gomega) {
+					g.Expect(kubernautCondition(ctx, "ProviderDetected")).To(Equal("False"))
+				}).Should(Succeed())
+				Eventually(func(g Gomega) {
+					g.Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal("False"))
+				}).Should(Succeed())
 				Expect(noManagedPolicies(ctx)).To(Succeed())
 				return
 			}
 
-			Expect(kubernautCondition(ctx, "ProviderDetected")).To(Equal(conditionTrue))
-			Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal(conditionTrue))
+			Eventually(func(g Gomega) {
+				g.Expect(kubernautCondition(ctx, "ProviderDetected")).To(Equal(conditionTrue))
+			}).Should(Succeed())
+			Eventually(func(g Gomega) {
+				g.Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal(conditionTrue))
+			}).Should(Succeed())
 			Eventually(func(g Gomega) {
 				g.Expect(managedNativePolicyExists(ctx)).To(Succeed())
 			}).Should(Succeed())

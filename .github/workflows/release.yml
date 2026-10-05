@@ -38,19 +38,132 @@ jobs:
       - name: Extract version from tag
         id: version
         run: |
-          TAG=${GITHUB_REF#refs/tags/}
-          VERSION=${TAG#v}
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "build_date=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          {
+            echo "tag=$TAG"
+            echo "version=$VERSION"
+            echo "build_date=$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          } >> "$GITHUB_OUTPUT"
 
           if [[ "$VERSION" =~ -(rc|alpha|beta) ]]; then
-            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
             echo "Pre-release: $TAG (version: $VERSION)"
           else
-            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
             echo "Release: $TAG (version: $VERSION)"
           fi
+
+  # ========================================
+  # STAGE 0b: UPSTREAM COMPATIBILITY GATE
+  #
+  # Upstream publishes and qualifies the full Kubernaut RC first. This job
+  # consumes only the immutable qualification evidence; it never checks out
+  # upstream source, pulls upstream application images, or invokes upstream CI.
+  # The image build jobs depend on this gate, so an unqualified operator SHA
+  # cannot publish an operator image.
+  # ========================================
+
+  qualification:
+    name: Verify upstream compatibility qualification
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout operator source
+        uses: actions/checkout@v7
+
+      - name: Download upstream qualification manifest
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          URL="https://github.com/jordigilh/kubernaut/releases/download/${TAG}/operator-compatibility-qualification.json"
+          echo "Downloading immutable upstream qualification evidence for ${TAG}"
+          curl --fail --location --retry 3 --silent --show-error \
+            "$URL" -o upstream-qualification.json
+          test -s upstream-qualification.json
+
+      - name: Verify qualification matches this operator tag
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          OPERATOR_SHA: ${{ github.sha }}
+        run: |
+          ./hack/verify-release-qualification.sh \
+            --manifest upstream-qualification.json \
+            --operator-sha "$OPERATOR_SHA" \
+            --expected-upstream-ref "refs/tags/${TAG}"
+
+      - name: Retain qualification evidence for the operator release
+        uses: actions/upload-artifact@v7
+        with:
+          name: upstream-qualification-${{ needs.prepare.outputs.tag }}
+          path: upstream-qualification.json
+          if-no-files-found: error
+          retention-days: 30
+
+  # ========================================
+  # STAGE 0c: OPERATOR-LOCAL RELEASE GATES
+  #
+  # These checks remain deliberately independent of the upstream qualification
+  # gate. They prove the tagged operator itself is buildable, testable, and
+  # contract-compatible before either architecture image is published.
+  # ========================================
+
+  operator-gates:
+    name: Verify operator release gates
+    needs: [prepare, qualification]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout operator source
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Run unit, integration, security, and pyramid gates
+        run: make test
+
+      - name: Run hack script tests
+        run: make test-hack-scripts
+
+      - name: Verify generated manifests are clean
+        run: git diff --exit-code -- api config
+
+      - name: Shellcheck hack/ scripts
+        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/validate-security-traceability.sh hack/verify-test-pyramid.sh hack/verify-ci-boundary.sh hack/verify-ci-boundary.test.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
+
+      - name: Install pinned Kind and kubectl
+        run: |
+          set -euo pipefail
+          KIND_VERSION=v0.31.0
+          KUBECTL_VERSION=v1.35.0
+          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kind version
+          kubectl version --client
+
+      - name: Pull pinned dependency images
+        run: |
+          docker pull docker.io/library/postgres:16.4
+          docker pull docker.io/valkey/valkey:8.0.2
+
+      - name: Run contract-only Kind gate
+        env:
+          KIND_OPERATOR_VERSION: ${{ needs.prepare.outputs.version }}
+          KUBERNAUT_E2E_PROVIDER: generic
+          KUBERNAUT_E2E_TLS_SOURCE: development
+          KIND_CLUSTER_NAME: kubernaut-kind-release
+        run: make test-e2e-kind
 
   # ========================================
   # STAGE 1a: BUILD & PUSH amd64 IMAGE
@@ -59,7 +172,7 @@ jobs:
 
   build-amd64:
     name: Build Operator (amd64)
-    needs: prepare
+    needs: [prepare, qualification, operator-gates]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -175,7 +288,7 @@ jobs:
 
   build-arm64:
     name: Build Operator (arm64)
-    needs: prepare
+    needs: [prepare, qualification, operator-gates]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -252,6 +365,10 @@ jobs:
     needs: [prepare, build-amd64, build-arm64]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      amd64_digest: ${{ needs.build-amd64.outputs.digest }}
+      arm64_digest: ${{ needs.build-arm64.outputs.digest }}
+      manifest_digest: ${{ steps.manifest-digest.outputs.digest }}
     steps:
       - name: Login to Quay.io
         run: |
@@ -285,6 +402,19 @@ jobs:
             "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-arm64"
           podman manifest push "${LATEST}" "docker://${LATEST}"
           echo "Pushed ${LATEST}"
+
+      - name: Resolve published manifest digest
+        id: manifest-digest
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          MANIFEST="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          podman pull "${MANIFEST}"
+          DIGEST=$(podman inspect --format='{{.Digest}}' "${MANIFEST}")
+          test -n "${DIGEST}"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Manifest digest: ${DIGEST}"
 
   # ========================================
   # Cosign sign multi-arch manifest (keyless)
@@ -423,9 +553,8 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}" \
-            VERSION="${VERSION}" \
-            make bundle
+          export IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          make bundle
 
       - name: Build bundle image
         env:
@@ -480,7 +609,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [prepare, create-manifests, bundle, catalog, sbom, sign, provenance-amd64, provenance-arm64]
+    needs: [prepare, qualification, operator-gates, create-manifests, bundle, catalog, sbom, sign, provenance-amd64, provenance-arm64]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -495,6 +624,61 @@ jobs:
           name: sbom-${{ needs.prepare.outputs.version }}
           path: .
 
+      - name: Download upstream qualification evidence
+        uses: actions/download-artifact@v8
+        with:
+          name: upstream-qualification-${{ needs.prepare.outputs.tag }}
+          path: qualification
+
+      - name: Create operator release provenance manifest
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          OPERATOR_SHA: ${{ github.sha }}
+          AMD64_DIGEST: ${{ needs.create-manifests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ needs.create-manifests.outputs.arm64_digest }}
+          MANIFEST_DIGEST: ${{ needs.create-manifests.outputs.manifest_digest }}
+          QUALIFICATION_URL: https://github.com/jordigilh/kubernaut/releases/download/${{ needs.prepare.outputs.tag }}/operator-compatibility-qualification.json
+        run: |
+          set -euo pipefail
+          test -n "$AMD64_DIGEST"
+          test -n "$ARM64_DIGEST"
+          test -n "$MANIFEST_DIGEST"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          qualification_path = Path("qualification/upstream-qualification.json")
+          with qualification_path.open(encoding="utf-8") as qualification_file:
+              qualification = json.load(qualification_file)
+
+          registry = os.environ["IMAGE_REGISTRY"]
+          image = f"{registry}/kubernaut-operator"
+          manifest = {
+              "schema": "kubernaut-operator-release-provenance/v1",
+              "operator": {
+                  "repository": os.environ["GITHUB_REPOSITORY"],
+                  "tag": os.environ["TAG"],
+                  "sha": os.environ["OPERATOR_SHA"],
+                  "images": {
+                      "amd64": f"{image}@{os.environ['AMD64_DIGEST']}",
+                      "arm64": f"{image}@{os.environ['ARM64_DIGEST']}",
+                      "manifest": f"{image}@{os.environ['MANIFEST_DIGEST']}",
+                  },
+              },
+              "upstream_qualification": qualification,
+              "qualification_manifest_url": os.environ["QUALIFICATION_URL"],
+              "release_workflow": {
+                  "run_id": os.environ["GITHUB_RUN_ID"],
+                  "run_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+              },
+          }
+          Path("operator-release-provenance.json").write_text(
+              json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -507,12 +691,12 @@ jobs:
             PRERELEASE_FLAG="--prerelease"
           fi
 
-          gh release create "${TAG}" sbom.cdx.json \
+          gh release create "${TAG}" sbom.cdx.json operator-release-provenance.json \
             --title "Kubernaut Operator ${TAG}" \
             --generate-notes \
             ${PRERELEASE_FLAG} \
             --notes-start-tag "$(git tag --sort=-creatordate | grep '^v' | sed -n '2p')" || \
-          gh release create "${TAG}" sbom.cdx.json \
+          gh release create "${TAG}" sbom.cdx.json operator-release-provenance.json \
             --title "Kubernaut Operator ${TAG}" \
             --generate-notes \
             ${PRERELEASE_FLAG}

@@ -149,8 +149,12 @@ test-integration: manifests generate fmt vet setup-envtest ## Run integration te
 test-security-traceability: ## Validate the versioned NIST/FedRAMP and OWASP ASVS evidence matrix.
 	@./hack/validate-security-traceability.sh
 
+.PHONY: test-ci-boundary
+test-ci-boundary: ## Verify that operator CI remains independent of the upstream application.
+	@./hack/verify-ci-boundary.sh
+
 .PHONY: test-pyramid
-test-pyramid: test-security-traceability ## Verify independent tiers, production wiring, and the real E2E journey.
+test-pyramid: test-security-traceability test-ci-boundary ## Verify independent tiers, production wiring, and the real E2E journey.
 	@./hack/verify-test-pyramid.sh
 
 .PHONY: test
@@ -162,6 +166,8 @@ test: test-unit test-integration test-pyramid ## Run all tests (unit + integrati
 .PHONY: test-hack-scripts
 test-hack-scripts: yq ## Run fixture-based tests for standalone hack/ shell tooling.
 	PATH="$(LOCALBIN):$$PATH" bash hack/migrate-llm-profile.test.sh
+	bash hack/verify-ci-boundary.test.sh
+	bash hack/verify-release-qualification.test.sh
 
 # E2E tests run against a live OCP cluster. Ensure you are logged in (oc login)
 # and IMG points to a registry reachable from the cluster.
