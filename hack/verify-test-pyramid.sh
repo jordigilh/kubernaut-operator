@@ -29,6 +29,16 @@ require_text Makefile 'UNIT_COVERAGE_THRESHOLD' 'unit target does not enforce it
 require_text Makefile '^test-integration: .*setup-envtest' 'integration target is missing envtest setup'
 require_text Makefile 'go test \$\(IT_PKGS\) -coverprofile cover-integration\.out' 'integration target does not write independent coverage'
 require_text Makefile 'INTEGRATION_COVERAGE_THRESHOLD' 'integration target does not enforce its coverage floor'
+require_text Makefile '^test-ci-boundary:' 'CI boundary target is missing'
+require_text Makefile '^test-pyramid: .*test-ci-boundary' 'test pyramid does not enforce the CI boundary'
+
+# A release tag must not publish before both upstream qualification and the
+# operator-local gates have completed successfully.
+require_text .github/workflows/release.yml '^  qualification:' 'release workflow is missing upstream qualification gate'
+require_text .github/workflows/release.yml '^  operator-gates:' 'release workflow is missing operator-local gates'
+require_text .github/workflows/release.yml 'Run unit, integration, security, and pyramid gates' 'release workflow does not run local test gates'
+require_text .github/workflows/release.yml 'run: make test-e2e-kind' 'release workflow does not run the contract-only Kind gate'
+require_text .github/workflows/release.yml 'needs: \[prepare, qualification, operator-gates\]' 'image build is not gated by both qualification and local gates'
 
 # The live harness must exercise production installation and the real CR
 # journey. These checks intentionally inspect the call graph rather than only

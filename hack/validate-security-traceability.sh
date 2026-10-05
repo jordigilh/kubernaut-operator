@@ -7,6 +7,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 matrix="${repo_root}/docs/security/ISSUE-488-CONTROL-TRACEABILITY.md"
 tls_matrix="${repo_root}/docs/security/ISSUE-491-TLS-CONTROL-ATTESTATION.md"
+ci_matrix="${repo_root}/docs/design/ISSUE-501-OPERATOR-UPSTREAM-CI-BOUNDARY.md"
 
 fail() {
 	echo "security traceability validation failed: $*" >&2
@@ -15,6 +16,7 @@ fail() {
 
 [[ -f "${matrix}" ]] || fail "missing ${matrix}"
 [[ -f "${tls_matrix}" ]] || fail "missing ${tls_matrix}"
+[[ -f "${ci_matrix}" ]] || fail "missing ${ci_matrix}"
 
 grep -Fq 'NIST SP 800-53 Rev. 5' "${matrix}" || fail "missing NIST SP 800-53 Rev. 5 declaration"
 grep -Fq 'OWASP ASVS 5.0.0' "${matrix}" || fail "missing OWASP ASVS 5.0.0 declaration"
@@ -51,6 +53,20 @@ grep -Fq 'does not establish' "${tls_matrix}" || fail "TLS matrix must reject fo
 grep -Fq 'FedRAMP' "${tls_matrix}" || fail "TLS matrix is missing FedRAMP scope"
 grep -Fq 'SOC 2' "${tls_matrix}" || fail "TLS matrix is missing SOC 2 scope"
 grep -Fq 'OWASP ASVS' "${tls_matrix}" || fail "TLS matrix is missing OWASP ASVS scope"
+
+grep -Fq 'does not claim formal' "${ci_matrix}" || fail "CI boundary document must reject formal compliance claims"
+for control in SA-12 CM-3 CM-8 AU-3 AU-12 RA-5 CA-7; do
+	grep -Eq "(^|[^A-Za-z0-9-])${control}([^A-Za-z0-9-]|$)" "${ci_matrix}" \
+		|| fail "CI boundary document is missing NIST/FedRAMP control ${control}"
+done
+for requirement in v5.0.0-V15.1.2 v5.0.0-V15.2.4 v5.0.0-V16.2.1 v5.0.0-V16.5.3; do
+	grep -Fq "${requirement}" "${ci_matrix}" \
+		|| fail "CI boundary document is missing ASVS requirement ${requirement}"
+done
+for evidence_id in CI-501-BOUNDARY-001 CI-501-PROVENANCE-001 CI-501-ARTIFACT-001 CI-501-GATE-001; do
+	grep -R -n --include='*.sh' --include='*.md' -F "${evidence_id}" "${repo_root}/hack" "${repo_root}/docs" >/dev/null \
+		|| fail "CI boundary evidence ${evidence_id} has no executable/documented artifact"
+done
 
 for control in AC-6 CM-6 IA-5 SC-8 SC-12 SC-13 SC-17 SI-4 SI-10; do
 	grep -Eq "(^|[^A-Za-z0-9-])${control}([^A-Za-z0-9-]|$)" "${tls_matrix}" \
