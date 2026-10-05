@@ -63,11 +63,11 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 	})
 
 	// DD-362: FMC always renders mcpGateway.namespace from the shared
-	// spec.fleet.mcpGatewayNamespace -- there is no per-component
+	// spec.fleet.mcpGateway.namespace -- there is no per-component
 	// override (FleetOverrideSpec.Namespace was removed).
-	It("renders the mcpGateway namespace from the shared spec.fleet.mcpGatewayNamespace when set", func() {
+	It("renders the mcpGateway namespace from the shared spec.fleet.mcpGateway.namespace when set", func() {
 		kn, knV2 := testKubernautWithFMC()
-		knV2.Spec.Fleet.MCPGatewayNamespace = "managed-clusters"
+		knV2.Spec.Fleet.MCPGateway.Namespace = "managed-clusters"
 		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cm.Data["config.yaml"]).To(ContainSubstring("namespace: managed-clusters"))
@@ -382,7 +382,7 @@ var _ = Describe("FleetMetadataCacheService", func() {
 })
 
 var _ = Describe("FleetMetadataCache RBAC", func() {
-	It("grants Envoy AI Gateway CRD watch access when mcpGatewayType=eaigw", func() {
+	It("grants Envoy AI Gateway CRD watch access when mcpGateway.type=eaigw", func() {
 		kn, knV2 := testKubernautWithFMC()
 		labels := CommonLabels(kn)
 		cr := fleetMetadataCacheClusterRole(kn, knV2, labels)
@@ -396,9 +396,9 @@ var _ = Describe("FleetMetadataCache RBAC", func() {
 		Expect(apiGroups).NotTo(ContainElement("mcp.kuadrant.io"))
 	})
 
-	It("grants Kuadrant CRD watch access when mcpGatewayType=kuadrant", func() {
+	It("grants Kuadrant CRD watch access when mcpGateway.type=kuadrant", func() {
 		kn, knV2 := testKubernautWithFMC()
-		knV2.Spec.Fleet.MCPGatewayType = mcpGatewayTypeKuadrant
+		knV2.Spec.Fleet.MCPGateway.Type = mcpGatewayTypeKuadrant
 		labels := CommonLabels(kn)
 		cr := fleetMetadataCacheClusterRole(kn, knV2, labels)
 
@@ -461,7 +461,7 @@ var _ = Describe("FleetMetadataCacheEnabled helper", func() {
 
 	It("returns false when fleet.enabled is true but backend is acm", func() {
 		_, knV2 := testKubernautWithFMC()
-		knV2.Spec.Fleet.Backend = "acm"
+		knV2.Spec.Fleet.ScopeCheck.Backend = fleetBackendACM
 		Expect(knV2.Spec.FleetMetadataCacheEnabled()).To(BeFalse())
 	})
 })
@@ -480,32 +480,32 @@ var _ = Describe("isComponentActive for FleetMetadataCache", func() {
 
 // resolveFleetEndpoint (used by configmaps.go for Gateway/RO's rendered
 // fleet.endpoint) is exercised here too since it is the mechanism tying
-// FMC's own service URL to spec.fleet.endpoint auto-derivation.
+// FMC's own service URL to spec.fleet.scopeCheck.endpoint auto-derivation.
 var _ = Describe("resolveFleetEndpoint", func() {
 	It("auto-derives the in-cluster FMC URL when backend=fleetmetadatacache and FMC is operator-managed", func() {
 		kn, knV2 := testKubernautWithFMC()
-		knV2.Spec.Fleet.Endpoint = ""
+		knV2.Spec.Fleet.ScopeCheck.Endpoint = ""
 		Expect(resolveFleetEndpoint(knV2)).To(Equal(FleetMetadataCacheURL(kn.Namespace)))
 	})
 
 	It("leaves an explicit endpoint untouched", func() {
 		_, knV2 := testKubernautWithFMC()
-		knV2.Spec.Fleet.Endpoint = "https://byo-fmc.example.com"
+		knV2.Spec.Fleet.ScopeCheck.Endpoint = "https://byo-fmc.example.com"
 		Expect(resolveFleetEndpoint(knV2)).To(Equal("https://byo-fmc.example.com"))
 	})
 
 	It("does not auto-derive when fleet.enabled is false", func() {
 		_, knV2 := testKubernautWithFMC()
 		f := false
-		knV2.Spec.Fleet.Endpoint = ""
+		knV2.Spec.Fleet.ScopeCheck.Endpoint = ""
 		knV2.Spec.Fleet.Enabled = &f
 		Expect(resolveFleetEndpoint(knV2)).To(Equal(""))
 	})
 
 	It("does not auto-derive when backend=acm even if FMC is enabled", func() {
 		_, knV2 := testKubernautWithFMC()
-		knV2.Spec.Fleet.Backend = "acm"
-		knV2.Spec.Fleet.Endpoint = ""
+		knV2.Spec.Fleet.ScopeCheck.Backend = "acm"
+		knV2.Spec.Fleet.ScopeCheck.Endpoint = ""
 		Expect(resolveFleetEndpoint(knV2)).To(Equal(""))
 	})
 })

@@ -69,7 +69,7 @@ const (
 	// DD-362: shared MCP Gateway namespace fixtures used across
 	// configmaps_test.go and rbac_test.go's namespace-retrofit coverage.
 	// There is no per-component override anymore -- every fleet-aware
-	// component resolves the one shared spec.fleet.mcpGatewayNamespace.
+	// component resolves the one shared spec.fleet.mcpGateway.namespace.
 	testFMCMCPGatewayNamespace    = "fmc-ns"
 	testAFMCPGatewayNamespace     = "af-ns"
 	testEMMCPGatewayNamespace     = "em-ns"
@@ -158,16 +158,22 @@ var testFleetEnabled = true
 
 // testKubernautWithFleetMCP returns a base Kubernaut plus a separate v1alpha2
 // view with spec.fleet enabled for MCP Gateway remote reads only
-// (mcpGatewayEndpoint/mcpGatewayType set, no backend/endpoint) -- the shape
+// (mcpGateway.endpoint/mcpGateway.type set, no scope-check endpoint) -- the shape
 // SP/AF/EM care about (#224), as opposed to testKubernautWithFMC's
 // GW/RO/FMC-oriented backend+endpoint shape.
 func testKubernautWithFleetMCP() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) {
 	kn := testKubernaut()
 	knV2 := testKnV2(kn)
 	knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-		Enabled:            &testFleetEnabled,
-		MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse",
-		MCPGatewayType:     "eaigw",
+		Enabled: &testFleetEnabled,
+		MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{
+			Endpoint: "https://mcp-gateway.example.com/sse",
+			Type:     "eaigw",
+		},
+		OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
+			TokenURL:             "https://keycloak.example.com/token",
+			CredentialsSecretRef: "fleet-oauth2-creds",
+		},
 	}
 	return kn, knV2
 }
@@ -176,10 +182,17 @@ func testKubernautWithFMC() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Ku
 	kn := testKubernaut()
 	knV2 := testKnV2(kn)
 	knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-		Enabled: &testFMCEnabled, Backend: "fleetmetadatacache",
-		MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-		OAuth2: kubernautv1alpha2.OAuth2Spec{
-			Enabled: true, TokenURL: "https://keycloak.example.com/token",
+		Enabled: &testFMCEnabled,
+		MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{
+			Endpoint: "https://mcp-gateway.example.com/sse",
+			Type:     "eaigw",
+		},
+		ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{
+			Backend:  "fleetmetadatacache",
+			Endpoint: "https://fmc.kubernaut.svc:8443",
+		},
+		OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
+			TokenURL:             "https://keycloak.example.com/token",
 			CredentialsSecretRef: "fleet-oauth2-creds",
 		},
 	}

@@ -609,7 +609,7 @@ var _ = Describe("Kubernaut Controller", func() {
 	// spec.fleet through to KA's rendered ConfigMap in a live cluster
 	// (Pyramid Invariant: "IT proves wiring").
 	Context("KA Fleet GatewayType propagation", func() {
-		It("KFG-060 [CM-6]: a Kubernaut CR with spec.fleet.enabled and mcpGatewayType=kuadrant reconciles successfully and KA's rendered ConfigMap carries the gatewayType through", func() {
+		It("KFG-060 [CM-6]: a Kubernaut CR with spec.fleet.enabled and mcpGateway.type=kuadrant reconciles successfully and KA's rendered ConfigMap carries the gatewayType through", func() {
 			createBYOSecrets(ctx)
 			kn := newCRWithRouteDisabled()
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
@@ -619,14 +619,11 @@ var _ = Describe("Kubernaut Controller", func() {
 			knV2 := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-				Enabled:             &enabled,
-				Backend:             "fleetmetadatacache",
-				Endpoint:            "https://fmc.kubernaut.svc:8443",
-				MCPGatewayEndpoint:  "https://mcp-gateway.example.com/sse",
-				MCPGatewayType:      "kuadrant",
-				MCPGatewayNamespace: testNamespace,
-				OAuth2: kubernautv1alpha2.OAuth2Spec{
-					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				Enabled:    &enabled,
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "kuadrant", Namespace: testNamespace},
+				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
+					TokenURL:             "https://keycloak.example.com/token",
 					CredentialsSecretRef: "fleet-oauth2-creds",
 				},
 			}
@@ -642,7 +639,7 @@ var _ = Describe("Kubernaut Controller", func() {
 			cm := &corev1.ConfigMap{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "kubernaut-agent-config", Namespace: testNamespace}, cm)).To(Succeed())
 			Expect(cm.Data["config.yaml"]).To(ContainSubstring("gatewayType: kuadrant"),
-				"CM-6: the reconcile loop must render spec.fleet.mcpGatewayType into KA's live ConfigMap, not just in unit-level struct construction")
+				"CM-6: the reconcile loop must render spec.fleet.mcpGateway.type into KA's live ConfigMap, not just in unit-level struct construction")
 		})
 
 		It("AF-TT-002 [CM-6]: AF's live ConfigMap renders mcp.sessionIdleTimeout/toolTimeout/toolTimeouts matching AF's own binary defaults through reconciliation, not just in unit-level struct construction", func() {
@@ -758,14 +755,11 @@ var _ = Describe("Kubernaut Controller", func() {
 			knV2 := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-				Enabled:             &enabled,
-				Backend:             "fleetmetadatacache",
-				Endpoint:            "https://fmc.kubernaut.svc:8443",
-				MCPGatewayEndpoint:  "https://mcp-gateway.example.com/sse",
-				MCPGatewayType:      "eaigw",
-				MCPGatewayNamespace: testNamespace,
-				OAuth2: kubernautv1alpha2.OAuth2Spec{
-					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				Enabled:    &enabled,
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw", Namespace: testNamespace},
+				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
+					TokenURL:             "https://keycloak.example.com/token",
 					CredentialsSecretRef: "fleet-oauth2-creds",
 				},
 			}

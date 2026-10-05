@@ -56,11 +56,11 @@ var _ = Describe("WorkflowExecution fleet write-scoped OAuth2 credential wiring 
 		Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())
 		t := true
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &t, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-			MCPGatewayNamespace: testNamespace,
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+			Enabled:    &t,
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw", Namespace: testNamespace},
+			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
+				TokenURL:             "https://keycloak.example.com/token",
 				CredentialsSecretRef: "shared-fleet-oauth2-creds",
 			},
 		}

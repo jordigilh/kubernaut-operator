@@ -71,7 +71,7 @@ func newMinimalV1alpha2CR(name string) *kubernautv1alpha2.Kubernaut {
 	}
 }
 
-var _ = Describe("v1alpha2 Fleet OAuth2 admission (ADR-CRD-001 F12)", func() {
+var _ = Describe("v1alpha2 Fleet nested API admission", func() {
 	ctx := context.Background()
 
 	var created *kubernautv1alpha2.Kubernaut
@@ -83,52 +83,18 @@ var _ = Describe("v1alpha2 Fleet OAuth2 admission (ADR-CRD-001 F12)", func() {
 		}
 	})
 
-	It("rejects fleet.enabled=true with mcpGatewayEndpoint set but oauth2.enabled omitted", func() {
-		cr := newMinimalV1alpha2CR("f12-reject-no-oauth2")
+	It("accepts active Fleet with nested MCP Gateway, scope-check, and OAuth2 configuration", func() {
+		cr := newMinimalV1alpha2CR("fleet-nested-active")
 		t := true
 		cr.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled:            &t,
-			Backend:            "fleetmetadatacache",
-			Endpoint:           "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse",
-			MCPGatewayType:     "eaigw",
-			// OAuth2 left at zero value -- Enabled defaults to false.
-		}
-
-		err := k8sClient.Create(ctx, cr)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("fleet.oauth2.enabled must be true"))
-	})
-
-	It("rejects fleet.enabled=true with mcpGatewayEndpoint set and oauth2.enabled explicitly false", func() {
-		cr := newMinimalV1alpha2CR("f12-reject-oauth2-false")
-		t := true
-		cr.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled:            &t,
-			Backend:            "fleetmetadatacache",
-			Endpoint:           "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse",
-			MCPGatewayType:     "eaigw",
-			OAuth2:             kubernautv1alpha2.OAuth2Spec{Enabled: false},
-		}
-
-		err := k8sClient.Create(ctx, cr)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("fleet.oauth2.enabled must be true"))
-	})
-
-	It("accepts fleet.enabled=true with mcpGatewayEndpoint set and oauth2.enabled=true", func() {
-		cr := newMinimalV1alpha2CR("f12-accept-oauth2-true")
-		t := true
-		cr.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled:             &t,
-			Backend:             "fleetmetadatacache",
-			Endpoint:            "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443",
-			MCPGatewayEndpoint:  "https://mcp-gateway.example.com/sse",
-			MCPGatewayType:      "eaigw",
-			MCPGatewayNamespace: testNamespace,
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled:              true,
+			Enabled: &t,
+			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{
+				Type: "eaigw", Endpoint: "https://mcp-gateway.example.com/sse", Namespace: testNamespace,
+			},
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{
+				Backend: "fleetmetadatacache", Endpoint: "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443",
+			},
+			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 				TokenURL:             "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
 			},
@@ -139,25 +105,39 @@ var _ = Describe("v1alpha2 Fleet OAuth2 admission (ADR-CRD-001 F12)", func() {
 
 		fetched := &kubernautv1alpha2.Kubernaut{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: cr.Name, Namespace: cr.Namespace}, fetched)).To(Succeed())
-		Expect(fetched.Spec.Fleet.OAuth2.Enabled).To(BeTrue())
+		Expect(fetched.Spec.Fleet.Enabled).NotTo(BeNil())
+		Expect(*fetched.Spec.Fleet.Enabled).To(BeTrue())
+		Expect(fetched.Spec.Fleet.MCPGateway.Endpoint).To(Equal(cr.Spec.Fleet.MCPGateway.Endpoint))
+		Expect(fetched.Spec.Fleet.ScopeCheck.Backend).To(Equal("fleetmetadatacache"))
+		Expect(fetched.Spec.Fleet.OAuth2.TokenURL).To(Equal(cr.Spec.Fleet.OAuth2.TokenURL))
 	})
 
-	It("accepts fleet.enabled=false with mcpGatewayEndpoint set but oauth2 unset (pre-staged, inert config)", func() {
-		cr := newMinimalV1alpha2CR("f12-accept-disabled-prestaged")
+	It("accepts disabled Fleet with pre-staged nested configuration and no OAuth2 fields", func() {
+		cr := newMinimalV1alpha2CR("fleet-nested-disabled")
 		f := false
 		cr.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled:            &f,
-			Backend:            "fleetmetadatacache",
-			Endpoint:           "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse",
-			MCPGatewayType:     "eaigw",
-			// OAuth2 intentionally left unset: Enabled=false means every
-			// other Fleet field (including OAuth2) is documented as inert,
-			// so pre-staging config while disabled must not be rejected.
+			Enabled: &f,
+			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{
+				Type: "eaigw", Endpoint: "https://mcp-gateway.example.com/sse", Namespace: testNamespace,
+			},
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "acm"},
 		}
 
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 		created = cr
+	})
+
+	It("rejects an unsupported MCP Gateway type at CRD admission", func() {
+		cr := newMinimalV1alpha2CR("fleet-nested-invalid-gateway")
+		t := true
+		cr.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+			Enabled:    &t,
+			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Type: "unsupported"},
+		}
+
+		err := k8sClient.Create(ctx, cr)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("Unsupported value"))
 	})
 
 	It("accepts fleet unset entirely", func() {

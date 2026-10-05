@@ -135,8 +135,8 @@ func (c *mcpGatewayNamespaceRoleListFailingClient) List(ctx context.Context, lis
 // Business acceptance criteria (#354, AC-6 least-privilege): a namespace-
 // scoped Role/RoleBinding granting MCP Gateway CRD read access (FMC/SP) must
 // not persist in a namespace that no longer matches the component's current
-// effective mcpGatewayNamespace -- whether that namespace changed via the
-// shared spec.fleet.mcpGatewayNamespace default, a per-component override,
+// effective MCP Gateway namespace -- whether that namespace changed via the
+// shared spec.fleet.mcpGateway.namespace default, a per-component override,
 // or the CR was deleted before a normal reconcile had a chance to prune the
 // stale copy. A name-only diff (as #341's cluster-scoped prune uses) is not
 // sufficient here because the same logical role name is expected to exist in
@@ -181,13 +181,13 @@ var _ = Describe("Namespace-scoped MCP Gateway RBAC pruning on namespace change 
 		cleanupClusterScoped(ctx)
 	})
 
-	It("prunes FMC and SignalProcessing's Role/RoleBinding from the old shared mcpGatewayNamespace once it changes to a new namespace", func() {
+	It("prunes FMC and SignalProcessing's Role/RoleBinding from the old shared MCP Gateway namespace once it changes to a new namespace", func() {
 		ensureNamespace(fmcNSa)
 		ensureNamespace(fmcNSb)
 		createBYOSecrets(ctx)
 		Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
 		fleet := defaultFMCFleetSpec()
-		fleet.MCPGatewayNamespace = fmcNSa
+		fleet.MCPGateway.Namespace = fmcNSa
 		enableFleetMetadataCacheWithFleet(ctx, fleet)
 		reconcileToRunning(ctx)
 
@@ -201,10 +201,10 @@ var _ = Describe("Namespace-scoped MCP Gateway RBAC pruning on namespace change 
 			Name: testNamespace + "-signalprocessing-mcpgateway", Namespace: fmcNSa,
 		}, spRole)).To(Succeed())
 
-		By("changing the shared mcpGatewayNamespace to a different namespace")
+		By("changing the shared MCP Gateway namespace to a different namespace")
 		existing := &kubernautv1alpha2.Kubernaut{}
 		Expect(k8sClient.Get(ctx, singletonKey(), existing)).To(Succeed())
-		existing.Spec.Fleet.MCPGatewayNamespace = fmcNSb
+		existing.Spec.Fleet.MCPGateway.Namespace = fmcNSb
 		Expect(k8sClient.Update(ctx, existing)).To(Succeed())
 
 		r := newReconciler()
@@ -248,7 +248,7 @@ var _ = Describe("Namespace-scoped MCP Gateway RBAC pruning on namespace change 
 		createBYOSecrets(ctx)
 		Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
 		fleet := defaultFMCFleetSpec()
-		fleet.MCPGatewayNamespace = fmcNSa
+		fleet.MCPGateway.Namespace = fmcNSa
 		enableFleetMetadataCacheWithFleet(ctx, fleet)
 		reconcileToRunning(ctx)
 
@@ -261,7 +261,7 @@ var _ = Describe("Namespace-scoped MCP Gateway RBAC pruning on namespace change 
 		By("changing the namespace and deleting the CR in the same beat, without an intervening reconcile")
 		existing := &kubernautv1alpha2.Kubernaut{}
 		Expect(k8sClient.Get(ctx, singletonKey(), existing)).To(Succeed())
-		existing.Spec.Fleet.MCPGatewayNamespace = fmcNSb
+		existing.Spec.Fleet.MCPGateway.Namespace = fmcNSb
 		Expect(k8sClient.Update(ctx, existing)).To(Succeed())
 		Expect(k8sClient.Delete(ctx, existing)).To(Succeed())
 		stripWorkflowNamespaceCreatedByAnnotation(ctx)
@@ -297,7 +297,7 @@ var _ = Describe("Namespace-scoped MCP Gateway RBAC pruning on namespace change 
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
 			fleet := defaultFMCFleetSpec()
-			fleet.MCPGatewayNamespace = fmcNSa
+			fleet.MCPGateway.Namespace = fmcNSa
 			enableFleetMetadataCacheWithFleet(ctx, fleet)
 
 			r := newReconciler()
@@ -334,7 +334,7 @@ var _ = Describe("Namespace-scoped MCP Gateway RBAC pruning on namespace change 
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
 			fleet := defaultFMCFleetSpec()
-			fleet.MCPGatewayNamespace = fmcNSa
+			fleet.MCPGateway.Namespace = fmcNSa
 			enableFleetMetadataCacheWithFleet(ctx, fleet)
 
 			r := newReconciler()
@@ -372,7 +372,7 @@ var _ = Describe("Namespace-scoped MCP Gateway RBAC pruning on namespace change 
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
 			fleet := defaultFMCFleetSpec()
-			fleet.MCPGatewayNamespace = fmcNSa
+			fleet.MCPGateway.Namespace = fmcNSa
 			enableFleetMetadataCacheWithFleet(ctx, fleet)
 			reconcileToRunning(ctx)
 
@@ -382,10 +382,10 @@ var _ = Describe("Namespace-scoped MCP Gateway RBAC pruning on namespace change 
 				Name: testNamespace + "-fleetmetadatacache-mcpgateway", Namespace: fmcNSa,
 			}, staleRole)).To(Succeed())
 
-			By("changing the shared mcpGatewayNamespace so the old namespace's Role becomes orphaned")
+			By("changing the shared MCP Gateway namespace so the old namespace's Role becomes orphaned")
 			existing := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), existing)).To(Succeed())
-			existing.Spec.Fleet.MCPGatewayNamespace = fmcNSb
+			existing.Spec.Fleet.MCPGateway.Namespace = fmcNSb
 			Expect(k8sClient.Update(ctx, existing)).To(Succeed())
 
 			r := newReconciler()
@@ -409,7 +409,7 @@ var _ = Describe("Namespace-scoped MCP Gateway RBAC pruning on namespace change 
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
 			fleet := defaultFMCFleetSpec()
-			fleet.MCPGatewayNamespace = fmcNSa
+			fleet.MCPGateway.Namespace = fmcNSa
 			enableFleetMetadataCacheWithFleet(ctx, fleet)
 			reconcileToRunning(ctx)
 
@@ -425,7 +425,7 @@ var _ = Describe("Namespace-scoped MCP Gateway RBAC pruning on namespace change 
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
 			fleet := defaultFMCFleetSpec()
-			fleet.MCPGatewayNamespace = fmcNSa
+			fleet.MCPGateway.Namespace = fmcNSa
 			enableFleetMetadataCacheWithFleet(ctx, fleet)
 			reconcileToRunning(ctx)
 
