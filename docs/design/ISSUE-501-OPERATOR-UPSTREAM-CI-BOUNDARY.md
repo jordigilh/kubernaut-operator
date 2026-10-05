@@ -1,8 +1,8 @@
 # Issue #501 — Operator/upstream CI boundary and release qualification
 
-**Issue:** [kubernaut-operator#501](https://github.com/jordigilh/kubernaut-operator/issues/501)  
-**Related work:** [PR #500](https://github.com/jordigilh/kubernaut-operator/pull/500), [Issue #498](https://github.com/jordigilh/kubernaut-operator/issues/498)  
-**Status:** Approved operating model; operator-side gates implemented; upstream workflow implementation is a separate follow-up  
+**Issue:** [kubernaut-operator#501](https://github.com/jordigilh/kubernaut-operator/issues/501)
+**Related work:** [PR #500](https://github.com/jordigilh/kubernaut-operator/pull/500), [Issue #498](https://github.com/jordigilh/kubernaut-operator/issues/498)
+**Status:** Approved operating model; operator-side gates implemented; upstream workflow implementation is a separate follow-up
 **Date:** 2026-10-04
 
 ## 1. Decision summary
