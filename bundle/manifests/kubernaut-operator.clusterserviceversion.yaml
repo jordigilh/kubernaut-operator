@@ -18,9 +18,11 @@ metadata:
       \ \"authWebhook\": {\n        \"logging\": {\n          \"level\": \"INFO\"\n        }\n      },\n      \"console\": {\n        \"auth\": {\n          \"secretName\": \"kubernaut-console-oidc\"\n\
       \        },\n        \"enabled\": true,\n        \"route\": {\n          \"enabled\": true\n        }\n      },\n      \"dataStorage\": {\n        \"endpointPropagationDelay\": \"10s\",\n        \"\
       logging\": {\n          \"level\": \"INFO\"\n        }\n      },\n      \"effectivenessMonitor\": {\n        \"assessment\": {\n          \"stabilizationWindow\": \"30s\",\n          \"validityWindow\"\
-      : \"300s\"\n        },\n        \"logging\": {\n          \"level\": \"INFO\"\n        }\n      },\n      \"fleet\": {\n        \"backend\": \"fleetmetadatacache\",\n        \"enabled\": false,\n\
-      \        \"endpoint\": \"https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443\",\n        \"mcpGatewayEndpoint\": \"https://mcp-gateway.example.com/sse\",\n        \"mcpGatewayType\":\
-      \ \"eaigw\"\n      },\n      \"gateway\": {\n        \"config\": {\n          \"cors\": {\n            \"allowCredentials\": false,\n            \"maxAge\": 300\n          },\n          \"deduplicationCooldown\"\
+      : \"300s\"\n        },\n        \"logging\": {\n          \"level\": \"INFO\"\n        }\n      },\n      \"fleet\": {\n        \"enabled\": false,\n        \"mcpGateway\": {\n          \"endpoint\"\
+      : \"https://mcp-gateway.example.com/sse\",\n          \"namespace\": \"managed-clusters\",\n          \"type\": \"eaigw\"\n        },\n        \"oauth2\": {\n          \"credentialsSecretRef\": \"\
+      fleet-oauth2-creds\",\n          \"scopes\": [\n            \"openid\",\n            \"groups\"\n          ],\n          \"tokenURL\": \"https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token\"\
+      \n        },\n        \"scopeCheck\": {\n          \"backend\": \"fleetmetadatacache\",\n          \"endpoint\": \"https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443\"\n        }\n \
+      \     },\n      \"gateway\": {\n        \"config\": {\n          \"cors\": {\n            \"allowCredentials\": false,\n            \"maxAge\": 300\n          },\n          \"deduplicationCooldown\"\
       : \"5m\",\n          \"k8sRequestTimeout\": \"15s\"\n        },\n        \"enabled\": false,\n        \"logging\": {\n          \"level\": \"INFO\"\n        },\n        \"route\": {\n          \"\
       enabled\": false\n        }\n      },\n      \"image\": {\n        \"pullPolicy\": \"IfNotPresent\"\n      },\n      \"kubernautAgent\": {\n        \"alignmentCheck\": {\n          \"enabled\": false,\n\
       \          \"maxStepTokens\": 500,\n          \"timeout\": \"10s\"\n        },\n        \"audit\": {\n          \"enabled\": true\n        },\n        \"interactive\": {\n          \"enabled\": true,\n\
@@ -50,7 +52,7 @@ metadata:
     categories: AI/Machine Learning,Monitoring
     com.redhat.openshift.versions: v4.18
     containerImage: quay.io/kubernaut-ai/kubernaut-operator:1.6.0-rc7
-    createdAt: '2026-10-02T18:25:04Z'
+    createdAt: '2026-10-05T14:12:17Z'
     description: "Automated Kubernetes remediation powered by AI \u2014 detects issues, analyzes root causes, and executes verified fixes."
     documentation: https://jordigilh.github.io/kubernaut-docs/latest/
     features.operators.openshift.io/cnf: 'false'
@@ -223,10 +225,23 @@ spec:
         - apiGroups:
           - cert-manager.io
           resources:
-          - clusterissuers
+          - certificates
           - issuers
           verbs:
+          - create
           - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - cert-manager.io
+          resources:
+          - clusterissuers
+          verbs:
+          - get
+          - list
+          - watch
         - apiGroups:
           - cilium.io
           resources:
