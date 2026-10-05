@@ -19,6 +19,7 @@ package resources
 import (
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -487,7 +488,7 @@ var validMCPGatewayTypes = map[string]bool{
 	mcpGatewayTypeKuadrant: true,
 }
 
-// fleetBackendACM is spec.fleet.backend's value for the BYO ACM Search
+// fleetBackendACM is spec.fleet.scopeCheck.backend's value for the BYO ACM Search
 // integration. backend=fleetmetadatacache already has a named constant
 // (ComponentFleetMetadataCache in common.go); this gives "acm" the same
 // treatment instead of repeating the bare literal.
@@ -510,40 +511,40 @@ func validateFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	var errs []error
 	const base = "spec.fleet"
 
-	if fleet.Backend == "" {
-		errs = append(errs, fmt.Errorf("%s.backend: must not be empty when fleet.enabled is true — must be one of: fleetmetadatacache, acm", base))
-	} else if !validFleetBackends[fleet.Backend] {
-		errs = append(errs, fmt.Errorf("%s.backend: invalid backend %q — must be one of: fleetmetadatacache, acm", base, fleet.Backend))
+	if fleet.ScopeCheck.Backend == "" {
+		errs = append(errs, fmt.Errorf("%s.scopeCheck.backend: must not be empty when fleet.enabled is true — must be one of: fleetmetadatacache, acm", base))
+	} else if !validFleetBackends[fleet.ScopeCheck.Backend] {
+		errs = append(errs, fmt.Errorf("%s.scopeCheck.backend: invalid backend %q — must be one of: fleetmetadatacache, acm", base, fleet.ScopeCheck.Backend))
 	}
 
 	// Endpoint is auto-derived (resolveFleetEndpoint) when backend is
 	// fleetmetadatacache -- FMC is operator-managed only (no BYO path), so
 	// the user doesn't need to also wire up its in-cluster URL by hand.
 	// backend=acm still requires an explicit endpoint.
-	if fleet.Endpoint == "" && !knV2.Spec.FleetMetadataCacheEnabled() {
-		errs = append(errs, fmt.Errorf("%s.endpoint: must be set when fleet.enabled is true (unless backend=fleetmetadatacache, which auto-derives the operator-managed FMC's in-cluster URL)", base))
+	if fleet.ScopeCheck.Endpoint == "" && !knV2.Spec.FleetMetadataCacheEnabled() {
+		errs = append(errs, fmt.Errorf("%s.scopeCheck.endpoint: must be set when fleet.enabled is true (unless backend=fleetmetadatacache, which auto-derives the operator-managed FMC's in-cluster URL)", base))
 	}
 
 	// FedRAMP IA-5 (authenticator management): upstream pkg/fleet has no
 	// unauthenticated mode for the ACM Search GraphQL API. Without a token,
 	// Gateway/RemediationOrchestrator crash-loop at startup instead of
 	// failing fast here at admission.
-	if fleet.Backend == fleetBackendACM && fleet.TokenSecretName == "" {
-		errs = append(errs, fmt.Errorf("%s.tokenSecretName: must be set when fleet.backend is \"acm\" — the ACM Search GraphQL API requires bearer token authentication", base))
+	if fleet.ScopeCheck.Backend == fleetBackendACM && (fleet.ScopeCheck.TokenSecretRef == nil || fleet.ScopeCheck.TokenSecretRef.Name == "") {
+		errs = append(errs, fmt.Errorf("%s.scopeCheck.tokenSecretRef: must be set when fleet.scopeCheck.backend is \"acm\" — the ACM Search GraphQL API requires bearer token authentication", base))
 	}
 
 	// #222: Gateway and RemediationOrchestrator both unconditionally call
 	// upstream Fleet.ValidateFullFederation() at startup, which requires
-	// mcpGatewayEndpoint+mcpGatewayType whenever fleet is enabled. Omitting
+	// mcpGateway.endpoint and mcpGateway.type whenever fleet is enabled. Omitting
 	// either crash-loops both components instead of failing fast here.
-	if fleet.MCPGatewayEndpoint == "" {
-		errs = append(errs, fmt.Errorf("%s.mcpGatewayEndpoint: must be set when fleet.enabled is true — Gateway and RemediationOrchestrator require it for remote-cluster reads (upstream Fleet.ValidateFullFederation)", base))
+	if fleet.MCPGateway.Endpoint == "" {
+		errs = append(errs, fmt.Errorf("%s.mcpGateway.endpoint: must be set when fleet.enabled is true — Gateway and RemediationOrchestrator require it for remote-cluster reads (upstream Fleet.ValidateFullFederation)", base))
 	}
 
-	if fleet.MCPGatewayType == "" {
-		errs = append(errs, fmt.Errorf("%s.mcpGatewayType: must be set when fleet.enabled is true — must be one of: eaigw, kuadrant", base))
-	} else if !validMCPGatewayTypes[fleet.MCPGatewayType] {
-		errs = append(errs, fmt.Errorf("%s.mcpGatewayType: invalid value %q — must be one of: eaigw, kuadrant", base, fleet.MCPGatewayType))
+	if fleet.MCPGateway.Type == "" {
+		errs = append(errs, fmt.Errorf("%s.mcpGateway.type: must be set when fleet.enabled is true — must be one of: eaigw, kuadrant", base))
+	} else if !validMCPGatewayTypes[fleet.MCPGateway.Type] {
+		errs = append(errs, fmt.Errorf("%s.mcpGateway.type: invalid value %q — must be one of: eaigw, kuadrant", base, fleet.MCPGateway.Type))
 	}
 
 	// kubernaut-operator#455: leaving this empty let FleetMetadataCache's
@@ -554,39 +555,26 @@ func validateFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	// (CM-6): a cluster can have multiple MCP Gateways installed, so an
 	// explicit namespace scopes every fleet-aware component's CRD watch to
 	// exactly one of them instead of watching cluster-wide.
-	if fleet.MCPGatewayNamespace == "" {
-		errs = append(errs, fmt.Errorf("%s.mcpGatewayNamespace: must be set when fleet.enabled is true — scopes every fleet-aware component's MCP Gateway CRD watch to a single namespace (kubernaut-operator#455)", base))
+	if fleet.MCPGateway.Namespace == "" {
+		errs = append(errs, fmt.Errorf("%s.mcpGateway.namespace: must be set when fleet.enabled is true — scopes every fleet-aware component's MCP Gateway CRD watch to a single namespace (kubernaut-operator#455)", base))
 	}
 
 	errs = append(errs, validateFleetOAuth2(knV2, fleet)...)
+	errs = append(errs, validateFleetTrust("spec.fleet.scopeCheck.tls", fleet.ScopeCheck.TLS)...)
+	errs = append(errs, validateFleetTrust("spec.fleet.oauth2.tls", fleet.OAuth2.TLS)...)
 
 	return errs
 }
 
-// validateFleetOAuth2 validates spec.fleet.oauth2, mirroring upstream
-// FleetConfig.Validate()'s pairing check: oauth2.enabled=true without both
-// fields silently sends unauthenticated requests to the MCP Gateway instead
-// of failing closed at startup.
-//
-// Fix (Fleet v1alpha2 migration, defense-in-depth alongside ADR-CRD-001
-// F12's CEL rule): oauth2.enabled=false is no longer a silent early return
-// when fleet.enabled=true and mcpGatewayEndpoint is set -- there is no
-// unauthenticated mode for the MCP Gateway
-// (kubernaut#1991/kubernaut#1992). The v1alpha2 CEL rule already blocks
-// this at admission; this check is the reconcile-time backstop for the
-// same invariant (e.g. a v1alpha2 CR created before the CEL rule shipped).
+// validateFleetOAuth2 validates the OAuth2 configuration required by active
+// Fleet. There is no Fleet-specific OAuth2 enable flag; Fleet activation is
+// the sole gate and the token endpoint/effective credentials are mandatory.
 func validateFleetOAuth2(knV2 *kubernautv1alpha2.Kubernaut, fleet *kubernautv1alpha2.FleetSpec) []error {
 	const base = "spec.fleet"
-	if !fleet.OAuth2.Enabled {
-		if fleet.MCPGatewayEndpoint != "" {
-			return []error{fmt.Errorf("%s.oauth2.enabled: must be true when fleet.enabled is true and fleet.mcpGatewayEndpoint is set — there is no unauthenticated mode for the MCP Gateway", base)}
-		}
-		return nil
-	}
 
 	var errs []error
 	if fleet.OAuth2.TokenURL == "" {
-		errs = append(errs, fmt.Errorf("%s.oauth2.tokenURL: must be set when fleet.oauth2.enabled is true", base))
+		errs = append(errs, fmt.Errorf("%s.oauth2.tokenURL: must be set when fleet.enabled is true", base))
 	}
 
 	// A federated IdP (e.g. Keycloak) issues distinct per-service OAuth2
@@ -630,9 +618,9 @@ func validateFleetOAuth2(knV2 *kubernautv1alpha2.Kubernaut, fleet *kubernautv1al
 	case 0:
 		// all six have an effective value.
 	case len(components):
-		errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set when fleet.oauth2.enabled is true", base))
+		errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set when fleet.enabled is true", base))
 	default:
-		errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set, or %s must be set, when fleet.oauth2.enabled is true (the other fleet-aware components already override their own)", base, strings.Join(missing, " or ")))
+		errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set, or %s must be set, when fleet.enabled is true (the other fleet-aware components already override their own)", base, strings.Join(missing, " or ")))
 	}
 
 	// #235/DD-235: WorkflowExecution is deliberately NOT one of the six
@@ -643,7 +631,48 @@ func validateFleetOAuth2(knV2 *kubernautv1alpha2.Kubernaut, fleet *kubernautv1al
 	// unconditionally here, independent of whether the shared field or any
 	// of the six read-only components' overrides are set.
 	if knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef == "" {
-		errs = append(errs, fmt.Errorf("spec.workflowExecution.fleet.oauth2CredentialsSecretRef: must be independently set when fleet.oauth2.enabled is true -- WorkflowExecution's write-scoped MCP credential never falls back to the shared %s.oauth2.credentialsSecretRef (least-privilege, DD-235)", base))
+		errs = append(errs, fmt.Errorf("spec.workflowExecution.fleet.oauth2CredentialsSecretRef: must be independently set when fleet.enabled is true -- WorkflowExecution's write-scoped MCP credential never falls back to the shared %s.oauth2.credentialsSecretRef (least-privilege, DD-235)", base))
+	}
+
+	return errs
+}
+
+func validateFleetTrust(path string, trust *kubernautv1alpha2.FleetTrustSpec) []error {
+	if trust == nil {
+		return nil
+	}
+
+	source := trust.Source
+	if source == "" {
+		source = kubernautv1alpha2.FleetTrustSourceInterService
+	}
+	hasFile := trust.CAFile != ""
+	hasSecret := trust.CACertSecretRef != nil
+	var errs []error
+
+	switch source {
+	case kubernautv1alpha2.FleetTrustSourceInterService, kubernautv1alpha2.FleetTrustSourceSystem:
+		if hasFile || hasSecret {
+			errs = append(errs, fmt.Errorf("%s: source %q must not set caFile or caCertSecretRef", path, source))
+		}
+	case kubernautv1alpha2.FleetTrustSourceFile:
+		if !hasFile {
+			errs = append(errs, fmt.Errorf("%s.caFile: must be set when source is file", path))
+		} else if !filepath.IsAbs(trust.CAFile) {
+			errs = append(errs, fmt.Errorf("%s.caFile: must be an absolute path", path))
+		}
+		if hasSecret {
+			errs = append(errs, fmt.Errorf("%s: source file must not set caCertSecretRef", path))
+		}
+	case kubernautv1alpha2.FleetTrustSourceSecret:
+		if !hasSecret || trust.CACertSecretRef.Name == "" {
+			errs = append(errs, fmt.Errorf("%s.caCertSecretRef.name: must be set when source is secret", path))
+		}
+		if hasFile {
+			errs = append(errs, fmt.Errorf("%s: source secret must not set caFile", path))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("%s.source: invalid value %q — must be one of: interService, system, file, secret", path, source))
 	}
 
 	return errs
@@ -651,10 +680,10 @@ func validateFleetOAuth2(knV2 *kubernautv1alpha2.Kubernaut, fleet *kubernautv1al
 
 // validateFleetMetadataCache validates spec.fleetMetadataCache. FMC has no
 // separate enable toggle (kubernaut-operator#450): it is active whenever
-// spec.fleet.enabled is true and spec.fleet.backend is
+// spec.fleet.enabled is true and spec.fleet.scopeCheck.backend is
 // "fleetmetadatacache" (KubernautSpec.FleetMetadataCacheEnabled()), which
 // means validateFleetConfig/validateFleetOAuth2 already enforce FMC's
-// mcpGatewayEndpoint/mcpGatewayType/oauth2.enabled/oauth2.tokenURL
+// mcpGateway.endpoint/mcpGateway.type/oauth2.tokenURL
 // requirements unconditionally whenever FMC is active -- duplicating those
 // checks here would just double-report the same error. The one FMC-specific
 // requirement that isn't already covered is its own OAuth2 credential
@@ -668,7 +697,7 @@ func validateFleetMetadataCache(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	}
 
 	fleet := &knV2.Spec.Fleet
-	if fleet.OAuth2.Enabled && effectiveFleetOAuth2SecretRef(knV2.Spec.FleetMetadataCache.Fleet, fleet.OAuth2.CredentialsSecretRef) == "" {
+	if effectiveFleetOAuth2SecretRef(knV2.Spec.FleetMetadataCache.Fleet, fleet.OAuth2.CredentialsSecretRef) == "" {
 		return []error{fmt.Errorf("spec.fleetMetadataCache.fleet.oauth2CredentialsSecretRef: must be set, or spec.fleet.oauth2.credentialsSecretRef must be set, when fleetMetadataCache is active (fleet.enabled=true, backend=fleetmetadatacache)")}
 	}
 

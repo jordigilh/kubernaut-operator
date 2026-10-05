@@ -110,7 +110,7 @@ type fleetMetadataCacheConfigYAML struct {
 // FleetMetadataCacheConfigMap builds the fleetmetadatacache-config ConfigMap.
 // Only called when spec.fleetMetadataCache.enabled is true (validated by
 // ValidateFleet at admission), so
-// spec.fleet.mcpGatewayEndpoint/mcpGatewayType and spec.fleet.oauth2.tokenURL
+// spec.fleet.mcpGateway.endpoint/type and spec.fleet.oauth2.tokenURL
 // are guaranteed non-empty. Fleet's entire CRD surface lives in v1alpha2
 // (Fleet v1alpha2 migration); kn is still needed for object metadata/labels
 // and non-Fleet fields (Valkey).
@@ -126,9 +126,9 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernau
 			TLS:         fleetMetadataCacheServerTLSYAML{CertDir: InterServiceTLSCertDirFor(knV2)},
 		},
 		MCPGateway: fleetMetadataCacheMCPGatewayYAML{
-			Endpoint:    fleet.MCPGatewayEndpoint,
-			GatewayType: fleet.MCPGatewayType,
-			Namespace:   fleet.MCPGatewayNamespace,
+			Endpoint:    fleet.MCPGateway.Endpoint,
+			GatewayType: fleet.MCPGateway.Type,
+			Namespace:   fleet.MCPGateway.Namespace,
 			Resilience:  resolveFleetResilience(knV2),
 		},
 		Valkey: fleetMetadataCacheValkeyYAML{
@@ -143,7 +143,7 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernau
 			TokenURL:       fleet.OAuth2.TokenURL,
 			CredentialsDir: fleetMetadataCacheOAuth2Dir,
 			Scopes:         fleet.OAuth2.Scopes,
-			TLSCaFile:      InterServiceTLSCAFileFor(knV2),
+			TLSCaFile:      resolveFleetTrustCAFile(fleet.OAuth2.TLS, InterServiceTLSCAFileFor(knV2), fleetOAuth2CAMountPath),
 		},
 		Debug: debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
@@ -205,6 +205,10 @@ func FleetMetadataCacheDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuberna
 		{Name: "config", MountPath: "/etc/fleetmetadatacache", ReadOnly: true},
 		{Name: "fleet-oauth2", MountPath: fleetMetadataCacheOAuth2Dir, ReadOnly: true},
 		InterServiceTLSCAMount(kn),
+	}
+	if trust := knV2.Spec.Fleet.OAuth2.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
+		volumes = append(volumes, secretKeyVolume("fleet-oauth2-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
+		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-oauth2-ca", MountPath: "/etc/fleet-tls/oauth2", ReadOnly: true})
 	}
 	// #398: mirrors DataStorageDeployment's identical spec.valkey.tls volume
 	// wiring -- without this, FMC's rendered valkey.tls.caFile/certFile/
@@ -280,7 +284,7 @@ func FleetMetadataCacheService(kn *kubernautv1alpha2.Kubernaut) *corev1.Service 
 // HTTPRoute for Kuadrant) that represent managed clusters, matching
 // upstream's own Helm chart rules exactly (gatewayType-conditional).
 //
-// #224: cluster-scoped only when the shared spec.fleet.mcpGatewayNamespace
+// #224: cluster-scoped only when the shared spec.fleet.mcpGateway.namespace
 // (DD-362 -- no per-component override) is empty. When a namespace
 // resolves, these rules move to a namespace-scoped Role instead (see
 // MCPGatewayNamespaceRBAC) -- unlike upstream's own Helm chart, which still
@@ -291,8 +295,8 @@ func FleetMetadataCacheService(kn *kubernautv1alpha2.Kubernaut) *corev1.Service 
 // registry.RegistryConfig{Namespace: ...}).
 func fleetMetadataCacheClusterRole(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	var rules []rbacv1.PolicyRule
-	if knV2.Spec.Fleet.MCPGatewayNamespace == "" {
-		rules = mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGatewayType)
+	if knV2.Spec.Fleet.MCPGateway.Namespace == "" {
+		rules = mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGateway.Type)
 	}
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{

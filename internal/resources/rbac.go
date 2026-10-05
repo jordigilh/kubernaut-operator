@@ -62,7 +62,7 @@ const (
 	// controller can list them across all namespaces and prune any whose
 	// namespace no longer matches the current desired (namespace, name)
 	// set -- e.g. after an administrator changes a component's effective
-	// mcpGatewayNamespace to a different namespace. CommonLabels alone is
+	// MCP Gateway namespace to a different namespace. CommonLabels alone is
 	// too broad for this purpose (it's stamped on nearly every operator-
 	// managed object), so a dedicated marker is needed the same way
 	// LabelCoreClusterRBAC is for cluster-scoped RBAC (#341).
@@ -133,19 +133,19 @@ func ClusterRoles(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kuber
 		roles = append(roles, ConsoleAccessClusterRole(kn))
 	}
 
-	// #224 Finding 5: once the shared spec.fleet.mcpGatewayNamespace
+	// #224 Finding 5: once the shared spec.fleet.mcpGateway.namespace
 	// resolves (DD-362 -- no per-component override), FMC's MCP Gateway
 	// CRD rules move to a namespace-scoped Role instead (see
 	// MCPGatewayNamespaceRBAC) -- the cluster-scoped ClusterRole would
 	// otherwise be a permission-less no-op, so it's omitted entirely
 	// rather than left behind as dead weight.
-	if knV2.Spec.FleetMetadataCacheEnabled() && knV2.Spec.Fleet.MCPGatewayNamespace == "" {
+	if knV2.Spec.FleetMetadataCacheEnabled() && knV2.Spec.Fleet.MCPGateway.Namespace == "" {
 		roles = append(roles, fleetMetadataCacheClusterRole(kn, knV2, labels))
 	}
 
 	// #1993 (ADR-068 gap closure, IA-2/AC-3/AC-17): the GW/RO -> FMC
 	// scope-check REST API previously carried no application-level auth.
-	// Unconditional on FMC's mcpGatewayNamespace resolution (unlike the
+	// Unconditional on FMC's MCP Gateway namespace resolution (unlike the
 	// role above) since this is unrelated to MCP Gateway CRD access.
 	if knV2.Spec.FleetMetadataCacheEnabled() {
 		roles = append(roles,
@@ -208,7 +208,7 @@ func ClusterRoleBindings(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha
 		)
 	}
 
-	if knV2.Spec.FleetMetadataCacheEnabled() && knV2.Spec.Fleet.MCPGatewayNamespace == "" {
+	if knV2.Spec.FleetMetadataCacheEnabled() && knV2.Spec.Fleet.MCPGateway.Namespace == "" {
 		crbs = append(crbs, fleetMetadataCacheClusterRoleBinding(kn, labels))
 	}
 
@@ -496,7 +496,7 @@ func WorkflowNamespaceRBAC(kn *kubernautv1alpha2.Kubernaut) ([]*rbacv1.Role, []*
 
 // MCPGatewayNamespaceRBAC returns the namespace-scoped Roles/RoleBindings
 // granting MCP Gateway CRD read access to FMC, SignalProcessing, AF, and EM
-// when the shared spec.fleet.mcpGatewayNamespace (DD-362 -- no
+// when the shared spec.fleet.mcpGateway.namespace (DD-362 -- no
 // per-component override) resolves non-empty (#224 Finding 5). When empty,
 // the corresponding cluster-scoped ClusterRole rule in
 // fleetMetadataCacheClusterRole/signalprocessingClusterRole/
@@ -514,7 +514,7 @@ func MCPGatewayNamespaceRBAC(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1a
 	labels := CommonLabels(kn)
 	labels[LabelMCPGatewayNamespaceRBAC] = LabelValueTrue
 	ns := kn.Namespace
-	rules := mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGatewayType)
+	rules := mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGateway.Type)
 
 	// One code path shared by FMC, SP, AF, and EM -- all grant the same
 	// rules, differing only in whether they're active, their effective
@@ -526,10 +526,10 @@ func MCPGatewayNamespaceRBAC(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1a
 		roleBase  string
 		component string
 	}{
-		{knV2.Spec.FleetMetadataCacheEnabled(), knV2.Spec.Fleet.MCPGatewayNamespace, "fleetmetadatacache-mcpgateway", ComponentFleetMetadataCache},
-		{mcpGatewayRemoteReadsEnabled(knV2), knV2.Spec.Fleet.MCPGatewayNamespace, "signalprocessing-mcpgateway", ComponentSignalProcessing},
-		{mcpGatewayRemoteReadsEnabled(knV2), knV2.Spec.Fleet.MCPGatewayNamespace, "apifrontend-mcpgateway", ComponentAPIFrontend},
-		{mcpGatewayRemoteReadsEnabled(knV2), knV2.Spec.Fleet.MCPGatewayNamespace, "effectivenessmonitor-mcpgateway", ComponentEffectivenessMonitor},
+		{knV2.Spec.FleetMetadataCacheEnabled(), knV2.Spec.Fleet.MCPGateway.Namespace, "fleetmetadatacache-mcpgateway", ComponentFleetMetadataCache},
+		{mcpGatewayRemoteReadsEnabled(knV2), knV2.Spec.Fleet.MCPGateway.Namespace, "signalprocessing-mcpgateway", ComponentSignalProcessing},
+		{mcpGatewayRemoteReadsEnabled(knV2), knV2.Spec.Fleet.MCPGateway.Namespace, "apifrontend-mcpgateway", ComponentAPIFrontend},
+		{mcpGatewayRemoteReadsEnabled(knV2), knV2.Spec.Fleet.MCPGateway.Namespace, "effectivenessmonitor-mcpgateway", ComponentEffectivenessMonitor},
 	}
 
 	var roles []*rbacv1.Role
@@ -1176,7 +1176,7 @@ func kubernautAgentInvestigatorClusterRole(kn *kubernautv1alpha2.Kubernaut, labe
 // unconditional rule set (#200) so SP/AF/EM's ClusterRoles -- and
 // MCPGatewayNamespaceRBAC's namespace-scoped Role variant for FMC/SP --
 // can share the exact same rules rather than re-deriving them.
-// mcpGatewayTypeKuadrant is spec.fleet.mcpGatewayType's Kuadrant value
+// mcpGatewayTypeKuadrant is spec.fleet.mcpGateway.type's Kuadrant value
 // (validated against validMCPGatewayTypes in validation.go).
 const mcpGatewayTypeKuadrant = "kuadrant"
 
@@ -1201,7 +1201,7 @@ func mcpGatewayCRDPolicyRules(gatewayType string) []rbacv1.PolicyRule {
 // cmd/effectivenessmonitor/main.go (preflight Finding 4).
 func mcpGatewayRemoteReadsEnabled(knV2 *kubernautv1alpha2.Kubernaut) bool {
 	fleet := &knV2.Spec.Fleet
-	return fleet.Enabled != nil && *fleet.Enabled && fleet.MCPGatewayEndpoint != ""
+	return fleet.Enabled != nil && *fleet.Enabled && fleet.MCPGateway.Endpoint != ""
 }
 
 // fleetCallerRBACEnabled reports whether the operator should provision the
@@ -1252,11 +1252,11 @@ func signalprocessingClusterRole(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernau
 		{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 	}
 	// #224: grant MCP Gateway CRD read access here only when the shared
-	// spec.fleet.mcpGatewayNamespace (DD-362) is empty; a resolved
+	// spec.fleet.mcpGateway.namespace (DD-362) is empty; a resolved
 	// namespace moves these rules to a namespace-scoped Role instead (see
 	// MCPGatewayNamespaceRBAC).
-	if mcpGatewayRemoteReadsEnabled(knV2) && knV2.Spec.Fleet.MCPGatewayNamespace == "" {
-		rules = append(rules, mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGatewayType)...)
+	if mcpGatewayRemoteReadsEnabled(knV2) && knV2.Spec.Fleet.MCPGateway.Namespace == "" {
+		rules = append(rules, mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGateway.Type)...)
 	}
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "signalprocessing-controller"), Labels: labels},
@@ -1363,11 +1363,11 @@ func effectivenessMonitorControllerClusterRole(kn *kubernautv1alpha2.Kubernaut, 
 	// #227: EM's upstream ClusterRegistry now reads registry.RegistryConfig{
 	// Namespace: cfg.Fleet.Namespace} (kubernaut#1720, closing #224 Finding
 	// 4's kubernaut#1686 blocker), so the cluster-scoped MCP Gateway CRD
-	// rules are only needed while the shared spec.fleet.mcpGatewayNamespace
+	// rules are only needed while the shared spec.fleet.mcpGateway.namespace
 	// (DD-362) is unresolved -- once it resolves, MCPGatewayNamespaceRBAC
 	// grants a namespace-scoped Role instead (mirroring FMC/SP).
-	if mcpGatewayRemoteReadsEnabled(knV2) && knV2.Spec.Fleet.MCPGatewayNamespace == "" {
-		rules = append(rules, mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGatewayType)...)
+	if mcpGatewayRemoteReadsEnabled(knV2) && knV2.Spec.Fleet.MCPGateway.Namespace == "" {
+		rules = append(rules, mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGateway.Type)...)
 	}
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "effectivenessmonitor-controller"), Labels: labels},
@@ -1506,11 +1506,11 @@ func apifrontendClusterRole(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1al
 	// #227: AF's upstream ClusterRegistry now reads registry.RegistryConfig{
 	// Namespace: cfg.Fleet.Namespace} (kubernaut#1720, closing #224 Finding
 	// 4's kubernaut#1686 blocker), so the cluster-scoped MCP Gateway CRD
-	// rules are only needed while the shared spec.fleet.mcpGatewayNamespace
+	// rules are only needed while the shared spec.fleet.mcpGateway.namespace
 	// (DD-362) is unresolved -- once it resolves, MCPGatewayNamespaceRBAC
 	// grants a namespace-scoped Role instead (mirroring FMC/SP).
-	if mcpGatewayRemoteReadsEnabled(knV2) && knV2.Spec.Fleet.MCPGatewayNamespace == "" {
-		rules = append(rules, mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGatewayType)...)
+	if mcpGatewayRemoteReadsEnabled(knV2) && knV2.Spec.Fleet.MCPGateway.Namespace == "" {
+		rules = append(rules, mcpGatewayCRDPolicyRules(knV2.Spec.Fleet.MCPGateway.Type)...)
 	}
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "apifrontend-role"), Labels: labels},
