@@ -131,16 +131,15 @@ type KubernautSpec struct {
 	// +optional
 	Console ConsoleSpec `json:"console,omitempty"`
 
-	// Fleet configures federated scope-checking for Gateway,
-	// RemediationOrchestrator, and APIFrontend against a shared fleet
-	// backend (ADR-068).
+	// Fleet configures nested MCP Gateway, scope-check, OAuth2, and resilience
+	// settings for federated reads and scope-checking (ADR-068).
 	// +optional
 	Fleet FleetSpec `json:"fleet,omitempty"`
 
 	// FleetMetadataCache configures the operator-managed Fleet Metadata
-	// Cache (FMC) service (ADR-068). Disabled by default -- most
-	// deployments that enable spec.fleet use backend=acm (an existing RHACM
-	// Search installation) instead of standing up FMC.
+	// Cache (FMC) service (ADR-068). It is active when
+	// spec.fleet.scopeCheck.backend=fleetmetadatacache; deployments that select
+	// spec.fleet.scopeCheck.backend=acm use an existing RHACM Search installation.
 	// +optional
 	FleetMetadataCache FleetMetadataCacheSpec `json:"fleetMetadataCache,omitempty"`
 
@@ -275,7 +274,7 @@ func (v *ValkeySpec) ValkeyTLSEnabled() bool {
 // single component (F1). Falls back to spec.fleet.oauth2.credentialsSecretRef
 // when unset. Replaces v1alpha1's flat, per-component
 // FleetOAuth2CredentialsSecretRef field. All fleet-aware components share
-// one MCP Gateway CRD registry (spec.fleet.mcpGatewayNamespace) -- there is
+// one MCP Gateway CRD registry (spec.fleet.mcpGateway.namespace) -- there is
 // no per-component namespace override (DD-362).
 type FleetOverrideSpec struct {
 	// Overrides spec.fleet.oauth2.credentialsSecretRef for this component.
@@ -287,102 +286,125 @@ type FleetOverrideSpec struct {
 	OAuth2CredentialsSecretRef string `json:"oauth2CredentialsSecretRef,omitempty"`
 }
 
-// FleetSpec configures federated scope-checking for Gateway,
-// RemediationOrchestrator, and APIFrontend against a shared fleet backend
-// (ADR-068; APIFrontend joined in #464, kubernaut#2025/#2022). All three
-// components render the same resolved fleet config; there is no per-component
-// override. When Enabled is false or omitted, the other fields are inert
-// (no validation, no rendering) so users can pre-stage configuration.
+// FleetSpec configures federated scope-checking for the fleet-aware services
+// and the shared MCP Gateway connection. The API is capability-oriented so
+// backend scope checks, gateway transport, OAuth2 token acquisition, and
+// resilience tuning have distinct names and can be resolved once for every
+// component. When Enabled is false or omitted, the nested configuration is
+// inert and may be pre-staged.
 //
-// ADR-CRD-001 F12: there is no unauthenticated mode for the MCP Gateway --
-// upstream Fleet.ValidateFullFederation rejects a missing/disabled OAuth2
-// client at startup for every fleet-aware component, including
-// FleetMetadataCache (validateFleetMetadataCache enforces this the same
-// way, since kubernaut-operator#450 tied FMC's activation to this same
-// Enabled field via FleetMetadataCacheEnabled()). The CEL rule closes that
-// gap at admission time instead of a startup crash-loop, once Fleet itself
-// is enabled; see kubernaut#1991/#1992 for the equivalent upstream Helm
-// chart fix. Gated on Enabled (like AnsibleSpec's own
-// conditional-requirement rule) to preserve this type's pre-staging
-// contract: the other fields stay inert, unvalidated, until Enabled is
-// true.
-// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || !has(self.mcpGatewayEndpoint) || size(self.mcpGatewayEndpoint) == 0 || (has(self.oauth2) && has(self.oauth2.enabled) && self.oauth2.enabled)",message="fleet.oauth2.enabled must be true when fleet.enabled is true and fleet.mcpGatewayEndpoint is set -- there is no unauthenticated mode for the MCP Gateway (mirrors FleetMetadataCache's existing unconditional requirement)"
+// Fleet has no separate OAuth2 enable flag. When Fleet is enabled, OAuth2 is
+// required by the runtime contract and validation requires its token endpoint
+// and effective credentials. The LLM profile OAuth2 API has a separate type
+// and remains independent of this Fleet contract.
 type FleetSpec struct {
-	// Whether federated scope-checking is enabled for Gateway,
-	// RemediationOrchestrator, and APIFrontend.
+	// Whether Fleet federation is enabled.
 	// +kubebuilder:default=false
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// Fleet backend to query for scope information. Required when Enabled
-	// is true. "fleetmetadatacache" targets the Fleet Metadata Cache (FMC)
-	// service's HTTP API; "acm" targets Red Hat Advanced Cluster Management
-	// Search's GraphQL API.
+	// MCP Gateway connection shared by all Fleet-aware components.
+	// +optional
+	MCPGateway FleetMCPGatewaySpec `json:"mcpGateway,omitempty"`
+
+	// Scope-check backend and its trust/token references.
+	// +optional
+	ScopeCheck FleetScopeCheckSpec `json:"scopeCheck,omitempty"`
+
+	// OAuth2 client credentials for the MCP Gateway token endpoint. There is no
+	// Enabled field: active Fleet always requires this configuration.
+	// +optional
+	OAuth2 FleetOAuth2Spec `json:"oauth2,omitempty"`
+
+	// Resilience overrides shared MCP client retry and timeout behavior.
+	// +optional
+	Resilience *FleetResilienceSpec `json:"resilience,omitempty"`
+}
+
+// FleetMCPGatewaySpec configures the shared MCP Gateway endpoint and provider.
+type FleetMCPGatewaySpec struct {
+	// MCP Gateway provider. Supported values are eaigw and kuadrant.
+	// +kubebuilder:validation:Enum=eaigw;kuadrant
+	// +optional
+	Type string `json:"type,omitempty"`
+
+	// MCP Gateway endpoint used for remote-cluster reads.
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// Namespace restricting MCP Gateway provider CRD watches and RBAC.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+}
+
+// FleetScopeCheckSpec configures the backend used for federated scope checks.
+type FleetScopeCheckSpec struct {
+	// Scope-check backend. fleetmetadatacache selects the operator-managed FMC;
+	// acm selects the ACM Search GraphQL API.
 	// +kubebuilder:validation:Enum=fleetmetadatacache;acm
 	// +optional
 	Backend string `json:"backend,omitempty"`
 
-	// HTTP(S) endpoint of the fleet backend. Required when Enabled is true.
+	// Backend endpoint. FMC derives this when omitted; ACM requires it.
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
 
-	// Name of a Secret containing a CA bundle (key: ca.crt) to verify the
-	// backend endpoint's TLS certificate. Optional.
+	// Backend CA trust source. Omitted defaults to interService.
 	// +optional
-	CASecretName string `json:"caSecretName,omitempty"`
+	TLS *FleetTrustSpec `json:"tls,omitempty"`
 
-	// Name of a Secret containing a bearer token (key: token) for ACM
-	// Search GraphQL authentication. Optional when backend=fleetmetadatacache;
-	// required (enforced at admission, FedRAMP IA-5) when backend=acm, since
-	// ACM Search's GraphQL API has no unauthenticated mode.
+	// ACM Search bearer-token Secret. The default key is token.
 	// +optional
-	TokenSecretName string `json:"tokenSecretName,omitempty"`
+	TokenSecretRef *SecretKeyRef `json:"tokenSecretRef,omitempty"`
+}
 
-	// MCPGatewayEndpoint is the fleet-wide MCP Gateway (Envoy AI Gateway or
-	// Kuadrant) SSE endpoint used for remote-cluster K8s reads. Required
-	// (enforced at admission) when Enabled is true: Gateway and
-	// RemediationOrchestrator both fail closed at startup without it
-	// (upstream Fleet.ValidateFullFederation) — see #222. This field is not
-	// specific to any one backend; it is shared config used independently
-	// of Backend/Endpoint.
+// FleetOAuth2Spec configures the OAuth2 client-credentials grant used by
+// Fleet-aware services. Active Fleet always requires TokenURL and effective
+// credentials; there is intentionally no Enabled field.
+type FleetOAuth2Spec struct {
+	// OAuth2 token endpoint URL.
 	// +optional
-	MCPGatewayEndpoint string `json:"mcpGatewayEndpoint,omitempty"`
+	TokenURL string `json:"tokenURL,omitempty"`
 
-	// MCPGatewayType selects the MCP Gateway implementation backing
-	// MCPGatewayEndpoint. Required (enforced at admission) when Enabled is
-	// true.
-	// +kubebuilder:validation:Enum=eaigw;kuadrant
+	// OAuth2 scopes shared by Fleet-aware consumers.
 	// +optional
-	MCPGatewayType string `json:"mcpGatewayType,omitempty"`
+	Scopes []string `json:"scopes,omitempty"`
 
-	// OAuth2 credentials for authenticating to the MCP Gateway. Shared by
-	// every fleet-aware component. Required (enforced at admission via the
-	// FleetSpec-level CEL rule, ADR-CRD-001 F12) when MCPGatewayEndpoint is
-	// set: there is no unauthenticated mode for the MCP Gateway, and every
-	// fleet-aware component fails closed at startup without it.
+	// Secret containing client-id and client-secret.
 	// +optional
-	OAuth2 OAuth2Spec `json:"oauth2,omitempty"`
+	CredentialsSecretRef string `json:"credentialsSecretRef,omitempty"`
 
-	// MCPGatewayNamespace restricts every fleet-aware component's MCP
-	// Gateway CRD watch (Backend for Envoy AI Gateway,
-	// MCPServerRegistration for Kuadrant) to a single namespace. Required
-	// (enforced at admission) when Enabled is true (kubernaut-operator#455):
-	// leaving it empty let FleetMetadataCache's cluster registry silently
-	// default to its own install namespace instead of the documented
-	// cluster-wide fallback (jordigilh/kubernaut#2298). It's also
-	// least-privilege — a cluster can have multiple MCP Gateways installed,
-	// so an explicit namespace scopes every fleet-aware component's watch to
-	// exactly one of them.
+	// Token-endpoint CA trust source. Omitted defaults to interService.
 	// +optional
-	MCPGatewayNamespace string `json:"mcpGatewayNamespace,omitempty"`
+	TLS *FleetTrustSpec `json:"tls,omitempty"`
+}
 
-	// Resilience overrides the MCP client's backoff/timeout tuning shared
-	// by every fleet-aware component (issue #390, kubernaut#2262 Phase 2).
-	// Mirrors upstream pkg/fleet.FleetResilienceConfig. There is no
-	// per-component override -- like the rest of FleetSpec, this is a
-	// single shared block (DD-362 precedent).
+// FleetTrustSource identifies the source of a Fleet backend or OAuth2 CA.
+type FleetTrustSource string
+
+const (
+	FleetTrustSourceInterService FleetTrustSource = "interService"
+	FleetTrustSourceSystem       FleetTrustSource = "system"
+	FleetTrustSourceFile         FleetTrustSource = "file"
+	FleetTrustSourceSecret       FleetTrustSource = "secret"
+)
+
+// FleetTrustSpec selects the CA trust material for one Fleet connection lane.
+// Source defaults to interService. The source-specific payload is validated by
+// the Fleet resolver before dependent workloads are made ready.
+type FleetTrustSpec struct {
+	// Source of the CA bundle. Omitted defaults to interService.
+	// +kubebuilder:validation:Enum=interService;system;file;secret
 	// +optional
-	Resilience *FleetResilienceSpec `json:"resilience,omitempty"`
+	Source FleetTrustSource `json:"source,omitempty"`
+
+	// Absolute path to administrator-provided CA material when source=file.
+	// +optional
+	CAFile string `json:"caFile,omitempty"`
+
+	// Secret/key containing CA PEM when source=secret.
+	// +optional
+	CACertSecretRef *CACertSecretRef `json:"caCertSecretRef,omitempty"`
 }
 
 // FleetResilienceSpec tunes the MCP client's startup backoff and
@@ -428,17 +450,17 @@ type FleetResilienceSpec struct {
 
 // FleetMetadataCacheSpec configures the operator-managed Fleet Metadata
 // Cache (FMC) service (ADR-068). FMC polls managed clusters via the MCP
-// Gateway (spec.fleet.mcpGatewayEndpoint/mcpGatewayType) and serves
-// federated scope-check results from Valkey over HTTP, so Gateway and
-// RemediationOrchestrator (spec.fleet.backend=fleetmetadatacache) query
+// Gateway (spec.fleet.mcpGateway.endpoint/type) and serves federated
+// scope-check results from Valkey over HTTP, so Gateway and
+// RemediationOrchestrator (spec.fleet.scopeCheck.backend=fleetmetadatacache) query
 // scope without holding federated K8s credentials themselves.
 //
 // There is no separate enable toggle: FMC is not a BYO/self-hosted
 // component, so the operator deploys it automatically whenever
-// spec.fleet.enabled is true and spec.fleet.backend is
+// spec.fleet.enabled is true and spec.fleet.scopeCheck.backend is
 // "fleetmetadatacache" -- see KubernautSpec.FleetMetadataCacheEnabled()
 // and kubernaut-operator#450. Most deployments that enable spec.fleet use
-// backend=acm (an existing RHACM Search installation) instead, in which
+// scopeCheck.backend=acm (an existing RHACM Search installation) instead, in which
 // case this block stays inert.
 type FleetMetadataCacheSpec struct {
 	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for FMC's own
@@ -447,7 +469,7 @@ type FleetMetadataCacheSpec struct {
 	// FleetOverrideSpec type used by every other fleet-aware component).
 	// Falls back to spec.fleet.oauth2.credentialsSecretRef when unset. FMC's
 	// MCP Gateway CRD watch namespace always uses the shared
-	// spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
+	// spec.fleet.mcpGateway.namespace (DD-362 -- no per-component override).
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 
@@ -476,7 +498,7 @@ type FleetMetadataCacheSpec struct {
 // operator-managed only (no BYO/self-hosted path), so selecting it as the
 // fleet backend is what deploys it (kubernaut-operator#450).
 func (s *KubernautSpec) FleetMetadataCacheEnabled() bool {
-	return s.FleetEnabled() && s.Fleet.Backend == "fleetmetadatacache"
+	return s.FleetEnabled() && s.Fleet.ScopeCheck.Backend == "fleetmetadatacache"
 }
 
 // FleetEnabled returns true when fleet federation (multi-cluster reads via
@@ -635,7 +657,7 @@ type SignalProcessingSpec struct {
 	// component). Falls back to spec.fleet.oauth2.credentialsSecretRef when
 	// unset. SignalProcessing's ClusterRegistry watch (used for cluster
 	// classification labels, BR-FLEET-003) always uses the shared
-	// spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
+	// spec.fleet.mcpGateway.namespace (DD-362 -- no per-component override).
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 }
@@ -840,7 +862,7 @@ type WorkflowExecutionSpec struct {
 
 // WorkflowExecutionFleetSpec configures WorkflowExecution's own write-scoped
 // MCP Gateway OAuth2 client (BR-FLEET-054, ADR-068, DD-235). Required when
-// spec.fleet.oauth2.enabled is true; enforced by validateFleetOAuth2, not by
+// spec.fleet.enabled is true; enforced by validateFleetOAuth2, not by
 // kubebuilder (the requirement is a cross-tree condition kubebuilder markers
 // can't express). Deliberately does not embed FleetOverrideSpec: it has no
 // Namespace field (WE never watches MCP Gateway CRDs, unlike FMC/SP/AF/EM),
@@ -853,7 +875,7 @@ type WorkflowExecutionFleetSpec struct {
 	// OAuth2CredentialsSecretRef names the Secret holding WE's own
 	// write-scoped OAuth2 client credentials (client-id/client-secret) for
 	// authenticating to the MCP Gateway's write tools. Required when
-	// spec.fleet.oauth2.enabled is true -- has no fallback to
+	// spec.fleet.enabled is true -- has no fallback to
 	// spec.fleet.oauth2.credentialsSecretRef.
 	// +optional
 	OAuth2CredentialsSecretRef string `json:"oauth2CredentialsSecretRef,omitempty"`
@@ -883,7 +905,7 @@ type EffectivenessMonitorSpec struct {
 	// EffectivenessMonitor only (F1). Falls back to
 	// spec.fleet.oauth2.credentialsSecretRef when unset. EM's MCP Gateway
 	// CRD watch namespace always uses the shared
-	// spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
+	// spec.fleet.mcpGateway.namespace (DD-362 -- no per-component override).
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 }
@@ -2045,7 +2067,7 @@ type APIFrontendSpec struct {
 	// APIFrontend only (F1). Falls back to
 	// spec.fleet.oauth2.credentialsSecretRef when unset. AF's MCP Gateway
 	// CRD watch namespace always uses the shared
-	// spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
+	// spec.fleet.mcpGateway.namespace (DD-362 -- no per-component override).
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
 

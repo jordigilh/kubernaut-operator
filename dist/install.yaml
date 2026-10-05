@@ -315,7 +315,7 @@ spec:
                       APIFrontend only (F1). Falls back to
                       spec.fleet.oauth2.credentialsSecretRef when unset. AF's MCP Gateway
                       CRD watch namespace always uses the shared
-                      spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
+                      spec.fleet.mcpGateway.namespace (DD-362 -- no per-component override).
                     properties:
                       oauth2CredentialsSecretRef:
                         description: |-
@@ -1159,7 +1159,7 @@ spec:
                       EffectivenessMonitor only (F1). Falls back to
                       spec.fleet.oauth2.credentialsSecretRef when unset. EM's MCP Gateway
                       CRD watch namespace always uses the shared
-                      spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
+                      spec.fleet.mcpGateway.namespace (DD-362 -- no per-component override).
                     properties:
                       oauth2CredentialsSecretRef:
                         description: |-
@@ -1247,100 +1247,85 @@ spec:
                 type: object
               fleet:
                 description: |-
-                  Fleet configures federated scope-checking for Gateway,
-                  RemediationOrchestrator, and APIFrontend against a shared fleet
-                  backend (ADR-068).
+                  Fleet configures nested MCP Gateway, scope-check, OAuth2, and resilience
+                  settings for federated reads and scope-checking (ADR-068).
                 properties:
-                  backend:
-                    description: |-
-                      Fleet backend to query for scope information. Required when Enabled
-                      is true. "fleetmetadatacache" targets the Fleet Metadata Cache (FMC)
-                      service's HTTP API; "acm" targets Red Hat Advanced Cluster Management
-                      Search's GraphQL API.
-                    enum:
-                    - fleetmetadatacache
-                    - acm
-                    type: string
-                  caSecretName:
-                    description: |-
-                      Name of a Secret containing a CA bundle (key: ca.crt) to verify the
-                      backend endpoint's TLS certificate. Optional.
-                    type: string
                   enabled:
                     default: false
-                    description: |-
-                      Whether federated scope-checking is enabled for Gateway,
-                      RemediationOrchestrator, and APIFrontend.
+                    description: Whether Fleet federation is enabled.
                     type: boolean
-                  endpoint:
-                    description: HTTP(S) endpoint of the fleet backend. Required when
-                      Enabled is true.
-                    type: string
-                  mcpGatewayEndpoint:
-                    description: |-
-                      MCPGatewayEndpoint is the fleet-wide MCP Gateway (Envoy AI Gateway or
-                      Kuadrant) SSE endpoint used for remote-cluster K8s reads. Required
-                      (enforced at admission) when Enabled is true: Gateway and
-                      RemediationOrchestrator both fail closed at startup without it
-                      (upstream Fleet.ValidateFullFederation) — see #222. This field is not
-                      specific to any one backend; it is shared config used independently
-                      of Backend/Endpoint.
-                    type: string
-                  mcpGatewayNamespace:
-                    description: |-
-                      MCPGatewayNamespace restricts every fleet-aware component's MCP
-                      Gateway CRD watch (Backend for Envoy AI Gateway,
-                      MCPServerRegistration for Kuadrant) to a single namespace. Required
-                      (enforced at admission) when Enabled is true (kubernaut-operator#455):
-                      leaving it empty let FleetMetadataCache's cluster registry silently
-                      default to its own install namespace instead of the documented
-                      cluster-wide fallback (jordigilh/kubernaut#2298). It's also
-                      least-privilege — a cluster can have multiple MCP Gateways installed,
-                      so an explicit namespace scopes every fleet-aware component's watch to
-                      exactly one of them.
-                    type: string
-                  mcpGatewayType:
-                    description: |-
-                      MCPGatewayType selects the MCP Gateway implementation backing
-                      MCPGatewayEndpoint. Required (enforced at admission) when Enabled is
-                      true.
-                    enum:
-                    - eaigw
-                    - kuadrant
-                    type: string
+                  mcpGateway:
+                    description: MCP Gateway connection shared by all Fleet-aware
+                      components.
+                    properties:
+                      endpoint:
+                        description: MCP Gateway endpoint used for remote-cluster
+                          reads.
+                        type: string
+                      namespace:
+                        description: Namespace restricting MCP Gateway provider CRD
+                          watches and RBAC.
+                        type: string
+                      type:
+                        description: MCP Gateway provider. Supported values are eaigw
+                          and kuadrant.
+                        enum:
+                        - eaigw
+                        - kuadrant
+                        type: string
+                    type: object
                   oauth2:
                     description: |-
-                      OAuth2 credentials for authenticating to the MCP Gateway. Shared by
-                      every fleet-aware component. Required (enforced at admission via the
-                      FleetSpec-level CEL rule, ADR-CRD-001 F12) when MCPGatewayEndpoint is
-                      set: there is no unauthenticated mode for the MCP Gateway, and every
-                      fleet-aware component fails closed at startup without it.
+                      OAuth2 client credentials for the MCP Gateway token endpoint. There is no
+                      Enabled field: active Fleet always requires this configuration.
                     properties:
                       credentialsSecretRef:
-                        description: |-
-                          Name of the Secret containing OAuth2 client credentials
-                          (keys: "client-id", "client-secret").
+                        description: Secret containing client-id and client-secret.
                         type: string
-                      enabled:
-                        default: false
-                        description: Whether OAuth2 authentication is enabled.
-                        type: boolean
                       scopes:
-                        description: OAuth2 scopes.
+                        description: OAuth2 scopes shared by Fleet-aware consumers.
                         items:
                           type: string
                         type: array
+                      tls:
+                        description: Token-endpoint CA trust source. Omitted defaults
+                          to interService.
+                        properties:
+                          caCertSecretRef:
+                            description: Secret/key containing CA PEM when source=secret.
+                            properties:
+                              key:
+                                default: ca.crt
+                                description: Key within the Secret containing the
+                                  CA PEM.
+                                type: string
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          caFile:
+                            description: Absolute path to administrator-provided CA
+                              material when source=file.
+                            type: string
+                          source:
+                            description: Source of the CA bundle. Omitted defaults
+                              to interService.
+                            enum:
+                            - interService
+                            - system
+                            - file
+                            - secret
+                            type: string
+                        type: object
                       tokenURL:
-                        description: Token endpoint URL.
+                        description: OAuth2 token endpoint URL.
                         type: string
                     type: object
                   resilience:
-                    description: |-
-                      Resilience overrides the MCP client's backoff/timeout tuning shared
-                      by every fleet-aware component (issue #390, kubernaut#2262 Phase 2).
-                      Mirrors upstream pkg/fleet.FleetResilienceConfig. There is no
-                      per-component override -- like the rest of FleetSpec, this is a
-                      single shared block (DD-362 precedent).
+                    description: Resilience overrides shared MCP client retry and
+                      timeout behavior.
                     properties:
                       connectTimeout:
                         description: ConnectTimeout bounds each individual MCP connect
@@ -1371,28 +1356,75 @@ spec:
                           refresh HTTP call.
                         type: string
                     type: object
-                  tokenSecretName:
-                    description: |-
-                      Name of a Secret containing a bearer token (key: token) for ACM
-                      Search GraphQL authentication. Optional when backend=fleetmetadatacache;
-                      required (enforced at admission, FedRAMP IA-5) when backend=acm, since
-                      ACM Search's GraphQL API has no unauthenticated mode.
-                    type: string
+                  scopeCheck:
+                    description: Scope-check backend and its trust/token references.
+                    properties:
+                      backend:
+                        description: |-
+                          Scope-check backend. fleetmetadatacache selects the operator-managed FMC;
+                          acm selects the ACM Search GraphQL API.
+                        enum:
+                        - fleetmetadatacache
+                        - acm
+                        type: string
+                      endpoint:
+                        description: Backend endpoint. FMC derives this when omitted;
+                          ACM requires it.
+                        type: string
+                      tls:
+                        description: Backend CA trust source. Omitted defaults to
+                          interService.
+                        properties:
+                          caCertSecretRef:
+                            description: Secret/key containing CA PEM when source=secret.
+                            properties:
+                              key:
+                                default: ca.crt
+                                description: Key within the Secret containing the
+                                  CA PEM.
+                                type: string
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          caFile:
+                            description: Absolute path to administrator-provided CA
+                              material when source=file.
+                            type: string
+                          source:
+                            description: Source of the CA bundle. Omitted defaults
+                              to interService.
+                            enum:
+                            - interService
+                            - system
+                            - file
+                            - secret
+                            type: string
+                        type: object
+                      tokenSecretRef:
+                        description: ACM Search bearer-token Secret. The default key
+                          is token.
+                        properties:
+                          key:
+                            default: token
+                            description: 'Key within the Secret. Default: "token".'
+                            type: string
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    type: object
                 type: object
-                x-kubernetes-validations:
-                - message: fleet.oauth2.enabled must be true when fleet.enabled is
-                    true and fleet.mcpGatewayEndpoint is set -- there is no unauthenticated
-                    mode for the MCP Gateway (mirrors FleetMetadataCache's existing
-                    unconditional requirement)
-                  rule: '!has(self.enabled) || !self.enabled || !has(self.mcpGatewayEndpoint)
-                    || size(self.mcpGatewayEndpoint) == 0 || (has(self.oauth2) &&
-                    has(self.oauth2.enabled) && self.oauth2.enabled)'
               fleetMetadataCache:
                 description: |-
                   FleetMetadataCache configures the operator-managed Fleet Metadata
-                  Cache (FMC) service (ADR-068). Disabled by default -- most
-                  deployments that enable spec.fleet use backend=acm (an existing RHACM
-                  Search installation) instead of standing up FMC.
+                  Cache (FMC) service (ADR-068). It is active when
+                  spec.fleet.scopeCheck.backend=fleetmetadatacache; deployments that select
+                  spec.fleet.scopeCheck.backend=acm use an existing RHACM Search installation.
                 properties:
                   fleet:
                     description: |-
@@ -1402,7 +1434,7 @@ spec:
                       FleetOverrideSpec type used by every other fleet-aware component).
                       Falls back to spec.fleet.oauth2.credentialsSecretRef when unset. FMC's
                       MCP Gateway CRD watch namespace always uses the shared
-                      spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
+                      spec.fleet.mcpGateway.namespace (DD-362 -- no per-component override).
                     properties:
                       oauth2CredentialsSecretRef:
                         description: |-
@@ -3216,7 +3248,7 @@ spec:
                       component). Falls back to spec.fleet.oauth2.credentialsSecretRef when
                       unset. SignalProcessing's ClusterRegistry watch (used for cluster
                       classification labels, BR-FLEET-003) always uses the shared
-                      spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override).
+                      spec.fleet.mcpGateway.namespace (DD-362 -- no per-component override).
                     properties:
                       oauth2CredentialsSecretRef:
                         description: |-
@@ -3339,9 +3371,10 @@ spec:
                       The operator validates these objects but does not mutate or delete them.
                     properties:
                       internalCASecretName:
-                        description: Secret containing the public internal CA under
-                          ca.crt.
-                        minLength: 1
+                        description: |-
+                          Secret containing the public internal CA under ca.crt.
+                          Required when mode=AdministratorManaged. In other modes this field is
+                          ignored unless it is used as an explicit output-name override.
                         type: string
                       serviceTLSSecretNames:
                         additionalProperties:
@@ -3350,11 +3383,9 @@ spec:
                           Serving Secret names keyed by component: gateway, datastorage,
                           kubernautagent, apifrontend, and authwebhook. Each Secret contains
                           tls.crt and tls.key with SANs covering its Service DNS names.
-                        minProperties: 1
+                          Required when mode=AdministratorManaged. Provisioned cert-manager mode
+                          fills omitted entries with the stable operator defaults.
                         type: object
-                    required:
-                    - internalCASecretName
-                    - serviceTLSSecretNames
                     type: object
                   certManager:
                     description: |-
@@ -3362,39 +3393,124 @@ spec:
                       be installed; the operator never installs its CRDs or controller.
                     properties:
                       internalCASecretName:
-                        description: Public CA Secret containing ca.crt.
-                        minLength: 1
+                        description: |-
+                          Public CA Secret containing ca.crt for administrator-managed material or
+                          tls.crt for cert-manager Certificate output.
+                          Required for reference-only mode. Provisioning mode defaults this to the
+                          dedicated inter-service CA Secret unless an override is supplied here or
+                          in Provisioning.
                         type: string
                       issuer:
-                        description: Issuer used by runtime Certificate resources.
+                        description: |-
+                          Issuer is the legacy operator spelling for the cert-manager issuer
+                          reference. It remains accepted for existing CRs.
                         properties:
                           group:
                             default: cert-manager.io
                             description: API group, normally cert-manager.io.
                             type: string
                           kind:
-                            default: Issuer
-                            description: Issuer kind, normally Issuer or ClusterIssuer.
+                            description: |-
+                              Issuer kind, normally Issuer or ClusterIssuer. The lower-case Helm mode
+                              defaults to ClusterIssuer; legacy title-case mode defaults to Issuer.
                             type: string
                           name:
-                            description: Issuer name.
-                            minLength: 1
+                            description: |-
+                              Issuer name. When empty in Helm-compatible cert-manager mode, the
+                              controller selects the sole Issuer/ClusterIssuer in scope, matching the
+                              chart's live-cluster lookup behavior.
                             type: string
-                        required:
-                        - name
+                        type: object
+                      issuerRef:
+                        description: |-
+                          IssuerRef mirrors Helm tls.certManager.issuerRef. When populated it takes
+                          precedence over the legacy Issuer field.
+                        properties:
+                          group:
+                            default: cert-manager.io
+                            description: API group, normally cert-manager.io.
+                            type: string
+                          kind:
+                            description: |-
+                              Issuer kind, normally Issuer or ClusterIssuer. The lower-case Helm mode
+                              defaults to ClusterIssuer; legacy title-case mode defaults to Issuer.
+                            type: string
+                          name:
+                            description: |-
+                              Issuer name. When empty in Helm-compatible cert-manager mode, the
+                              controller selects the sole Issuer/ClusterIssuer in scope, matching the
+                              chart's live-cluster lookup behavior.
+                            type: string
+                        type: object
+                      provisioning:
+                        description: |-
+                          Provisioning enables operator-owned cert-manager Issuer and Certificate
+                          resources. cert-manager remains the owner of generated output Secrets.
+                          When omitted, the existing reference-only contract is preserved.
+                        properties:
+                          bootstrapIssuerName:
+                            default: kubernaut-interservice-bootstrap-issuer
+                            description: |-
+                              Names of the operator-owned bootstrap Issuer, CA Certificate, and
+                              CA-backed Issuer. Defaults match the upstream Helm chart.
+                            type: string
+                          duration:
+                            default: 8760h
+                            description: |-
+                              Lifetime and renewal window for leaf and externally-issued certificates.
+                              The internal root uses a ten-year default unless InternalCADuration is
+                              explicitly set.
+                            type: string
+                          enabled:
+                            default: true
+                            description: |-
+                              Explicitly enables provisioning. A nil value is treated as true when the
+                              provisioning block is present, so `provisioning: {}` is a useful concise
+                              opt-in while an explicit false preserves reference-only behavior.
+                            type: boolean
+                          extraSANs:
+                            description: |-
+                              Extra DNS SANs are added to inter-service leaves. When non-empty, the
+                              loopback IP 127.0.0.1 is also included for host-based development clients,
+                              matching the upstream chart contract.
+                            items:
+                              type: string
+                            type: array
+                          internalCACertificateName:
+                            default: kubernaut-interservice-ca
+                            type: string
+                          internalCADuration:
+                            default: 87600h
+                            type: string
+                          internalCAIssuerName:
+                            default: kubernaut-interservice-ca-issuer
+                            type: string
+                          internalCASecretName:
+                            description: |-
+                              Optional output Secret override. The parent CertManager
+                              InternalCASecretName takes precedence when it is set for migration.
+                            type: string
+                          renewBefore:
+                            default: 720h
+                            type: string
+                          signingCertificateName:
+                            default: datastorage-signing-cert
+                            description: |-
+                              Certificate and output Secret names for DataStorage's RSA audit-signing
+                              key. Defaults to datastorage-signing-cert.
+                            type: string
+                          signingCertificateSecretName:
+                            default: datastorage-signing-cert
+                            type: string
                         type: object
                       serviceTLSSecretNames:
                         additionalProperties:
                           type: string
                         description: |-
                           Serving Secret names keyed by component, with the same keys as the
-                          administrator-managed mode.
-                        minProperties: 1
+                          administrator-managed mode. Required for reference-only mode;
+                          provisioning mode fills omitted entries with stable defaults.
                         type: object
-                    required:
-                    - internalCASecretName
-                    - issuer
-                    - serviceTLSSecretNames
                     type: object
                   developmentSelfSigned:
                     description: Configures the explicit development-only self-signed
@@ -3410,11 +3526,50 @@ spec:
                           generated leaves.
                         type: string
                     type: object
+                  hooks:
+                    description: |-
+                      Hooks mirrors Helm hooks.tlsCerts. Helm hook Jobs are replaced by the
+                      operator's reconciliation loop, while the extra SAN input remains the
+                      same migration-compatible configuration surface.
+                    properties:
+                      tlsCerts:
+                        description: |-
+                          TLSCerts configures the self-signed certificate SAN additions used by the
+                          Helm tls-cert-job. The operator reconciles the equivalent Secrets directly.
+                        properties:
+                          extraSANs:
+                            description: |-
+                              Additional DNS SANs for inter-service certificates. When non-empty, the
+                              loopback IP 127.0.0.1 is also included, matching the chart behavior.
+                            items:
+                              type: string
+                            type: array
+                        type: object
+                    type: object
+                  interService:
+                    description: |-
+                      InterService mirrors Helm tls.interService. The defaults are /etc/tls and
+                      /etc/tls-ca/ca.crt, matching the chart's values.schema.json contract.
+                    properties:
+                      caFile:
+                        default: /etc/tls-ca/ca.crt
+                        description: Path to the CA certificate used by client-side
+                          trust.
+                        type: string
+                      certDir:
+                        default: /etc/tls
+                        description: Directory containing tls.crt and tls.key for
+                          server-side TLS.
+                        type: string
+                    type: object
                   mode:
                     description: |-
                       Source mode. Empty selects only a positively discovered OpenShift
                       service-CA adapter; generic clusters must not treat it as plaintext.
                     enum:
+                    - hook
+                    - cert-manager
+                    - manual
                     - AdministratorManaged
                     - CertManager
                     - DevelopmentSelfSigned
@@ -3548,7 +3703,7 @@ spec:
                           OAuth2CredentialsSecretRef names the Secret holding WE's own
                           write-scoped OAuth2 client credentials (client-id/client-secret) for
                           authenticating to the MCP Gateway's write tools. Required when
-                          spec.fleet.oauth2.enabled is true -- has no fallback to
+                          spec.fleet.enabled is true -- has no fallback to
                           spec.fleet.oauth2.credentialsSecretRef.
                         type: string
                     type: object
@@ -4027,6 +4182,26 @@ rules:
   - update
   - watch
 - apiGroups:
+  - cert-manager.io
+  resources:
+  - certificates
+  - issuers
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - cert-manager.io
+  resources:
+  - clusterissuers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - cilium.io
   resources:
   - ciliumnetworkpolicies
@@ -4130,6 +4305,7 @@ rules:
   - projectcalico.org
   resources:
   - networkpolicies
+  - tier.networkpolicies
   verbs:
   - create
   - delete
@@ -4137,6 +4313,14 @@ rules:
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - projectcalico.org
+  resources:
+  - tiers
+  verbs:
+  - get
+  - list
   - watch
 - apiGroups:
   - rbac.authorization.k8s.io

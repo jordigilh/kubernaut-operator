@@ -1231,6 +1231,18 @@ func secretVolume(name, secretName string) corev1.Volume {
 	}
 }
 
+func secretKeyVolume(name, secretName, secretKey, itemPath string) corev1.Volume {
+	return corev1.Volume{
+		Name: name,
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: secretName,
+				Items:      []corev1.KeyToPath{{Key: secretKey, Path: itemPath}},
+			},
+		},
+	}
+}
+
 // appendInterServiceTLSCA mounts the inter-service trust bundle and points
 // TLS_CA_FILE/SSL_CERT_FILE at it. SSL_CERT_FILE is only appended when the
 // caller hasn't already declared one (#404) -- Go's SSL_CERT_FILE replaces
@@ -1304,8 +1316,12 @@ func appendMCPGatewayOnlyFleetSecretMount(volumes []corev1.Volume, mounts []core
 // branch below is defense-in-depth, not the primary enforcement.
 func appendWorkflowExecutionFleetSecretMount(volumes []corev1.Volume, mounts []corev1.VolumeMount, knV2 *kubernautv1alpha2.Kubernaut, componentEtcDir string) ([]corev1.Volume, []corev1.VolumeMount) {
 	fleet := &knV2.Spec.Fleet
-	if fleet.Enabled == nil || !*fleet.Enabled || !fleet.OAuth2.Enabled {
+	if fleet.Enabled == nil || !*fleet.Enabled {
 		return volumes, mounts
+	}
+	if trust := fleet.OAuth2.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
+		volumes = append(volumes, secretKeyVolume("fleet-oauth2-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
+		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-oauth2-ca", MountPath: "/etc/fleet-tls/oauth2", ReadOnly: true})
 	}
 	credentialsSecretRef := knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef
 	if credentialsSecretRef == "" {
@@ -1326,16 +1342,20 @@ func appendFleetSecretMountsVariant(volumes []corev1.Volume, mounts []corev1.Vol
 		return volumes, mounts
 	}
 	if includeBackend {
-		if fleet.CASecretName != "" {
-			volumes = append(volumes, secretVolume("fleet-ca", fleet.CASecretName))
-			mounts = append(mounts, corev1.VolumeMount{Name: "fleet-ca", MountPath: "/etc/fleet-tls/ca", ReadOnly: true})
+		if trust := fleet.ScopeCheck.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
+			volumes = append(volumes, secretKeyVolume("fleet-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
+			mounts = append(mounts, corev1.VolumeMount{Name: "fleet-ca", MountPath: "/etc/fleet-tls/scope-check", ReadOnly: true})
 		}
-		if fleet.TokenSecretName != "" {
-			volumes = append(volumes, secretVolume("fleet-token", fleet.TokenSecretName))
+		if tokenRef := fleet.ScopeCheck.TokenSecretRef; tokenRef != nil && tokenRef.Name != "" {
+			volumes = append(volumes, secretKeyVolume("fleet-token", tokenRef.Name, withDefault(tokenRef.Key, "token"), "token"))
 			mounts = append(mounts, corev1.VolumeMount{Name: "fleet-token", MountPath: "/etc/fleet-token", ReadOnly: true})
 		}
 	}
-	if credentialsSecretRef := withDefault(credentialsSecretRefOverride, fleet.OAuth2.CredentialsSecretRef); fleet.OAuth2.Enabled && credentialsSecretRef != "" {
+	if trust := fleet.OAuth2.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
+		volumes = append(volumes, secretKeyVolume("fleet-oauth2-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
+		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-oauth2-ca", MountPath: "/etc/fleet-tls/oauth2", ReadOnly: true})
+	}
+	if credentialsSecretRef := withDefault(credentialsSecretRefOverride, fleet.OAuth2.CredentialsSecretRef); credentialsSecretRef != "" {
 		volumes = append(volumes, secretVolume("fleet-oauth2", credentialsSecretRef))
 		mounts = append(mounts, corev1.VolumeMount{
 			Name:      "fleet-oauth2",

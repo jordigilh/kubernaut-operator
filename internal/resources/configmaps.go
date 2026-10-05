@@ -294,7 +294,7 @@ type fleetOAuth2YAML struct {
 	// isn't signed by a public/system CA (e.g. a cluster-local Keycloak).
 	// Pre-existing gap (#223 triage) -- upstream has consumed this field
 	// since before #223, but the operator never rendered it. Defaults to
-	// InterServiceTLSCAFile via resolveFleetConfigDefaultCA, since the
+	// caller's resolved inter-service CA path, since the
 	// OAuth2 provider is typically another in-cluster/OCP service whose
 	// cert is signed by the service-ca operator.
 	TLSCAFile string `json:"tlsCAFile,omitempty" yaml:"tlsCAFile,omitempty"`
@@ -304,8 +304,9 @@ type fleetOAuth2YAML struct {
 // volume mounts added in deployments.go (GatewayDeployment /
 // RemediationOrchestratorDeployment).
 const (
-	fleetCAMountPath    = "/etc/fleet-tls/ca/ca.crt"
-	fleetTokenMountPath = "/etc/fleet-token/token"
+	fleetCAMountPath       = "/etc/fleet-tls/scope-check/ca.crt"
+	fleetOAuth2CAMountPath = "/etc/fleet-tls/oauth2/ca.crt"
+	fleetTokenMountPath    = "/etc/fleet-token/token"
 )
 
 // apifrontendTLSCAFile is AF's own combined inter-service CA bundle mount
@@ -315,6 +316,27 @@ const (
 // appendInterServiceTLSCA). Used both for AF's existing kaTlsCaFile/
 // dsTlsCaFile fields and as the default for AF's fleet oauth2.tlsCAFile.
 const apifrontendTLSCAFile = "/etc/apifrontend/tls-ca/ca.crt"
+
+// resolveFleetTrustCAFile maps one source-aware Fleet trust lane to the path
+// consumed by the upstream service. interService (and an omitted source) uses
+// the caller's existing generic trust mount; system leaves the CA path empty;
+// file preserves the administrator-owned path; secret uses the deterministic
+// read-only mount created by the corresponding Deployment helper.
+func resolveFleetTrustCAFile(trust *kubernautv1alpha2.FleetTrustSpec, defaultCAFile, secretCAFile string) string {
+	if trust == nil || trust.Source == "" || trust.Source == kubernautv1alpha2.FleetTrustSourceInterService {
+		return defaultCAFile
+	}
+	switch trust.Source {
+	case kubernautv1alpha2.FleetTrustSourceSystem:
+		return ""
+	case kubernautv1alpha2.FleetTrustSourceFile:
+		return trust.CAFile
+	case kubernautv1alpha2.FleetTrustSourceSecret:
+		return secretCAFile
+	default:
+		return defaultCAFile
+	}
+}
 
 // resolveFleetConfig builds the fleet: block rendered into a component's
 // ConfigMap. Returns nil when fleet is disabled so the key is omitted
@@ -326,10 +348,10 @@ const apifrontendTLSCAFile = "/etc/apifrontend/tls-ca/ca.crt"
 // RemediationOrchestrator must be able to authenticate as different clients.
 //
 // The top-level TLSCAFile (used by upstream's Backend/Endpoint scope-check
-// adapter to verify fleet.Endpoint's TLS, e.g. FleetMetadataCache's
+// adapter to verify spec.fleet.scopeCheck.endpoint's TLS, e.g. FMC's
 // in-cluster Service) defaults to defaultOAuth2CAFile -- the same
 // trust-bundle path already mounted for the OAuth2 sub-block -- whenever
-// the admin hasn't set an explicit fleet.CASecretName. Without this
+// scopeCheck.tls is omitted or selects interService. Without this
 // default, an admin relying on the operator's own service-ca-signed
 // endpoint (the common case: no BYO CA) got no CA at all here, silently
 // falling back to the Go process's system-only cert pool.
@@ -340,28 +362,22 @@ func resolveFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefO
 	}
 	cfg := &fleetConfigYAML{
 		Enabled:            true,
-		Backend:            fleet.Backend,
+		Backend:            fleet.ScopeCheck.Backend,
 		Endpoint:           resolveFleetEndpoint(knV2),
-		MCPGatewayEndpoint: fleet.MCPGatewayEndpoint,
-		MCPGatewayType:     fleet.MCPGatewayType,
+		MCPGatewayEndpoint: fleet.MCPGateway.Endpoint,
+		MCPGatewayType:     fleet.MCPGateway.Type,
 		Resilience:         resolveFleetResilience(knV2),
 	}
-	if fleet.CASecretName != "" {
-		cfg.TLSCAFile = fleetCAMountPath
-	} else {
-		cfg.TLSCAFile = defaultOAuth2CAFile
-	}
-	if fleet.TokenSecretName != "" {
+	cfg.TLSCAFile = resolveFleetTrustCAFile(fleet.ScopeCheck.TLS, defaultOAuth2CAFile, fleetCAMountPath)
+	if fleet.ScopeCheck.TokenSecretRef != nil && fleet.ScopeCheck.TokenSecretRef.Name != "" {
 		cfg.TokenPath = fleetTokenMountPath
 	}
-	if fleet.OAuth2.Enabled {
-		cfg.OAuth2 = &fleetOAuth2YAML{
-			Enabled:              true,
-			TokenURL:             fleet.OAuth2.TokenURL,
-			CredentialsSecretRef: withDefault(credentialsSecretRefOverride, fleet.OAuth2.CredentialsSecretRef),
-			Scopes:               fleet.OAuth2.Scopes,
-			TLSCAFile:            defaultOAuth2CAFile,
-		}
+	cfg.OAuth2 = &fleetOAuth2YAML{
+		Enabled:              true,
+		TokenURL:             fleet.OAuth2.TokenURL,
+		CredentialsSecretRef: withDefault(credentialsSecretRefOverride, fleet.OAuth2.CredentialsSecretRef),
+		Scopes:               fleet.OAuth2.Scopes,
+		TLSCAFile:            resolveFleetTrustCAFile(fleet.OAuth2.TLS, defaultOAuth2CAFile, fleetOAuth2CAMountPath),
 	}
 	return cfg
 }
@@ -375,7 +391,7 @@ func resolveFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefO
 // resolveAPIFrontendFleetConfig below instead). Reuses resolveFleetConfig's
 // marshaling and TLSCAFile defaulting, then strips the backend/endpoint/
 // tokenPath fields EM neither needs nor reads. fleet.namespace is always the
-// shared spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component
+// shared spec.fleet.mcpGateway.namespace (DD-362 -- no per-component
 // override) so EM's ClusterRegistry scopes its watch to a single namespace
 // instead of cluster-wide (#227).
 func resolveMCPGatewayOnlyFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefOverride, defaultOAuth2CAFile string) *fleetConfigYAML {
@@ -387,7 +403,7 @@ func resolveMCPGatewayOnlyFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credent
 	cfg.Endpoint = ""
 	cfg.TLSCAFile = ""
 	cfg.TokenPath = ""
-	cfg.Namespace = knV2.Spec.Fleet.MCPGatewayNamespace
+	cfg.Namespace = knV2.Spec.Fleet.MCPGateway.Namespace
 	return cfg
 }
 
@@ -397,7 +413,7 @@ func resolveMCPGatewayOnlyFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credent
 // EM above -- AF needs the full, un-stripped shape resolveFleetConfig
 // already produces for GW/RO. The one AF-specific addition on top of that
 // shared shape is fleet.namespace: always the shared
-// spec.fleet.mcpGatewayNamespace (DD-362 -- no per-component override) so
+// spec.fleet.mcpGateway.namespace (DD-362 -- no per-component override) so
 // AF's ClusterRegistry scopes its watch to a single namespace instead of
 // cluster-wide (#227). GW/RO never set this field.
 func resolveAPIFrontendFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefOverride, defaultOAuth2CAFile string) *fleetConfigYAML {
@@ -405,7 +421,7 @@ func resolveAPIFrontendFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credential
 	if cfg == nil {
 		return nil
 	}
-	cfg.Namespace = knV2.Spec.Fleet.MCPGatewayNamespace
+	cfg.Namespace = knV2.Spec.Fleet.MCPGateway.Namespace
 	return cfg
 }
 
@@ -579,7 +595,7 @@ type signalProcessingFleetYAML struct {
 // tolerates an all-zero-value fleet: block -- BR-INTEGRATION-054, "when
 // Endpoint is empty, SP operates in local-only mode" -- but omitting the
 // key keeps non-fleet deployments' rendered YAML unchanged). fleet.namespace
-// is always the shared spec.fleet.mcpGatewayNamespace (DD-362 -- no
+// is always the shared spec.fleet.mcpGateway.namespace (DD-362 -- no
 // per-component override).
 func resolveSignalProcessingFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) *signalProcessingFleetYAML {
 	fleet := &knV2.Spec.Fleet
@@ -588,19 +604,17 @@ func resolveSignalProcessingFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) *sign
 	}
 	override := knV2.Spec.SignalProcessing.Fleet
 	cfg := &signalProcessingFleetYAML{
-		Endpoint:       fleet.MCPGatewayEndpoint,
-		MCPGatewayType: fleet.MCPGatewayType,
-		Namespace:      fleet.MCPGatewayNamespace,
+		Endpoint:       fleet.MCPGateway.Endpoint,
+		MCPGatewayType: fleet.MCPGateway.Type,
+		Namespace:      fleet.MCPGateway.Namespace,
 		Resilience:     resolveFleetResilience(knV2),
 	}
-	if fleet.OAuth2.Enabled {
-		cfg.OAuth2 = &fleetOAuth2YAML{
-			Enabled:              true,
-			TokenURL:             fleet.OAuth2.TokenURL,
-			CredentialsSecretRef: effectiveFleetOAuth2SecretRef(override, fleet.OAuth2.CredentialsSecretRef),
-			Scopes:               fleet.OAuth2.Scopes,
-			TLSCAFile:            InterServiceTLSCAFileFor(knV2),
-		}
+	cfg.OAuth2 = &fleetOAuth2YAML{
+		Enabled:              true,
+		TokenURL:             fleet.OAuth2.TokenURL,
+		CredentialsSecretRef: effectiveFleetOAuth2SecretRef(override, fleet.OAuth2.CredentialsSecretRef),
+		Scopes:               fleet.OAuth2.Scopes,
+		TLSCAFile:            resolveFleetTrustCAFile(fleet.OAuth2.TLS, InterServiceTLSCAFileFor(knV2), fleetOAuth2CAMountPath),
 	}
 	return cfg
 }
@@ -748,17 +762,15 @@ func resolveWEFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, defaultOAuth2CAFile
 		return nil
 	}
 	cfg := &weFleetYAML{
-		Endpoint:   fleet.MCPGatewayEndpoint,
+		Endpoint:   fleet.MCPGateway.Endpoint,
 		Resilience: resolveFleetResilience(knV2),
-	}
-	if fleet.OAuth2.Enabled {
-		cfg.OAuth2 = &fleetOAuth2YAML{
+		OAuth2: &fleetOAuth2YAML{
 			Enabled:              true,
 			TokenURL:             fleet.OAuth2.TokenURL,
 			CredentialsSecretRef: knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef,
 			Scopes:               fleet.OAuth2.Scopes,
-			TLSCAFile:            defaultOAuth2CAFile,
-		}
+			TLSCAFile:            resolveFleetTrustCAFile(fleet.OAuth2.TLS, defaultOAuth2CAFile, fleetOAuth2CAMountPath),
+		},
 	}
 	return cfg
 }
@@ -1053,6 +1065,7 @@ type kaFleetOAuth2YAML struct {
 	TokenURL             string   `json:"tokenURL,omitempty" yaml:"tokenURL,omitempty"`
 	CredentialsSecretRef string   `json:"credentialsSecretRef,omitempty" yaml:"credentialsSecretRef,omitempty"`
 	Scopes               []string `json:"scopes,omitempty" yaml:"scopes,omitempty"`
+	TLSCaFile            string   `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 }
 
 // resolveKAFleetConfig builds KA's integrations.fleet: block. Returns nil
@@ -1065,17 +1078,16 @@ func resolveKAFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) *kaFleetYAML {
 		return nil
 	}
 	cfg := &kaFleetYAML{
-		Endpoint:    fleet.MCPGatewayEndpoint,
-		GatewayType: fleet.MCPGatewayType,
+		Endpoint:    fleet.MCPGateway.Endpoint,
+		GatewayType: fleet.MCPGateway.Type,
 		Resilience:  resolveFleetResilience(knV2),
-	}
-	if fleet.OAuth2.Enabled {
-		cfg.OAuth2 = &kaFleetOAuth2YAML{
+		OAuth2: &kaFleetOAuth2YAML{
 			Enabled:              true,
 			TokenURL:             fleet.OAuth2.TokenURL,
 			CredentialsSecretRef: effectiveFleetOAuth2SecretRef(knV2.Spec.KubernautAgent.Fleet, fleet.OAuth2.CredentialsSecretRef),
 			Scopes:               fleet.OAuth2.Scopes,
-		}
+			TLSCaFile:            resolveFleetTrustCAFile(fleet.OAuth2.TLS, InterServiceTLSCAFileFor(knV2), fleetOAuth2CAMountPath),
+		},
 	}
 	return cfg
 }

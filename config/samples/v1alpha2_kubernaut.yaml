@@ -21,34 +21,34 @@ spec:
     port: 6379
     secretName: valkey-secret
 
-  # Federated scope-checking (Gateway/RemediationOrchestrator) and
-  # multi-cluster reads (SignalProcessing/APIFrontend/EffectivenessMonitor)
-  # against a shared fleet backend (ADR-068). Disabled by default; all
-  # fields below are inert (no validation, no rendering) until enabled:
-  # true is set.
-  #
-  # mcpGatewayEndpoint/mcpGatewayType are REQUIRED alongside backend/endpoint:
-  # Gateway, RemediationOrchestrator, and APIFrontend fail closed at startup
-  # without them (upstream Fleet.ValidateFullFederation; APIFrontend's own
-  # checkRRScope path gained the same Backend/Endpoint scope-check adapter
-  # call in kubernaut#2025/#2022, #464); SignalProcessing/EffectivenessMonitor
-  # only need mcpGatewayEndpoint+mcpGatewayType (they never call the
-  # Backend/Endpoint scope-check adapter, so backend/endpoint are irrelevant
-  # to them and omitted from their rendered config).
+  # Federated scope-checking and multi-cluster reads (ADR-068). Disabled by
+  # default; nested values may be pre-staged and remain inert until enabled.
+  # When enabled, mcpGateway.endpoint/type/namespace and oauth2.tokenURL plus
+  # effective credentials are required. ACM additionally requires
+  # scopeCheck.endpoint and scopeCheck.tokenSecretRef.
   fleet:
     enabled: false
-    backend: fleetmetadatacache
-    endpoint: "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443"
-    # caSecretName: fmc-ca-bundle   # Secret key: ca.crt (optional; verifies the endpoint's TLS cert)
-    # tokenSecretName: acm-search-token   # Secret key: token (typically required for backend: acm)
-    mcpGatewayEndpoint: "https://mcp-gateway.example.com/sse"
-    mcpGatewayType: eaigw   # or "kuadrant"
-    # mcpGatewayNamespace: managed-clusters   # optional; scopes the MCP Gateway CRD watch (and its RBAC) to one namespace instead of cluster-wide, shared by every fleet-aware component (DD-362 -- no per-component override; FleetOverrideSpec below only carries oauth2CredentialsSecretRef).
-    # oauth2:
-    #   enabled: true
-    #   tokenURL: "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token"
-    #   credentialsSecretRef: fleet-oauth2-creds   # Secret keys: client-id, client-secret
-    #   scopes: ["openid", "groups"]
+    mcpGateway:
+      endpoint: "https://mcp-gateway.example.com/sse"
+      type: eaigw   # or "kuadrant"
+      namespace: managed-clusters
+    scopeCheck:
+      backend: fleetmetadatacache
+      endpoint: "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443"
+      # tls:
+      #   source: secret
+      #   caCertSecretRef:
+      #     name: fmc-ca-bundle
+      #     key: ca.crt
+      # tokenSecretRef:
+      #   name: acm-search-token
+      #   key: token
+    oauth2:
+      tokenURL: "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token"
+      credentialsSecretRef: fleet-oauth2-creds   # Secret keys: client-id, client-secret
+      scopes: ["openid", "groups"]
+      # tls:
+      #   source: system
     #
     # A federated IdP (e.g. Keycloak) can issue distinct per-service OAuth2
     # client registrations against the same tokenURL above. Override
@@ -63,15 +63,15 @@ spec:
     # v1alpha1's flat per-component fleetOAuth2CredentialsSecretRef fields.)
 
   # Operator-managed Fleet Metadata Cache (FMC) service (ADR-068), optional.
-  # Most deployments that enable spec.fleet above use backend: acm (an
+  # Most deployments that enable spec.fleet above use
+  # scopeCheck.backend: acm (an
   # existing RHACM Search installation) instead of standing up FMC -- only
-  # enable this when backend: fleetmetadatacache above and you want the
-  # operator to run FMC itself. When enabled with fleet.endpoint left unset,
+  # enable this when scopeCheck.backend: fleetmetadatacache above and you want
+  # the operator to run FMC itself. When enabled with scopeCheck.endpoint left unset,
   # the operator auto-derives FMC's in-cluster URL.
   # fleetMetadataCache:
-  #   enabled: false
   #   fleet:
-  #     oauth2CredentialsSecretRef: fmc-oauth2-creds   # optional; overrides fleet.oauth2.credentialsSecretRef for FMC only (namespace scoping is shared-only via spec.fleet.mcpGatewayNamespace above, DD-362)
+  #     oauth2CredentialsSecretRef: fmc-oauth2-creds   # optional; overrides fleet.oauth2.credentialsSecretRef for FMC only (namespace scoping is shared via spec.fleet.mcpGateway.namespace, DD-362)
   #   syncInterval: "30s"
   #   keyTTL: "45s"
 
@@ -242,7 +242,7 @@ spec:
     policy:
       configMapName: signalprocessing-policy
     # fleet:
-    #   oauth2CredentialsSecretRef: sp-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for SignalProcessing only (used only when fleet.enabled: true, for cluster-label classification via the MCP Gateway CRD; namespace scoping is shared-only via spec.fleet.mcpGatewayNamespace, DD-362)
+    #   oauth2CredentialsSecretRef: sp-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for SignalProcessing only (used only when fleet.enabled: true, for cluster-label classification via the MCP Gateway CRD; namespace scoping is shared-only via spec.fleet.mcpGateway.namespace, DD-362)
 
   remediationOrchestrator:
     dryRun: false

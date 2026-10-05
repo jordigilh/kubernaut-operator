@@ -25,6 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -49,15 +50,15 @@ func newCRWithFMCEnabled() *kubernautv1alpha2.Kubernaut {
 func defaultFMCFleetSpec() kubernautv1alpha2.FleetSpec {
 	t := true
 	return kubernautv1alpha2.FleetSpec{
-		Enabled: &t, Backend: "fleetmetadatacache",
-		MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
+		Enabled:    &t,
+		ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+		MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw", Namespace: testNamespace},
 		// testNamespace ("default") always exists in envtest -- these
 		// generic lifecycle fixtures aren't exercising namespace-scoped
 		// RBAC (see mcpgatewaynamespacerbac_*_test.go for that), so reusing
 		// it avoids needing an explicit ensureNamespace call per test.
-		MCPGatewayNamespace: testNamespace,
-		OAuth2: kubernautv1alpha2.OAuth2Spec{
-			Enabled: true, TokenURL: "https://keycloak.example.com/token",
+		OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
+			TokenURL:             "https://keycloak.example.com/token",
 			CredentialsSecretRef: "fleet-oauth2-creds",
 		},
 	}
@@ -72,14 +73,14 @@ func enableFleetMetadataCache(ctx context.Context) {
 
 // enableFleetMetadataCacheWithFleet is like enableFleetMetadataCache but
 // lets the caller override spec.fleet (e.g. to test a missing
-// mcpGatewayEndpoint or a non-fleetmetadatacache backend) while still
+// mcpGateway.endpoint or a non-fleetmetadatacache backend) while still
 // enabling FMC (fleet.enabled=true, fleet.backend=fleetmetadatacache).
 func enableFleetMetadataCacheWithFleet(ctx context.Context, fleet kubernautv1alpha2.FleetSpec) {
 	knV2 := &kubernautv1alpha2.Kubernaut{}
 	Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())
 	knV2.Spec.Fleet = fleet
 	// #235/DD-235: WorkflowExecution's own write-scoped credential is
-	// independently required whenever fleet.oauth2.enabled is true, and
+	// independently required whenever Fleet is enabled, and
 	// never falls back to the shared fleet.oauth2.credentialsSecretRef.
 	// Set unconditionally here (harmless when fleet.oauth2 ends up
 	// disabled in a caller's override) so every FMC-focused test in this
@@ -98,6 +99,35 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		deleteCRIfExists(ctx)
 		deleteBYOSecrets(ctx)
 		cleanupClusterScoped(ctx)
+	})
+
+	It("rejects an active Fleet when a Secret-backed scope-check CA is missing", func() {
+		createBYOSecrets(ctx)
+		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+
+		kn := &kubernautv1alpha2.Kubernaut{}
+		Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+		fleet := defaultFMCFleetSpec()
+		fleet.ScopeCheck.TLS = &kubernautv1alpha2.FleetTrustSpec{
+			Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "missing-fleet-ca"},
+		}
+		kn.Spec.Fleet = fleet
+		kn.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+		Expect(k8sClient.Update(ctx, kn)).To(Succeed())
+
+		r := newReconciler()
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+		Expect(err).NotTo(HaveOccurred())
+
+		updated := &kubernautv1alpha2.Kubernaut{}
+		Expect(k8sClient.Get(ctx, singletonKey(), updated)).To(Succeed())
+		Expect(updated.Status.Phase).To(Equal(kubernautv1alpha2.PhaseError))
+		condition := meta.FindStatusCondition(updated.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
+		Expect(condition).NotTo(BeNil())
+		Expect(condition.Message).To(ContainSubstring("spec.fleet.scopeCheck.tls.caCertSecretRef"))
 	})
 
 	Describe("FleetMetadataCache Lifecycle (#200)", func() {
@@ -123,7 +153,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}, cm)).To(Succeed())
 			Expect(cm.Data).To(HaveKey("config.yaml"))
 
-			// kubernaut-operator#455: mcpGatewayNamespace is now mandatory,
+			// kubernaut-operator#455: mcpGateway.namespace is now mandatory,
 			// so the cluster-scoped ClusterRole/CRB variant (empty
 			// namespace) is no longer a reachable state -- FMC's MCP
 			// Gateway CRD watch always grants via the namespace-scoped
@@ -255,12 +285,12 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(errors.IsNotFound(err)).To(BeTrue(), "FMC ClusterRoleBinding should be deleted after disabling")
 		})
 
-		It("rejects the CR when fleetMetadataCache is enabled but spec.fleet.mcpGatewayEndpoint is missing", func() {
+		It("rejects the CR when fleetMetadataCache is enabled but spec.fleet.mcpGateway.endpoint is missing", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithFMCEnabled()
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			fleet := defaultFMCFleetSpec()
-			fleet.MCPGatewayEndpoint = ""
+			fleet.MCPGateway.Endpoint = ""
 			enableFleetMetadataCacheWithFleet(ctx, fleet)
 
 			r := newReconciler()

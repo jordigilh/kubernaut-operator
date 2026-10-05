@@ -880,19 +880,21 @@ var _ = Describe("Deployments", func() {
 		})
 
 		Context("Fleet OAuth2 credentials mount (#204, #413)", func() {
-			It("KFG-020 [IA-5]: no fleet-oauth2 volume/mount when fleet OAuth2 is disabled", func() {
+			It("KFG-020 [IA-5]: no fleet-oauth2 volume/mount when Fleet is disabled", func() {
 				kn, knV2 := testKubernautWithFleetMCP()
+				disabled := false
+				knV2.Spec.Fleet.Enabled = &disabled
 				dep, err := KubernautAgentDeployment(kn, knV2)
 				Expect(err).NotTo(HaveOccurred())
 				for _, v := range dep.Spec.Template.Spec.Volumes {
-					Expect(v.Name).NotTo(Equal(testVolumeFleetOAuth2), "should not mount fleet-oauth2 when fleet OAuth2 is disabled")
+					Expect(v.Name).NotTo(Equal(testVolumeFleetOAuth2), "should not mount fleet-oauth2 when Fleet is disabled")
 				}
 			})
 
 			It("KFG-021 [IA-5]: mounts the fleet-oauth2 Secret at KA's current hyphenated path, not the obsolete unhyphenated path", func() {
 				kn, knV2 := testKubernautWithFleetMCP()
-				knV2.Spec.Fleet.OAuth2 = kubernautv1alpha2.OAuth2Spec{
-					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				knV2.Spec.Fleet.OAuth2 = kubernautv1alpha2.FleetOAuth2Spec{
+					TokenURL:             "https://keycloak.example.com/token",
 					CredentialsSecretRef: "fleet-oauth2-creds",
 				}
 				dep, err := KubernautAgentDeployment(kn, knV2)
@@ -909,8 +911,8 @@ var _ = Describe("Deployments", func() {
 
 			It("KFG-021b [IA-5]: uses KA's own FleetOAuth2CredentialsSecretRef override for the mount when set, not the shared credentialsSecretRef", func() {
 				kn, knV2 := testKubernautWithFleetMCP()
-				knV2.Spec.Fleet.OAuth2 = kubernautv1alpha2.OAuth2Spec{
-					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				knV2.Spec.Fleet.OAuth2 = kubernautv1alpha2.FleetOAuth2Spec{
+					TokenURL:             "https://keycloak.example.com/token",
 					CredentialsSecretRef: "shared-fleet-oauth2-creds",
 				}
 				knV2.Spec.KubernautAgent.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: "ka-oauth2-creds"}
@@ -922,6 +924,24 @@ var _ = Describe("Deployments", func() {
 					if v.Name == testVolumeFleetOAuth2 {
 						Expect(v.Secret).NotTo(BeNil())
 						Expect(v.Secret.SecretName).To(Equal("ka-oauth2-creds"))
+					}
+				}
+			})
+
+			It("KFG-022 [SC-8]: mounts the Fleet OAuth2 CA Secret at the independent OAuth2 trust path", func() {
+				kn, knV2 := testKubernautWithFleetMCP()
+				knV2.Spec.Fleet.OAuth2.TLS = &kubernautv1alpha2.FleetTrustSpec{
+					Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+					CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fleet-oauth2-ca"},
+				}
+				dep, err := KubernautAgentDeployment(kn, knV2)
+				Expect(err).NotTo(HaveOccurred())
+				expectHasVolume(dep, "fleet-oauth2-ca")
+				expectHasVolumeMount(dep, "fleet-oauth2-ca", "/etc/fleet-tls/oauth2")
+				for _, v := range dep.Spec.Template.Spec.Volumes {
+					if v.Name == "fleet-oauth2-ca" {
+						Expect(v.Secret).NotTo(BeNil())
+						Expect(v.Secret.SecretName).To(Equal("fleet-oauth2-ca"))
 					}
 				}
 			})
@@ -1200,10 +1220,11 @@ var _ = Describe("Deployments", func() {
 			knV2 := testKnV2(kn)
 			enabled := true
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-				OAuth2: kubernautv1alpha2.OAuth2Spec{
-					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				Enabled:    &enabled,
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
+				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
+					TokenURL:             "https://keycloak.example.com/token",
 					CredentialsSecretRef: "fleet-oauth2-creds",
 				},
 			}
@@ -1220,10 +1241,11 @@ var _ = Describe("Deployments", func() {
 			knV2 := testKnV2(kn)
 			enabled := true
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-				Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-				MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-				OAuth2: kubernautv1alpha2.OAuth2Spec{
-					Enabled: true, TokenURL: "https://keycloak.example.com/token",
+				Enabled:    &enabled,
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
+				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
+					TokenURL:             "https://keycloak.example.com/token",
 					CredentialsSecretRef: "fleet-oauth2-creds",
 				},
 			}
@@ -1239,6 +1261,19 @@ var _ = Describe("Deployments", func() {
 						"[AC-6] WE must mount its own write-scoped Secret, never the shared fleet-oauth2-creds one")
 				}
 			}
+		})
+
+		It("mounts the Fleet OAuth2 CA Secret independently from WE's write credential", func() {
+			kn, knV2 := testKubernautWithFleetMCP()
+			knV2.Spec.Fleet.OAuth2.TLS = &kubernautv1alpha2.FleetTrustSpec{
+				Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+				CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fleet-oauth2-ca"},
+			}
+			knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+			dep, err := WorkflowExecutionDeployment(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, "fleet-oauth2-ca")
+			expectHasVolumeMount(dep, "fleet-oauth2-ca", "/etc/fleet-tls/oauth2")
 		})
 	})
 
@@ -2182,7 +2217,8 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		kn := testKubernaut()
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			Enabled:    &enabled,
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
 		}
 		gwDep, err := GatewayDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
@@ -2196,12 +2232,15 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		}
 	})
 
-	It("[IA-5, SC-12] mounts fleet-ca on both Gateway and RemediationOrchestrator when caSecretName is set", func() {
+	It("[IA-5, SC-12] mounts fleet-ca on both Gateway and RemediationOrchestrator when scopeCheck.tls.caCertSecretRef is set", func() {
 		kn := testKubernaut()
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			CASecretName: "fmc-ca-bundle",
+			Enabled: &enabled,
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{
+				Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+				TLS: &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fmc-ca-bundle"}},
+			},
 		}
 		gwDep, err := GatewayDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
@@ -2209,7 +2248,7 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		Expect(err).NotTo(HaveOccurred())
 		for _, dep := range []*appsv1.Deployment{gwDep, roDep} {
 			expectHasVolume(dep, "fleet-ca")
-			expectHasVolumeMount(dep, "fleet-ca", "/etc/fleet-tls/ca")
+			expectHasVolumeMount(dep, "fleet-ca", "/etc/fleet-tls/scope-check")
 			for _, v := range dep.Spec.Template.Spec.Volumes {
 				if v.Name == "fleet-ca" {
 					Expect(v.Secret).NotTo(BeNil())
@@ -2219,12 +2258,15 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		}
 	})
 
-	It("[IA-5] mounts fleet-token on both Gateway and RemediationOrchestrator when tokenSecretName is set", func() {
+	It("[IA-5] mounts fleet-token on both Gateway and RemediationOrchestrator when scopeCheck.tokenSecretRef is set", func() {
 		kn := testKubernaut()
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
-			TokenSecretName: "acm-search-token",
+			Enabled: &enabled,
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{
+				Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
+				TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"},
+			},
 		}
 		gwDep, err := GatewayDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
@@ -2245,11 +2287,12 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 	// #222: upstream GW/RO read the OAuth2 client-id/client-secret files from
 	// "/etc/<component>/<credentialsSecretRef>/{client-id,client-secret}" —
 	// each component needs its own mount under its own /etc/<component> tree.
-	It("does not mount fleet-oauth2 volume when fleet oauth2 is disabled", func() {
+	It("does not mount fleet-oauth2 volume when Fleet is disabled", func() {
 		kn := testKubernaut()
 		knV2 := testKnV2(kn)
+		disabled := false
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			Enabled: &disabled,
 		}
 		gwDep, err := GatewayDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
@@ -2258,19 +2301,20 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		for _, dep := range []*appsv1.Deployment{gwDep, roDep} {
 			for _, v := range dep.Spec.Template.Spec.Volumes {
 				Expect(v.Name).NotTo(Equal(testVolumeFleetOAuth2),
-					"%s should not have a fleet-oauth2 volume when fleet.oauth2.enabled is false", dep.Name)
+					"%s should not have a fleet-oauth2 volume when spec.fleet.enabled is false", dep.Name)
 			}
 		}
 	})
 
-	It("mounts fleet-oauth2 on Gateway at /etc/gateway/<credentialsSecretRef> when oauth2 is enabled", func() {
+	It("mounts fleet-oauth2 on Gateway at /etc/gateway/<credentialsSecretRef> when Fleet is enabled", func() {
 		kn := testKubernaut()
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+			Enabled:    &enabled,
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
+			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
+				TokenURL:             "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
 			},
 		}
@@ -2286,14 +2330,15 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		}
 	})
 
-	It("mounts fleet-oauth2 on RemediationOrchestrator at /etc/remediationorchestrator/<credentialsSecretRef> when oauth2 is enabled", func() {
+	It("mounts fleet-oauth2 on RemediationOrchestrator at /etc/remediationorchestrator/<credentialsSecretRef> when Fleet is enabled", func() {
 		kn := testKubernaut()
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+			Enabled:    &enabled,
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
+			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
+				TokenURL:             "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
 			},
 		}
@@ -2317,10 +2362,11 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		kn := testKubernaut()
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+			Enabled:    &enabled,
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
+			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
+				TokenURL:             "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
 			},
 		}
@@ -2341,10 +2387,11 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		kn := testKubernaut()
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+			Enabled:    &enabled,
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
+			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
+				TokenURL:             "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
 			},
 		}
@@ -2389,10 +2436,10 @@ var _ = Describe("SignalProcessing/APIFrontend/EffectivenessMonitor Fleet secret
 		}
 	})
 
-	It("never mounts fleet-ca or fleet-token on SignalProcessing/EffectivenessMonitor even when caSecretName/tokenSecretName are set", func() {
+	It("never mounts fleet-ca or fleet-token on SignalProcessing/EffectivenessMonitor even when scope-check Secret references are set", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		knV2.Spec.Fleet.CASecretName = "fmc-ca-bundle"
-		knV2.Spec.Fleet.TokenSecretName = "acm-search-token"
+		knV2.Spec.Fleet.ScopeCheck.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fmc-ca-bundle"}}
+		knV2.Spec.Fleet.ScopeCheck.TokenSecretRef = &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"}
 		spDep, err := SignalProcessingDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		emDep, err := EffectivenessMonitorDeployment(kn, knV2)
@@ -2405,10 +2452,10 @@ var _ = Describe("SignalProcessing/APIFrontend/EffectivenessMonitor Fleet secret
 		}
 	})
 
-	It("mounts fleet-oauth2 on SignalProcessing at /etc/signalprocessing/<credentialsSecretRef> when oauth2 is enabled", func() {
+	It("mounts fleet-oauth2 on SignalProcessing at /etc/signalprocessing/<credentialsSecretRef> when Fleet is enabled", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		knV2.Spec.Fleet.OAuth2 = kubernautv1alpha2.OAuth2Spec{
-			Enabled: true, TokenURL: "https://keycloak.example.com/token",
+		knV2.Spec.Fleet.OAuth2 = kubernautv1alpha2.FleetOAuth2Spec{
+			TokenURL:             "https://keycloak.example.com/token",
 			CredentialsSecretRef: "fleet-oauth2-creds",
 		}
 		spDep, err := SignalProcessingDeployment(kn, knV2)
@@ -2417,10 +2464,10 @@ var _ = Describe("SignalProcessing/APIFrontend/EffectivenessMonitor Fleet secret
 		expectHasVolumeMount(spDep, testVolumeFleetOAuth2, "/etc/signalprocessing/fleet-oauth2-creds")
 	})
 
-	It("mounts fleet-oauth2 on APIFrontend at /etc/apifrontend/<credentialsSecretRef> when oauth2 is enabled", func() {
+	It("mounts fleet-oauth2 on APIFrontend at /etc/apifrontend/<credentialsSecretRef> when Fleet is enabled", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		knV2.Spec.Fleet.OAuth2 = kubernautv1alpha2.OAuth2Spec{
-			Enabled: true, TokenURL: "https://keycloak.example.com/token",
+		knV2.Spec.Fleet.OAuth2 = kubernautv1alpha2.FleetOAuth2Spec{
+			TokenURL:             "https://keycloak.example.com/token",
 			CredentialsSecretRef: "fleet-oauth2-creds",
 		}
 		kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
@@ -2432,10 +2479,10 @@ var _ = Describe("SignalProcessing/APIFrontend/EffectivenessMonitor Fleet secret
 		expectHasVolumeMount(afDep, testVolumeFleetOAuth2, "/etc/apifrontend/fleet-oauth2-creds")
 	})
 
-	It("mounts fleet-oauth2 on EffectivenessMonitor at /etc/effectivenessmonitor/<credentialsSecretRef> when oauth2 is enabled", func() {
+	It("mounts fleet-oauth2 on EffectivenessMonitor at /etc/effectivenessmonitor/<credentialsSecretRef> when Fleet is enabled", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		knV2.Spec.Fleet.OAuth2 = kubernautv1alpha2.OAuth2Spec{
-			Enabled: true, TokenURL: "https://keycloak.example.com/token",
+		knV2.Spec.Fleet.OAuth2 = kubernautv1alpha2.FleetOAuth2Spec{
+			TokenURL:             "https://keycloak.example.com/token",
 			CredentialsSecretRef: "fleet-oauth2-creds",
 		}
 		emDep, err := EffectivenessMonitorDeployment(kn, knV2)
@@ -2446,8 +2493,8 @@ var _ = Describe("SignalProcessing/APIFrontend/EffectivenessMonitor Fleet secret
 
 	It("SignalProcessing uses its own fleetOAuth2CredentialsSecretRef override instead of the shared credentialsSecretRef", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		knV2.Spec.Fleet.OAuth2 = kubernautv1alpha2.OAuth2Spec{
-			Enabled: true, TokenURL: "https://keycloak.example.com/token",
+		knV2.Spec.Fleet.OAuth2 = kubernautv1alpha2.FleetOAuth2Spec{
+			TokenURL:             "https://keycloak.example.com/token",
 			CredentialsSecretRef: "fleet-oauth2-creds",
 		}
 		knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testSPFleetOAuth2SecretRef}
@@ -2463,16 +2510,16 @@ var _ = Describe("SignalProcessing/APIFrontend/EffectivenessMonitor Fleet secret
 // the GW/RO tests above exactly (see "Gateway/RemediationOrchestrator Fleet
 // secret mounts" further up this file).
 var _ = Describe("APIFrontend Fleet secret mounts (#464)", func() {
-	It("[IA-5, SC-12] mounts fleet-ca on APIFrontend when caSecretName is set", func() {
+	It("[IA-5, SC-12] mounts fleet-ca on APIFrontend when scopeCheck.tls uses a Secret", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		knV2.Spec.Fleet.CASecretName = "fmc-ca-bundle"
+		knV2.Spec.Fleet.ScopeCheck.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fmc-ca-bundle"}}
 		kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
 			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
 		afDep, err := APIFrontendDeployment(kn, knV2, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
 		expectHasVolume(afDep, "fleet-ca")
-		expectHasVolumeMount(afDep, "fleet-ca", "/etc/fleet-tls/ca")
+		expectHasVolumeMount(afDep, "fleet-ca", "/etc/fleet-tls/scope-check")
 		for _, v := range afDep.Spec.Template.Spec.Volumes {
 			if v.Name == "fleet-ca" {
 				Expect(v.Secret).NotTo(BeNil())
@@ -2481,11 +2528,11 @@ var _ = Describe("APIFrontend Fleet secret mounts (#464)", func() {
 		}
 	})
 
-	It("[IA-5] mounts fleet-token on APIFrontend when tokenSecretName is set", func() {
+	It("[IA-5] mounts fleet-token on APIFrontend when scopeCheck.tokenSecretRef is set", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		knV2.Spec.Fleet.Backend = fleetBackendACM
-		knV2.Spec.Fleet.Endpoint = "https://acm-search.example.com/graphql"
-		knV2.Spec.Fleet.TokenSecretName = "acm-search-token"
+		knV2.Spec.Fleet.ScopeCheck.Backend = fleetBackendACM
+		knV2.Spec.Fleet.ScopeCheck.Endpoint = "https://acm-search.example.com/graphql"
+		knV2.Spec.Fleet.ScopeCheck.TokenSecretRef = &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"}
 		kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
 			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
@@ -2509,8 +2556,10 @@ var _ = Describe("APIFrontend Fleet secret mounts (#464)", func() {
 		afDep, err := APIFrontendDeployment(kn, knV2, KagentiSidecarNone)
 		Expect(err).NotTo(HaveOccurred())
 		for _, v := range afDep.Spec.Template.Spec.Volumes {
-			Expect(v.Name).NotTo(HavePrefix("fleet-"),
-				"apifrontend should not have fleet volume %q when no secret names are set", v.Name)
+			Expect(v.Name).NotTo(Equal("fleet-ca"),
+				"apifrontend should not have a fleet-ca volume when scopeCheck.tls is not Secret-sourced")
+			Expect(v.Name).NotTo(Equal("fleet-token"),
+				"apifrontend should not have a fleet-token volume when scopeCheck.tokenSecretRef is unset")
 		}
 	})
 })

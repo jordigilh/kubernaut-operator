@@ -19,6 +19,7 @@ package controller
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"strings"
@@ -92,6 +93,7 @@ const (
 	ReasonTLSReady                  = "TLSReady"
 	ReasonTLSNotReady               = "TLSNotReady"
 	ReasonTLSWaitingForServiceCA    = "WaitingForServiceCA"
+	ReasonFleetTrustSecretInvalid   = "FleetTrustSecretInvalid"
 	ReasonExposureReady             = "ExposureReady"
 	ReasonExposureInternal          = "InternalOnly"
 	ReasonMonitoringAvailable       = "MonitoringAvailable"
@@ -283,6 +285,13 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 		}
 		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
 			"SpecValidationFailed", fmt.Sprintf("CR validation failed: %s", strings.Join(msgs, "; ")))
+	}
+
+	if err := r.validateFleetTrustSecrets(ctx, knV2); err != nil {
+		log.Error(err, "Fleet trust Secret validation failed",
+			"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
+			ReasonFleetTrustSecretInvalid, fmt.Sprintf("Fleet trust material validation failed: %v", err))
 	}
 
 	tlsMaterial, err := r.validateTLSConfiguration(ctx, kn)
@@ -996,7 +1005,7 @@ func (r *KubernautReconciler) pruneOrphanedCoreClusterRBAC(
 // extended to AF/EM by #227). FMC's cluster-scoped ClusterRole/
 // ClusterRoleBinding naturally drop out of
 // resources.ClusterRoles()/ClusterRoleBindings() once its effective
-// mcpGatewayNamespace resolves (the entire ClusterRole is MCP-Gateway-only),
+// the MCP Gateway namespace resolves (the entire ClusterRole is MCP-Gateway-only),
 // and deployCoreRBAC's generic prune (#341) removes the now-stale objects in
 // the same reconcile -- no dedicated delete is needed here. SP/AF/EM's
 // ClusterRoles are always present (they carry unconditional core rules
@@ -1006,7 +1015,7 @@ func (r *KubernautReconciler) pruneOrphanedCoreClusterRBAC(
 // #341's name-only prune isn't sufficient for these namespace-scoped
 // objects: the same role name (e.g. "<instance>-fleetmetadatacache-
 // mcpgateway") is expected to exist in a *different* namespace after an
-// administrator changes the effective mcpGatewayNamespace, so
+// administrator changes the effective MCP Gateway namespace, so
 // pruneOrphanedMCPGatewayNamespaceRBAC (#354) diffs by (namespace, name)
 // instead of name alone.
 func (r *KubernautReconciler) deployMCPGatewayNamespaceRBAC(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
@@ -1033,7 +1042,7 @@ func (r *KubernautReconciler) deployMCPGatewayNamespaceRBAC(ctx context.Context,
 // a lookup set, used to build the "desired" side of a namespace-aware
 // label-selector prune diff (#354) -- unlike namesOf, this distinguishes a
 // same-named object across different namespaces, since a role name
-// legitimately recurs in a new namespace after an mcpGatewayNamespace
+// legitimately recurs in a new namespace after an MCP Gateway namespace
 // change while the old namespace's copy becomes orphaned.
 func namespacedKeysOf[T client.Object](objs []T) map[types.NamespacedName]bool {
 	keys := make(map[types.NamespacedName]bool, len(objs))
@@ -2982,7 +2991,7 @@ func (r *KubernautReconciler) deleteAdditionalAgentAndToolRBAC(ctx context.Conte
 // (namespace, name)-keyed prune (#354). Deliberately does not recompute
 // resources.MCPGatewayNamespaceRBAC(kn, knV2) from the CR's current spec:
 // that would only find/delete whatever namespace the last-set
-// mcpGatewayNamespace value resolves to, missing any namespace an earlier,
+// MCP Gateway namespace value resolves to, missing any namespace an earlier,
 // never-reconciled spec change pointed at -- the label-selector list below
 // catches those regardless of what the spec says at delete time.
 func (r *KubernautReconciler) deleteMCPGatewayNamespaceRBAC(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, _ *kubernautv1alpha2.Kubernaut) []error {
@@ -3107,6 +3116,49 @@ func (r *KubernautReconciler) validateSecret(ctx context.Context, namespace, nam
 	for _, key := range requiredKeys {
 		if _, ok := secret.Data[key]; !ok {
 			return fmt.Errorf("secret %q is missing required key %q", name, key)
+		}
+	}
+	return nil
+}
+
+// validateFleetTrustSecrets verifies Secret-backed Fleet CA references before
+// the operator starts the migration/deployment phases. Kubernetes will reject
+// a Pod that cannot mount a referenced Secret, but validating the key and PEM
+// here keeps an invalid Fleet from progressing far enough to claim readiness
+// and gives the CR an actionable status condition instead of a Pod event.
+func (r *KubernautReconciler) validateFleetTrustSecrets(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	if !kn.Spec.FleetEnabled() {
+		return nil
+	}
+
+	lanes := []struct {
+		path  string
+		trust *kubernautv1alpha2.FleetTrustSpec
+	}{
+		{path: "spec.fleet.scopeCheck.tls", trust: kn.Spec.Fleet.ScopeCheck.TLS},
+		{path: "spec.fleet.oauth2.tls", trust: kn.Spec.Fleet.OAuth2.TLS},
+	}
+	for _, lane := range lanes {
+		if lane.trust == nil || lane.trust.Source != kubernautv1alpha2.FleetTrustSourceSecret || lane.trust.CACertSecretRef == nil {
+			continue
+		}
+
+		secretName := lane.trust.CACertSecretRef.Name
+		secretKey := lane.trust.CACertSecretRef.Key
+		if secretKey == "" {
+			secretKey = "ca.crt"
+		}
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: secretName}, secret); err != nil {
+			return fmt.Errorf("%s.caCertSecretRef: secret %q could not be read: %w", lane.path, secretName, err)
+		}
+		caPEM, ok := secret.Data[secretKey]
+		if !ok || len(caPEM) == 0 {
+			return fmt.Errorf("%s.caCertSecretRef: secret %q is missing key %q", lane.path, secretName, secretKey)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return fmt.Errorf("%s.caCertSecretRef: secret %q key %q does not contain valid ca pem", lane.path, secretName, secretKey)
 		}
 	}
 	return nil

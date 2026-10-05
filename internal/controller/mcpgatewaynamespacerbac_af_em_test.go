@@ -31,7 +31,7 @@ import (
 )
 
 // Business acceptance criteria (#227, BR-FLEET-003/BR-INTEGRATION-054,
-// AC-6 least-privilege): once the shared spec.fleet.mcpGatewayNamespace
+// AC-6 least-privilege): once the shared spec.fleet.mcpGateway.namespace
 // (DD-362 -- no per-component override) resolves to a real namespace, the
 // operator must grant AF/EM a namespace-scoped Role/RoleBinding there
 // instead of leaving the cluster-wide MCP Gateway CRD read grant on their
@@ -55,7 +55,7 @@ var _ = Describe("AF/EM namespace-scoped MCP Gateway RBAC wiring (#227)", func()
 		cleanupClusterScoped(ctx)
 	})
 
-	It("creates AF/EM's namespace-scoped Role+RoleBinding once the shared spec.fleet.mcpGatewayNamespace resolves, and drops the MCP Gateway CRD rules from their ClusterRole", func() {
+	It("creates AF/EM's namespace-scoped Role+RoleBinding once the shared spec.fleet.mcpGateway.namespace resolves, and drops the MCP Gateway CRD rules from their ClusterRole", func() {
 		ensureNamespace(mcpGatewayTargetNS)
 		createBYOSecrets(ctx)
 		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
@@ -64,11 +64,11 @@ var _ = Describe("AF/EM namespace-scoped MCP Gateway RBAC wiring (#227)", func()
 		Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())
 		t := true
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &t, Backend: "fleetmetadatacache", Endpoint: "http://fleetmetadatacache.example.com",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw",
-			MCPGatewayNamespace: mcpGatewayTargetNS,
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
+			Enabled:    &t,
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "http://fleetmetadatacache.example.com"},
+			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw", Namespace: mcpGatewayTargetNS},
+			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
+				TokenURL:             "https://keycloak.example.com/token",
 				CredentialsSecretRef: "fleet-oauth2-creds",
 			},
 		}

@@ -1123,701 +1123,181 @@ var _ = Describe("API Frontend Severity Triage LLM Validation", func() {
 })
 
 var _ = Describe("Fleet Config Validation", func() {
-	enabled := true
-
-	It("accepts a nil fleet spec (feature untouched)", func() {
+	validFleet := func() *kubernautv1alpha2.Kubernaut {
 		kn := testKubernaut()
-		errs := ValidateFleet(testKnV2(kn))
-		Expect(errs).To(BeEmpty())
-	})
-
-	It("accepts fleet disabled with backend/endpoint unset (pre-staging allowed)", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{}
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(BeEmpty())
-	})
-
-	It("accepts fleet disabled even with an invalid backend value (inert fields are not validated)", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{Backend: "valkey"}
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(BeEmpty())
-	})
-
-	It("rejects fleet enabled with an empty backend", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
+		enabled := true
+		kn.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+			Enabled: &enabled,
+			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{
+				Type: "eaigw", Endpoint: "https://mcp-gateway.example.com/sse", Namespace: "mcp-system",
+			},
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{
+				Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+			},
+			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
+				TokenURL: "https://keycloak.example.com/token", CredentialsSecretRef: "fleet-oauth2-creds",
 			},
 		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.backend"))
+		kn.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+		return kn
+	}
+
+	It("accepts a nil or disabled Fleet spec", func() {
+		kn := testKubernaut()
+		Expect(ValidateFleet(testKnV2(kn))).To(BeEmpty())
+
+		disabled := false
+		kn.Spec.Fleet = kubernautv1alpha2.FleetSpec{Enabled: &disabled, ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "invalid"}}
+		Expect(ValidateFleet(testKnV2(kn))).To(BeEmpty())
 	})
 
-	It("rejects fleet enabled with an unsupported backend value", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "valkey", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
-		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.backend"))
+	It("rejects active Fleet without a scope-check backend", func() {
+		kn := validFleet()
+		kn.Spec.Fleet.ScopeCheck.Backend = ""
+		errs := ValidateFleet(kn)
+		Expect(errs).NotTo(BeEmpty())
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.scopeCheck.backend"))
+	})
+
+	It("rejects an unsupported scope-check backend", func() {
+		kn := validFleet()
+		kn.Spec.Fleet.ScopeCheck.Backend = "valkey"
+		errs := ValidateFleet(kn)
+		Expect(errs).NotTo(BeEmpty())
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.scopeCheck.backend"))
 		Expect(errs[0].Error()).To(ContainSubstring("valkey"))
 	})
 
-	It("rejects fleet enabled with an empty endpoint (backend=acm has no auto-derivation)", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "acm", TokenSecretName: "acm-search-token",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
-		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.endpoint"))
+	It("requires an explicit ACM endpoint and token Secret", func() {
+		kn := validFleet()
+		kn.Spec.Fleet.ScopeCheck.Backend = "acm"
+		kn.Spec.Fleet.ScopeCheck.Endpoint = ""
+		kn.Spec.Fleet.ScopeCheck.TokenSecretRef = nil
+		errs := ValidateFleet(kn)
+		Expect(errs).To(HaveLen(2))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.scopeCheck.endpoint"))
+		Expect(errs[1].Error()).To(ContainSubstring("spec.fleet.scopeCheck.tokenSecretRef"))
 	})
 
-	It("accepts fleet enabled with backend=fleetmetadatacache and an endpoint", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
-		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(BeEmpty())
+	It("accepts active Fleet with the operator-managed FMC backend", func() {
+		Expect(ValidateFleet(validFleet())).To(BeEmpty())
 	})
 
-	It("accepts fleet enabled with backend=acm, an endpoint, and a token secret ref", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
-			TokenSecretName:    "acm-search-token",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
+	It("accepts active Fleet with ACM and a typed token Secret reference", func() {
+		kn := validFleet()
+		kn.Spec.Fleet.ScopeCheck = kubernautv1alpha2.FleetScopeCheckSpec{
+			Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
+			TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token", Key: "bearer"},
 		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(BeEmpty())
+		Expect(ValidateFleet(kn)).To(BeEmpty())
 	})
 
-	It("accepts fleet enabled with a caSecretName set alongside a valid backend/endpoint", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			CASecretName:       "fmc-ca-bundle",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
-		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(BeEmpty())
+	It("requires the MCP Gateway endpoint, type, and namespace when Fleet is active", func() {
+		kn := validFleet()
+		kn.Spec.Fleet.MCPGateway = kubernautv1alpha2.FleetMCPGatewaySpec{}
+		errs := ValidateFleet(kn)
+		Expect(errs).To(HaveLen(3))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGateway.endpoint"))
+		Expect(errs[1].Error()).To(ContainSubstring("spec.fleet.mcpGateway.type"))
+		Expect(errs[2].Error()).To(ContainSubstring("spec.fleet.mcpGateway.namespace"))
 	})
 
-	It("FL-010 [IA-5]: rejects fleet enabled with backend=acm and no tokenSecretName", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
+	It("requires Fleet OAuth2 token URL, shared credentials, and the independent WE credential", func() {
+		kn := validFleet()
+		kn.Spec.Fleet.ScopeCheck = kubernautv1alpha2.FleetScopeCheckSpec{
+			Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
+			TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"},
 		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1),
-			"IA-5: backend=acm has no unauthenticated mode upstream — omitting tokenSecretName crash-loops Gateway/RemediationOrchestrator at startup instead of failing fast at admission")
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.tokenSecretName"))
-	})
-
-	It("FL-011 [IA-5]: accepts fleet enabled with backend=fleetmetadatacache and no tokenSecretName", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
-		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(BeEmpty(), "tokenSecretName is optional for fleetmetadatacache, mandatory only for acm")
-	})
-
-	// #222: Gateway and RemediationOrchestrator both fail closed at startup
-	// (upstream Fleet.ValidateFullFederation) when fleet is enabled without
-	// mcpGatewayEndpoint/mcpGatewayType. FL-012..FL-015 catch this at
-	// admission instead of letting both components crash-loop.
-	It("FL-012 [SC-8]: rejects fleet enabled with no mcpGatewayEndpoint", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-		}
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1),
-			"Gateway/RemediationOrchestrator crash-loop at startup without mcpGatewayEndpoint (upstream Fleet.ValidateFullFederation) — this must fail fast at admission instead")
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGatewayEndpoint"))
-	})
-
-	It("FL-013 [SC-8]: rejects fleet enabled with mcpGatewayEndpoint set but no mcpGatewayType", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
-		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGatewayType"))
-	})
-
-	It("FL-014 [SC-8]: rejects fleet enabled with an unsupported mcpGatewayType value", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "istio", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
-		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGatewayType"))
-		Expect(errs[0].Error()).To(ContainSubstring("istio"))
-	})
-
-	It("FL-015 [SC-8]: accepts fleet enabled with mcpGatewayType=kuadrant", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: mcpGatewayTypeKuadrant,
-			MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
-		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(BeEmpty())
-	})
-
-	// FL-025..FL-026 (kept adjacent to FL-012..FL-015's MCP Gateway block
-	// despite the out-of-sequence numbers -- added later by
-	// kubernaut-operator#455): mcpGatewayNamespace must be set whenever
-	// fleet is enabled. Leaving it empty let FleetMetadataCache's cluster
-	// registry silently default to watching its own install namespace
-	// instead of the MCP Gateway's namespace (root cause of
-	// jordigilh/kubernaut#2298's "0 clusters" symptom) -- fail fast at
-	// admission instead. It's also least-privilege (CM-6): a cluster can
-	// have multiple MCP Gateways installed, so an explicit namespace scopes
-	// every fleet-aware component's CRD watch to exactly one of them.
-	It("FL-025 [SC-8,CM-6]: rejects fleet enabled with no mcpGatewayNamespace", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: mcpGatewayTypeKuadrant,
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
-		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1),
-			"FMC's cluster registry silently defaults to its own install namespace instead of the MCP Gateway's namespace when this is empty (jordigilh/kubernaut#2298) -- this must fail fast at admission instead")
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGatewayNamespace"))
-	})
-
-	It("FL-026 [SC-8,CM-6]: accepts fleet enabled with mcpGatewayNamespace set", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: mcpGatewayTypeKuadrant,
-			MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
-		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(BeEmpty())
-	})
-
-	// FL-016..FL-018: mirrors upstream FleetConfig.Validate()'s OAuth2 pairing
-	// check — oauth2.enabled=true without tokenURL/credentialsSecretRef
-	// silently sends unauthenticated requests to the MCP Gateway instead of
-	// failing closed at startup.
-	It("FL-016 [IA-5]: rejects fleet oauth2 enabled with no tokenURL", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, CredentialsSecretRef: "fleet-oauth2-creds"},
-		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1))
+		kn.Spec.Fleet.OAuth2 = kubernautv1alpha2.FleetOAuth2Spec{}
+		kn.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = ""
+		errs := ValidateFleet(kn)
+		Expect(errs).To(HaveLen(3))
 		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.tokenURL"))
+		Expect(errs[1].Error()).To(ContainSubstring("spec.fleet.oauth2.credentialsSecretRef"))
+		Expect(errs[2].Error()).To(ContainSubstring("spec.workflowExecution.fleet.oauth2CredentialsSecretRef"))
 	})
 
-	It("FL-017 [IA-5]: rejects fleet oauth2 enabled with no credentialsSecretRef", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
-		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: "fmc-oauth2-creds"}
-		errs := ValidateFleet(knV2)
+	It("validates each Fleet trust lane by source", func() {
+		kn := validFleet()
+		kn.Spec.Fleet.ScopeCheck.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceFile, CAFile: "relative-ca.pem"}
+		kn.Spec.Fleet.OAuth2.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "oauth2-ca"}}
+		errs := ValidateFleet(kn)
 		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.credentialsSecretRef"))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.scopeCheck.tls.caFile"))
+
+		kn.Spec.Fleet.ScopeCheck.TLS.CAFile = "/etc/fleet/ca.pem"
+		Expect(ValidateFleet(kn)).To(BeEmpty())
 	})
 
-	It("FL-018 [IA-5]: accepts fleet oauth2 enabled with tokenURL and credentialsSecretRef set", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
+	It("rejects source-incompatible trust payloads", func() {
+		kn := validFleet()
+		kn.Spec.Fleet.OAuth2.TLS = &kubernautv1alpha2.FleetTrustSpec{
+			Source: kubernautv1alpha2.FleetTrustSourceSystem, CAFile: "/etc/fleet/ca.pem",
 		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(BeEmpty())
-	})
-
-	// FL-019..FL-022: a federated IdP (e.g. Keycloak) issues distinct
-	// per-service OAuth2 client registrations against one shared token
-	// endpoint (confirmed against upstream's own Helm chart:
-	// kubernaut.fleet.oauth2 helper resolves each service's own
-	// credentialsSecretRef, falling back to the fleet-wide default). Gateway
-	// and RemediationOrchestrator must each be able to authenticate as their
-	// own client without requiring the other to share the same Secret — but
-	// each still needs *some* effective value (its own override, or the
-	// shared fallback), so a component whose override is unset must not go
-	// uncovered when the shared field is also empty.
-	It("FL-019 [IA-5]: accepts fleet oauth2 enabled with no shared credentialsSecretRef when all six fleet-aware components set their own override", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
-		}
-		knV2.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
-		knV2.Spec.RemediationOrchestrator.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testROFleetOAuth2SecretRef}
-		knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testSPFleetOAuth2SecretRef}
-		knV2.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testAFFleetOAuth2SecretRef}
-		knV2.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testEMFleetOAuth2SecretRef}
-		knV2.Spec.KubernautAgent.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testKAFleetOAuth2SecretRef}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: "fmc-oauth2-creds"}
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(BeEmpty())
-	})
-
-	It("FL-020 [IA-5]: accepts fleet oauth2 enabled with a shared credentialsSecretRef while gateway overrides its own (mixed)", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
-		}
-		knV2.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(BeEmpty(), "remediationOrchestrator/signalProcessing/apiFrontend/effectivenessMonitor should all fall back to the shared credentialsSecretRef when they have no override of their own")
-	})
-
-	It("FL-021 [IA-5]: rejects fleet oauth2 enabled when gateway overrides its own but remediationOrchestrator has neither an override nor a shared fallback", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
-		}
-		knV2.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
-		knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testSPFleetOAuth2SecretRef}
-		knV2.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testAFFleetOAuth2SecretRef}
-		knV2.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testEMFleetOAuth2SecretRef}
-		knV2.Spec.KubernautAgent.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testKAFleetOAuth2SecretRef}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: "fmc-oauth2-creds"}
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1),
-			"remediationOrchestrator has no effective credentialsSecretRef (no override, shared field empty) and would crash-loop at startup")
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.credentialsSecretRef"))
-		Expect(errs[0].Error()).To(ContainSubstring("remediationOrchestrator"))
-	})
-
-	It("FL-022 [IA-5]: rejects fleet oauth2 enabled when remediationOrchestrator overrides its own but gateway has neither an override nor a shared fallback", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
-		}
-		knV2.Spec.RemediationOrchestrator.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testROFleetOAuth2SecretRef}
-		knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testSPFleetOAuth2SecretRef}
-		knV2.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testAFFleetOAuth2SecretRef}
-		knV2.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testEMFleetOAuth2SecretRef}
-		knV2.Spec.KubernautAgent.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testKAFleetOAuth2SecretRef}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: "fmc-oauth2-creds"}
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1),
-			"gateway has no effective credentialsSecretRef (no override, shared field empty) and would crash-loop at startup")
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.credentialsSecretRef"))
-		Expect(errs[0].Error()).To(ContainSubstring("gateway"))
-	})
-
-	// #224: SP/AF/EM gained their own FleetOAuth2CredentialsSecretRef
-	// override fields alongside GW/RO -- FL-023/FL-024 cover the same
-	// missing-effective-value failure mode for the three new components.
-	It("FL-023 [IA-5]: rejects fleet oauth2 enabled when signalProcessing has neither an override nor a shared fallback", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
-		}
-		knV2.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
-		knV2.Spec.RemediationOrchestrator.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testROFleetOAuth2SecretRef}
-		knV2.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testAFFleetOAuth2SecretRef}
-		knV2.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testEMFleetOAuth2SecretRef}
-		knV2.Spec.KubernautAgent.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testKAFleetOAuth2SecretRef}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: "fmc-oauth2-creds"}
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1),
-			"signalProcessing has no effective credentialsSecretRef (no override, shared field empty) and would crash-loop at startup")
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.credentialsSecretRef"))
-		Expect(errs[0].Error()).To(ContainSubstring("signalProcessing"))
-	})
-
-	It("FL-024 [IA-5]: rejects fleet oauth2 enabled when apiFrontend and effectivenessMonitor have neither an override nor a shared fallback", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
-		}
-		knV2.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
-		knV2.Spec.RemediationOrchestrator.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testROFleetOAuth2SecretRef}
-		knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testSPFleetOAuth2SecretRef}
-		knV2.Spec.KubernautAgent.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testKAFleetOAuth2SecretRef}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: "fmc-oauth2-creds"}
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1),
-			"apiFrontend and effectivenessMonitor have no effective credentialsSecretRef (no override, shared field empty) and would crash-loop at startup")
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.credentialsSecretRef"))
-		Expect(errs[0].Error()).To(ContainSubstring("apiFrontend"))
-		Expect(errs[0].Error()).To(ContainSubstring("effectivenessMonitor"))
-	})
-
-	// #204: KA gained its own FleetOAuth2CredentialsSecretRef override field
-	// alongside GW/RO/SP/AF/EM -- KFG-040/KFG-041 cover the same
-	// missing-effective-value failure mode and shared-fallback acceptance
-	// for the sixth component.
-	It("KFG-040 [SI-10]: rejects fleet oauth2 enabled when kubernautAgent has neither an override nor a shared fallback", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
-		}
-		knV2.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
-		knV2.Spec.RemediationOrchestrator.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testROFleetOAuth2SecretRef}
-		knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testSPFleetOAuth2SecretRef}
-		knV2.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testAFFleetOAuth2SecretRef}
-		knV2.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testEMFleetOAuth2SecretRef}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		knV2.Spec.FleetMetadataCache.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: "fmc-oauth2-creds"}
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1),
-			"kubernautAgent has no effective credentialsSecretRef (no override, shared field empty) and would be unable to authenticate list_clusters/list_tools_for_cluster calls to the MCP Gateway")
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.credentialsSecretRef"))
-		Expect(errs[0].Error()).To(ContainSubstring("kubernautAgent"))
-	})
-
-	It("KFG-041 [SI-10]: accepts fleet oauth2 enabled when kubernautAgent relies on the shared spec.fleet.oauth2.credentialsSecretRef fallback", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
-		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(BeEmpty(), "kubernautAgent should fall back to the shared spec.fleet.oauth2.credentialsSecretRef when it has no override of its own")
-	})
-
-	// #235/DD-235: WE never falls back to the shared credentialsSecretRef
-	// the way GW/RO/SP/AF/EM/KA do -- WE-001/WE-002 prove this is a
-	// distinct failure mode from the six-component tolerance loop above,
-	// not just another entry in it.
-	It("WE-001 [AC-6]: rejects fleet oauth2 enabled when workflowExecution has no independently-configured credential, even though the shared credential is present", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
-		}
-		knV2.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
-		knV2.Spec.RemediationOrchestrator.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testROFleetOAuth2SecretRef}
-		knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testSPFleetOAuth2SecretRef}
-		knV2.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testAFFleetOAuth2SecretRef}
-		knV2.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testEMFleetOAuth2SecretRef}
-		knV2.Spec.KubernautAgent.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testKAFleetOAuth2SecretRef}
-		// workflowExecution.fleet.oauth2CredentialsSecretRef intentionally
-		// left unset -- every other component above has an effective
-		// value (own override or the shared fallback), proving this
-		// failure is WE-specific, not a repeat of FL-017/FL-021..024.
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1),
-			"[AC-6] workflowExecution has no independently-configured write-scoped credential and must never silently fall back to the shared read-only one")
-		Expect(errs[0].Error()).To(ContainSubstring("spec.workflowExecution.fleet.oauth2CredentialsSecretRef"))
-	})
-
-	It("WE-002 [AC-6]: accepts fleet oauth2 enabled when workflowExecution sets its own independent credential", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
-		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(BeEmpty())
-	})
-
-	// FM-008: #200/kubernaut-operator#450 endpoint auto-derivation.
-	// spec.fleet.endpoint is required whenever fleet.enabled is true
-	// UNLESS backend=fleetmetadatacache, in which case
-	// resolveFleetEndpoint derives the in-cluster FMC service URL --
-	// FMC is operator-managed only (no BYO path), so selecting it as the
-	// backend is enough on its own.
-	It("FM-008: accepts fleet enabled with backend=fleetmetadatacache and no endpoint", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fleet-oauth2-creds",
-			},
-		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(BeEmpty())
+		errs := ValidateFleet(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.tls"))
 	})
 })
 
-// FleetMetadataCache Validation: FM-001..FM-007 (#200, kubernaut-operator#450).
-// FMC has no separate enable toggle: it is active whenever
-// spec.fleet.enabled is true and spec.fleet.backend is
-// "fleetmetadatacache" (KubernautSpec.FleetMetadataCacheEnabled()). Its own
-// MCP Gateway/OAuth2 requirements (mirroring upstream's Helm chart "fail"
-// guards and cmd/fleetmetadatacache/config.Validate()) are then checked the
-// same way spec.fleet's own MCP Gateway requirements are.
 var _ = Describe("FleetMetadataCache Validation", func() {
-	enabled := true
-
-	It("FM-001: fleet disabled (default) leaves FMC's own rules unvalidated", func() {
-		kn := testKubernaut()
-		errs := ValidateFleet(testKnV2(kn))
-		Expect(errs).To(BeEmpty())
+	It("leaves FMC validation inert when Fleet is disabled", func() {
+		Expect(ValidateFleet(testKnV2(testKubernaut()))).To(BeEmpty())
 	})
 
-	It("FM-002 [SC-8]: rejects backend=fleetmetadatacache with no mcpGatewayEndpoint", func() {
+	It("requires the nested MCP Gateway endpoint when FMC is active", func() {
 		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache",
-			MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fmc-oauth2-creds",
-			},
+		enabled := true
+		kn.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+			Enabled:    &enabled,
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
+			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Type: "eaigw", Namespace: "mcp-system"},
+			OAuth2:     kubernautv1alpha2.FleetOAuth2Spec{TokenURL: "https://keycloak.example.com/token", CredentialsSecretRef: "fmc-oauth2-creds"},
 		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGatewayEndpoint"))
+		kn.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+		errs := ValidateFleet(kn)
+		Expect(errs).NotTo(BeEmpty())
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGateway.endpoint"))
 	})
 
-	It("FM-003 [SC-8]: rejects backend=fleetmetadatacache with mcpGatewayEndpoint set but no mcpGatewayType", func() {
+	It("requires the FMC-specific effective credentials override when shared credentials are absent", func() {
 		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{
-				Enabled: true, TokenURL: "https://keycloak.example.com/token",
-				CredentialsSecretRef: "fmc-oauth2-creds",
-			},
+		enabled := true
+		kn.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+			Enabled:    &enabled,
+			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Type: "eaigw", Endpoint: "https://mcp-gateway.example.com/sse", Namespace: "mcp-system"},
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
+			OAuth2:     kubernautv1alpha2.FleetOAuth2Spec{TokenURL: "https://keycloak.example.com/token"},
 		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGatewayType"))
-	})
-
-	It("FM-004 [IA-5]: rejects backend=fleetmetadatacache with fleet.oauth2.enabled false", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-		}
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1),
-			"FMC has no unauthenticated mode for the MCP Gateway (cmd/fleetmetadatacache/config.Validate())")
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.enabled"))
-	})
-
-	It("FM-005 [IA-5]: rejects backend=fleetmetadatacache with oauth2.enabled true but no tokenURL", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, CredentialsSecretRef: "fmc-oauth2-creds"},
-		}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.tokenURL"))
-	})
-
-	// FM-006/FM-007 isolate FleetMetadataCacheSpec.Fleet's own credential
-	// override from validateFleetOAuth2's six-component loop (which
-	// FleetMetadataCache isn't one of) by giving every other
-	// fleet-aware component + WorkflowExecution an explicit override, so
-	// the shared fleet.oauth2.credentialsSecretRef can stay empty without
-	// tripping the six-component loop's own "all missing" error.
-	It("FM-006 [IA-5]: rejects backend=fleetmetadatacache with no credentialsSecretRef (neither shared nor own override)", func() {
-		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
-		}
-		knV2.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
-		knV2.Spec.RemediationOrchestrator.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testROFleetOAuth2SecretRef}
-		knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testSPFleetOAuth2SecretRef}
-		knV2.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testAFFleetOAuth2SecretRef}
-		knV2.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testEMFleetOAuth2SecretRef}
-		knV2.Spec.KubernautAgent.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testKAFleetOAuth2SecretRef}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		errs := ValidateFleet(knV2)
+		kn.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
+		kn.Spec.RemediationOrchestrator.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testROFleetOAuth2SecretRef}
+		kn.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testSPFleetOAuth2SecretRef}
+		kn.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testAFFleetOAuth2SecretRef}
+		kn.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testEMFleetOAuth2SecretRef}
+		kn.Spec.KubernautAgent.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testKAFleetOAuth2SecretRef}
+		kn.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+		errs := ValidateFleet(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("spec.fleetMetadataCache.fleet.oauth2CredentialsSecretRef"))
 	})
 
-	It("FM-007 [IA-5]: accepts fleetMetadataCache's own credentialsSecretRef override with no shared fleet.oauth2.credentialsSecretRef", func() {
+	It("accepts an FMC-specific credentials override without a shared credential", func() {
 		kn := testKubernaut()
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled, Backend: "fleetmetadatacache",
-			MCPGatewayEndpoint: "https://mcp-gateway.example.com/sse", MCPGatewayType: "eaigw", MCPGatewayNamespace: "mcp-system",
-			OAuth2: kubernautv1alpha2.OAuth2Spec{Enabled: true, TokenURL: "https://keycloak.example.com/token"},
+		enabled := true
+		kn.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+			Enabled:    &enabled,
+			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Type: "eaigw", Endpoint: "https://mcp-gateway.example.com/sse", Namespace: "mcp-system"},
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
+			OAuth2:     kubernautv1alpha2.FleetOAuth2Spec{TokenURL: "https://keycloak.example.com/token"},
 		}
-		knV2.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
-		knV2.Spec.RemediationOrchestrator.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testROFleetOAuth2SecretRef}
-		knV2.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testSPFleetOAuth2SecretRef}
-		knV2.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testAFFleetOAuth2SecretRef}
-		knV2.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testEMFleetOAuth2SecretRef}
-		knV2.Spec.KubernautAgent.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testKAFleetOAuth2SecretRef}
-		knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		knV2.Spec.FleetMetadataCache = kubernautv1alpha2.FleetMetadataCacheSpec{
-			Fleet: &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: "fmc-own-oauth2-creds"},
-		}
-		errs := ValidateFleet(knV2)
-		Expect(errs).To(BeEmpty())
+		kn.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
+		kn.Spec.RemediationOrchestrator.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testROFleetOAuth2SecretRef}
+		kn.Spec.SignalProcessing.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testSPFleetOAuth2SecretRef}
+		kn.Spec.APIFrontend.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testAFFleetOAuth2SecretRef}
+		kn.Spec.EffectivenessMonitor.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testEMFleetOAuth2SecretRef}
+		kn.Spec.KubernautAgent.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testKAFleetOAuth2SecretRef}
+		kn.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+		kn.Spec.FleetMetadataCache = kubernautv1alpha2.FleetMetadataCacheSpec{Fleet: &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: "fmc-own-oauth2-creds"}}
+		Expect(ValidateFleet(kn)).To(BeEmpty())
 	})
 })
