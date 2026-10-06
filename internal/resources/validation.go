@@ -524,6 +524,7 @@ func validateFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	if fleet.ScopeCheck.Endpoint == "" && !knV2.Spec.FleetMetadataCacheEnabled() {
 		errs = append(errs, fmt.Errorf("%s.scopeCheck.endpoint: must be set when fleet.enabled is true (unless backend=fleetmetadatacache, which auto-derives the operator-managed FMC's in-cluster URL)", base))
 	}
+	errs = append(errs, validateFleetMetadataCacheEndpoint(fleet, base)...)
 
 	// FedRAMP IA-5 (authenticator management): upstream pkg/fleet has no
 	// unauthenticated mode for the ACM Search GraphQL API. Without a token,
@@ -564,6 +565,17 @@ func validateFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	errs = append(errs, validateFleetTrust("spec.fleet.oauth2.tls", fleet.OAuth2.TLS)...)
 
 	return errs
+}
+
+func validateFleetMetadataCacheEndpoint(fleet *kubernautv1alpha2.FleetSpec, base string) []error {
+	if fleet.ScopeCheck.Backend != ComponentFleetMetadataCache || fleet.ScopeCheck.Endpoint == "" {
+		return nil
+	}
+	endpoint, err := url.Parse(fleet.ScopeCheck.Endpoint)
+	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" {
+		return []error{fmt.Errorf("%s.scopeCheck.endpoint: must be an absolute https URL when backend is %q", base, ComponentFleetMetadataCache)}
+	}
+	return nil
 }
 
 // validateFleetOAuth2 validates the OAuth2 configuration required by active

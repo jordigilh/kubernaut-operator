@@ -65,7 +65,7 @@ var _ = Describe("AF/EM namespace-scoped MCP Gateway RBAC wiring (#227)", func()
 		t := true
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled:    &t,
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "http://fleetmetadatacache.example.com"},
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fleetmetadatacache.example.com"},
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw", Namespace: mcpGatewayTargetNS},
 			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 				TokenURL:             "https://keycloak.example.com/token",

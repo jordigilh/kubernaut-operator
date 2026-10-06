@@ -177,4 +177,44 @@ var _ = Describe("cert-manager TLS provisioning", func() {
 		signingSpec := byName["datastorage-signing-cert"].Object["spec"].(map[string]interface{})
 		Expect(signingSpec["secretName"]).To(Equal("migrated-signing-cert"))
 	})
+
+	It("provisions and resolves the FMC serving Certificate when FMC is enabled", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+			Enabled:    &testFMCEnabled,
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: ComponentFleetMetadataCache},
+		}
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode: kubernautv1alpha2.TLSModeCertManager,
+			CertManager: &kubernautv1alpha2.CertManagerTLSConfig{
+				IssuerRef:    kubernautv1alpha2.TLSIssuerRef{Name: "customer-issuer"},
+				Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{Enabled: boolPtr(true)},
+			},
+		}
+
+		material, err := ResolveTLSMaterial(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(material.ServiceTLSSecretNames).To(HaveKeyWithValue(TLSServiceFleetMetadataCache, FleetMetadataCacheTLSSecretName))
+
+		objects, err := CertManagerTLSResources(kn)
+		Expect(err).NotTo(HaveOccurred())
+		var fmc *unstructured.Unstructured
+		for _, object := range objects {
+			if object.GetName() == FleetMetadataCacheTLSSecretName {
+				fmc = object
+				break
+			}
+		}
+		Expect(fmc).NotTo(BeNil())
+		spec, found, err := unstructured.NestedMap(fmc.Object, "spec")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(spec["secretName"]).To(Equal(FleetMetadataCacheTLSSecretName))
+		Expect(spec["dnsNames"]).To(Equal([]interface{}{
+			"fleetmetadatacache-service",
+			"fleetmetadatacache-service." + kn.Namespace,
+			"fleetmetadatacache-service." + kn.Namespace + ".svc",
+			"fleetmetadatacache-service." + kn.Namespace + ".svc.cluster.local",
+		}))
+	})
 })

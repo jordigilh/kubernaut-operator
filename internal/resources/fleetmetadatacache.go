@@ -195,16 +195,19 @@ func fleetMetadataCacheEffectiveOAuth2SecretRef(knV2 *kubernautv1alpha2.Kubernau
 // -- FMC always requires it, enforced by ValidateFleet.
 func FleetMetadataCacheDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	credRef := fleetMetadataCacheEffectiveOAuth2SecretRef(knV2)
+	tlsKn := knV2
 
 	volumes := []corev1.Volume{
 		configMapVolume("config", fleetMetadataCacheConfigMapName),
 		secretVolume("fleet-oauth2", credRef),
-		InterServiceTLSCAVolume(kn),
+		secretVolume("tls-certs", TLSSecretName(tlsKn, TLSServiceFleetMetadataCache)),
+		InterServiceTLSCAVolume(tlsKn),
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: "config", MountPath: "/etc/fleetmetadatacache", ReadOnly: true},
 		{Name: "fleet-oauth2", MountPath: fleetMetadataCacheOAuth2Dir, ReadOnly: true},
-		InterServiceTLSCAMount(kn),
+		{Name: "tls-certs", MountPath: InterServiceTLSCertDirFor(tlsKn), ReadOnly: true},
+		InterServiceTLSCAMount(tlsKn),
 	}
 	if trust := knV2.Spec.Fleet.OAuth2.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
 		volumes = append(volumes, secretKeyVolume("fleet-oauth2-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
@@ -233,7 +236,7 @@ func FleetMetadataCacheDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuberna
 	// still scanned) to also trust this bundle, closing that gap without
 	// an upstream kubernaut-core code change. Tracked upstream for a proper
 	// fix (WithHTTPClient wiring in cmd/fleetmetadatacache/main.go).
-	env := []corev1.EnvVar{{Name: "SSL_CERT_FILE", Value: InterServiceTLSCAFileFor(kn)}}
+	env := []corev1.EnvVar{{Name: "SSL_CERT_FILE", Value: InterServiceTLSCAFileFor(tlsKn)}}
 
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentFleetMetadataCache, ImageName: "fleetmetadatacache",
@@ -260,11 +263,11 @@ func FleetMetadataCacheDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuberna
 
 // --- Service ---
 
-// FleetMetadataCacheService builds the Service fronting FMC's api and
-// metrics ports. Plain ClusterIP, no TLS -- see FleetMetadataCacheURL for
-// why (upstream's binary has no TLS server support).
+// FleetMetadataCacheService builds the Service fronting FMC's TLS API,
+// plaintext health, and plaintext metrics ports. The API serving certificate
+// is provisioned by the selected runtime TLS source.
 func FleetMetadataCacheService(kn *kubernautv1alpha2.Kubernaut) *corev1.Service {
-	return &corev1.Service{
+	svc := &corev1.Service{
 		ObjectMeta: ObjectMeta(kn, fleetMetadataCacheServiceName, ComponentFleetMetadataCache),
 		Spec: corev1.ServiceSpec{
 			Selector: SelectorLabels(ComponentFleetMetadataCache),
@@ -275,6 +278,8 @@ func FleetMetadataCacheService(kn *kubernautv1alpha2.Kubernaut) *corev1.Service 
 			},
 		},
 	}
+	applyTLSServiceMetadata(kn, svc, ComponentFleetMetadataCache)
+	return svc
 }
 
 // --- RBAC ---

@@ -12,8 +12,9 @@
 
 Verify that a new, shared `spec.fleet` CRD block lets Gateway and
 RemediationOrchestrator be pointed at a federated scope-check backend per
-ADR-068 — either the Fleet Metadata Cache (FMC) service's HTTP API or Red
-Hat Advanced Cluster Management (ACM) Search's GraphQL API — correcting the
+ADR-068 — either the Fleet Metadata Cache (FMC) service's HTTPS API (with
+separate plain-HTTP health/metrics endpoints) or Red Hat Advanced Cluster
+Management (ACM) Search's GraphQL API — correcting the
 stale `valkeyAddr`/`backend: "valkey"` premise present in the issue as
 originally filed (upstream did a hard removal of that path, not a
 backward-compatible deprecation; see `pkg/fleet/fleet_test.go`'s

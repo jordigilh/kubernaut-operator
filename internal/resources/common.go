@@ -653,18 +653,10 @@ func GatewayURL(namespace string) string {
 	return fmt.Sprintf("https://gateway-service.%s.svc.cluster.local:8443", namespace)
 }
 
-// FleetMetadataCacheURL returns the in-cluster FMC service URL. Plain HTTP,
-// not HTTPS: upstream's FMC binary (cmd/fleetmetadatacache) has no TLS
-// server support (ServerConfig has no cert fields, buildFMCServers()
-// constructs a bare http.Server) and its own Helm chart serves the api port
-// unencrypted, so there is no server-side cert for the operator to
-// provision here either. FMC is only reachable from Gateway/
-// RemediationOrchestrator pods in the same namespace (enforced by the
-// selected native policy provider or an administrator-supplied policy), the
-// same trust boundary already accepted for unencrypted Valkey traffic
-// elsewhere in this operator.
+// FleetMetadataCacheURL returns the in-cluster FMC API URL. The API port is
+// TLS-only; health and metrics remain separate plaintext operational ports.
 func FleetMetadataCacheURL(namespace string) string {
-	return fmt.Sprintf("http://fleetmetadatacache-service.%s.svc.cluster.local:8080", namespace)
+	return fmt.Sprintf("https://fleetmetadatacache-service.%s.svc.cluster.local:8080", namespace)
 }
 
 // resolveFleetEndpoint returns the effective spec.fleet.scopeCheck.endpoint value.

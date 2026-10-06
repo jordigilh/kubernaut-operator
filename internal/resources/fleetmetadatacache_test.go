@@ -36,6 +36,7 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 		data := cm.Data["config.yaml"]
 		for _, want := range []string{
 			"server:", "apiAddr: :8080", "healthAddr: :8081", "metricsAddr: :9090",
+			"certDir: /etc/tls",
 			"mcpGateway:", "endpoint: https://mcp-gateway.example.com/sse", "gatewayType: eaigw",
 			"valkey:", "sync:", "keyTtl: 45s", "interval: 30s",
 			"oauth2:", "tokenUrl: https://keycloak.example.com/token",
@@ -243,9 +244,18 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 		Expect(err).NotTo(HaveOccurred())
 		expectHasVolume(dep, "config")
 		expectHasVolume(dep, "fleet-oauth2")
+		expectHasVolume(dep, "tls-certs")
 		expectHasVolumeMount(dep, "config", "/etc/fleetmetadatacache")
 		expectHasVolumeMount(dep, "fleet-oauth2", fleetMetadataCacheOAuth2Dir)
+		expectHasVolumeMount(dep, "tls-certs", InterServiceTLSCertDirFor(knV2))
 		expectVolumeSourceConfigMap(dep, "config", "fleetmetadatacache-config")
+		for _, volume := range dep.Spec.Template.Spec.Volumes {
+			if volume.Name == "tls-certs" {
+				Expect(volume.Secret).NotTo(BeNil())
+				Expect(volume.Secret.SecretName).To(Equal(FleetMetadataCacheTLSSecretName))
+				break
+			}
+		}
 	})
 
 	It("#267: mounts tls-ca volume from the trust-bundle ConfigMap so the OAuth2 token-source client can trust a self-signed IdP CA", func() {
@@ -346,10 +356,12 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 
 var _ = Describe("FleetMetadataCacheService", func() {
 	It("selects the fleetmetadatacache component and exposes api+health+metrics ports", func() {
-		kn, _ := testKubernautWithFMC()
+		kn, knV2 := testKubernautWithFMC()
+		kn.Spec.Fleet = knV2.Spec.Fleet
 		svc := FleetMetadataCacheService(kn)
 		Expect(svc.Name).To(Equal("fleetmetadatacache-service"))
 		Expect(svc.Spec.Selector).To(Equal(SelectorLabels(ComponentFleetMetadataCache)))
+		Expect(svc.Annotations).To(HaveKeyWithValue(OCPServingCertAnnotation, FleetMetadataCacheTLSSecretName))
 
 		portMap := map[string]int32{}
 		for _, p := range svc.Spec.Ports {
@@ -436,8 +448,8 @@ var _ = Describe("FleetMetadataCache RBAC", func() {
 })
 
 var _ = Describe("FleetMetadataCacheURL", func() {
-	It("returns a plain-HTTP in-cluster URL on port 8080", func() {
-		Expect(FleetMetadataCacheURL("kubernaut-system")).To(Equal("http://fleetmetadatacache-service.kubernaut-system.svc.cluster.local:8080"))
+	It("returns a TLS-only in-cluster URL on port 8080", func() {
+		Expect(FleetMetadataCacheURL("kubernaut-system")).To(Equal("https://fleetmetadatacache-service.kubernaut-system.svc.cluster.local:8080"))
 	})
 })
 

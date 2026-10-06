@@ -152,6 +152,28 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				Name: "fleetmetadatacache-config", Namespace: testNamespace,
 			}, cm)).To(Succeed())
 			Expect(cm.Data).To(HaveKey("config.yaml"))
+			Expect(cm.Data["config.yaml"]).To(ContainSubstring("certDir: /etc/tls"))
+
+			By("verifying the FMC Deployment mounts the serving Secret at the configured cert directory")
+			servingSecretMounted := false
+			for _, volume := range dep.Spec.Template.Spec.Volumes {
+				if volume.Name == "tls-certs" {
+					servingSecretMounted = true
+					Expect(volume.Secret).NotTo(BeNil())
+					Expect(volume.Secret.SecretName).To(Equal(resources.FleetMetadataCacheTLSSecretName))
+				}
+			}
+			Expect(servingSecretMounted).To(BeTrue())
+			servingMountFound := false
+			for _, mount := range dep.Spec.Template.Spec.Containers[0].VolumeMounts {
+				if mount.Name == "tls-certs" {
+					servingMountFound = true
+					Expect(mount.MountPath).To(Equal(resources.InterServiceTLSCertDir))
+					Expect(mount.ReadOnly).To(BeTrue())
+				}
+			}
+			Expect(servingMountFound).To(BeTrue())
+			Expect(svc.Annotations).To(HaveKeyWithValue(resources.OCPServingCertAnnotation, resources.FleetMetadataCacheTLSSecretName))
 
 			// kubernaut-operator#455: mcpGateway.namespace is now mandatory,
 			// so the cluster-scoped ClusterRole/CRB variant (empty

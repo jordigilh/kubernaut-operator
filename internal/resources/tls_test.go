@@ -47,6 +47,67 @@ var _ = Describe("runtime TLS source", func() {
 		Expect(material.OwnsSecrets).To(BeFalse())
 	})
 
+	It("resolves the administrator-managed FMC serving Secret when FMC is enabled", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+			Enabled:    &testFMCEnabled,
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: ComponentFleetMetadataCache},
+		}
+		serviceNames := validServiceTLSSecretNames()
+		serviceNames[TLSServiceFleetMetadataCache] = "customer-fmc-tls"
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode: kubernautv1alpha2.TLSModeAdministratorManaged,
+			AdministratorManaged: &kubernautv1alpha2.AdministratorManagedTLSConfig{
+				InternalCASecretName:  "customer-ca",
+				ServiceTLSSecretNames: serviceNames,
+			},
+		}
+
+		material, err := ResolveTLSMaterial(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(material.ServiceTLSSecretNames).To(HaveKeyWithValue(TLSServiceFleetMetadataCache, "customer-fmc-tls"))
+	})
+
+	It("generates an FMC serving Secret in development self-signed mode when FMC is enabled", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+			Enabled:    &testFMCEnabled,
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: ComponentFleetMetadataCache},
+		}
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
+			DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
+		}
+
+		secrets, err := DevelopmentSelfSignedTLSSecrets(kn, nil, time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(secretsByName(secrets)).To(HaveKey(FleetMetadataCacheTLSSecretName))
+		Expect(TLSServiceDNSNames(TLSServiceFleetMetadataCache, kn.Namespace)).To(ContainElement("fleetmetadatacache-service." + kn.Namespace + ".svc.cluster.local"))
+	})
+
+	It("generates and resolves an FMC serving Secret in Helm hook mode when FMC is enabled", func() {
+		kn := testKubernaut()
+		kn.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+			Enabled:    &testFMCEnabled,
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: ComponentFleetMetadataCache},
+		}
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
+
+		material, err := ResolveTLSMaterial(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(material.ServiceTLSSecretNames).To(HaveKeyWithValue(TLSServiceFleetMetadataCache, FleetMetadataCacheTLSSecretName))
+
+		secrets, err := DevelopmentSelfSignedTLSSecrets(kn, nil, time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC))
+		Expect(err).NotTo(HaveOccurred())
+		byName := secretsByName(secrets)
+		Expect(ValidateServingTLSSecretForService(
+			byName[FleetMetadataCacheTLSSecretName],
+			byName[defaultDevelopmentSelfSignedCASecretName],
+			TLSServiceFleetMetadataCache,
+			kn.Namespace,
+		)).To(Succeed())
+	})
+
 	It("uses stable generated names for explicit development self-signed mode", func() {
 		kn := testKubernaut()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{

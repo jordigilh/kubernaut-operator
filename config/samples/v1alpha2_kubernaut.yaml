@@ -34,7 +34,7 @@ spec:
       namespace: managed-clusters
     scopeCheck:
       backend: fleetmetadatacache
-      endpoint: "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443"
+      endpoint: "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443" # FMC endpoints must use HTTPS; omit for the operator-managed in-cluster URL
       # tls:
       #   source: secret
       #   caCertSecretRef:

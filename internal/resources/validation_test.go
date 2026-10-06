@@ -1183,6 +1183,14 @@ var _ = Describe("Fleet Config Validation", func() {
 		Expect(ValidateFleet(validFleet())).To(BeEmpty())
 	})
 
+	It("rejects an insecure explicit FMC endpoint", func() {
+		kn := validFleet()
+		kn.Spec.Fleet.ScopeCheck.Endpoint = "http://fmc.kubernaut.svc:8080"
+		errs := ValidateFleet(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("https"))
+	})
+
 	It("accepts active Fleet with ACM and a typed token Secret reference", func() {
 		kn := validFleet()
 		kn.Spec.Fleet.ScopeCheck = kubernautv1alpha2.FleetScopeCheckSpec{
