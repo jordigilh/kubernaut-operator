@@ -253,8 +253,9 @@ spec:
   # --- Fleet Metadata Cache (FMC) — optional, ADR-068 ---
   # Deploys the operator-managed FMC service, which polls managed clusters
   # via the MCP Gateway (fleet.mcpGatewayEndpoint/mcpGatewayType above) and
-  # serves federated scope-check results from Valkey over plain HTTP inside
-  # the cluster (upstream's binary has no TLS server support). Most
+  # serves federated scope-check results from Valkey over HTTPS inside
+  # the cluster; its separate health and metrics endpoints remain plain HTTP.
+  # Most
   # deployments that enable spec.fleet use backend: acm (an existing RHACM
   # Search installation) instead of standing up FMC — FMC has no separate
   # enable toggle (kubernaut-operator#450): it deploys automatically when

@@ -398,7 +398,7 @@ binaries is:
 fleet:
   enabled: true
   backend: fleetmetadatacache
-  endpoint: http://fleetmetadatacache-service.<namespace>.svc.cluster.local:8080
+  endpoint: https://fleetmetadatacache-service.<namespace>.svc.cluster.local:8080
   mcpGatewayEndpoint: https://mcp.example/mcp
   mcpGatewayType: eaigw
   tlsCAFile: /etc/tls-ca/ca.crt
@@ -459,7 +459,8 @@ while retaining a deliberate `file` source for an administrator-managed path.
 - No per-service CA or second trust domain.
 - No generic `spec.tls.interService.caConfigMapName` override; that belongs to
   the separate TLS follow-up.
-- No FMC server TLS work from #477.
+- FMC server TLS is tracked separately in #477 and is not part of this Fleet
+  schema/migration design.
 - No provider CRD/controller installation or reconciliation.
 - No resolution of external Kuadrant issues #414/#470.
 - No application Helm-chart compatibility, Helm-values conversion, or
@@ -990,7 +991,7 @@ as a complete authorization or cryptographic assessment.
 | Secret-backed Fleet CA is accidentally adopted or a path is left unmounted | Explicit Secret ownership/read-only tests, lane-specific volume/path assertions, cleanup test, and no desired object for administrator material. |
 | OAuth2 token endpoint trust is conflated with backend trust | Separate resolved fields and test each override independently, including FMC. |
 | Kuadrant APIs are absent in generic clusters | Provider configuration/RBAC is typed data only; no provider API watch is added to the operator; generic gate uses EAIGW. |
-| FMC server TLS scope expands accidentally | Keep FMC API HTTP behavior and track #477 separately. |
+| FMC server TLS scope expands accidentally | Keep FMC API TLS wiring isolated to #477. |
 | Existing #491/#498 behavior regresses | Reuse their resolver/material ownership functions and rerun their existing suites plus the full pyramid. |
 | Contract image masks an application integration defect | Treat contract Kind as operator evidence only; require the #501 upstream exact-SHA qualification before release. |
 | #501 qualification evidence still names a retired application chart | Keep issue #499 independent of chart compatibility and coordinate the evidence-schema correction with the upstream release workflow. |
