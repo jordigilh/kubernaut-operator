@@ -201,7 +201,7 @@ func resolveTelemetryConfig(t kubernautv1alpha2.TelemetrySpec) *telemetryYAML {
 }
 
 // fleetConfigYAML mirrors upstream pkg/fleet.FleetConfig's rendered subset
-// (ADR-068): scope-checking against FMC's HTTP API or ACM Search's GraphQL
+// (ADR-068): scope-checking against FMC's HTTPS API or ACM Search's GraphQL
 // API, plus the shared MCP Gateway endpoint/auth used for remote-cluster
 // reads. See FleetSpec for the CRD-level field documentation.
 type fleetConfigYAML struct {

@@ -339,13 +339,14 @@ type FleetMCPGatewaySpec struct {
 
 // FleetScopeCheckSpec configures the backend used for federated scope checks.
 type FleetScopeCheckSpec struct {
-	// Scope-check backend. fleetmetadatacache selects the operator-managed FMC;
-	// acm selects the ACM Search GraphQL API.
+	// Scope-check backend. fleetmetadatacache selects the operator-managed FMC
+	// service's HTTPS API; acm selects the ACM Search GraphQL API.
 	// +kubebuilder:validation:Enum=fleetmetadatacache;acm
 	// +optional
 	Backend string `json:"backend,omitempty"`
 
-	// Backend endpoint. FMC derives this when omitted; ACM requires it.
+	// Backend endpoint. FMC derives this when omitted; ACM requires it. FMC
+	// endpoints must use HTTPS.
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
 
@@ -451,9 +452,10 @@ type FleetResilienceSpec struct {
 // FleetMetadataCacheSpec configures the operator-managed Fleet Metadata
 // Cache (FMC) service (ADR-068). FMC polls managed clusters via the MCP
 // Gateway (spec.fleet.mcpGateway.endpoint/type) and serves federated
-// scope-check results from Valkey over HTTP, so Gateway and
+// scope-check results from Valkey over HTTPS, so Gateway and
 // RemediationOrchestrator (spec.fleet.scopeCheck.backend=fleetmetadatacache) query
-// scope without holding federated K8s credentials themselves.
+// scope without holding federated K8s credentials themselves. The API port is
+// HTTPS-only; health and metrics remain separate plaintext operational ports.
 //
 // There is no separate enable toggle: FMC is not a BYO/self-hosted
 // component, so the operator deploys it automatically whenever

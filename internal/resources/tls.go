@@ -49,6 +49,7 @@ const (
 	TLSServiceKubernautAgent                 = "kubernautagent"
 	TLSServiceAPIFrontend                    = "apifrontend"
 	TLSServiceAuthWebhook                    = "authwebhook"
+	TLSServiceFleetMetadataCache             = "fleetmetadatacache"
 	tlsCACertificateKey                      = "ca.crt"
 	defaultDevelopmentSelfSignedCASecretName = "kubernaut-internal-ca" //nolint:gosec // this is a Secret object name, not credential material
 )
@@ -76,9 +77,9 @@ func ResolveTLSMaterial(kn *kubernautv1alpha2.Kubernaut) (TLSMaterial, error) {
 
 	switch kn.Spec.TLS.Mode {
 	case "":
-		return openShiftServiceTLSMaterial(), nil
+		return openShiftServiceTLSMaterial(kn), nil
 	case kubernautv1alpha2.TLSModeHook:
-		return developmentTLSMaterial(), nil
+		return developmentTLSMaterial(kn), nil
 	case kubernautv1alpha2.TLSModeAdministratorManaged:
 		return resolveAdministratorManagedTLS(kn)
 	case kubernautv1alpha2.TLSModeCertManager, kubernautv1alpha2.TLSModeHelmCertManager:
@@ -92,17 +93,19 @@ func ResolveTLSMaterial(kn *kubernautv1alpha2.Kubernaut) (TLSMaterial, error) {
 	}
 }
 
-func openShiftServiceTLSMaterial() TLSMaterial {
+func openShiftServiceTLSMaterial(kn *kubernautv1alpha2.Kubernaut) TLSMaterial {
+	serviceNames := map[string]string{
+		TLSServiceGateway:        GatewayTLSSecretName,
+		TLSServiceDataStorage:    DataStorageTLSSecretName,
+		TLSServiceKubernautAgent: KubernautAgentTLSSecretName,
+		TLSServiceAPIFrontend:    APIFrontendTLSSecretName,
+		TLSServiceAuthWebhook:    "authwebhook-tls",
+	}
+	addFleetMetadataCacheTLSSecret(kn, serviceNames)
 	return TLSMaterial{
-		Source:               TLSMaterialSourceOpenShiftServiceCA,
-		InternalCASecretName: InterServiceCAConfigMapName,
-		ServiceTLSSecretNames: map[string]string{
-			TLSServiceGateway:        GatewayTLSSecretName,
-			TLSServiceDataStorage:    DataStorageTLSSecretName,
-			TLSServiceKubernautAgent: KubernautAgentTLSSecretName,
-			TLSServiceAPIFrontend:    APIFrontendTLSSecretName,
-			TLSServiceAuthWebhook:    "authwebhook-tls",
-		},
+		Source:                TLSMaterialSourceOpenShiftServiceCA,
+		InternalCASecretName:  InterServiceCAConfigMapName,
+		ServiceTLSSecretNames: serviceNames,
 	}
 }
 
@@ -111,7 +114,7 @@ func resolveAdministratorManagedTLS(kn *kubernautv1alpha2.Kubernaut) (TLSMateria
 	if cfg == nil {
 		return TLSMaterial{}, fmt.Errorf("tls.administratorManaged is required for mode %q", kn.Spec.TLS.Mode)
 	}
-	names, err := requiredServiceTLSSecretNames(cfg.ServiceTLSSecretNames)
+	names, err := requiredServiceTLSSecretNames(cfg.ServiceTLSSecretNames, kn.Spec.FleetMetadataCacheEnabled())
 	if err != nil {
 		return TLSMaterial{}, fmt.Errorf("tls.administratorManaged: %w", err)
 	}
@@ -144,7 +147,7 @@ func resolveCertManagerTLS(kn *kubernautv1alpha2.Kubernaut) (TLSMaterial, error)
 			ServiceTLSSecretNames: settings.serviceSecretNames,
 		}, nil
 	}
-	names, err := requiredServiceTLSSecretNames(cfg.ServiceTLSSecretNames)
+	names, err := requiredServiceTLSSecretNames(cfg.ServiceTLSSecretNames, kn.Spec.FleetMetadataCacheEnabled())
 	if err != nil {
 		return TLSMaterial{}, fmt.Errorf("tls.certManager: %w", err)
 	}
@@ -167,7 +170,7 @@ func resolveDevelopmentSelfSignedTLS(kn *kubernautv1alpha2.Kubernaut) (TLSMateri
 	if caName == "" {
 		caName = defaultDevelopmentSelfSignedCASecretName
 	}
-	material := developmentTLSMaterial()
+	material := developmentTLSMaterial(kn)
 	material.InternalCASecretName = caName
 	return material, nil
 }
@@ -177,7 +180,7 @@ func resolveManualTLS(kn *kubernautv1alpha2.Kubernaut) (TLSMaterial, error) {
 	// stable serving Secret names. Its full read-only validation is handled
 	// by the controller adapter; this resolver only establishes the names.
 	cfg := kn.Spec.TLS.AdministratorManaged
-	names := defaultCertManagerServiceSecretNames()
+	names := defaultCertManagerServiceSecretNames(kn)
 	if cfg == nil {
 		return TLSMaterial{
 			Source:                  TLSMaterialSourceAdministratorManaged,
@@ -204,18 +207,26 @@ func resolveManualTLS(kn *kubernautv1alpha2.Kubernaut) (TLSMaterial, error) {
 	}, nil
 }
 
-func developmentTLSMaterial() TLSMaterial {
+func developmentTLSMaterial(kn *kubernautv1alpha2.Kubernaut) TLSMaterial {
+	serviceNames := map[string]string{
+		TLSServiceGateway:        GatewayTLSSecretName,
+		TLSServiceDataStorage:    DataStorageTLSSecretName,
+		TLSServiceKubernautAgent: KubernautAgentTLSSecretName,
+		TLSServiceAPIFrontend:    APIFrontendTLSSecretName,
+		TLSServiceAuthWebhook:    "authwebhook-tls",
+	}
+	addFleetMetadataCacheTLSSecret(kn, serviceNames)
 	return TLSMaterial{
-		Source:               TLSMaterialSourceDevelopmentSelfSigned,
-		InternalCASecretName: defaultDevelopmentSelfSignedCASecretName,
-		ServiceTLSSecretNames: map[string]string{
-			TLSServiceGateway:        GatewayTLSSecretName,
-			TLSServiceDataStorage:    DataStorageTLSSecretName,
-			TLSServiceKubernautAgent: KubernautAgentTLSSecretName,
-			TLSServiceAPIFrontend:    APIFrontendTLSSecretName,
-			TLSServiceAuthWebhook:    "authwebhook-tls",
-		},
-		OwnsSecrets: true,
+		Source:                TLSMaterialSourceDevelopmentSelfSigned,
+		InternalCASecretName:  defaultDevelopmentSelfSignedCASecretName,
+		ServiceTLSSecretNames: serviceNames,
+		OwnsSecrets:           true,
+	}
+}
+
+func addFleetMetadataCacheTLSSecret(kn *kubernautv1alpha2.Kubernaut, serviceNames map[string]string) {
+	if kn != nil && kn.Spec.FleetMetadataCacheEnabled() {
+		serviceNames[TLSServiceFleetMetadataCache] = FleetMetadataCacheTLSSecretName
 	}
 }
 
@@ -417,13 +428,17 @@ func ValidateServingTLSSecretForHost(secret *corev1.Secret, host string) error {
 	return nil
 }
 
-func requiredServiceTLSSecretNames(input map[string]string) (map[string]string, error) {
+func requiredServiceTLSSecretNames(input map[string]string, includeFleetMetadataCache bool) (map[string]string, error) {
 	if len(input) == 0 {
 		return nil, fmt.Errorf("serviceTLSSecretNames is required")
 	}
-	const required = "gateway datastorage kubernautagent apifrontend authwebhook"
+	keys := []string{TLSServiceGateway, TLSServiceDataStorage, TLSServiceKubernautAgent, TLSServiceAPIFrontend, TLSServiceAuthWebhook}
+	if includeFleetMetadataCache {
+		keys = append(keys, TLSServiceFleetMetadataCache)
+	}
+	required := strings.Join(keys, " ")
 	result := make(map[string]string, len(input))
-	for _, key := range []string{TLSServiceGateway, TLSServiceDataStorage, TLSServiceKubernautAgent, TLSServiceAPIFrontend, TLSServiceAuthWebhook} {
+	for _, key := range keys {
 		value := input[key]
 		if value == "" {
 			return nil, fmt.Errorf("serviceTLSSecretNames[%q] is required; required keys: %s", key, required)
@@ -468,7 +483,8 @@ func DevelopmentSelfSignedTLSSecrets(
 	if err != nil {
 		return nil, err
 	}
-	secrets := make([]*corev1.Secret, 0, len(developmentTLSServiceNames)+1+boolToInt(settings.includeSigningCertificate))
+	serviceNames := developmentTLSServiceNamesFor(kn)
+	secrets := make([]*corev1.Secret, 0, len(serviceNames)+1+boolToInt(settings.includeSigningCertificate))
 	secrets = append(secrets, &corev1.Secret{
 		ObjectMeta: ObjectMeta(kn, settings.caName, "inter-service-tls"),
 		Type:       corev1.SecretTypeOpaque,
@@ -490,7 +506,7 @@ func DevelopmentSelfSignedTLSSecrets(
 		}
 		secrets = append(secrets, signingSecret)
 	}
-	if len(parseCertificatesOrNil(caBundle)) > 1 && allDevelopmentLeavesUseCA(existing, activeCACert, kn.Namespace, settings.extraSANs) {
+	if len(parseCertificatesOrNil(caBundle)) > 1 && allDevelopmentLeavesUseCA(existing, activeCACert, kn, settings.extraSANs) {
 		secrets[0].Data[tlsCACertificateKey] = append([]byte(nil), activeCACert...)
 	}
 	return secrets, nil
@@ -535,8 +551,9 @@ func developmentServingTLSSecrets(
 	activeCACert, caKey, caBundle []byte,
 	settings developmentTLSSettings,
 ) ([]*corev1.Secret, error) {
-	secrets := make([]*corev1.Secret, 0, len(developmentTLSServiceNames))
-	for serviceKey, serviceName := range developmentTLSServiceNames {
+	serviceNames := developmentTLSServiceNamesFor(kn)
+	secrets := make([]*corev1.Secret, 0, len(serviceNames))
+	for serviceKey, serviceName := range serviceNames {
 		secretName := ResolveDevelopmentTLSSecretName(serviceKey)
 		secret := existing[secretName]
 		leafExtraSANs := developmentLeafExtraSANs(serviceKey, settings.extraSANs)
@@ -626,11 +643,23 @@ func developmentLeafExtraSANs(serviceKey string, extraSANs []string) []string {
 }
 
 var developmentTLSServiceNames = map[string]string{
-	TLSServiceGateway:        "gateway-service",
-	TLSServiceDataStorage:    "data-storage-service",
-	TLSServiceKubernautAgent: "kubernaut-agent",
-	TLSServiceAPIFrontend:    "apifrontend",
-	TLSServiceAuthWebhook:    "authwebhook-service",
+	TLSServiceGateway:            "gateway-service",
+	TLSServiceDataStorage:        "data-storage-service",
+	TLSServiceKubernautAgent:     "kubernaut-agent",
+	TLSServiceAPIFrontend:        "apifrontend",
+	TLSServiceAuthWebhook:        "authwebhook-service",
+	TLSServiceFleetMetadataCache: "fleetmetadatacache-service",
+}
+
+func developmentTLSServiceNamesFor(kn *kubernautv1alpha2.Kubernaut) map[string]string {
+	serviceNames := make(map[string]string, len(developmentTLSServiceNames))
+	for serviceKey, serviceName := range developmentTLSServiceNames {
+		if serviceKey == TLSServiceFleetMetadataCache && (kn == nil || !kn.Spec.FleetMetadataCacheEnabled()) {
+			continue
+		}
+		serviceNames[serviceKey] = serviceName
+	}
+	return serviceNames
 }
 
 // ResolveDevelopmentTLSSecretName returns the stable serving Secret name for
@@ -647,6 +676,8 @@ func ResolveDevelopmentTLSSecretName(serviceKey string) string {
 		return APIFrontendTLSSecretName
 	case TLSServiceAuthWebhook:
 		return "authwebhook-tls"
+	case TLSServiceFleetMetadataCache:
+		return FleetMetadataCacheTLSSecretName
 	default:
 		return ""
 	}
@@ -664,6 +695,8 @@ func developmentTLSComponent(serviceKey string) string {
 		return ComponentAPIFrontend
 	case TLSServiceAuthWebhook:
 		return ComponentAuthWebhook
+	case TLSServiceFleetMetadataCache:
+		return ComponentFleetMetadataCache
 	default:
 		return "inter-service-tls"
 	}
@@ -761,13 +794,13 @@ func signerMatchesCertificate(key crypto.Signer, certificate *x509.Certificate) 
 	return err == nil && bytes.Equal(certificatePublicKey, signerPublicKey)
 }
 
-func allDevelopmentLeavesUseCA(existing map[string]*corev1.Secret, caPEM []byte, namespace string, extraSANs []string) bool {
+func allDevelopmentLeavesUseCA(existing map[string]*corev1.Secret, caPEM []byte, kn *kubernautv1alpha2.Kubernaut, extraSANs []string) bool {
 	caCertificates, err := parseCertificates(caPEM)
 	if err != nil || len(caCertificates) != 1 {
 		return false
 	}
 	ca := caCertificates[0]
-	for serviceKey, serviceName := range developmentTLSServiceNames {
+	for serviceKey, serviceName := range developmentTLSServiceNamesFor(kn) {
 		secret := existing[ResolveDevelopmentTLSSecretName(serviceKey)]
 		if secret == nil {
 			return false
@@ -777,7 +810,7 @@ func allDevelopmentLeavesUseCA(existing map[string]*corev1.Secret, caPEM []byte,
 			return false
 		}
 		validDNSName := false
-		serviceSANs := developmentDNSNamesWithExtras(serviceName, namespace, developmentLeafExtraSANs(serviceKey, extraSANs))
+		serviceSANs := developmentDNSNamesWithExtras(serviceName, kn.Namespace, developmentLeafExtraSANs(serviceKey, extraSANs))
 		for _, dnsName := range serviceSANs {
 			if certificate.VerifyHostname(dnsName) == nil {
 				validDNSName = true

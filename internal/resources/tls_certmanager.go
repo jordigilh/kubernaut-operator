@@ -158,10 +158,10 @@ func certManagerLeafResources(kn *kubernautv1alpha2.Kubernaut, settings certMana
 	copy(leafs, certManagerTLSLeaves)
 	if kn.Spec.FleetMetadataCacheEnabled() {
 		leafs = append(leafs, certManagerTLSLeaf{
-			serviceKey:      "fleetmetadatacache",
-			certificateName: "fleetmetadatacache-tls",
+			serviceKey:      TLSServiceFleetMetadataCache,
+			certificateName: FleetMetadataCacheTLSSecretName,
 			dnsNameBase:     "fleetmetadatacache-service",
-			secretName:      "fleetmetadatacache-tls",
+			secretName:      FleetMetadataCacheTLSSecretName,
 		})
 	}
 	objects := make([]*unstructured.Unstructured, 0, len(leafs))
@@ -229,7 +229,7 @@ func certManagerProvisioningValuesFor(kn *kubernautv1alpha2.Kubernaut, cfg *kube
 		duration:               defaultCertManagerDuration,
 		renewBefore:            defaultCertManagerRenewBefore,
 		caDuration:             defaultCertManagerCADuration,
-		serviceSecretNames:     defaultCertManagerServiceSecretNames(),
+		serviceSecretNames:     defaultCertManagerServiceSecretNames(kn),
 		signingCertificateName: defaultCertManagerSigningCertificateName,
 		signingSecretName:      defaultCertManagerSigningSecretName,
 	}
@@ -260,14 +260,16 @@ func certManagerProvisioningValuesFor(kn *kubernautv1alpha2.Kubernaut, cfg *kube
 	return settings
 }
 
-func defaultCertManagerServiceSecretNames() map[string]string {
-	return map[string]string{
+func defaultCertManagerServiceSecretNames(kn *kubernautv1alpha2.Kubernaut) map[string]string {
+	serviceNames := map[string]string{
 		TLSServiceGateway:        GatewayTLSSecretName,
 		TLSServiceDataStorage:    DataStorageTLSSecretName,
 		TLSServiceKubernautAgent: KubernautAgentTLSSecretName,
 		TLSServiceAPIFrontend:    APIFrontendTLSSecretName,
 		TLSServiceAuthWebhook:    "authwebhook-tls",
 	}
+	addFleetMetadataCacheTLSSecret(kn, serviceNames)
+	return serviceNames
 }
 
 func certManagerExternalIssuerRef(kn *kubernautv1alpha2.Kubernaut, cfg *kubernautv1alpha2.CertManagerTLSConfig) map[string]interface{} {

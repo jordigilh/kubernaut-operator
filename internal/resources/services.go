@@ -65,10 +65,11 @@ var metricsServiceDefinitions = []serviceDefinition{
 
 // Inter-service TLS secret names provisioned by the OCP service-ca operator.
 const (
-	GatewayTLSSecretName        = "gateway-tls"
-	DataStorageTLSSecretName    = "datastorage-tls"
-	KubernautAgentTLSSecretName = "kubernautagent-tls"
-	APIFrontendTLSSecretName    = "apifrontend-tls"
+	GatewayTLSSecretName            = "gateway-tls"
+	DataStorageTLSSecretName        = "datastorage-tls"
+	KubernautAgentTLSSecretName     = "kubernautagent-tls"
+	APIFrontendTLSSecretName        = "apifrontend-tls"
+	FleetMetadataCacheTLSSecretName = "fleetmetadatacache-tls"
 )
 
 // Services builds all API Services for the Kubernaut deployment.
@@ -134,7 +135,9 @@ func Services(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut
 	}
 
 	if knV2.Spec.FleetMetadataCacheEnabled() {
-		services = append(services, FleetMetadataCacheService(kn))
+		fmcService := FleetMetadataCacheService(kn)
+		applyTLSServiceMetadata(knV2, fmcService, ComponentFleetMetadataCache)
+		services = append(services, fmcService)
 	}
 
 	return services
@@ -191,6 +194,8 @@ func tlsServiceKey(component string) string {
 		return TLSServiceAPIFrontend
 	case ComponentAuthWebhook:
 		return TLSServiceAuthWebhook
+	case ComponentFleetMetadataCache:
+		return TLSServiceFleetMetadataCache
 	default:
 		return component
 	}
