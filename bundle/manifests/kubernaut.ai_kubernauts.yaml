@@ -1353,15 +1353,16 @@ spec:
                     properties:
                       backend:
                         description: |-
-                          Scope-check backend. fleetmetadatacache selects the operator-managed FMC;
-                          acm selects the ACM Search GraphQL API.
+                          Scope-check backend. fleetmetadatacache selects the operator-managed FMC
+                          service's HTTPS API; acm selects the ACM Search GraphQL API.
                         enum:
                         - fleetmetadatacache
                         - acm
                         type: string
                       endpoint:
-                        description: Backend endpoint. FMC derives this when omitted;
-                          ACM requires it.
+                        description: |-
+                          Backend endpoint. FMC derives this when omitted; ACM requires it. FMC
+                          endpoints must use HTTPS.
                         type: string
                       tls:
                         description: Backend CA trust source. Omitted defaults to
