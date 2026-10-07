@@ -470,6 +470,13 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 	}
 	tls := kubernautv1alpha2.TLSConfigSpec{Mode: tlsMode}
 	dataStorage := kubernautv1alpha2.DataStorageSpec{}
+	monitoring := kubernautv1alpha2.MonitoringSpec{}
+	if configuredProvider != providerGeneric {
+		monitoring = kubernautv1alpha2.MonitoringSpec{
+			Prometheus:   kubernautv1alpha2.PrometheusSpec{URL: monitoringPrometheusURL()},
+			AlertManager: kubernautv1alpha2.AlertManagerSpec{URL: monitoringAlertManagerURL()},
+		}
+	}
 	switch configuredTLS {
 	case tlsDevelopment:
 		tls.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}
@@ -530,6 +537,7 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 			SignalProcessing: kubernautv1alpha2.SignalProcessingSpec{
 				Policy: kubernautv1alpha2.PolicyConfigMapRef{ConfigMapName: "signalprocessing-policy"},
 			},
+			Monitoring: monitoring,
 			LLMProfiles: map[string]kubernautv1alpha2.LLMProfileSpec{
 				"primary": {
 					Provider:              "openai",

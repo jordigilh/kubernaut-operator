@@ -31,6 +31,9 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 	BeforeAll(func() {
 		ctx = context.Background()
 		Expect(ensureProbeWorkloads(ctx)).To(Succeed())
+		if configuredProvider != providerGeneric {
+			Expect(ensureMonitoringWorkloads(ctx)).To(Succeed())
+		}
 		Expect(applyKubernautCR(ctx)).To(Succeed())
 	})
 
@@ -233,6 +236,46 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 		}).Should(Succeed())
 	})
 
+	It("E2E-POLICY-MONITORING-001 [AC-4, SC-7, SC-8, SI-4; SOC2 CC6.1, CC7.2; "+
+		"ASVS V4.1, V5.1] preserves Agent get_metric_names and get_alerts while denying unrelated monitoring egress", func() {
+		if configuredProvider == providerGeneric {
+			return
+		}
+
+		Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal(conditionTrue))
+		Expect(agentMonitoringConfigContains(ctx, monitoringPrometheusURL())).To(Succeed())
+		Expect(agentMonitoringConfigContains(ctx, monitoringAlertManagerURL())).To(Succeed())
+
+		By("calling the Prometheus API path used by get_metric_names from the kubernaut-agent workload")
+		Eventually(func(g Gomega) {
+			body, err := agentMonitoringGET(
+				ctx, monitoringPrometheusServiceName, monitoringPrometheusServicePort,
+				"/api/v1/label/__name__/values",
+			)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(body).To(ContainSubstring("kubernaut_e2e_metric"))
+		}).Should(Succeed())
+
+		By("calling the Alertmanager API path used by get_alerts from the kubernaut-agent workload")
+		Eventually(func(g Gomega) {
+			body, err := agentMonitoringGET(
+				ctx, monitoringAlertManagerServiceName, monitoringAlertManagerServicePort,
+				"/api/v2/alerts",
+			)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(body).To(Equal("[]"))
+		}).Should(Succeed())
+
+		By("proving the native monitoring allowlist does not widen to another Service")
+		Eventually(func(g Gomega) {
+			_, err := agentMonitoringGET(
+				ctx, monitoringBlockedServiceName, monitoringBlockedServicePort,
+				"/api/v1/label/__name__/values",
+			)
+			g.Expect(err).To(HaveOccurred())
+		}).Should(Succeed())
+	})
+
 	It("E2E-TLS-CERTMANAGER-002 [SC-8, SC-12, SC-13, SI-4; SOC2 CC7, A1; "+
 		"ASVS v5.0.0-V11.1.1, v5.0.0-V11.1.2, v5.0.0-V12.1.1, v5.0.0-V16.5.2] rotates a cert-manager leaf "+
 		"without losing operator trust", func() {
@@ -289,5 +332,8 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 
 	AfterAll(func() {
 		Expect(deleteProbeWorkloads(context.Background())).To(Succeed())
+		if configuredProvider != providerGeneric {
+			Expect(deleteMonitoringWorkloads(context.Background())).To(Succeed())
+		}
 	})
 })
