@@ -35,6 +35,7 @@ import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -1971,9 +1972,9 @@ func (r *KubernautReconciler) reconcileProviderPolicies(ctx context.Context, kn 
 	monitoringDestinations, monitoringErr := r.resolveMonitoringDestinations(ctx, knV2, detection)
 	intent.Monitoring = monitoringDestinations
 	if monitoringErr != nil {
-		intent.Monitoring = nil
 		logf.FromContext(ctx).Error(monitoringErr, "native monitoring policy destination unavailable",
 			"provider", detection.Provider,
+			"resolvedDestinationCount", len(monitoringDestinations),
 			"generation", kn.Generation,
 			"resourceVersion", kn.ResourceVersion)
 	}
@@ -4275,6 +4276,8 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&kubernautv1alpha2.Kubernaut{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Watches(&corev1.Service{}, handler.EnqueueRequestsFromMapFunc(r.monitoringObjectToKubernaut)).
+		Watches(&discoveryv1.EndpointSlice{}, handler.EnqueueRequestsFromMapFunc(r.monitoringObjectToKubernaut)).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&corev1.Secret{}).
@@ -4342,4 +4345,48 @@ func (r *KubernautReconciler) apiServerToKubernaut(ctx context.Context, _ client
 		})
 	}
 	return reqs
+}
+
+// monitoringObjectToKubernaut maps external monitoring Service and
+// EndpointSlice changes to Kubernaut instances whose configured endpoint
+// addresses that Service. This keeps native policy rules exact when selectors,
+// Service ports, or resolved backends change instead of waiting for the
+// periodic reconciliation timer.
+func (r *KubernautReconciler) monitoringObjectToKubernaut(ctx context.Context, object client.Object) []reconcile.Request {
+	if object == nil {
+		return nil
+	}
+
+	serviceName := object.GetName()
+	if endpointSlice, ok := object.(*discoveryv1.EndpointSlice); ok {
+		serviceName = endpointSlice.Labels[discoveryv1.LabelServiceName]
+	}
+	if serviceName == "" {
+		return nil
+	}
+
+	list := &kubernautv1alpha2.KubernautList{}
+	if err := r.List(ctx, list); err != nil {
+		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for monitoring event",
+			"namespace", object.GetNamespace(), "service", serviceName)
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(list.Items))
+	for index := range list.Items {
+		kn := &list.Items[index]
+		monitoring := r.monitoringConfigView(ctx, kn)
+		for _, endpoint := range monitoringEndpoints(monitoring) {
+			reference, err := policy.MonitoringServiceReferenceFromURL(endpoint.URL)
+			if err != nil {
+				continue
+			}
+			if reference.Name != serviceName || reference.Namespace != object.GetNamespace() {
+				continue
+			}
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)})
+			break
+		}
+	}
+	return requests
 }

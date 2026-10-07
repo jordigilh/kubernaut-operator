@@ -106,7 +106,7 @@ var _ = Describe("monitoring destination resolution", func() {
 			},
 			AddressType: discoveryv1.AddressTypeIPv4,
 			Ports: []discoveryv1.EndpointPort{{
-				Name:     ptr.To("http"),
+				Name:     ptr.To("web"),
 				Protocol: ptr.To(corev1.ProtocolTCP),
 				Port:     &endpointPort,
 			}},
@@ -130,7 +130,7 @@ var _ = Describe("monitoring destination resolution", func() {
 
 	It("resolves a named OVN targetPort from an unambiguous ready EndpointSlice port", func() {
 		service := monitoringService(map[string]string{"app": "prometheus"}, corev1.ServicePort{
-			Name:       "web",
+			Name:       "metrics",
 			Protocol:   corev1.ProtocolTCP,
 			Port:       9094,
 			TargetPort: intstr.FromString("web"),
@@ -145,7 +145,7 @@ var _ = Describe("monitoring destination resolution", func() {
 			},
 			AddressType: discoveryv1.AddressTypeIPv4,
 			Ports: []discoveryv1.EndpointPort{{
-				Name:     ptr.To("web"),
+				Name:     ptr.To("metrics"),
 				Protocol: ptr.To(corev1.ProtocolTCP),
 				Port:     &endpointPort,
 			}},
@@ -185,7 +185,7 @@ var _ = Describe("monitoring destination resolution", func() {
 			},
 			AddressType: discoveryv1.AddressTypeIPv4,
 			Ports: []discoveryv1.EndpointPort{{
-				Name: ptr.To("http"), Port: &firstPort, Protocol: ptr.To(corev1.ProtocolTCP),
+				Name: ptr.To("web"), Port: &firstPort, Protocol: ptr.To(corev1.ProtocolTCP),
 			}},
 			Endpoints: []discoveryv1.Endpoint{{Conditions: discoveryv1.EndpointConditions{Ready: &ready}}},
 		}
@@ -222,7 +222,7 @@ var _ = Describe("monitoring destination resolution", func() {
 			},
 			AddressType: discoveryv1.AddressTypeIPv4,
 			Ports: []discoveryv1.EndpointPort{{
-				Name: ptr.To("http"), Protocol: ptr.To(corev1.ProtocolTCP), Port: &backendPort,
+				Name: ptr.To("web"), Protocol: ptr.To(corev1.ProtocolTCP), Port: &backendPort,
 			}},
 			Endpoints: []discoveryv1.Endpoint{{
 				Addresses:  []string{"10.0.0.10"},
@@ -243,6 +243,24 @@ var _ = Describe("monitoring destination resolution", func() {
 		})
 
 		Expect(err).To(MatchError(ContainSubstring("could not be resolved")))
+	})
+
+	It("retains healthy monitoring destinations when another endpoint is unresolved", func() {
+		prometheus := monitoringServiceWithName("prometheus", map[string]string{"app": "prometheus"}, corev1.ServicePort{
+			Name: "web", Protocol: corev1.ProtocolTCP, Port: 9090, TargetPort: intstr.FromInt(8080),
+		})
+
+		destinations, err := ResolveMonitoringDestinations(context.Background(), monitoringClient(prometheus), MonitoringResolutionOptions{
+			Provider: ProviderCilium,
+			Endpoints: []MonitoringEndpoint{
+				{Name: MonitoringPrometheus, URL: "https://prometheus.monitoring.svc:9090"},
+				{Name: MonitoringAlertManager, URL: "https://missing.monitoring.svc:9093"},
+			},
+		})
+
+		Expect(err).To(MatchError(ContainSubstring("alertmanager")))
+		Expect(destinations).To(HaveLen(1))
+		Expect(destinations[0].Name).To(Equal(MonitoringPrometheus))
 	})
 
 	It("resolves an omitted URL port from a single TCP Service port", func() {
@@ -425,8 +443,12 @@ func monitoringClient(objects ...client.Object) client.Client {
 }
 
 func monitoringService(selector map[string]string, ports ...corev1.ServicePort) *corev1.Service {
+	return monitoringServiceWithName("prometheus", selector, ports...)
+}
+
+func monitoringServiceWithName(name string, selector map[string]string, ports ...corev1.ServicePort) *corev1.Service {
 	return &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{Name: "prometheus", Namespace: "monitoring"},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "monitoring"},
 		Spec: corev1.ServiceSpec{
 			Selector: selector,
 			Ports:    ports,

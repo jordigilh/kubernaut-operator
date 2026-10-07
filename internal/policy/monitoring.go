@@ -18,6 +18,7 @@ package policy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -45,14 +46,25 @@ type MonitoringEndpoint struct {
 	URL  string
 }
 
+// MonitoringServiceReference identifies the in-cluster Service addressed by a
+// monitoring endpoint URL. Controllers use it to scope event-driven watches
+// without duplicating URL parsing or accepting external destinations.
+type MonitoringServiceReference struct {
+	Name      string
+	Namespace string
+}
+
 // MonitoringServicePort records the Service port and its backend target. The
 // full Service port set is retained so provider adapters can enforce their
-// different least-privilege requirements.
+// different least-privilege requirements. ServicePortName is the name carried
+// by EndpointSlice ports; TargetPortName is the Service's pod target-port
+// name, which is not the EndpointSlice lookup key.
 type MonitoringServicePort struct {
-	Port           int32
-	Protocol       string
-	TargetPort     int32
-	TargetPortName string
+	Port            int32
+	Protocol        string
+	ServicePortName string
+	TargetPort      int32
+	TargetPortName  string
 }
 
 // MonitoringDestination is the provider-neutral, normalized destination for
@@ -92,27 +104,45 @@ func ResolveMonitoringDestinations(ctx context.Context, reader client.Reader, op
 
 	endpoints := append([]MonitoringEndpoint(nil), options.Endpoints...)
 	sort.Slice(endpoints, func(i, j int) bool { return endpoints[i].Name < endpoints[j].Name })
-	destinations := make([]MonitoringDestination, 0, len(endpoints))
+	destinationsByName := make(map[string]MonitoringDestination, len(endpoints))
 	seen := make(map[string]struct{}, len(endpoints))
+	resolutionErrors := make([]error, 0, len(endpoints))
 	for _, endpoint := range endpoints {
 		name := strings.ToLower(strings.TrimSpace(endpoint.Name))
 		if !supportedMonitoringEndpoint(name) {
-			return nil, fmt.Errorf("unsupported monitoring endpoint %q", name)
+			resolutionErrors = append(resolutionErrors, fmt.Errorf("unsupported monitoring endpoint %q", name))
+			continue
 		}
 		if _, exists := seen[name]; exists {
-			return nil, fmt.Errorf("monitoring endpoint %q is configured more than once", name)
+			delete(destinationsByName, name)
+			resolutionErrors = append(resolutionErrors, fmt.Errorf("monitoring endpoint %q is configured more than once", name))
+			continue
 		}
 		seen[name] = struct{}{}
 		destination, err := resolveMonitoringEndpoint(ctx, reader, options.Provider, MonitoringEndpoint{Name: name, URL: endpoint.URL})
 		if err != nil {
-			return nil, fmt.Errorf("resolving %s monitoring endpoint: %w", name, err)
+			resolutionErrors = append(resolutionErrors, fmt.Errorf("resolving %s monitoring endpoint: %w", name, err))
+			continue
 		}
-		destinations = append(destinations, destination)
+		if err := validateMonitoringDestination(options.Provider, destination); err != nil {
+			resolutionErrors = append(resolutionErrors, fmt.Errorf("resolving %s monitoring endpoint: %w", name, err))
+			continue
+		}
+		destinationsByName[name] = destination
+	}
+
+	destinations := make([]MonitoringDestination, 0, len(destinationsByName))
+	for _, endpoint := range endpoints {
+		name := strings.ToLower(strings.TrimSpace(endpoint.Name))
+		if destination, ok := destinationsByName[name]; ok {
+			destinations = append(destinations, destination)
+			delete(destinationsByName, name)
+		}
 	}
 	if err := ValidateMonitoringDestinations(options.Provider, destinations); err != nil {
-		return nil, err
+		return nil, errors.Join(append(resolutionErrors, err)...)
 	}
-	return destinations, nil
+	return destinations, errors.Join(resolutionErrors...)
 }
 
 func resolveMonitoringEndpoint(ctx context.Context, reader client.Reader, provider Provider, endpoint MonitoringEndpoint) (MonitoringDestination, error) {
@@ -133,7 +163,7 @@ func resolveMonitoringEndpoint(ctx context.Context, reader client.Reader, provid
 	}
 	backendPort := selected.TargetPort
 	if (provider == ProviderCilium || provider == ProviderOVN) && selected.TargetPortName != "" {
-		backendPort, err = resolveNamedTargetPort(ctx, reader, service, selected.TargetPortName)
+		backendPort, err = resolveNamedTargetPort(ctx, reader, service, selected)
 		if err != nil {
 			return MonitoringDestination{}, fmt.Errorf("resolving monitoring service %s/%s targetPort: %w", namespace, serviceName, err)
 		}
@@ -320,7 +350,11 @@ func normalizeMonitoringServicePort(servicePort corev1.ServicePort) (MonitoringS
 	if protocol == "" {
 		protocol = corev1.ProtocolTCP
 	}
-	port := MonitoringServicePort{Port: servicePort.Port, Protocol: string(protocol)}
+	port := MonitoringServicePort{
+		Port:            servicePort.Port,
+		Protocol:        string(protocol),
+		ServicePortName: servicePort.Name,
+	}
 	targetPort := servicePort.TargetPort
 	if targetPort.Type == intstr.Int && targetPort.IntVal == 0 {
 		targetPort = intstr.FromInt(int(servicePort.Port))
@@ -369,7 +403,11 @@ func copyStringMap(input map[string]string) map[string]string {
 	return output
 }
 
-func resolveNamedTargetPort(ctx context.Context, reader client.Reader, service *corev1.Service, targetPortName string) (int32, error) {
+func resolveNamedTargetPort(ctx context.Context, reader client.Reader, service *corev1.Service, servicePort MonitoringServicePort) (int32, error) {
+	targetPortName := servicePort.TargetPortName
+	if servicePort.ServicePortName == "" {
+		return 0, fmt.Errorf("named targetPort %q cannot be matched because the service port has no name", targetPortName)
+	}
 	slices := &discoveryv1.EndpointSliceList{}
 	if err := reader.List(ctx, slices, client.InNamespace(service.Namespace), client.MatchingLabels{discoveryv1.LabelServiceName: service.Name}); err != nil {
 		return 0, fmt.Errorf("listing endpointslices: %w", err)
@@ -381,7 +419,7 @@ func resolveNamedTargetPort(ctx context.Context, reader client.Reader, service *
 			continue
 		}
 		readyEndpoint = true
-		port, found, err := endpointSliceTargetPort(slice, targetPortName)
+		port, found, err := endpointSliceTargetPort(slice, servicePort.ServicePortName, targetPortName)
 		if err != nil {
 			return 0, err
 		}
@@ -410,9 +448,9 @@ func endpointSliceHasReadyEndpoint(slice discoveryv1.EndpointSlice) bool {
 	return false
 }
 
-func endpointSliceTargetPort(slice discoveryv1.EndpointSlice, targetPortName string) (int32, bool, error) {
+func endpointSliceTargetPort(slice discoveryv1.EndpointSlice, servicePortName, targetPortName string) (int32, bool, error) {
 	for _, port := range slice.Ports {
-		if port.Name == nil || *port.Name != targetPortName {
+		if port.Name == nil || *port.Name != servicePortName {
 			continue
 		}
 		protocol := corev1.ProtocolTCP
@@ -425,4 +463,16 @@ func endpointSliceTargetPort(slice discoveryv1.EndpointSlice, targetPortName str
 		return *port.Port, true, nil
 	}
 	return 0, false, nil
+}
+
+// MonitoringServiceReferenceFromURL parses and validates an endpoint URL for
+// use by controller event mapping. It shares the same in-cluster-only parser
+// as destination resolution, so external or malformed URLs never widen the
+// watch scope.
+func MonitoringServiceReferenceFromURL(raw string) (MonitoringServiceReference, error) {
+	serviceName, namespace, _, err := parseMonitoringURL(raw)
+	if err != nil {
+		return MonitoringServiceReference{}, err
+	}
+	return MonitoringServiceReference{Name: serviceName, Namespace: namespace}, nil
 }

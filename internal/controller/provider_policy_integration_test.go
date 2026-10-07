@@ -239,6 +239,101 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 		Expect(policyCondition.Message).To(ContainSubstring("missing"))
 	})
 
+	It("keeps a healthy monitoring rule when another destination is unresolved", func() {
+		createBYOSecrets(ctx)
+		waitForCiliumPolicyCRDDeletion(ctx)
+		monitoringNamespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "monitoring-policy-partial"}}
+		Expect(k8sClient.Create(ctx, monitoringNamespace)).To(Succeed())
+		prometheus := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "prometheus", Namespace: monitoringNamespace.Name},
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{"app": "prometheus"},
+				Ports: []corev1.ServicePort{{
+					Name: "web", Protocol: corev1.ProtocolTCP, Port: 9090, TargetPort: intstr.FromInt(8080),
+				}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, prometheus)).To(Succeed())
+
+		providerCRD := ciliumPolicyCRD()
+		providerDaemonSet := ciliumProviderDaemonSet()
+		Expect(k8sClient.Create(ctx, providerCRD)).To(Succeed())
+		Expect(k8sClient.Create(ctx, providerDaemonSet)).To(Succeed())
+		providerDaemonSet.Status.NumberReady = 1
+		Expect(k8sClient.Status().Update(ctx, providerDaemonSet)).To(Succeed())
+
+		DeferCleanup(func() {
+			cleanupCtx := context.Background()
+			cleanupErrors := newReconciler().deleteProviderPolicies(cleanupCtx, testNamespace, kubernautv1alpha2.SingletonName)
+			Expect(cleanupErrors).To(BeEmpty())
+			deleteCRIfExists(cleanupCtx)
+			cleanupNamespacedResources(cleanupCtx)
+			deleteBYOSecrets(cleanupCtx)
+			cleanupClusterScoped(cleanupCtx)
+			_ = k8sClient.Delete(cleanupCtx, prometheus)
+			_ = k8sClient.Delete(cleanupCtx, monitoringNamespace)
+			cleanupProviderFixture(cleanupCtx, providerDaemonSet, providerCRD)
+		})
+
+		cr := newCRWithRouteDisabled()
+		cr.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderCilium
+		cr.Spec.Monitoring.Prometheus.URL = "https://prometheus.monitoring-policy-partial.svc:9090"
+		cr.Spec.Monitoring.AlertManager.URL = "https://missing.monitoring-policy-partial.svc:9093"
+		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+		reconcileToDeployPhase(ctx)
+
+		policies := &unstructured.UnstructuredList{}
+		policies.SetGroupVersionKind(schema.GroupVersionKind{
+			Group: "cilium.io", Version: "v2", Kind: "CiliumNetworkPolicyList",
+		})
+		Expect(k8sClient.List(ctx, policies, client.InNamespace(testNamespace))).To(Succeed())
+		var agentPolicy *unstructured.Unstructured
+		for index := range policies.Items {
+			if policies.Items[index].GetName() == agentPolicyName {
+				agentPolicy = &policies.Items[index]
+				break
+			}
+		}
+		Expect(agentPolicy).NotTo(BeNil())
+		spec, found, err := unstructured.NestedMap(agentPolicy.Object, "spec")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		egress, found, err := unstructured.NestedSlice(spec, "egress")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		monitoringServicesFound := make(map[string]bool)
+		for _, item := range egress {
+			rule, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			services, ok := rule["toServices"].([]interface{})
+			if !ok || len(services) != 1 {
+				continue
+			}
+			serviceRule, ok := services[0].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			k8sService, ok := serviceRule["k8sService"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if name, ok := k8sService["serviceName"].(string); ok {
+				monitoringServicesFound[name] = true
+			}
+		}
+		Expect(monitoringServicesFound).To(Equal(map[string]bool{"prometheus": true}))
+
+		status := &kubernautv1alpha2.Kubernaut{}
+		Expect(k8sClient.Get(ctx, singletonKey(), status)).To(Succeed())
+		policyCondition := findCondition(status.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady)
+		Expect(policyCondition).NotTo(BeNil())
+		Expect(policyCondition.Status).To(Equal(metav1.ConditionFalse))
+		Expect(policyCondition.Reason).To(Equal(policy.ReasonMonitoringUnavailable))
+	})
+
 	It("submits a Calico Service policy through the deployment phase", func() {
 		createBYOSecrets(ctx)
 		waitForCalicoPolicyCRDDeletion(ctx)
