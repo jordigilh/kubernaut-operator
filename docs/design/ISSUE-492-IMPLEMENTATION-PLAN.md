@@ -1,6 +1,6 @@
 # Issue #492: Kubernaut Agent monitoring egress policy
 
-**Status:** Cilium/Calico and OVN monitoring implementations are complete. The OVN API/dataplane primitive is qualified on both disposable OpenShift 4.22.16 SNO clusters, and the working-tree operator-generated OVN policy plus Agent monitoring journey is manually qualified on SNO-A. Unit, integration, build, lint, manifest, security, and both provider E2E gates pass. The Cilium/Calico Agent journey passed on the rootful Linux fallback with pinned Cilium 1.20.2 and Calico v3.31.4; OCP/OVN qualification remains manual rather than CI-backed.
+**Status:** Cilium/Calico and OVN monitoring implementations are complete, and the 2026-10-07 production-readiness follow-up remediates named target-port resolution, independent endpoint gating, and external monitoring resource watches. The change is still not GA-ready: requested coverage targets are not met and OVN/OpenShift qualification remains manual rather than CI-backed. The OVN API/dataplane primitive is qualified on both disposable OpenShift 4.22.16 SNO clusters, and the working-tree operator-generated OVN policy plus Agent monitoring journey is manually qualified on SNO-A. Build, lint, manifest, security, integration, and Cilium/Calico provider E2E gates pass.
 **Issue:** [kubernaut-operator#492](https://github.com/jordigilh/kubernaut-operator/issues/492)
 **Milestone:** v1.6
 **Related:** #488 (native provider policy), #489 (operator-only Helm/bootstrap), #468 (AlertManager RBAC), upstream `kubernaut#2484`
@@ -22,11 +22,10 @@ The business failure is loss of RCA evidence: the Agent’s `get_alerts` and `ge
 
 ## 2. Worktree and preservation boundary
 
-Preflight was run on the existing branch `docs/issue-489-helm-plan`.
+Preflight was run on the existing branch `docs/issue-489-helm-plan`; the implementation was subsequently moved to the dedicated branch `fix/issue-492-native-monitoring-egress` from `origin/main`.
 
-* `HEAD` remains the existing docs commit `8aad209 docs: add issue 489 operator Helm plan`.
-* The existing #489 plan commit remains untouched; the #492 implementation and tests remain uncommitted on this worktree.
-* No reset, checkout, discard, amend, commit, or PR operation has been performed for this issue.
+* The existing #489 plan commit remains untouched and is not part of the #492 branch history.
+* PR [#507](https://github.com/jordigilh/kubernaut-operator/pull/507) tracks the implementation and closes #492; the remediation is committed as a follow-up on that branch.
 * The implementation includes the approved Cilium, Calico, and OVN native adapters. Disposable SNO probe resources, the temporary operator run, and its generated CRDs were removed after validation.
 
 ## 3. Preflight evidence
@@ -111,6 +110,18 @@ This is manual OCP assurance, not an automated OCP/OVN CI claim. The unit and en
 ### Spike D — RBAC and CRD impact (completed)
 
 No CRD schema change is required because existing monitoring URLs and enabled flags remain the source of truth. The controller uses least-privilege read access to resolve referenced Services and named Cilium target ports through EndpointSlices. That production RBAC change is documented and generated, while the resolver/controller paths are covered by unit and integration tests. No write permissions or monitoring API permissions were added.
+
+### Audit remediation follow-up — 2026-10-07
+
+The production-readiness audit for PR #507 identified three implementation defects; all three are addressed in the follow-up change:
+
+1. **Named target ports:** EndpointSlice port names are now matched to `ServicePort.Name`, while the numeric EndpointSlice port remains the effective backend port for Cilium and OVN. This supports valid definitions such as `name=metrics,targetPort=http` without confusing the Service port name with the pod target-port name.
+2. **Independent endpoint gating:** destination resolution now retains every independently valid monitoring Service, aggregates diagnostics for failed endpoints, renders the healthy rules, and reports `ProviderPolicyReady=False` with `MonitoringUnavailable` when any configured endpoint is unavailable. No unsafe rule is emitted for the failed endpoint.
+3. **Event-driven freshness:** the controller watches all Services and EndpointSlices through an exact in-cluster Service/namespace mapper, in addition to owned resources. Selector, Service-port, and backend EndpointSlice changes therefore enqueue reconciliation immediately instead of relying only on the periodic requeue.
+
+Regression coverage includes named-port resolver tests, partial-resolution policy/envtest assertions, and Service/EndpointSlice watch mapping tests. `make test`, `make lint`, and `go build ./...` pass after the remediation.
+
+The audit’s release blockers remain open and are not overstated as fixed: repository coverage is below the requested 100% evidence target, and OVN/OpenShift has no automated CI lane. The qualified Cilium/Calico Kind runs and manual OpenShift SNO evidence remain bounded to the environments documented above.
 
 ## 5. Alternatives considered
 
@@ -235,8 +246,8 @@ These controls are business acceptance criteria, not merely comments or implemen
 
 ## 12. Confidence assessment
 
-**Confidence: 97% for the implemented Cilium/Calico policy behavior, controller wiring, and qualified Agent journeys; 95% for the implemented OVN resolver/renderer and manually tested OpenShift 4.22.16 operator/dataplane path; 94% for release-complete provider qualification because OCP/OVN has no automated CI lane.**
+**Confidence: 98% for the remediated Cilium/Calico policy behavior and controller wiring; 96% for the remediated OVN resolver/renderer and manually tested OpenShift 4.22.16 operator/dataplane path; 90% for GA readiness because coverage targets and an automated OCP/OVN lane remain outstanding.**
 
 The issue scope, current code gap, controller wiring, existing monitoring endpoint contract, Cilium `toServices`/effective-backend `toPorts` behavior, Calico Kubernetes-datastore requirement and egress Service-port constraint, OVN peer expressiveness, provider gates, fail-closed lifecycle, and test harness are directly evidenced. The Cilium and Calico rootful Kind runs validate the complete Agent journey and unrelated-destination denial. The SNO probes validate OVN `v1alpha1` peer expressiveness and Service/backend-port enforcement on two clusters, and the SNO-A operator run validates production rendering plus the Agent monitoring journey. The lack of an automated OCP lane remains an explicit release-qualification limitation.
 
-No commit or PR has been created. The implementation remains available for review, with Cilium/Calico provider enforcement qualified on the rootful fallback and OVN evidence explicitly bounded to manual OpenShift qualification.
+PR #507 remains the review vehicle. The implementation and remediation are available for review, with Cilium/Calico provider enforcement qualified on the rootful fallback and OVN evidence explicitly bounded to manual OpenShift qualification.
