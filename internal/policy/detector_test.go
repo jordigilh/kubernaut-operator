@@ -168,6 +168,40 @@ var _ = Describe("provider discovery", func() {
 		Expect(candidate.SchemaValid).To(BeFalse())
 	})
 
+	It("rejects a Cilium schema that omits native monitoring fields", func() {
+		gvk := schema.GroupVersionKind{Group: "cilium.io", Version: "v2", Kind: "CiliumNetworkPolicy"}
+		mapper := testRESTMapper(gvk, meta.RESTScopeNamespace)
+		crd := testProviderCRD(gvk, "ciliumnetworkpolicies", apiextensionsv1.NamespaceScoped)
+		egress := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["egress"]
+		delete(egress.Items.Schema.Properties, "toPorts")
+		crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["egress"] = egress
+		client := fake.NewClientBuilder().WithScheme(testDiscoveryScheme()).WithRuntimeObjects(
+			crd,
+			readyDaemonSet("cilium", "quay.io/cilium/cilium:v1.20.2"),
+		).Build()
+
+		candidate := (Detector{Client: client, RESTMapper: mapper}).Discover(context.Background()).Candidates[ProviderCilium]
+		Expect(candidate.SchemaValid).To(BeFalse())
+	})
+
+	It("rejects a Calico schema that omits native monitoring Service matching", func() {
+		gvk := schema.GroupVersionKind{Group: "projectcalico.org", Version: "v3", Kind: "NetworkPolicy"}
+		mapper := testRESTMapper(gvk, meta.RESTScopeNamespace)
+		crd := testProviderCRD(gvk, "networkpolicies", apiextensionsv1.NamespaceScoped)
+		egress := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["egress"]
+		destination := egress.Items.Schema.Properties["destination"]
+		delete(destination.Properties, "services")
+		egress.Items.Schema.Properties["destination"] = destination
+		crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["egress"] = egress
+		client := fake.NewClientBuilder().WithScheme(testDiscoveryScheme()).WithRuntimeObjects(
+			crd,
+			readyDaemonSet("calico-node", "docker.io/calico/node:v3.31.1"),
+		).Build()
+
+		candidate := (Detector{Client: client, RESTMapper: mapper}).Discover(context.Background()).Candidates[ProviderCalico]
+		Expect(candidate.SchemaValid).To(BeFalse())
+	})
+
 	It("rejects a Calico schema that omits policy order consumed by the renderer", func() {
 		gvk := schema.GroupVersionKind{Group: "projectcalico.org", Version: "v3", Kind: "NetworkPolicy"}
 		mapper := testRESTMapper(gvk, meta.RESTScopeNamespace)
@@ -192,7 +226,7 @@ var _ = Describe("provider discovery", func() {
 			"kind":       "Network",
 			"metadata":   map[string]interface{}{"name": "cluster"},
 			"spec": map[string]interface{}{
-				"defaultNetwork": map[string]interface{}{"type": "OVNKubernetes"},
+				"networkType": "OVNKubernetes",
 			},
 		}}
 		clusterVersion := &unstructured.Unstructured{Object: map[string]interface{}{
@@ -246,7 +280,16 @@ func testProviderCRD(gvk schema.GroupVersionKind, plural string, scope apiextens
 			"endpointSelector":  {Type: "object"},
 			"enableDefaultDeny": {Type: "object"},
 			"ingress":           {Type: "array"},
-			"egress":            {Type: "array"},
+			"egress": {
+				Type: "array",
+				Items: &apiextensionsv1.JSONSchemaPropsOrArray{Schema: &apiextensionsv1.JSONSchemaProps{
+					Type: "object",
+					Properties: map[string]apiextensionsv1.JSONSchemaProps{
+						"toServices": {Type: "array"},
+						"toPorts":    {Type: "array"},
+					},
+				}},
+			},
 		}
 	case "NetworkPolicy":
 		properties = map[string]apiextensionsv1.JSONSchemaProps{
@@ -254,7 +297,17 @@ func testProviderCRD(gvk schema.GroupVersionKind, plural string, scope apiextens
 			"order":    {Type: "number"},
 			"types":    {Type: "array"},
 			"ingress":  {Type: "array"},
-			"egress":   {Type: "array"},
+			"egress": {
+				Type: "array",
+				Items: &apiextensionsv1.JSONSchemaPropsOrArray{Schema: &apiextensionsv1.JSONSchemaProps{
+					Type: "object",
+					Properties: map[string]apiextensionsv1.JSONSchemaProps{
+						"destination": {Type: "object", Properties: map[string]apiextensionsv1.JSONSchemaProps{
+							"services": {Type: "object"},
+						}},
+					},
+				}},
+			},
 		}
 	case "AdminNetworkPolicy":
 		properties = map[string]apiextensionsv1.JSONSchemaProps{

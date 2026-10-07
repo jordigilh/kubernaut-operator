@@ -356,6 +356,72 @@ var _ = Describe("native policy rendering", func() {
 		Expect(apiPort).To(HaveKeyWithValue("port", float64(6443)))
 		Expect(apiPort).To(HaveKeyWithValue("protocol", "TCP"))
 	})
+
+	It("renders OVN monitoring egress in an Agent-only policy with a deny boundary", func() {
+		intent, err := BuildIntent("kubernaut-system", []string{"gateway", "kubernaut-agent"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		intent.InstanceName = policyTestInstance
+		intent.DNSNamespace = "openshift-dns"
+		intent.Monitoring = []MonitoringDestination{{
+			Name: "alertmanager", ServiceName: "alertmanager-main", Namespace: "openshift-monitoring",
+			ServicePort: 9094, BackendPort: 9095,
+			ServiceSelector: map[string]string{
+				"app.kubernetes.io/component": "alert-router",
+				"app.kubernetes.io/instance":  "main",
+			},
+			ServicePorts: []MonitoringServicePort{{
+				Port: 9094, Protocol: "TCP", TargetPort: 9095,
+			}},
+		}}
+
+		objects, err := Render(DiscoveryResultForTest(ProviderOVN, "4.22.16"), intent)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(objects).To(HaveLen(3))
+
+		var monitoringPolicy *unstructured.Unstructured
+		for index := range objects {
+			if objects[index].Object.GetName() == "kubernaut-agent-monitoring" {
+				monitoringPolicy = objects[index].Object
+				break
+			}
+		}
+		Expect(monitoringPolicy).NotTo(BeNil())
+		spec, found, err := unstructured.NestedMap(monitoringPolicy.Object, "spec")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(spec).To(HaveKeyWithValue("priority", float64(89)))
+
+		subject, found, err := unstructured.NestedMap(spec, "subject", "pods", "podSelector", "matchLabels")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(subject).To(HaveKeyWithValue("app", MonitoringAgentComponent))
+
+		egress, found, err := unstructured.NestedSlice(spec, "egress")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		var monitoringRule, denyRule map[string]interface{}
+		for _, item := range egress {
+			rule := item.(map[string]interface{})
+			switch rule["name"] {
+			case "allow-monitoring-alertmanager":
+				monitoringRule = rule
+			case "deny-other-monitoring":
+				denyRule = rule
+			}
+		}
+		Expect(monitoringRule).NotTo(BeNil())
+		Expect(monitoringRule["action"]).To(Equal("Allow"))
+		monitoringPeer := monitoringRule["to"].([]interface{})[0].(map[string]interface{})["pods"].(map[string]interface{})
+		Expect(monitoringPeer["podSelector"].(map[string]interface{})["matchLabels"]).To(Equal(map[string]interface{}{
+			"app.kubernetes.io/component": "alert-router",
+			"app.kubernetes.io/instance":  "main",
+		}))
+		port := monitoringRule["ports"].([]interface{})[0].(map[string]interface{})["portNumber"].(map[string]interface{})
+		Expect(port).To(HaveKeyWithValue("port", float64(9095)))
+		Expect(port).To(HaveKeyWithValue("protocol", "TCP"))
+		Expect(denyRule).NotTo(BeNil())
+		Expect(denyRule["action"]).To(Equal("Deny"))
+	})
 })
 
 // DiscoveryResultForTest builds a ready native-provider result for renderer
