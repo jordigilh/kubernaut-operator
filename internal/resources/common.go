@@ -388,6 +388,12 @@ func effectivePrometheusURL(knV2 *kubernautv1alpha2.Kubernaut) string {
 	return OCPPrometheusURL
 }
 
+// EffectivePrometheusURL exposes the same capability-aware endpoint used by
+// Agent configuration to the native policy resolver.
+func EffectivePrometheusURL(knV2 *kubernautv1alpha2.Kubernaut) string {
+	return effectivePrometheusURL(knV2)
+}
+
 // effectiveAlertManagerURL returns the configured endpoint, or the OpenShift
 // adapter endpoint when monitoring is enabled with no explicit override.
 func effectiveAlertManagerURL(knV2 *kubernautv1alpha2.Kubernaut) string {
@@ -398,6 +404,12 @@ func effectiveAlertManagerURL(knV2 *kubernautv1alpha2.Kubernaut) string {
 		return u
 	}
 	return OCPAlertManagerURL
+}
+
+// EffectiveAlertManagerURL exposes the same capability-aware endpoint used by
+// Agent configuration to the native policy resolver.
+func EffectiveAlertManagerURL(knV2 *kubernautv1alpha2.Kubernaut) string {
+	return effectiveAlertManagerURL(knV2)
 }
 
 // effectiveEMTLSCaFile resolves EM's single external.tlsCaFile config key

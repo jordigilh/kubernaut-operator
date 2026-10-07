@@ -145,6 +145,7 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=services;configmaps;secrets;serviceaccounts;namespaces,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=endpoints,resourceNames=kubernetes,verbs=get
 // +kubebuilder:rbac:groups="",resources=configmaps,resourceNames=default-ingress-cert,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
@@ -1967,23 +1968,23 @@ func (r *KubernautReconciler) reconcileProviderPolicies(ctx context.Context, kn 
 	if detection.Provider == policy.ProviderOVN && detection.Platform == "OpenShift" {
 		intent.DNSNamespace = resources.OCPDNSNamespace
 	}
+	monitoringDestinations, monitoringErr := r.resolveMonitoringDestinations(ctx, knV2, detection)
+	intent.Monitoring = monitoringDestinations
+	if monitoringErr != nil {
+		intent.Monitoring = nil
+		logf.FromContext(ctx).Error(monitoringErr, "native monitoring policy destination unavailable",
+			"provider", detection.Provider,
+			"generation", kn.Generation,
+			"resourceVersion", kn.ResourceVersion)
+	}
 	objects, err := policy.Render(detection, intent)
 	if err != nil {
 		return r.patchProviderPolicyStatus(ctx, kn, detection, false, err)
 	}
 
-	desired := make(map[string]struct{}, len(objects))
-	for _, rendered := range objects {
-		object := rendered.Object
-		desired[policyObjectKey(object)] = struct{}{}
-		if rendered.Namespaced {
-			if err := resources.SetOwnerReference(kn, object, r.Scheme); err != nil {
-				return fmt.Errorf("setting provider policy owner reference on %s: %w", object.GetName(), err)
-			}
-		}
-		if err := r.ensureProviderPolicy(ctx, object); err != nil {
-			return fmt.Errorf("ensuring native %s policy %s: %w", object.GetKind(), object.GetName(), err)
-		}
+	desired, err := r.ensureRenderedProviderPolicies(ctx, kn, objects)
+	if err != nil {
+		return err
 	}
 	if err := r.pruneProviderPolicies(ctx, kn.Namespace, kn.Name, desired); err != nil {
 		return err
@@ -1996,7 +1997,68 @@ func (r *KubernautReconciler) reconcileProviderPolicies(ctx context.Context, kn 
 			"resourceVersion", kn.ResourceVersion,
 			"policyCount", len(objects))
 	}
-	return r.patchProviderPolicyStatus(ctx, kn, detection, detection.Ready, nil)
+	if monitoringErr != nil {
+		detection.PolicyReason = policy.ReasonMonitoringUnavailable
+		detection.PolicyMessage = fmt.Sprintf("native provider is ready but monitoring egress is unavailable: %v", monitoringErr)
+	}
+	return r.patchProviderPolicyStatus(ctx, kn, detection, detection.Ready && monitoringErr == nil, nil)
+}
+
+func (r *KubernautReconciler) ensureRenderedProviderPolicies(
+	ctx context.Context,
+	kn *kubernautv1alpha2.Kubernaut,
+	objects []policy.RenderedPolicy,
+) (map[string]struct{}, error) {
+	desired := make(map[string]struct{}, len(objects))
+	for _, rendered := range objects {
+		object := rendered.Object
+		desired[policyObjectKey(object)] = struct{}{}
+		if rendered.Namespaced {
+			if err := resources.SetOwnerReference(kn, object, r.Scheme); err != nil {
+				return nil, fmt.Errorf("setting provider policy owner reference on %s: %w", object.GetName(), err)
+			}
+		}
+		if err := r.ensureProviderPolicy(ctx, object); err != nil {
+			return nil, fmt.Errorf("ensuring native %s policy %s: %w", object.GetKind(), object.GetName(), err)
+		}
+	}
+	return desired, nil
+}
+
+func (r *KubernautReconciler) resolveMonitoringDestinations(
+	ctx context.Context,
+	knV2 *kubernautv1alpha2.Kubernaut,
+	detection policy.DetectionResult,
+) ([]policy.MonitoringDestination, error) {
+	if !detection.Ready || !providerSupportsMonitoring(detection.Provider) {
+		return nil, nil
+	}
+	monitoring := r.monitoringConfigView(ctx, knV2)
+	return policy.ResolveMonitoringDestinations(ctx, r.Client, policy.MonitoringResolutionOptions{
+		Provider:  detection.Provider,
+		Endpoints: monitoringEndpoints(monitoring),
+	})
+}
+
+func providerSupportsMonitoring(provider policy.Provider) bool {
+	return provider == policy.ProviderCilium || provider == policy.ProviderCalico || provider == policy.ProviderOVN
+}
+
+func monitoringEndpoints(kn *kubernautv1alpha2.Kubernaut) []policy.MonitoringEndpoint {
+	endpoints := make([]policy.MonitoringEndpoint, 0, 2)
+	if kn.Spec.Monitoring.Prometheus.PrometheusEnabled() {
+		endpoints = append(endpoints, policy.MonitoringEndpoint{
+			Name: policy.MonitoringPrometheus,
+			URL:  resources.EffectivePrometheusURL(kn),
+		})
+	}
+	if kn.Spec.Monitoring.AlertManager.AlertManagerEnabled() {
+		endpoints = append(endpoints, policy.MonitoringEndpoint{
+			Name: policy.MonitoringAlertManager,
+			URL:  resources.EffectiveAlertManagerURL(kn),
+		})
+	}
+	return endpoints
 }
 
 // ensureProviderPolicy refuses to adopt a provider/platform-owned object that
@@ -2082,15 +2144,23 @@ func (r *KubernautReconciler) patchProviderPolicyStatus(
 		})
 		policyStatus := metav1.ConditionFalse
 		policyReason := detection.Reason
+		policyMessage := detection.Message
+		if detection.PolicyReason != "" {
+			policyReason = detection.PolicyReason
+		}
+		if detection.PolicyMessage != "" {
+			policyMessage = detection.PolicyMessage
+		}
 		if ready {
 			policyStatus = metav1.ConditionTrue
 			policyReason = policy.ReasonProviderReady
+			policyMessage = detection.Message
 		}
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 			Type:               kubernautv1alpha2.ConditionProviderPolicyReady,
 			Status:             policyStatus,
 			Reason:             policyReason,
-			Message:            detection.Message,
+			Message:            policyMessage,
 			ObservedGeneration: kn.Generation,
 		})
 	}); err != nil {
@@ -2100,7 +2170,11 @@ func (r *KubernautReconciler) patchProviderPolicyStatus(
 		return reconcileErr
 	}
 	if r.Recorder != nil && !ready {
-		r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "ProviderPolicyUnavailable", "Reconcile", "%s", detection.Message)
+		eventMessage := detection.Message
+		if detection.PolicyMessage != "" {
+			eventMessage = detection.PolicyMessage
+		}
+		r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "ProviderPolicyUnavailable", "Reconcile", "%s", eventMessage)
 	}
 	return nil
 }

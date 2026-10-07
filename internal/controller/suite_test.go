@@ -113,6 +113,12 @@ var _ = BeforeSuite(func() {
 				filepath.Join(openshiftModDir, "config", "v1",
 					"zz_generated.crd-manifests",
 					"0000_10_config-operator_01_ingresses.crd.yaml"),
+				filepath.Join(openshiftModDir, "config", "v1",
+					"zz_generated.crd-manifests",
+					"0000_10_config-operator_01_networks.crd.yaml"),
+				filepath.Join(openshiftModDir, "config", "v1",
+					"zz_generated.crd-manifests",
+					"0000_00_cluster-version-operator_01_clusterversions-Default.crd.yaml"),
 			},
 		},
 	}
