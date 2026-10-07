@@ -67,9 +67,10 @@ const (
 	certManagerOwnerReferencePatch = `[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":` +
 		`"--enable-certificate-owner-ref=true"}]`
 
-	operatorNamespace  = "kubernaut-operator-system"
-	kubernautNamespace = "kubernaut-system"
-	conditionTrue      = "True"
+	operatorNamespace   = "kubernaut-operator-system"
+	kubernautNamespace  = "kubernaut-system"
+	monitoringNamespace = "kubernaut-e2e-monitoring"
+	conditionTrue       = "True"
 	// Provider probes run in the Kubernaut namespace so the operator's
 	// namespace-scoped policy selectors are exercised by the real workload.
 	probeNamespace = kubernautNamespace
@@ -79,6 +80,13 @@ const (
 	operatorDeploymentName = "kubernaut-operator-controller-manager"
 
 	managedPolicyLabel = "kubernaut.ai/managed-policy=true"
+
+	monitoringPrometheusServiceName   = "prometheus"
+	monitoringAlertManagerServiceName = "alertmanager"
+	monitoringBlockedServiceName      = "monitoring-blocked"
+	monitoringPrometheusServicePort   = int32(9090)
+	monitoringAlertManagerServicePort = int32(9093)
+	monitoringBlockedServicePort      = int32(9090)
 )
 
 const calicoInstallation = `apiVersion: operator.tigera.io/v1

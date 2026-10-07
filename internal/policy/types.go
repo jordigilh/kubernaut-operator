@@ -77,14 +77,15 @@ func ProviderForGVK(gvk schema.GroupVersionKind) Provider {
 }
 
 const (
-	ReasonProviderReady        = "ProviderReady"
-	ReasonNoSupportedProvider  = "NoSupportedProvider"
-	ReasonNoActiveInstallation = "NoActiveInstallation"
-	ReasonAmbiguousProvider    = "AmbiguousProvider"
-	ReasonUnsupportedProvider  = "UnsupportedProvider"
-	ReasonUnsupportedVersion   = "UnsupportedVersion"
-	ReasonSchemaInvalid        = "SchemaInvalid"
-	ReasonProviderUnavailable  = "ProviderUnavailable"
+	ReasonProviderReady         = "ProviderReady"
+	ReasonNoSupportedProvider   = "NoSupportedProvider"
+	ReasonNoActiveInstallation  = "NoActiveInstallation"
+	ReasonAmbiguousProvider     = "AmbiguousProvider"
+	ReasonUnsupportedProvider   = "UnsupportedProvider"
+	ReasonUnsupportedVersion    = "UnsupportedVersion"
+	ReasonSchemaInvalid         = "SchemaInvalid"
+	ReasonProviderUnavailable   = "ProviderUnavailable"
+	ReasonMonitoringUnavailable = "MonitoringUnavailable"
 )
 
 // ResourceCapability records discovery and schema evidence for one provider
@@ -121,15 +122,17 @@ type DiscoverySnapshot struct {
 
 // DetectionResult is the provider decision consumed by the policy lifecycle.
 type DetectionResult struct {
-	Requested  Provider
-	Provider   Provider
-	Ready      bool
-	Reason     string
-	Message    string
-	Version    string
-	Platform   string
-	Candidates []Provider
-	Evidence   []string
+	Requested     Provider
+	Provider      Provider
+	Ready         bool
+	Reason        string
+	Message       string
+	PolicyReason  string
+	PolicyMessage string
+	Version       string
+	Platform      string
+	Candidates    []Provider
+	Evidence      []string
 }
 
 // RequiredGVKs returns the native policy GVKs required by each adapter.

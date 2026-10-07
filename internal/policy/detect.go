@@ -33,6 +33,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const (
+	schemaTypeArray  = "array"
+	schemaTypeObject = "object"
+)
+
 // Detector combines provider API/schema discovery with active-installation
 // evidence. It never creates provider objects or provider CRDs.
 type Detector struct {
@@ -114,7 +119,13 @@ func (d Detector) discoverOVN(ctx context.Context) ProviderSnapshot {
 		result.Diagnostic = "OpenShift Network configuration is unavailable"
 		return result
 	}
-	networkType, _, _ := unstructured.NestedString(network.Object, "spec", "defaultNetwork", "type")
+	networkType, _, _ := unstructured.NestedString(network.Object, "spec", "networkType")
+	if networkType == "" {
+		// Older OpenShift representations exposed the plugin below
+		// spec.defaultNetwork.type. Prefer the current NetworkSpec field while
+		// retaining compatibility with that representation.
+		networkType, _, _ = unstructured.NestedString(network.Object, "spec", "defaultNetwork", "type")
+	}
 	if networkType != "OVNKubernetes" {
 		result.Diagnostic = "OpenShift defaultNetwork.type is not OVNKubernetes"
 		return result
@@ -214,24 +225,24 @@ func crdHasSupportedSchema(crd *apiextensionsv1.CustomResourceDefinition, expect
 // or unrelated CRD with the expected GVK must not be enough to make the
 // operator submit a security policy that the provider cannot interpret.
 func schemaSupportsPolicy(gvk schema.GroupVersionKind, root *apiextensionsv1.JSONSchemaProps) bool {
-	if root == nil || root.Type != "object" || root.Properties == nil {
+	if root == nil || root.Type != schemaTypeObject || root.Properties == nil {
 		return false
 	}
 	spec, ok := root.Properties["spec"]
-	if !ok || spec.Type != "object" || spec.Properties == nil {
+	if !ok || spec.Type != schemaTypeObject || spec.Properties == nil {
 		return false
 	}
 
 	var fields map[string]string
 	switch gvk {
 	case schema.GroupVersionKind{Group: "cilium.io", Version: "v2", Kind: "CiliumNetworkPolicy"}:
-		fields = map[string]string{"endpointSelector": "object", "enableDefaultDeny": "object", "ingress": "array", "egress": "array"}
+		fields = map[string]string{"endpointSelector": schemaTypeObject, "enableDefaultDeny": schemaTypeObject, "ingress": schemaTypeArray, "egress": schemaTypeArray}
 	case schema.GroupVersionKind{Group: "projectcalico.org", Version: "v3", Kind: "NetworkPolicy"}:
-		fields = map[string]string{"selector": "string", "order": "number", "types": "array", "ingress": "array", "egress": "array"}
+		fields = map[string]string{"selector": "string", "order": "number", "types": schemaTypeArray, "ingress": schemaTypeArray, "egress": schemaTypeArray}
 	case schema.GroupVersionKind{Group: "policy.networking.k8s.io", Version: "v1alpha1", Kind: "AdminNetworkPolicy"}:
-		fields = map[string]string{"priority": "integer", "subject": "object", "ingress": "array", "egress": "array"}
+		fields = map[string]string{"priority": "integer", "subject": schemaTypeObject, "ingress": schemaTypeArray, "egress": schemaTypeArray}
 	case schema.GroupVersionKind{Group: "policy.networking.k8s.io", Version: "v1alpha1", Kind: "BaselineAdminNetworkPolicy"}:
-		fields = map[string]string{"subject": "object", "ingress": "array", "egress": "array"}
+		fields = map[string]string{"subject": schemaTypeObject, "ingress": schemaTypeArray, "egress": schemaTypeArray}
 	default:
 		return false
 	}
@@ -241,7 +252,32 @@ func schemaSupportsPolicy(gvk schema.GroupVersionKind, root *apiextensionsv1.JSO
 			return false
 		}
 	}
-	return true
+	return schemaSupportsMonitoringFields(gvk, spec.Properties["egress"])
+}
+
+func schemaSupportsMonitoringFields(gvk schema.GroupVersionKind, egress apiextensionsv1.JSONSchemaProps) bool {
+	if gvk.Group != "cilium.io" && gvk.Group != "projectcalico.org" {
+		return true
+	}
+	if egress.Type != schemaTypeArray || egress.Items == nil || egress.Items.Schema == nil {
+		return false
+	}
+	item := egress.Items.Schema
+	if item.Type != schemaTypeObject || item.Properties == nil {
+		return false
+	}
+	switch gvk {
+	case schema.GroupVersionKind{Group: "cilium.io", Version: "v2", Kind: "CiliumNetworkPolicy"}:
+		return item.Properties["toServices"].Type == schemaTypeArray && item.Properties["toPorts"].Type == schemaTypeArray
+	case schema.GroupVersionKind{Group: "projectcalico.org", Version: "v3", Kind: "NetworkPolicy"}:
+		destination, ok := item.Properties["destination"]
+		if !ok || destination.Type != schemaTypeObject || destination.Properties == nil {
+			return false
+		}
+		return destination.Properties["services"].Type == schemaTypeObject
+	default:
+		return true
+	}
 }
 
 func expectedScope(gvk schema.GroupVersionKind) meta.RESTScopeName {

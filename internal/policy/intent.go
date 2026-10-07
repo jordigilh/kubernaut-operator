@@ -41,6 +41,7 @@ type Intent struct {
 	APIServerIdentity    APIServerIdentity
 	DNSNamespace         string
 	StaticAPIServerCIDRs []string
+	Monitoring           []MonitoringDestination
 }
 
 // BuildIntent constructs the common policy intent for one Kubernaut namespace.

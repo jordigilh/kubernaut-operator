@@ -18,6 +18,7 @@ package policy
 
 import (
 	"fmt"
+	"sort"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -42,6 +43,9 @@ func Render(result DetectionResult, intent Intent) ([]RenderedPolicy, error) {
 	}
 	if !result.Ready {
 		return nil, nil
+	}
+	if err := ValidateMonitoringDestinations(result.Provider, intent.Monitoring); err != nil {
+		return nil, err
 	}
 	switch result.Provider {
 	case ProviderCilium:
@@ -71,6 +75,35 @@ func renderCilium(intent Intent) []RenderedPolicy {
 				"k8s:io.kubernetes.pod.namespace":     intent.Namespace,
 			},
 		}
+		egress := []interface{}{
+			map[string]interface{}{
+				"toEndpoints": []interface{}{managedSelector},
+			},
+			map[string]interface{}{
+				"toEntities": []interface{}{"kube-apiserver"},
+			},
+			map[string]interface{}{
+				"toEndpoints": []interface{}{
+					map[string]interface{}{
+						"matchLabels": map[string]interface{}{
+							"k8s:k8s-app": "kube-dns",
+						},
+						"matchExpressions": []interface{}{
+							map[string]interface{}{
+								"key":      "k8s:io.kubernetes.pod.namespace",
+								"operator": "In",
+								"values":   []interface{}{dnsNamespace},
+							},
+						},
+					},
+				},
+			},
+		}
+		if component == MonitoringAgentComponent {
+			for _, destination := range intent.Monitoring {
+				egress = append(egress, ciliumMonitoringRule(destination))
+			}
+		}
 		spec := map[string]interface{}{
 			"endpointSelector": selector,
 			"enableDefaultDeny": map[string]interface{}{
@@ -82,30 +115,7 @@ func renderCilium(intent Intent) []RenderedPolicy {
 					"fromEndpoints": []interface{}{managedSelector},
 				},
 			},
-			"egress": []interface{}{
-				map[string]interface{}{
-					"toEndpoints": []interface{}{managedSelector},
-				},
-				map[string]interface{}{
-					"toEntities": []interface{}{"kube-apiserver"},
-				},
-				map[string]interface{}{
-					"toEndpoints": []interface{}{
-						map[string]interface{}{
-							"matchLabels": map[string]interface{}{
-								"k8s:k8s-app": "kube-dns",
-							},
-							"matchExpressions": []interface{}{
-								map[string]interface{}{
-									"key":      "k8s:io.kubernetes.pod.namespace",
-									"operator": "In",
-									"values":   []interface{}{dnsNamespace},
-								},
-							},
-						},
-					},
-				},
-			},
+			"egress": egress,
 		}
 		objects = append(objects, RenderedPolicy{
 			Object: newPolicyObject(
@@ -129,6 +139,33 @@ func renderCalico(intent Intent) []RenderedPolicy {
 	for _, component := range intent.Components {
 		selector := fmt.Sprintf("app == '%s' && %s == '%s' && %s == 'kubernaut-operator'", component, quoteSelectorKey(instanceLabel), instance, quoteSelectorKey(ManagedByLabel))
 		managedSelector := fmt.Sprintf("%s == 'kubernaut-operator' && %s == '%s'", quoteSelectorKey(ManagedByLabel), quoteSelectorKey(instanceLabel), instance)
+		egress := []interface{}{
+			map[string]interface{}{
+				"action":      "Allow",
+				"destination": map[string]interface{}{"selector": managedSelector},
+			},
+			map[string]interface{}{
+				"action": "Allow",
+				"destination": map[string]interface{}{
+					"services": map[string]interface{}{
+						"name":      intent.APIServerIdentity.ServiceName,
+						"namespace": intent.APIServerIdentity.Namespace,
+					},
+				},
+			},
+			map[string]interface{}{
+				"action": "Allow",
+				"destination": map[string]interface{}{
+					"namespaceSelector": fmt.Sprintf("projectcalico.org/name == '%s'", dnsNamespace),
+					"selector":          "k8s-app == 'kube-dns'",
+				},
+			},
+		}
+		if component == MonitoringAgentComponent {
+			for _, destination := range intent.Monitoring {
+				egress = append(egress, calicoMonitoringRule(destination))
+			}
+		}
 		spec := map[string]interface{}{
 			"selector": selector,
 			"order":    float64(100),
@@ -139,28 +176,7 @@ func renderCalico(intent Intent) []RenderedPolicy {
 					"source": map[string]interface{}{"selector": managedSelector},
 				},
 			},
-			"egress": []interface{}{
-				map[string]interface{}{
-					"action":      "Allow",
-					"destination": map[string]interface{}{"selector": managedSelector},
-				},
-				map[string]interface{}{
-					"action": "Allow",
-					"destination": map[string]interface{}{
-						"services": map[string]interface{}{
-							"name":      intent.APIServerIdentity.ServiceName,
-							"namespace": intent.APIServerIdentity.Namespace,
-						},
-					},
-				},
-				map[string]interface{}{
-					"action": "Allow",
-					"destination": map[string]interface{}{
-						"namespaceSelector": fmt.Sprintf("projectcalico.org/name == '%s'", dnsNamespace),
-						"selector":          "k8s-app == 'kube-dns'",
-					},
-				},
-			},
+			"egress": egress,
 		}
 		objects = append(objects, RenderedPolicy{
 			Object: newPolicyObject(
@@ -172,6 +188,35 @@ func renderCalico(intent Intent) []RenderedPolicy {
 		})
 	}
 	return objects
+}
+
+func ciliumMonitoringRule(destination MonitoringDestination) map[string]interface{} {
+	return map[string]interface{}{
+		"toServices": []interface{}{map[string]interface{}{
+			"k8sService": map[string]interface{}{
+				"serviceName": destination.ServiceName,
+				"namespace":   destination.Namespace,
+			},
+		}},
+		"toPorts": []interface{}{map[string]interface{}{
+			"ports": []interface{}{map[string]interface{}{
+				"port":     fmt.Sprintf("%d", destination.BackendPort),
+				"protocol": "TCP",
+			}},
+		}},
+	}
+}
+
+func calicoMonitoringRule(destination MonitoringDestination) map[string]interface{} {
+	return map[string]interface{}{
+		"action": "Allow",
+		"destination": map[string]interface{}{
+			"services": map[string]interface{}{
+				"name":      destination.ServiceName,
+				"namespace": destination.Namespace,
+			},
+		},
+	}
 }
 
 func renderOVN(intent Intent) []RenderedPolicy {
@@ -203,7 +248,7 @@ func renderOVN(intent Intent) []RenderedPolicy {
 		"egress":  allowEgress,
 	}
 	labels := policyLabelsForIntent(ProviderOVN, "namespace", intent)
-	return []RenderedPolicy{
+	objects := []RenderedPolicy{
 		{
 			Object: newPolicyObject(
 				"policy.networking.k8s.io/v1alpha1", "AdminNetworkPolicy",
@@ -219,9 +264,47 @@ func renderOVN(intent Intent) []RenderedPolicy {
 			Namespaced: false,
 		},
 	}
+	if hasPolicyComponent(intent.Components, MonitoringAgentComponent) && len(intent.Monitoring) > 0 {
+		monitoringEgress := append(ovnEgressRules(intent.Namespace, instance, dnsNamespace), ovnMonitoringEgressRules(intent.Monitoring)...)
+		monitoringSpec := map[string]interface{}{
+			// Priority 89 is higher precedence than the common namespace policy
+			// at 90, while remaining below platform-owned priorities.
+			"priority": float64(89),
+			"subject":  ovnAgentPodsPeer(intent.Namespace, instance),
+			"egress":   monitoringEgress,
+		}
+		objects = append(objects, RenderedPolicy{
+			Object: newPolicyObject(
+				"policy.networking.k8s.io/v1alpha1", "AdminNetworkPolicy",
+				"kubernaut-agent-monitoring", "",
+				policyLabelsForIntent(ProviderOVN, MonitoringAgentComponent, intent), monitoringSpec,
+			),
+			Namespaced: false,
+		})
+	}
+	return objects
 }
 
 func ovnPodsPeer(namespace, instance string) map[string]interface{} {
+	return ovnPodsPeerWithLabels(namespace, map[string]string{
+		ManagedByLabel: "kubernaut-operator",
+		instanceLabel:  instance,
+	})
+}
+
+func ovnAgentPodsPeer(namespace, instance string) map[string]interface{} {
+	return ovnPodsPeerWithLabels(namespace, map[string]string{
+		ManagedByLabel: "kubernaut-operator",
+		instanceLabel:  instance,
+		"app":          MonitoringAgentComponent,
+	})
+}
+
+func ovnServicePodsPeer(destination MonitoringDestination) map[string]interface{} {
+	return ovnPodsPeerWithLabels(destination.Namespace, destination.ServiceSelector)
+}
+
+func ovnPodsPeerWithLabels(namespace string, labels map[string]string) map[string]interface{} {
 	return map[string]interface{}{
 		"pods": map[string]interface{}{
 			"namespaceSelector": map[string]interface{}{
@@ -230,13 +313,66 @@ func ovnPodsPeer(namespace, instance string) map[string]interface{} {
 				},
 			},
 			"podSelector": map[string]interface{}{
-				"matchLabels": map[string]interface{}{
-					ManagedByLabel: "kubernaut-operator",
-					instanceLabel:  instance,
-				},
+				"matchLabels": stringMapToInterface(labels),
 			},
 		},
 	}
+}
+
+func ovnNamespacePeer(namespace string) map[string]interface{} {
+	return map[string]interface{}{
+		"namespaces": map[string]interface{}{
+			"matchLabels": map[string]interface{}{
+				"kubernetes.io/metadata.name": namespace,
+			},
+		},
+	}
+}
+
+func ovnMonitoringEgressRules(destinations []MonitoringDestination) []interface{} {
+	ordered := append([]MonitoringDestination(nil), destinations...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Name < ordered[j].Name })
+	rules := make([]interface{}, 0, len(ordered)+1)
+	namespaces := make(map[string]struct{}, len(ordered))
+	for _, destination := range ordered {
+		rules = append(rules, ovnMonitoringRule(destination))
+		namespaces[destination.Namespace] = struct{}{}
+	}
+	orderedNamespaces := make([]string, 0, len(namespaces))
+	for namespace := range namespaces {
+		orderedNamespaces = append(orderedNamespaces, namespace)
+	}
+	sort.Strings(orderedNamespaces)
+	denyPeers := make([]interface{}, 0, len(orderedNamespaces))
+	for _, namespace := range orderedNamespaces {
+		denyPeers = append(denyPeers, ovnNamespacePeer(namespace))
+	}
+	if len(denyPeers) > 0 {
+		rules = append(rules, map[string]interface{}{
+			"name":   "deny-other-monitoring",
+			"action": "Deny",
+			"to":     denyPeers,
+		})
+	}
+	return rules
+}
+
+func ovnMonitoringRule(destination MonitoringDestination) map[string]interface{} {
+	return map[string]interface{}{
+		"name":   fmt.Sprintf("allow-monitoring-%s", destination.Name),
+		"action": "Allow",
+		"to":     []interface{}{ovnServicePodsPeer(destination)},
+		"ports":  ovnTCPPortRules(int(destination.BackendPort)),
+	}
+}
+
+func hasPolicyComponent(components []string, wanted string) bool {
+	for _, component := range components {
+		if component == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func ovnEgressRules(namespace, instance, dnsNamespace string) []interface{} {

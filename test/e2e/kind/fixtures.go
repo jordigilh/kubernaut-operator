@@ -81,6 +81,128 @@ func ensureProbeWorkloads(ctx context.Context) error {
 	return nil
 }
 
+// ensureMonitoringWorkloads creates disposable Prometheus- and
+// Alertmanager-shaped HTTP Services for the qualified native-provider lane.
+// The responses use the exact API paths called by the Agent's
+// get_metric_names/get_alerts clients, while the third Service provides a
+// distinct backend that must remain denied by the native allowlist.
+func ensureMonitoringWorkloads(ctx context.Context) error {
+	if err := ensureNamespace(ctx, monitoringNamespace); err != nil {
+		return err
+	}
+
+	prometheusLabels := monitoringBackendLabels("prometheus")
+	alertManagerLabels := monitoringBackendLabels("alertmanager")
+	blockedLabels := monitoringBackendLabels("blocked")
+	objects := []interface{}{
+		monitoringDeployment(
+			monitoringPrometheusServiceName, prometheusLabels,
+			`{"status":"success","data":["kubernaut_e2e_metric"]}`,
+		),
+		monitoringService(monitoringPrometheusServiceName, prometheusLabels, monitoringPrometheusServicePort),
+		monitoringDeployment(monitoringAlertManagerServiceName, alertManagerLabels, `[]`),
+		monitoringService(monitoringAlertManagerServiceName, alertManagerLabels, monitoringAlertManagerServicePort),
+		monitoringDeployment(
+			monitoringBlockedServiceName, blockedLabels,
+			`{"status":"success","data":["should_not_be_reachable"]}`,
+		),
+		monitoringService(monitoringBlockedServiceName, blockedLabels, monitoringBlockedServicePort),
+	}
+	if err := applyYAML(ctx, objects...); err != nil {
+		return fmt.Errorf("applying monitoring fixtures: %w", err)
+	}
+	for _, name := range []string{
+		monitoringPrometheusServiceName,
+		monitoringAlertManagerServiceName,
+		monitoringBlockedServiceName,
+	} {
+		if _, err := kubectl(
+			ctx, "wait", "--for=condition=Available", "deployment/"+name,
+			"-n", monitoringNamespace, "--timeout=5m",
+		); err != nil {
+			return fmt.Errorf("waiting for monitoring deployment %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func deleteMonitoringWorkloads(ctx context.Context) error {
+	for _, resource := range []string{
+		"deployment/" + monitoringPrometheusServiceName,
+		"service/" + monitoringPrometheusServiceName,
+		"deployment/" + monitoringAlertManagerServiceName,
+		"service/" + monitoringAlertManagerServiceName,
+		"deployment/" + monitoringBlockedServiceName,
+		"service/" + monitoringBlockedServiceName,
+	} {
+		if _, err := kubectl(
+			ctx, "delete", resource, "-n", monitoringNamespace,
+			"--ignore-not-found=true", "--wait=false",
+		); err != nil {
+			return fmt.Errorf("deleting monitoring fixture %s: %w", resource, err)
+		}
+	}
+	if _, err := kubectl(
+		ctx, "delete", "namespace", monitoringNamespace,
+		"--ignore-not-found=true", "--wait=false",
+	); err != nil {
+		return fmt.Errorf("deleting monitoring fixture namespace: %w", err)
+	}
+	return nil
+}
+
+func monitoringBackendLabels(role string) map[string]string {
+	return map[string]string{
+		"app":             "kubernaut-monitoring-e2e",
+		"monitoring-role": role,
+	}
+}
+
+func monitoringDeployment(name string, labels map[string]string, response string) *appsv1.Deployment {
+	replicas := int32(1)
+	selectorLabels := map[string]string{"monitoring-role": labels["monitoring-role"]}
+	return &appsv1.Deployment{
+		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: monitoringNamespace,
+			Labels:    labels,
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: selectorLabels},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{
+					Name:  "monitoring",
+					Image: serverImage,
+					Args:  []string{"-listen=:8080", "-text=" + response},
+					Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}},
+				}}},
+			},
+		},
+	}
+}
+
+func monitoringService(name string, labels map[string]string, port int32) *corev1.Service {
+	return &corev1.Service{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: monitoringNamespace,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"monitoring-role": labels["monitoring-role"]},
+			Ports: []corev1.ServicePort{{
+				Name:       "http",
+				Protocol:   corev1.ProtocolTCP,
+				Port:       port,
+				TargetPort: intstr.FromInt32(8080),
+			}},
+		},
+	}
+}
+
 func probeLabels(role string) map[string]string {
 	return map[string]string{
 		"app":      "probe",
@@ -187,6 +309,57 @@ func probeHTTPFromRole(ctx context.Context, serviceName, role string) (bool, err
 		return false, nil //nolint:nilerr // curl failure is the expected denied-probe result
 	}
 	return true, nil
+}
+
+func monitoringPrometheusURL() string {
+	return fmt.Sprintf(
+		"http://%s.%s.svc:%d", monitoringPrometheusServiceName,
+		monitoringNamespace, monitoringPrometheusServicePort,
+	)
+}
+
+func monitoringAlertManagerURL() string {
+	return fmt.Sprintf(
+		"http://%s.%s.svc:%d", monitoringAlertManagerServiceName,
+		monitoringNamespace, monitoringAlertManagerServicePort,
+	)
+}
+
+func agentMonitoringConfigContains(ctx context.Context, value string) error {
+	output, err := kubectl(
+		ctx, "get", "configmap", "kubernaut-agent-config", "-n", kubernautNamespace,
+		"-o", "jsonpath={.data.config\\.yaml}",
+	)
+	if err != nil {
+		return fmt.Errorf("reading kubernaut-agent monitoring config: %w", err)
+	}
+	if !strings.Contains(output, value) {
+		return fmt.Errorf("kubernaut-agent config does not contain %q", value)
+	}
+	return nil
+}
+
+func agentMonitoringGET(ctx context.Context, serviceName string, port int32, path string) (string, error) {
+	podOutput, err := kubectl(
+		ctx, "get", "pods", "-n", kubernautNamespace, "-l", "app=kubernaut-agent",
+		"-o", "jsonpath={.items[0].metadata.name}",
+	)
+	if err != nil {
+		return "", fmt.Errorf("finding kubernaut-agent pod: %w", err)
+	}
+	podName := strings.TrimSpace(podOutput)
+	if podName == "" {
+		return "", fmt.Errorf("kubernaut-agent pod is not ready")
+	}
+	url := fmt.Sprintf("http://%s.%s.svc:%d%s", serviceName, monitoringNamespace, port, path)
+	output, err := kubectl(
+		ctx, "exec", "-n", kubernautNamespace, podName, "--",
+		"wget", "-q", "-O", "-", "-T", "4", url,
+	)
+	if err != nil {
+		return "", fmt.Errorf("kubernaut-agent GET %s: %w", url, err)
+	}
+	return strings.TrimSpace(output), nil
 }
 
 func nativePolicyResource(provider policyProvider) string {
