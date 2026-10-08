@@ -8,9 +8,10 @@
 native-monitoring changes from PR #507. The earlier plan recorded `b1c4780`;
 that baseline is stale.
 
-**Status:** Implementation and qualification complete in this uncommitted
-worktree. No commit, pull request, or GitHub issue mutation is part of this
-session.
+**Status:** Implementation and qualification are recorded in PR
+[#509](https://github.com/jordigilh/kubernaut-operator/pull/509). The current
+remediation keeps development certificate generation outside the manager Pod
+and makes Helm lint plus the operator-only Helm Kind journey release gates.
 
 **Methodology:** RED → GREEN → REFACTOR → CHECK, with the wiring checkpoint,
 the unit/integration/E2E pyramid, and security-control evidence required before
@@ -535,7 +536,7 @@ proves the installation journey.
 | Unit/render | Ginkgo or a pinned maintained Helm render harness; schema, object identity, values rejection, no-application-resource assertions, certificate-profile and RBAC shape tests. | `BA-489-OWNERSHIP-01`, `BA-489-VALUES-01`, `BA-489-TLS-01`, `BA-489-RBAC-01` |
 | Integration | envtest/controller tests for singleton admission shape, manager configuration seams, CRD compatibility diagnostics, certificate readiness/failure, and user-CR sequencing. | `BA-489-SINGLETON-01`, `BA-489-CRD-01`, `BA-489-TLS-02`, `BA-489-READINESS-01` |
 | E2E | Dedicated Kind Helm install with pinned Helm v3.17.3; development, administrator-managed, cert-manager, metrics, pull-secret, disconnected bootstrap, conflict, CRD schema upgrade/rollback, failed manager rollout recovery, uninstall retention, and reinstall journeys. Hosted OpenShift separately verifies service-CA, restricted SCC startup, singleton admission, upgrade, uninstall, and reinstall. | `BA-489-INSTALL-01`, `BA-489-UPGRADE-01`, `BA-489-UNINSTALL-01`, `BA-489-DISCONNECTED-01`, `BA-489-TLS-03`, `BA-489-OCP-01` |
-| CI/wiring | Helm version pin, generated-artifact diff, `make test`, `make test-pyramid`, SBOM/vulnerability checks, and a production caller for every new helper. | `BA-489-CI-01`, `BA-489-AUDIT-01` |
+| CI/wiring | Helm version pin, generated-artifact diff, `make test`, `make lint`, `make test-pyramid`, release-gated Helm Kind E2E, SBOM/vulnerability checks, and a production caller for every new helper. | `BA-489-CI-01`, `BA-489-AUDIT-01` |
 
 No pending `XIt`, `PIt`, or skipped business test is acceptable. No E2E test may
 call a resource helper directly in place of installing the rendered chart.
@@ -555,7 +556,7 @@ is implemented.
 | `BA-489-TLS-02` | CA reaches the singleton webhook configuration and rotates without deleting the only trusted root. | `SC-8`, `SC-12`, `SC-13`, `SC-17`, `SI-4` | `CC7`, `A1` | `V11.1.1`, `V12.1.3`, `V13.2.1`, `V16.5.2` |
 | `BA-489-CRD-01` | CRD upgrades are explicit and compatible; the CRD and existing operand CRs are retained on operator uninstall and never co-owned by OLM/Kustomize/Helm. | `CM-3`, `CM-6`, `CM-8`, `SI-10` | `CC8`, `A1` | `V15.2.4`, `V16.5.2` |
 | `BA-489-SINGLETON-01` | Only one namespaced `Kubernaut` CR is admitted cluster-wide; a second operator install conflicts deterministically. | `AC-3`, `AC-6`, `SI-10` | `CC6`, `CC8` | `V4.1.4`, `V8.2.1`, `V16.5.2` |
-| `BA-489-READINESS-01` | Generation/resource-version, certificate state, conflicts, failures, and phase transitions are observable. | `SI-4`, `AU-2`, `AU-3`, `AU-12` | `CC7`, `A1` | `V16.1.1`, `V16.1.2`, `V16.5.2` |
+| `BA-489-READINESS-01` | Generation/resource-version, certificate state, conflicts, failures, and phase transitions are observable. | `SI-4`, `AU-2`, `AU-3`, `AU-12` | `CC7`, `A1` | `V16.1.1`, `V16.5.2` |
 | `BA-489-DISCONNECTED-01` | Immutable operator images, pull Secrets, and reproducible source references work without public registry assumptions. | `CM-8`, `CM-6` | `CC8`, `CC9` | `V15.2.4` |
 
 The operator continues to provide structured log-based audit traces; the chart
@@ -631,9 +632,14 @@ follows:
    `helm.sh/resource-policy: keep`; Helm owns upgrades only when ownership
    metadata matches this release. OLM/Kustomize-owned CRDs are not adopted.
 2. **Development TLS:** use a pinned `bitnami/kubectl` provisioner image in a
-   restricted init container, a Helm-owned empty Secret, and a post-install/
-   post-upgrade CA publisher. Generated private keys never enter Helm values or
-   rendered release data.
+   pre-install/pre-upgrade bootstrap Job with a short-lived, namespace-scoped
+   ServiceAccount. The manager mounts the generated Secret directly and never
+   runs the certificate image. A separate restricted post-install/
+   post-upgrade publisher waits for manager readiness, patches and verifies the
+   webhook CA, and attaches the development Secret to the manager Deployment so
+   Kubernetes garbage-collects only that Secret when the manager is removed.
+   Generated private keys never enter Helm values or rendered release data, and
+   uninstall does not depend on pulling the bootstrap image.
 3. **Production TLS profiles:** administrator-managed, cert-manager, and
    OpenShift service-CA are explicit modes. The chart never adopts or deletes
    administrator- or cert-manager-owned output Secrets.
@@ -654,7 +660,8 @@ follows:
    Kind journey; local validation additionally exercised Helm 4.1.1.
 
 Implementation evidence now includes the chart render suite, source-sync checks,
-`make test`, pinned Helm v3.17.3 Kind journeys, Helm conflict/upgrade/rollback/
+`make test`, `make lint`, a release-gated operator-only Helm Kind journey,
+pinned Helm v3.17.3 Kind journeys, Helm conflict/upgrade/rollback/
 failed-rollout/uninstall/reinstall coverage, all three TLS profiles, live secure
 metrics scraping, image pull-secret rendering and use, disconnected bootstrap
 image loading, generated-artifact/build/lint checks, and the hosted OpenShift
@@ -663,15 +670,25 @@ restricted-SCC startup, singleton admission denial, certificate reuse, CR and
 operand retention, and reinstall. No production controller code or
 OLM/Kustomize packaging was changed.
 
+The current revision was requalified on 2026-10-08: the generic Kind
+development, disconnected, manual, and cert-manager journeys each passed all
+six ordered scenarios, and the hosted OpenShift 4.22.16 service-CA journey
+passed. The independent unit lane reports 86.6% overall and 87.4% for
+`internal/resources`; both exceed the repository's configured 80% CI floor, but
+the broader 96% methodology target remains an explicit follow-up and is not
+claimed as met here. The default `1.6.0-rc20` manager tag also remains a
+pre-release source-tree reference until the release pipeline publishes its
+immutable manifest; production and disconnected users should provide a digest.
+
 Residual risks are limited to registry-specific authentication/proxy behavior
 outside the tested local-disconnected image path, certificate-provider policy
 choices outside the exercised self-signed cert-manager Issuer and
 administrator-generated CA, and application/operand lifecycle behavior that is
 intentionally outside this operator-only chart.
 
-**Implementation confidence: 97%.** The chart and lifecycle contracts are
+**Implementation confidence: 94%.** The chart and lifecycle contracts are
 covered by unit/render tests, pinned Helm Kind journeys for development,
 manual, cert-manager, metrics, pull-secret, disconnected, CRD rollback, and
 failed-rollout recovery paths, plus live OpenShift service-CA qualification.
-The remaining uncertainty is environment-specific registry and certificate
-authority policy rather than an untested chart control path.
+The remaining uncertainty is the repository-wide coverage target and release
+image publication/registry policy rather than an untested chart control path.

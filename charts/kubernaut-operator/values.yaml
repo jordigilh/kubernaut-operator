@@ -100,9 +100,9 @@ resources:
 securityContext:
   pod:
     runAsNonRoot: true
-    # Development TLS shares an emptyDir between the init and manager
-    # containers. The OpenShift profile omits this fixed value so SCC can
-    # assign a project-compatible supplemental group.
+    # Retain a stable supplemental-group default for generic Kubernetes.
+    # The OpenShift profile omits this fixed value so SCC can assign a
+    # project-compatible supplemental group.
     fsGroup: 65534
     seccompProfile:
       type: RuntimeDefault

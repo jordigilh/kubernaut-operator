@@ -17,6 +17,14 @@ helm install kubernaut-operator ./charts/kubernaut-operator \
 
 For production, select one of the explicit certificate profiles.
 
+The development profile creates and reuses its serving Secret from a
+pre-install/pre-upgrade Job. That Job uses a short-lived certificate-bootstrap
+ServiceAccount with namespace-scoped Secret access; the manager Pod does not
+run the certificate image or receive its RBAC identity. A separate restricted
+publisher patches and verifies the singleton webhook CA after installation,
+then attaches the development Secret to the manager Deployment for safe
+ garbage collection on uninstall.
+
 ### Administrator-managed certificates
 
 Create a Secret containing `tls.crt` and `tls.key`, and provide the base64 CA
@@ -103,8 +111,8 @@ development, manual, cert-manager, and disconnected profiles with Helm v3.17.3.
 The OpenShift TLS profile does not force `fsGroup` or `hostUsers` in the pod
 template. OpenShift SCC admission assigns a compatible UID, supplemental group,
 and user-namespace mode; a fixed group is not portable across project ranges.
-Generic development TLS retains `fsGroup: 65534` because its init and manager
-containers share generated key files through an `emptyDir`. Set
+Generic development TLS retains `fsGroup: 65534` as its fixed
+generic-Kubernetes supplemental-group default. Set
 `hostUsers=false` explicitly only when the target cluster requires pod-level
 user namespaces.
 

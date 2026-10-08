@@ -1,0 +1,58 @@
+{{- if and .Values.webhook.enabled (eq .Values.webhook.tls.mode "development") }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubernaut-operator-cert-bootstrap
+  namespace: {{ include "kubernaut-operator.namespace" . }}
+  labels:
+    {{- include "kubernaut-operator.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-30"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kubernaut-operator-cert-bootstrap
+  namespace: {{ include "kubernaut-operator.namespace" . }}
+  labels:
+    {{- include "kubernaut-operator.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-20"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+rules:
+  # Kubernetes authorization cannot restrict a create request by resourceName.
+  # This short-lived hook identity therefore gets create only, plus exact-name
+  # read/patch access to the chart's serving Secret. It is deleted after the
+  # bootstrap Job succeeds and never receives manager or cluster-scoped RBAC.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - {{ include "kubernaut-operator.webhookSecretName" . }}
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kubernaut-operator-cert-bootstrap
+  namespace: {{ include "kubernaut-operator.namespace" . }}
+  labels:
+    {{- include "kubernaut-operator.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kubernaut-operator-cert-bootstrap
+subjects:
+  - kind: ServiceAccount
+    name: kubernaut-operator-cert-bootstrap
+    namespace: {{ include "kubernaut-operator.namespace" . }}
+{{- end }}

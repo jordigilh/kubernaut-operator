@@ -1,0 +1,115 @@
+{{- if and .Values.webhook.enabled (eq .Values.webhook.tls.mode "development") }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kubernaut-operator-cert-bootstrap
+  namespace: {{ include "kubernaut-operator.namespace" . }}
+  labels:
+    {{- include "kubernaut-operator.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kubernaut-operator-cert-bootstrap
+        app.kubernetes.io/part-of: kubernaut
+    spec:
+      restartPolicy: Never
+      serviceAccountName: kubernaut-operator-cert-bootstrap
+      automountServiceAccountToken: true
+      {{- include "kubernaut-operator.developmentImagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: certificate-bootstrap
+          image: {{ include "kubernaut-operator.certBootstrapImage" . | quote }}
+          imagePullPolicy: {{ .Values.webhook.tls.development.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              set -eu
+              umask 077
+              namespace="${POD_NAMESPACE}"
+              secret="${WEBHOOK_SECRET}"
+              workdir="$(mktemp -d /tmp/kubernaut-certs.XXXXXX)"
+              cleanup() { rm -rf "${workdir}"; }
+              trap cleanup EXIT
+
+              ca_bundle=""
+              serving_cert=""
+              serving_key=""
+              if kubectl get secret "${secret}" -n "${namespace}" >/dev/null 2>&1; then
+                ca_bundle="$(kubectl get secret "${secret}" -n "${namespace}" -o jsonpath='{.data.ca\.crt}' 2>/dev/null || true)"
+                serving_cert="$(kubectl get secret "${secret}" -n "${namespace}" -o jsonpath='{.data.tls\.crt}' 2>/dev/null || true)"
+                serving_key="$(kubectl get secret "${secret}" -n "${namespace}" -o jsonpath='{.data.tls\.key}' 2>/dev/null || true)"
+              fi
+
+              if [ "${ROTATE_ON_UPGRADE}" != "true" ] && [ -n "${ca_bundle}" ] && [ -n "${serving_cert}" ] && [ -n "${serving_key}" ]; then
+                exit 0
+              fi
+
+              openssl req -x509 -newkey rsa:2048 -nodes \
+                -keyout "${workdir}/ca.key" -out "${workdir}/ca.crt" \
+                -days "${VALIDITY_DAYS}" -subj "/CN=Kubernaut operator webhook CA"
+              openssl genrsa -out "${workdir}/tls.key" 2048
+              cat > "${workdir}/tls.cnf" <<EOF
+              [req]
+              distinguished_name = req_distinguished_name
+              req_extensions = v3_req
+              prompt = no
+              [req_distinguished_name]
+              CN = ${WEBHOOK_SERVICE}.${namespace}.svc
+              [v3_req]
+              keyUsage = critical, digitalSignature, keyEncipherment
+              extendedKeyUsage = serverAuth
+              subjectAltName = @alt_names
+              [alt_names]
+              DNS.1 = ${WEBHOOK_SERVICE}.${namespace}.svc
+              DNS.2 = ${WEBHOOK_SERVICE}.${namespace}.svc.cluster.local
+              EOF
+              openssl req -new -key "${workdir}/tls.key" -out "${workdir}/tls.csr" -config "${workdir}/tls.cnf"
+              openssl x509 -req -in "${workdir}/tls.csr" \
+                -CA "${workdir}/ca.crt" -CAkey "${workdir}/ca.key" \
+                -CAcreateserial -out "${workdir}/tls.crt" \
+                -days "${VALIDITY_DAYS}" -extensions v3_req -extfile "${workdir}/tls.cnf"
+
+              kubectl create secret generic "${secret}" -n "${namespace}" \
+                --from-file=ca.crt="${workdir}/ca.crt" \
+                --from-file=tls.crt="${workdir}/tls.crt" \
+                --from-file=tls.key="${workdir}/tls.key" \
+                --dry-run=client -o yaml | kubectl apply --server-side \
+                  --field-manager=kubernaut-operator-cert-bootstrap -f -
+              kubectl annotate secret "${secret}" -n "${namespace}" \
+                kubernaut.ai/tls-source=development --overwrite
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: WEBHOOK_SECRET
+              value: {{ include "kubernaut-operator.webhookSecretName" . | quote }}
+            - name: WEBHOOK_SERVICE
+              value: {{ include "kubernaut-operator.webhookServiceName" . | quote }}
+            - name: VALIDITY_DAYS
+              value: {{ .Values.webhook.tls.development.validityDays | quote }}
+            - name: ROTATE_ON_UPGRADE
+              value: {{ .Values.webhook.tls.development.rotateOnUpgrade | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: cert-bootstrap-tmp
+              mountPath: /tmp
+      volumes:
+        - name: cert-bootstrap-tmp
+          emptyDir: {}
+{{- end }}

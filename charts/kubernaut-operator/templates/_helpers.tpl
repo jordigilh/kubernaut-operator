@@ -39,6 +39,10 @@ app.kubernetes.io/component: controller-manager
 kubernaut-operator-singleton
 {{- end }}
 
+{{- define "kubernaut-operator.managerDeploymentName" -}}
+kubernaut-operator-controller-manager
+{{- end }}
+
 {{- define "kubernaut-operator.webhookSecretName" -}}
 {{- if eq .Values.webhook.tls.mode "manual" -}}
 {{- required "webhook.tls.existingSecret is required when webhook.tls.mode=manual" .Values.webhook.tls.existingSecret -}}
@@ -55,7 +59,7 @@ kubernaut-operator-singleton
 {{- end -}}
 {{- end }}
 
-{{- define "kubernaut-operator.certInitImage" -}}
+{{- define "kubernaut-operator.certBootstrapImage" -}}
 {{- $image := .Values.webhook.tls.development.image -}}
 {{- if $image.digest -}}
 {{ $image.repository }}@{{ $image.digest }}

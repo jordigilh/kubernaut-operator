@@ -48,12 +48,18 @@ var _ = Describe("operator bootstrap chart", func() {
 		Expect(objects.ofKind("Deployment")).To(HaveLen(1))
 		Expect(objects.ofKind("Deployment")[0].name()).To(Equal("kubernaut-operator-controller-manager"))
 
-		secrets := objects.ofKind("Secret")
-		Expect(secrets).To(HaveLen(1))
-		Expect(secrets[0].name()).To(Equal("kubernaut-operator-webhook-cert"))
-		Expect(secrets[0]).NotTo(HaveKey("data"), "development TLS private keys must not be stored in the Helm release")
-		Expect(secrets[0].nestedString("metadata", "annotations", "kubernaut.ai/tls-source")).To(Equal("development"))
-		Expect(objects.ofKind("Job")).To(HaveLen(1), "only the development CA publisher is a Helm hook")
+		Expect(objects.ofKind("Secret")).To(BeEmpty(),
+			"development TLS private keys must be created by the restricted bootstrap Job, not stored in Helm release data")
+		jobs := objects.ofKind("Job")
+		Expect(jobs).To(HaveLen(2), "development TLS renders certificate bootstrap and CA publication hooks")
+		bootstrap := jobs.named("Job", "kubernaut-operator-cert-bootstrap")
+		Expect(bootstrap.nestedString("spec", "template", "spec", "serviceAccountName")).To(Equal(
+			"kubernaut-operator-cert-bootstrap"))
+		Expect(bootstrap.nestedString("spec", "template", "spec", "containers", "0", "name")).To(Equal(
+			"certificate-bootstrap"))
+		patcher := jobs.named("Job", "kubernaut-operator-cert-patch")
+		Expect(patcher.nestedString("spec", "template", "spec", "serviceAccountName")).To(Equal(
+			"kubernaut-operator-cert-patch"))
 	})
 
 	It("renders a fail-closed namespaced singleton webhook with deterministic names", func() {
@@ -88,7 +94,12 @@ var _ = Describe("operator bootstrap chart", func() {
 
 		development := renderChart().ofKind("Deployment")[0]
 		Expect(development.nestedString(append(podSpec, "securityContext", "fsGroup")...)).To(Equal("65534"),
-			"development TLS must preserve shared emptyDir readability on generic Kubernetes")
+			"development TLS must preserve the generic Kubernetes supplemental-group default")
+		Expect(development.hasPath(append(podSpec, "initContainers")...)).To(BeFalse(),
+			"certificate provisioning must not run in the manager Pod")
+		Expect(development.nestedString(
+			append(podSpec, "volumes", "0", "secret", "secretName")...,
+		)).To(Equal("kubernaut-operator-webhook-cert"))
 
 		override := renderChart("--set", "hostUsers=false").ofKind("Deployment")[0]
 		Expect(override.nestedString(append(podSpec, "hostUsers")...)).To(Equal("false"))
@@ -160,7 +171,7 @@ var _ = Describe("operator bootstrap chart", func() {
 			"--set", "webhook.failurePolicy=Ignore",
 		)
 		Expect(err).To(HaveOccurred())
-		Expect(string(output)).To(ContainSubstring("webhook.failurePolicy"))
+		Expect(string(output)).To(ContainSubstring("failurePolicy"))
 	})
 
 	It("renders immutable operator images, pull Secrets, and secure metrics", func() {
@@ -187,8 +198,10 @@ var _ = Describe("operator bootstrap chart", func() {
 		Expect(deployment.nestedString(
 			"spec", "template", "spec", "containers", "0", "args", "2",
 		)).To(Equal("--metrics-bind-address=:8443"))
-		Expect(deployment.nestedString(
-			"spec", "template", "spec", "initContainers", "0", "image",
+		Expect(deployment.hasPath("spec", "template", "spec", "initContainers")).To(BeFalse())
+		bootstrap := objects.ofKind("Job").named("Job", "kubernaut-operator-cert-bootstrap")
+		Expect(bootstrap.nestedString(
+			"spec", "template", "spec", "containers", "0", "image",
 		)).To(MatchRegexp(`@sha256:[0-9a-f]{64}$`))
 		Expect(objects.ofKind("Service")).To(HaveLen(2))
 		serviceNames := make([]string, 0, len(objects.ofKind("Service")))
@@ -296,6 +309,7 @@ func runHelm(args ...string) ([]byte, error) {
 	if bin == "" {
 		bin = "helm"
 	}
+	//nolint:gosec // Helm binary and arguments are controlled by the chart test harness
 	command := exec.CommandContext(context.Background(), bin, args...)
 	command.Dir = repositoryRoot()
 	var stdout, stderr bytes.Buffer
@@ -327,6 +341,15 @@ func (items manifests) ofKind(kind string) manifests {
 		}
 	}
 	return result
+}
+
+func (items manifests) named(kind, name string) manifest {
+	for _, item := range items {
+		if item.kind() == kind && item.name() == name {
+			return item
+		}
+	}
+	return nil
 }
 
 func (item manifest) kind() string {

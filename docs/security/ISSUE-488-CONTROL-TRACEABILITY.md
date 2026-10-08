@@ -2,7 +2,7 @@
 
 **Matrix ID:** KO-SEC-TR-488-001
 **Version:** 0.1
-**Date:** 2026-10-02
+**Date:** 2026-10-08
 **Scope:** Kubernaut Operator Issue #488 gap closure
 **Status:** evidence matrix in progress
 
@@ -38,6 +38,7 @@ The versioned ASVS source is the official `v5.0.0` CSV:
 | `IT-*` | Ginkgo controller tests using envtest or a fake client at the controller seam |
 | `E2E-*` | Real production-manifest Kind journey; the cert-manager ID is executed with `KUBERNAUT_E2E_TLS_SOURCE=certmanager` and pinned cert-manager `v1.20.2` |
 | `CI-*` | Repository workflow, generated-artifact, lint, SBOM, or vulnerability-scan evidence |
+| `HELM-*` | Helm render/schema tests and the pinned Helm v3.17.3 operator-only Kind lifecycle, including TLS, RBAC, disconnected, conflict, upgrade, uninstall, and reinstall assertions |
 
 ## NIST SP 800-53 Rev. 5 / FedRAMP-oriented objectives
 
@@ -50,7 +51,7 @@ The versioned ASVS source is the official `v5.0.0` CSV:
 | SI-4 | Make capability, readiness, failure, generation, and resource-version signals observable. | Structured controller logging, status conditions, events, and phase transitions in `internal/controller/`. | Controller condition/event tests; Kind status assertions; `CI-CONTROLS-GAP-001` validation. | partially verified | Cluster log aggregation, alerting, retention, and operational monitoring still require deployment evidence. |
 | AU-2, AU-3, AU-12 | Record reconciliation/security-relevant events with enough context for investigation. | `docs/security/auditing.md`; `internal/controller/kubernaut_controller.go` structured logs/events. | Controller error/status tests; `E2E-TLS-GAP-001`; generated CI artifacts. | partially verified | The operator intentionally uses structured log-based audit traces; it does not provide platform-service database persistence, hash chains, or retention. |
 | SI-10 | Validate CR, TLS, hostname, issuer, policy-input, and optional-API inputs without unsafe fallback. | `api/v1alpha2/`; `internal/resources/validation.go`; TLS source validation and capability gates. | Resource validation suite; webhook tests; `IT-TLS-GAP-002`; generic Kind no-fallback assertions. | partially verified | A complete application-wide input inventory and independent security assessment remain follow-up work. |
-| CM-2, CM-3, CM-6, CM-8 | Keep generated manifests, ownership boundaries, optional API inventory, and configuration baselines reproducible. | `Makefile`; `config/`; `bundle/`; `docs/installation/06-platform-support.md`; no operator Helm chart in this scope. | `make manifests generate`; `CI-PYRAMID-GAP-001`; build/lint/test gates. | partially verified | Dedicated operator Helm bootstrap and OpenShift/OVN inventory are deferred follow-ups. |
+| CM-2, CM-3, CM-6, CM-8 | Keep generated manifests, ownership boundaries, optional API inventory, and configuration baselines reproducible. | `Makefile`; `config/`; `bundle/`; `charts/kubernaut-operator/`; `docs/installation/06-platform-support.md`. | `make manifests generate`; `HELM-RENDER-001`; `HELM-E2E-LIFECYCLE-001`; release `operator-gates`; build/lint/test gates. | partially verified | OpenShift/OVN inventory and external release-evidence review remain required. |
 
 ## OWASP ASVS 5.0.0 requirement traceability
 
@@ -72,11 +73,14 @@ Requirement text is summarized from the official ASVS source linked above.
 
 ## Explicit non-goals and deferred evidence
 
-- **OVN/OpenShift:** live policy qualification is deferred; no release claim is
-  made for that path by this matrix.
-- **Dedicated operator Helm chart:** deferred to a follow-up; no chart ownership
-  or chart conformance is claimed here. An upstream dependency chart may still
-  be used independently for fixtures.
+- **OVN/OpenShift provider policy:** live policy qualification is deferred; no
+  provider-policy release claim is made for that path by this matrix. This does
+  not supersede the separate Issue #489 OpenShift service-CA bootstrap evidence.
+- **Issue #488 scope boundary:** the dedicated operator Helm chart is owned by
+  Issue #489 and is evidenced separately by `docs/design/ISSUE-489-IMPLEMENTATION-PLAN.md`,
+  `HELM-RENDER-001`, and `HELM-E2E-LIFECYCLE-001`; this Issue #488 matrix does
+  not duplicate its full chart conformance record. An upstream dependency chart
+  may still be used independently for fixtures.
 - **Formal compliance:** this matrix does not claim FedRAMP authorization,
   NIST control implementation approval, or OWASP ASVS compliance/conformance.
 - **Operator audit model:** the operator emits structured log-based audit

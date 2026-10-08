@@ -72,11 +72,11 @@ const (
 const helmCertManagerManifest = "https://github.com/cert-manager/cert-manager/releases/download/" +
 	helmCertManagerVersion + "/cert-manager.yaml"
 
-const helmCertInitDigest = "sha256:6e2cdb22d6ab7264ea198c717f555e30536b54029d26c8781b9f25f78951b564"
+const helmCertBootstrapDigest = "sha256:6e2cdb22d6ab7264ea198c717f555e30536b54029d26c8781b9f25f78951b564"
 
-const helmCertInitSourceImage = "docker.io/bitnami/kubectl@" + helmCertInitDigest
+const helmCertBootstrapSourceImage = "docker.io/bitnami/kubectl@" + helmCertBootstrapDigest
 
-const helmCertInitLocalImage = "localhost/bitnami/kubectl:issue489"
+const helmCertBootstrapLocalImage = "localhost/bitnami/kubectl:issue489"
 
 const helmCertManagerOwnerReferencePatch = `[
   {"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--enable-certificate-owner-ref=true"}
@@ -158,6 +158,19 @@ var _ = Describe("operator-only Helm lifecycle", Ordered, func() {
 		Expect(parts[0]).NotTo(BeEmpty())
 		Expect(parts[1]).To(Equal("Fail"))
 		Expect(parts[2]).To(Equal("Namespaced"))
+		secretMaterial, err := run(
+			ctx, "kubectl", "--context", e2eContext, "get", "secret",
+			"kubernaut-operator-webhook-cert", "-n", e2eNamespace,
+			"-o", "jsonpath={.data.ca\\.crt}:{.data.tls\\.crt}:{.data.tls\\.key}",
+		)
+		Expect(err).NotTo(HaveOccurred(), secretMaterial)
+		materialParts := strings.Split(strings.TrimSpace(secretMaterial), ":")
+		Expect(materialParts).To(HaveLen(3))
+		for _, material := range materialParts {
+			Expect(material).NotTo(BeEmpty(), "webhook Secret must contain complete TLS material")
+		}
+		Expect(materialParts[0]).To(Equal(parts[0]),
+			"the fail-closed webhook must publish the CA from its serving Secret")
 
 		output, err = run(
 			ctx, "kubectl", "--context", e2eContext, "get", "deployment",
@@ -170,10 +183,78 @@ var _ = Describe("operator-only Helm lifecycle", Ordered, func() {
 			output, err = run(
 				ctx, "kubectl", "--context", e2eContext, "get", "deployment",
 				"kubernaut-operator-controller-manager", "-n", e2eNamespace,
-				"-o", "jsonpath={.spec.template.spec.initContainers[0].image}",
+				"-o", "jsonpath={.spec.template.spec.initContainers}",
 			)
 			Expect(err).NotTo(HaveOccurred(), output)
-			Expect(strings.TrimSpace(output)).To(Equal(helmCertInitLocalImage))
+			Expect(strings.TrimSpace(output)).To(BeEmpty(),
+				"the disconnected certificate image must run only in the restricted bootstrap Job")
+		}
+
+		if e2eTLSMode == helmTLSDevelopment {
+			output, err := run(
+				ctx, "kubectl", "--context", e2eContext, "get", "secret",
+				"kubernaut-operator-webhook-cert", "-n", e2eNamespace,
+				"-o", "jsonpath={.metadata.ownerReferences[0].kind}:{.metadata.ownerReferences[0].name}",
+			)
+			Expect(err).NotTo(HaveOccurred(), output)
+			Expect(strings.TrimSpace(output)).To(Equal(
+				"Deployment:kubernaut-operator-controller-manager"),
+				"development serving material must follow only the manager lifecycle")
+
+			output, err = run(
+				ctx, "kubectl", "--context", e2eContext, "get", "serviceaccount",
+				"kubernaut-operator-cert-bootstrap", "-n", e2eNamespace,
+			)
+			Expect(err).To(HaveOccurred(), output)
+			Expect(output).To(ContainSubstring("NotFound"))
+
+			patchIdentity := "system:serviceaccount:" + e2eNamespace + ":kubernaut-operator-cert-patch"
+			checks := []struct {
+				args        []string
+				expected    string
+				description string
+			}{
+				{
+					args:        []string{"get", "secrets", "-n", e2eNamespace},
+					expected:    "no",
+					description: "certificate patcher must not list or read arbitrary Secrets",
+				},
+				{
+					args:        []string{"get", "deployments", "-n", e2eNamespace},
+					expected:    "no",
+					description: "certificate patcher must not read manager workloads",
+				},
+				{
+					args:        []string{"get", "deployment/kubernaut-operator-controller-manager", "-n", e2eNamespace},
+					expected:    "yes",
+					description: "certificate patcher must read only the named manager Deployment",
+				},
+				{
+					args:        []string{"get", "secret/kubernaut-operator-webhook-cert", "-n", e2eNamespace},
+					expected:    "yes",
+					description: "certificate patcher must read only the named serving Secret",
+				},
+				{
+					args:        []string{"get", "validatingwebhookconfigurations"},
+					expected:    "no",
+					description: "certificate patcher must not read arbitrary webhook configurations",
+				},
+				{
+					args:        []string{"get", "validatingwebhookconfiguration/kubernaut-operator-singleton"},
+					expected:    "yes",
+					description: "certificate patcher must read only the named webhook configuration",
+				},
+			}
+			for _, check := range checks {
+				can, canErr := run(ctx, "kubectl", append([]string{
+					"--context", e2eContext, "auth", "can-i",
+					"--as=" + patchIdentity,
+				}, check.args...)...)
+				if check.expected == "yes" {
+					Expect(canErr).NotTo(HaveOccurred(), check.description)
+				}
+				Expect(authzResult(can)).To(Equal(check.expected), check.description)
+			}
 		}
 
 		switch e2eTLSMode {
@@ -395,15 +476,22 @@ var _ = Describe("operator-only Helm lifecycle", Ordered, func() {
 			"deployment/kubernaut-operator-controller-manager",
 			"validatingwebhookconfiguration/kubernaut-operator-singleton",
 		}
-		if e2eTLSMode == helmTLSDevelopment {
-			resources = append(resources, "secret/kubernaut-operator-webhook-cert")
-		}
 		for _, resource := range resources {
 			output, err = run(
 				ctx, "kubectl", "--context", e2eContext, "get", resource, "-n", e2eNamespace,
 			)
 			Expect(err).To(HaveOccurred(), output)
 			Expect(output).To(ContainSubstring("NotFound"), output)
+		}
+		if e2eTLSMode == helmTLSDevelopment {
+			Eventually(func(g Gomega) {
+				output, err = run(
+					ctx, "kubectl", "--context", e2eContext, "get",
+					"secret/kubernaut-operator-webhook-cert", "-n", e2eNamespace,
+				)
+				g.Expect(err).To(HaveOccurred(), output)
+				g.Expect(output).To(ContainSubstring("NotFound"), output)
+			}).WithTimeout(2 * time.Minute).WithPolling(2 * time.Second).Should(Succeed())
 		}
 		if e2eTLSMode == helmTLSManual || e2eTLSMode == helmTLSCertManager {
 			output, err = run(
@@ -534,13 +622,13 @@ func ensureDisconnectedBootstrapImage(ctx context.Context) error {
 	if containerTool == "" {
 		containerTool = "docker"
 	}
-	if _, err := run(ctx, containerTool, "pull", helmCertInitSourceImage); err != nil {
+	if _, err := run(ctx, containerTool, "pull", helmCertBootstrapSourceImage); err != nil {
 		return fmt.Errorf("pulling the pinned bootstrap source image: %w", err)
 	}
-	if _, err := run(ctx, containerTool, "tag", helmCertInitSourceImage, helmCertInitLocalImage); err != nil {
+	if _, err := run(ctx, containerTool, "tag", helmCertBootstrapSourceImage, helmCertBootstrapLocalImage); err != nil {
 		return fmt.Errorf("tagging the disconnected bootstrap image: %w", err)
 	}
-	if _, err := run(ctx, "kind", "load", "docker-image", helmCertInitLocalImage,
+	if _, err := run(ctx, "kind", "load", "docker-image", helmCertBootstrapLocalImage,
 		"--name", clusterName()); err != nil {
 		return fmt.Errorf("loading the disconnected bootstrap image into Kind: %w", err)
 	}
@@ -849,6 +937,15 @@ func webhookCA(ctx context.Context) (string, error) {
 		"kubernaut-operator-singleton", "-o", "jsonpath={.webhooks[0].clientConfig.caBundle}")
 }
 
+func authzResult(output string) string {
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" {
+		return ""
+	}
+	lines := strings.Split(trimmed, "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
+}
+
 func chartVariant(marker string) (string, func(), error) {
 	temporaryRoot, err := os.MkdirTemp("", "kubernaut-helm-chart-variant-")
 	if err != nil {
@@ -887,6 +984,7 @@ func chartVariant(marker string) (string, func(), error) {
 		if err := os.MkdirAll(filepath.Dir(targetPath), 0o750); err != nil {
 			return err
 		}
+		//nolint:gosec // targetPath stays beneath the temporary chart variant
 		return os.WriteFile(targetPath, contents, info.Mode().Perm())
 	}); err != nil {
 		_ = os.RemoveAll(temporaryRoot)
@@ -1063,6 +1161,7 @@ func imageValues(image string) ([]string, error) {
 }
 
 func run(ctx context.Context, command string, args ...string) (string, error) {
+	//nolint:gosec // test commands and arguments are intentionally supplied by the E2E harness
 	process := exec.CommandContext(ctx, command, args...)
 	output, err := process.CombinedOutput()
 	if err != nil {

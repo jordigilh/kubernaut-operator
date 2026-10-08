@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: kubernaut-operator-cert-init
+  name: kubernaut-operator-cert-patch
   namespace: {{ include "kubernaut-operator.namespace" . }}
   labels:
     {{- include "kubernaut-operator.labels" . | nindent 4 }}
@@ -10,7 +10,7 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: kubernaut-operator-cert-init
+  name: kubernaut-operator-cert-patch
   namespace: {{ include "kubernaut-operator.namespace" . }}
   labels:
     {{- include "kubernaut-operator.labels" . | nindent 4 }}
@@ -19,28 +19,33 @@ rules:
     resources: ["secrets"]
     resourceNames:
       - {{ include "kubernaut-operator.webhookSecretName" . }}
-    verbs: ["get", "patch", "update"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames:
+      - {{ include "kubernaut-operator.managerDeploymentName" . }}
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: kubernaut-operator-cert-init
+  name: kubernaut-operator-cert-patch
   namespace: {{ include "kubernaut-operator.namespace" . }}
   labels:
     {{- include "kubernaut-operator.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: kubernaut-operator-cert-init
+  name: kubernaut-operator-cert-patch
 subjects:
   - kind: ServiceAccount
-    name: kubernaut-operator-cert-init
+    name: kubernaut-operator-cert-patch
     namespace: {{ include "kubernaut-operator.namespace" . }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: kubernaut-operator-cert-init
+  name: kubernaut-operator-cert-patch
   labels:
     {{- include "kubernaut-operator.labels" . | nindent 4 }}
 rules:
@@ -48,20 +53,20 @@ rules:
     resources: ["validatingwebhookconfigurations"]
     resourceNames:
       - {{ include "kubernaut-operator.webhookConfigurationName" . }}
-    verbs: ["get", "patch", "update"]
+    verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: kubernaut-operator-cert-init
+  name: kubernaut-operator-cert-patch
   labels:
     {{- include "kubernaut-operator.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: kubernaut-operator-cert-init
+  name: kubernaut-operator-cert-patch
 subjects:
   - kind: ServiceAccount
-    name: kubernaut-operator-cert-init
+    name: kubernaut-operator-cert-patch
     namespace: {{ include "kubernaut-operator.namespace" . }}
 {{- end }}
