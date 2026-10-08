@@ -814,22 +814,21 @@ func AuthWebhookDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alp
 // It mounts projected config (config.yaml + rbac_roles.yaml), TLS server cert,
 // and CA cert for inter-service trust.
 // apifrontendVolumesMountsEnv builds all of API Frontend's config/TLS/
-// credential volumes, mounts, and env vars: the sidecar-aware NO_PROXY
-// setting, monitoring's service-ca mount, AF's own resolved LLM profile's
+// credential volumes, mounts, and env vars: monitoring's service-ca mount,
+// AF's own resolved LLM profile's
 // credentials/mTLS-client/OAuth2 mounts, severity-triage's independently
 // resolved cross-credential mount, and Valkey secrets.
-func apifrontendVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode) (
+func apifrontendVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut) (
 	[]corev1.Volume, []corev1.VolumeMount, []corev1.EnvVar) {
-	volumes, mounts, env := apifrontendBaseVolumesMountsEnv(kn, sidecar)
+	volumes, mounts, env := apifrontendBaseVolumesMountsEnv(kn)
 	return apifrontendCredentialVolumesMountsEnv(kn, volumes, mounts, env)
 }
 
 // apifrontendBaseVolumesMountsEnv builds API Frontend's non-credential
-// config/TLS-server/TLS-CA volumes and mounts, the sidecar-aware NO_PROXY
-// env var, and monitoring's service-ca mount.
-func apifrontendBaseVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode) (
+// config/TLS-server/TLS-CA volumes and mounts, and monitoring's service-ca
+// mount.
+func apifrontendBaseVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut) (
 	[]corev1.Volume, []corev1.VolumeMount, []corev1.EnvVar) {
-	ns := kn.Namespace
 	env := []corev1.EnvVar{
 		{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
@@ -846,11 +845,6 @@ func apifrontendBaseVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut, sidecar Ka
 		// trust store, so the OpenShift path must use the merged bundle.
 		env = append(env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: "/etc/ssl/combined/ca-bundle.crt"})
 	}
-	if sidecar != KagentiSidecarNone {
-		noProxy := fmt.Sprintf("127.0.0.1,localhost,kubernaut-agent.%s.svc.cluster.local,data-storage-service.%s.svc.cluster.local", ns, ns)
-		env = append(env, corev1.EnvVar{Name: "NO_PROXY", Value: noProxy})
-	}
-
 	volumes := []corev1.Volume{
 		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		configMapVolume("config", "apifrontend-config"),
@@ -990,17 +984,12 @@ func apifrontendCredentialVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut,
 	return volumes, mounts, env
 }
 
-// apifrontendPorts resolves the listen/metrics/health ports, applying the
-// sidecar's shifted defaults (when the kagenti sidecar occupies AF's normal
-// ports) and then any administrator-configured overrides.
-func apifrontendPorts(kn *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode) (listenPort, metricsPort, healthPort int32) {
-	listenPort = sidecar.AFListenPort()
+// apifrontendPorts resolves the listen/metrics/health ports and applies any
+// administrator-configured overrides.
+func apifrontendPorts(kn *kubernautv1alpha2.Kubernaut) (listenPort, metricsPort, healthPort int32) {
+	listenPort = PortHTTPS
 	metricsPort = PortMetrics
 	healthPort = PortHealthProbe
-	if sidecar.ShiftsPorts() {
-		metricsPort = 9092
-		healthPort = 8082
-	}
 	if kn.Spec.APIFrontend.MetricsPort != nil {
 		metricsPort = *kn.Spec.APIFrontend.MetricsPort
 	}
@@ -1010,8 +999,8 @@ func apifrontendPorts(kn *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMod
 	return listenPort, metricsPort, healthPort
 }
 
-func APIFrontendDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode) (*appsv1.Deployment, error) {
-	volumes, mounts, env := apifrontendVolumesMountsEnv(kn, sidecar)
+func APIFrontendDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+	volumes, mounts, env := apifrontendVolumesMountsEnv(kn)
 	volumes, mounts = appendFleetSecretMounts(volumes, mounts, knV2, "/etc/apifrontend", effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""))
 
 	initContainers, err := afInitContainers(kn)
@@ -1025,7 +1014,7 @@ func APIFrontendDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alp
 	}
 	gracePeriod := drainSec + 5
 
-	listenPort, metricsPort, healthPort := apifrontendPorts(kn, sidecar)
+	listenPort, metricsPort, healthPort := apifrontendPorts(kn)
 
 	dep, err := buildDeployment(kn, DeploymentParams{
 		Component: ComponentAPIFrontend, ImageName: "apifrontend",
@@ -1049,11 +1038,6 @@ func APIFrontendDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alp
 	if err != nil {
 		return nil, err
 	}
-
-	dep.Labels[KagentiAgentTypeLabel] = "agent"
-	dep.Labels[KagentiA2AProtocolLabel] = ""
-	dep.Spec.Template.Labels[KagentiAgentTypeLabel] = "agent"
-	dep.Spec.Template.Labels[KagentiA2AProtocolLabel] = ""
 
 	return dep, nil
 }

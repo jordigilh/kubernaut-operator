@@ -495,6 +495,45 @@ spec:
 
 If omitted, notifications are delivered to the console log and file output only.
 
+## API Frontend OIDC
+
+API Frontend and the standalone Console use the same effective OIDC issuer.
+The operator is provider-neutral and has no built-in or generic portal URL.
+When `jwtProviders` is empty, set a complete URL for the IdP used by this
+installation:
+
+```yaml
+spec:
+  apiFrontend:
+    auth:
+      issuerURL: "https://idp.example.com/realms/kubernaut"
+      audience: kubernaut-apifrontend
+```
+
+Replace the example with the actual issuer URL for the installation. Omitting
+it is a validation error, and the operator never constructs an issuer from a
+short realm name or selects a portal implicitly. Explicit issuer URLs must use HTTPS;
+HTTP is accepted only when `allowInsecureIssuers: true` is deliberately set
+for development or testing. `jwksURL` may be omitted for a Keycloak-compatible
+issuer, in which case the standard realm JWKS path is derived. Set it
+explicitly for other providers.
+
+When `jwtProviders` is non-empty, API Frontend validates all listed providers
+and renders the complete list. Console oauth2-proxy uses the first validated
+provider's issuer. Keep that provider suitable for browser login and configure
+its client with the Console redirect URI and the API Frontend audience as
+needed. Changing realms invalidates existing tokens and Console cookies;
+update the IdP clients, audiences, redirect URIs, JWKS reachability, and CA
+trust together.
+
+If external MCP/A2A access is not needed, disable the API Frontend explicitly:
+
+```yaml
+spec:
+  apiFrontend:
+    enabled: false
+```
+
 ## Console (optional)
 
 The standalone web Console (A2A chat UI, `spec.console.enabled`) is fronted by an oauth2-proxy sidecar that needs its own OIDC client -- distinct from the Fleet client-credentials clients above and from AF's own OIDC config. Provision a **confidential, Authorization Code flow** client (`standardFlowEnabled`, not a service-account/client-credentials client) on your OIDC provider:

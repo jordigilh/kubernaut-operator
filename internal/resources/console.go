@@ -50,7 +50,7 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*
 
 	issuerURL := kn.Spec.ConsoleIssuerURL()
 	if issuerURL == "" {
-		return nil, fmt.Errorf("console requires apiFrontend.auth.issuerURL or apiFrontend.auth.jwtProviders to be configured")
+		return nil, fmt.Errorf("console requires a valid effective OIDC issuer")
 	}
 
 	secretName := kn.Spec.Console.Auth.SecretName

@@ -51,10 +51,10 @@ spec:
     policy:
       configMapName: signalprocessing-policy
 
-  # apiFrontend is enabled by default and requires an OIDC issuer -- replace
-  # with your real IdP, or set apiFrontend.enabled: false below if you don't
-  # have one yet (see docs/installation/02-configure-services.md).
+  # apiFrontend is enabled by default and requires a complete issuer URL for
+  # your IdP. Replace this example with your real issuer, or set
+  # apiFrontend.enabled: false if you do not need API/Console access yet.
   apiFrontend:
     auth:
-      issuerURL: "https://login.example.com/realms/kubernaut"
+      issuerURL: "https://idp.example.com/realms/kubernaut"
       audience: "kubernaut-apifrontend"

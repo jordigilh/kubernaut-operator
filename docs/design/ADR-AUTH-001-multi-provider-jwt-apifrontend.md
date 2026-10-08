@@ -6,12 +6,19 @@
 > implementation contract; the clean-break branch serves and stores only
 > `kubernaut.ai/v1alpha2`.
 
-**Status**: Proposed
+**Status**: Historical design background; superseded for v1alpha2 by issue #479
 **Decision Date**: 2026-06-16
 **Version**: 1.0
 **Confidence**: 90%
 **Deciders**: Kubernaut Operator Team
 **Applies To**: kubernaut-operator CRD, ConfigMap generation, CR validation
+
+> **v1alpha2 supersession:** The clean-break v1alpha2 API uses the explicit
+> `spec.apiFrontend.auth.issuerURL`; the operator does not own or assume a
+> production IdP default. No external discovery resource, sidecar, or legacy API-version
+> compatibility path supplies the issuer. Sections below that describe an
+> auto-detected issuer or a required legacy issuer are retained only as the
+> historical rationale for the multi-provider shape.
 
 **Related Business Requirements**:
 - BR-SECURITY-001: Multi-provider OIDC/JWT authentication (FedRAMP IA-2)
@@ -72,7 +79,7 @@ Upstream kubernaut (PR#1397 / issue#1436) has added multi-provider JWT authentic
 
 - No backward compatibility required — the operator has not yet released with the AF `jwtProviders` field, and the existing `JWTProviderSpec` for KA can be safely modified since it was introduced in a pre-release cycle.
 - The upstream `JWTProviderConfig` schema is the contract; the operator must emit config that matches it exactly.
-- The existing single-provider AF fields (`issuerURL`, `audience`, `jwksURL`) must remain functional when `jwtProviders` is empty (kagenti auto-detection path).
+- The existing single-provider AF fields (`issuerURL`, `audience`, `jwksURL`) must remain functional when `jwtProviders` is empty (legacy single-provider path).
 
 ---
 
@@ -245,7 +252,7 @@ type JWTProviderSpec struct {
 
 ```go
 type APIFrontendAuthSpec struct {
-    // existing fields remain for single-provider / kagenti-detected config...
+    // existing fields remain for single-provider configuration...
     IssuerURL             string `json:"issuerURL,omitempty"`
     Audience              string `json:"audience,omitempty"`
     TokenReviewAudience   string `json:"tokenReviewAudience,omitempty"`
@@ -296,7 +303,7 @@ type afAuthYAML struct {
 **Modified `afAuthConfig()`** — populate `jwtProviders` when CR has them:
 
 ```go
-func afAuthConfig(kn *kubernautv1alpha1.Kubernaut, oidc *KagentiOIDCDefaults) afAuthYAML {
+func afAuthConfig(kn *kubernautv1alpha1.Kubernaut, oidc *OIDCDefaults) afAuthYAML {
     af := kn.Spec.APIFrontend
     // ... existing logic for issuer, jwks, insecure ...
 
@@ -379,7 +386,8 @@ func validateJWTProviderList(providers []kubernautv1alpha1.JWTProviderSpec, base
 
 **Interaction with single-provider `issuerURL`**:
 - When `jwtProviders` is non-empty, the single-provider `issuerURL` requirement is relaxed (multi-provider takes precedence).
-- When both `jwtProviders` is empty and `issuerURL` is empty (and kagenti is not active), validation fails.
+- When both `jwtProviders` and `issuerURL` are empty, v1alpha2 validation rejects
+  the configuration; the operator never invents or discovers an IdP URL.
 
 #### 4. CRD Regeneration
 

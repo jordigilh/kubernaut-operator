@@ -44,6 +44,41 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		Expect(crd.Spec.Conversion).To(BeNil())
 	})
 
+	It("does not publish a fabricated issuer default", func() {
+		crd := loadKubernautCRD()
+		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+		auth := schema.Properties["spec"].Properties["apiFrontend"].Properties["auth"]
+		issuer := auth.Properties["issuerURL"]
+		Expect(issuer.Default).To(BeNil())
+	})
+
+	It("does not expose deferred SPIFFE/SPIRE configuration", func() {
+		crd := loadKubernautCRD()
+		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+		apiFrontend := schema.Properties["spec"].Properties["apiFrontend"]
+		Expect(apiFrontend.Properties).NotTo(HaveKey("spire"))
+	})
+
+	It("resolves only configured issuer sources", func() {
+		spec := KubernautSpec{}
+		Expect(spec.EffectiveIssuerURL()).To(BeEmpty())
+		Expect(spec.EffectiveIssuerSource()).To(Equal(OIDCIssuerSourceUnset))
+
+		spec.APIFrontend.Auth.IssuerURL = "https://login.example.com/realms/demo"
+		Expect(spec.EffectiveIssuerURL()).To(Equal("https://login.example.com/realms/demo"))
+		Expect(spec.EffectiveIssuerSource()).To(Equal(OIDCIssuerSourceExplicit))
+
+		spec.APIFrontend.Auth.JWTProviders = []JWTProviderSpec{{
+			Name: "first", IssuerURL: "https://first.example.com", JWKSURL: "https://first.example.com/keys",
+			Audiences: []string{"aud-first"},
+		}, {
+			Name: "second", IssuerURL: "https://second.example.com", JWKSURL: "https://second.example.com/keys",
+			Audiences: []string{"aud-second"},
+		}}
+		Expect(spec.EffectiveIssuerURL()).To(Equal("https://first.example.com"))
+		Expect(spec.EffectiveIssuerSource()).To(Equal(OIDCIssuerSourceMultiProvider))
+	})
+
 	It("publishes the nested Fleet API without legacy flat fields or Fleet oauth2.enabled", func() {
 		crd := loadKubernautCRD()
 		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema

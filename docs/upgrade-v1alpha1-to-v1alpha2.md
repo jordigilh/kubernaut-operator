@@ -39,6 +39,11 @@ Create a new manifest from the exported object and make these changes:
    them blindly.
 8. Add any v1alpha2-required fields, especially the AIAnalysis and
    SignalProcessing policy references and the required LLM profile map.
+9. Remove legacy `spec.apiFrontend.spire` configuration; v1alpha2 does not
+   expose a SPIFFE/SPIRE operator contract. Review
+   `spec.apiFrontend.auth.issuerURL`: v1alpha2 requires a complete explicit
+   issuer URL for single-provider API Frontend auth; the operator does not
+   select or synthesize an IdP URL. Do not replace it with a short realm name.
 
 Review the complete v1alpha2 schema with:
 
@@ -74,6 +79,10 @@ The operator does not migrate application data between API versions. The
 database migration Job remains the application-schema migration mechanism;
 the API migration only changes the Kubernaut object shape and ownership
 boundary.
+
+Changing the OIDC realm during this migration invalidates existing access
+tokens and Console cookies. Coordinate IdP client registrations, audiences,
+redirect URIs, JWKS reachability, and CA trust before applying the new object.
 
 ## Unsupported shortcut
 

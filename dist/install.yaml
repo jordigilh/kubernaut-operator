@@ -220,9 +220,12 @@ spec:
                         type: string
                       issuerURL:
                         description: |-
-                          OIDC issuer URL (e.g. "https://login.kubernaut.ai/realms/kubernaut").
-                          Used for single-provider auth or kagenti auto-detection fallback.
-                          When jwtProviders is non-empty, multi-provider config takes precedence.
+                          OIDC issuer URL for single-provider auth (e.g.
+                          "https://idp.example.com/realms/kubernaut"). Required when jwtProviders is
+                          empty; when jwtProviders is non-empty, multi-provider config takes precedence.
+                          An explicit value must be an absolute HTTPS URL, or HTTP when
+                          allowInsecureIssuers is true.
+                        pattern: ^https?://.+
                         type: string
                       jwksURL:
                         description: |-
@@ -272,6 +275,7 @@ spec:
                             issuerURL:
                               description: OIDC issuer URL for token validation.
                               minLength: 1
+                              pattern: ^https?://.+
                               type: string
                             jwksURL:
                               description: |-
@@ -285,7 +289,7 @@ spec:
                               type: string
                             name:
                               description: Human-readable name for this provider (e.g.
-                                "rhbk", "spire").
+                                "rhbk", "secondary").
                               maxLength: 63
                               minLength: 1
                               type: string
@@ -328,8 +332,7 @@ spec:
                     type: object
                   healthPort:
                     description: |-
-                      Override for the AF health probe port. Defaults to 8081 (or 8082 when
-                      kagenti sidecar port shifting is active). Use when cluster policies
+                      Override for the AF health probe port. Defaults to 8081. Use when cluster policies
                       restrict port ranges.
                     format: int32
                     maximum: 65535
@@ -417,8 +420,7 @@ spec:
                     type: object
                   metricsPort:
                     description: |-
-                      Override for the AF metrics port. Defaults to 9090 (or 9092 when
-                      kagenti sidecar port shifting is active). Use when cluster policies
+                      Override for the AF metrics port. Defaults to 9090. Use when cluster policies
                       restrict port ranges.
                     format: int32
                     maximum: 65535
@@ -676,40 +678,6 @@ spec:
                         maximum: 300
                         minimum: 0
                         type: integer
-                    type: object
-                  spire:
-                    description: |-
-                      SPIRE mTLS identity configuration for kagenti agent card discovery
-                      (FedRAMP SC-8, IA-5). When enabled, a ClusterSPIFFEID is created and
-                      a SPIRE-aware mTLS sidecar is injected into the AF deployment so the
-                      kagenti-operator can perform verified fetch with identity binding.
-                    properties:
-                      className:
-                        description: |-
-                          SPIRE class name for the ClusterSPIFFEID (e.g. "zero-trust-workload-identity-manager-spire").
-                          When empty, the className field is omitted from the ClusterSPIFFEID spec.
-                        type: string
-                      enabled:
-                        description: |-
-                          Whether SPIRE mTLS sidecar injection is enabled. Defaults to false
-                          (opt-in) when omitted (kubernaut-operator#459): kagenti's CRD surface
-                          is still pre-1.0 and actively churning upstream (the legacy
-                          Agent/Component CRD is being replaced by AgentRuntime, and the CRD
-                          group itself has shifted between kagenti.dev and rossoctl.dev across
-                          recent releases), so kubernaut-operator no longer assumes kagenti is
-                          present by default. Standalone console+AF with OAuth2 needs no
-                          kagenti/SPIRE involvement at all. Set explicitly to true only when
-                          kagenti is actually installed and its authbridge/envoy sidecar should
-                          terminate AF's mTLS.
-                        type: boolean
-                      trustDomain:
-                        description: |-
-                          TrustDomain overrides the SPIFFE ID trust domain. When empty (default),
-                          the operator uses SPIRE's {{ .TrustDomain }} template variable, which
-                          resolves to the cluster's configured trust domain at SVID registration
-                          time. Set this only if you need a fixed trust domain that differs from
-                          the SPIRE server's.
-                        type: string
                     type: object
                 type: object
               authWebhook:
@@ -4196,18 +4164,6 @@ rules:
   - update
   - watch
 - apiGroups:
-  - agent.kagenti.dev
-  resources:
-  - agentruntimes
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
   - apiextensions.k8s.io
   resources:
   - customresourcedefinitions
@@ -4447,18 +4403,6 @@ rules:
   verbs:
   - create
   - update
-- apiGroups:
-  - spire.spiffe.io
-  resources:
-  - clusterspiffeids
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

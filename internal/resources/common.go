@@ -120,44 +120,6 @@ const (
 	MigrationTTLSeconds   int32 = 300
 )
 
-// KagentiSidecarMode describes how the kagenti webhook injects its
-// authentication sidecar into AF pods. The operator detects the mode at
-// runtime and adjusts AF listen/health/metrics ports accordingly.
-type KagentiSidecarMode int
-
-const (
-	// KagentiSidecarNone means kagenti is not active (SPIRE disabled or
-	// kagenti not installed).
-	KagentiSidecarNone KagentiSidecarMode = iota
-
-	// KagentiSidecarEnvoy is kagenti 0.2.x: an envoy-proxy sidecar that
-	// intercepts traffic via iptables + ORIGINAL_DST routing. The
-	// application container keeps its original listen port because envoy
-	// transparently proxies to it.
-	KagentiSidecarEnvoy
-
-	// KagentiSidecarAuthbridge is kagenti 0.3.x+: an authbridge-proxy
-	// binary that takes the declared containerPort and shifts the
-	// application container to port+1 via the PORT env var. The operator
-	// must NOT pre-shift; it keeps AF on PortHTTPS so that authbridge
-	// occupies 8443 and AF moves to 8444.
-	KagentiSidecarAuthbridge
-)
-
-// AFListenPort returns the port the operator writes into the AF container
-// spec and config.yaml. The kagenti webhook handles the actual port
-// shifting at admission time — authbridge takes this port and moves the
-// application to port+1.
-func (m KagentiSidecarMode) AFListenPort() int32 {
-	return PortHTTPS
-}
-
-// ShiftsPorts reports whether AF metrics and health ports must be shifted
-// away from defaults to avoid conflicts with the kagenti sidecar.
-func (m KagentiSidecarMode) ShiftsPorts() bool {
-	return m != KagentiSidecarNone
-}
-
 // PDB constant.
 const PDBMaxUnavailable = 1
 
@@ -195,17 +157,6 @@ var anthropicFamilyReasoningProviders = map[string]bool{
 	LLMProviderAnthropic: true,
 	LLMProviderVertexAI:  true,
 }
-
-// Kagenti discovery labels for A2A agent auto-discovery.
-const (
-	KagentiAgentTypeLabel                = "kagenti.io/type"
-	KagentiA2AProtocolLabel              = "protocol.kagenti.io/a2a"
-	KagentiClientRegistrationInjectLabel = "kagenti.io/client-registration-inject"
-)
-
-// AgentTLSPortName is the service port name that signals to the kagenti-operator
-// that the agent card endpoint requires TLS.
-const AgentTLSPortName = "agent-tls"
 
 // OCP service-CA injection annotation.
 const OCPServiceCAInjectAnnotation = "service.beta.openshift.io/inject-cabundle"

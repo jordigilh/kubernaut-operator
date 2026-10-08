@@ -163,12 +163,12 @@ spec:
 
   # --- API Frontend (optional) ---
   # The API Frontend provides external MCP/A2A access to Kubernaut Agent.
-  # It requires an OIDC issuer (e.g. RHBK/Keycloak) when TLS is enabled.
-  # Set enabled: false to skip AF deployment entirely.
+  # Set the complete issuer URL for the IdP used by this installation, or
+  # disable AF entirely.
   apiFrontend:
     # enabled: false                        # uncomment to disable AF
     auth:
-      issuerURL: "https://keycloak.apps.example.com/realms/kubernaut"
+      issuerURL: "https://idp.example.com/realms/kubernaut"
       audience: "kubernaut-apifrontend"     # must match the OIDC client
       # jwksURL is intentionally omitted -- the operator derives it from
       # issuerURL using Keycloak's well-known JWKS path convention
@@ -527,9 +527,13 @@ oc get kubernaut kubernaut -n kubernaut-system \
 | `TokenKeyMissing` | The Secret exists but has no `token` key | Recreate the Secret with `--from-literal=token=...` |
 | `Ready` | Configuration is valid | If alerts still aren't arriving, check the token hasn't expired (see the rotation note above) or inspect Gateway's logs for `403` SAR-authorization failures |
 
-**API Frontend crash-looping with `auth.issuerURL is required`:**
+**API Frontend cannot validate OIDC tokens:**
 
-The AF requires OIDC authentication in production (TLS) mode. Set `spec.apiFrontend.auth.issuerURL` to your OIDC provider's issuer URL (e.g. RHBK/Keycloak realm). If you don't need external MCP/A2A access, disable the AF entirely:
+The AF requires `spec.apiFrontend.auth.issuerURL` when `jwtProviders` is empty;
+the operator does not choose an IdP or generic portal. Set the complete issuer
+URL (and, when needed, `jwksURL` and `oidcCaFile`). Verify the IdP client,
+audience, JWKS reachability, and CA trust.
+If you don't need external MCP/A2A access, disable the AF entirely:
 
 ```yaml
 spec:
@@ -610,70 +614,6 @@ it is not automatic just because the user belongs to a Keycloak group.
 This is a separate, coarse-grained authorization gate from per-tool RBAC (AF v1.5.6+ / operator v1.5.8+): the Console's pre-flight check calls `GET /a2a/access` on AF, which runs a SubjectAccessReview against a synthetic `kubernaut.ai/console` resource. See [Additional RBAC for API Frontend](02-configure-services.md#additional-rbac-for-api-frontend) for how this is configured, and this dedicated writeup for full diagnosis (Keycloak group-claim verification, AF debug-log inspection): [Kubernaut Console: troubleshooting "Access Denied"](https://gist.github.com/jordigilh/5984f65c88da042f2207825a9e57df62).
 
 Quick check: if `spec.apiFrontend.rbac.roleBindings` already lists groups, the operator auto-derives console access from them and the CR is very likely already correct — the more common cause at that point is the denied user's JWT not actually carrying the expected `groups` claim.
-
-**API Frontend `proxy-init` crash-looping with `can't initialize iptables table 'mangle': Permission denied`:**
-
-When Kagenti is installed, the `proxy-init` init container sets up iptables rules
-for traffic interception. On some OpenShift versions (observed on OCP 4.21), the
-`iptable_mangle` kernel module is not loaded by default even though `iptable_nat`
-is. This causes `proxy-init` to select the `iptables-legacy` backend (because
-`iptable_nat` is present) and then fail when it tries to manipulate the `mangle`
-table.
-
-Diagnose by checking the init container logs:
-
-```bash
-oc logs <apifrontend-pod> -n kubernaut-system -c proxy-init
-```
-
-If you see:
-
-```
-Using iptables command: iptables-legacy (iptables v1.8.11 (legacy))
-iptables v1.8.11 (legacy): can't initialize iptables table `mangle': Permission denied
-```
-
-Load the missing kernel module on **every worker node** where Kubernaut pods may
-be scheduled:
-
-```bash
-# From a debug shell or SSH session on each node:
-sudo modprobe iptable_mangle
-```
-
-Then delete the crashing pod so it restarts:
-
-```bash
-oc delete pod <apifrontend-pod> -n kubernaut-system
-```
-
-To persist the module across node reboots, create a `MachineConfig`:
-
-```bash
-oc apply -f - <<EOF
-apiVersion: machineconfiguration.openshift.io/v1
-kind: MachineConfig
-metadata:
-  name: 99-worker-iptable-mangle
-  labels:
-    machineconfiguration.openshift.io/role: worker
-spec:
-  config:
-    ignition:
-      version: 3.2.0
-    storage:
-      files:
-        - path: /etc/modules-load.d/iptable_mangle.conf
-          mode: 0644
-          contents:
-            source: data:,iptable_mangle
-EOF
-```
-
-> **Note:** This issue is tracked upstream as
-> [kagenti/kagenti-extensions#502](https://github.com/kagenti/kagenti-extensions/issues/502).
-> On OCP 4.18 and earlier, `iptable_mangle` is typically loaded by default and
-> this workaround is not needed.
 
 **CR in Degraded:**
 

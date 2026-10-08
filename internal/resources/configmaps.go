@@ -2509,33 +2509,16 @@ type afResilienceYAML struct {
 	K8s afCircuitBreakerYAML `json:"k8s" yaml:"k8s"`
 }
 
-// KagentiOIDCDefaults holds OIDC values auto-detected from kagenti.
-// Exported so the controller can pass them to ConfigMap generation.
-type KagentiOIDCDefaults struct {
-	IssuerURL            string
-	JWKSURL              string
-	AllowInsecureIssuers bool
-}
-
 // APIFrontendConfigMap generates the apifrontend-config ConfigMap.
-// oidc may be nil when kagenti is not active; when non-nil, its values
-// fill in any OIDC fields left empty in the CR (CR values always win).
 // afServerConfig builds the top-level server block: listen port, TLS
-// settings, and metrics/health port overrides derived from the sidecar mode
-// and any administrator-supplied overrides.
-func afServerConfig(af kubernautv1alpha2.APIFrontendSpec, sidecar KagentiSidecarMode) afServerYAML {
-	afTLS := afTLSYAML{CertDir: "/etc/apifrontend/tls", Required: true}
-	if sidecar != KagentiSidecarNone {
-		afTLS = afTLSYAML{}
-	}
+// settings, and metrics/health port overrides.
+func afServerConfig(af kubernautv1alpha2.APIFrontendSpec) afServerYAML {
 
 	server := afServerYAML{
-		Port: int(sidecar.AFListenPort()),
-		TLS:  afTLS,
-	}
-	if sidecar.ShiftsPorts() {
-		server.MetricsPort = 9092
-		server.HealthPort = 8082
+		Port:        int(PortHTTPS),
+		MetricsPort: int(PortMetrics),
+		HealthPort:  int(PortHealthProbe),
+		TLS:         afTLSYAML{CertDir: "/etc/apifrontend/tls", Required: true},
 	}
 	if af.MetricsPort != nil {
 		server.MetricsPort = int(*af.MetricsPort)
@@ -2571,7 +2554,7 @@ func afResilienceConfig() afResilienceYAML {
 	}
 }
 
-func APIFrontendConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode, oidc *KagentiOIDCDefaults) (*corev1.ConfigMap, error) {
+func APIFrontendConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 	af := kn.Spec.APIFrontend
 	ns := kn.Namespace
 	afProfile, _ := ResolveLLMProfile(kn, AFLLMProfileRef(kn))
@@ -2584,7 +2567,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 	}
 
 	cfg := afConfigYAML{
-		Server: afServerConfig(af, sidecar),
+		Server: afServerConfig(af),
 		Agent: afAgentYAML{
 			KABaseURL:         kaBaseURL,
 			KAMCPEndpoint:     kaBaseURL + "/api/v1/mcp/",
@@ -2601,7 +2584,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 			Name: "Kubernaut Agent",
 			URL:  agentCardURL,
 		},
-		Auth: afAuthConfig(kn, oidc),
+		Auth: afAuthConfig(kn),
 		RBAC: afRBACConfig(kn, knV2),
 		Logging: afLoggingYAML{
 			Level: withDefault(af.Logging.Level, "info"),
@@ -2770,25 +2753,12 @@ func deriveAFJWKSURL(issuerURL string) string {
 	return strings.TrimRight(issuerURL, "/") + afKeycloakJWKSPath
 }
 
-func afAuthConfig(kn *kubernautv1alpha2.Kubernaut, oidc *KagentiOIDCDefaults) afAuthYAML {
+func afAuthConfig(kn *kubernautv1alpha2.Kubernaut) afAuthYAML {
 	af := kn.Spec.APIFrontend
 
 	issuer := af.Auth.IssuerURL
 	jwks := af.Auth.JWKSURL
 	insecure := af.Auth.AllowInsecureIssuers
-
-	// Merge kagenti-detected OIDC defaults; CR values always win.
-	if oidc != nil {
-		if issuer == "" {
-			issuer = oidc.IssuerURL
-		}
-		if jwks == "" {
-			jwks = oidc.JWKSURL
-		}
-		if !insecure {
-			insecure = oidc.AllowInsecureIssuers
-		}
-	}
 
 	// kubernaut-operator#462: an empty jwksURL isn't safe to leave for AF's
 	// own runtime to guess -- it falls back to treating the issuer URL
@@ -2796,12 +2766,12 @@ func afAuthConfig(kn *kubernautv1alpha2.Kubernaut, oidc *KagentiOIDCDefaults) af
 	// info document (not a JWKS), silently failing every token's signature
 	// verification with no operator-visible error (AF only logs this at
 	// DEBUG). Keycloak is the only supported IdP for this single-provider
-	// path (kagenti auto-detection above already covers the SPIRE/kagenti
-	// case), so deriving via its well-known JWKS path convention is a safe
+	// path, so deriving via its well-known JWKS path convention is a safe
 	// default rather than a guess. This mirrors the same convention already
 	// applied to the single-provider v2 runtime path -- but is intentionally
 	// NOT applied to the jwtProviders[] array itself here,
-	// since that list can mix in non-Keycloak IdPs (e.g. SPIRE) whose JWKS
+	// since that list can mix in non-Keycloak IdPs (for example, alternate OIDC
+	// providers) whose JWKS
 	// path this convention would get wrong.
 	if jwks == "" && issuer != "" {
 		jwks = deriveAFJWKSURL(issuer)
