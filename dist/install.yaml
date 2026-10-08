@@ -219,11 +219,10 @@ spec:
                           session authenticity).'
                         type: string
                       issuerURL:
-                        default: https://login.kubernaut.ai/realms/kubernaut
                         description: |-
-                          OIDC issuer URL (e.g. "https://login.kubernaut.ai/realms/kubernaut").
-                          When omitted for single-provider auth, the production Kubernaut realm is
-                          used. When jwtProviders is non-empty, multi-provider config takes precedence.
+                          OIDC issuer URL for single-provider auth (e.g.
+                          "https://idp.example.com/realms/kubernaut"). Required when jwtProviders is
+                          empty; when jwtProviders is non-empty, multi-provider config takes precedence.
                           An explicit value must be an absolute HTTPS URL, or HTTP when
                           allowInsecureIssuers is true.
                         pattern: ^https?://.+

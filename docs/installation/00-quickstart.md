@@ -1,6 +1,6 @@
 # Quickstart: Minimal Kubernaut CR
 
-This page is the fast path to a `Running` Kubernaut deployment: only the fields the operator actually requires, nothing else. Everything not listed here has a working default -- no need to touch it to get started.
+This page is the fast path to a `Running` Kubernaut deployment: only the fields the operator actually requires, nothing else. Everything not listed here has a working default -- except the identity provider, which must be supplied by the administrator.
 
 If you want the fuller, every-knob-annotated walkthrough instead (LLM reasoning, safety controls, rate limits, Fleet federation, Ansible/AAP, GitOps layout, Slack, etc.), skip ahead to [Configure Services](02-configure-services.md) and [Deploy Kubernaut](03-deploy.md). This page and those two aren't redundant: this one gets you to `Running` fastest; those cover depth.
 
@@ -9,7 +9,7 @@ If you want the fuller, every-knob-annotated walkthrough instead (LLM reasoning,
 Mandatory-ness comes from two different places, and it matters which one applies:
 
 - **Schema-required** (enforced by the Kubernetes API server itself, before the object is even persisted): `spec.postgresql`, `spec.valkey`, `spec.llmProfiles`, `spec.kubernautAgent`, `spec.aiAnalysis.policy.configMapName`, `spec.signalProcessing.policy.configMapName`. Omit any of these and `oc apply` is rejected immediately with a validation error -- there's no operator-bundled default for any of them (this matches the upstream Helm chart's own behavior exactly: `helm install` fails the same way).
-- **Operator-required** (enforced at reconcile time, after admission succeeds): LLM profile content (`provider`/`model`/`credentialsSecretName`, plus `endpoint` for `provider: openai`). API Frontend uses `https://login.kubernaut.ai/realms/kubernaut` when `auth.issuerURL` is omitted; set a complete issuer URL for another realm.
+- **Operator-required** (enforced at reconcile time, after admission succeeds): LLM profile content (`provider`/`model`/`credentialsSecretName`, plus `endpoint` for `provider: openai`) and a complete OIDC issuer URL when API Frontend is enabled. The operator does not assume or create a public login portal; disable API Frontend if OIDC access is not needed.
 
 ## 1. Prerequisites
 
@@ -19,7 +19,7 @@ Provision these before applying the CR (see [Infrastructure Prerequisites](01-in
 - PostgreSQL 15+, reachable, with a Secret containing `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`.
 - Valkey/Redis 7+, reachable, with a Secret containing key `valkey-secrets.yaml`.
 - LLM API credentials (OpenAI, Anthropic, or GCP Vertex AI) in a Secret.
-- An OIDC provider configured with the production realm (or an explicit external/demo/test issuer URL) for API Frontend -- or set `apiFrontend.enabled: false` in the CR below if you don't need API/Console access yet.
+- An OIDC provider configured with the issuer URL you will set for API Frontend -- or set `apiFrontend.enabled: false` in the CR below if you don't need API/Console access yet.
 
 Both Rego policy ConfigMaps below are schema-required with no bundled default -- create minimal starter policies now (tune them properly later, see [Configure Services](02-configure-services.md#signal-processing-sp----classification-policy-required) and [Configure Services](02-configure-services.md#ai-analysis-aa----approval-policy-required)):
 
@@ -101,11 +101,12 @@ spec:
     policy:
       configMapName: signalprocessing-policy
 
-  # apiFrontend is enabled by default and uses the production issuer when
-  # issuerURL is omitted. Set a complete external/demo/test URL for another
-  # realm, or set apiFrontend.enabled: false if you do not need API access yet.
+  # apiFrontend is enabled by default and requires your complete OIDC issuer URL.
+  # Replace this example with the issuer for your IdP, or set
+  # apiFrontend.enabled: false if you do not need API access yet.
   apiFrontend:
     auth:
+      issuerURL: "https://idp.example.com/realms/kubernaut"
       audience: "kubernaut-apifrontend"
 ```
 

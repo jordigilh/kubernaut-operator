@@ -163,12 +163,12 @@ spec:
 
   # --- API Frontend (optional) ---
   # The API Frontend provides external MCP/A2A access to Kubernaut Agent.
-  # Its OIDC issuer defaults to the production Kubernaut realm. Set a
-  # complete URL for an external/demo/test realm, or disable AF entirely.
+  # Set the complete issuer URL for the IdP used by this installation, or
+  # disable AF entirely.
   apiFrontend:
     # enabled: false                        # uncomment to disable AF
     auth:
-      issuerURL: "https://login.kubernaut.ai/realms/kubernaut"
+      issuerURL: "https://idp.example.com/realms/kubernaut"
       audience: "kubernaut-apifrontend"     # must match the OIDC client
       # jwksURL is intentionally omitted -- the operator derives it from
       # issuerURL using Keycloak's well-known JWKS path convention
@@ -529,10 +529,10 @@ oc get kubernaut kubernaut -n kubernaut-system \
 
 **API Frontend cannot validate OIDC tokens:**
 
-The AF uses `https://login.kubernaut.ai/realms/kubernaut` when
-`spec.apiFrontend.auth.issuerURL` is omitted. If you use another provider or
-realm, set the complete issuer URL (and, when needed, `jwksURL` and
-`oidcCaFile`). Verify the IdP client, audience, JWKS reachability, and CA trust.
+The AF requires `spec.apiFrontend.auth.issuerURL` when `jwtProviders` is empty;
+the operator does not choose an IdP or generic portal. Set the complete issuer
+URL (and, when needed, `jwksURL` and `oidcCaFile`). Verify the IdP client,
+audience, JWKS reachability, and CA trust.
 If you don't need external MCP/A2A access, disable the AF entirely:
 
 ```yaml

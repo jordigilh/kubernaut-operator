@@ -51,10 +51,10 @@ spec:
     policy:
       configMapName: signalprocessing-policy
 
-  # apiFrontend is enabled by default. When issuerURL is omitted, the
-  # operator uses https://login.kubernaut.ai/realms/kubernaut. Set a complete
-  # external/demo/test issuer URL when using another realm, or set
+  # apiFrontend is enabled by default and requires a complete issuer URL for
+  # your IdP. Replace this example with your real issuer, or set
   # apiFrontend.enabled: false if you do not need API/Console access yet.
   apiFrontend:
     auth:
+      issuerURL: "https://idp.example.com/realms/kubernaut"
       audience: "kubernaut-apifrontend"

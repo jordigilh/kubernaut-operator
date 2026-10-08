@@ -41,10 +41,9 @@ Create a new manifest from the exported object and make these changes:
    SignalProcessing policy references and the required LLM profile map.
 9. Remove legacy `spec.apiFrontend.spire` configuration; v1alpha2 does not
    expose a SPIFFE/SPIRE operator contract. Review
-   `spec.apiFrontend.auth.issuerURL`: omission now selects the
-   production issuer `https://login.kubernaut.ai/realms/kubernaut`; retain a
-   complete explicit external/demo/test URL when the deployment uses another
-   realm. Do not replace it with a short realm name.
+   `spec.apiFrontend.auth.issuerURL`: v1alpha2 requires a complete explicit
+   issuer URL for single-provider API Frontend auth; the operator does not
+   select or synthesize an IdP URL. Do not replace it with a short realm name.
 
 Review the complete v1alpha2 schema with:
 

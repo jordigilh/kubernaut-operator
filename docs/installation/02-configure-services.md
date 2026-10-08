@@ -498,26 +498,21 @@ If omitted, notifications are delivered to the console log and file output only.
 ## API Frontend OIDC
 
 API Frontend and the standalone Console use the same effective OIDC issuer.
-The v1alpha2 production default is:
-
-```text
-https://login.kubernaut.ai/realms/kubernaut
-```
-
-Omit `spec.apiFrontend.auth.issuerURL` to use that default. To use another
-realm, set a complete URL; for example, a demo installation must explicitly
-set:
+The operator is provider-neutral and has no built-in or generic portal URL.
+When `jwtProviders` is empty, set a complete URL for the IdP used by this
+installation:
 
 ```yaml
 spec:
   apiFrontend:
     auth:
-      issuerURL: "https://login.kubernaut.ai/realms/kubernaut-demo"
+      issuerURL: "https://idp.example.com/realms/kubernaut"
       audience: kubernaut-apifrontend
 ```
 
-The operator never constructs an issuer from a short realm name and never
-selects `kubernaut-demo` implicitly. Explicit issuer URLs must use HTTPS;
+Replace the example with the actual issuer URL for the installation. Omitting
+it is a validation error, and the operator never constructs an issuer from a
+short realm name or selects a portal implicitly. Explicit issuer URLs must use HTTPS;
 HTTP is accepted only when `allowInsecureIssuers: true` is deliberately set
 for development or testing. `jwksURL` may be omitted for a Keycloak-compatible
 issuer, in which case the standard realm JWKS path is derived. Set it

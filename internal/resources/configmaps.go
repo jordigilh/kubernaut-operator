@@ -2760,10 +2760,6 @@ func afAuthConfig(kn *kubernautv1alpha2.Kubernaut) afAuthYAML {
 	jwks := af.Auth.JWKSURL
 	insecure := af.Auth.AllowInsecureIssuers
 
-	if issuer == "" && len(af.Auth.JWTProviders) == 0 {
-		issuer = kn.Spec.EffectiveIssuerURL()
-	}
-
 	// kubernaut-operator#462: an empty jwksURL isn't safe to leave for AF's
 	// own runtime to guess -- it falls back to treating the issuer URL
 	// itself as the JWKS endpoint, which for Keycloak returns the realm

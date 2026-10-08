@@ -174,10 +174,10 @@ spec:
   apiFrontend:
     enabled: true
     auth:
-      # The production default. Replace this with a complete external, demo,
-      # or test issuer URL when using another realm; do not use a short realm
-      # name because the operator never guesses or synthesizes issuer URLs.
-      issuerURL: "https://login.kubernaut.ai/realms/kubernaut"
+      # Replace this reserved example with the complete issuer URL for your
+      # IdP; do not use a short realm name because the operator never guesses
+      # or synthesizes issuer URLs.
+      issuerURL: "https://idp.example.com/realms/kubernaut"
       audience: "kubernaut-apifrontend"
     logging:
       level: DEBUG

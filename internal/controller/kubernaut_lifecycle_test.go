@@ -1486,25 +1486,33 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	// ======================================================================
 
 	Context("API Frontend shared OIDC issuer", func() {
-		It("uses the production issuer when issuerURL is omitted", func() {
+		It("rejects a missing issuerURL instead of inventing an identity provider", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
 			cr.Spec.APIFrontend.Auth.IssuerURL = ""
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
-			reconcileToRunning(ctx)
 
-			cm := &corev1.ConfigMap{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: "apifrontend-config", Namespace: testNamespace,
-			}, cm)).To(Succeed())
-			Expect(cm.Data["config.yaml"]).To(ContainSubstring(
-				"issuerURL: https://login.kubernaut.ai/realms/kubernaut"))
+			r := newReconciler()
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
+
+			updated := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(kubernautv1alpha2.PhaseError))
+			cond := findCondition(updated.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal("SpecValidationFailed"))
+			Expect(cond.Message).To(ContainSubstring("spec.apiFrontend.auth.issuerURL"))
 		})
 
 		It("preserves an explicit demo issuer URL", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			cr.Spec.APIFrontend.Auth.IssuerURL = "https://login.kubernaut.ai/realms/kubernaut-demo"
+			cr.Spec.APIFrontend.Auth.IssuerURL = "https://idp.example.com/realms/kubernaut-demo"
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			reconcileToRunning(ctx)
 
@@ -1513,11 +1521,11 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				Name: "apifrontend-config", Namespace: testNamespace,
 			}, cm)).To(Succeed())
 			Expect(cm.Data["config.yaml"]).To(ContainSubstring(
-				"issuerURL: https://login.kubernaut.ai/realms/kubernaut-demo"))
+				"issuerURL: https://idp.example.com/realms/kubernaut-demo"))
 		})
 
 		It("propagates one explicit issuer to API Frontend and Console", func() {
-			const issuer = "https://login.kubernaut.ai/realms/kubernaut-demo"
+			const issuer = "https://idp.example.com/realms/kubernaut-demo"
 			createBYOSecrets(ctx)
 			consoleEnabled := true
 			routeEnabled := false

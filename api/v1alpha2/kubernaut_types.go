@@ -21,14 +21,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// DefaultOIDCIssuerURL is the production OIDC issuer used when a single-provider
-// API Frontend configuration omits auth.issuerURL.
-const DefaultOIDCIssuerURL = "https://login.kubernaut.ai/realms/kubernaut"
-
 const (
 	OIDCIssuerSourceMultiProvider = "multi-provider"
 	OIDCIssuerSourceExplicit      = "explicit"
-	OIDCIssuerSourceProduction    = "production-default"
+	OIDCIssuerSourceUnset         = "unset"
 )
 
 // KubernautSpec defines the desired state of a Kubernaut deployment on
@@ -2169,12 +2165,11 @@ type ToolRoleBinding struct {
 
 // APIFrontendAuthSpec configures OIDC authentication for the API Frontend.
 type APIFrontendAuthSpec struct {
-	// OIDC issuer URL (e.g. "https://login.kubernaut.ai/realms/kubernaut").
-	// When omitted for single-provider auth, the production Kubernaut realm is
-	// used. When jwtProviders is non-empty, multi-provider config takes precedence.
+	// OIDC issuer URL for single-provider auth (e.g.
+	// "https://idp.example.com/realms/kubernaut"). Required when jwtProviders is
+	// empty; when jwtProviders is non-empty, multi-provider config takes precedence.
 	// An explicit value must be an absolute HTTPS URL, or HTTP when
 	// allowInsecureIssuers is true.
-	// +kubebuilder:default="https://login.kubernaut.ai/realms/kubernaut"
 	// +kubebuilder:validation:Pattern=`^https?://.+`
 	// +optional
 	IssuerURL string `json:"issuerURL,omitempty"`
@@ -2330,15 +2325,14 @@ func (s *KubernautSpec) ConsoleEnabled() bool {
 // EffectiveIssuerURL resolves the single OIDC issuer used by the console and
 // by single-provider API Frontend auth. Multi-provider configurations select
 // their first validated provider for Console oauth2-proxy while API Frontend
-// validates every configured provider.
+// validates every configured provider. It returns an empty string when no
+// issuer is configured; reconciliation validation rejects that state for an
+// enabled single-provider API Frontend.
 func (s *KubernautSpec) EffectiveIssuerURL() string {
 	if len(s.APIFrontend.Auth.JWTProviders) > 0 {
 		return s.APIFrontend.Auth.JWTProviders[0].IssuerURL
 	}
-	if s.APIFrontend.Auth.IssuerURL != "" {
-		return s.APIFrontend.Auth.IssuerURL
-	}
-	return DefaultOIDCIssuerURL
+	return s.APIFrontend.Auth.IssuerURL
 }
 
 // EffectiveIssuerSource identifies which API Frontend auth configuration wins
@@ -2351,7 +2345,7 @@ func (s *KubernautSpec) EffectiveIssuerSource() string {
 	if s.APIFrontend.Auth.IssuerURL != "" {
 		return OIDCIssuerSourceExplicit
 	}
-	return OIDCIssuerSourceProduction
+	return OIDCIssuerSourceUnset
 }
 
 // ConsoleIssuerURL derives the OIDC issuer URL for the console oauth2-proxy

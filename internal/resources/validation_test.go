@@ -65,13 +65,13 @@ var _ = Describe("IA-2: AF multi-provider JWT authentication", func() {
 			"IA-2: multi-provider config is sufficient — top-level issuerURL not required")
 	})
 
-	It("IA-2: accepts AF deployment without an issuer because the production default applies", func() {
+	It("IA-2: rejects AF deployment without an explicit issuer", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.IssuerURL = ""
 		kn.Spec.APIFrontend.Auth.JWTProviders = nil
 		errs := ValidateKubernaut(kn)
-		Expect(errs).To(BeEmpty(),
-			"IA-2: the v1alpha2 production issuer default is an authentication source")
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.apiFrontend.auth.issuerURL"))
 	})
 })
 
@@ -260,13 +260,6 @@ var _ = Describe("APIFrontend Validation", func() {
 		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("configMapName"))
-	})
-
-	It("accepts AF without an explicit OAuth/OIDC issuerURL because the production default applies", func() {
-		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.Auth.IssuerURL = ""
-		errs := ValidateKubernaut(kn)
-		Expect(errs).To(BeEmpty())
 	})
 
 	It("accepts valid issuerURL when AF is enabled", func() {

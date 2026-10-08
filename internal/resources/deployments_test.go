@@ -2484,7 +2484,7 @@ var _ = Describe("SignalProcessing/APIFrontend/EffectivenessMonitor Fleet secret
 			CredentialsSecretRef: "fleet-oauth2-creds",
 		}
 		kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
-			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
+			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://idp.example.com/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
 		afDep, err := APIFrontendDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
@@ -2527,7 +2527,7 @@ var _ = Describe("APIFrontend Fleet secret mounts (#464)", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
 		knV2.Spec.Fleet.ScopeCheck.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fmc-ca-bundle"}}
 		kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
-			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
+			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://idp.example.com/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
 		afDep, err := APIFrontendDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
@@ -2547,7 +2547,7 @@ var _ = Describe("APIFrontend Fleet secret mounts (#464)", func() {
 		knV2.Spec.Fleet.ScopeCheck.Endpoint = "https://acm-search.example.com/graphql"
 		knV2.Spec.Fleet.ScopeCheck.TokenSecretRef = &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"}
 		kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
-			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
+			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://idp.example.com/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
 		afDep, err := APIFrontendDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
@@ -2564,7 +2564,7 @@ var _ = Describe("APIFrontend Fleet secret mounts (#464)", func() {
 	It("does not mount fleet-ca or fleet-token when enabled but no secret names are set", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
 		kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
-			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
+			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://idp.example.com/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
 		afDep, err := APIFrontendDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())

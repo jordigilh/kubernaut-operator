@@ -2996,14 +2996,15 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).To(ContainSubstring("issuerURL"))
 	})
 
-	It("renders the production issuer when auth issuerURL is omitted", func() {
+	It("does not invent an issuer when auth issuerURL is omitted", func() {
 		kn := testKubernaut()
 		kn.Spec.APIFrontend.Auth.IssuerURL = ""
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn))
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("port: 8443"))
-		Expect(data).To(ContainSubstring("issuerURL: https://login.kubernaut.ai/realms/kubernaut"))
+		Expect(data).To(ContainSubstring("issuerURL: \"\""))
+		Expect(data).NotTo(ContainSubstring("issuerURL: https://"))
 	})
 
 	// #423 coverage backfill: server.healthPort/metricsPort overrides had
@@ -3063,7 +3064,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn))
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
-		Expect(data).To(ContainSubstring("https://login.kubernaut.ai/realms/kubernaut"))
+		Expect(data).To(ContainSubstring("https://idp.example.com/realms/kubernaut"))
 		Expect(data).To(ContainSubstring("kubernaut-apifrontend"))
 	})
 

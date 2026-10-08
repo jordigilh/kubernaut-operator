@@ -491,11 +491,13 @@ func validateAPIFrontend(kn *kubernautv1alpha2.Kubernaut) []error {
 
 	// IA-2: When jwtProviders is configured, multi-provider JWT auth
 	// satisfies the authentication requirement — top-level issuerURL is
-	// not needed. Otherwise the CRD's production default supplies the issuer
-	// when the field is omitted.
+	// not needed. Otherwise an explicit issuerURL is required; the operator
+	// must never invent or select an identity provider on the user's behalf.
 	hasMultiProvider := len(af.Auth.JWTProviders) > 0
-	if !hasMultiProvider && af.Auth.IssuerURL != "" {
-		if err := validateOIDCURL(
+	if !hasMultiProvider {
+		if af.Auth.IssuerURL == "" {
+			errs = append(errs, fmt.Errorf("spec.apiFrontend.auth.issuerURL: required when jwtProviders is empty"))
+		} else if err := validateOIDCURL(
 			af.Auth.IssuerURL,
 			"spec.apiFrontend.auth.issuerURL",
 			af.Auth.AllowInsecureIssuers,

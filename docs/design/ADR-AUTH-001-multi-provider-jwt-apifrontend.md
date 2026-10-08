@@ -14,8 +14,8 @@
 **Applies To**: kubernaut-operator CRD, ConfigMap generation, CR validation
 
 > **v1alpha2 supersession:** The clean-break v1alpha2 API uses the explicit
-> `spec.apiFrontend.auth.issuerURL` plus the production default documented in
-> issue #479. No external discovery resource, sidecar, or legacy API-version
+> `spec.apiFrontend.auth.issuerURL`; the operator does not own or assume a
+> production IdP default. No external discovery resource, sidecar, or legacy API-version
 > compatibility path supplies the issuer. Sections below that describe an
 > auto-detected issuer or a required legacy issuer are retained only as the
 > historical rationale for the multi-provider shape.
@@ -386,7 +386,8 @@ func validateJWTProviderList(providers []kubernautv1alpha1.JWTProviderSpec, base
 
 **Interaction with single-provider `issuerURL`**:
 - When `jwtProviders` is non-empty, the single-provider `issuerURL` requirement is relaxed (multi-provider takes precedence).
-- When both `jwtProviders` and `issuerURL` are empty, the v1alpha2 resolver supplies the documented production default; this replaces the pre-v1alpha2 required-issuer rule.
+- When both `jwtProviders` and `issuerURL` are empty, v1alpha2 validation rejects
+  the configuration; the operator never invents or discovers an IdP URL.
 
 #### 4. CRD Regeneration
 

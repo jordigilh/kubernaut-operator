@@ -58,20 +58,19 @@ var _ = Describe("Console Resources", func() {
 			Expect(err.Error()).To(ContainSubstring("console"))
 		})
 
-		It("UT-CD-02 [IA-5, CC6.1]: uses the production OIDC issuer when the field is empty", func() {
+		It("UT-CD-02 [IA-5, CC6.1]: rejects deployment when the issuer is empty", func() {
 			kn := testKubernautWithConsole()
 			kn.Spec.APIFrontend.Auth.IssuerURL = ""
 			kn.Spec.APIFrontend.Auth.JWTProviders = nil
 
 			dep, err := ConsoleDeployment(kn, testIngressDomain)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(dep).NotTo(BeNil())
-			Expect(dep.Spec.Template.Spec.Containers[0].Args).To(ContainElement(
-				"--oidc-issuer-url=https://login.kubernaut.ai/realms/kubernaut"))
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("effective OIDC issuer"))
+			Expect(dep).To(BeNil())
 		})
 
 		It("propagates an explicit issuer override identically to Console and API Frontend", func() {
-			const issuer = "https://login.kubernaut.ai/realms/kubernaut-demo"
+			const issuer = "https://idp.example.com/realms/kubernaut-demo"
 			kn := testKubernautWithConsole()
 			kn.Spec.APIFrontend.Auth.IssuerURL = issuer
 

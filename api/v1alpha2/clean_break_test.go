@@ -44,13 +44,12 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		Expect(crd.Spec.Conversion).To(BeNil())
 	})
 
-	It("defaults the single-provider issuer to the production realm", func() {
+	It("does not publish a fabricated issuer default", func() {
 		crd := loadKubernautCRD()
 		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
 		auth := schema.Properties["spec"].Properties["apiFrontend"].Properties["auth"]
 		issuer := auth.Properties["issuerURL"]
-		Expect(issuer.Default).NotTo(BeNil())
-		Expect(string(issuer.Default.Raw)).To(Equal(`"https://login.kubernaut.ai/realms/kubernaut"`))
+		Expect(issuer.Default).To(BeNil())
 	})
 
 	It("does not expose deferred SPIFFE/SPIRE configuration", func() {
@@ -60,10 +59,10 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		Expect(apiFrontend.Properties).NotTo(HaveKey("spire"))
 	})
 
-	It("resolves issuer precedence without synthesizing a realm URL", func() {
+	It("resolves only configured issuer sources", func() {
 		spec := KubernautSpec{}
-		Expect(spec.EffectiveIssuerURL()).To(Equal(DefaultOIDCIssuerURL))
-		Expect(spec.EffectiveIssuerSource()).To(Equal(OIDCIssuerSourceProduction))
+		Expect(spec.EffectiveIssuerURL()).To(BeEmpty())
+		Expect(spec.EffectiveIssuerSource()).To(Equal(OIDCIssuerSourceUnset))
 
 		spec.APIFrontend.Auth.IssuerURL = "https://login.example.com/realms/demo"
 		Expect(spec.EffectiveIssuerURL()).To(Equal("https://login.example.com/realms/demo"))
