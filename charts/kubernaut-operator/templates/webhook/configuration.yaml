@@ -1,0 +1,42 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ include "kubernaut-operator.webhookConfigurationName" . }}
+  labels:
+    {{- include "kubernaut-operator.labels" . | nindent 4 }}
+  {{- if or (eq .Values.webhook.tls.mode "certManager") (eq .Values.webhook.tls.mode "openshift") }}
+  annotations:
+    {{- if eq .Values.webhook.tls.mode "certManager" }}
+    cert-manager.io/inject-ca-from: {{ printf "%s/%s" (include "kubernaut-operator.namespace" .) (include "kubernaut-operator.webhookSecretName" .) | quote }}
+    {{- end }}
+    {{- if eq .Values.webhook.tls.mode "openshift" }}
+    service.beta.openshift.io/inject-cabundle: "true"
+    {{- end }}
+  {{- end }}
+webhooks:
+  - name: singleton.validate.kubernaut.ai
+    admissionReviewVersions:
+      - v1
+    sideEffects: None
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    timeoutSeconds: 10
+    clientConfig:
+      service:
+        namespace: {{ include "kubernaut-operator.namespace" . }}
+        name: {{ include "kubernaut-operator.webhookServiceName" . }}
+        path: /validate-kubernaut-singleton
+        port: 9443
+      {{- if eq .Values.webhook.tls.mode "manual" }}
+      caBundle: {{ required "webhook.tls.caBundle is required when webhook.tls.mode=manual" .Values.webhook.tls.caBundle | quote }}
+      {{- end }}
+    rules:
+      - operations:
+          - CREATE
+        apiGroups:
+          - kubernaut.ai
+        apiVersions:
+          - v1alpha2
+        resources:
+          - kubernauts
+        scope: Namespaced

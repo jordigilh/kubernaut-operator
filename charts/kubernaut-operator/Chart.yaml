@@ -1,0 +1,12 @@
+apiVersion: v2
+name: kubernaut-operator
+description: Operator-only bootstrap chart for the Kubernaut Kubernetes operator
+type: application
+version: 1.6.0-rc20
+appVersion: 1.6.0-rc20
+kubeVersion: ">=1.27.0-0"
+home: https://github.com/jordigilh/kubernaut-operator
+sources:
+  - https://github.com/jordigilh/kubernaut-operator
+maintainers:
+  - name: Kubernaut AI

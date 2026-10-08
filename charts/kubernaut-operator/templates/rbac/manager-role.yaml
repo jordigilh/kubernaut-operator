@@ -1,0 +1,6 @@
+{{- $role := fromYaml (.Files.Get "files/manager-role.yaml") -}}
+{{- $metadata := default (dict) $role.metadata -}}
+{{- $_ := set $metadata "name" "kubernaut-operator-manager-role" -}}
+{{- $_ := set $metadata "labels" (include "kubernaut-operator.labels" . | fromYaml) -}}
+{{- $_ := set $role "metadata" $metadata -}}
+{{ toYaml $role }}

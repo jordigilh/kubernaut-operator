@@ -71,6 +71,7 @@ endif
 # scaffolded by default. However, you might want to replace it to use other
 # tools. (i.e. podman)
 CONTAINER_TOOL ?= docker
+HELM_BIN ?= helm
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -119,6 +120,7 @@ vet: ## Run go vet against code.
 # api/... covers the v1alpha2 API schema and clean-break contract; pure Go, no
 # API server needed.
 UT_PKGS := ./internal/resources/... ./internal/webhook/... ./internal/policy/... ./api/... ./test/e2e/kind/contract/...
+HELM_PKGS := ./test/helm/...
 UNIT_COVERAGE_THRESHOLD ?= 80
 
 .PHONY: test-unit
@@ -154,8 +156,15 @@ test-ci-boundary: ## Verify that operator CI remains independent of the upstream
 	@./hack/verify-ci-boundary.sh
 
 .PHONY: test-pyramid
-test-pyramid: test-security-traceability test-ci-boundary ## Verify independent tiers, production wiring, and the real E2E journey.
+test-pyramid: test-security-traceability test-ci-boundary test-helm ## Verify independent tiers, production wiring, and the real E2E journey.
 	@./hack/verify-test-pyramid.sh
+
+.PHONY: test-helm
+test-helm: ## Validate the operator-only Helm chart and its render contracts.
+	@command -v $(HELM_BIN) >/dev/null 2>&1 || { echo "Helm CLI not found: $(HELM_BIN)"; exit 1; }
+	$(HELM_BIN) lint charts/kubernaut-operator
+	HELM_BIN=$(HELM_BIN) ./hack/verify-helm-chart.sh
+	HELM_BIN=$(HELM_BIN) go test $(HELM_PKGS) -v
 
 .PHONY: test
 test: test-unit test-integration test-pyramid ## Run all tests (unit + integration).
@@ -179,14 +188,27 @@ test-e2e: manifests generate fmt vet ## Run the e2e tests against a live OCP clu
 	go test ./test/e2e/ -v -ginkgo.v -timeout 30m
 
 .PHONY: test-e2e-kind
-test-e2e-kind: fmt vet kustomize ## Run the isolated operator contract Kind E2E suite.
+test-e2e-kind: fmt vet ## Run the isolated Helm-backed operator contract Kind E2E suite.
 	@command -v kind >/dev/null 2>&1 || { echo "kind CLI not found. Install: https://kind.sigs.k8s.io/docs/user/quick-start/"; exit 1; }
 	@command -v kubectl >/dev/null 2>&1 || { echo "kubectl CLI not found."; exit 1; }
+	@command -v $(HELM_BIN) >/dev/null 2>&1 || { echo "Helm CLI not found: $(HELM_BIN)"; exit 1; }
 	@command -v $(CONTAINER_TOOL) >/dev/null 2>&1 || { echo "$(CONTAINER_TOOL) CLI not found."; exit 1; }
-	@if [ "$${KUBERNAUT_E2E_PROVIDER:-generic}" = "cilium" ]; then command -v helm >/dev/null 2>&1 || { echo "helm CLI not found. Install Helm for the selected E2E lane."; exit 1; }; fi
 	$(CONTAINER_TOOL) build --build-arg VERSION=$(KIND_OPERATOR_VERSION) --build-arg GIT_COMMIT=$(GIT_COMMIT) -t $(KIND_OPERATOR_IMAGE) .
 	$(CONTAINER_TOOL) build -f test/e2e/kind/contract/Dockerfile -t $(KIND_CONTRACT_IMAGE) test/e2e/kind/contract
-	KUBERNAUT_OPERATOR_IMAGE=$(KIND_OPERATOR_IMAGE) KUBERNAUT_E2E_CONTRACT_IMAGE=$(KIND_CONTRACT_IMAGE) KUBERNAUT_E2E_OPERATOR_VERSION=$(KIND_OPERATOR_VERSION) KUSTOMIZE_BIN=$(KUSTOMIZE) go test ./test/e2e/kind/ -v -ginkgo.v -timeout 45m
+	HELM_BIN=$(HELM_BIN) KUBERNAUT_OPERATOR_IMAGE=$(KIND_OPERATOR_IMAGE) KUBERNAUT_E2E_CONTRACT_IMAGE=$(KIND_CONTRACT_IMAGE) go test ./test/e2e/kind/ -v -ginkgo.v -timeout 30m
+
+.PHONY: test-e2e-kind-helm
+test-e2e-kind-helm: fmt vet ## Run the isolated operator-only Helm bootstrap Kind E2E suite.
+	@command -v kind >/dev/null 2>&1 || { echo "kind CLI not found. Install: https://kind.sigs.k8s.io/docs/user/quick-start/"; exit 1; }
+	@command -v kubectl >/dev/null 2>&1 || { echo "kubectl CLI not found."; exit 1; }
+	@command -v $(HELM_BIN) >/dev/null 2>&1 || { echo "Helm CLI not found: $(HELM_BIN)"; exit 1; }
+	@command -v $(CONTAINER_TOOL) >/dev/null 2>&1 || { echo "$(CONTAINER_TOOL) CLI not found."; exit 1; }
+	$(CONTAINER_TOOL) build --build-arg VERSION=$(KIND_OPERATOR_VERSION) --build-arg GIT_COMMIT=$(GIT_COMMIT) -t $(KIND_OPERATOR_IMAGE) .
+	HELM_BIN=$(HELM_BIN) KUBERNAUT_OPERATOR_IMAGE=$(KIND_OPERATOR_IMAGE) KUBERNAUT_HELM_E2E_CLUSTER=$${KUBERNAUT_HELM_E2E_CLUSTER:-kubernaut-operator-helm-e2e} go test ./test/e2e/helm/ -v -ginkgo.v -timeout 30m
+
+.PHONY: test-e2e-helm-openshift
+test-e2e-helm-openshift: ## Run the opt-in operator-only Helm bootstrap OpenShift qualification lane.
+	@./hack/test-helm-openshift.sh
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter

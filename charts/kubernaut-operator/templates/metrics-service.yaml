@@ -1,0 +1,22 @@
+{{- if .Values.metrics.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubernaut-operator-metrics
+  namespace: {{ include "kubernaut-operator.namespace" . }}
+  labels:
+    {{- include "kubernaut-operator.labels" . | nindent 4 }}
+  {{- with .Values.metrics.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "kubernaut-operator.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: https
+      port: 8443
+      targetPort: metrics
+      protocol: TCP
+{{- end }}

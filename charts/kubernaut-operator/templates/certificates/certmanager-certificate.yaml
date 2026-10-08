@@ -1,0 +1,28 @@
+{{- if eq .Values.webhook.tls.mode "certManager" }}
+{{- if not .Values.webhook.tls.certManager.issuerRef.name }}
+{{- fail "webhook.tls.certManager.issuerRef.name is required when webhook.tls.mode=certManager" }}
+{{- end }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "kubernaut-operator.webhookSecretName" . }}
+  namespace: {{ include "kubernaut-operator.namespace" . }}
+  labels:
+    {{- include "kubernaut-operator.labels" . | nindent 4 }}
+  annotations:
+    # Keep the cert-manager contract and its output Secret across an operator
+    # uninstall. Reinstalling the same Helm release resumes certificate
+    # management without adopting or deleting administrator-owned material.
+    helm.sh/resource-policy: keep
+spec:
+  secretName: {{ include "kubernaut-operator.webhookSecretName" . }}
+  duration: {{ .Values.webhook.tls.certManager.duration }}
+  renewBefore: {{ .Values.webhook.tls.certManager.renewBefore }}
+  issuerRef:
+    name: {{ .Values.webhook.tls.certManager.issuerRef.name }}
+    kind: {{ .Values.webhook.tls.certManager.issuerRef.kind }}
+    group: cert-manager.io
+  dnsNames:
+    - {{ include "kubernaut-operator.webhookServiceName" . }}.{{ include "kubernaut-operator.namespace" . }}.svc
+    - {{ include "kubernaut-operator.webhookServiceName" . }}.{{ include "kubernaut-operator.namespace" . }}.svc.cluster.local
+{{- end }}

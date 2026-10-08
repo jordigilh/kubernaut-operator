@@ -231,12 +231,19 @@ func kubectlStdin(ctx context.Context, input string, args ...string) (string, er
 }
 
 func helm(ctx context.Context, args ...string) (string, error) {
-	return runCmd(ctx, "helm", args...)
+	return runCmd(ctx, helmBinary(), args...)
 }
 
 func helmInCluster(ctx context.Context, args ...string) (string, error) {
 	fullArgs := append([]string{"--kube-context", clusterContext}, args...)
-	return runCmd(ctx, "helm", fullArgs...)
+	return runCmd(ctx, helmBinary(), fullArgs...)
+}
+
+func helmBinary() string {
+	if binary := strings.TrimSpace(os.Getenv("HELM_BIN")); binary != "" {
+		return binary
+	}
+	return "helm"
 }
 
 func operatorImage() string {
@@ -251,13 +258,6 @@ func contractImage() string {
 		return image
 	}
 	return defaultContractImage
-}
-
-func kustomizeBinary() string {
-	if binary := strings.TrimSpace(os.Getenv("KUSTOMIZE_BIN")); binary != "" {
-		return binary
-	}
-	return "kustomize"
 }
 
 func loadOperatorImage(ctx context.Context) error {
@@ -278,18 +278,21 @@ func loadInfrastructureImages(ctx context.Context) error {
 }
 
 func installOperator(ctx context.Context) error {
-	manifests, err := runCmd(ctx, kustomizeBinary(), "build", filepath.Join(repositoryRoot(), "config", "kind-e2e"))
+	imageArgs, err := operatorImageValues(operatorImage())
 	if err != nil {
-		return fmt.Errorf("building Kind operator manifests: %w", err)
+		return err
 	}
-	if _, err := kubectlStdin(ctx, manifests, "apply", "-f", "-"); err != nil {
-		return fmt.Errorf("installing Kind operator manifests: %w", err)
-	}
-	if _, err := kubectl(
-		ctx, "set", "image", "deployment/"+operatorDeploymentName,
-		"manager="+operatorImage(), "-n", operatorNamespace,
-	); err != nil {
-		return fmt.Errorf("selecting operator image %q: %w", operatorImage(), err)
+	args := make([]string, 0, 11+len(imageArgs))
+	args = append(args,
+		"install", "kubernaut-operator", operatorChartPath(),
+		"--namespace", operatorNamespace,
+		"--create-namespace",
+		"--set", "webhook.tls.mode=development",
+		"--wait", "--timeout", "10m",
+	)
+	args = append(args, imageArgs...)
+	if _, err := helmInCluster(ctx, args...); err != nil {
+		return fmt.Errorf("installing operator Helm chart: %w", err)
 	}
 	if _, err := kubectl(
 		ctx, "rollout", "status", "deployment/"+operatorDeploymentName,
@@ -298,6 +301,27 @@ func installOperator(ctx context.Context) error {
 		return fmt.Errorf("waiting for operator deployment: %w", err)
 	}
 	return nil
+}
+
+func operatorImageValues(image string) ([]string, error) {
+	if at := strings.LastIndex(image, "@"); at > strings.LastIndex(image, "/") {
+		return []string{
+			"--set-string", "image.repository=" + image[:at],
+			"--set-string", "image.digest=" + image[at+1:],
+		}, nil
+	}
+	colon := strings.LastIndex(image, ":")
+	if colon <= strings.LastIndex(image, "/") {
+		return nil, fmt.Errorf("operator image %q must include a tag or digest", image)
+	}
+	return []string{
+		"--set-string", "image.repository=" + image[:colon],
+		"--set-string", "image.tag=" + image[colon+1:],
+	}, nil
+}
+
+func operatorChartPath() string {
+	return filepath.Join(repositoryRoot(), "charts", "kubernaut-operator")
 }
 
 func repositoryRoot() string {
