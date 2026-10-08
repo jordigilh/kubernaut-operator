@@ -24,14 +24,27 @@ import (
 )
 
 const (
-	spireAPIGroup   = "spire.spiffe.io"
-	spireAPIVersion = "v1alpha1"
+	spireAPIGroup       = "spire.spiffe.io"
+	spireAPIVersion     = "v1alpha1"
+	clusterSPIFFEIDName = "kubernaut-apifrontend"
 )
 
-// AFSpiffeID returns the resolved SPIFFE ID for the apifrontend ServiceAccount.
-// Used by the controller to patch the authbridge ConfigMap with a concrete
-// identity value (as opposed to the {{ .TrustDomain }} template used in
-// ClusterSPIFFEID which is resolved server-side by SPIRE).
+// ClusterSPIFFEIDReference returns the identity and name used by the
+// operator-owned API Frontend ClusterSPIFFEID. It is used only to remove the
+// exact registration when SPIRE is disabled or the Kubernaut resource is
+// deleted; provider-owned SPIRE infrastructure is never selected here.
+func ClusterSPIFFEIDReference() *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{}
+	obj.SetAPIVersion(spireAPIGroup + "/" + spireAPIVersion)
+	obj.SetKind("ClusterSPIFFEID")
+	obj.SetName(clusterSPIFFEIDName)
+	return obj
+}
+
+// AFSpiffeID returns the resolved SPIFFE ID for the API Frontend ServiceAccount.
+// It is useful to qualification tooling that needs the expected concrete
+// identity; ClusterSPIFFEID itself keeps SPIRE's trust-domain template by
+// default so the provider remains authoritative.
 func AFSpiffeID(kn *kubernautv1alpha2.Kubernaut) string {
 	td := "localtest.me"
 	if kn.Spec.APIFrontend.SPIRE.TrustDomain != "" {
@@ -47,7 +60,7 @@ func AFSpiffeID(kn *kubernautv1alpha2.Kubernaut) string {
 // The spiffeIDTemplate uses SPIRE's {{ .TrustDomain }} variable by default so
 // the identity matches whatever trust domain the cluster's SPIRE server is
 // configured with (FedRAMP SC-8, IA-5). The path follows the standard
-// /ns/{namespace}/sa/{serviceaccount} convention used by kagenti.
+// /ns/{namespace}/sa/{serviceaccount} convention.
 func ClusterSPIFFEID(kn *kubernautv1alpha2.Kubernaut) (*unstructured.Unstructured, error) {
 	if !kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
 		// SPIRE disabled: no identity to register, not an error. Callers
@@ -67,7 +80,7 @@ func ClusterSPIFFEID(kn *kubernautv1alpha2.Kubernaut) (*unstructured.Unstructure
 	obj := &unstructured.Unstructured{}
 	obj.SetAPIVersion(spireAPIGroup + "/" + spireAPIVersion)
 	obj.SetKind("ClusterSPIFFEID")
-	obj.SetName("kubernaut-apifrontend")
+	obj.SetName(clusterSPIFFEIDName)
 	obj.SetLabels(ComponentLabels(kn, ComponentAPIFrontend))
 
 	spec := map[string]interface{}{

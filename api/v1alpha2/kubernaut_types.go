@@ -21,6 +21,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// DefaultOIDCIssuerURL is the production OIDC issuer used when a single-provider
+// API Frontend configuration omits auth.issuerURL.
+const DefaultOIDCIssuerURL = "https://login.kubernaut.ai/realms/kubernaut"
+
+const (
+	OIDCIssuerSourceMultiProvider = "multi-provider"
+	OIDCIssuerSourceExplicit      = "explicit"
+	OIDCIssuerSourceProduction    = "production-default"
+)
+
 // KubernautSpec defines the desired state of a Kubernaut deployment on
 // Kubernetes. The operator deploys all Kubernaut services into the CR's
 // namespace; OpenShift monitoring, service-CA, and Routes are optional
@@ -1082,6 +1092,7 @@ type JWTProviderSpec struct {
 
 	// OIDC issuer URL for token validation.
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^https?://.+`
 	IssuerURL string `json:"issuerURL"`
 
 	// JWKS endpoint URL for token signature verification (F6 -- required in
@@ -1935,20 +1946,13 @@ func (s *APIFrontendRouteSpec) AFRouteEnabled() bool {
 	return s.Enabled != nil && *s.Enabled
 }
 
-// APIFrontendSPIRESpec configures SPIRE mTLS identity for kagenti agent card
-// verified fetch. The operator creates a ClusterSPIFFEID and injects a
-// SPIRE-aware mTLS sidecar into the AF deployment.
+// APIFrontendSPIRESpec configures SPIRE workload identity registration for the
+// API Frontend ServiceAccount. The operator creates a ClusterSPIFFEID when the
+// external SPIRE Controller Manager CRD is installed. SPIRE Server, agents,
+// workload attestation, and SVID delivery remain provider-owned prerequisites.
 type APIFrontendSPIRESpec struct {
-	// Whether SPIRE mTLS sidecar injection is enabled. Defaults to false
-	// (opt-in) when omitted (kubernaut-operator#459): kagenti's CRD surface
-	// is still pre-1.0 and actively churning upstream (the legacy
-	// Agent/Component CRD is being replaced by AgentRuntime, and the CRD
-	// group itself has shifted between kagenti.dev and rossoctl.dev across
-	// recent releases), so kubernaut-operator no longer assumes kagenti is
-	// present by default. Standalone console+AF with OAuth2 needs no
-	// kagenti/SPIRE involvement at all. Set explicitly to true only when
-	// kagenti is actually installed and its authbridge/envoy sidecar should
-	// terminate AF's mTLS.
+	// Whether the operator should register the API Frontend workload with SPIRE.
+	// Defaults to false (opt-in) when omitted.
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
@@ -1966,9 +1970,8 @@ type APIFrontendSPIRESpec struct {
 	TrustDomain string `json:"trustDomain,omitempty"`
 }
 
-// SPIREEnabled returns true when SPIRE mTLS sidecar injection is active.
-// Defaults to false (opt-in) when the field is nil (not specified in the CR)
-// -- see APIFrontendSPIRESpec.Enabled's doc comment for why (kubernaut-operator#459).
+// SPIREEnabled returns true when SPIRE workload registration is enabled.
+// Defaults to false (opt-in) when the field is nil.
 func (s *APIFrontendSPIRESpec) SPIREEnabled() bool {
 	return s.Enabled != nil && *s.Enabled
 }
@@ -2004,10 +2007,10 @@ type APIFrontendSpec struct {
 	// +optional
 	Ingress IngressSpec `json:"ingress,omitempty"`
 
-	// SPIRE mTLS identity configuration for kagenti agent card discovery
-	// (FedRAMP SC-8, IA-5). When enabled, a ClusterSPIFFEID is created and
-	// a SPIRE-aware mTLS sidecar is injected into the AF deployment so the
-	// kagenti-operator can perform verified fetch with identity binding.
+	// SPIRE workload identity registration for the API Frontend ServiceAccount
+	// (FedRAMP SC-8, IA-5). When enabled, a ClusterSPIFFEID is created when the
+	// external SPIRE Controller Manager CRD is available. The operator does not
+	// install or inject a SPIRE implementation.
 	// +optional
 	SPIRE APIFrontendSPIRESpec `json:"spire,omitempty"`
 
@@ -2060,16 +2063,14 @@ type APIFrontendSpec struct {
 	// +optional
 	Logging LoggingSpec `json:"logging,omitempty"`
 
-	// Override for the AF metrics port. Defaults to 9090 (or 9092 when
-	// kagenti sidecar port shifting is active). Use when cluster policies
+	// Override for the AF metrics port. Defaults to 9090. Use when cluster policies
 	// restrict port ranges.
 	// +kubebuilder:validation:Minimum=1024
 	// +kubebuilder:validation:Maximum=65535
 	// +optional
 	MetricsPort *int32 `json:"metricsPort,omitempty"`
 
-	// Override for the AF health probe port. Defaults to 8081 (or 8082 when
-	// kagenti sidecar port shifting is active). Use when cluster policies
+	// Override for the AF health probe port. Defaults to 8081. Use when cluster policies
 	// restrict port ranges.
 	// +kubebuilder:validation:Minimum=1024
 	// +kubebuilder:validation:Maximum=65535
@@ -2206,8 +2207,12 @@ type ToolRoleBinding struct {
 // APIFrontendAuthSpec configures OIDC authentication for the API Frontend.
 type APIFrontendAuthSpec struct {
 	// OIDC issuer URL (e.g. "https://login.kubernaut.ai/realms/kubernaut").
-	// Used for single-provider auth or kagenti auto-detection fallback.
-	// When jwtProviders is non-empty, multi-provider config takes precedence.
+	// When omitted for single-provider auth, the production Kubernaut realm is
+	// used. When jwtProviders is non-empty, multi-provider config takes precedence.
+	// An explicit value must be an absolute HTTPS URL, or HTTP when
+	// allowInsecureIssuers is true.
+	// +kubebuilder:default="https://login.kubernaut.ai/realms/kubernaut"
+	// +kubebuilder:validation:Pattern=`^https?://.+`
 	// +optional
 	IssuerURL string `json:"issuerURL,omitempty"`
 
@@ -2359,13 +2364,37 @@ func (s *KubernautSpec) ConsoleEnabled() bool {
 	return s.Console.Enabled != nil && *s.Console.Enabled
 }
 
-// ConsoleIssuerURL derives the OIDC issuer URL for the console oauth2-proxy
-// from the API Frontend auth configuration.
-func (s *KubernautSpec) ConsoleIssuerURL() string {
+// EffectiveIssuerURL resolves the single OIDC issuer used by the console and
+// by single-provider API Frontend auth. Multi-provider configurations select
+// their first validated provider for Console oauth2-proxy while API Frontend
+// validates every configured provider.
+func (s *KubernautSpec) EffectiveIssuerURL() string {
 	if len(s.APIFrontend.Auth.JWTProviders) > 0 {
 		return s.APIFrontend.Auth.JWTProviders[0].IssuerURL
 	}
-	return s.APIFrontend.Auth.IssuerURL
+	if s.APIFrontend.Auth.IssuerURL != "" {
+		return s.APIFrontend.Auth.IssuerURL
+	}
+	return DefaultOIDCIssuerURL
+}
+
+// EffectiveIssuerSource identifies which API Frontend auth configuration wins
+// when the shared issuer is resolved. It is intended for structured
+// reconciliation logs and does not expose credential material.
+func (s *KubernautSpec) EffectiveIssuerSource() string {
+	if len(s.APIFrontend.Auth.JWTProviders) > 0 {
+		return OIDCIssuerSourceMultiProvider
+	}
+	if s.APIFrontend.Auth.IssuerURL != "" {
+		return OIDCIssuerSourceExplicit
+	}
+	return OIDCIssuerSourceProduction
+}
+
+// ConsoleIssuerURL derives the OIDC issuer URL for the console oauth2-proxy
+// from the shared API Frontend auth configuration.
+func (s *KubernautSpec) ConsoleIssuerURL() string {
+	return s.EffectiveIssuerURL()
 }
 
 // DataStorageSpec configures the DataStorage service.

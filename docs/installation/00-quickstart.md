@@ -9,7 +9,7 @@ If you want the fuller, every-knob-annotated walkthrough instead (LLM reasoning,
 Mandatory-ness comes from two different places, and it matters which one applies:
 
 - **Schema-required** (enforced by the Kubernetes API server itself, before the object is even persisted): `spec.postgresql`, `spec.valkey`, `spec.llmProfiles`, `spec.kubernautAgent`, `spec.aiAnalysis.policy.configMapName`, `spec.signalProcessing.policy.configMapName`. Omit any of these and `oc apply` is rejected immediately with a validation error -- there's no operator-bundled default for any of them (this matches the upstream Helm chart's own behavior exactly: `helm install` fails the same way).
-- **Operator-required** (enforced at reconcile time, after admission succeeds): LLM profile content (`provider`/`model`/`credentialsSecretName`, plus `endpoint` for `provider: openai`), and `apiFrontend.auth.issuerURL` whenever API Frontend is enabled (the default). These pass admission but the CR gets stuck with a `SpecValidationFailed`/`BYOValidated=False` condition until fixed.
+- **Operator-required** (enforced at reconcile time, after admission succeeds): LLM profile content (`provider`/`model`/`credentialsSecretName`, plus `endpoint` for `provider: openai`). API Frontend uses `https://login.kubernaut.ai/realms/kubernaut` when `auth.issuerURL` is omitted; set a complete issuer URL for another realm.
 
 ## 1. Prerequisites
 
@@ -19,7 +19,7 @@ Provision these before applying the CR (see [Infrastructure Prerequisites](01-in
 - PostgreSQL 15+, reachable, with a Secret containing `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`.
 - Valkey/Redis 7+, reachable, with a Secret containing key `valkey-secrets.yaml`.
 - LLM API credentials (OpenAI, Anthropic, or GCP Vertex AI) in a Secret.
-- An OIDC issuer for API Frontend (e.g. RHBK/Keycloak) -- or set `apiFrontend.enabled: false` in the CR below if you don't have one yet and want to add API/Console access later.
+- An OIDC provider configured with the production realm (or an explicit external/demo/test issuer URL) for API Frontend -- or set `apiFrontend.enabled: false` in the CR below if you don't need API/Console access yet.
 
 Both Rego policy ConfigMaps below are schema-required with no bundled default -- create minimal starter policies now (tune them properly later, see [Configure Services](02-configure-services.md#signal-processing-sp----classification-policy-required) and [Configure Services](02-configure-services.md#ai-analysis-aa----approval-policy-required)):
 
@@ -101,12 +101,11 @@ spec:
     policy:
       configMapName: signalprocessing-policy
 
-  # apiFrontend is enabled by default and requires an OIDC issuer -- replace
-  # with your real IdP, or set apiFrontend.enabled: false if you don't have
-  # one yet.
+  # apiFrontend is enabled by default and uses the production issuer when
+  # issuerURL is omitted. Set a complete external/demo/test URL for another
+  # realm, or set apiFrontend.enabled: false if you do not need API access yet.
   apiFrontend:
     auth:
-      issuerURL: "https://login.example.com/realms/kubernaut"
       audience: "kubernaut-apifrontend"
 ```
 

@@ -42,6 +42,8 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	configuredTLS, err = tlsSourceFromEnvironment()
 	Expect(err).NotTo(HaveOccurred())
+	configuredSPIRE, err = spireEnabledFromEnvironment()
+	Expect(err).NotTo(HaveOccurred())
 
 	clusterContext = kubeContext()
 	SetDefaultEventuallyTimeout(3 * time.Minute)
@@ -70,6 +72,11 @@ var _ = BeforeSuite(func() {
 
 	By("waiting for cluster DNS")
 	Expect(waitForDNS(ctx)).To(Succeed())
+
+	if configuredSPIRE {
+		By("installing the pinned SPIRE qualification provider")
+		Expect(installSPIRE(ctx)).To(Succeed())
+	}
 
 	if configuredTLS == tlsCertManager {
 		By("installing the pinned cert-manager source")
@@ -101,6 +108,13 @@ var _ = AfterSuite(func() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	if configuredSPIRE {
+		if err := deleteSPIREQualificationWorkloads(ctx); err != nil {
+			_, _ = fmt.Fprintf(
+				GinkgoWriter, "warning: deleting SPIRE qualification fixtures failed: %v\n", err, //nolint:errcheck
+			)
+		}
+	}
 	cleanupProbeWorkloads(ctx)
 	deleteKindCluster(ctx)
 })

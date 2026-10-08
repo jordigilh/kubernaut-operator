@@ -32,15 +32,15 @@ namespace created by an older operator version would keep running
 *without* the `restricted` PSA backstop indefinitely after an upgrade,
 since nothing ever patches it. This is the same category of problem the
 operator already solved for a different namespace (the AF/SPIRE app
-namespace) via `ensurePSALabels()`/`ensureKagentiNamespaceLabel()`
-(`internal/controller/kubernaut_controller.go:1484-1526`), which `Get`s
-the namespace on every reconcile and patches in any missing PSA label.
+namespace) via its existing namespace-label reconciliation path
+(`internal/controller/kubernaut_controller.go`), which `Get`s the namespace
+on every reconcile and patches in any missing PSA label.
 Per product decision, this PR includes the same reconcile-time patch
 behavior for `kubernaut-workflows`, closing the upgrade-path gap now.
 
 **Explicitly out of scope**: the existing *privileged* SPIFFE-CSI
-namespace labeling logic (`ensurePSALabels`, unrelated namespace/purpose)
-and any Helm-chart-side change (this issue is operator-only; the Helm
+namespace labeling logic for its unrelated namespace/purpose, and any
+Helm-chart-side change (this issue is operator-only; the Helm
 chart already has its own equivalent). No new CR/CRD field is introduced
 -- unconditional, matching kubernaut's non-configurable decision in
 BR-WE-018.
@@ -69,7 +69,7 @@ applies configuration settings; secure-by-default posture).
 | WNS-001 | AC-4    | `WorkflowNamespace()` sets `pod-security.kubernetes.io/enforce`, `/audit`, and `/warn` all to `restricted` | Yes |
 | WNS-002 | CM-6    | The PSA labels are present alongside the existing `CommonLabels()` (managed-by/part-of/instance), not instead of them | Yes |
 
-### 3.2 Reconcile-time patch on pre-existing namespace (`internal/controller/kubernaut_lifecycle_test.go`, fake-client unit tests mirroring "Kagenti Namespace Label")
+### 3.2 Reconcile-time patch on pre-existing namespace (`internal/controller/kubernaut_lifecycle_test.go`, fake-client unit tests mirroring existing namespace-label reconciliation)
 
 Business objective: an operator upgrade must converge an existing
 `kubernaut-workflows` namespace (created by an older operator version) to
@@ -107,4 +107,4 @@ Invariant: IT proves wiring).
 - All scenarios above pass via `make test-unit` and `make test-integration`.
 - `make lint` reports 0 issues.
 - No CRD/CR field added or changed -- `make generate`/`make manifests` produce no diff.
-- No behavior change for the SPIFFE-CSI `ensurePSALabels()`/`ensureKagentiNamespaceLabel()` path (different namespace, different PSA level, untouched).
+- No behavior change for the existing privileged SPIFFE-CSI namespace-label path (different namespace, different PSA level, untouched).

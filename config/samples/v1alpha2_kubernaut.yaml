@@ -174,10 +174,11 @@ spec:
   apiFrontend:
     enabled: true
     auth:
-      issuerURL: "https://keycloak-keycloak.apps.dev.redhat-internal.com/realms/kagenti"
-      audience: "https://keycloak-keycloak.apps.dev.redhat-internal.com/realms/kagenti"
-      jwksURL: "http://keycloak-service.keycloak:8080/realms/kagenti/protocol/openid-connect/certs"
-      allowInsecureIssuers: true
+      # The production default. Replace this with a complete external, demo,
+      # or test issuer URL when using another realm; do not use a short realm
+      # name because the operator never guesses or synthesizes issuer URLs.
+      issuerURL: "https://login.kubernaut.ai/realms/kubernaut"
+      audience: "kubernaut-apifrontend"
     logging:
       level: DEBUG
     rateLimit:
@@ -190,7 +191,10 @@ spec:
     shutdown:
       drainSeconds: 15
     spire:
-      enabled: true
+      # Opt-in registration only. A SPIRE Controller Manager/provider must be
+      # installed separately; this operator does not install SPIRE or inject
+      # SVIDs. See docs/installation/02-configure-services.md.
+      enabled: false
       className: zero-trust-workload-identity-manager-spire
     rbac:
       sarCacheTTL: "30s"

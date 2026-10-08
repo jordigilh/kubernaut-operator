@@ -303,6 +303,14 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 		}).Should(Succeed())
 	})
 
+	It("E2E-SPIRE-001 [SC-8, IA-5, SC-13] qualifies provider-owned SVID delivery, "+
+		"mTLS authorization, rotation, and scoped cleanup", func() {
+		if !configuredSPIRE {
+			return
+		}
+		Expect(ensureSPIREQualification(ctx)).To(Succeed())
+	})
+
 	It("preserves a user-owned provider policy while cleaning up the CR journey", func() {
 		if configuredProvider != providerGeneric {
 			Expect(applyUnmanagedNativePolicy(ctx)).To(Succeed())

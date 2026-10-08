@@ -211,10 +211,14 @@ spec:
                           session authenticity).'
                         type: string
                       issuerURL:
+                        default: https://login.kubernaut.ai/realms/kubernaut
                         description: |-
                           OIDC issuer URL (e.g. "https://login.kubernaut.ai/realms/kubernaut").
-                          Used for single-provider auth or kagenti auto-detection fallback.
-                          When jwtProviders is non-empty, multi-provider config takes precedence.
+                          When omitted for single-provider auth, the production Kubernaut realm is
+                          used. When jwtProviders is non-empty, multi-provider config takes precedence.
+                          An explicit value must be an absolute HTTPS URL, or HTTP when
+                          allowInsecureIssuers is true.
+                        pattern: ^https?://.+
                         type: string
                       jwksURL:
                         description: |-
@@ -264,6 +268,7 @@ spec:
                             issuerURL:
                               description: OIDC issuer URL for token validation.
                               minLength: 1
+                              pattern: ^https?://.+
                               type: string
                             jwksURL:
                               description: |-
@@ -320,8 +325,7 @@ spec:
                     type: object
                   healthPort:
                     description: |-
-                      Override for the AF health probe port. Defaults to 8081 (or 8082 when
-                      kagenti sidecar port shifting is active). Use when cluster policies
+                      Override for the AF health probe port. Defaults to 8081. Use when cluster policies
                       restrict port ranges.
                     format: int32
                     maximum: 65535
@@ -409,8 +413,7 @@ spec:
                     type: object
                   metricsPort:
                     description: |-
-                      Override for the AF metrics port. Defaults to 9090 (or 9092 when
-                      kagenti sidecar port shifting is active). Use when cluster policies
+                      Override for the AF metrics port. Defaults to 9090. Use when cluster policies
                       restrict port ranges.
                     format: int32
                     maximum: 65535
@@ -671,10 +674,10 @@ spec:
                     type: object
                   spire:
                     description: |-
-                      SPIRE mTLS identity configuration for kagenti agent card discovery
-                      (FedRAMP SC-8, IA-5). When enabled, a ClusterSPIFFEID is created and
-                      a SPIRE-aware mTLS sidecar is injected into the AF deployment so the
-                      kagenti-operator can perform verified fetch with identity binding.
+                      SPIRE workload identity registration for the API Frontend ServiceAccount
+                      (FedRAMP SC-8, IA-5). When enabled, a ClusterSPIFFEID is created when the
+                      external SPIRE Controller Manager CRD is available. The operator does not
+                      install or inject a SPIRE implementation.
                     properties:
                       className:
                         description: |-
@@ -683,16 +686,8 @@ spec:
                         type: string
                       enabled:
                         description: |-
-                          Whether SPIRE mTLS sidecar injection is enabled. Defaults to false
-                          (opt-in) when omitted (kubernaut-operator#459): kagenti's CRD surface
-                          is still pre-1.0 and actively churning upstream (the legacy
-                          Agent/Component CRD is being replaced by AgentRuntime, and the CRD
-                          group itself has shifted between kagenti.dev and rossoctl.dev across
-                          recent releases), so kubernaut-operator no longer assumes kagenti is
-                          present by default. Standalone console+AF with OAuth2 needs no
-                          kagenti/SPIRE involvement at all. Set explicitly to true only when
-                          kagenti is actually installed and its authbridge/envoy sidecar should
-                          terminate AF's mTLS.
+                          Whether the operator should register the API Frontend workload with SPIRE.
+                          Defaults to false (opt-in) when omitted.
                         type: boolean
                       trustDomain:
                         description: |-

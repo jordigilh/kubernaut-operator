@@ -374,7 +374,7 @@ var _ = Describe("FleetMetadataCacheService", func() {
 
 	It("is included in Services() when fleetMetadataCache.enabled is true", func() {
 		kn, knV2 := testKubernautWithFMC()
-		svcs := Services(kn, knV2, KagentiSidecarNone)
+		svcs := Services(kn, knV2)
 		names := make([]string, 0, len(svcs))
 		for _, s := range svcs {
 			names = append(names, s.Name)
@@ -384,7 +384,7 @@ var _ = Describe("FleetMetadataCacheService", func() {
 
 	It("is excluded from Services() when fleetMetadataCache.enabled is false", func() {
 		kn := testKubernaut()
-		svcs := Services(kn, testKnV2(kn), KagentiSidecarNone)
+		svcs := Services(kn, testKnV2(kn))
 		names := make([]string, 0, len(svcs))
 		for _, s := range svcs {
 			names = append(names, s.Name)

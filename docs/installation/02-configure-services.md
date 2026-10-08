@@ -495,6 +495,87 @@ spec:
 
 If omitted, notifications are delivered to the console log and file output only.
 
+## API Frontend OIDC and optional SPIRE identity
+
+API Frontend and the standalone Console use the same effective OIDC issuer.
+The v1alpha2 production default is:
+
+```text
+https://login.kubernaut.ai/realms/kubernaut
+```
+
+Omit `spec.apiFrontend.auth.issuerURL` to use that default. To use another
+realm, set a complete URL; for example, a demo installation must explicitly
+set:
+
+```yaml
+spec:
+  apiFrontend:
+    auth:
+      issuerURL: "https://login.kubernaut.ai/realms/kubernaut-demo"
+      audience: kubernaut-apifrontend
+```
+
+The operator never constructs an issuer from a short realm name and never
+selects `kubernaut-demo` implicitly. Explicit issuer URLs must use HTTPS;
+HTTP is accepted only when `allowInsecureIssuers: true` is deliberately set
+for development or testing. `jwksURL` may be omitted for a Keycloak-compatible
+issuer, in which case the standard realm JWKS path is derived. Set it
+explicitly for other providers.
+
+When `jwtProviders` is non-empty, API Frontend validates all listed providers
+and renders the complete list. Console oauth2-proxy uses the first validated
+provider's issuer. Keep that provider suitable for browser login and configure
+its client with the Console redirect URI and the API Frontend audience as
+needed. Changing realms invalidates existing tokens and Console cookies;
+update the IdP clients, audiences, redirect URIs, JWKS reachability, and CA
+trust together.
+
+If external MCP/A2A access is not needed, disable the API Frontend explicitly:
+
+```yaml
+spec:
+  apiFrontend:
+    enabled: false
+```
+
+SPIRE is independent of OIDC. Setting `spec.apiFrontend.spire.enabled: true`
+only asks the operator to register the API Frontend ServiceAccount with an
+already-installed SPIRE Controller Manager through `ClusterSPIFFEID`:
+
+```yaml
+spec:
+  apiFrontend:
+    spire:
+      enabled: true
+      className: zero-trust-workload-identity-manager-spire # optional
+      # trustDomain: spiffe.example.com                  # optional override
+```
+
+The operator does not install SPIRE, inject CSI volumes or sidecars, issue or
+rotate SVIDs, distribute trust bundles, or prove an mTLS handshake. Those are
+provider-owned and require a separate live qualification lane. Keep this flag
+disabled unless the external provider and its non-Kagenti delivery mechanism
+are installed. Kagenti/rossctl resources, ConfigMaps, and webhooks are not
+v1.6 prerequisites.
+
+The repository includes an opt-in, manual/nightly qualification lane for the
+provider boundary. It downloads and checksum-verifies SPIRE Helm chart
+`spire-0.13.0`, installs SPIRE Server, Agents, Controller Manager, and the
+SPIFFE CSI driver, then exercises the API Frontend ServiceAccount identity,
+SVID renewal, URI-SAN mTLS authorization, wrong-peer rejection, and scoped
+`ClusterSPIFFEID` cleanup:
+
+```bash
+KUBERNAUT_E2E_SPIRE=true make test-e2e-kind
+```
+
+The lane temporarily adds a CSI/probe sidecar to the test API Frontend pod;
+that test-only wiring is not part of the production operator Deployment. The
+default `make test-e2e-kind` lane does not install SPIRE. X.509-SVID
+qualification does not qualify SPIRE JWT-SVID providers or OAuth2 issuer
+configuration; those require separate issuer/JWKS acceptance tests.
+
 ## Console (optional)
 
 The standalone web Console (A2A chat UI, `spec.console.enabled`) is fronted by an oauth2-proxy sidecar that needs its own OIDC client -- distinct from the Fleet client-credentials clients above and from AF's own OIDC config. Provision a **confidential, Authorization Code flow** client (`standardFlowEnabled`, not a service-account/client-credentials client) on your OIDC provider:

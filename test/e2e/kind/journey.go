@@ -513,6 +513,21 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 			},
 		}
 	}
+	apiFrontend := kubernautv1alpha2.APIFrontendSpec{Enabled: ptr.To(false)}
+	if configuredSPIRE {
+		apiFrontend = kubernautv1alpha2.APIFrontendSpec{
+			Enabled: ptr.To(true),
+			Auth: kubernautv1alpha2.APIFrontendAuthSpec{
+				IssuerURL: kubernautv1alpha2.DefaultOIDCIssuerURL,
+				Audience:  "kubernaut-apifrontend",
+				JWKSURL:   kubernautv1alpha2.DefaultOIDCIssuerURL + "/protocol/openid-connect/certs",
+			},
+			SPIRE: kubernautv1alpha2.APIFrontendSPIRESpec{
+				Enabled:     ptr.To(true),
+				TrustDomain: spireTrustDomain,
+			},
+		}
+	}
 	return &kubernautv1alpha2.Kubernaut{
 		TypeMeta:   metav1.TypeMeta{APIVersion: kubernautv1alpha2.GroupVersion.String(), Kind: "Kubernaut"},
 		ObjectMeta: metav1.ObjectMeta{Name: kubernautv1alpha2.SingletonName, Namespace: kubernautNamespace},
@@ -548,7 +563,7 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 			},
 			KubernautAgent:  kubernautv1alpha2.KubernautAgentSpec{LLMProfileRef: "primary"},
 			Gateway:         kubernautv1alpha2.GatewaySpec{Enabled: ptr.To(false)},
-			APIFrontend:     kubernautv1alpha2.APIFrontendSpec{Enabled: ptr.To(false)},
+			APIFrontend:     apiFrontend,
 			TLS:             tls,
 			NetworkPolicies: kubernautv1alpha2.NetworkPoliciesSpec{Provider: provider},
 		},

@@ -52,7 +52,7 @@ var _ = Describe("IA-2: AF multi-provider JWT authentication", func() {
 
 	It("IA-2: accepts AF with multiple concurrent OIDC providers for multi-source authentication", func() {
 		kn := withAFProviders([]kubernautv1alpha2.JWTProviderSpec{keycloakProvider, spireProvider})
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty(),
 			"IA-2: platform must support concurrent JWT validation from multiple OIDC issuers")
 	})
@@ -60,19 +60,18 @@ var _ = Describe("IA-2: AF multi-provider JWT authentication", func() {
 	It("IA-2: satisfies authentication requirement when jwtProviders replaces top-level issuerURL", func() {
 		kn := withAFProviders([]kubernautv1alpha2.JWTProviderSpec{keycloakProvider})
 		kn.Spec.APIFrontend.Auth.IssuerURL = ""
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty(),
 			"IA-2: multi-provider config is sufficient — top-level issuerURL not required")
 	})
 
-	It("IA-2: rejects AF deployment without any authentication source", func() {
+	It("IA-2: accepts AF deployment without an issuer because the production default applies", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.IssuerURL = ""
 		kn.Spec.APIFrontend.Auth.JWTProviders = nil
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("IA-2"),
-			"IA-2: error must reference FedRAMP control when no auth source is configured")
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty(),
+			"IA-2: the v1alpha2 production issuer default is an authentication source")
 	})
 })
 
@@ -86,7 +85,7 @@ var _ = Describe("SC-23: per-provider audience binding", func() {
 				Audiences: []string{},
 			},
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).NotTo(BeEmpty())
 		Expect(errs[0].Error()).To(ContainSubstring("audiences"),
 			"SC-23: validation must require at least one audience for session authenticity")
@@ -101,7 +100,7 @@ var _ = Describe("SC-23: per-provider audience binding", func() {
 				Audiences: []string{"kubernaut-console", "kubernaut-api"},
 			},
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty(),
 			"SC-23: multi-audience binding is valid for federated token validation")
 	})
@@ -118,7 +117,7 @@ var _ = Describe("SC-8: JWKS endpoint transmission confidentiality", func() {
 				Audiences: []string{"kubernaut"},
 			},
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("scheme must be https"),
 			"SC-8: token signature verification must use encrypted channel")
@@ -137,7 +136,7 @@ var _ = Describe("SC-8: JWKS endpoint transmission confidentiality", func() {
 				Audiences: []string{"kubernaut"},
 			},
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty(),
 			"SC-8: dev/test environments may use HTTP JWKS when explicitly opted in")
 	})
@@ -152,9 +151,26 @@ var _ = Describe("SC-8: JWKS endpoint transmission confidentiality", func() {
 				Audiences: []string{"kubernaut"},
 			},
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty(),
 			"SC-8: HTTPS JWKS endpoints satisfy transmission confidentiality")
+	})
+
+	It("SC-8: rejects unsupported JWKS schemes even when HTTP is explicitly allowed", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.AllowInsecureIssuers = true
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{
+			{
+				Name:      "unsupported-scheme",
+				IssuerURL: "https://idp.example.com",
+				JWKSURL:   "ftp://idp.example.com/jwks",
+				Audiences: []string{"kubernaut"},
+			},
+		}
+
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("scheme must be https"))
 	})
 })
 
@@ -165,7 +181,7 @@ var _ = Describe("CM-6: provider identity uniqueness", func() {
 			{Name: "keycloak", IssuerURL: "https://kc1.example.com", Audiences: []string{"aud1"}},
 			{Name: "keycloak", IssuerURL: "https://kc2.example.com", Audiences: []string{"aud2"}},
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).NotTo(BeEmpty())
 		Expect(errs[0].Error()).To(ContainSubstring("duplicate"),
 			"CM-6: duplicate provider names create ambiguous configuration")
@@ -176,7 +192,7 @@ var _ = Describe("CM-6: provider identity uniqueness", func() {
 		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{
 			{Name: "no-issuer", IssuerURL: "", Audiences: []string{"kubernaut"}},
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).NotTo(BeEmpty())
 		Expect(errs[0].Error()).To(ContainSubstring("issuerURL"),
 			"CM-6: each provider must have a non-empty issuerURL for deterministic config")
@@ -187,7 +203,7 @@ var _ = Describe("PostgreSQL SSLMode Validation", func() {
 	It("rejects sslMode=disable", func() {
 		kn := testKubernaut()
 		kn.Spec.PostgreSQL.SSLMode = "disable"
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("disable"))
 		Expect(errs[0].Error()).To(ContainSubstring("SC-8"))
@@ -196,21 +212,21 @@ var _ = Describe("PostgreSQL SSLMode Validation", func() {
 	It("accepts sslMode=verify-full", func() {
 		kn := testKubernaut()
 		kn.Spec.PostgreSQL.SSLMode = DefaultSSLMode
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
 	It("accepts sslMode=verify-ca", func() {
 		kn := testKubernaut()
 		kn.Spec.PostgreSQL.SSLMode = "verify-ca"
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
 	It("accepts empty sslMode (defaults to verify-full in ConfigMap)", func() {
 		kn := testKubernaut()
 		kn.Spec.PostgreSQL.SSLMode = ""
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 })
@@ -219,7 +235,7 @@ var _ = Describe("APIFrontend Validation", func() {
 	It("rejects invalid agentCardURL", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.AgentCardURL = malformedURL
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("agentCardURL"))
 	})
@@ -227,55 +243,71 @@ var _ = Describe("APIFrontend Validation", func() {
 	It("accepts valid agentCardURL", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.AgentCardURL = "https://kubernaut.example.com/.well-known/agent.json"
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
 	It("accepts empty agentCardURL", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.AgentCardURL = ""
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
 	It("rejects empty configMapName in rbacRolesConfigMapRef", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.RBACRolesConfigMapRef = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: ""} //nolint:staticcheck // exercising deprecated-field backward compat
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("configMapName"))
 	})
 
-	It("rejects AF without OAuth/OIDC issuerURL (FedRAMP IA-2, CM-6)", func() {
+	It("accepts AF without an explicit OAuth/OIDC issuerURL because the production default applies", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.IssuerURL = ""
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("issuerURL"))
-		Expect(errs[0].Error()).To(ContainSubstring("OAuth/OIDC"))
-		Expect(errs[0].Error()).To(ContainSubstring("IA-2"))
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
 	})
 
 	It("accepts valid issuerURL when AF is enabled", func() {
 		kn := testKubernautWithAF()
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
-	It("IA-2: skips issuerURL requirement when kagenti authbridge sidecar is active", func() {
+	It("rejects a relative issuerURL even when an internal sidecar mode is supplied", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.Auth.IssuerURL = ""
-		errs := ValidateKubernaut(kn, KagentiSidecarAuthbridge)
-		Expect(errs).To(BeEmpty(),
-			"IA-2: issuerURL must not be required when kagenti auto-detection is available")
+		kn.Spec.APIFrontend.Auth.IssuerURL = "not-a-url"
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("issuerURL"))
 	})
 
-	It("IA-2: skips issuerURL requirement when kagenti envoy sidecar is active", func() {
+	It("rejects an HTTP issuerURL unless insecure issuers are explicitly allowed", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.Auth.IssuerURL = ""
-		errs := ValidateKubernaut(kn, KagentiSidecarEnvoy)
-		Expect(errs).To(BeEmpty(),
-			"IA-2: issuerURL must not be required when kagenti auto-detection is available (envoy mode)")
+		kn.Spec.APIFrontend.Auth.IssuerURL = "http://idp.example.com/realms/test"
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("scheme must be https"))
+		Expect(errs[0].Error()).To(ContainSubstring("allowInsecureIssuers"))
+	})
+
+	It("accepts an HTTP issuerURL when insecure issuers are explicitly allowed", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.IssuerURL = "http://idp.example.com/realms/test"
+		kn.Spec.APIFrontend.Auth.AllowInsecureIssuers = true
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(BeEmpty())
+	})
+
+	It("rejects a malformed provider issuerURL", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{
+			{Name: "bad", IssuerURL: "relative", JWKSURL: "https://idp.example.com/jwks", Audiences: []string{"aud"}},
+		}
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("jwtProviders[0].issuerURL"))
 	})
 
 	It("skips issuerURL check when AF is disabled", func() {
@@ -283,7 +315,7 @@ var _ = Describe("APIFrontend Validation", func() {
 		disabled := false
 		kn.Spec.APIFrontend.Enabled = &disabled
 		kn.Spec.APIFrontend.Auth.IssuerURL = ""
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -292,7 +324,7 @@ var _ = Describe("APIFrontend Validation", func() {
 		disabled := false
 		kn.Spec.APIFrontend.Enabled = &disabled
 		kn.Spec.APIFrontend.AgentCardURL = malformedURL
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 })
@@ -306,7 +338,7 @@ var _ = Describe("ToolRoleBinding Validation", func() {
 				{Role: "sre", Groups: []string{"team-b"}},
 			},
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("duplicate"))
 	})
@@ -319,14 +351,14 @@ var _ = Describe("ToolRoleBinding Validation", func() {
 				{Role: "cicd", Groups: []string{"ci-bots"}},
 			},
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
 	It("accepts empty roleBindings list", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -337,7 +369,7 @@ var _ = Describe("ToolRoleBinding Validation", func() {
 				{Role: "unknown-persona", Groups: []string{"team-x"}},
 			},
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("unknown"))
 	})
@@ -347,7 +379,7 @@ var _ = Describe("ToolRoleBinding Validation", func() {
 		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
 			SARCacheTTL: "not-a-duration",
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("sarCacheTTL"))
 	})
@@ -361,7 +393,7 @@ var _ = Describe("ToolRoleBinding Validation", func() {
 				{Role: "sre", ClusterRoleName: "my-custom-role", Groups: []string{"team-a"}},
 			},
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("mutually exclusive"))
 	})
@@ -373,7 +405,7 @@ var _ = Describe("ToolRoleBinding Validation", func() {
 				{Groups: []string{"team-a"}},
 			},
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("one of role or clusterRoleName"))
 	})
@@ -385,7 +417,7 @@ var _ = Describe("ToolRoleBinding Validation", func() {
 				{ClusterRoleName: "my-custom-role", Groups: []string{"team-a"}},
 			},
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -397,7 +429,7 @@ var _ = Describe("ToolRoleBinding Validation", func() {
 				{ClusterRoleName: "my-custom-role", Groups: []string{"custom-team"}},
 			},
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 })
@@ -414,7 +446,7 @@ var _ = Describe("AlignmentCheck Validation", func() {
 			Enabled: false,
 			Timeout: "not-a-duration",
 		})
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -424,7 +456,7 @@ var _ = Describe("AlignmentCheck Validation", func() {
 			Timeout:       "10s",
 			MaxStepTokens: 500,
 		})
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -433,7 +465,7 @@ var _ = Describe("AlignmentCheck Validation", func() {
 			Enabled: true,
 			Timeout: "not-a-duration",
 		})
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("timeout"))
 		Expect(errs[0].Error()).To(ContainSubstring("invalid Go duration"))
@@ -444,7 +476,7 @@ var _ = Describe("AlignmentCheck Validation", func() {
 			Enabled: true,
 			Timeout: "500ms",
 		})
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("timeout"))
 		Expect(errs[0].Error()).To(ContainSubstring("between"))
@@ -455,7 +487,7 @@ var _ = Describe("AlignmentCheck Validation", func() {
 			Enabled: true,
 			Timeout: "120s",
 		})
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("timeout"))
 		Expect(errs[0].Error()).To(ContainSubstring("between"))
@@ -466,7 +498,7 @@ var _ = Describe("AlignmentCheck Validation", func() {
 			Enabled: true,
 			Timeout: "1s",
 		})
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -475,7 +507,7 @@ var _ = Describe("AlignmentCheck Validation", func() {
 			Enabled: true,
 			Timeout: "60s",
 		})
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -484,7 +516,7 @@ var _ = Describe("AlignmentCheck Validation", func() {
 			Enabled:       true,
 			MaxStepTokens: -1,
 		})
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("maxStepTokens"))
 		Expect(errs[0].Error()).To(ContainSubstring("positive"))
@@ -495,7 +527,7 @@ var _ = Describe("AlignmentCheck Validation", func() {
 			Enabled:       true,
 			LLMProfileRef: "primary",
 		})
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -505,7 +537,7 @@ var _ = Describe("AlignmentCheck Validation", func() {
 			Timeout:       "not-a-duration",
 			MaxStepTokens: -1,
 		})
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(2))
 	})
 })
@@ -515,7 +547,7 @@ var _ = Describe("DryRun Validation", func() {
 		kn := testKubernaut()
 		kn.Spec.RemediationOrchestrator.DryRun = false
 		kn.Spec.RemediationOrchestrator.DryRunHoldPeriod = "not-a-duration"
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -523,7 +555,7 @@ var _ = Describe("DryRun Validation", func() {
 		kn := testKubernaut()
 		kn.Spec.RemediationOrchestrator.DryRun = true
 		kn.Spec.RemediationOrchestrator.DryRunHoldPeriod = "1h"
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -531,7 +563,7 @@ var _ = Describe("DryRun Validation", func() {
 		kn := testKubernaut()
 		kn.Spec.RemediationOrchestrator.DryRun = true
 		kn.Spec.RemediationOrchestrator.DryRunHoldPeriod = "not-a-duration"
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("dryRunHoldPeriod"))
 		Expect(errs[0].Error()).To(ContainSubstring("invalid Go duration"))
@@ -541,7 +573,7 @@ var _ = Describe("DryRun Validation", func() {
 		kn := testKubernaut()
 		kn.Spec.RemediationOrchestrator.DryRun = true
 		kn.Spec.RemediationOrchestrator.DryRunHoldPeriod = ""
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 })
@@ -558,7 +590,7 @@ var _ = Describe("Interactive Mode Validation", func() {
 	It("skips validation when interactive is nil", func() {
 		kn := testKubernaut()
 		kn.Spec.KubernautAgent.Interactive = nil
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -567,7 +599,7 @@ var _ = Describe("Interactive Mode Validation", func() {
 			Enabled:    boolPtr(false),
 			SessionTTL: "not-a-duration",
 		})
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -577,7 +609,7 @@ var _ = Describe("Interactive Mode Validation", func() {
 			SessionTTL:        "30m",
 			InactivityTimeout: "10m",
 		})
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -586,7 +618,7 @@ var _ = Describe("Interactive Mode Validation", func() {
 			Enabled:    boolPtr(true),
 			SessionTTL: "not-a-duration",
 		})
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("sessionTTL"))
 	})
@@ -596,7 +628,7 @@ var _ = Describe("Interactive Mode Validation", func() {
 			Enabled:           boolPtr(true),
 			InactivityTimeout: "not-a-duration",
 		})
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("inactivityTimeout"))
 	})
@@ -607,7 +639,7 @@ var _ = Describe("Interactive Mode Validation", func() {
 			SessionTTL:        "bad1",
 			InactivityTimeout: "bad2",
 		})
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(2))
 	})
 })
@@ -617,13 +649,13 @@ var _ = Describe("Policy Prerequisite Validation", func() {
 		kn := testKubernaut()
 		kn.Spec.AIAnalysis.Policy.ConfigMapName = ""
 		kn.Spec.SignalProcessing.Policy.ConfigMapName = ""
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
 	It("accepts user-provided policy configMapNames", func() {
 		kn := testKubernaut()
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 })
@@ -634,7 +666,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 		profile := kn.Spec.LLMProfiles["primary"]
 		profile.Provider = ""
 		kn.Spec.LLMProfiles["primary"] = profile
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring(`llmProfiles["primary"].provider`))
 	})
@@ -644,7 +676,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 		profile := kn.Spec.LLMProfiles["primary"]
 		profile.Model = ""
 		kn.Spec.LLMProfiles["primary"] = profile
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring(`llmProfiles["primary"].model`))
 	})
@@ -654,7 +686,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 		profile := kn.Spec.LLMProfiles["primary"]
 		profile.CredentialsSecretName = ""
 		kn.Spec.LLMProfiles["primary"] = profile
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring(`llmProfiles["primary"].credentialsSecretName`))
 	})
@@ -662,13 +694,13 @@ var _ = Describe("LLM Profile Content Validation", func() {
 	It("accumulates all missing fields for one profile", func() {
 		kn := testKubernaut()
 		kn.Spec.LLMProfiles["primary"] = kubernautv1alpha2.LLMProfileSpec{}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(3))
 	})
 
 	It("accepts a valid profile", func() {
 		kn := testKubernaut()
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -678,7 +710,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 		profile.Provider = LLMProviderOpenAI
 		profile.Endpoint = ""
 		kn.Spec.LLMProfiles["primary"] = profile
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		endpointErr := false
 		for _, e := range errs {
 			if strings.Contains(e.Error(), "endpoint") {
@@ -695,7 +727,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 		profile.Provider = LLMProviderOpenAI
 		profile.Endpoint = "http://llm-gateway:8080"
 		kn.Spec.LLMProfiles["primary"] = profile
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty(),
 			"provider openai with endpoint and credentials should pass validation")
 	})
@@ -705,7 +737,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 		profile := kn.Spec.LLMProfiles["primary"]
 		profile.TLSCertFile = testMTLSCertFile
 		kn.Spec.LLMProfiles["primary"] = profile
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		found := false
 		for _, e := range errs {
 			if strings.Contains(e.Error(), "tlsCertFile") && strings.Contains(e.Error(), "tlsKeyFile") {
@@ -721,7 +753,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 		profile.TLSCertFile = testMTLSCertFile
 		profile.TLSKeyFile = testMTLSKeyFile
 		kn.Spec.LLMProfiles["primary"] = profile
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		found := false
 		for _, e := range errs {
 			if strings.Contains(e.Error(), "tlsClientSecretRef") {
@@ -736,7 +768,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 		profile := kn.Spec.LLMProfiles["primary"]
 		profile.TLSClientSecretRef = testVolumeLLMTLSClient
 		kn.Spec.LLMProfiles["primary"] = profile
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		found := false
 		for _, e := range errs {
 			if strings.Contains(e.Error(), "tlsClientSecretRef") {
@@ -753,7 +785,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 		profile.TLSKeyFile = testMTLSKeyFile
 		profile.TLSClientSecretRef = testVolumeLLMTLSClient
 		kn.Spec.LLMProfiles["primary"] = profile
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -763,7 +795,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 		profile.Provider = LLMProviderAnthropic
 		profile.Reasoning = &kubernautv1alpha2.LLMReasoningSpec{Enabled: false, Effort: "none"}
 		kn.Spec.LLMProfiles["primary"] = profile
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty(), "SI-10: effort:none with enabled:false is not a contradiction (reasoning is off, so no wire-level conflict exists)")
 	})
 
@@ -773,7 +805,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 		profile.Provider = LLMProviderAnthropic
 		profile.Reasoning = &kubernautv1alpha2.LLMReasoningSpec{Enabled: true, Effort: "minimal"}
 		kn.Spec.LLMProfiles["primary"] = profile
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty(), "SI-10: minimal is Anthropic's lowest real tier, not a contradiction — validation must not false-positive on legitimate configurations")
 	})
 
@@ -783,7 +815,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 		profile.Provider = LLMProviderAnthropic
 		profile.Reasoning = &kubernautv1alpha2.LLMReasoningSpec{Enabled: true, Effort: "none"}
 		kn.Spec.LLMProfiles["primary"] = profile
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).NotTo(BeEmpty(), "SI-10: anthropic has no \"thinking enabled, zero effort\" wire state — left undetected here, this ships a CR that reconciles cleanly but causes KA/AF to fail every LLM call against Anthropic's API at runtime, only surfacing as a production incident")
 		found := false
 		for _, e := range errs {
@@ -802,7 +834,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 		profile.VertexLocation = testVertexLocation
 		profile.Reasoning = &kubernautv1alpha2.LLMReasoningSpec{Enabled: true, Effort: "none"}
 		kn.Spec.LLMProfiles["primary"] = profile
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		found := false
 		for _, e := range errs {
 			if strings.Contains(e.Error(), "reasoning") {
@@ -819,7 +851,7 @@ var _ = Describe("LLM Profile Content Validation", func() {
 		profile.Endpoint = "http://llm-gateway:8080"
 		profile.Reasoning = &kubernautv1alpha2.LLMReasoningSpec{Enabled: true, Effort: "none"}
 		kn.Spec.LLMProfiles["primary"] = profile
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty(), "SI-10: the none+enabled runtime-failure contradiction is specific to Anthropic-family providers — validation must not over-broadly reject OpenAI configurations that have no such conflict")
 	})
 })
@@ -828,7 +860,7 @@ var _ = Describe("LLM Profile Referential Integrity", func() {
 	It("accepts a missing kubernautAgent.llmProfileRef when spec.llmProfiles defines exactly one profile (auto-inferred)", func() {
 		kn := testKubernaut() // testKubernaut() defines exactly one profile ("primary")
 		kn.Spec.KubernautAgent.LLMProfileRef = ""
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 		Expect(EffectiveKALLMProfileRef(kn)).To(Equal("primary"),
 			"the sole entry in spec.llmProfiles must be inferred, not a fixed conventional name")
@@ -840,7 +872,7 @@ var _ = Describe("LLM Profile Referential Integrity", func() {
 			Provider: LLMProviderOpenAI, Model: "gpt-4o-mini", CredentialsSecretName: "llm-creds-2",
 		}
 		kn.Spec.KubernautAgent.LLMProfileRef = ""
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		found := false
 		for _, e := range errs {
 			if strings.Contains(e.Error(), "kubernautAgent.llmProfileRef") &&
@@ -856,7 +888,7 @@ var _ = Describe("LLM Profile Referential Integrity", func() {
 		kn := testKubernaut()
 		kn.Spec.LLMProfiles = map[string]kubernautv1alpha2.LLMProfileSpec{}
 		kn.Spec.KubernautAgent.LLMProfileRef = ""
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		found := false
 		for _, e := range errs {
 			if strings.Contains(e.Error(), "kubernautAgent.llmProfileRef") && strings.Contains(e.Error(), "required") {
@@ -869,7 +901,7 @@ var _ = Describe("LLM Profile Referential Integrity", func() {
 	It("rejects kubernautAgent.llmProfileRef referencing an undefined profile", func() {
 		kn := testKubernaut()
 		kn.Spec.KubernautAgent.LLMProfileRef = "does-not-exist"
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("kubernautAgent.llmProfileRef"))
 		Expect(errs[0].Error()).To(ContainSubstring(`"does-not-exist"`))
@@ -877,14 +909,14 @@ var _ = Describe("LLM Profile Referential Integrity", func() {
 
 	It("accepts kubernautAgent.llmProfileRef referencing a defined profile", func() {
 		kn := testKubernaut()
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
 	It("rejects kubernautAgent.llmProfileRef when spec.llmProfiles is empty", func() {
 		kn := testKubernaut()
 		kn.Spec.LLMProfiles = nil
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1), "an empty spec.llmProfiles map must not panic and should surface exactly the undefined-profile error")
 		Expect(errs[0].Error()).To(ContainSubstring("kubernautAgent.llmProfileRef"))
 		Expect(errs[0].Error()).To(ContainSubstring(`"primary"`))
@@ -893,7 +925,7 @@ var _ = Describe("LLM Profile Referential Integrity", func() {
 	It("rejects apiFrontend.llmProfileRef referencing an undefined profile", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.LLMProfileRef = "does-not-exist"
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		found := false
 		for _, e := range errs {
 			if strings.Contains(e.Error(), "apiFrontend.llmProfileRef") {
@@ -906,7 +938,7 @@ var _ = Describe("LLM Profile Referential Integrity", func() {
 	It("accepts an empty apiFrontend.llmProfileRef (defaults to KA's profile)", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.LLMProfileRef = ""
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -916,14 +948,14 @@ var _ = Describe("LLM Profile Referential Integrity", func() {
 			Provider: LLMProviderVertexAI, Model: "gemini-2.5-flash", CredentialsSecretName: "af-llm-creds",
 		}
 		kn.Spec.APIFrontend.LLMProfileRef = "af-profile"
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
 	It("rejects invalid phaseModels key", func() {
 		kn := testKubernaut()
 		kn.Spec.KubernautAgent.PhaseModels = map[string]string{"banana": "primary"}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring(`invalid phase key "banana"`))
 	})
@@ -933,21 +965,21 @@ var _ = Describe("LLM Profile Referential Integrity", func() {
 		kn.Spec.KubernautAgent.PhaseModels = map[string]string{
 			"rca": "primary", "banana": "primary", "unknown": "primary",
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(2))
 	})
 
 	It("accepts empty phaseModels", func() {
 		kn := testKubernaut()
 		kn.Spec.KubernautAgent.PhaseModels = nil
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
 	It("rejects a phaseModels entry with an empty profile ref (no fallback, unlike llmProfileRef fields)", func() {
 		kn := testKubernaut()
 		kn.Spec.KubernautAgent.PhaseModels = map[string]string{"rca": ""}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring(`phaseModels["rca"]`))
 		Expect(errs[0].Error()).To(ContainSubstring("undefined profile"))
@@ -956,7 +988,7 @@ var _ = Describe("LLM Profile Referential Integrity", func() {
 	It("rejects phaseModels value referencing an undefined profile", func() {
 		kn := testKubernaut()
 		kn.Spec.KubernautAgent.PhaseModels = map[string]string{"rca": "does-not-exist"}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		found := false
 		for _, e := range errs {
 			if strings.Contains(e.Error(), "phaseModels") && strings.Contains(e.Error(), `"does-not-exist"`) {
@@ -974,7 +1006,7 @@ var _ = Describe("LLM Profile Referential Integrity", func() {
 			CredentialsSecretName: primary.CredentialsSecretName,
 		}
 		kn.Spec.KubernautAgent.PhaseModels = map[string]string{"workflow_discovery": "lightweight"}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -985,7 +1017,7 @@ var _ = Describe("LLM Profile Referential Integrity", func() {
 			CredentialsSecretName: "different-secret",
 		}
 		kn.Spec.KubernautAgent.PhaseModels = map[string]string{"workflow_discovery": "other-creds"}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -997,7 +1029,7 @@ var _ = Describe("LLM Profile Referential Integrity", func() {
 			VertexProject:         "example-gcp-project", VertexLocation: "us-central1",
 		}
 		kn.Spec.KubernautAgent.PhaseModels = map[string]string{"rca": "vertex-phase"}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty(),
 			"#233: cross-provider phase overrides are representable now that KA resolves each phase's own apiKeyFile independently")
 	})
@@ -1153,14 +1185,14 @@ func errorStrings(errs []error) []string {
 var _ = Describe("API Frontend Severity Triage LLM Validation", func() {
 	It("accepts a nil severityTriage (defaults to inheriting AF's resolved profile)", func() {
 		kn := testKubernautWithAF()
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
 	It("accepts an empty severityTriage.llmProfileRef (inherits AF's resolved profile)", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -1169,7 +1201,7 @@ var _ = Describe("API Frontend Severity Triage LLM Validation", func() {
 		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{
 			LLMProfileRef: "does-not-exist",
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		found := false
 		for _, e := range errs {
 			if strings.Contains(e.Error(), "severityTriage.llmProfileRef") {
@@ -1189,7 +1221,7 @@ var _ = Describe("API Frontend Severity Triage LLM Validation", func() {
 		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{
 			LLMProfileRef: "triage",
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -1202,7 +1234,7 @@ var _ = Describe("API Frontend Severity Triage LLM Validation", func() {
 		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{
 			LLMProfileRef: "triage-other-creds",
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -1215,7 +1247,7 @@ var _ = Describe("API Frontend Severity Triage LLM Validation", func() {
 		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{
 			LLMProfileRef: "triage-anthropic",
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty(),
 			"#234: AF resolves severityTriage.llm independently via resolveLLMKey(), so cross-provider triage overrides are safe")
 	})
@@ -1236,7 +1268,7 @@ var _ = Describe("API Frontend Severity Triage LLM Validation", func() {
 		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{
 			LLMProfileRef: "triage-vertex",
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty(),
 			"#279: cross-credential vertex_ai-vs-vertex_ai overrides are safe now that each resolves its own apiKeyFile, matching every other provider combination unblocked in #234")
 	})
@@ -1257,7 +1289,7 @@ var _ = Describe("API Frontend Severity Triage LLM Validation", func() {
 		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{
 			LLMProfileRef: "triage-vertex-same-creds",
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
@@ -1267,7 +1299,7 @@ var _ = Describe("API Frontend Severity Triage LLM Validation", func() {
 		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{
 			LLMEnabled: &disabled,
 		}
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 })

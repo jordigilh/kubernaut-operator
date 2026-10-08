@@ -57,7 +57,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	sigsyaml "sigs.k8s.io/yaml"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/policy"
@@ -112,22 +111,12 @@ const (
 	ReasonAdditionalRBACFullyBound   = "FullyBound"
 	ReasonAdditionalRBACPartialBound = "PartiallyBound"
 
-	ReasonOIDCAutoDetected    = "OIDCAutoDetected"
-	ReasonOIDCDetectionFailed = "OIDCDetectionFailed"
-
 	ReasonAlertManagerAuthReady           = "Ready"
 	ReasonAlertManagerAuthNotConfigured   = "SecretNameNotConfigured"
 	ReasonAlertManagerAuthSecretMissing   = "TokenSecretNotFound"
 	ReasonAlertManagerAuthKeyMissing      = "TokenKeyMissing"
 	ReasonAlertManagerAuthGatewayDisabled = "GatewayDisabled"
 )
-
-// kagentiAuthbridgeConfigMapName is the well-known ConfigMap the kagenti
-// operator maintains in kagenti-system with Keycloak/OIDC settings.
-const kagentiAuthbridgeConfigMapName = "authbridge-config"
-
-// kagentiSystemNamespace is the namespace where the kagenti operator runs.
-const kagentiSystemNamespace = "kagenti-system"
 
 // maxFinalizerAttempts is the number of consecutive reconcile attempts during
 // deletion cleanup before the finalizer is force-removed.
@@ -181,8 +170,6 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors;prometheusrules;alertmanagerconfigs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=spire.spiffe.io,resources=clusterspiffeids,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=agent.kagenti.dev,resources=agentruntimes,verbs=get;list;watch;create;update;patch;delete
-
 // Reconcile is the main reconciliation loop for the Kubernaut singleton CR.
 //
 // The blank line and this doc comment above are required, not stylistic: Go
@@ -303,8 +290,7 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 		return result, err
 	}
 
-	sidecar := r.detectKagentiSidecarMode(ctx, kn)
-	validationErrs := resources.ValidateKubernaut(kn, sidecar)
+	validationErrs := resources.ValidateKubernaut(kn)
 	validationErrs = append(validationErrs, resources.ValidateFleet(knV2)...)
 	if len(validationErrs) > 0 {
 		msgs := make([]string, len(validationErrs))
@@ -606,6 +592,14 @@ func setCRDsReady(kn *kubernautv1alpha2.Kubernaut) {
 
 //nolint:gocyclo // this phase is an ordered lifecycle transaction; each step must stop deployment on failure.
 func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
+	if kn.Spec.APIFrontendEnabled() || kn.Spec.ConsoleEnabled() {
+		logf.FromContext(ctx).Info("resolved shared OIDC issuer",
+			"issuerURL", kn.Spec.EffectiveIssuerURL(),
+			"source", kn.Spec.EffectiveIssuerSource(),
+			"generation", kn.Generation,
+			"resourceVersion", kn.ResourceVersion,
+		)
+	}
 	if err := r.deployWorkflowNamespace(ctx, kn); err != nil {
 		return err
 	}
@@ -625,7 +619,6 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 
 	tlsProfile := r.resolveClusterTLSProfile(ctx)
 
-	sidecar := r.detectKagentiSidecarMode(ctx, kn)
 	tlsMaterial, tlsBundle, err := r.ensureRuntimeTLS(ctx, kn)
 	if err != nil {
 		if statusErr := r.patchStatus(ctx, kn, func() {
@@ -642,13 +635,8 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		return fmt.Errorf("ensuring runtime TLS: %w", err)
 	}
 
-	oidcDefaults, err := r.resolveKagentiOIDCDefaults(ctx, kn, sidecar)
-	if err != nil {
-		return r.handleOIDCDetectionError(ctx, kn, err)
-	}
-
 	runtimeKnV2 := r.monitoringConfigView(ctx, knV2)
-	cmHashes, err := r.deployConfigMaps(ctx, kn, runtimeKnV2, dbName, dbUser, tlsProfile, sidecar, oidcDefaults)
+	cmHashes, err := r.deployConfigMaps(ctx, kn, runtimeKnV2, dbName, dbUser, tlsProfile)
 	if err != nil {
 		return err
 	}
@@ -664,19 +652,7 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 	if err := r.deployAdmissionWebhooks(ctx, kn, tlsMaterial, tlsBundle); err != nil {
 		return err
 	}
-	if err := r.ensureKagentiNamespaceLabel(ctx, kn); err != nil {
-		return err
-	}
-	if err := r.ensureAgentRuntimeCR(ctx, kn, sidecar); err != nil {
-		return err
-	}
-	if err := r.ensureAuthbridgeMetricsBypass(ctx, kn, sidecar); err != nil {
-		return err
-	}
-	if err := r.ensureAuthbridgeClientID(ctx, kn, sidecar); err != nil {
-		return err
-	}
-	hasRoute, err := r.deployWorkloads(ctx, kn, runtimeKnV2, cmHashes, sidecar, telemetryRevisions)
+	hasRoute, err := r.deployWorkloads(ctx, kn, runtimeKnV2, cmHashes, telemetryRevisions)
 	if err != nil {
 		return err
 	}
@@ -702,22 +678,6 @@ func (r *KubernautReconciler) handleRBACDeployError(ctx context.Context, kn *kub
 	r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, ReasonRBACApplyFailed, "Reconcile",
 		"Failed to provision RBAC: %v", err)
 	return err
-}
-
-// handleOIDCDetectionError records a failed-BYO-OIDC status condition, then
-// returns a wrapped error for the caller to propagate. Extracted from
-// phaseDeploy to keep its cyclomatic complexity within threshold.
-func (r *KubernautReconciler) handleOIDCDetectionError(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, err error) error {
-	if statusErr := r.patchStatus(ctx, kn, func() {
-		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-			Type: kubernautv1alpha2.ConditionBYOValidated, Status: metav1.ConditionFalse,
-			Reason: ReasonOIDCDetectionFailed, Message: err.Error(),
-			ObservedGeneration: kn.Generation,
-		})
-	}); statusErr != nil {
-		logf.FromContext(ctx).Error(statusErr, "failed to patch OIDC detection status")
-	}
-	return fmt.Errorf("resolving kagenti OIDC defaults: %w", err)
 }
 
 // finalizeDeployStatus records the terminal Deploying-phase status
@@ -1599,7 +1559,7 @@ func (r *KubernautReconciler) cleanupDisabledFleetMetadataCache(ctx context.Cont
 // deployConfigMaps builds and ensures all service ConfigMaps. Returns a map
 // of component name to SHA-256 hash of the ConfigMap data, used to stamp pod
 // template annotations and force rolling restarts when config content changes.
-func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, dbName, dbUser, tlsProfile string, sidecar resources.KagentiSidecarMode, oidc *resources.KagentiOIDCDefaults) (map[string]string, error) {
+func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, dbName, dbUser, tlsProfile string) (map[string]string, error) {
 	tlsOpt := resources.WithTLSProfile(tlsProfile)
 
 	configMaps, cmHashes, err := buildCoreConfigMaps(kn, knV2, tlsOpt, dbName, dbUser)
@@ -1607,7 +1567,7 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 		return nil, err
 	}
 
-	configMaps, err = r.appendOptionalComponentConfigMaps(kn, knV2, sidecar, oidc, tlsOpt, configMaps, cmHashes)
+	configMaps, err = r.appendOptionalComponentConfigMaps(kn, knV2, tlsOpt, configMaps, cmHashes)
 	if err != nil {
 		return nil, err
 	}
@@ -1696,7 +1656,7 @@ func buildCoreConfigMaps(
 // components that are toggled on/off via the CR spec (gateway, apifrontend,
 // fleetmetadatacache), recording each one's content hash in cmHashes.
 func (r *KubernautReconciler) appendOptionalComponentConfigMaps(
-	kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar resources.KagentiSidecarMode, oidc *resources.KagentiOIDCDefaults,
+	kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut,
 	tlsOpt resources.ConfigMapOption, configMaps []*corev1.ConfigMap, cmHashes map[string]string,
 ) ([]*corev1.ConfigMap, error) {
 	if kn.Spec.GatewayEnabled() {
@@ -1708,7 +1668,7 @@ func (r *KubernautReconciler) appendOptionalComponentConfigMaps(
 		cmHashes["gateway"] = resources.ConfigMapDataHash(gwCM.Data)
 	}
 	if kn.Spec.APIFrontendEnabled() {
-		afCM, err := resources.APIFrontendConfigMap(kn, knV2, sidecar, oidc)
+		afCM, err := resources.APIFrontendConfigMap(kn, knV2)
 		if err != nil {
 			return nil, fmt.Errorf("building apifrontend ConfigMap: %w", err)
 		}
@@ -1894,7 +1854,7 @@ type deploymentBuilderFunc func(*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2
 // apifrontend, console, fleetmetadatacache). When an optional component is
 // disabled instead, its namespaced resources are cleaned up here.
 func (r *KubernautReconciler) enabledDeploymentBuilders(
-	ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar resources.KagentiSidecarMode,
+	ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut,
 ) ([]deploymentBuilderFunc, error) {
 	depBuilders := []deploymentBuilderFunc{
 		func(kn *kubernautv1alpha2.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
@@ -1915,9 +1875,7 @@ func (r *KubernautReconciler) enabledDeploymentBuilders(
 		return nil, fmt.Errorf("cleaning up disabled gateway: %w", err)
 	}
 	if kn.Spec.APIFrontendEnabled() {
-		depBuilders = append(depBuilders, func(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-			return resources.APIFrontendDeployment(kn, knV2, sidecar)
-		})
+		depBuilders = append(depBuilders, resources.APIFrontendDeployment)
 	}
 	if kn.Spec.ConsoleEnabled() {
 		ingressDomain := r.clusterIngressDomain(ctx)
@@ -1953,8 +1911,8 @@ func (r *KubernautReconciler) ensureDeployments(
 	return nil
 }
 
-func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, cmHashes map[string]string, sidecar resources.KagentiSidecarMode, telemetryRevisions telemetryMaterialRevisionSet) (hasRoute bool, _ error) {
-	depBuilders, err := r.enabledDeploymentBuilders(ctx, kn, knV2, sidecar)
+	func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, cmHashes map[string]string, telemetryRevisions telemetryMaterialRevisionSet) (hasRoute bool, _ error) {
+		depBuilders, err := r.enabledDeploymentBuilders(ctx, kn, knV2)
 	if err != nil {
 		return false, err
 	}
@@ -1962,7 +1920,7 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		return false, err
 	}
 
-	if err := r.ensureServices(ctx, kn, knV2, sidecar); err != nil {
+	if err := r.ensureServices(ctx, kn, knV2); err != nil {
 		return false, err
 	}
 
@@ -1994,8 +1952,8 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 	return r.reconcileRoutes(ctx, kn)
 }
 
-func (r *KubernautReconciler) ensureServices(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, sidecar resources.KagentiSidecarMode) error {
-	for _, svc := range resources.Services(kn, knV2, sidecar) {
+func (r *KubernautReconciler) ensureServices(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
+	for _, svc := range resources.Services(kn, knV2) {
 		if err := r.ensureNamespaced(ctx, kn, svc); err != nil {
 			return fmt.Errorf("ensuring Service %s: %w", svc.Name, err)
 		}
@@ -2457,318 +2415,6 @@ func (r *KubernautReconciler) reconcileOptionalRoute(
 	return false, nil
 }
 
-// detectKagentiSidecarMode determines which sidecar injection strategy the
-// installed kagenti version uses. kagenti 0.3.x+ ships the agents.agent.kagenti.dev
-// CRD and uses authbridge-proxy (shifts app port to +1). Older 0.2.x versions
-// use an envoy sidecar with iptables interception (no port shift).
-func (r *KubernautReconciler) detectKagentiSidecarMode(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) resources.KagentiSidecarMode {
-	if !kn.Spec.APIFrontendEnabled() || !kn.Spec.APIFrontend.SPIRE.SPIREEnabled() {
-		return resources.KagentiSidecarNone
-	}
-	if r.hasCRD(ctx, "agents.agent.kagenti.dev") {
-		logf.FromContext(ctx).Info("detected kagenti 0.3.x+ (authbridge-proxy sidecar)")
-		return resources.KagentiSidecarAuthbridge
-	}
-	logf.FromContext(ctx).Info("detected kagenti 0.2.x (envoy sidecar)")
-	return resources.KagentiSidecarEnvoy
-}
-
-// resolveKagentiOIDCDefaults reads the kagenti authbridge-config ConfigMap
-// and extracts OIDC settings that the AF needs to validate tokens issued
-// by the same Keycloak realm kagenti uses. This eliminates the manual step
-// of copying realm URLs into the Kubernaut CR on every fresh deploy.
-//
-// FedRAMP IA-2: the operator ensures AF authenticates users against the
-// correct identity provider by deriving settings from the kagenti source of
-// truth rather than relying on error-prone manual configuration.
-func (r *KubernautReconciler) resolveKagentiOIDCDefaults(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, sidecar resources.KagentiSidecarMode) (*resources.KagentiOIDCDefaults, error) {
-	if sidecar == resources.KagentiSidecarNone {
-		// No kagenti sidecar active: OIDC auto-detection is not applicable, not an error.
-		return nil, nil //nolint:nilnil
-	}
-
-	log := logf.FromContext(ctx)
-
-	cm := &corev1.ConfigMap{}
-	key := client.ObjectKey{Namespace: kagentiSystemNamespace, Name: kagentiAuthbridgeConfigMapName}
-	if err := r.Get(ctx, key, cm); err != nil {
-		if apierrors.IsNotFound(err) {
-			// If the CR already provides issuerURL, the ConfigMap is not
-			// strictly needed — the operator can proceed without auto-detection.
-			if kn.Spec.APIFrontend.Auth.IssuerURL != "" {
-				log.Info("kagenti authbridge-config not found but CR has issuerURL set — skipping OIDC auto-detection")
-				// CR already provides issuerURL manually: auto-detection is
-				// unnecessary, not a failure.
-				return nil, nil //nolint:nilnil
-			}
-			return nil, fmt.Errorf("kagenti sidecar is active but %s/%s ConfigMap not found — "+
-				"set spec.apiFrontend.auth.issuerURL manually or ensure kagenti-operator is installed",
-				kagentiSystemNamespace, kagentiAuthbridgeConfigMapName)
-		}
-		return nil, fmt.Errorf("reading kagenti authbridge-config: %w", err)
-	}
-
-	issuer := cm.Data["ISSUER"]
-	if issuer == "" {
-		if kn.Spec.APIFrontend.Auth.IssuerURL != "" {
-			log.Info("kagenti authbridge-config missing ISSUER key but CR has issuerURL — skipping OIDC auto-detection")
-			// CR already provides issuerURL manually: auto-detection is
-			// unnecessary, not a failure.
-			return nil, nil //nolint:nilnil
-		}
-		return nil, fmt.Errorf("kagenti %s/%s ConfigMap is missing the ISSUER key — "+
-			"set spec.apiFrontend.auth.issuerURL manually", kagentiSystemNamespace, kagentiAuthbridgeConfigMapName)
-	}
-
-	keycloakURL := cm.Data["KEYCLOAK_URL"]
-	realm := cm.Data["KEYCLOAK_REALM"]
-
-	defaults := &resources.KagentiOIDCDefaults{
-		IssuerURL: issuer,
-	}
-
-	if keycloakURL != "" && realm != "" {
-		defaults.JWKSURL = strings.TrimRight(keycloakURL, "/") +
-			"/realms/" + realm + "/protocol/openid-connect/certs"
-		defaults.AllowInsecureIssuers = strings.HasPrefix(keycloakURL, "http://")
-	}
-
-	log.Info("auto-detected OIDC defaults from kagenti",
-		"issuerURL", defaults.IssuerURL,
-		"jwksURL", defaults.JWKSURL,
-		"allowInsecureIssuers", defaults.AllowInsecureIssuers)
-	r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, ReasonOIDCAutoDetected, "Reconcile",
-		"Auto-detected OIDC issuerURL from kagenti authbridge-config: %s", defaults.IssuerURL)
-
-	return defaults, nil
-}
-
-// ensureKagentiNamespaceLabel adds or removes the "kagenti-enabled" label on
-// the kubernaut-system namespace. The kagenti mutating webhook requires this
-// label in its namespaceSelector to inject the authbridge sidecar into AF pods.
-// Additionally, when SPIRE is enabled the authbridge sidecar uses a SPIFFE CSI
-// inline volume that requires pod-security.kubernetes.io/enforce=privileged.
-func (r *KubernautReconciler) ensureKagentiNamespaceLabel(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
-	log := logf.FromContext(ctx)
-
-	ns := &corev1.Namespace{}
-	if err := r.Get(ctx, types.NamespacedName{Name: kn.Namespace}, ns); err != nil {
-		return fmt.Errorf("fetching namespace for kagenti label: %w", err)
-	}
-
-	want := kn.Spec.APIFrontendEnabled() && kn.Spec.APIFrontend.SPIRE.SPIREEnabled()
-	have := ns.Labels["kagenti-enabled"] == resources.LabelValueTrue
-
-	needsUpdate := want != have
-
-	if ns.Labels == nil {
-		ns.Labels = make(map[string]string)
-	}
-
-	if want {
-		if !have {
-			log.Info("labeling namespace for kagenti authbridge injection", "namespace", kn.Namespace)
-			ns.Labels["kagenti-enabled"] = resources.LabelValueTrue
-		}
-		if ensurePSALabels(ns.Labels) {
-			log.Info("setting pod security labels for SPIFFE CSI volume", "namespace", kn.Namespace)
-			needsUpdate = true
-		}
-	} else if have {
-		log.Info("removing kagenti-enabled label from namespace", "namespace", kn.Namespace)
-		delete(ns.Labels, "kagenti-enabled")
-	}
-
-	if !needsUpdate {
-		return nil
-	}
-	return r.Update(ctx, ns)
-}
-
-// ensurePSALabels sets the Pod Security Admission labels required for the
-// SPIFFE CSI inline volume. Returns true if any label was added or changed.
-func ensurePSALabels(labels map[string]string) bool {
-	changed := false
-	psaLabels := map[string]string{
-		"pod-security.kubernetes.io/enforce":         "privileged",
-		"pod-security.kubernetes.io/enforce-version": "latest",
-		"pod-security.kubernetes.io/audit":           "privileged",
-		"pod-security.kubernetes.io/audit-version":   "latest",
-		"pod-security.kubernetes.io/warn":            "privileged",
-		"pod-security.kubernetes.io/warn-version":    "latest",
-	}
-	for k, v := range psaLabels {
-		if labels[k] != v {
-			labels[k] = v
-			changed = true
-		}
-	}
-	return changed
-}
-
-// agentRuntimeGVR is the GroupVersionResource for kagenti AgentRuntime CRs.
-var agentRuntimeGVR = schema.GroupVersionResource{
-	Group:    "agent.kagenti.dev",
-	Version:  "v1alpha1",
-	Resource: "agentruntimes",
-}
-
-// ensureAgentRuntimeCR creates or deletes the kagenti AgentRuntime CR for
-// apifrontend. When kagenti sidecar injection is active, the CR tells the
-// kagenti operator to provision authbridge ConfigMaps, SCC RoleBindings,
-// and discovery labels in the kubernaut-system namespace. When sidecar
-// injection is disabled, any existing CR is cleaned up.
-func (r *KubernautReconciler) ensureAgentRuntimeCR(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, sidecar resources.KagentiSidecarMode) error {
-	log := logf.FromContext(ctx)
-
-	if !r.hasCRD(ctx, "agentruntimes.agent.kagenti.dev") {
-		return nil
-	}
-
-	name := string(resources.ComponentAPIFrontend)
-	want := sidecar != resources.KagentiSidecarNone
-
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(schema.GroupVersionKind{
-		Group: agentRuntimeGVR.Group, Version: agentRuntimeGVR.Version, Kind: "AgentRuntime",
-	})
-	err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: name}, existing)
-
-	if !want {
-		if err == nil {
-			log.Info("deleting AgentRuntime CR (kagenti sidecar disabled)", "name", name)
-			return client.IgnoreNotFound(r.Delete(ctx, existing))
-		}
-		return nil
-	}
-
-	desired := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": agentRuntimeGVR.Group + "/" + agentRuntimeGVR.Version,
-			"kind":       "AgentRuntime",
-			"metadata": map[string]interface{}{
-				"name":      name,
-				"namespace": kn.Namespace,
-				"labels": map[string]interface{}{
-					"app.kubernetes.io/managed-by": "kubernaut-operator",
-					"app.kubernetes.io/part-of":    "kubernaut",
-					"app.kubernetes.io/instance":   kn.Name,
-				},
-			},
-			"spec": map[string]interface{}{
-				"type": "agent",
-				"targetRef": map[string]interface{}{
-					"apiVersion": "apps/v1",
-					"kind":       "Deployment",
-					"name":       name,
-				},
-			},
-		},
-	}
-
-	if apierrors.IsNotFound(err) {
-		log.Info("creating AgentRuntime CR for apifrontend", "name", name)
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return fmt.Errorf("checking AgentRuntime CR: %w", err)
-	}
-
-	return nil
-}
-
-// patchAuthbridgeConfig reads the kagenti-generated authbridge ConfigMap,
-// unmarshals config.yaml as a generic map, calls patchFn to apply modifications,
-// and writes back only if patchFn signals a change. Returns nil without error
-// when the sidecar is inactive, AF is disabled, or the ConfigMap doesn't exist yet.
-func (r *KubernautReconciler) patchAuthbridgeConfig(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, sidecar resources.KagentiSidecarMode, desc string, patchFn func(map[string]interface{}) (changed bool)) error {
-	if sidecar == resources.KagentiSidecarNone || !kn.Spec.APIFrontendEnabled() {
-		return nil
-	}
-
-	cmName := "authbridge-config-" + string(resources.ComponentAPIFrontend)
-	cm := &corev1.ConfigMap{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: cmName}, cm); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("reading authbridge config %s: %w", cmName, err)
-	}
-
-	raw, ok := cm.Data["config.yaml"]
-	if !ok {
-		return nil
-	}
-
-	var full map[string]interface{}
-	if err := sigsyaml.Unmarshal([]byte(raw), &full); err != nil {
-		return fmt.Errorf("parsing authbridge config %s: %w", cmName, err)
-	}
-
-	if !patchFn(full) {
-		return nil
-	}
-
-	patched, err := sigsyaml.Marshal(full)
-	if err != nil {
-		return fmt.Errorf("marshaling patched authbridge config: %w", err)
-	}
-
-	cm.Data["config.yaml"] = string(patched)
-	if err := r.Update(ctx, cm); err != nil {
-		return fmt.Errorf("patching authbridge config %s with %s: %w", cmName, desc, err)
-	}
-
-	logf.FromContext(ctx).Info("patched authbridge config", "configmap", cmName, "patch", desc)
-	return nil
-}
-
-// ensureAuthbridgeMetricsBypass patches the kagenti-generated per-workload
-// authbridge ConfigMap to add /metrics to bypass.inbound_paths. Without this,
-// the envoy sidecar returns 401 on the metrics endpoint, breaking Prometheus
-// scraping. Upstream fix tracked in kagenti/kagenti-extensions#524.
-func (r *KubernautReconciler) ensureAuthbridgeMetricsBypass(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, sidecar resources.KagentiSidecarMode) error {
-	return r.patchAuthbridgeConfig(ctx, kn, sidecar, "/metrics bypass", func(full map[string]interface{}) bool {
-		bypassMap, _ := full["bypass"].(map[string]interface{})
-		if bypassMap == nil {
-			bypassMap = make(map[string]interface{})
-			full["bypass"] = bypassMap
-		}
-
-		pathsRaw, _ := bypassMap["inbound_paths"].([]interface{})
-		for _, p := range pathsRaw {
-			if s, ok := p.(string); ok && s == "/metrics" {
-				return false
-			}
-		}
-
-		bypassMap["inbound_paths"] = append(pathsRaw, "/metrics")
-		return true
-	})
-}
-
-// ensureAuthbridgeClientID patches the kagenti-generated authbridge ConfigMap
-// to include an inline identity.client_id (the AF's SPIFFE ID). Without this,
-// the authbridge cannot validate the aud claim of inbound JWTs and rejects all
-// tokens. This replaces the kagenti-client-registration sidecar which required
-// keycloak-admin-secret in the app namespace (issue #171).
-func (r *KubernautReconciler) ensureAuthbridgeClientID(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, sidecar resources.KagentiSidecarMode) error {
-	return r.patchAuthbridgeConfig(ctx, kn, sidecar, "identity.client_id", func(full map[string]interface{}) bool {
-		identityMap, _ := full["identity"].(map[string]interface{})
-		if identityMap == nil {
-			identityMap = make(map[string]interface{})
-			full["identity"] = identityMap
-		}
-
-		wantID := resources.AFSpiffeID(kn)
-		if current, _ := identityMap["client_id"].(string); current == wantID {
-			return false
-		}
-		identityMap["client_id"] = wantID
-		return true
-	})
-}
-
 func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
 	afHPA := resources.APIFrontendHPA(kn)
 	if err := r.ensureNamespaced(ctx, kn, afHPA); err != nil {
@@ -2776,9 +2422,6 @@ func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *k
 	}
 
 	if err := r.ensureAPIFrontendMonitoring(ctx, kn); err != nil {
-		return err
-	}
-	if err := r.ensureMCPGatewayResources(ctx, kn); err != nil {
 		return err
 	}
 	return r.ensureAPIFrontendSPIFFEID(ctx, kn)
@@ -2801,34 +2444,6 @@ func (r *KubernautReconciler) ensureAPIFrontendMonitoring(ctx context.Context, k
 	return nil
 }
 
-// ensureMCPGatewayResources provisions the MCP HTTPRoute and
-// MCPServerRegistration when the kagenti MCPServerRegistration CRD is
-// installed and the builders determine one is needed (e.g. not BYO gateway).
-func (r *KubernautReconciler) ensureMCPGatewayResources(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
-	if !r.hasCRD(ctx, "mcpserverregistrations.kagenti.dev") {
-		return nil
-	}
-	route, err := resources.MCPGatewayHTTPRoute(kn)
-	if err != nil {
-		return fmt.Errorf("building MCP HTTPRoute: %w", err)
-	}
-	if route != nil {
-		if err := r.ensureNamespaced(ctx, kn, route); err != nil {
-			return fmt.Errorf("ensuring MCP HTTPRoute: %w", err)
-		}
-	}
-	reg, err := resources.MCPServerRegistration(kn)
-	if err != nil {
-		return fmt.Errorf("building MCPServerRegistration: %w", err)
-	}
-	if reg != nil {
-		if err := r.ensureNamespaced(ctx, kn, reg); err != nil {
-			return fmt.Errorf("ensuring MCPServerRegistration: %w", err)
-		}
-	}
-	return nil
-}
-
 // ensureAPIFrontendSPIFFEID provisions the ClusterSPIFFEID for APIFrontend
 // when the SPIRE CRD is installed and the builder determines one is needed.
 func (r *KubernautReconciler) ensureAPIFrontendSPIFFEID(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
@@ -2843,6 +2458,12 @@ func (r *KubernautReconciler) ensureAPIFrontendSPIFFEID(ctx context.Context, kn 
 		if err := r.ensureUnowned(ctx, spiffeID); err != nil {
 			return fmt.Errorf("ensuring ClusterSPIFFEID: %w", err)
 		}
+		return nil
+	}
+
+	stale := resources.ClusterSPIFFEIDReference()
+	if err := r.deleteIfExists(ctx, stale); err != nil {
+		return fmt.Errorf("deleting disabled ClusterSPIFFEID: %w", err)
 	}
 	return nil
 }
@@ -2974,7 +2595,6 @@ func (r *KubernautReconciler) deleteClusterScopedResources(ctx context.Context, 
 	errs = append(errs, r.deleteWebhookResources(ctx, kn)...)
 	errs = append(errs, r.deleteWorkflowResources(ctx, kn)...)
 	errs = append(errs, r.deleteSPIREResources(ctx, kn)...)
-	errs = append(errs, r.deleteAgentRuntimeCR(ctx, kn)...)
 	errs = append(errs, r.deleteProviderPolicies(ctx, kn.Namespace, kn.Name)...)
 
 	if len(errs) > 0 {
@@ -3022,27 +2642,17 @@ func (r *KubernautReconciler) deleteSPIREResources(ctx context.Context, kn *kube
 		return nil
 	}
 	spiffeID, err := resources.ClusterSPIFFEID(kn)
-	if err != nil || spiffeID == nil {
+	if err != nil {
+		return []error{fmt.Errorf("building ClusterSPIFFEID for cleanup: %w", err)}
+	}
+	if spiffeID == nil {
+		spiffeID = resources.ClusterSPIFFEIDReference()
+	}
+	if spiffeID == nil {
 		return nil
 	}
 	if err := r.deleteIfExists(ctx, spiffeID); err != nil {
 		return []error{fmt.Errorf("deleting ClusterSPIFFEID %s: %w", spiffeID.GetName(), err)}
-	}
-	return nil
-}
-
-func (r *KubernautReconciler) deleteAgentRuntimeCR(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) []error {
-	if !r.hasCRD(ctx, "agentruntimes.agent.kagenti.dev") {
-		return nil
-	}
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(schema.GroupVersionKind{
-		Group: agentRuntimeGVR.Group, Version: agentRuntimeGVR.Version, Kind: "AgentRuntime",
-	})
-	obj.SetName(string(resources.ComponentAPIFrontend))
-	obj.SetNamespace(kn.Namespace)
-	if err := r.deleteIfExists(ctx, obj); err != nil {
-		return []error{fmt.Errorf("deleting AgentRuntime %s: %w", obj.GetName(), err)}
 	}
 	return nil
 }
