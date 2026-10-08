@@ -1,0 +1,65 @@
+{{- if and .Values.webhook.enabled (eq .Values.webhook.tls.mode "development") }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kubernaut-operator-cert-patch
+  namespace: {{ include "kubernaut-operator.namespace" . }}
+  labels:
+    {{- include "kubernaut-operator.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kubernaut-operator-cert-init
+        app.kubernetes.io/part-of: kubernaut
+    spec:
+      restartPolicy: Never
+      serviceAccountName: kubernaut-operator-cert-init
+      automountServiceAccountToken: true
+      {{- include "kubernaut-operator.developmentImagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: certificate-patcher
+          image: {{ include "kubernaut-operator.certInitImage" . | quote }}
+          imagePullPolicy: {{ .Values.webhook.tls.development.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              set -eu
+              ca_bundle=""
+              for attempt in $(seq 1 120); do
+                ca_bundle="$(kubectl get secret "${WEBHOOK_SECRET}" -n "${POD_NAMESPACE}" -o jsonpath='{.data.ca\.crt}' 2>/dev/null || true)"
+                if [ -n "${ca_bundle}" ] && kubectl get validatingwebhookconfiguration "${WEBHOOK_CONFIGURATION}" >/dev/null 2>&1; then
+                  break
+                fi
+                sleep 1
+              done
+              test -n "${ca_bundle}"
+              kubectl get validatingwebhookconfiguration "${WEBHOOK_CONFIGURATION}" >/dev/null
+              kubectl patch validatingwebhookconfiguration "${WEBHOOK_CONFIGURATION}" \
+                --type=json \
+                -p="[{\"op\":\"add\",\"path\":\"/webhooks/0/clientConfig/caBundle\",\"value\":\"${ca_bundle}\"}]"
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: WEBHOOK_SECRET
+              value: {{ include "kubernaut-operator.webhookSecretName" . | quote }}
+            - name: WEBHOOK_CONFIGURATION
+              value: {{ include "kubernaut-operator.webhookConfigurationName" . | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+{{- end }}

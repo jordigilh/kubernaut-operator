@@ -1,0 +1,27 @@
+{{- if .Values.webhook.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kubernaut-operator.webhookServiceName" . }}
+  namespace: {{ include "kubernaut-operator.namespace" . }}
+  labels:
+    {{- include "kubernaut-operator.labels" . | nindent 4 }}
+  {{- if or .Values.webhook.service.annotations (eq .Values.webhook.tls.mode "openshift") }}
+  annotations:
+    {{- with .Values.webhook.service.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if eq .Values.webhook.tls.mode "openshift" }}
+    service.beta.openshift.io/serving-cert-secret-name: {{ include "kubernaut-operator.webhookSecretName" . | quote }}
+    {{- end }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "kubernaut-operator.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: webhook
+      port: {{ .Values.webhook.service.port }}
+      targetPort: webhook
+      protocol: TCP
+{{- end }}

@@ -1,0 +1,211 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubernaut-operator-controller-manager
+  namespace: {{ include "kubernaut-operator.namespace" . }}
+  labels:
+    {{- include "kubernaut-operator.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      {{- include "kubernaut-operator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kubernaut-operator.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- $podSecurityContext := .Values.securityContext.pod | default (dict) }}
+      {{- if eq .Values.webhook.tls.mode "openshift" }}
+      {{- $podSecurityContext = omit $podSecurityContext "fsGroup" }}
+      {{- end }}
+      {{- with $podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if ne .Values.hostUsers nil }}
+      hostUsers: {{ .Values.hostUsers }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      serviceAccountName: {{ include "kubernaut-operator.serviceAccountName" . }}
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- include "kubernaut-operator.imagePullSecrets" . | nindent 6 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if and .Values.webhook.enabled (eq .Values.webhook.tls.mode "development") }}
+      initContainers:
+        - name: webhook-cert-init
+          image: {{ include "kubernaut-operator.certInitImage" . | quote }}
+          imagePullPolicy: {{ .Values.webhook.tls.development.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              set -eu
+              namespace="${POD_NAMESPACE}"
+              secret="${WEBHOOK_SECRET}"
+              workdir="$(mktemp -d)"
+              cleanup() { rm -rf "${workdir}"; }
+              trap cleanup EXIT
+
+              ca_bundle=""
+              serving_cert=""
+              serving_key=""
+              if kubectl get secret "${secret}" -n "${namespace}" >/dev/null 2>&1; then
+                ca_bundle="$(kubectl get secret "${secret}" -n "${namespace}" -o jsonpath='{.data.ca\.crt}' 2>/dev/null || true)"
+                serving_cert="$(kubectl get secret "${secret}" -n "${namespace}" -o jsonpath='{.data.tls\.crt}' 2>/dev/null || true)"
+                serving_key="$(kubectl get secret "${secret}" -n "${namespace}" -o jsonpath='{.data.tls\.key}' 2>/dev/null || true)"
+              fi
+
+              if [ "${ROTATE_ON_UPGRADE}" != "true" ] && [ -n "${ca_bundle}" ] && [ -n "${serving_cert}" ] && [ -n "${serving_key}" ]; then
+                printf '%s' "${serving_cert}" | base64 -d > /webhook-certs/tls.crt
+                printf '%s' "${serving_key}" | base64 -d > /webhook-certs/tls.key
+                chmod 0644 /webhook-certs/tls.crt
+                chmod 0640 /webhook-certs/tls.key
+                exit 0
+              fi
+
+              openssl req -x509 -newkey rsa:2048 -nodes \
+                -keyout "${workdir}/ca.key" -out "${workdir}/ca.crt" \
+                -days "${VALIDITY_DAYS}" -subj "/CN=Kubernaut operator webhook CA"
+              openssl genrsa -out "${workdir}/tls.key" 2048
+              cat > "${workdir}/tls.cnf" <<EOF
+              [req]
+              distinguished_name = req_distinguished_name
+              req_extensions = v3_req
+              prompt = no
+              [req_distinguished_name]
+              CN = ${WEBHOOK_SERVICE}.${namespace}.svc
+              [v3_req]
+              keyUsage = critical, digitalSignature, keyEncipherment
+              extendedKeyUsage = serverAuth
+              subjectAltName = @alt_names
+              [alt_names]
+              DNS.1 = ${WEBHOOK_SERVICE}.${namespace}.svc
+              DNS.2 = ${WEBHOOK_SERVICE}.${namespace}.svc.cluster.local
+              EOF
+              openssl req -new -key "${workdir}/tls.key" -out "${workdir}/tls.csr" -config "${workdir}/tls.cnf"
+              openssl x509 -req -in "${workdir}/tls.csr" \
+                -CA "${workdir}/ca.crt" -CAkey "${workdir}/ca.key" \
+                -CAcreateserial -out "${workdir}/tls.crt" \
+                -days "${VALIDITY_DAYS}" -extensions v3_req -extfile "${workdir}/tls.cnf"
+
+              cp "${workdir}/tls.crt" /webhook-certs/tls.crt
+              cp "${workdir}/tls.key" /webhook-certs/tls.key
+              chmod 0644 /webhook-certs/tls.crt
+              chmod 0640 /webhook-certs/tls.key
+              kubectl create secret generic "${secret}" -n "${namespace}" \
+                --from-file=ca.crt="${workdir}/ca.crt" \
+                --from-file=tls.crt="${workdir}/tls.crt" \
+                --from-file=tls.key="${workdir}/tls.key" \
+                --dry-run=client -o yaml | kubectl apply --server-side \
+                  --field-manager=kubernaut-operator-cert-init -f -
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: WEBHOOK_SECRET
+              value: {{ include "kubernaut-operator.webhookSecretName" . | quote }}
+            - name: WEBHOOK_SERVICE
+              value: {{ include "kubernaut-operator.webhookServiceName" . | quote }}
+            - name: VALIDITY_DAYS
+              value: {{ .Values.webhook.tls.development.validityDays | quote }}
+            - name: ROTATE_ON_UPGRADE
+              value: {{ .Values.webhook.tls.development.rotateOnUpgrade | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: webhook-certs
+              mountPath: /webhook-certs
+            - name: cert-init-tmp
+              mountPath: /tmp
+      {{- end }}
+      containers:
+        - name: manager
+          image: {{ include "kubernaut-operator.managerImage" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /manager
+          args:
+            - --leader-elect={{ .Values.leaderElection.enabled }}
+            - --health-probe-bind-address={{ .Values.healthProbe.bindAddress }}
+            - --metrics-bind-address={{ ternary .Values.metrics.bindAddress "0" .Values.metrics.enabled }}
+            - --metrics-secure={{ .Values.metrics.secure }}
+            - --enable-http2=false
+          env:
+            {{- range $name, $image := .Values.relatedImages }}
+            - name: RELATED_IMAGE_{{ $name }}
+              value: {{ $image | quote }}
+            {{- end }}
+          ports:
+            {{- if .Values.webhook.enabled }}
+            - name: webhook
+              containerPort: {{ .Values.webhook.service.port }}
+              protocol: TCP
+            {{- end }}
+            {{- if .Values.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.metrics.service.port }}
+              protocol: TCP
+            {{- end }}
+          {{- with .Values.securityContext.container }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.webhook.enabled }}
+          volumeMounts:
+            - name: webhook-certs
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
+          {{- end }}
+      {{- if .Values.webhook.enabled }}
+      volumes:
+        {{- if eq .Values.webhook.tls.mode "development" }}
+        - name: webhook-certs
+          emptyDir: {}
+        - name: cert-init-tmp
+          emptyDir: {}
+        {{- else }}
+        - name: webhook-certs
+          secret:
+            secretName: {{ include "kubernaut-operator.webhookSecretName" . }}
+            optional: false
+        {{- end }}
+      {{- end }}

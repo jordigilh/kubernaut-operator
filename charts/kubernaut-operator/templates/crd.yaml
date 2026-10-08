@@ -1,0 +1,13 @@
+{{- if .Values.crd.install }}
+{{- $crd := fromYaml (.Files.Get "files/kubernaut.ai_kubernauts.yaml") -}}
+{{- $metadata := default (dict) $crd.metadata -}}
+{{- $_ := set $metadata "name" "kubernauts.kubernaut.ai" -}}
+{{- $_ := set $metadata "labels" (include "kubernaut-operator.labels" . | fromYaml) -}}
+{{- $annotations := default (dict) $metadata.annotations -}}
+{{- $_ := set $annotations "helm.sh/resource-policy" "keep" -}}
+{{- $_ := set $annotations "meta.helm.sh/release-name" .Release.Name -}}
+{{- $_ := set $annotations "meta.helm.sh/release-namespace" .Release.Namespace -}}
+{{- $_ := set $metadata "annotations" $annotations -}}
+{{- $_ := set $crd "metadata" $metadata -}}
+{{ toYaml $crd }}
+{{- end }}
