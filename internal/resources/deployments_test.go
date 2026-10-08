@@ -129,6 +129,27 @@ func expectHasVolumeMount(dep *appsv1.Deployment, name, mountPath string) {
 	Fail("Deployment " + dep.Name + " container should have volume mount " + name)
 }
 
+func findVolume(dep *appsv1.Deployment, name string) *corev1.Volume {
+	for i := range dep.Spec.Template.Spec.Volumes {
+		if dep.Spec.Template.Spec.Volumes[i].Name == name {
+			return &dep.Spec.Template.Spec.Volumes[i]
+		}
+	}
+	return nil
+}
+
+func telemetrySecretFixture() kubernautv1alpha2.TelemetrySpec {
+	return kubernautv1alpha2.TelemetrySpec{
+		Endpoint: "otel-collector:4317",
+		TLS: kubernautv1alpha2.TelemetryTLSConfig{
+			CACertSecretRef:    &kubernautv1alpha2.CACertSecretRef{Name: "telemetry-ca"},
+			CertFile:           "/etc/telemetry/tls.crt",
+			KeyFile:            "/etc/telemetry/tls.key",
+			TLSClientSecretRef: "telemetry-client",
+		},
+	}
+}
+
 var _ = Describe("Deployments", func() {
 	Context("Gateway", func() {
 		It("has basic deployment properties", func() {
@@ -169,6 +190,44 @@ var _ = Describe("Deployments", func() {
 				}
 			}
 			Expect(found).To(BeTrue(), "tls-certs volume should reference gateway-tls Secret")
+		})
+
+		It("adds shared telemetry Secret material only for a network exporter", func() {
+			kn := testKubernaut()
+			kn.Spec.Gateway.Config.Telemetry = telemetrySecretFixture()
+			dep, err := GatewayDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			volume := findVolume(dep, "telemetry-material")
+			Expect(volume).NotTo(BeNil())
+			Expect(volume.Projected).NotTo(BeNil())
+			Expect(volume.Projected.Sources).To(HaveLen(2))
+			Expect(volume.Projected.Sources[0].Secret.Name).To(Equal("telemetry-ca"))
+			Expect(volume.Projected.Sources[0].Secret.Items).To(Equal([]corev1.KeyToPath{{Key: "ca.crt", Path: "ca.crt"}}))
+			Expect(volume.Projected.Sources[1].Secret.Name).To(Equal("telemetry-client"))
+			Expect(volume.Projected.Sources[1].Secret.Items).To(Equal([]corev1.KeyToPath{
+				{Key: "tls.crt", Path: "tls.crt"},
+				{Key: "tls.key", Path: "tls.key"},
+			}))
+			expectHasVolumeMount(dep, "telemetry-material", "/etc/telemetry")
+		})
+
+		It("does not add telemetry mounts for local-only modes", func() {
+			kn := testKubernaut()
+			kn.Spec.Gateway.Config.Telemetry = kubernautv1alpha2.TelemetrySpec{Endpoint: "stdout"}
+			dep, err := GatewayDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			expectNoVolume(dep, "telemetry-material")
+			expectNoVolume(dep, "telemetry-ca")
+			expectNoVolume(dep, "telemetry-client")
+		})
+
+		It("provides writable tmp for ambient trust bootstrap", func() {
+			kn := testKubernaut()
+			dep, err := GatewayDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, "tmp")
+			expectHasVolumeMount(dep, "tmp", "/tmp")
 		})
 
 		// CONS-005 (#423): gateway.resources was flagged as a cross-consumer
@@ -447,6 +506,17 @@ var _ = Describe("Deployments", func() {
 			expectHasVolume(dep, "tls-certs")
 			expectHasVolumeMount(dep, "tls-certs", InterServiceTLSCertDir)
 		})
+
+		It("uses the shared telemetry Secret mount helper", func() {
+			kn := testKubernaut()
+			kn.Spec.DataStorage.Telemetry = telemetrySecretFixture()
+			dep, err := DataStorageDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+			volume := findVolume(dep, "telemetry-material")
+			Expect(volume).NotTo(BeNil())
+			Expect(volume.Projected).NotTo(BeNil())
+			expectHasVolumeMount(dep, "telemetry-material", "/etc/telemetry")
+		})
 	})
 
 	Context("AIAnalysis", func() {
@@ -572,6 +642,17 @@ var _ = Describe("Deployments", func() {
 			expectDeploymentBasics(dep, "kubernautagent")
 			expectHasVolume(dep, "llm-credentials")
 			expectHasVolumeMount(dep, "llm-credentials", "/etc/kubernaut-agent/credentials")
+		})
+
+		It("uses the shared telemetry Secret mount helper", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.Telemetry = telemetrySecretFixture()
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			volume := findVolume(dep, "telemetry-material")
+			Expect(volume).NotTo(BeNil())
+			Expect(volume.Projected).NotTo(BeNil())
+			expectHasVolumeMount(dep, "telemetry-material", "/etc/telemetry")
 		})
 
 		It("uses the API server default audience for the projected service-account token", func() {
@@ -1556,15 +1637,14 @@ var _ = Describe("Deployments", func() {
 				}
 				Expect(hasCAMount).To(BeTrue(), "Deployment %q missing %s volume mount", dep.Name, testVolumeTLSCA)
 
-				// #404: KubernautAgent is the sole exception -- its
-				// SSL_CERT_FILE must point at its own merged (system+
-				// inter-service) bundle, a strict superset of
-				// InterServiceTLSCAFile, since KA also verifies public-CA
-				// LLM providers via the same global trust store. TLS_CA_FILE
-				// stays at the narrower InterServiceTLSCAFile for everyone,
-				// KA included.
+				// #478: Gateway and DataStorage must not set SSL_CERT_FILE to
+				// the narrow inter-service bundle because Go treats it as a
+				// replacement for the image's public system roots. KA retains
+				// its existing merged system+inter-service bundle on OpenShift.
+				component := dep.Spec.Template.Labels["app"]
+				expectsProcessTrustEnv := component != ComponentGateway && component != ComponentDataStorage
 				wantSSLCertFile := InterServiceTLSCAFile
-				if dep.Spec.Template.Labels["app"] == ComponentKubernautAgent {
+				if component == ComponentKubernautAgent {
 					wantSSLCertFile = "/etc/ssl/combined/ca-bundle.crt"
 				}
 
@@ -1579,7 +1659,11 @@ var _ = Describe("Deployments", func() {
 					}
 				}
 				Expect(hasCAEnv).To(BeTrue(), "Deployment %q missing TLS_CA_FILE env var", dep.Name)
-				Expect(hasSSLCertEnv).To(BeTrue(), "Deployment %q missing SSL_CERT_FILE=%s env var (workaround for kubernaut#TBD: MCP client base transport doesn't honor a custom CA)", dep.Name, wantSSLCertFile)
+				if expectsProcessTrustEnv {
+					Expect(hasSSLCertEnv).To(BeTrue(), "Deployment %q missing SSL_CERT_FILE=%s env var", dep.Name, wantSSLCertFile)
+				} else {
+					Expect(hasSSLCertEnv).To(BeFalse(), "Deployment %q must leave SSL_CERT_FILE unset so public system roots remain available", dep.Name)
+				}
 			}
 		})
 

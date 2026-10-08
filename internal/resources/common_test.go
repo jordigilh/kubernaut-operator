@@ -252,15 +252,14 @@ func fleetNamespaceFromYAML(data string) string {
 // and Kubernaut Agent ConfigMap builders.
 func telemetrySpecFixture() kubernautv1alpha2.TelemetrySpec {
 	logSink := true
-	tlsEnabled := true
 	return kubernautv1alpha2.TelemetrySpec{
 		Endpoint: "otel-collector.observability.svc:4317",
 		LogSink:  &logSink,
 		TLS: kubernautv1alpha2.TelemetryTLSConfig{
-			Enabled:  &tlsEnabled,
-			CAFile:   "/etc/telemetry/ca.crt",
-			CertFile: "/etc/telemetry/tls.crt",
-			KeyFile:  "/etc/telemetry/tls.key",
+			CAFile:             "/etc/telemetry/ca.crt",
+			CertFile:           "/etc/telemetry/tls.crt",
+			KeyFile:            "/etc/telemetry/tls.key",
+			TLSClientSecretRef: "telemetry-client",
 		},
 	}
 }
@@ -280,7 +279,6 @@ func assertTelemetryYAML(data string) {
 	ExpectWithOffset(1, yaml.Unmarshal([]byte(data), &root)).To(Succeed())
 	ExpectWithOffset(1, root.Telemetry.Endpoint).To(Equal("otel-collector.observability.svc:4317"), "telemetry.endpoint mismatch, got:\n%s", data)
 	ExpectWithOffset(1, root.Telemetry.LogSink).To(BeTrue(), "telemetry.logSink mismatch, got:\n%s", data)
-	ExpectWithOffset(1, root.Telemetry.TLS.Enabled).To(BeTrue(), "telemetry.tls.enabled mismatch, got:\n%s", data)
 	ExpectWithOffset(1, root.Telemetry.TLS.CAFile).To(Equal("/etc/telemetry/ca.crt"), "telemetry.tls.caFile mismatch, got:\n%s", data)
 	ExpectWithOffset(1, root.Telemetry.TLS.CertFile).To(Equal("/etc/telemetry/tls.crt"), "telemetry.tls.certFile mismatch, got:\n%s", data)
 	ExpectWithOffset(1, root.Telemetry.TLS.KeyFile).To(Equal("/etc/telemetry/tls.key"), "telemetry.tls.keyFile mismatch, got:\n%s", data)

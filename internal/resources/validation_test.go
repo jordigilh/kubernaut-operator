@@ -25,7 +25,10 @@ import (
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
-const malformedURL = "not-a-url"
+const (
+	malformedURL          = "not-a-url"
+	testTelemetryCertFile = "/etc/telemetry/tls.crt"
+)
 
 var _ = Describe("IA-2: AF multi-provider JWT authentication", func() {
 	withAFProviders := func(providers []kubernautv1alpha2.JWTProviderSpec) *kubernautv1alpha2.Kubernaut {
@@ -999,6 +1002,153 @@ var _ = Describe("LLM Profile Referential Integrity", func() {
 			"#233: cross-provider phase overrides are representable now that KA resolves each phase's own apiKeyFile independently")
 	})
 })
+
+var _ = Describe("OTLP telemetry TLS contract", func() {
+	setGatewayTelemetry := func(kn *kubernautv1alpha2.Kubernaut, telemetry kubernautv1alpha2.TelemetrySpec) {
+		kn.Spec.Gateway.Config.Telemetry = telemetry
+	}
+
+	setNetworkTelemetry := func(endpoint string) kubernautv1alpha2.TelemetrySpec {
+		return kubernautv1alpha2.TelemetrySpec{Endpoint: endpoint}
+	}
+
+	It("accepts disabled, log-sink-only, and stdout-only telemetry without TLS material", func() {
+		cases := []kubernautv1alpha2.TelemetrySpec{
+			{},
+			{LogSink: boolPtr(true)},
+			{Endpoint: "stdout"},
+		}
+		for _, telemetry := range cases {
+			kn := testKubernaut()
+			setGatewayTelemetry(kn, telemetry)
+			Expect(ValidateKubernaut(kn, KagentiSidecarNone)).To(BeEmpty(), "telemetry=%#v", telemetry)
+		}
+	})
+
+	It("accepts an explicit HTTPS endpoint while keeping TLS implicit in the rendered contract", func() {
+		kn := testKubernaut()
+		setGatewayTelemetry(kn, setNetworkTelemetry("https://otel-collector:4317"))
+		Expect(ValidateKubernaut(kn, KagentiSidecarNone)).To(BeEmpty())
+	})
+
+	DescribeTable("rejects non-TLS endpoint forms", func(endpoint string) {
+		kn := testKubernaut()
+		setGatewayTelemetry(kn, setNetworkTelemetry(endpoint))
+		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		Expect(errs).NotTo(BeEmpty())
+		Expect(strings.Join(errorStrings(errs), "; ")).To(ContainSubstring("spec.gateway.config.telemetry.endpoint"))
+	},
+		Entry("http URI", "http://otel-collector:4317"),
+		Entry("other URI scheme", "ftp://otel-collector:4317"),
+		Entry("missing port", "otel-collector"),
+		Entry("invalid port", "otel-collector:not-a-port"),
+		Entry("whitespace", "otel-collector:4317 "),
+		Entry("loopback address", "127.0.0.1:4317"),
+		Entry("IPv6 loopback address", "[::1]:4317"),
+		Entry("link-local metadata address", "169.254.169.254:4317"),
+		Entry("metadata hostname", "metadata.google.internal:4317"),
+	)
+
+	It("rejects ambiguous CA sources and requires an absolute file path", func() {
+		kn := testKubernaut()
+		telemetry := setNetworkTelemetry("otel-collector:4317")
+		telemetry.TLS.CAFile = "relative/ca.pem"
+		telemetry.TLS.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "telemetry-ca"}
+		setGatewayTelemetry(kn, telemetry)
+
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		Expect(joined).To(ContainSubstring("caFile"))
+		Expect(joined).To(ContainSubstring("caCertSecretRef"))
+	})
+
+	It("requires a named CA Secret and validates the full numeric port range", func() {
+		kn := testKubernaut()
+		telemetry := setNetworkTelemetry("otel-collector:0")
+		telemetry.TLS.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{}
+		setGatewayTelemetry(kn, telemetry)
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		Expect(joined).To(ContainSubstring("caCertSecretRef.name must not be empty"))
+		Expect(joined).To(ContainSubstring("port from 1 to 65535"))
+
+		for _, endpoint := range []string{"otel-collector:65536", "otel-collector:+1"} {
+			Expect(validateTelemetryEndpoint(endpoint)).To(MatchError(ContainSubstring("TCP port")), endpoint)
+		}
+		Expect(allASCIIDigits("")).To(BeFalse())
+		Expect(allASCIIDigits("12a")).To(BeFalse())
+	})
+
+	It("requires a complete client pair and validates Secret-backed client paths", func() {
+		kn := testKubernaut()
+		telemetry := setNetworkTelemetry("otel-collector:4317")
+		telemetry.TLS.CertFile = testTelemetryCertFile
+		telemetry.TLS.TLSClientSecretRef = "telemetry-client"
+		setGatewayTelemetry(kn, telemetry)
+
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		Expect(joined).To(ContainSubstring("certFile"))
+		Expect(joined).To(ContainSubstring("keyFile"))
+
+		telemetry.TLS = kubernautv1alpha2.TelemetryTLSConfig{TLSClientSecretRef: "telemetry-client"}
+		setGatewayTelemetry(kn, telemetry)
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		Expect(joined).To(ContainSubstring("requires both certFile and keyFile"))
+
+		telemetry.TLS.CertFile = "relative/tls.crt"
+		telemetry.TLS.KeyFile = "/etc/telemetry/tls.key"
+		setGatewayTelemetry(kn, telemetry)
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		Expect(joined).To(ContainSubstring("absolute"))
+
+		telemetry.TLS.CertFile = testTelemetryCertFile
+		telemetry.TLS.KeyFile = "/etc/other/tls.key"
+		setGatewayTelemetry(kn, telemetry)
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		Expect(joined).To(ContainSubstring("same directory"))
+
+		telemetry.TLS.KeyFile = testTelemetryCertFile
+		setGatewayTelemetry(kn, telemetry)
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		Expect(joined).To(ContainSubstring("different paths"))
+
+		telemetry.TLS.KeyFile = "/etc/telemetry/ca.crt"
+		telemetry.TLS.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "telemetry-ca"}
+		setGatewayTelemetry(kn, telemetry)
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		Expect(joined).To(ContainSubstring("must not overwrite"))
+
+		telemetry.TLS.CertFile = "/etc/collector/tls.crt"
+		telemetry.TLS.KeyFile = "/etc/collector/tls.key"
+		setGatewayTelemetry(kn, telemetry)
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		Expect(joined).To(ContainSubstring("mounted below /etc/telemetry"))
+	})
+
+	It("rejects Secret keys that could escape the projected Secret item path", func() {
+		kn := testKubernaut()
+		telemetry := setNetworkTelemetry("otel-collector:4317")
+		telemetry.TLS.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "telemetry-ca", Key: "../ca.crt"}
+		setGatewayTelemetry(kn, telemetry)
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		Expect(joined).To(ContainSubstring("without path separators"))
+	})
+
+	It("uses the same validation policy for DataStorage and Kubernaut Agent", func() {
+		kn := testKubernaut()
+		kn.Spec.DataStorage.Telemetry = setNetworkTelemetry("http://otel-collector:4317")
+		kn.Spec.KubernautAgent.Telemetry = setNetworkTelemetry("otel-collector")
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		Expect(joined).To(ContainSubstring("spec.dataStorage.telemetry.endpoint"))
+		Expect(joined).To(ContainSubstring("spec.kubernautAgent.telemetry.endpoint"))
+	})
+})
+
+func errorStrings(errs []error) []string {
+	result := make([]string, len(errs))
+	for i, err := range errs {
+		result[i] = err.Error()
+	}
+	return result
+}
 
 var _ = Describe("API Frontend Severity Triage LLM Validation", func() {
 	It("accepts a nil severityTriage (defaults to inheriting AF's resolved profile)", func() {
