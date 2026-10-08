@@ -44,14 +44,14 @@ var _ = Describe("IA-2: AF multi-provider JWT authentication", func() {
 		Audiences: []string{"kubernaut-console"},
 	}
 
-	spireProvider := kubernautv1alpha2.JWTProviderSpec{
-		Name:      "spire",
-		IssuerURL: "https://spire.example.com",
+	secondaryProvider := kubernautv1alpha2.JWTProviderSpec{
+		Name:      "secondary",
+		IssuerURL: "https://secondary.example.com",
 		Audiences: []string{"kubernaut-workload"},
 	}
 
 	It("IA-2: accepts AF with multiple concurrent OIDC providers for multi-source authentication", func() {
-		kn := withAFProviders([]kubernautv1alpha2.JWTProviderSpec{keycloakProvider, spireProvider})
+		kn := withAFProviders([]kubernautv1alpha2.JWTProviderSpec{keycloakProvider, secondaryProvider})
 		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty(),
 			"IA-2: platform must support concurrent JWT validation from multiple OIDC issuers")

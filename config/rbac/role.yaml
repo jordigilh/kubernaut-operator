@@ -297,15 +297,3 @@ rules:
   verbs:
   - create
   - update
-- apiGroups:
-  - spire.spiffe.io
-  resources:
-  - clusterspiffeids
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch

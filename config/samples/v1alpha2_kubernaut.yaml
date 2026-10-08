@@ -190,12 +190,6 @@ spec:
       enabled: false
     shutdown:
       drainSeconds: 15
-    spire:
-      # Opt-in registration only. A SPIRE Controller Manager/provider must be
-      # installed separately; this operator does not install SPIRE or inject
-      # SVIDs. See docs/installation/02-configure-services.md.
-      enabled: false
-      className: zero-trust-workload-identity-manager-spire
     rbac:
       sarCacheTTL: "30s"
       roleBindings:

@@ -615,20 +615,6 @@ This is a separate, coarse-grained authorization gate from per-tool RBAC (AF v1.
 
 Quick check: if `spec.apiFrontend.rbac.roleBindings` already lists groups, the operator auto-derives console access from them and the CR is very likely already correct — the more common cause at that point is the denied user's JWT not actually carrying the expected `groups` claim.
 
-**SPIRE identity is not delivered to the API Frontend pod:**
-
-`spec.apiFrontend.spire.enabled` registers a `ClusterSPIFFEID`; it does not
-install a SPIRE provider or inject an SVID. Confirm that the external SPIRE
-Controller Manager CRD is installed, that the configured `className` matches
-the provider, and that the provider's CSI/injection mechanism and trust bundle
-are configured. The operator's core reconciliation does not depend on
-Kagenti/rossctl resources or sidecars. SVID rotation, mTLS peer authorization,
-and JWT-SVID validation require the separate live qualification lane. Run the
-operator's pinned provider lane with
-`KUBERNAUT_E2E_SPIRE=true make test-e2e-kind`; it is manual/nightly evidence,
-not a claim that ordinary production Deployments receive SVID files without
-provider-owned delivery wiring.
-
 **CR in Degraded:**
 
 One or more services are not ready. Check which:

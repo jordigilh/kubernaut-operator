@@ -41,7 +41,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -1531,65 +1530,6 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(cm.Data["config.yaml"]).To(ContainSubstring("required: true"))
 		})
 
-		It("registers SPIFFE independently when the external CRD is present", func() {
-			kn := unitTestKubernautCR(true)
-			spireCRD := &apiextensionsv1.CustomResourceDefinition{
-				ObjectMeta: metav1.ObjectMeta{Name: "clusterspiffeids.spire.spiffe.io"},
-				Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-					Group: "spire.spiffe.io",
-					Names: apiextensionsv1.CustomResourceDefinitionNames{
-						Kind: "ClusterSPIFFEID", Plural: "clusterspiffeids", Singular: "clusterspiffeid",
-					},
-					Scope: apiextensionsv1.ClusterScoped,
-					Versions: []apiextensionsv1.CustomResourceDefinitionVersion{{
-						Name: "v1alpha1", Served: true, Storage: true,
-					}},
-				},
-			}
-			r := newReconcilerWithCRDScheme(spireCRD)
-
-			Expect(r.ensureAPIFrontendSPIFFEID(ctx, kn)).To(Succeed())
-
-			registered := &unstructured.Unstructured{}
-			registered.SetAPIVersion("spire.spiffe.io/v1alpha1")
-			registered.SetKind("ClusterSPIFFEID")
-			Expect(r.Get(ctx, types.NamespacedName{Name: "kubernaut-apifrontend"}, registered)).To(Succeed())
-			template, found, err := unstructured.NestedString(registered.Object, "spec", "spiffeIDTemplate")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(found).To(BeTrue())
-			Expect(template).To(Equal("spiffe://{{ .TrustDomain }}/ns/" + testNamespace + "/sa/apifrontend"))
-			Expect(registered.GetLabels()).To(HaveKeyWithValue("app.kubernetes.io/component", "apifrontend"))
-		})
-
-		It("does not require SPIRE when its CRD is absent", func() {
-			kn := unitTestKubernautCR(true)
-			r := newReconcilerWithCRDScheme()
-			Expect(r.ensureAPIFrontendSPIFFEID(ctx, kn)).To(Succeed())
-		})
-
-		It("removes only the operator-owned registration when SPIRE is disabled", func() {
-			spireCRD := &apiextensionsv1.CustomResourceDefinition{
-				ObjectMeta: metav1.ObjectMeta{Name: "clusterspiffeids.spire.spiffe.io"},
-				Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-					Group: "spire.spiffe.io",
-					Names: apiextensionsv1.CustomResourceDefinitionNames{
-						Kind: "ClusterSPIFFEID", Plural: "clusterspiffeids", Singular: "clusterspiffeid",
-					},
-					Scope: apiextensionsv1.ClusterScoped,
-					Versions: []apiextensionsv1.CustomResourceDefinitionVersion{{
-						Name: "v1alpha1", Served: true, Storage: true,
-					}},
-				},
-			}
-			registered := resources.ClusterSPIFFEIDReference()
-			r := newReconcilerWithCRDScheme(spireCRD, registered)
-			kn := unitTestKubernautCR(false)
-
-			Expect(r.ensureAPIFrontendSPIFFEID(ctx, kn)).To(Succeed())
-			got := resources.ClusterSPIFFEIDReference()
-			getErr := r.Get(ctx, types.NamespacedName{Name: got.GetName()}, got)
-			Expect(errors.IsNotFound(getErr)).To(BeTrue())
-		})
 	})
 
 	// ======================================================================
@@ -3131,7 +3071,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("WNS-010 [AC-4]: patches an existing kubernaut-workflows namespace that is missing the restricted PSA labels, so upgrades of pre-existing clusters converge to the defense-in-depth backstop, not just fresh installs", func() {
 			ns := wfNamespace(map[string]string{"app.kubernetes.io/managed-by": "kubernaut-operator"})
-			kn := unitTestKubernautCR(false)
+			kn := unitTestKubernautCR()
 			r := newFakeUnitReconciler(ns)
 
 			Expect(r.deployWorkflowNamespace(ctx, kn)).To(Succeed())
@@ -3149,7 +3089,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				"pod-security.kubernetes.io/audit":   "restricted",
 				"pod-security.kubernetes.io/warn":    "restricted",
 			})
-			kn := unitTestKubernautCR(false)
+			kn := unitTestKubernautCR()
 			r := newFakeUnitReconciler(ns)
 
 			before := &corev1.Namespace{}
@@ -3165,7 +3105,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("WNS-012 [CM-6]: patching preserves pre-existing unrelated labels on the namespace", func() {
 			ns := wfNamespace(map[string]string{"custom-team-label": "sre"})
-			kn := unitTestKubernautCR(false)
+			kn := unitTestKubernautCR()
 			r := newFakeUnitReconciler(ns)
 
 			Expect(r.deployWorkflowNamespace(ctx, kn)).To(Succeed())
@@ -3245,19 +3185,11 @@ func newReconcilerWithCRDScheme(objs ...runtime.Object) *KubernautReconciler {
 	}
 }
 
-func unitTestKubernautCR(spireEnabled bool) *kubernautv1alpha2.Kubernaut {
-	kn := &kubernautv1alpha2.Kubernaut{
+func unitTestKubernautCR() *kubernautv1alpha2.Kubernaut {
+	return &kubernautv1alpha2.Kubernaut{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "kubernaut",
 			Namespace: testNamespace,
 		},
-		Spec: kubernautv1alpha2.KubernautSpec{
-			APIFrontend: kubernautv1alpha2.APIFrontendSpec{
-				SPIRE: kubernautv1alpha2.APIFrontendSPIRESpec{
-					Enabled: ptr.To(spireEnabled),
-				},
-			},
-		},
 	}
-	return kn
 }

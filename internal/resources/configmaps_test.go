@@ -4049,8 +4049,8 @@ var _ = Describe("IA-2: AF multi-provider JWT config emission", func() {
 				Audiences: []string{"kubernaut-console"},
 			},
 			{
-				Name:      "spire",
-				IssuerURL: "https://spire.example.com",
+				Name:      "secondary",
+				IssuerURL: "https://secondary.example.com",
 				Audiences: []string{"kubernaut-workload"},
 			},
 		}
@@ -4068,10 +4068,10 @@ var _ = Describe("IA-2: AF multi-provider JWT config emission", func() {
 		Expect(data).To(ContainSubstring("jwksURL: https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/certs"),
 			"IA-2: keycloak jwksURL must be propagated")
 
-		Expect(data).To(ContainSubstring("name: spire"),
-			"IA-2: second provider name must be spire")
-		Expect(data).To(ContainSubstring("issuerURL: https://spire.example.com"),
-			"IA-2: spire issuerURL must be propagated")
+		Expect(data).To(ContainSubstring("name: secondary"),
+			"IA-2: second provider name must be secondary")
+		Expect(data).To(ContainSubstring("issuerURL: https://secondary.example.com"),
+			"IA-2: secondary issuerURL must be propagated")
 	})
 
 	It("[IA-2] omits jwtProviders when single-provider legacy path is used", func() {
@@ -4083,13 +4083,13 @@ var _ = Describe("IA-2: AF multi-provider JWT config emission", func() {
 			"IA-2: jwtProviders must not appear when no multi-provider config is set")
 	})
 
-	It("kubernaut-operator#462: does not apply the Keycloak jwksURL derivation to jwtProviders[] entries (heterogeneous IdPs, e.g. SPIRE)", func() {
+	It("kubernaut-operator#462: does not apply the Keycloak jwksURL derivation to heterogeneous jwtProviders[] entries", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.Auth.IssuerURL = "" // isolate: only the spire provider has an issuerURL
+		kn.Spec.APIFrontend.Auth.IssuerURL = "" // isolate: only the secondary provider has an issuerURL
 		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{
 			{
-				Name:      "spire",
-				IssuerURL: "https://spire.example.com",
+				Name:      "secondary",
+				IssuerURL: "https://secondary.example.com",
 				Audiences: []string{"kubernaut-workload"},
 			},
 		}
@@ -4098,7 +4098,7 @@ var _ = Describe("IA-2: AF multi-provider JWT config emission", func() {
 		data := cm.Data["config.yaml"]
 		Expect(data).NotTo(ContainSubstring("protocol/openid-connect/certs"),
 			"#462: the Keycloak-convention derivation is only safe for the single-provider issuerURL/jwksURL "+
-				"fields -- jwtProviders[] entries can be non-Keycloak IdPs (e.g. SPIRE) and must be left as-is "+
+				"fields -- jwtProviders[] entries can be non-Keycloak IdPs and must be left as-is "+
 				"when their own jwksURL is empty")
 	})
 })
@@ -4130,8 +4130,8 @@ var _ = Describe("AC-6: claim-based authorization config", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{
 			{
-				Name:      "spire",
-				IssuerURL: "https://spire.example.com",
+				Name:      "secondary",
+				IssuerURL: "https://secondary.example.com",
 				Audiences: []string{"kubernaut-workload"},
 			},
 		}

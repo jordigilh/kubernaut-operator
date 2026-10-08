@@ -269,9 +269,6 @@ func loadOperatorImage(ctx context.Context) error {
 
 func loadInfrastructureImages(ctx context.Context) error {
 	images := []string{contractImage(), postgresImage, valkeyImage}
-	if configuredSPIRE {
-		images = append(images, spireProbeImage())
-	}
 	for _, image := range images {
 		if _, err := runCmd(ctx, "kind", "load", "docker-image", image, "--name", kindClusterName()); err != nil {
 			return fmt.Errorf("loading contract or dependency image %q into Kind: %w", image, err)

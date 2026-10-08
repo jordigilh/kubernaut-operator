@@ -2774,7 +2774,8 @@ func afAuthConfig(kn *kubernautv1alpha2.Kubernaut) afAuthYAML {
 	// default rather than a guess. This mirrors the same convention already
 	// applied to the single-provider v2 runtime path -- but is intentionally
 	// NOT applied to the jwtProviders[] array itself here,
-	// since that list can mix in non-Keycloak IdPs (e.g. SPIRE) whose JWKS
+	// since that list can mix in non-Keycloak IdPs (for example, alternate OIDC
+	// providers) whose JWKS
 	// path this convention would get wrong.
 	if jwks == "" && issuer != "" {
 		jwks = deriveAFJWKSURL(issuer)

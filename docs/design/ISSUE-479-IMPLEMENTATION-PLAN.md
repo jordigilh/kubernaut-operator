@@ -6,33 +6,23 @@
 **Status:** Implemented and qualified in this branch.
 
 **Completion evidence:** `go build ./...`, unit/resource tests, controller
-integration tests, lint, generated-manifest checks, and the opt-in SPIRE Kind
-qualification pass. The SPIRE lane passed 8/8 specs with pinned chart
-`spire-0.13.0` (server `1.7.2`), CSI-delivered X.509-SVIDs, rotation, mTLS
-authorization/rejection, and scoped cleanup. The default Kind lane remains the
-fast operator contract gate. JWT-SVID/OIDC-provider behavior and application
-Helm ownership remain separate qualification/packaging concerns.
+integration tests, lint, and generated-manifest checks. The default Kind lane
+remains the fast operator contract gate. Live OIDC-provider qualification and
+application Helm ownership remain separate qualification/packaging concerns.
 
 **Methodology:** RED → GREEN → REFACTOR, with controller wiring verified in GREEN.
 
-## v1.6 scope correction: OAuth2 and SPIFFE remain first-class
+## v1.6 scope correction: OAuth2/OIDC is first-class
 
-For v1.6, OAuth2/OIDC user authentication and SPIFFE/SPIRE workload identity
-remain supported. Kagenti/rossctl is not a first-class production dependency: it
-must not supply the OIDC issuer, be required for a default install, or make core
-OAuth2/SPIFFE reconciliation fail when its CRDs or sidecars are absent.
+For v1.6, OAuth2/OIDC user authentication remains supported. Kagenti/rossctl is
+not a first-class production dependency: it must not supply the OIDC issuer or
+be required for a default install. There is no independent SPIFFE/SPIRE
+consumer requirement in this scope; SPIFFE/SPIRE configuration is deferred to a
+separate issue until an upstream consumer and acceptance contract exist.
 
 The baseline contained Kagenti-specific issuer auto-detection and sidecar/port
 plumbing. This implementation removes that coupling from the v1.6 operator path;
-issue #479 uses the explicit/shared issuer contract instead. SPIFFE support is
-tested and documented independently from OIDC issuer selection.
-
-In the baseline, `SPIREEnabled()` fed `detectKagentiSidecarMode()`, the controller
-selected a Kagenti sidecar mode based on an optional Kagenti CRD, and
-`KagentiSidecarMode` changed AF port/`NO_PROXY` rendering. The completed path
-retains neutral `ClusterSPIFFEID` registration and uses provider-owned CSI/SVID
-delivery only in the opt-in qualification lane. Presence or absence of a
-Kagenti/rossctl CRD is not SPIFFE capability detection.
+issue #479 uses the explicit/shared issuer contract instead.
 
 ### v1.6 removal/retention boundary
 
@@ -41,47 +31,10 @@ issuer auto-detection, `KagentiSidecarMode` detection/port switching,
 authbridge ConfigMap patching, Kagenti namespace labeling, and AgentRuntime
 creation. Do not add or retain Kagenti-named configuration in the v1alpha2 CRD.
 
-Retain the neutral `spec.apiFrontend.spire` surface and the `ClusterSPIFFEID`
-builder/reconciliation path. The supported SPIFFE contract is limited to producing
-the expected SPIRE resource when the external `clusterspiffeids.spire.spiffe.io`
-CRD/provider is installed. The operator does not install SPIRE or prove SVID
-issuance, CSI mounting, injector behavior, trust-bundle distribution, or mTLS
-handshake without a live SPIRE qualification environment.
-
-### SPIRE qualification lane
-
-Add an opt-in Kind/E2E lane using the pinned SPIRE Helm chart
-`spire-0.13.0` (chart SHA-256
-`f0178ef5f50a7d69fc532bdf60f79eaf211110c420ae00105115338d0f33126a`, server
-`1.7.2`, controller/CSI components from that chart) and its compatible
-Kubernetes integration components: SPIRE Server, node Agents, Kubernetes workload
-attestation, SPIRE Controller Manager/`ClusterSPIFFEID` CRD, and the SPIFFE CSI
-driver. The lane must:
-
-1. Install the external SPIRE stack and record exact versions/manifests.
-2. Apply a v1alpha2 CR with OAuth2 configured and `spec.apiFrontend.spire.enabled=true`.
-3. Assert the operator creates the expected `ClusterSPIFFEID` and no Kagenti/rossctl
-   resources or labels.
-4. Assert the API Frontend pod receives the expected SPIFFE identity through the
-   selected non-Kagenti mechanism, including the expected
-   `spiffe://<trust-domain>/ns/<namespace>/sa/apifrontend` identity.
-5. Exercise SVID rotation/restart behavior and a real mTLS handshake using the
-   issued identity; reject a peer with the wrong identity.
-6. Cleanly disable the CR field and verify the operator removes only its
-   `ClusterSPIFFEID` and does not delete provider-owned infrastructure.
-
-The existing unit/envtest suites remain the fast gates. This lane is initially
-manual/nightly because it depends on external provider manifests; it becomes a
-merge gate only after deterministic bootstrap and cleanup are proven. The lane
-uses a qualification-only CSI mount and a pinned SPIFFE Helper-based probe
-sidecar; this does not silently add CSI/injection behavior to the operator's
-production deployment builder. If the lane cannot show AF SVID delivery without
-an optional external integration, SPIFFE remains a resource-registration
-integration/tech-preview rather than an end-to-end v1.6 production guarantee.
-
-SPIRE-issued JWTs are a separate sublane. It requires an explicitly configured
-JWT-SVID issuer, JWKS endpoint, audiences, and AF acceptance test; a successful
-X.509-SVID mTLS lane does not prove JWT-provider support.
+Do not retain the inherited SPIFFE/SPIRE CRD field or reconciliation path in
+this OIDC change. A future SPIFFE/SPIRE issue must first define an upstream
+consumer, provider compatibility contract, documentation, and unit/integration
+or live qualification requirements.
 
 ## 1. Objective and acceptance contract
 
@@ -99,12 +52,10 @@ The implementation is complete only when:
    issuer.
 5. Existing multi-provider behavior remains valid and is tested.
 6. No Kagenti/rossctl resource, ConfigMap, or sidecar is required for the default
-   OAuth2/SPIFFE installation path.
+   OAuth2 installation path.
 7. v1alpha1 is explicitly EOL at v1alpha2 release; no concurrent v1alpha1 support
    or conversion path is introduced.
-8. SPIFFE support is documented with its bounded validation contract and is not
-   represented as proven end-to-end without live provider qualification.
-9. Installation, upgrade, demo/test, security, and operator-chart guidance is clear.
+8. Installation, upgrade, demo/test, security, and operator-chart guidance is clear.
 
 ## 2. Recommended design decisions
 
@@ -172,8 +123,7 @@ syntax check; it must not be left to the downstream runtime.
 The current API is v1alpha2-only, served/storage, and has no conversion webhook.
 v1alpha1 is EOL at the v1alpha2 release boundary; this plan adds no conversion
 webhook, v1alpha1 path, or dual-version compatibility behavior. API comments must
-remove Kagenti as an issuer fallback and describe SPIFFE/SPIRE identity as
-independent from OIDC.
+remove Kagenti as an issuer fallback and describe the explicit OIDC contract.
 
 ### 3.2 Renderer/controller gap
 
@@ -183,11 +133,11 @@ independent from OIDC.
 | Console | `internal/resources/console.go:41` calls `ConsoleIssuerURL()` and writes oauth2-proxy args | Pass the same explicit/default OAuth2 context |
 | Optional gateway registration | `internal/resources/mcpgateway.go:89` reads raw top-level issuer and is tied to the optional Kagenti gateway CRD | Keep outside the v1.6 core contract; if retained, make it an explicit optional integration using the shared OAuth2 value |
 | Validation | `internal/resources/validation.go:307` requires a top-level issuer unless Kagenti or providers apply, but does not validate top-level issuer syntax | Accept the production default, validate explicit/provider issuers as absolute URLs, and remove the Kagenti exception |
-| Controller | `phaseDeploy` resolves Kagenti and passes a Kagenti sidecar mode through AF deployment paths | Decouple OIDC resolution from sidecar detection; preserve SPIFFE/SPIRE only through an independently verified path |
+| Controller | `phaseDeploy` resolves Kagenti and passes a Kagenti sidecar mode through AF deployment paths | Decouple OIDC resolution from obsolete provider and sidecar detection |
 
 The concrete v1.6 risk is that the existing AF path can silently depend on
-Kagenti-specific detection and sidecar port behavior even though OAuth2 and SPIFFE
-should work without that integration.
+Kagenti-specific detection and sidecar port behavior even though OAuth2 should
+work without that integration.
 
 ### 3.3 Existing test seams
 
@@ -200,7 +150,7 @@ should work without that integration.
   sidecar exceptions.
 - `internal/controller/kubernaut_lifecycle_test.go` covers issuer enforcement,
   Kagenti failures, and OIDC auto-detection; v1.6 tests must instead prove that
-  missing Kagenti/rossctl resources do not block OAuth2 or SPIFFE paths.
+  missing Kagenti/rossctl resources do not block OAuth2.
 - `internal/controller/kubernaut_controller_test.go` covers ConfigMap reconciliation.
 
 ### 3.4 Packaging and upstream boundaries
@@ -227,7 +177,7 @@ cannot be satisfied by adding forbidden application values to #489.
 | S4 — provider mismatch | Should top-level issuer conflict with `jwtProviders`? | Existing multi-provider precedence and first-provider Console helper | **NO new conflict:** providers remain authoritative |
 | S5 — #478 | Does OTLP TLS enforcement affect this design? | #478 changes telemetry transport validation | **No code dependency:** coordinate release notes and run both suites |
 | S6 — URL validation | Does “full issuerURL” currently reject relative/malformed values? | Top-level issuer has no syntax check; provider issuer has only `MinLength=1` | **YES:** add absolute scheme+host validation; approve HTTP/insecure policy explicitly |
-| S7 — SPIFFE boundary | Does retaining SPIFFE require Kagenti/rossctl? | `APIFrontendSPIRESpec`, `ClusterSPIFFEID`, and sidecar/port detection are currently Kagenti-named | **YES:** preserve SPIFFE/SPIRE, but decouple OIDC and verify the injection/provider contract separately |
+| S7 — SPIFFE scope | Is there a current SPIFFE/SPIRE consumer requirement? | No independent consumer or acceptance contract exists after Kagenti removal | **NO:** defer SPIFFE/SPIRE configuration to a separately specified issue |
 
 ## 5. Implemented design
 
@@ -258,10 +208,7 @@ that path; it is not applied to heterogeneous provider entries.
    Frontend builders through the normal workload path.
 4. Optional MCP gateway registration is outside the v1.6 core path and is not
    reconciled by this implementation.
-5. SPIFFE/SPIRE resource registration is reconciled independently and must not
-   affect OIDC issuer selection; external SPIRE injection/SVID issuance remains a
-   provider-owned qualification boundary.
-6. No consumer performs a separate fallback calculation.
+5. No consumer performs a separate fallback calculation.
 
 Log the selected source and issuer at the existing structured reconciliation
 boundary, including generation and resourceVersion. Issuer URLs are not secrets,
@@ -278,8 +225,6 @@ accepted because the resolver supplies the production default. Preserve:
   URLs; the CRD also carries an HTTP(S) syntax pattern, with the controller
   retaining the stronger host check;
 - no dependency on Kagenti/rossctl CRDs, ConfigMaps, or sidecars;
-- bounded SPIFFE/SPIRE validation and opt-in behavior: validate the CRD/resource
-  contract, not external SVID issuance or mTLS;
 - existing `allowInsecureIssuers`, CA, and TLS safeguards.
 
 The implemented contract keeps production values HTTPS-only by default while
@@ -293,16 +238,16 @@ and runtime issuer/JWKS reachability remain separate concerns.
 ### 5.4 Documentation and samples
 
 Update API comments, `config/samples/v1alpha2_kubernaut_minimal.yaml`, the full
-sample's OAuth2/SPIFFE comments, and:
+sample's OAuth2 comments, and:
 
 - `docs/installation/00-quickstart.md`;
 - `docs/installation/02-configure-services.md`;
 - `docs/installation/03-deploy.md`;
 - `docs/upgrade-v1alpha1-to-v1alpha2.md`.
 
-Document the production default, explicit external/demo/test full URL, independent
-OAuth2 and SPIFFE/SPIRE behavior, Console client/audience/redirect requirements,
-the disabled-AF path, and that Kagenti/rossctl is not a v1.6 production prerequisite.
+Document the production default, explicit external/demo/test full URL, Console
+client/audience/redirect requirements, the disabled-AF path, and that
+Kagenti/rossctl is not a v1.6 production prerequisite.
 Explain that changing realms invalidates old tokens/cookies and requires matching
 IdP clients, audiences, redirect URIs, JWKS reachability, and CA trust.
 
@@ -341,14 +286,9 @@ Extend existing Ginkgo/Gomega suites with:
 4. Validation cases for accepted default, rejected empty provider issuer, malformed
    or relative top-level/provider issuers, existing security errors, AF-disabled
    behavior, and absent Kagenti/rossctl resources not blocking the core path.
-5. SPIFFE/SPIRE cases proving opt-in identity resources remain independent of OIDC
-   issuer selection and do not require Kagenti/rossctl discovery: unit tests assert
-   the `ClusterSPIFFEID` template/selectors/className, envtest asserts creation when
-   the CRD is installed and no failure when it is absent, and live qualification is
-   required before claiming SVID/injection/mTLS support.
-6. Envtest cases proving equal AF/Console issuers for default and explicit
-   demo/external configurations, plus OAuth2/SPIFFE operation without Kagenti.
-7. A cross-repository Helm contract check, when the owning chart is available,
+5. Envtest cases proving equal AF/Console issuers for default and explicit
+   demo/external configurations, plus OAuth2 operation without Kagenti.
+6. A cross-repository Helm contract check, when the owning chart is available,
    covering the production default, exact override, and explicit demo overlay; if it
    is not available, record the dependency rather than duplicating chart templates.
 
@@ -376,13 +316,11 @@ retained.
 | Effective issuer resolver | AF and Console builders | `api/v1alpha2.KubernautSpec.EffectiveIssuerURL()` and `ConsoleIssuerURL()` | API/resource renderer UTs |
 | AF shared issuer | `phaseDeploy` | `deployConfigMaps` → `appendOptionalComponentConfigMaps` → `APIFrontendConfigMap` → `afAuthConfig` | Envtest default/override |
 | Console shared issuer | `phaseDeploy` | `deployWorkloads` → `enabledDeploymentBuilders` → `ConsoleDeployment` → `ConsoleIssuerURL` | Console renderer UTs |
-| SPIFFE/SPIRE resource registration | `phaseDeploy` | `deployAPIFrontendExtras` → `ensureAPIFrontendSPIFFEID` → `ClusterSPIFFEID` | Resource/envtest tests; live provider qualification is separate |
 | Default validation | `phaseValidate` | `ValidateKubernaut` and provider validation | Validation/lifecycle tests |
 | #489 boundary | User-applied CR | Bootstrap chart only; no application OIDC/CR rendering | Chart/static review |
 
-Checkpoint W fails if any builder calculates a separate issuer, SPIFFE is made
-dependent on Kagenti/rossctl discovery, rendered values diverge from the resolver,
-or #489 starts owning application OIDC configuration.
+Checkpoint W fails if any builder calculates a separate issuer, rendered values
+diverge from the resolver, or #489 starts owning application OIDC configuration.
 
 ## 8. Verification matrix
 
@@ -390,19 +328,18 @@ or #489 starts owning application OIDC configuration.
 |---|---|---|
 | Unit | Resolver precedence, exact URL preservation, default, demo explicitness, renderers, TLS args | All Ginkgo specs pass; no business `testing.T` tests |
 | Validation | Default, absolute issuer URLs, provider, AF-disabled, optional-integration absence | No IA-2/IA-5/SC-8/CM-6 regression |
-| Integration/envtest | Default, external/demo override, multi-provider, OAuth2, and SPIFFE without Kagenti | Actual AF and Console issuer values are equal |
+| Integration/envtest | Default, external/demo override, multi-provider, and OAuth2 without Kagenti | Actual AF and Console issuer values are equal |
 | Schema/codegen | API comments/markers and generated artifacts | `make manifests generate` has only intended diffs |
 | Packaging | #489 bootstrap boundary | No application CR/workload/copied values |
 | Helm contract | No application chart in this checkout | External chart parity remains an explicit follow-up; no duplicate values were added here |
-| Documentation | Production, external, demo/test, OAuth2, SPIFFE, optional rossctl, upgrade paths | Examples and precedence agree |
-| Live qualification | Real IdP login/JWKS reachability and, separately, SPIRE SVID/CSI/injection/mTLS behavior | Release qualification; unit/envtest cannot prove provider behavior |
+| Documentation | Production, external, demo/test, OAuth2, optional rossctl, upgrade paths | Examples and precedence agree |
+| Live qualification | Real IdP login/JWKS reachability | Release qualification; unit/envtest cannot prove provider behavior |
 
 Post-implementation checks are `go build ./...`, `golangci-lint run`,
 `make test-unit`, `make test-integration`, `make test`, `make manifests generate`,
 `go test ./... -run=^$ -timeout=30s`, and `git diff --check`. Inspect CRD, bundle,
 and `dist/install.yaml` diffs. The default Kind contract lane remains
-`make test-e2e-kind`; the SPIRE qualification lane is explicitly opt-in:
-`KUBERNAUT_E2E_SPIRE=true make test-e2e-kind`.
+`make test-e2e-kind`.
 
 ## 9. Compatibility, upgrade, and rollout
 
@@ -414,8 +351,6 @@ and `dist/install.yaml` diffs. The default Kind contract lane remains
   trust before enabling Console.
 - Demo/test installations must set the complete demo URL before upgrading. Removing
   it switches new pods to production and invalidates demo tokens/cookies.
-- Existing SPIFFE/SPIRE configurations remain an explicit, opt-in identity path. They
-  must not change OIDC issuer selection or require a Kagenti/rossctl CRD.
 - Kagenti/rossctl migration or first-class support is not part of the v1.6 core
   contract. If retained, it requires a separate compatibility and production-readiness
   decision.
@@ -423,7 +358,7 @@ and `dist/install.yaml` diffs. The default Kind contract lane remains
   export/transform/recreate operation during a maintenance window; no conversion
   webhook, dual-served API, or v1alpha1 runtime fallback is added.
 - v1alpha2 is the sole supported stored configuration for the production default,
-  explicit overrides, OAuth2, and SPIFFE/SPIRE.
+  explicit overrides, and OAuth2.
 
 ## 10. Security and audit requirements
 
@@ -445,22 +380,20 @@ and `dist/install.yaml` diffs. The default Kind contract lane remains
 | Future renderer drift | Central resolver, propagation, Checkpoint W, equality tests |
 | Multi-provider Console ambiguity | Document first-provider rule and assert provider membership |
 | Optional rossctl integration becomes an accidental prerequisite | Keep it out of core issuer resolution and test absent-resource operation |
-| SPIFFE support remains coupled to Kagenti sidecar detection | Add a separate SPIFFE/provider spike and require an explicit injection contract |
 | #489 duplicates application config | Keep chart bootstrap-only and review templates |
 | Helm acceptance is assigned to the wrong repository | Track the owning chart/change explicitly and require cross-repo parity before closing #479 |
 | Realm change invalidates sessions | Publish client/audience/JWKS/redirect rollout checklist |
 
 The pre-implementation approval gates were the CRD-default-plus-runtime-fallback
-contract, the first-provider Console rule, the OAuth2/SPIFFE versus rossctl scope
+contract, the first-provider Console rule, the OAuth2 versus rossctl scope
 boundary, the #489 packaging boundary, and ownership of Helm acceptance. The
 final implementation and verification above record those decisions and their
 remaining cross-repository boundary.
 
 **Final confidence: 95% for the operator scope.** The OIDC/defaulting,
 Kagenti-removal, CRD-generation, resource-rendering, controller-wiring, and
-provider-registration contracts are covered by source review and automated
-tests. The pinned SPIRE lane additionally proves provider-owned X.509 SVID/CSI
-delivery, trust, rotation, mTLS authorization/rejection, and cleanup. Remaining
-boundaries are intentional: JWT-SVID/OIDC-provider behavior needs a separate
-acceptance lane, and application Helm values remain owned outside this operator
-change; #489 must not render an application Kubernaut CR or own its OIDC values.
+OIDC-provider contract are covered by source review and automated tests. Remaining
+boundaries are intentional: live IdP/JWKS acceptance and application Helm values
+remain outside this operator change; #489 must not render an application Kubernaut
+CR or own its OIDC values. SPIFFE/SPIRE configuration is deferred until a
+separate requirement and acceptance contract exist.

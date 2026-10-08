@@ -290,7 +290,7 @@ spec:
                               type: string
                             name:
                               description: Human-readable name for this provider (e.g.
-                                "rhbk", "spire").
+                                "rhbk", "secondary").
                               maxLength: 63
                               minLength: 1
                               type: string
@@ -679,32 +679,6 @@ spec:
                         maximum: 300
                         minimum: 0
                         type: integer
-                    type: object
-                  spire:
-                    description: |-
-                      SPIRE workload identity registration for the API Frontend ServiceAccount
-                      (FedRAMP SC-8, IA-5). When enabled, a ClusterSPIFFEID is created when the
-                      external SPIRE Controller Manager CRD is available. The operator does not
-                      install or inject a SPIRE implementation.
-                    properties:
-                      className:
-                        description: |-
-                          SPIRE class name for the ClusterSPIFFEID (e.g. "zero-trust-workload-identity-manager-spire").
-                          When empty, the className field is omitted from the ClusterSPIFFEID spec.
-                        type: string
-                      enabled:
-                        description: |-
-                          Whether the operator should register the API Frontend workload with SPIRE.
-                          Defaults to false (opt-in) when omitted.
-                        type: boolean
-                      trustDomain:
-                        description: |-
-                          TrustDomain overrides the SPIFFE ID trust domain. When empty (default),
-                          the operator uses SPIRE's {{ .TrustDomain }} template variable, which
-                          resolves to the cluster's configured trust domain at SVID registration
-                          time. Set this only if you need a fixed trust domain that differs from
-                          the SPIRE server's.
-                        type: string
                     type: object
                 type: object
               authWebhook:
@@ -4430,18 +4404,6 @@ rules:
   verbs:
   - create
   - update
-- apiGroups:
-  - spire.spiffe.io
-  resources:
-  - clusterspiffeids
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

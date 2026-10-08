@@ -53,6 +53,13 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		Expect(string(issuer.Default.Raw)).To(Equal(`"https://login.kubernaut.ai/realms/kubernaut"`))
 	})
 
+	It("does not expose deferred SPIFFE/SPIRE configuration", func() {
+		crd := loadKubernautCRD()
+		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+		apiFrontend := schema.Properties["spec"].Properties["apiFrontend"]
+		Expect(apiFrontend.Properties).NotTo(HaveKey("spire"))
+	})
+
 	It("resolves issuer precedence without synthesizing a realm URL", func() {
 		spec := KubernautSpec{}
 		Expect(spec.EffectiveIssuerURL()).To(Equal(DefaultOIDCIssuerURL))

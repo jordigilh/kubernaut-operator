@@ -169,7 +169,6 @@ type KubernautReconciler struct {
 // +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers;ingresses;networks;clusterversions,verbs=get;list;watch
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors;prometheusrules;alertmanagerconfigs,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=spire.spiffe.io,resources=clusterspiffeids,verbs=get;list;watch;create;update;patch;delete
 // Reconcile is the main reconciliation loop for the Kubernaut singleton CR.
 //
 // The blank line and this doc comment above are required, not stylistic: Go
@@ -2424,7 +2423,7 @@ func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *k
 	if err := r.ensureAPIFrontendMonitoring(ctx, kn); err != nil {
 		return err
 	}
-	return r.ensureAPIFrontendSPIFFEID(ctx, kn)
+	return nil
 }
 
 // ensureAPIFrontendMonitoring provisions the APIFrontend ServiceMonitor and
@@ -2440,30 +2439,6 @@ func (r *KubernautReconciler) ensureAPIFrontendMonitoring(ctx context.Context, k
 	pr := resources.APIFrontendPrometheusRule(kn)
 	if err := r.ensureNamespaced(ctx, kn, pr); err != nil {
 		return fmt.Errorf("ensuring AF PrometheusRule: %w", err)
-	}
-	return nil
-}
-
-// ensureAPIFrontendSPIFFEID provisions the ClusterSPIFFEID for APIFrontend
-// when the SPIRE CRD is installed and the builder determines one is needed.
-func (r *KubernautReconciler) ensureAPIFrontendSPIFFEID(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
-	if !r.hasCRD(ctx, "clusterspiffeids.spire.spiffe.io") {
-		return nil
-	}
-	spiffeID, err := resources.ClusterSPIFFEID(kn)
-	if err != nil {
-		return fmt.Errorf("building ClusterSPIFFEID: %w", err)
-	}
-	if spiffeID != nil {
-		if err := r.ensureUnowned(ctx, spiffeID); err != nil {
-			return fmt.Errorf("ensuring ClusterSPIFFEID: %w", err)
-		}
-		return nil
-	}
-
-	stale := resources.ClusterSPIFFEIDReference()
-	if err := r.deleteIfExists(ctx, stale); err != nil {
-		return fmt.Errorf("deleting disabled ClusterSPIFFEID: %w", err)
 	}
 	return nil
 }
@@ -2594,7 +2569,6 @@ func (r *KubernautReconciler) deleteClusterScopedResources(ctx context.Context, 
 	errs = append(errs, r.deleteRBACResources(ctx, kn, knV2)...)
 	errs = append(errs, r.deleteWebhookResources(ctx, kn)...)
 	errs = append(errs, r.deleteWorkflowResources(ctx, kn)...)
-	errs = append(errs, r.deleteSPIREResources(ctx, kn)...)
 	errs = append(errs, r.deleteProviderPolicies(ctx, kn.Namespace, kn.Name)...)
 
 	if len(errs) > 0 {
@@ -2635,26 +2609,6 @@ func (r *KubernautReconciler) deleteProviderPolicies(ctx context.Context, namesp
 		}
 	}
 	return errs
-}
-
-func (r *KubernautReconciler) deleteSPIREResources(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) []error {
-	if !r.hasCRD(ctx, "clusterspiffeids.spire.spiffe.io") {
-		return nil
-	}
-	spiffeID, err := resources.ClusterSPIFFEID(kn)
-	if err != nil {
-		return []error{fmt.Errorf("building ClusterSPIFFEID for cleanup: %w", err)}
-	}
-	if spiffeID == nil {
-		spiffeID = resources.ClusterSPIFFEIDReference()
-	}
-	if spiffeID == nil {
-		return nil
-	}
-	if err := r.deleteIfExists(ctx, spiffeID); err != nil {
-		return []error{fmt.Errorf("deleting ClusterSPIFFEID %s: %w", spiffeID.GetName(), err)}
-	}
-	return nil
 }
 
 // deleteRBACResources removes all cluster-scoped RBAC: ClusterRoles, CRBs,

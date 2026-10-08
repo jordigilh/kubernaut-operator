@@ -85,14 +85,14 @@ var _ = Describe("Console Resources", func() {
 		})
 
 		It("uses the first validated provider as the Console issuer in multi-provider mode", func() {
-			const issuer = "https://spire.example.com"
+			const issuer = "https://secondary.example.com"
 			kn := testKubernautWithConsole()
 			kn.Spec.APIFrontend.Auth.IssuerURL = ""
 			kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{
 				{
-					Name:      "spire",
+					Name:      "secondary",
 					IssuerURL: issuer,
-					JWKSURL:   "https://spire.example.com/keys",
+					JWKSURL:   "https://secondary.example.com/keys",
 					Audiences: []string{"kubernaut-console"},
 				},
 			}
@@ -105,7 +105,7 @@ var _ = Describe("Console Resources", func() {
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("issuerURL: " + issuer))
-			Expect(data).To(ContainSubstring("name: spire"))
+			Expect(data).To(ContainSubstring("name: secondary"))
 		})
 
 		It("UT-CD-03 [IA-5, CC6.1]: rejects deployment when auth secret name is missing", func() {

@@ -1085,7 +1085,7 @@ func (s *InteractiveSpec) InteractiveEnabled() bool {
 // surface was therefore removed from InteractiveSpec as unreachable dead
 // configuration (v1.6 GA gap-closure).
 type JWTProviderSpec struct {
-	// Human-readable name for this provider (e.g. "rhbk", "spire").
+	// Human-readable name for this provider (e.g. "rhbk", "secondary").
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
@@ -1946,36 +1946,6 @@ func (s *APIFrontendRouteSpec) AFRouteEnabled() bool {
 	return s.Enabled != nil && *s.Enabled
 }
 
-// APIFrontendSPIRESpec configures SPIRE workload identity registration for the
-// API Frontend ServiceAccount. The operator creates a ClusterSPIFFEID when the
-// external SPIRE Controller Manager CRD is installed. SPIRE Server, agents,
-// workload attestation, and SVID delivery remain provider-owned prerequisites.
-type APIFrontendSPIRESpec struct {
-	// Whether the operator should register the API Frontend workload with SPIRE.
-	// Defaults to false (opt-in) when omitted.
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// SPIRE class name for the ClusterSPIFFEID (e.g. "zero-trust-workload-identity-manager-spire").
-	// When empty, the className field is omitted from the ClusterSPIFFEID spec.
-	// +optional
-	ClassName string `json:"className,omitempty"`
-
-	// TrustDomain overrides the SPIFFE ID trust domain. When empty (default),
-	// the operator uses SPIRE's {{ .TrustDomain }} template variable, which
-	// resolves to the cluster's configured trust domain at SVID registration
-	// time. Set this only if you need a fixed trust domain that differs from
-	// the SPIRE server's.
-	// +optional
-	TrustDomain string `json:"trustDomain,omitempty"`
-}
-
-// SPIREEnabled returns true when SPIRE workload registration is enabled.
-// Defaults to false (opt-in) when the field is nil.
-func (s *APIFrontendSPIRESpec) SPIREEnabled() bool {
-	return s.Enabled != nil && *s.Enabled
-}
-
 // AuthWebhookSpec configures the AuthWebhook admission controller.
 type AuthWebhookSpec struct {
 	// +optional
@@ -2006,13 +1976,6 @@ type APIFrontendSpec struct {
 	// the optional OpenShift Route above.
 	// +optional
 	Ingress IngressSpec `json:"ingress,omitempty"`
-
-	// SPIRE workload identity registration for the API Frontend ServiceAccount
-	// (FedRAMP SC-8, IA-5). When enabled, a ClusterSPIFFEID is created when the
-	// external SPIRE Controller Manager CRD is available. The operator does not
-	// install or inject a SPIRE implementation.
-	// +optional
-	SPIRE APIFrontendSPIRESpec `json:"spire,omitempty"`
 
 	// OIDC authentication configuration.
 	// +optional
