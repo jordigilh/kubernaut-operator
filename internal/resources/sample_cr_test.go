@@ -58,7 +58,7 @@ var _ = Describe("Quickstart minimal sample CR [BR-UX-001, CM-6]", func() {
 	It("passes ValidateKubernaut and ValidateFleet with zero errors", func() {
 		knV2 := loadMinimalSampleCR()
 
-		errs := ValidateKubernaut(knV2, KagentiSidecarNone)
+		errs := ValidateKubernaut(knV2)
 		Expect(errs).To(BeEmpty(), "the quickstart doc's minimal sample must be a genuinely valid CR")
 
 		errs = ValidateFleet(knV2)

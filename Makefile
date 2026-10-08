@@ -183,10 +183,10 @@ test-e2e-kind: fmt vet kustomize ## Run the isolated operator contract Kind E2E 
 	@command -v kind >/dev/null 2>&1 || { echo "kind CLI not found. Install: https://kind.sigs.k8s.io/docs/user/quick-start/"; exit 1; }
 	@command -v kubectl >/dev/null 2>&1 || { echo "kubectl CLI not found."; exit 1; }
 	@command -v $(CONTAINER_TOOL) >/dev/null 2>&1 || { echo "$(CONTAINER_TOOL) CLI not found."; exit 1; }
-	@if [ "$${KUBERNAUT_E2E_PROVIDER:-generic}" = "cilium" ]; then command -v helm >/dev/null 2>&1 || { echo "helm CLI not found. Install Helm for the Cilium lane."; exit 1; }; fi
+	@if [ "$${KUBERNAUT_E2E_PROVIDER:-generic}" = "cilium" ]; then command -v helm >/dev/null 2>&1 || { echo "helm CLI not found. Install Helm for the selected E2E lane."; exit 1; }; fi
 	$(CONTAINER_TOOL) build --build-arg VERSION=$(KIND_OPERATOR_VERSION) --build-arg GIT_COMMIT=$(GIT_COMMIT) -t $(KIND_OPERATOR_IMAGE) .
 	$(CONTAINER_TOOL) build -f test/e2e/kind/contract/Dockerfile -t $(KIND_CONTRACT_IMAGE) test/e2e/kind/contract
-	KUBERNAUT_OPERATOR_IMAGE=$(KIND_OPERATOR_IMAGE) KUBERNAUT_E2E_CONTRACT_IMAGE=$(KIND_CONTRACT_IMAGE) KUSTOMIZE_BIN=$(KUSTOMIZE) go test ./test/e2e/kind/ -v -ginkgo.v -timeout 30m
+	KUBERNAUT_OPERATOR_IMAGE=$(KIND_OPERATOR_IMAGE) KUBERNAUT_E2E_CONTRACT_IMAGE=$(KIND_CONTRACT_IMAGE) KUBERNAUT_E2E_OPERATOR_VERSION=$(KIND_OPERATOR_VERSION) KUSTOMIZE_BIN=$(KUSTOMIZE) go test ./test/e2e/kind/ -v -ginkgo.v -timeout 45m
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter

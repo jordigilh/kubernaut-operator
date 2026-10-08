@@ -2070,7 +2070,7 @@ var _ = Describe("APIFrontend/EffectivenessMonitor fleet RBAC", func() {
 	It("apifrontendClusterRole gains MCP Gateway CRD rules when Fleet is enabled with mcpGateway.endpoint set", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
 		kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
-			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://login.kubernaut.ai/realms/kubernaut", Audience: "kubernaut-apifrontend"},
+			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://idp.example.com/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
 		cr := apifrontendClusterRole(kn, knV2, CommonLabels(kn))
 		apiGroups := make([]string, 0, len(cr.Rules))

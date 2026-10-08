@@ -58,15 +58,53 @@ var _ = Describe("Console Resources", func() {
 			Expect(err.Error()).To(ContainSubstring("console"))
 		})
 
-		It("UT-CD-02 [IA-5, CC6.1]: rejects deployment when OIDC issuer is empty", func() {
+		It("UT-CD-02 [IA-5, CC6.1]: rejects deployment when the issuer is empty", func() {
 			kn := testKubernautWithConsole()
 			kn.Spec.APIFrontend.Auth.IssuerURL = ""
 			kn.Spec.APIFrontend.Auth.JWTProviders = nil
 
 			dep, err := ConsoleDeployment(kn, testIngressDomain)
 			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("effective OIDC issuer"))
 			Expect(dep).To(BeNil())
-			Expect(err.Error()).To(ContainSubstring("issuerURL"))
+		})
+
+		It("propagates an explicit issuer override identically to Console and API Frontend", func() {
+			const issuer = "https://idp.example.com/realms/kubernaut-demo"
+			kn := testKubernautWithConsole()
+			kn.Spec.APIFrontend.Auth.IssuerURL = issuer
+
+			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dep.Spec.Template.Spec.Containers[0].Args).To(ContainElement("--oidc-issuer-url=" + issuer))
+
+			cm, err := APIFrontendConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["config.yaml"]).To(ContainSubstring("issuerURL: " + issuer))
+		})
+
+		It("uses the first validated provider as the Console issuer in multi-provider mode", func() {
+			const issuer = "https://secondary.example.com"
+			kn := testKubernautWithConsole()
+			kn.Spec.APIFrontend.Auth.IssuerURL = ""
+			kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{
+				{
+					Name:      "secondary",
+					IssuerURL: issuer,
+					JWKSURL:   "https://secondary.example.com/keys",
+					Audiences: []string{"kubernaut-console"},
+				},
+			}
+
+			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dep.Spec.Template.Spec.Containers[0].Args).To(ContainElement("--oidc-issuer-url=" + issuer))
+
+			cm, err := APIFrontendConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("issuerURL: " + issuer))
+			Expect(data).To(ContainSubstring("name: secondary"))
 		})
 
 		It("UT-CD-03 [IA-5, CC6.1]: rejects deployment when auth secret name is missing", func() {

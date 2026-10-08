@@ -28,18 +28,20 @@ import (
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
-const maxJWKSURLLength = 2048
+const (
+	maxJWKSURLLength = 2048
+	httpURLScheme    = "http"
+	httpsURLScheme   = "https"
+)
 
 // ValidateKubernaut runs all CR-level validations and returns accumulated errors.
-// sidecar indicates whether kagenti is active; when it is, issuerURL is not
-// required because the operator auto-detects it from kagenti's authbridge-config.
-func ValidateKubernaut(kn *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode) []error {
+func ValidateKubernaut(kn *kubernautv1alpha2.Kubernaut) []error {
 	errs := make([]error, 0, 8)
 	errs = append(errs, validatePostgreSQLSSLMode(kn)...)
 	errs = append(errs, validatePolicyPrerequisites(kn)...)
 	errs = append(errs, validateLLMProfiles(kn)...)
 	errs = append(errs, validateTelemetry(kn)...)
-	errs = append(errs, validateAPIFrontend(kn, sidecar)...)
+	errs = append(errs, validateAPIFrontend(kn)...)
 	errs = append(errs, validateAlignmentCheck(kn)...)
 	errs = append(errs, validateDryRun(kn)...)
 	errs = append(errs, validateInteractive(kn)...)
@@ -432,49 +434,48 @@ func validateJWTProviderList(providers []kubernautv1alpha2.JWTProviderSpec, base
 
 	for i, p := range providers {
 		path := fmt.Sprintf("%s.jwtProviders[%d]", basePath, i)
-
 		if seen[p.Name] {
 			errs = append(errs, fmt.Errorf("%s.name: duplicate provider name %q", path, p.Name))
 		}
 		seen[p.Name] = true
+		errs = append(errs, validateJWTProvider(p, path, allowInsecure, insecureFlagPath)...)
+	}
+	return errs
+}
 
-		if p.IssuerURL == "" {
-			errs = append(errs, fmt.Errorf("%s.issuerURL: required", path))
-		}
+func validateJWTProvider(provider kubernautv1alpha2.JWTProviderSpec, path string, allowInsecure bool, insecureFlagPath string) []error {
+	var errs []error
+	if provider.IssuerURL == "" {
+		errs = append(errs, fmt.Errorf("%s.issuerURL: required", path))
+	} else if err := validateOIDCURL(
+		provider.IssuerURL,
+		path+".issuerURL",
+		allowInsecure,
+		insecureFlagPath,
+	); err != nil {
+		errs = append(errs, err)
+	}
 
-		if len(p.Audiences) == 0 {
-			errs = append(errs, fmt.Errorf("%s.audiences: at least one audience required", path))
-		}
+	if len(provider.Audiences) == 0 {
+		errs = append(errs, fmt.Errorf("%s.audiences: at least one audience required", path))
+	}
 
-		if p.JWKSURL == "" {
-			continue
-		}
-
-		if len(p.JWKSURL) > maxJWKSURLLength {
-			errs = append(errs, fmt.Errorf("%s.jwksURL: must be <= %d characters (got %d)", path, maxJWKSURLLength, len(p.JWKSURL)))
-			continue
-		}
-
-		u, err := url.Parse(p.JWKSURL)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("%s.jwksURL: invalid URL: %w", path, err))
-			continue
-		}
-		if u.Scheme == "" || u.Host == "" {
-			errs = append(errs, fmt.Errorf("%s.jwksURL: must be an absolute URL with scheme and host", path))
-			continue
-		}
-
-		if !allowInsecure && strings.ToLower(u.Scheme) != "https" {
-			errs = append(errs, fmt.Errorf(
-				"%s.jwksURL: scheme must be https (got %q); set %s=true to permit HTTP for dev/test",
-				path, u.Scheme, insecureFlagPath))
+	if provider.JWKSURL != "" {
+		if err := validateJWTProviderJWKSURL(provider.JWKSURL, path, allowInsecure, insecureFlagPath); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	return errs
 }
 
-func validateAPIFrontend(kn *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode) []error {
+func validateJWTProviderJWKSURL(raw, path string, allowInsecure bool, insecureFlagPath string) error {
+	if len(raw) > maxJWKSURLLength {
+		return fmt.Errorf("%s.jwksURL: must be <= %d characters (got %d)", path, maxJWKSURLLength, len(raw))
+	}
+	return validateOIDCURL(raw, path+".jwksURL", allowInsecure, insecureFlagPath)
+}
+
+func validateAPIFrontend(kn *kubernautv1alpha2.Kubernaut) []error {
 	if !kn.Spec.APIFrontendEnabled() {
 		return nil
 	}
@@ -490,12 +491,20 @@ func validateAPIFrontend(kn *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecar
 
 	// IA-2: When jwtProviders is configured, multi-provider JWT auth
 	// satisfies the authentication requirement — top-level issuerURL is
-	// not needed. When kagenti sidecar is active, issuerURL is
-	// auto-detected. Only require issuerURL when neither source is available.
+	// not needed. Otherwise an explicit issuerURL is required; the operator
+	// must never invent or select an identity provider on the user's behalf.
 	hasMultiProvider := len(af.Auth.JWTProviders) > 0
-	if af.Auth.IssuerURL == "" && sidecar == KagentiSidecarNone && !hasMultiProvider {
-		errs = append(errs, fmt.Errorf(
-			"spec.apiFrontend.auth.issuerURL: required — API Frontend requires OAuth/OIDC authentication (FedRAMP IA-2, CM-6)"))
+	if !hasMultiProvider {
+		if af.Auth.IssuerURL == "" {
+			errs = append(errs, fmt.Errorf("spec.apiFrontend.auth.issuerURL: required when jwtProviders is empty"))
+		} else if err := validateOIDCURL(
+			af.Auth.IssuerURL,
+			"spec.apiFrontend.auth.issuerURL",
+			af.Auth.AllowInsecureIssuers,
+			"spec.apiFrontend.auth.allowInsecureIssuers",
+		); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
 	// Deprecated field, but still supported for backward compatibility until
@@ -516,6 +525,22 @@ func validateAPIFrontend(kn *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecar
 	}
 
 	return errs
+}
+
+// validateOIDCURL validates the operator-facing OIDC URL contract. OIDC
+// discovery and JWKS clients require an absolute URL with a host; HTTP is only
+// accepted when the explicit development/test escape hatch is enabled.
+func validateOIDCURL(raw, path string, allowInsecure bool, insecureFlagPath string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("%s: must be an absolute URL with scheme and host", path)
+	}
+
+	scheme := strings.ToLower(u.Scheme)
+	if scheme == httpsURLScheme || (scheme == httpURLScheme && allowInsecure) {
+		return nil
+	}
+	return fmt.Errorf("%s: scheme must be %s (got %q); set %s=true to permit HTTP for dev/test", path, httpsURLScheme, u.Scheme, insecureFlagPath)
 }
 
 // validToolPersonas is the set of known persona names for tool role bindings.

@@ -67,12 +67,12 @@ CRs were silently ignored by the controller.
 The webhook uses `FailurePolicy: Ignore` so it does not block the API server if
 the operator is down.
 
-### ClusterSPIFFEID
+### SPIFFE/SPIRE configuration
 
-When `spec.apiFrontend.spire.enabled=true` and the `clusterspiffeids.spire.spiffe.io`
-CRD is present, the operator creates a `ClusterSPIFFEID` for the API Frontend
-service account. Set `spec.apiFrontend.spire.className` if your SPIRE installation
-uses a non-default class.
+The v1.6 operator no longer exposes or reconciles
+`spec.apiFrontend.spire`/`ClusterSPIFFEID` configuration. Remove that legacy
+field before upgrading; SPIFFE/SPIRE provider installation and workload identity
+are outside this operator contract.
 
 ### Full ServiceMonitor coverage
 

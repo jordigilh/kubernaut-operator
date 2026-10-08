@@ -103,7 +103,7 @@ func testKubernaut() *kubernautv1alpha2.Kubernaut {
 			},
 			APIFrontend: kubernautv1alpha2.APIFrontendSpec{
 				Auth: kubernautv1alpha2.APIFrontendAuthSpec{
-					IssuerURL: "https://login.kubernaut.ai/realms/kubernaut",
+					IssuerURL: "https://idp.example.com/realms/kubernaut",
 					Audience:  "kubernaut-apifrontend",
 				},
 			},
@@ -141,7 +141,7 @@ func testKubernautWithAF() *kubernautv1alpha2.Kubernaut {
 	kn := testKubernaut()
 	kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
 		Auth: kubernautv1alpha2.APIFrontendAuthSpec{
-			IssuerURL: "https://login.kubernaut.ai/realms/kubernaut",
+			IssuerURL: "https://idp.example.com/realms/kubernaut",
 			Audience:  "kubernaut-apifrontend",
 		},
 	}
