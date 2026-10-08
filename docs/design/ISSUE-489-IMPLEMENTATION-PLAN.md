@@ -499,11 +499,11 @@ git diff --exit-code config/ bundle/ dist/
 git diff --check
 ```
 
-Pin a supported Helm version in CI. CI uses Helm v3.17.3; the installed
-`helm-unittest` plugin emits a Helm 4 `platformHooks` schema warning. Chart CI
-must either pin a compatible
-Helm 3/plugin combination or use a maintained test harness rather than treating
-that local plugin as evidence.
+Pin the current upstream-qualified Helm 4 release in CI. CI uses Helm v4.3.0;
+the operator chart gate invokes Helm's native lint/template commands and does
+not install the unsigned `helm-unittest` plugin. Any future chart test that
+adds that plugin must account for Helm 4 plugin provenance verification rather
+than treating an unverified local plugin as evidence.
 
 ## 8. Wiring manifest and Checkpoint W
 
@@ -540,7 +540,7 @@ proves the installation journey.
 |---|---|---|
 | Unit/render | Ginkgo or a pinned maintained Helm render harness; schema, object identity, values rejection, no-application-resource assertions, certificate-profile and RBAC shape tests. | `BA-489-OWNERSHIP-01`, `BA-489-VALUES-01`, `BA-489-TLS-01`, `BA-489-RBAC-01` |
 | Integration | envtest/controller tests for singleton admission shape, manager configuration seams, CRD compatibility diagnostics, certificate readiness/failure, and user-CR sequencing. | `BA-489-SINGLETON-01`, `BA-489-CRD-01`, `BA-489-TLS-02`, `BA-489-READINESS-01` |
-| E2E | Dedicated Kind Helm install with pinned Helm v3.17.3; development, administrator-managed, cert-manager, metrics, pull-secret, disconnected bootstrap, conflict, CRD schema upgrade/rollback, failed manager rollout recovery, uninstall retention, and reinstall journeys. Hosted OpenShift separately verifies service-CA, restricted SCC startup, singleton admission, upgrade, uninstall, and reinstall. | `BA-489-INSTALL-01`, `BA-489-UPGRADE-01`, `BA-489-UNINSTALL-01`, `BA-489-DISCONNECTED-01`, `BA-489-TLS-03`, `BA-489-OCP-01` |
+| E2E | Dedicated Kind Helm install with pinned Helm v4.3.0; development, administrator-managed, cert-manager, metrics, pull-secret, disconnected bootstrap, conflict, CRD schema upgrade/rollback, failed manager rollout recovery, uninstall retention, and reinstall journeys. Hosted OpenShift separately verifies service-CA, restricted SCC startup, singleton admission, upgrade, uninstall, and reinstall. | `BA-489-INSTALL-01`, `BA-489-UPGRADE-01`, `BA-489-UNINSTALL-01`, `BA-489-DISCONNECTED-01`, `BA-489-TLS-03`, `BA-489-OCP-01` |
 | CI/wiring | Helm version pin, generated-artifact diff, `make test`, `make lint`, `make test-pyramid`, release-gated Helm Kind E2E, SBOM/vulnerability checks, and a production caller for every new helper. | `BA-489-CI-01`, `BA-489-AUDIT-01` |
 
 No pending `XIt`, `PIt`, or skipped business test is acceptable. No E2E test may
@@ -666,8 +666,9 @@ follows:
    and the restricted manager security context is fixed. Related images remain
    immutable, overridable references consumed by the manager only after a user
    applies a `Kubernaut` CR.
-8. **Harness:** use Ginkgo render tests, Helm v3.17.3 in CI, and a dedicated
-   Kind journey; local validation additionally exercised Helm 4.1.1.
+8. **Harness:** use Ginkgo render tests, pinned Helm v4.3.0 in CI, and a
+   dedicated Kind journey; local validation exercised Helm 4.3.0 on macOS and
+   the hosted lanes use the matching Linux amd64 archive.
 9. **Kind CI deployment:** every operator installation in the Kind CI/CD lanes
    uses the repository Helm chart, including the generic, hook, manual,
    cert-manager, Cilium, Calico, and release contract journeys. OpenShift is

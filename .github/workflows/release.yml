@@ -128,14 +128,14 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install pinned Helm
+      - name: Install pinned Helm 4
         run: |
           set -euo pipefail
-          HELM_VERSION=v3.17.3
+          HELM_VERSION=v4.3.0
           HELM_ARCHIVE="/tmp/helm-${HELM_VERSION}-linux-amd64.tar.gz"
           curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o "${HELM_ARCHIVE}"
           printf '%s  %s\n' \
-            ee88b3c851ae6466a3de507f7be73fe94d54cbf2987cbaa3d1a3832ea331f2cd \
+            86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb \
             "${HELM_ARCHIVE}" | sha256sum -c -
           tar -xzf "${HELM_ARCHIVE}" -C /tmp
           sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
@@ -218,19 +218,24 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install pinned Kind, kubectl, and Helm
+      - name: Install pinned Kind, kubectl, and Helm 4
         run: |
           set -euo pipefail
           KIND_VERSION=v0.31.0
           KUBECTL_VERSION=v1.35.0
-          HELM_VERSION=v3.17.3
+          HELM_VERSION=v4.3.0
           curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
           printf '%s  /tmp/kind\n' \
             eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa | sha256sum -c -
           curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
           printf '%s  /tmp/kubectl\n' \
             a2e984a18a0c063279d692533031c1eff93a262afcc0afdc517375432d060989 | sha256sum -c -
-          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz -C /tmp
+          HELM_ARCHIVE="/tmp/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o "${HELM_ARCHIVE}"
+          printf '%s  %s\n' \
+            86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb \
+            "${HELM_ARCHIVE}" | sha256sum -c -
+          tar -xzf "${HELM_ARCHIVE}" -C /tmp
           sudo install -m 0755 /tmp/kind /usr/local/bin/kind
           sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
           sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm

@@ -62,6 +62,8 @@ require_text .github/workflows/test.yml '^  helm-bootstrap:' 'test workflow is m
 require_text .github/workflows/test.yml 'KUBERNAUT_HELM_E2E_TLS_PROFILE:' 'Helm bootstrap matrix does not select TLS profiles'
 require_text .github/workflows/test.yml 'KUBERNAUT_HELM_E2E_DISCONNECTED:' 'Helm bootstrap matrix does not exercise disconnected bootstrap'
 require_text .github/workflows/test.yml 'run: make test-e2e-kind-helm' 'Helm bootstrap matrix does not run the Helm lifecycle suite'
+require_text .github/workflows/test.yml 'HELM_VERSION=v4\.' 'Kind CI is not qualified with Helm 4'
+require_text .github/workflows/release.yml 'HELM_VERSION=v4\.' 'release CI is not qualified with Helm 4'
 
 # Helm is the supported generic-Kubernetes/Kind operator installation path.
 # Keep the chart render gate and the live harness tied to the same source of
