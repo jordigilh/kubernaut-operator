@@ -84,11 +84,69 @@ not packaged by this chart.
 
 ## Disconnected and immutable images
 
-Use immutable digests for the manager image and override every `relatedImages`
-entry with the mirrored reference. Supply `image.pullSecrets` and, for the
-development profile, `webhook.tls.development.image` and its pull secrets.
-Related images are environment variables consumed by the operator; they do not
-cause operand workloads to be rendered or started by Helm.
+The chart supports the same disconnected image model as the OLM deployment,
+but mirroring is an installation responsibility. The chart has no remote Helm
+chart dependencies; its archive/OCI artifact must be available from the
+air-gapped Helm source, and every image used by the selected path must be
+available from a registry reachable by the cluster.
+
+For an operator-only installation with the default development TLS profile,
+mirror the manager and certificate-bootstrap images and provide pull Secrets
+for both workloads:
+
+```yaml
+# airgap-values.yaml
+image:
+  repository: registry.example.com/kubernaut/kubernaut-operator
+  digest: sha256:<manager-manifest-digest>
+  pullSecrets:
+    - name: registry-pull
+
+webhook:
+  tls:
+    mode: development
+    development:
+      image:
+        repository: registry.example.com/kubernaut/kubectl
+        digest: sha256:<bootstrap-image-digest>
+        pullSecrets:
+          - name: registry-pull
+```
+
+Install from the local or mirrored chart without changing the operator's
+other defaults:
+
+```bash
+helm install kubernaut-operator ./charts/kubernaut-operator \
+  --namespace kubernaut-operator-system \
+  --create-namespace \
+  --values airgap-values.yaml \
+  --wait --timeout 10m
+```
+
+The development bootstrap image is not needed when using `manual` TLS. In
+that case, pre-create the administrator-owned serving Secret and configure
+`webhook.tls.existingSecret` and `webhook.tls.caBundle` instead. A
+`certManager` installation requires cert-manager and its issuer to be
+installed from mirrored artifacts first; the `openshift` profile requires the
+OpenShift service CA.
+
+When the operator later reconciles a `Kubernaut` CR, mirror the operand images
+as well. There are two equivalent image-resolution paths:
+
+1. Replace **every** entry in the chart's `relatedImages` map with its mirrored
+   immutable reference. Do not override only one key, because omitted map keys
+   retain the public chart defaults.
+2. Set `spec.image.overrides` on the `Kubernaut` CR for every operand, using the
+   component keys documented by the CRD. CR overrides take precedence over
+   `RELATED_IMAGE_*`, just as they do with OLM.
+
+In both cases, set `spec.image.pullSecrets` on the `Kubernaut` CR so operand
+Pods can pull from the private mirror. The chart's `image.pullSecrets` only
+covers the operator and its bootstrap Jobs; it is not implicitly copied to
+operand workloads. Related images are environment variables consumed by the
+operator; they do not cause operand workloads to be rendered or started by
+Helm.
 
 The Helm Kind qualification lane exercises the disconnected bootstrap contract
 by loading the manager and certificate-provisioner image pulled by immutable
