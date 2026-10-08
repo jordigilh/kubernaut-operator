@@ -28,12 +28,13 @@ The current baseline has:
 - green CI for build, lint, SBOM/vulnerability scan, unit/integration tests, and
   generic/Cilium/Calico Kind E2E;
 - unit coverage of 88.1% and controller integration coverage of 78.0%;
-- `make test-pyramid` checks for controller policy wiring, production-manifest
+- `make test-pyramid` checks for controller policy wiring, Helm-backed
   Kind installation, CR creation, provider status assertions, and no direct
   policy application from the E2E package;
 - live generic/Cilium/Calico lifecycle, enforcement, ownership, and cleanup
   evidence;
-- no repository Helm chart;
+- the operator-only Helm chart is implemented separately under Issue #489; this
+  Issue #488 matrix does not duplicate its lifecycle evidence;
 - no live OpenShift/OVN qualification because the local `oc` environment is
   incomplete;
 - generic Kind E2E coverage using explicit development self-signed TLS, but no
@@ -47,7 +48,7 @@ The current baseline has:
 | Gap | Priority | Outcome | Owner artifact |
 |---|---:|---|---|
 | OpenShift/OVN live qualification | P0 | Supported OCP/OVN path is tested through the real operator and native policy API | `test/e2e/openshift/`, CI or documented qualified-cluster run |
-| Helm bootstrap and ownership | P0 if Helm remains in #488 | Bootstrap chart cannot create a `Kubernaut` CR or duplicate runtime ownership | `charts/`, Helm tests, clean-install evidence |
+| Helm bootstrap and ownership | Owned by #489, outside this matrix | Bootstrap chart cannot create a `Kubernaut` CR or duplicate runtime ownership | `docs/design/ISSUE-489-IMPLEMENTATION-PLAN.md`, `charts/`, Helm tests, clean-install evidence |
 | TLS source and rotation qualification | P0 | Source selection, CA publication, overlap, failure, and no-plaintext behavior are proven | resource/controller tests plus Kind TLS lanes |
 | FedRAMP/NIST traceability | P1 | Targeted controls have exact evidence links and residual-risk status | `docs/security/ISSUE-488-CONTROL-TRACEABILITY.md` |
 | OWASP ASVS traceability | P1 | ASVS 5.0.0 requirements relevant to the operator are version-pinned and evidenced | same matrix and security tests |
@@ -58,9 +59,10 @@ The current baseline has:
 
 - **OVN/OpenShift:** deferred; it remains explicitly unverified and is not a
   release claim for this work.
-- **Helm:** the new dedicated operator bootstrap chart is a follow-up. The
-  existing upstream dependencies chart may be reused for Kubernetes dependency
-  fixtures, but no chart ownership is added in this work.
+- **Helm:** operator bootstrap ownership is implemented and evidenced under
+  Issue #489. It remains outside this Issue #488 scope; this matrix references
+  the separate evidence rather than duplicating it. The existing upstream
+  dependencies chart may still be reused for Kubernetes dependency fixtures.
 - **cert-manager:** implement a pinned Kind lane that exercises the real
   operator source and CA path.
 - **OWASP ASVS:** use versioned OWASP ASVS 5.0.0 requirement IDs.
@@ -85,8 +87,10 @@ The current baseline has:
 
 ### AC-488-GAP-02 — Helm bootstrap ownership
 
-The dedicated operator chart is deferred to a follow-up. When that work starts,
-the production chart must:
+The dedicated operator chart is implemented under Issue #489 and evidenced by
+its own plan, render suite, and Helm Kind lifecycle. This acceptance row remains
+in the #488 plan only to record the ownership boundary; it must not duplicate
+the #489 evidence. The production chart must:
 
 1. install only the operator, CRDs, RBAC, manager serving-certificate/webhook
    prerequisites, and chart-owned bootstrap resources;
@@ -139,13 +143,13 @@ The repository gate must verify that:
 
 1. unit packages and their independent coverage threshold run;
 2. controller envtest packages and their independent coverage threshold run;
-3. the E2E harness installs production manifests, loads the operator image, and
+3. the E2E harness installs the operator Helm chart, loads the operator image, and
    creates a real `Kubernaut` CR;
 4. provider policy E2E does not call policy render/apply helpers directly;
 5. every new adapter or builder in the wiring manifest has a production caller
    and a corresponding integration test;
-6. unsupported tiers (OCP/OVN and Helm until enabled) are reported as
-   `not verified`, not silently counted as complete.
+6. unsupported tiers (OCP/OVN) and the separately owned Helm evidence are
+   reported explicitly, not silently counted as complete.
 
 ## 5. TDD implementation sequence
 
@@ -156,8 +160,8 @@ The repository gate must verify that:
    follow-up work.
 2. Add failing envtest cases for TLS readiness/rotation/failure paths. OVN
    discovery/reconciliation and live qualification are explicitly deferred.
-3. Record Helm chart tests as deferred follow-up tests; do not add a partial
-   operator chart or duplicate ownership in this work.
+3. Keep Helm chart ownership and lifecycle assertions in the separate #489
+   test plan; do not duplicate them in this work.
 4. Add the control-traceability document with all rows initially marked
    `not verified` or `partially verified`; no row may be marked verified without
    a concrete test/evidence link.
@@ -169,8 +173,9 @@ The repository gate must verify that:
    the existing unit evidence and explicit unsupported/untested status.
 2. Wire TLS rotation/readiness through the existing reconciliation path before
    adding optimizations.
-3. Do not implement the dedicated operator Helm chart in this work. Reuse of
-   the upstream dependencies chart remains a separate fixture concern.
+3. Do not duplicate the dedicated operator Helm chart implementation in this
+   work. Reuse of the upstream dependencies chart remains a separate fixture
+   concern.
 4. Add the pinned cert-manager Kind lane; no credentials or cluster endpoints
    enter the repository.
 5. Run the complete unit and integration suites after each green slice.
@@ -190,7 +195,7 @@ The repository gate must verify that:
 | OVN detector/adapter | Deferred follow-up | Existing policy unit tests | `IT-POLICY-OVN-GAP-001`, `E2E-OCP-OVN-001` remain unverified |
 | TLS source resolver | TLS/trust reconciliation | `UT-TLS-GAP-001` | `IT-TLS-GAP-001`, `E2E-TLS-GAP-001` |
 | TLS rotation coordinator | trust publication before leaf rollout | `UT-TLS-ROTATION-GAP-001` | `IT-TLS-ROTATION-GAP-001` |
-| Operator Helm bootstrap | Deferred follow-up | No tests added in this work | `IT-HELM-GAP-001`, `E2E-HELM-GAP-001` deferred |
+| Operator Helm bootstrap | Owned by Issue #489 | Chart render and lifecycle tests live in the separate #489 evidence set | `HELM-RENDER-001`, `HELM-E2E-LIFECYCLE-001` |
 | Control traceability gate | CI/security documentation check | `UT-CONTROLS-GAP-001` | CI evidence artifact |
 | Pyramid verifier | `make test-pyramid` and CI job graph | `UT-PYRAMID-GAP-001` | unit + integration + E2E job results |
 
@@ -207,7 +212,7 @@ The repository gate must verify that:
 | `UT-TLS-GAP-002` | Invalid source cannot produce plaintext or empty `caBundle` |
 | `UT-TLS-ROTATION-GAP-001` | New trust overlaps old trust until consumers move |
 | `UT-TLS-ROTATION-GAP-002` | Failed rotation preserves the last working root |
-| `UT-HELM-GAP-001` | Deferred follow-up: chart values/templates contain no runtime workload or CR ownership |
+| `UT-HELM-GAP-001` | Issue #489 evidence: chart values/templates contain no runtime workload or CR ownership |
 | `CI-CONTROLS-GAP-001` | Every required traceability row has a valid code/test/evidence link or explicit gap status |
 | `CI-PYRAMID-GAP-001` | Pyramid verifier rejects missing tier, direct policy calls, or orphaned wiring rows |
 
@@ -219,7 +224,7 @@ The repository gate must verify that:
 | `IT-TLS-GAP-001` | envtest | TLS readiness, webhook CA publication, and source failure conditions are correct |
 | `IT-TLS-GAP-003` | envtest | Generic TLS, trust ConfigMaps, webhook CA bundles, and Ingress remain wired without OpenShift annotations |
 | `IT-TLS-ROTATION-GAP-001` | envtest | Trust-before-leaf ordering and failed-rotation preservation are observable |
-| `IT-HELM-GAP-001` | Deferred follow-up | Helm render/install fixture for bootstrap ownership |
+| `IT-HELM-GAP-001` | Issue #489 evidence | Helm render/install fixture for bootstrap ownership |
 
 ### E2E tests
 
@@ -229,7 +234,7 @@ The repository gate must verify that:
 | `E2E-TLS-GAP-001` | Kind, explicit development TLS | Real admission/trust path succeeds without OpenShift annotations |
 | `E2E-TLS-CERTMANAGER-001` | Kind + pinned cert-manager `v1.20.2` | Certificate source and CA publication work without operator-owned cert-manager |
 | `E2E-TLS-CERTMANAGER-002` | Same cert-manager Kind lane | Leaf reissuance preserves Certificate ownership, TLS readiness, and webhook trust |
-| `E2E-HELM-GAP-001` | Deferred follow-up | Kind + Helm bootstrap, manager readiness, user CR lifecycle, upgrade/uninstall ownership |
+| `E2E-HELM-GAP-001` | Issue #489 evidence | Kind + Helm bootstrap, manager readiness, user CR lifecycle, upgrade/uninstall ownership |
 
 ## 8. Control-objective scope
 
@@ -273,7 +278,7 @@ make test-e2e-kind                         # generic/Cilium/Calico
 KUBERNAUT_E2E_PROVIDER=... make test-e2e-kind
 KUBERNAUT_E2E_TLS_SOURCE=certmanager make test-e2e-kind
 make test-e2e                              # authenticated OpenShift
-helm lint charts/kubernaut-operator       # after Helm scope approval
+helm lint charts/kubernaut-operator       # Issue #489 chart gate
 helm template ...
 ```
 
@@ -284,9 +289,10 @@ cluster or toolchain is unavailable.
 
 The following decisions are architectural and must be approved before GREEN:
 
-1. **Helm scope:** approved split follow-up. The existing upstream dependencies
-   chart may be reused for Kubernetes dependency fixtures; a dedicated operator
-   chart is a next step.
+1. **Helm scope:** approved split ownership. Issue #489 owns the dedicated
+   operator chart and lifecycle evidence; this plan does not duplicate it. The
+   existing upstream dependencies chart may be reused for Kubernetes dependency
+   fixtures.
 2. **OpenShift qualification:** approved deferment. OVN/OCP remains explicitly
    unverified for this release.
 3. **cert-manager E2E:** approved pinned Kind lane.
@@ -300,8 +306,8 @@ This gap-closure work is complete only when:
 - RED/GREEN/REFACTOR and Checkpoint W pass for each approved workstream;
 - every claimed control row has evidence or an explicit residual-risk status;
 - generic/Cilium/Calico remain green after changes;
-- approved OCP/OVN, Helm, and TLS lanes have passing evidence, or are explicitly
-  deferred and removed from the release claim;
+- approved TLS lanes have passing evidence; OCP/OVN remains explicitly deferred,
+  while Helm evidence is maintained separately under Issue #489;
 - generated artifacts and documentation are current;
 - no formal FedRAMP or ASVS compliance claim is made without an external
   assessment and the required organizational evidence.

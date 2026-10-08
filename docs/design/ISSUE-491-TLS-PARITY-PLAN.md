@@ -109,7 +109,8 @@ rotated implicitly by TLS reconciliation.
 ## Deferred or excluded
 
 - Installing/upgrading cert-manager or its CRDs/controller.
-- A dedicated operator Helm chart (#489).
+- Operator Helm chart lifecycle (#489), which is separately owned and evidenced
+  by its chart render and Helm Kind lifecycle suites rather than duplicated here.
 - OpenShift/OVN live qualification beyond the platform adapter evidence in
   #488.
 - Ownership of PostgreSQL/Valkey workloads or their server PKI.

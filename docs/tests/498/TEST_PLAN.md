@@ -6,10 +6,10 @@
 
 **Status:** Implementation plan for the dedicated `feat/498-tls-e2e-lanes`
 worktree. Repository changes are in progress, but the work is not complete
-until every source has unit, envtest, and production-manifest Kind evidence and
+until every source has unit, envtest, and Helm-backed Kind evidence and
 the hosted hook/manual-admin jobs are green.
 
-**Methodology:** RED → GREEN → REFACTOR → CHECK, with the production-manifest
+**Methodology:** RED → GREEN → REFACTOR → CHECK, with the operator Helm-chart
 E2E journey required for every supported generic TLS source.
 
 ## 1. Objective
@@ -359,7 +359,7 @@ RBAC, Route, service-CA, or router-CA qualification is added by this issue.
 - Manual/admin inputs are not adopted, overwritten, or deleted.
 - Invalid sources fail closed and preserve the last working trust material.
 - Every pyramid matrix row has passing unit, envtest, and applicable
-  production-manifest E2E evidence; static markers alone do not satisfy the E2E
+  Helm-backed Kind E2E evidence; static markers alone do not satisfy the E2E
   tier.
 - The pyramid gate fails when a source has a unit test but no controller wiring
   test, or a controller wiring test but no dedicated E2E job/scenario.
