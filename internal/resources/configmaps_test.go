@@ -357,6 +357,20 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
 			Expect(root.Telemetry.TLS.CAFile).To(Equal("/etc/telemetry/ca.crt"))
 		})
+
+		It("normalizes an explicit HTTPS endpoint to the upstream host:port contract", func() {
+			kn := testKubernaut()
+			kn.Spec.Gateway.Config.Telemetry = kubernautv1alpha2.TelemetrySpec{Endpoint: "https://otel-collector:4317"}
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			var root struct {
+				Telemetry telemetryYAML `yaml:"telemetry"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Telemetry.Endpoint).To(Equal("otel-collector:4317"))
+			Expect(root.Telemetry.TLS).To(Equal(telemetryTLSYAML{}))
+		})
 	})
 
 	// #259 [CM-6]: server.maxConcurrentRequests/readTimeout/writeTimeout/

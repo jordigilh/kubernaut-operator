@@ -77,8 +77,13 @@ func validateTelemetryCA(base string, tls kubernautv1alpha2.TelemetryTLSConfig) 
 	if tls.CAFile != "" && !filepath.IsAbs(tls.CAFile) {
 		errs = append(errs, fmt.Errorf("%s.tls.caFile must be an absolute path", base))
 	}
-	if tls.CACertSecretRef != nil && tls.CACertSecretRef.Name == "" {
-		errs = append(errs, fmt.Errorf("%s.tls.caCertSecretRef.name must not be empty", base))
+	if tls.CACertSecretRef != nil {
+		if tls.CACertSecretRef.Name == "" {
+			errs = append(errs, fmt.Errorf("%s.tls.caCertSecretRef.name must not be empty", base))
+		}
+		if key := tls.CACertSecretRef.Key; key != "" && (filepath.Base(key) != key || strings.ContainsAny(key, `\\/`)) {
+			errs = append(errs, fmt.Errorf("%s.tls.caCertSecretRef.key must be a Secret key name without path separators", base))
+		}
 	}
 	return errs
 }
@@ -92,40 +97,106 @@ func validateTelemetryClient(base string, tls kubernautv1alpha2.TelemetryTLSConf
 	if tls.TLSClientSecretRef != "" && !certSet {
 		errs = append(errs, fmt.Errorf("%s.tls.tlsClientSecretRef requires both certFile and keyFile", base))
 	}
-	if certSet {
-		if !filepath.IsAbs(tls.CertFile) {
-			errs = append(errs, fmt.Errorf("%s.tls.certFile must be an absolute path", base))
-		}
-		if !filepath.IsAbs(tls.KeyFile) {
-			errs = append(errs, fmt.Errorf("%s.tls.keyFile must be an absolute path", base))
-		}
-		if tls.TLSClientSecretRef != "" && filepath.Dir(tls.CertFile) != filepath.Dir(tls.KeyFile) {
-			errs = append(errs, fmt.Errorf("%s.tls.certFile and %s.tls.keyFile must use the same directory for Secret-backed mTLS", base, base))
-		}
+	if !certSet {
+		return errs
+	}
+	errs = append(errs, validateTelemetryClientPaths(base, tls)...)
+	if tls.TLSClientSecretRef != "" {
+		errs = append(errs, validateTelemetrySecretClientPaths(base, tls)...)
+	}
+	return errs
+}
+
+func validateTelemetryClientPaths(base string, tls kubernautv1alpha2.TelemetryTLSConfig) []error {
+	var errs []error
+	if !filepath.IsAbs(tls.CertFile) {
+		errs = append(errs, fmt.Errorf("%s.tls.certFile must be an absolute path", base))
+	}
+	if !filepath.IsAbs(tls.KeyFile) {
+		errs = append(errs, fmt.Errorf("%s.tls.keyFile must be an absolute path", base))
+	}
+	if filepath.Clean(tls.CertFile) == filepath.Clean(tls.KeyFile) {
+		errs = append(errs, fmt.Errorf("%s.tls.certFile and %s.tls.keyFile must be different paths", base, base))
+	}
+	return errs
+}
+
+func validateTelemetrySecretClientPaths(base string, tls kubernautv1alpha2.TelemetryTLSConfig) []error {
+	var errs []error
+	if filepath.Dir(tls.CertFile) != filepath.Dir(tls.KeyFile) {
+		errs = append(errs, fmt.Errorf("%s.tls.certFile and %s.tls.keyFile must use the same directory for Secret-backed mTLS", base, base))
+	}
+	if filepath.Dir(filepath.Clean(tls.CertFile)) != TelemetryMountDir {
+		errs = append(errs, fmt.Errorf("%s.tls.certFile must be mounted below %s for Secret-backed mTLS", base, TelemetryMountDir))
+	}
+	if filepath.Base(tls.CertFile) == filepath.Base(tls.KeyFile) {
+		errs = append(errs, fmt.Errorf("%s.tls.certFile and %s.tls.keyFile must have different filenames for Secret-backed mTLS", base, base))
+	}
+	if tls.CACertSecretRef != nil && (filepath.Clean(tls.CertFile) == telemetryCAFile || filepath.Clean(tls.KeyFile) == telemetryCAFile) {
+		errs = append(errs, fmt.Errorf("%s.tls client material must not overwrite the Secret-backed CA path %s", base, telemetryCAFile))
 	}
 	return errs
 }
 
 func validateTelemetryEndpoint(endpoint string) error {
+	_, err := normalizeTelemetryEndpoint(endpoint)
+	return err
+}
+
+// normalizeTelemetryEndpoint accepts the CR's backwards-compatible host:port
+// form and an explicit https://host:port form. The rendered upstream contract
+// remains host:port because the exporter enables certificate-verifying TLS for
+// every non-local endpoint.
+func normalizeTelemetryEndpoint(endpoint string) (string, error) {
 	if endpoint == "" || endpoint == "stdout" {
-		return nil
+		return endpoint, nil
 	}
-	if strings.TrimSpace(endpoint) != endpoint || strings.Contains(endpoint, " ") || strings.Contains(endpoint, "\t") || strings.Contains(endpoint, "\n") {
-		return fmt.Errorf("must be a host:port value without whitespace; TLS is implicit and mandatory")
+	if strings.TrimSpace(endpoint) != endpoint || strings.ContainsAny(endpoint, " \t\n\r") {
+		return "", fmt.Errorf("must be a host:port or https://host:port value without whitespace; TLS is mandatory")
 	}
 	if strings.Contains(endpoint, "://") {
-		return fmt.Errorf("must be a host:port value without a URI scheme; TLS is implicit and mandatory")
+		parsed, err := url.Parse(endpoint)
+		if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+			return "", fmt.Errorf("must use an https:// URI or host:port value; plaintext HTTP and other URI forms are unsupported")
+		}
+		endpoint = parsed.Host
 	}
+	if err := validateTelemetryHostPort(endpoint); err != nil {
+		return "", err
+	}
+	return endpoint, nil
+}
+
+func validateTelemetryHostPort(endpoint string) error {
 	host, port, err := net.SplitHostPort(endpoint)
 	if err != nil || host == "" || port == "" {
-		return fmt.Errorf("must be a host:port value without a URI scheme; TLS is implicit and mandatory")
+		return fmt.Errorf("must be a host:port or https://host:port value; TLS is mandatory")
 	}
+	host = strings.Trim(host, "[]")
+	if telemetryEndpointHostBlocked(host) {
+		return fmt.Errorf("must not target a loopback or cloud metadata hostname; use an approved collector endpoint")
+	}
+	if err := validateTelemetryPort(port); err != nil {
+		return err
+	}
+	return nil
+}
+
+func telemetryEndpointHostBlocked(host string) bool {
+	if strings.EqualFold(host, "localhost") || strings.EqualFold(host, "metadata.google.internal") || strings.EqualFold(host, "instance-data") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast())
+}
+
+func validateTelemetryPort(port string) error {
 	if _, err := strconv.Atoi(port); err != nil || !allASCIIDigits(port) {
-		return fmt.Errorf("must use a numeric TCP port; TLS is implicit and mandatory")
+		return fmt.Errorf("must use a numeric TCP port; TLS is mandatory")
 	}
 	portNumber, _ := strconv.Atoi(port)
 	if portNumber < 1 || portNumber > 65535 {
-		return fmt.Errorf("must use a TCP port from 1 to 65535; TLS is implicit and mandatory")
+		return fmt.Errorf("must use a TCP port from 1 to 65535; TLS is mandatory")
 	}
 	return nil
 }

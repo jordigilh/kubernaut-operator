@@ -331,11 +331,8 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionTLSReady,
 			ReasonTLSNotReady, err.Error())
 	}
-	if err := r.validateTelemetryAmbientTrust(ctx, kn); err != nil {
-		log.Error(err, "Ambient telemetry trust validation failed",
-			"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
-		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
-			ReasonTelemetryAmbientInvalid, fmt.Sprintf("ambient telemetry trust validation failed: %v", err))
+	if result, err, handled := r.validateTelemetryTrust(ctx, kn); handled {
+		return result, err
 	}
 	log.Info("BYO and runtime TLS sources validated",
 		"generation", kn.Generation,
@@ -367,6 +364,33 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 		})
 		r.setPhase(kn, kubernautv1alpha2.PhaseValidating)
 	})
+}
+
+func (r *KubernautReconciler) validateTelemetryTrust(
+	ctx context.Context,
+	kn *kubernautv1alpha2.Kubernaut,
+) (ctrl.Result, error, bool) {
+	if err := r.ensureTelemetryAmbientTrustSource(ctx, kn); err != nil {
+		logf.FromContext(ctx).Error(err, "Ambient telemetry trust source could not be prepared",
+			"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+		result, statusErr := r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
+			ReasonTelemetryAmbientInvalid, fmt.Sprintf("ambient telemetry trust preparation failed: %v", err))
+		return result, statusErr, true
+	}
+	if err := r.validateTelemetryAmbientTrust(ctx, kn); err != nil {
+		if errors.Is(err, errTelemetryAmbientTrustPending) {
+			logf.FromContext(ctx).Info("ambient telemetry trust is not ready; waiting before deployment",
+				"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+			result, statusErr := r.setTelemetryAmbientTrustPending(ctx, kn, err)
+			return result, statusErr, true
+		}
+		logf.FromContext(ctx).Error(err, "Ambient telemetry trust validation failed",
+			"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+		result, statusErr := r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
+			ReasonTelemetryAmbientInvalid, fmt.Sprintf("ambient telemetry trust validation failed: %v", err))
+		return result, statusErr, true
+	}
+	return ctrl.Result{}, nil, false
 }
 
 func (r *KubernautReconciler) validateTelemetryMaterial(

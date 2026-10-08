@@ -9,15 +9,17 @@ This section covers the ConfigMaps and Secrets required by each Kubernaut servic
 ## OTLP telemetry (optional)
 
 Configure telemetry independently for Gateway, DataStorage, and Kubernaut
-Agent. Network endpoints use `host:port` syntax and always use
-certificate-verifying TLS; do not include `http://` or `https://`:
+Agent. Network endpoints may use `host:port` or an explicit
+`https://host:port` form; both render as the upstream `host:port` contract and
+always use certificate-verifying TLS. `http://` and other URI schemes are
+rejected:
 
 ```yaml
 spec:
   gateway:
     config:
       telemetry:
-        endpoint: otel-collector.observability.svc:4317
+        endpoint: https://otel-collector.observability.svc:4317
         tls:
           caCertSecretRef:
             name: otlp-ca

@@ -23,9 +23,11 @@ The operator must mirror the completed upstream `kubernaut#2384` contract:
 2. `logSink: true` with an empty endpoint remains valid and is local-only.
 3. `endpoint: stdout` remains a local debugging/log-sink mode and does not
    require TLS material.
-4. A network endpoint is represented as `host:port` without a URI scheme and
-   always uses TLS with certificate verification. `http://` and `https://`
-   endpoint forms are rejected rather than interpreted as transport switches.
+4. A network endpoint accepts either `host:port` or an explicit
+   `https://host:port` form and always uses TLS with certificate verification.
+   The operator normalizes the explicit HTTPS form to the upstream `host:port`
+   contract; `http://` and other URI forms are rejected rather than interpreted
+   as transport switches.
 5. `TelemetryTLSConfig.Enabled` is removed. There must be no CRD or rendered
    configuration field that can disable TLS for a network export.
 6. System CA trust is the default for public collectors. An administrator may
@@ -134,19 +136,15 @@ the upstream path fields real inside generated Pods.
 
 ### Spike A — Network endpoint representation
 
-**Decision: YES to the upstream host:port contract; reject schemes.**
+**Decision: YES to the upstream host:port contract; accept and normalize HTTPS.**
 
 The upstream exporter selects TLS in its network path, not from an
-`https://` prefix. Accepting arbitrary endpoint strings in the CR currently
-allows an ambiguous or malformed configuration. The validation helper should
-accept `stdout` as the explicit local exception, otherwise reject a URI scheme,
-whitespace, or an endpoint that cannot be represented as the upstream network
-endpoint. The error should say that the endpoint must be `host:port` and that
-TLS is implicit and mandatory.
-
-Therefore, the acceptance criterion’s phrase “HTTPS OTLP endpoint” means a
-network export whose transport is HTTPS/TLS at runtime; it does not mean that
-the CR should accept an `https://` URI in the `endpoint` field.
+`https://` prefix. The operator therefore accepts the explicit HTTPS form for
+interoperability with the issue-level contract, validates its host/port and
+rejects paths, credentials, query strings, plaintext HTTP, and other schemes,
+then renders only the upstream `host:port` value. The renderer and validator
+share this normalization so an accepted HTTPS endpoint cannot be downgraded to
+plaintext.
 
 The delegated runtime spike also confirmed that the upstream exporter does not
 itself provide a strong scheme-validation error. The operator must own this
@@ -355,8 +353,10 @@ data merely to calculate a rollout annotation.
 Add telemetry validation to `internal/resources/validation.go` and call it
 from `ValidateKubernaut` for each active telemetry lane. It should:
 
-- reject URI schemes, whitespace, malformed host/port values, and any endpoint
-  that would select plaintext;
+- accept `host:port` and `https://host:port`, normalize the latter to the
+  upstream host:port form, and reject plaintext HTTP, other URI schemes,
+  whitespace, malformed host/port values, and any endpoint that would select
+  plaintext;
 - accept empty endpoint and `stdout` without requiring network TLS material;
 - reject `caFile` and `caCertSecretRef` together;
 - require an absolute `caFile` when it is used as an administrator-owned file
@@ -555,7 +555,8 @@ policy, or if a path is rendered without a matching mounted file.
 | Network `host:port`, file CA | TLS block with administrator path | No operator CA volume; path ownership documented |
 | Network `host:port`, Secret CA | TLS block with deterministic mounted path | Read-only CA Secret volume/mount |
 | Network `host:port`, mTLS | TLS block with cert/key paths | Read-only client Secret volume/mount |
-| HTTP/HTTPS URI endpoint | No deployment | Validation failure naming the endpoint field |
+| Explicit `https://host:port` endpoint | ConfigMap renders canonical `host:port` | Certificate-verifying TLS remains mandatory |
+| `http://` or other URI endpoint | No deployment | Validation failure naming the endpoint field |
 | Incomplete/invalid Secret material | No deployment readiness | Validation failure/status; no plaintext fallback |
 
 ### 8.2 Business assertions and controls
@@ -603,8 +604,8 @@ After API approval and implementation:
     - `docs/security/credentials-and-tls.md` with OTLP Secret keys, ownership,
       rotation, system/private CA, mTLS rules, ambient trust behavior, rollout
       observability, and invalid-rotation recovery;
-   - the relevant installation/configuration page with host:port/no-scheme
-     examples and migration from `tls.enabled`;
+    - the relevant installation/configuration page with host:port and explicit
+      HTTPS examples and migration from `tls.enabled`;
    - an issue-specific control traceability/test-plan document.
 7. Do not silently rewrite the historical `docs/tests/421` snapshot. If its
    owner wants the audit refreshed, do that as a separately identified update.
@@ -690,7 +691,7 @@ the narrow telemetry extension remains compatible with both.
 | Ambient trust rotation leaves default-trust OTLP exporters on stale roots despite shared-client hot reload. | Include the effective ambient trust revision in the shared telemetry-material rollout contract; validate before updating the Pod template and document the expected rolling update. |
 | Public OTLP export fails because `SSL_CERT_FILE` replaces system roots. | Render upstream ambient trust source fields, provide writable `/tmp`, remove narrow static `SSL_CERT_FILE` values, and test the real operand bootstrap before deployment. |
 | Operators mistake a Secret volume refresh for a completed telemetry rotation. | Document `oc/kubectl rollout status`, CR conditions, Deployment events, and the manual restart path for unwatchable file-based material. |
-| Existing consumers depend on plaintext or `https://` endpoint strings. | Explicit migration documentation, field-qualified rejection, and no silent downgrade or URL rewriting. |
+| Existing consumers depend on plaintext or non-canonical endpoint strings. | Explicit migration documentation, field-qualified rejection of plaintext, and safe HTTPS-to-host:port normalization without downgrade. |
 | Core runtime and operator YAML drift. | Pin/qualify the upstream release, run upstream-compatible YAML tests, and include a real collector handshake lane. |
 | Controls are overstated. | Label repository tests as evidence only; retain external platform, PKI, and formal assessment caveats. |
 
@@ -700,8 +701,8 @@ Before RED tests or production type changes, the issue owner must approve:
 
 1. Removal of `TelemetryTLSConfig.Enabled` from the v1alpha2 API and all
    generated/rendered artifacts.
-2. The host:port/no-scheme endpoint contract, including `stdout` as the only
-   local endpoint exception.
+2. The host:port/HTTPS endpoint contract, including `stdout` as the only local
+   endpoint exception and rejection of plaintext HTTP.
 3. The recommended `caCertSecretRef` and `tlsClientSecretRef` additions,
    their fixed Secret-key contracts, path rules, and administrator-owned
    read-only semantics.
@@ -768,8 +769,10 @@ only non-sensitive resource-version-derived rollout revisions. The CRD,
 bundle, and installer artifacts were regenerated; no telemetry TLS disable
 field is emitted.
 
-Verification completed with `make test` (unit coverage 86.4%, controller
-coverage 78.8%), `make lint`, `go build ./...`, `make test-pyramid`, and
-regenerated manifests, bundle, and installer artifacts. The live private-CA
-collector handshake remains an environment-dependent qualification step and
-was not run in this repository-only validation.
+Verification completed with `make test` (unit coverage 87.2%, controller
+coverage 79.2%), `make lint`, `go build ./...`, `make test-hack-scripts`,
+`make test-pyramid`, and regenerated manifests. The issue-scoped resource
+validation, renderer, and Secret-mount helpers have 100% statement coverage
+in the unit profile; controller behavior is covered by the integration
+profile and focused telemetry tests. The private-CA/mTLS collector handshake
+was executed through the upstream telemetry runtime qualification test.

@@ -76,7 +76,26 @@ var _ = Describe("Telemetry controller material lifecycle", func() {
 		Expect(err).To(MatchError(ContainSubstring("tlsClientSecretRef")))
 	})
 
-	It("rejects malformed ambient trust before a rollout revision is accepted", func() {
+	It("rejects a CA bundle with trailing non-PEM data", func() {
+		kn := telemetryUnitKubernaut()
+		kn.Spec.DataStorage.Telemetry = telemetrySecretSpec()
+		ca := telemetryCASecret("telemetry-ca", "ca.crt")
+		ca.Data["ca.crt"] = append(ca.Data["ca.crt"], []byte("unexpected trailing bytes")...)
+		r := newTelemetryUnitReconciler(kn, ca, telemetryClientSecret(), telemetryTrustBundle(kn.Namespace))
+
+		Expect(r.validateTelemetrySecrets(context.Background(), kn)).To(MatchError(ContainSubstring("non-pem data")))
+	})
+
+	It("rejects client certificates that are not valid for client authentication", func() {
+		kn := telemetryUnitKubernaut()
+		kn.Spec.DataStorage.Telemetry = telemetrySecretSpec()
+		clientSecret := telemetryClientSecretWithUsage(x509.ExtKeyUsageServerAuth)
+		r := newTelemetryUnitReconciler(kn, telemetryCASecret("telemetry-ca", "ca.crt"), clientSecret, telemetryTrustBundle(kn.Namespace))
+
+		Expect(r.validateTelemetrySecrets(context.Background(), kn)).To(MatchError(ContainSubstring("client authentication")))
+	})
+
+	It("IT-TELEMETRY-TLS-008 rejects malformed ambient trust before a rollout revision is accepted", func() {
 		kn := telemetryUnitKubernaut()
 		kn.Spec.DataStorage.Telemetry = kubernautv1alpha2.TelemetrySpec{Endpoint: "otel-collector:4317"}
 		trust := telemetryTrustBundle(kn.Namespace)
@@ -88,7 +107,64 @@ var _ = Describe("Telemetry controller material lifecycle", func() {
 		Expect(err).To(MatchError(ContainSubstring("valid ca pem")))
 	})
 
-	It("maps referenced Secret events and changes only non-sensitive revision metadata", func() {
+	It("reports missing ambient trust as pending rather than accepting an empty trust pool", func() {
+		kn := telemetryUnitKubernaut()
+		kn.Spec.DataStorage.Telemetry = kubernautv1alpha2.TelemetrySpec{Endpoint: "otel-collector:4317"}
+		r := newTelemetryUnitReconciler()
+
+		Expect(r.validateTelemetryAmbientTrust(context.Background(), kn)).To(MatchError(ContainSubstring("pending")))
+	})
+
+	It("waits for the OpenShift ambient trust source and records a pending condition", func() {
+		kn := telemetryUnitKubernaut()
+		kn.Spec.DataStorage.Telemetry = kubernautv1alpha2.TelemetrySpec{Endpoint: "otel-collector:4317"}
+		r := newTelemetryUnitReconciler()
+		Expect(r.Create(context.Background(), kn)).To(Succeed())
+
+		result, err, handled := r.validateTelemetryTrust(context.Background(), kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(handled).To(BeTrue())
+		Expect(result.RequeueAfter).To(Equal(requeueMigrationPoll))
+		condition := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionTLSReady)
+		Expect(condition).NotTo(BeNil())
+		Expect(condition.Reason).To(Equal(ReasonTLSWaitingForServiceCA))
+	})
+
+	It("parses only complete certificate PEM bundles", func() {
+		_, err := parseTelemetryCertificates([]byte("not pem"))
+		Expect(err).To(MatchError("contains non-pem data"))
+		_, err = parseTelemetryCertificates(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("key")}))
+		Expect(err).To(MatchError(`contains unsupported pem block "PRIVATE KEY"`))
+		_, err = parseTelemetryCertificates([]byte("-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----"))
+		Expect(err).To(MatchError(ContainSubstring("malformed pem")))
+	})
+
+	It("rejects a non-CA certificate when a CA Secret is referenced", func() {
+		kn := telemetryUnitKubernaut()
+		kn.Spec.DataStorage.Telemetry = telemetrySecretSpec()
+		ca := telemetryCASecret("telemetry-ca", "ca.crt")
+		_, certificate := telemetryClientKeyPair()
+		ca.Data["ca.crt"] = certificate
+		r := newTelemetryUnitReconciler(kn, ca, telemetryClientSecret(), telemetryTrustBundle(kn.Namespace))
+
+		Expect(r.validateTelemetrySecrets(context.Background(), kn)).To(MatchError(ContainSubstring("non-ca certificate")))
+	})
+
+	It("prepares an explicit runtime trust source before telemetry validation", func() {
+		kn := telemetryUnitKubernaut()
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeDevelopmentSelfSigned
+		kn.Spec.TLS.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}
+		kn.Spec.DataStorage.Telemetry = kubernautv1alpha2.TelemetrySpec{Endpoint: "otel-collector:4317"}
+		r := newTelemetryUnitReconciler(kn)
+
+		Expect(r.ensureTelemetryAmbientTrustSource(context.Background(), kn)).To(Succeed())
+		trust := &corev1.ConfigMap{}
+		Expect(r.Get(context.Background(), client.ObjectKey{Namespace: kn.Namespace, Name: resources.TrustBundleConfigMapName}, trust)).To(Succeed())
+		Expect(trust.Data["ca.crt"]).NotTo(BeEmpty())
+		Expect(r.validateTelemetryAmbientTrust(context.Background(), kn)).To(Succeed())
+	})
+
+	It("IT-TELEMETRY-TLS-005/007 maps referenced Secret events and changes only non-sensitive revision metadata", func() {
 		kn := telemetryUnitKubernaut()
 		kn.Spec.DataStorage.Telemetry = telemetrySecretSpec()
 		ca := telemetryCASecret("telemetry-ca", "ca.crt")
@@ -272,6 +348,22 @@ func telemetryCAPEM() []byte {
 }
 
 func telemetryClientKeyPair() ([]byte, []byte) {
+	return telemetryKeyPairWithUsage(x509.ExtKeyUsageClientAuth)
+}
+
+func telemetryClientSecretWithUsage(usage x509.ExtKeyUsage) *corev1.Secret {
+	key, certificate := telemetryKeyPairWithUsage(usage)
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "telemetry-client", Namespace: "telemetry-test"},
+		Type:       corev1.SecretTypeTLS,
+		Data: map[string][]byte{
+			corev1.TLSCertKey:       certificate,
+			corev1.TLSPrivateKeyKey: key,
+		},
+	}
+}
+
+func telemetryKeyPairWithUsage(usage x509.ExtKeyUsage) ([]byte, []byte) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	Expect(err).NotTo(HaveOccurred())
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 120))
@@ -282,7 +374,7 @@ func telemetryClientKeyPair() ([]byte, []byte) {
 		NotBefore:    time.Now().Add(-time.Minute),
 		NotAfter:     time.Now().Add(time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		ExtKeyUsage:  []x509.ExtKeyUsage{usage},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	Expect(err).NotTo(HaveOccurred())
@@ -301,7 +393,7 @@ func newTelemetryUnitReconciler(objects ...runtime.Object) *KubernautReconciler 
 	Expect(clientgoscheme.AddToScheme(scheme)).To(Succeed())
 	Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
 	return &KubernautReconciler{
-		Client: fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objects...).Build(),
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&kubernautv1alpha2.Kubernaut{}).WithRuntimeObjects(objects...).Build(),
 		Scheme: scheme,
 	}
 }

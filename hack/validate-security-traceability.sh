@@ -8,6 +8,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 matrix="${repo_root}/docs/security/ISSUE-488-CONTROL-TRACEABILITY.md"
 tls_matrix="${repo_root}/docs/security/ISSUE-491-TLS-CONTROL-ATTESTATION.md"
 ci_matrix="${repo_root}/docs/design/ISSUE-501-OPERATOR-UPSTREAM-CI-BOUNDARY.md"
+otlp_matrix="${repo_root}/docs/security/ISSUE-478-CONTROL-TRACEABILITY.md"
 
 fail() {
 	echo "security traceability validation failed: $*" >&2
@@ -17,6 +18,7 @@ fail() {
 [[ -f "${matrix}" ]] || fail "missing ${matrix}"
 [[ -f "${tls_matrix}" ]] || fail "missing ${tls_matrix}"
 [[ -f "${ci_matrix}" ]] || fail "missing ${ci_matrix}"
+[[ -f "${otlp_matrix}" ]] || fail "missing ${otlp_matrix}"
 
 grep -Fq 'NIST SP 800-53 Rev. 5' "${matrix}" || fail "missing NIST SP 800-53 Rev. 5 declaration"
 grep -Fq 'OWASP ASVS 5.0.0' "${matrix}" || fail "missing OWASP ASVS 5.0.0 declaration"
@@ -25,6 +27,19 @@ grep -Eq 'v5\.0\.0-V[0-9]+\.[0-9]+\.[0-9]+' "${matrix}" || fail "missing version
 for control in AC-3 AC-6 SC-7 SC-8 SC-12 SC-13 SC-17 IA-2 IA-5 SI-4 AU-2 AU-3 AU-12 SI-10 CM-2 CM-3 CM-6 CM-8; do
 	grep -Eq "(^|[^A-Za-z0-9-])${control}([^A-Za-z0-9-]|$)" "${matrix}" || fail "missing NIST/FedRAMP control ${control}"
 done
+
+grep -Fq 'NIST SP 800-53 Rev. 5' "${otlp_matrix}" || fail "OTLP matrix is missing NIST SP 800-53 Rev. 5 scope"
+grep -Fq 'OWASP ASVS 5.0.0' "${otlp_matrix}" || fail "OTLP matrix is missing OWASP ASVS 5.0.0 scope"
+for control in AC-6 CM-6 IA-5 SC-7 SC-8 'SC-8(1)' SC-12 SC-13 SI-4 SI-10 SA-11; do
+	grep -Fq "${control}" "${otlp_matrix}" || fail "OTLP matrix is missing control ${control}"
+done
+for requirement in v5.0.0-V12.1.3 v5.0.0-V12.2.1 v5.0.0-V12.3.1 v5.0.0-V12.3.2 v5.0.0-V12.3.3 v5.0.0-V12.3.4 v5.0.0-V12.3.5 v5.0.0-V13.3.1 v5.0.0-V13.3.2 v5.0.0-V14.2.4; do
+	grep -Fq "${requirement}" "${otlp_matrix}" || fail "OTLP matrix is missing ASVS requirement ${requirement}"
+done
+for artifact in internal/resources/validation.go internal/resources/telemetry.go internal/controller/telemetry.go internal/controller/telemetry_integration_test.go internal/resources/telemetry_runtime_test.go; do
+	grep -Fq "${artifact}" "${otlp_matrix}" || fail "OTLP matrix is missing evidence artifact ${artifact}"
+done
+grep -Eiq 'does not claim formal (FedRAMP|NIST|OWASP ASVS)' "${otlp_matrix}" || fail "OTLP matrix must reject formal compliance claims"
 
 for status in verified 'partially verified' 'not verified' 'not applicable'; do
 	grep -Fq "${status}" "${matrix}" || fail "missing status ${status}"

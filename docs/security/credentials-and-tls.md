@@ -84,10 +84,12 @@ The following table summarizes primary east-west trust patterns for the managed 
 
 This section defines the approved Issue #478 runtime contract to be applied by
 the implementation for Gateway, DataStorage, and Kubernaut Agent telemetry.
-Network OTLP endpoints use implicit TLS and
-`host:port` syntax; URI schemes are rejected. An empty endpoint disables network
-export, while `logSink`-only and `stdout` modes remain local-only and do not
-require telemetry TLS material.
+Network OTLP endpoints use certificate-verifying TLS and accept either
+`host:port` or `https://host:port` syntax. The operator normalizes the explicit
+HTTPS form to the upstream `host:port` contract; `http://` and other URI
+schemes are rejected. An empty endpoint disables network export, while
+`logSink`-only and `stdout` modes remain local-only and do not require
+telemetry TLS material.
 
 ### Trust and client-material sources
 

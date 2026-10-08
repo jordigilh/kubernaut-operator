@@ -1163,9 +1163,12 @@ func (s *AuditSpec) AuditEnabled() bool {
 // local-only option. Shared by Gateway, DataStorage, and Kubernaut Agent,
 // mirroring the upstream Helm chart's single top-level telemetry: block.
 type TelemetrySpec struct {
-	// OTLP collector endpoint in host:port form (e.g.
-	// "otel-collector.observability.svc:4317"). An empty value disables network
-	// export. The special value "stdout" is local-only debugging output.
+	// OTLP collector endpoint in host:port or https://host:port form (e.g.
+	// "otel-collector.observability.svc:4317" or
+	// "https://otel-collector.observability.svc:4317"). The operator normalizes
+	// the explicit HTTPS form to host:port before rendering and always enables
+	// certificate verification. An empty value disables network export. The
+	// special value "stdout" is local-only debugging output.
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
 

@@ -17,17 +17,22 @@ limitations under the License.
 package controller
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -38,6 +43,8 @@ import (
 )
 
 const openshiftConfigManagedNamespace = "openshift-config-managed"
+
+var errTelemetryAmbientTrustPending = errors.New("ambient telemetry trust is pending")
 
 type telemetryLane struct {
 	component string
@@ -67,6 +74,34 @@ func telemetryLanes(kn *kubernautv1alpha2.Kubernaut) []telemetryLane {
 		},
 	)
 	return lanes
+}
+
+// ensureTelemetryAmbientTrustSource makes the trust source observable before
+// telemetry validation. OpenShift service-CA injection is asynchronous, so
+// creating its two ConfigMaps here lets the controller wait on their contents
+// instead of deploying a producer with an empty trust bundle. Explicit TLS
+// modes are prepared through the same runtime source path used by migration.
+func (r *KubernautReconciler) ensureTelemetryAmbientTrustSource(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	if !hasNetworkTelemetry(kn) {
+		return nil
+	}
+	material, caBundle, err := r.ensureRuntimeTLS(ctx, kn)
+	if err != nil {
+		return fmt.Errorf("ensuring runtime trust source: %w", err)
+	}
+	if material.Source == resources.TLSMaterialSourceOpenShiftServiceCA {
+		if err := r.ensureNamespaced(ctx, kn, resources.InterServiceCAConfigMap(kn)); err != nil {
+			return fmt.Errorf("ensuring inter-service CA ConfigMap: %w", err)
+		}
+		if err := r.ensureNamespaced(ctx, kn, resources.TrustBundleConfigMap(kn)); err != nil {
+			return fmt.Errorf("ensuring ambient trust bundle ConfigMap: %w", err)
+		}
+		return nil
+	}
+	if err := r.ensureGenericTLSConfigMaps(ctx, kn, caBundle); err != nil {
+		return fmt.Errorf("ensuring explicit ambient trust bundle: %w", err)
+	}
+	return nil
 }
 
 // validateTelemetrySecrets verifies administrator-owned OTLP Secret material
@@ -103,34 +138,47 @@ func validateTelemetryCASecret(secret *corev1.Secret, key string) error {
 		return fmt.Errorf("secret %q is missing key %q", secret.Name, key)
 	}
 
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(data) {
-		return fmt.Errorf("secret %q key %q does not contain valid ca pem", secret.Name, key)
+	certificates, err := parseTelemetryCertificates(data)
+	if err != nil {
+		return fmt.Errorf("secret %q key %q does not contain valid ca pem: %w", secret.Name, key, err)
 	}
-	remaining := data
-	certificates := 0
-	for len(remaining) > 0 {
-		block, rest := pem.Decode(remaining)
-		if block == nil {
-			break
-		}
-		remaining = rest
-		if block.Type != "CERTIFICATE" {
-			continue
-		}
-		certificate, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			return fmt.Errorf("secret %q key %q contains an invalid certificate: %w", secret.Name, key, err)
-		}
+	now := time.Now()
+	for _, certificate := range certificates {
 		if !certificate.IsCA {
 			return fmt.Errorf("secret %q key %q contains a non-ca certificate", secret.Name, key)
 		}
-		certificates++
-	}
-	if certificates == 0 {
-		return fmt.Errorf("secret %q key %q does not contain a ca certificate", secret.Name, key)
+		if now.Before(certificate.NotBefore) || now.After(certificate.NotAfter) {
+			return fmt.Errorf("secret %q key %q contains an expired or not-yet-valid ca certificate", secret.Name, key)
+		}
 	}
 	return nil
+}
+
+func parseTelemetryCertificates(data []byte) ([]*x509.Certificate, error) {
+	remaining := bytes.TrimSpace(data)
+	certificates := make([]*x509.Certificate, 0, 1)
+	for len(remaining) > 0 {
+		if !bytes.HasPrefix(remaining, []byte("-----BEGIN ")) {
+			return nil, errors.New("contains non-pem data")
+		}
+		block, rest := pem.Decode(remaining)
+		if block == nil {
+			return nil, errors.New("contains malformed pem")
+		}
+		if block.Type != "CERTIFICATE" {
+			return nil, fmt.Errorf("contains unsupported pem block %q", block.Type)
+		}
+		certificate, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("contains an invalid certificate: %w", err)
+		}
+		certificates = append(certificates, certificate)
+		remaining = bytes.TrimSpace(rest)
+	}
+	if len(certificates) == 0 {
+		return nil, errors.New("does not contain a certificate")
+	}
+	return certificates, nil
 }
 
 func validateTelemetryClientSecret(secret *corev1.Secret) error {
@@ -149,10 +197,30 @@ func validateTelemetryClientSecret(secret *corev1.Secret) error {
 	if len(pair.Certificate) == 0 {
 		return fmt.Errorf("secret %q does not contain a client certificate", secret.Name)
 	}
-	if _, err := x509.ParseCertificate(pair.Certificate[0]); err != nil {
+	certificate, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
 		return fmt.Errorf("secret %q contains an invalid client certificate: %w", secret.Name, err)
 	}
+	now := time.Now()
+	if now.Before(certificate.NotBefore) || now.After(certificate.NotAfter) {
+		return fmt.Errorf("secret %q contains an expired or not-yet-valid client certificate", secret.Name)
+	}
+	if certificate.IsCA {
+		return fmt.Errorf("secret %q contains a CA certificate instead of a client certificate", secret.Name)
+	}
+	if len(certificate.ExtKeyUsage) > 0 && !telemetryClientAuthUsage(certificate.ExtKeyUsage) {
+		return fmt.Errorf("secret %q client certificate does not allow client authentication", secret.Name)
+	}
 	return nil
+}
+
+func telemetryClientAuthUsage(usages []x509.ExtKeyUsage) bool {
+	for _, usage := range usages {
+		if usage == x509.ExtKeyUsageClientAuth || usage == x509.ExtKeyUsageAny {
+			return true
+		}
+	}
+	return false
 }
 
 // telemetryMaterialRevisions resolves one non-sensitive revision per active
@@ -218,16 +286,26 @@ func (r *KubernautReconciler) validateTelemetryAmbientTrust(ctx context.Context,
 	key := client.ObjectKey{Namespace: kn.Namespace, Name: configMapName}
 	if err := r.Get(ctx, key, configMap); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil
+			return fmt.Errorf("%w: ConfigMap %q does not exist", errTelemetryAmbientTrustPending, configMapName)
 		}
 		return fmt.Errorf("reading ambient trust ConfigMap %q: %w", configMapName, err)
 	}
 	caPEM := strings.TrimSpace(configMap.Data[resources.InterServiceTLSCAKeyFor(kn)])
 	if caPEM == "" {
-		return nil
+		return fmt.Errorf("%w: ConfigMap %q key %q is empty", errTelemetryAmbientTrustPending, configMapName, resources.InterServiceTLSCAKeyFor(kn))
 	}
-	if !x509.NewCertPool().AppendCertsFromPEM([]byte(caPEM)) {
-		return fmt.Errorf("ambient trust ConfigMap %q key %q does not contain valid ca pem", configMapName, resources.InterServiceTLSCAKeyFor(kn))
+	certificates, err := parseTelemetryCertificates([]byte(caPEM))
+	if err != nil {
+		return fmt.Errorf("ambient trust ConfigMap %q key %q does not contain valid ca pem: %w", configMapName, resources.InterServiceTLSCAKeyFor(kn), err)
+	}
+	now := time.Now()
+	for _, certificate := range certificates {
+		if !certificate.IsCA {
+			return fmt.Errorf("ambient trust ConfigMap %q key %q contains a non-ca certificate", configMapName, resources.InterServiceTLSCAKeyFor(kn))
+		}
+		if now.Before(certificate.NotBefore) || now.After(certificate.NotAfter) {
+			return fmt.Errorf("ambient trust ConfigMap %q key %q contains an expired or not-yet-valid ca certificate", configMapName, resources.InterServiceTLSCAKeyFor(kn))
+		}
 	}
 	return nil
 }
@@ -354,6 +432,30 @@ func (r *KubernautReconciler) telemetryAmbientConfigMapToKubernaut(ctx context.C
 		requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: kn.Name, Namespace: kn.Namespace}})
 	}
 	return requests
+}
+
+func (r *KubernautReconciler) setTelemetryAmbientTrustPending(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, err error) (reconcile.Result, error) {
+	message := err.Error()
+	if statusErr := r.patchStatus(ctx, kn, func() {
+		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+			Type:               kubernautv1alpha2.ConditionBYOValidated,
+			Status:             metav1.ConditionFalse,
+			Reason:             ReasonTLSWaitingForServiceCA,
+			Message:            message,
+			ObservedGeneration: kn.Generation,
+		})
+		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+			Type:               kubernautv1alpha2.ConditionTLSReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             ReasonTLSWaitingForServiceCA,
+			Message:            message,
+			ObservedGeneration: kn.Generation,
+		})
+		r.setPhase(kn, kubernautv1alpha2.PhaseValidating)
+	}); statusErr != nil {
+		return reconcile.Result{}, statusErr
+	}
+	return reconcile.Result{RequeueAfter: requeueMigrationPoll}, nil
 }
 
 func ambientTrustConfigMapRelevant(kn *kubernautv1alpha2.Kubernaut, configMap *corev1.ConfigMap) bool {

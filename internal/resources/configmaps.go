@@ -188,12 +188,16 @@ func resolveTelemetryConfig(t kubernautv1alpha2.TelemetrySpec) *telemetryYAML {
 	if t.Endpoint == "" && !logSink {
 		return nil
 	}
+	endpoint := t.Endpoint
+	if normalized, err := normalizeTelemetryEndpoint(endpoint); err == nil {
+		endpoint = normalized
+	}
 	material := resolveTelemetryMaterial(t)
 	if !material.network {
-		return &telemetryYAML{Endpoint: t.Endpoint, LogSink: logSink}
+		return &telemetryYAML{Endpoint: endpoint, LogSink: logSink}
 	}
 	return &telemetryYAML{
-		Endpoint: t.Endpoint,
+		Endpoint: endpoint,
 		LogSink:  logSink,
 		TLS: telemetryTLSYAML{
 			CAFile:   material.caFile,
