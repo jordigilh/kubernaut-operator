@@ -69,6 +69,7 @@ var _ = Describe("operator bootstrap chart", func() {
 		webhook := webhooks[0]
 		Expect(webhook.name()).To(Equal("kubernaut-operator-singleton"))
 		Expect(webhook.nestedString("webhooks", "0", "failurePolicy")).To(Equal("Fail"))
+		Expect(webhook.nestedString("webhooks", "0", "timeoutSeconds")).To(Equal("10"))
 		Expect(webhook.nestedString("webhooks", "0", "rules", "0", "scope")).To(Equal("Namespaced"))
 		Expect(webhook.nestedString(
 			"webhooks", "0", "clientConfig", "service", "name",
@@ -165,13 +166,33 @@ var _ = Describe("operator bootstrap chart", func() {
 		Expect(string(output)).To(ContainSubstring("webhook.tls.certManager.issuerRef.name is required"))
 	})
 
-	It("rejects fail-open webhook policy overrides", func() {
-		output, err := runHelm(
-			"template", "kubernaut-operator", chartPath(), "--namespace", "default",
-			"--set", "webhook.failurePolicy=Ignore",
-		)
-		Expect(err).To(HaveOccurred())
-		Expect(string(output)).To(ContainSubstring("failurePolicy"))
+	It("rejects overrides for chart-owned invariants", func() {
+		settings := []string{
+			"leaderElection.enabled=false",
+			"healthProbe.bindAddress=:9090",
+			"metrics.bindAddress=:9090",
+			"metrics.secure=false",
+			"metrics.service.port=9090",
+			"webhook.enabled=false",
+			"webhook.failurePolicy=Ignore",
+			"webhook.timeoutSeconds=30",
+			"webhook.service.name=other-webhook",
+			"webhook.service.port=9090",
+			"webhook.tls.secretName=other-secret",
+			"webhook.tls.certManager.issuerRef.group=other.example",
+			"securityContext.pod.runAsNonRoot=false",
+			"terminationGracePeriodSeconds=30",
+		}
+
+		for _, setting := range settings {
+			rootField := strings.Split(strings.Split(setting, "=")[0], ".")[0]
+			output, err := runHelm(
+				"template", "kubernaut-operator", chartPath(), "--namespace", "default",
+				"--set", setting,
+			)
+			ExpectWithOffset(1, err).To(HaveOccurred(), setting)
+			ExpectWithOffset(1, string(output)).To(ContainSubstring(rootField), setting)
+		}
 	})
 
 	It("renders immutable operator images, pull Secrets, and secure metrics", func() {
@@ -198,6 +219,15 @@ var _ = Describe("operator bootstrap chart", func() {
 		Expect(deployment.nestedString(
 			"spec", "template", "spec", "containers", "0", "args", "2",
 		)).To(Equal("--metrics-bind-address=:8443"))
+		Expect(deployment.nestedString(
+			"spec", "template", "spec", "containers", "0", "args", "0",
+		)).To(Equal("--leader-elect=true"))
+		Expect(deployment.nestedString(
+			"spec", "template", "spec", "containers", "0", "args", "1",
+		)).To(Equal("--health-probe-bind-address=:8081"))
+		Expect(deployment.nestedString(
+			"spec", "template", "spec", "containers", "0", "args", "3",
+		)).To(Equal("--metrics-secure=true"))
 		Expect(deployment.hasPath("spec", "template", "spec", "initContainers")).To(BeFalse())
 		bootstrap := objects.ofKind("Job").named("Job", "kubernaut-operator-cert-bootstrap")
 		Expect(bootstrap.nestedString(

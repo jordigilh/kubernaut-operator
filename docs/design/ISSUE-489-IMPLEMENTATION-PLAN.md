@@ -161,14 +161,17 @@ The initial schema should be small, typed, and limited to bootstrap concerns:
 - operator image registry, repository, tag, digest, pull policy, and pull
   secrets;
 - ServiceAccount name and annotations;
-- leader-election enablement and ID, with the in-cluster namespace as the
+- fixed leader-election enablement and ID, with the in-cluster namespace as the
   default source;
-- metrics Service, secure/insecure binding, and authorization settings;
-- health/readiness probe settings;
-- pod/container security context, priority class, selectors, tolerations,
-  affinity, topology spread, and resource requests;
+- metrics enablement, Service annotations, and authorization settings; the
+  secure `:8443` binding is chart-owned;
+- fixed health/readiness probe binding at `:8081`;
+- chart-owned restricted pod/container security defaults, with only the
+  platform compatibility escape hatch exposed, plus priority class, selectors,
+  tolerations, affinity, topology spread, and resource requests;
 - bootstrap labels and annotations;
-- manager webhook Service/configuration names and certificate source;
+- fixed manager webhook Service/configuration names, ports, fail-closed policy,
+  and timeout, plus the certificate source;
 - administrator-managed serving Secret and CA reference;
 - explicit development-only self-signed profile;
 - explicit cert-manager reference/provisioning profile;
@@ -653,7 +656,11 @@ follows:
 6. **Conflicts:** fixed cluster-scoped names and Helm ownership metadata cause a
    second release or another installer to fail rather than adopt resources.
 7. **Values:** the JSON schema accepts only bootstrap settings and rejects
-   application configuration such as PostgreSQL. Related images remain
+   application configuration such as PostgreSQL. Operational invariants are
+   chart-owned rather than user-overridable: leader election is enabled,
+   health probes bind to `:8081`, metrics use secure `:8443` when enabled, the
+   webhook is always enabled with fixed names/ports and `failurePolicy: Fail`,
+   and the restricted manager security context is fixed. Related images remain
    immutable, overridable references consumed by the manager only after a user
    applies a `Kubernaut` CR.
 8. **Harness:** use Ginkgo render tests, Helm v3.17.3 in CI, and a dedicated

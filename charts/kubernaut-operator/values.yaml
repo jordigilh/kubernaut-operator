@@ -33,34 +33,19 @@ serviceAccount:
   name: kubernaut-operator-controller-manager
   annotations: {}
 
-leaderElection:
-  enabled: true
-
-healthProbe:
-  bindAddress: :8081
-
 metrics:
   enabled: false
-  bindAddress: :8443
-  secure: true
   service:
-    port: 8443
     annotations: {}
 
 webhook:
-  enabled: true
   service:
-    name: kubernaut-operator-webhook
-    port: 9443
     annotations: {}
-  failurePolicy: Fail
-  timeoutSeconds: 10
   tls:
     # Development is convenient for Kind/CI only. Select manual, certManager,
     # or openshift for a qualified production deployment.
     mode: development
     existingSecret: ""
-    secretName: kubernaut-operator-webhook-cert
     caBundle: ""
     development:
       image:
@@ -75,7 +60,6 @@ webhook:
       issuerRef:
         name: ""
         kind: Issuer
-        group: cert-manager.io
       duration: 8760h
       renewBefore: 720h
 
@@ -97,26 +81,9 @@ resources:
     cpu: 10m
     memory: 128Mi
 
-securityContext:
-  pod:
-    runAsNonRoot: true
-    # Retain a stable supplemental-group default for generic Kubernetes.
-    # The OpenShift profile omits this fixed value so SCC can assign a
-    # project-compatible supplemental group.
-    fsGroup: 65534
-    seccompProfile:
-      type: RuntimeDefault
-  container:
-    allowPrivilegeEscalation: false
-    readOnlyRootFilesystem: true
-    capabilities:
-      drop:
-        - ALL
-
 # Leave unset by default so the platform's SCC/Pod Security admission can choose
 # the compatible user-namespace mode. Set to false only on clusters that require
 # pod-level user namespaces (for example, a restricted-v3-only policy).
 hostUsers: null
 
 replicas: 1
-terminationGracePeriodSeconds: 10

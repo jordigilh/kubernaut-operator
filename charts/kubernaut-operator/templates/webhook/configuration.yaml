@@ -1,4 +1,3 @@
-{{- if .Values.webhook.enabled }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
@@ -19,15 +18,15 @@ webhooks:
     admissionReviewVersions:
       - v1
     sideEffects: None
-    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    failurePolicy: Fail
     matchPolicy: Equivalent
-    timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+    timeoutSeconds: 10
     clientConfig:
       service:
         namespace: {{ include "kubernaut-operator.namespace" . }}
         name: {{ include "kubernaut-operator.webhookServiceName" . }}
         path: /validate-kubernaut-singleton
-        port: {{ .Values.webhook.service.port }}
+        port: 9443
       {{- if eq .Values.webhook.tls.mode "manual" }}
       caBundle: {{ required "webhook.tls.caBundle is required when webhook.tls.mode=manual" .Values.webhook.tls.caBundle | quote }}
       {{- end }}
@@ -41,4 +40,3 @@ webhooks:
         resources:
           - kubernauts
         scope: Namespaced
-{{- end }}

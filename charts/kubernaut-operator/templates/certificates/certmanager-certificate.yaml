@@ -1,4 +1,4 @@
-{{- if and .Values.webhook.enabled (eq .Values.webhook.tls.mode "certManager") }}
+{{- if eq .Values.webhook.tls.mode "certManager" }}
 {{- if not .Values.webhook.tls.certManager.issuerRef.name }}
 {{- fail "webhook.tls.certManager.issuerRef.name is required when webhook.tls.mode=certManager" }}
 {{- end }}
@@ -21,7 +21,7 @@ spec:
   issuerRef:
     name: {{ .Values.webhook.tls.certManager.issuerRef.name }}
     kind: {{ .Values.webhook.tls.certManager.issuerRef.kind }}
-    group: {{ .Values.webhook.tls.certManager.issuerRef.group }}
+    group: cert-manager.io
   dnsNames:
     - {{ include "kubernaut-operator.webhookServiceName" . }}.{{ include "kubernaut-operator.namespace" . }}.svc
     - {{ include "kubernaut-operator.webhookServiceName" . }}.{{ include "kubernaut-operator.namespace" . }}.svc.cluster.local

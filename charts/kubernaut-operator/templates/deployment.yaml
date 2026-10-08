@@ -22,7 +22,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      {{- $podSecurityContext := .Values.securityContext.pod | default (dict) }}
+      {{- $podSecurityContext := dict "runAsNonRoot" true "fsGroup" 65534 "seccompProfile" (dict "type" "RuntimeDefault") }}
       {{- if eq .Values.webhook.tls.mode "openshift" }}
       {{- $podSecurityContext = omit $podSecurityContext "fsGroup" }}
       {{- end }}
@@ -38,7 +38,7 @@ spec:
       {{- end }}
       serviceAccountName: {{ include "kubernaut-operator.serviceAccountName" . }}
       automountServiceAccountToken: true
-      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      terminationGracePeriodSeconds: 10
       {{- include "kubernaut-operator.imagePullSecrets" . | nindent 6 }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
@@ -59,10 +59,10 @@ spec:
           command:
             - /manager
           args:
-            - --leader-elect={{ .Values.leaderElection.enabled }}
-            - --health-probe-bind-address={{ .Values.healthProbe.bindAddress }}
-            - --metrics-bind-address={{ ternary .Values.metrics.bindAddress "0" .Values.metrics.enabled }}
-            - --metrics-secure={{ .Values.metrics.secure }}
+            - --leader-elect=true
+            - --health-probe-bind-address=:8081
+            - --metrics-bind-address={{ ternary ":8443" "0" .Values.metrics.enabled }}
+            - --metrics-secure=true
             - --enable-http2=false
           env:
             {{- range $name, $image := .Values.relatedImages }}
@@ -70,20 +70,20 @@ spec:
               value: {{ $image | quote }}
             {{- end }}
           ports:
-            {{- if .Values.webhook.enabled }}
             - name: webhook
-              containerPort: {{ .Values.webhook.service.port }}
+              containerPort: 9443
               protocol: TCP
-            {{- end }}
             {{- if .Values.metrics.enabled }}
             - name: metrics
-              containerPort: {{ .Values.metrics.service.port }}
+              containerPort: 8443
               protocol: TCP
             {{- end }}
-          {{- with .Values.securityContext.container }}
           securityContext:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           livenessProbe:
             httpGet:
               path: /healthz
@@ -98,16 +98,12 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if .Values.webhook.enabled }}
           volumeMounts:
             - name: webhook-certs
               mountPath: /tmp/k8s-webhook-server/serving-certs
               readOnly: true
-          {{- end }}
-      {{- if .Values.webhook.enabled }}
       volumes:
         - name: webhook-certs
           secret:
             secretName: {{ include "kubernaut-operator.webhookSecretName" . }}
             optional: false
-      {{- end }}

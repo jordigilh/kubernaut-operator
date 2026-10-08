@@ -207,7 +207,10 @@ after those assertions complete.
 ## Configuration boundary
 
 Values are limited to operator bootstrap: image references, RBAC identity,
-leader election, metrics/health, webhook/TLS profiles, CRD lifecycle, and pod
-security. PostgreSQL, Valkey, OIDC, telemetry, Fleet, Gateway, application
-policy, and workload settings belong to the `Kubernaut` CR and are intentionally
-not accepted by the chart schema.
+metrics enablement and service annotations, webhook/TLS profiles, CRD
+lifecycle, scheduling, and pod-security compatibility. Leader election,
+health probes, webhook fail-closed behavior, fixed service ports, termination
+grace, and the restricted manager security context are chart-owned invariants.
+PostgreSQL, Valkey, OIDC, telemetry, Fleet, Gateway, application policy, and
+workload settings belong to the `Kubernaut` CR and are intentionally not
+accepted by the chart schema.

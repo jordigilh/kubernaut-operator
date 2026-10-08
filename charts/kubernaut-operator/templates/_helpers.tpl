@@ -32,7 +32,7 @@ app.kubernetes.io/component: controller-manager
 {{- end }}
 
 {{- define "kubernaut-operator.webhookServiceName" -}}
-{{- .Values.webhook.service.name -}}
+kubernaut-operator-webhook
 {{- end }}
 
 {{- define "kubernaut-operator.webhookConfigurationName" -}}
@@ -47,7 +47,7 @@ kubernaut-operator-controller-manager
 {{- if eq .Values.webhook.tls.mode "manual" -}}
 {{- required "webhook.tls.existingSecret is required when webhook.tls.mode=manual" .Values.webhook.tls.existingSecret -}}
 {{- else -}}
-{{- .Values.webhook.tls.secretName -}}
+kubernaut-operator-webhook-cert
 {{- end -}}
 {{- end }}
 
@@ -70,7 +70,7 @@ kubernaut-operator-controller-manager
 
 {{- define "kubernaut-operator.imagePullSecrets" -}}
 {{- $pullSecrets := .Values.image.pullSecrets | default (list) -}}
-{{- if and .Values.webhook.enabled (eq .Values.webhook.tls.mode "development") -}}
+{{- if eq .Values.webhook.tls.mode "development" -}}
 {{- $pullSecrets = concat $pullSecrets (.Values.webhook.tls.development.image.pullSecrets | default (list)) -}}
 {{- end -}}
 {{- with $pullSecrets }}
