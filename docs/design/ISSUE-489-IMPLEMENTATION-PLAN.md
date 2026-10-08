@@ -673,8 +673,9 @@ OLM/Kustomize packaging was changed.
 The current revision was requalified on 2026-10-08: the generic Kind
 development, disconnected, manual, and cert-manager journeys each passed all
 six ordered scenarios, and the hosted OpenShift 4.22.16 service-CA journey
-passed. The independent unit lane reports 86.6% overall and 87.4% for
-`internal/resources`; both exceed the repository's configured 80% CI floor, but
+passed. The independent unit lane reports 87.2% overall and 88.1% for
+`internal/resources`; controller integration coverage is 79.3%. These exceed
+the repository's configured 80% CI floor where it applies, but
 the broader 96% methodology target remains an explicit follow-up and is not
 claimed as met here. The default `1.6.0-rc20` manager tag also remains a
 pre-release source-tree reference until the release pipeline publishes its
