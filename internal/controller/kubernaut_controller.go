@@ -1910,8 +1910,8 @@ func (r *KubernautReconciler) ensureDeployments(
 	return nil
 }
 
-	func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, cmHashes map[string]string, telemetryRevisions telemetryMaterialRevisionSet) (hasRoute bool, _ error) {
-		depBuilders, err := r.enabledDeploymentBuilders(ctx, kn, knV2)
+func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, cmHashes map[string]string, telemetryRevisions telemetryMaterialRevisionSet) (hasRoute bool, _ error) {
+	depBuilders, err := r.enabledDeploymentBuilders(ctx, kn, knV2)
 	if err != nil {
 		return false, err
 	}

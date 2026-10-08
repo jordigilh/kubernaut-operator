@@ -1516,6 +1516,41 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				"issuerURL: https://login.kubernaut.ai/realms/kubernaut-demo"))
 		})
 
+		It("propagates one explicit issuer to API Frontend and Console", func() {
+			const issuer = "https://login.kubernaut.ai/realms/kubernaut-demo"
+			createBYOSecrets(ctx)
+			consoleEnabled := true
+			routeEnabled := false
+			cr := newCRWithRouteDisabled()
+			cr.Spec.APIFrontend.Auth.IssuerURL = issuer
+			cr.Spec.Console.Enabled = &consoleEnabled
+			cr.Spec.Console.Route.Enabled = &routeEnabled
+			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+			Expect(k8sClient.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
+				Data: map[string][]byte{
+					"client-id":     []byte("cid"),
+					"client-secret": []byte("csec"),
+					"cookie-secret": []byte("cook"),
+				},
+			})).To(Succeed())
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			reconcileToRunning(ctx)
+
+			apiFrontendConfig := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: "apifrontend-config", Namespace: testNamespace,
+			}, apiFrontendConfig)).To(Succeed())
+			Expect(apiFrontendConfig.Data["config.yaml"]).To(ContainSubstring("issuerURL: " + issuer))
+
+			consoleDeployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: string(resources.ComponentConsole), Namespace: testNamespace,
+			}, consoleDeployment)).To(Succeed())
+			Expect(consoleDeployment.Spec.Template.Spec.Containers[0].Args).To(
+				ContainElement("--oidc-issuer-url=" + issuer))
+		})
+
 		It("uses API Frontend TLS without an external sidecar", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()

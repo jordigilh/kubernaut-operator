@@ -1053,20 +1053,20 @@ var _ = Describe("OTLP telemetry TLS contract", func() {
 		for _, telemetry := range cases {
 			kn := testKubernaut()
 			setGatewayTelemetry(kn, telemetry)
-			Expect(ValidateKubernaut(kn, KagentiSidecarNone)).To(BeEmpty(), "telemetry=%#v", telemetry)
+			Expect(ValidateKubernaut(kn)).To(BeEmpty(), "telemetry=%#v", telemetry)
 		}
 	})
 
 	It("accepts an explicit HTTPS endpoint while keeping TLS implicit in the rendered contract", func() {
 		kn := testKubernaut()
 		setGatewayTelemetry(kn, setNetworkTelemetry("https://otel-collector:4317"))
-		Expect(ValidateKubernaut(kn, KagentiSidecarNone)).To(BeEmpty())
+		Expect(ValidateKubernaut(kn)).To(BeEmpty())
 	})
 
 	DescribeTable("rejects non-TLS endpoint forms", func(endpoint string) {
 		kn := testKubernaut()
 		setGatewayTelemetry(kn, setNetworkTelemetry(endpoint))
-		errs := ValidateKubernaut(kn, KagentiSidecarNone)
+		errs := ValidateKubernaut(kn)
 		Expect(errs).NotTo(BeEmpty())
 		Expect(strings.Join(errorStrings(errs), "; ")).To(ContainSubstring("spec.gateway.config.telemetry.endpoint"))
 	},
@@ -1088,7 +1088,7 @@ var _ = Describe("OTLP telemetry TLS contract", func() {
 		telemetry.TLS.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "telemetry-ca"}
 		setGatewayTelemetry(kn, telemetry)
 
-		joined := strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
 		Expect(joined).To(ContainSubstring("caFile"))
 		Expect(joined).To(ContainSubstring("caCertSecretRef"))
 	})
@@ -1098,7 +1098,7 @@ var _ = Describe("OTLP telemetry TLS contract", func() {
 		telemetry := setNetworkTelemetry("otel-collector:0")
 		telemetry.TLS.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{}
 		setGatewayTelemetry(kn, telemetry)
-		joined := strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
 		Expect(joined).To(ContainSubstring("caCertSecretRef.name must not be empty"))
 		Expect(joined).To(ContainSubstring("port from 1 to 65535"))
 
@@ -1116,42 +1116,42 @@ var _ = Describe("OTLP telemetry TLS contract", func() {
 		telemetry.TLS.TLSClientSecretRef = "telemetry-client"
 		setGatewayTelemetry(kn, telemetry)
 
-		joined := strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
 		Expect(joined).To(ContainSubstring("certFile"))
 		Expect(joined).To(ContainSubstring("keyFile"))
 
 		telemetry.TLS = kubernautv1alpha2.TelemetryTLSConfig{TLSClientSecretRef: "telemetry-client"}
 		setGatewayTelemetry(kn, telemetry)
-		joined = strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
 		Expect(joined).To(ContainSubstring("requires both certFile and keyFile"))
 
 		telemetry.TLS.CertFile = "relative/tls.crt"
 		telemetry.TLS.KeyFile = "/etc/telemetry/tls.key"
 		setGatewayTelemetry(kn, telemetry)
-		joined = strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
 		Expect(joined).To(ContainSubstring("absolute"))
 
 		telemetry.TLS.CertFile = testTelemetryCertFile
 		telemetry.TLS.KeyFile = "/etc/other/tls.key"
 		setGatewayTelemetry(kn, telemetry)
-		joined = strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
 		Expect(joined).To(ContainSubstring("same directory"))
 
 		telemetry.TLS.KeyFile = testTelemetryCertFile
 		setGatewayTelemetry(kn, telemetry)
-		joined = strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
 		Expect(joined).To(ContainSubstring("different paths"))
 
 		telemetry.TLS.KeyFile = "/etc/telemetry/ca.crt"
 		telemetry.TLS.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "telemetry-ca"}
 		setGatewayTelemetry(kn, telemetry)
-		joined = strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
 		Expect(joined).To(ContainSubstring("must not overwrite"))
 
 		telemetry.TLS.CertFile = "/etc/collector/tls.crt"
 		telemetry.TLS.KeyFile = "/etc/collector/tls.key"
 		setGatewayTelemetry(kn, telemetry)
-		joined = strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
 		Expect(joined).To(ContainSubstring("mounted below /etc/telemetry"))
 	})
 
@@ -1160,7 +1160,7 @@ var _ = Describe("OTLP telemetry TLS contract", func() {
 		telemetry := setNetworkTelemetry("otel-collector:4317")
 		telemetry.TLS.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "telemetry-ca", Key: "../ca.crt"}
 		setGatewayTelemetry(kn, telemetry)
-		joined := strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
 		Expect(joined).To(ContainSubstring("without path separators"))
 	})
 
@@ -1168,7 +1168,7 @@ var _ = Describe("OTLP telemetry TLS contract", func() {
 		kn := testKubernaut()
 		kn.Spec.DataStorage.Telemetry = setNetworkTelemetry("http://otel-collector:4317")
 		kn.Spec.KubernautAgent.Telemetry = setNetworkTelemetry("otel-collector")
-		joined := strings.Join(errorStrings(ValidateKubernaut(kn, KagentiSidecarNone)), "; ")
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
 		Expect(joined).To(ContainSubstring("spec.dataStorage.telemetry.endpoint"))
 		Expect(joined).To(ContainSubstring("spec.kubernautAgent.telemetry.endpoint"))
 	})
