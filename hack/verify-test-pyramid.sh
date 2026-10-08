@@ -30,7 +30,10 @@ require_text Makefile '^test-integration: .*setup-envtest' 'integration target i
 require_text Makefile 'go test \$\(IT_PKGS\) -coverprofile cover-integration\.out' 'integration target does not write independent coverage'
 require_text Makefile 'INTEGRATION_COVERAGE_THRESHOLD' 'integration target does not enforce its coverage floor'
 require_text Makefile '^test-ci-boundary:' 'CI boundary target is missing'
-require_text Makefile '^test-pyramid: .*test-ci-boundary' 'test pyramid does not enforce the CI boundary'
+require_text Makefile '^test-helm:' 'Helm chart validation target is missing'
+require_text Makefile '^test-e2e-kind-helm:' 'Helm Kind E2E target is missing'
+require_text Makefile '^test-pyramid: .*test-ci-boundary .*test-helm' 'test pyramid does not enforce the CI boundary and Helm chart gate'
+require_text Makefile 'HELM_PKGS := \.\/test\/helm' 'Helm render tests are not isolated in their own package set'
 
 # A release tag must not publish before both upstream qualification and the
 # operator-local gates have completed successfully.
@@ -69,7 +72,7 @@ fi
 
 # Checkpoint W: every approved new adapter/builder has a production caller and
 # both focused logic and controller-wiring evidence. Deferred OVN/OpenShift and
-# Helm rows are deliberately excluded from this approved workstream.
+# Helm rows are now covered by the dedicated chart gate below.
 check_wiring() {
 	local symbol=$1
 	local production_path=$2

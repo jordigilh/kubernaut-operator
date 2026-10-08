@@ -52,11 +52,19 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install pinned Helm
+        run: |
+          set -euo pipefail
+          HELM_VERSION=v3.17.3
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz -C /tmp
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+
       - name: Run tests
         run: make test
 
       - name: Shellcheck hack/ scripts
-        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/validate-security-traceability.sh hack/verify-test-pyramid.sh hack/verify-ci-boundary.sh hack/verify-ci-boundary.test.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
+        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/validate-security-traceability.sh hack/test-helm-openshift.sh hack/verify-test-pyramid.sh hack/verify-helm-chart.sh hack/verify-ci-boundary.sh hack/verify-ci-boundary.test.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
 
       - name: Run hack/ script tests
         run: make test-hack-scripts
@@ -124,6 +132,55 @@ jobs:
           KUBERNAUT_E2E_TLS_SOURCE: development
           KIND_CLUSTER_NAME: kubernaut-kind-generic
         run: make test-e2e-kind
+
+  helm-bootstrap:
+    name: Kind E2E (operator Helm bootstrap / ${{ matrix.tls_profile }} / disconnected=${{ matrix.disconnected }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tls_profile: development
+            disconnected: false
+          - tls_profile: manual
+            disconnected: false
+          - tls_profile: certmanager
+            disconnected: false
+          - tls_profile: development
+            disconnected: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install pinned Kind, kubectl, and Helm
+        run: |
+          set -euo pipefail
+          KIND_VERSION=v0.31.0
+          KUBECTL_VERSION=v1.35.0
+          HELM_VERSION=v3.17.3
+          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz -C /tmp
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          kind version
+          kubectl version --client
+          helm version --short
+
+      - name: Run Helm bootstrap Kind E2E
+        env:
+          KUBERNAUT_HELM_E2E_CLUSTER: kubernaut-operator-helm-e2e
+          KUBERNAUT_HELM_E2E_TLS_PROFILE: ${{ matrix.tls_profile }}
+          KUBERNAUT_HELM_E2E_METRICS: "true"
+          KUBERNAUT_HELM_E2E_DISCONNECTED: ${{ matrix.disconnected }}
+        run: make test-e2e-kind-helm
 
   kind-hook:
     name: Kind E2E (hook TLS)
