@@ -52,6 +52,40 @@ type telemetryLane struct {
 	spec      kubernautv1alpha2.TelemetrySpec
 }
 
+// telemetryMaterialRevisionSet keeps rollout revisions typed to the three
+// telemetry-producing workloads. Kubernetes metadata remains map-shaped, but
+// this internal value has a fixed schema and should not accept arbitrary
+// component names.
+type telemetryMaterialRevisionSet struct {
+	Gateway        string
+	DataStorage    string
+	KubernautAgent string
+}
+
+func (s *telemetryMaterialRevisionSet) set(component, revision string) {
+	switch component {
+	case resources.ComponentGateway:
+		s.Gateway = revision
+	case resources.ComponentDataStorage:
+		s.DataStorage = revision
+	case resources.ComponentKubernautAgent:
+		s.KubernautAgent = revision
+	}
+}
+
+func (s telemetryMaterialRevisionSet) get(component string) (string, bool) {
+	switch component {
+	case resources.ComponentGateway:
+		return s.Gateway, s.Gateway != ""
+	case resources.ComponentDataStorage:
+		return s.DataStorage, s.DataStorage != ""
+	case resources.ComponentKubernautAgent:
+		return s.KubernautAgent, s.KubernautAgent != ""
+	default:
+		return "", false
+	}
+}
+
 func telemetryLanes(kn *kubernautv1alpha2.Kubernaut) []telemetryLane {
 	lanes := make([]telemetryLane, 0, 3)
 	if kn.Spec.GatewayEnabled() {
@@ -227,19 +261,19 @@ func telemetryClientAuthUsage(usages []x509.ExtKeyUsage) bool {
 // network telemetry producer. Ambient trust is shared, while referenced
 // Secret resource versions are lane-specific so unrelated producers do not
 // roll when only one telemetry Secret changes.
-func (r *KubernautReconciler) telemetryMaterialRevisions(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (map[string]string, error) {
+func (r *KubernautReconciler) telemetryMaterialRevisions(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (telemetryMaterialRevisionSet, error) {
 	lanes := telemetryLanes(kn)
 	if !hasNetworkTelemetry(kn) {
-		return map[string]string{}, nil
+		return telemetryMaterialRevisionSet{}, nil
 	}
 	if err := r.validateTelemetryAmbientTrust(ctx, kn); err != nil {
-		return nil, err
+		return telemetryMaterialRevisionSet{}, err
 	}
 	ambientRevision, err := r.telemetryAmbientTrustRevision(ctx, kn)
 	if err != nil {
-		return nil, err
+		return telemetryMaterialRevisionSet{}, err
 	}
-	revisions := make(map[string]string, len(lanes))
+	revisions := telemetryMaterialRevisionSet{}
 	for _, lane := range lanes {
 		if !resources.TelemetryNetworkEnabled(lane.spec) {
 			continue
@@ -249,12 +283,12 @@ func (r *KubernautReconciler) telemetryMaterialRevisions(ctx context.Context, kn
 			secret := &corev1.Secret{}
 			key := client.ObjectKey{Namespace: kn.Namespace, Name: reference.Name}
 			if err := r.Get(ctx, key, secret); err != nil {
-				return nil, fmt.Errorf("reading telemetry Secret %q for revision: %w", reference.Name, err)
+				return telemetryMaterialRevisionSet{}, fmt.Errorf("reading telemetry Secret %q for revision: %w", reference.Name, err)
 			}
 			inputs = append(inputs, fmt.Sprintf("secret=%s/%s@%s", key.Namespace, key.Name, secret.ResourceVersion))
 		}
 		digest := sha256.Sum256([]byte(strings.Join(inputs, "\x00")))
-		revisions[lane.component] = fmt.Sprintf("%x", digest)
+		revisions.set(lane.component, fmt.Sprintf("%x", digest))
 	}
 	return revisions, nil
 }
@@ -339,9 +373,9 @@ func (r *KubernautReconciler) telemetryAmbientTrustRevision(ctx context.Context,
 	return fmt.Sprintf("%s@%s", configMapName, configMap.ResourceVersion), nil
 }
 
-func stampTelemetryMaterialRevision(dep *appsv1.Deployment, revisions map[string]string) {
+func stampTelemetryMaterialRevision(dep *appsv1.Deployment, revisions telemetryMaterialRevisionSet) {
 	component := dep.Spec.Template.Labels["app"]
-	revision, ok := revisions[component]
+	revision, ok := revisions.get(component)
 	if !ok || revision == "" {
 		return
 	}

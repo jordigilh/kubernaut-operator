@@ -126,9 +126,9 @@ var _ = Describe("OTLP telemetry reconciliation wiring", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		afterValid := telemetryDeploymentRevisions(ctx)
-		Expect(afterValid[resources.ComponentDataStorage]).NotTo(Equal(before[resources.ComponentDataStorage]))
-		Expect(afterValid[resources.ComponentGateway]).To(Equal(before[resources.ComponentGateway]))
-		Expect(afterValid[resources.ComponentKubernautAgent]).To(Equal(before[resources.ComponentKubernautAgent]))
+		Expect(afterValid.DataStorage).NotTo(Equal(before.DataStorage))
+		Expect(afterValid.Gateway).To(Equal(before.Gateway))
+		Expect(afterValid.KubernautAgent).To(Equal(before.KubernautAgent))
 	})
 
 	It("IT-TELEMETRY-TLS-003 [SC-7, SC-8, CM-6; ASVS v5.0.0-V12.1.3, v5.0.0-V12.2.1] preserves local-only telemetry without network Secret requirements or mounts", func() {
@@ -230,11 +230,11 @@ func getTelemetryDeployment(ctx context.Context, component string) *appsv1.Deplo
 	return dep
 }
 
-func telemetryDeploymentRevisions(ctx context.Context) map[string]string {
-	revisions := make(map[string]string, 3)
+func telemetryDeploymentRevisions(ctx context.Context) telemetryMaterialRevisionSet {
+	var revisions telemetryMaterialRevisionSet
 	for _, component := range []string{resources.ComponentGateway, resources.ComponentDataStorage, resources.ComponentKubernautAgent} {
 		dep := getTelemetryDeployment(ctx, component)
-		revisions[component] = dep.Spec.Template.Annotations[resources.AnnotationTelemetryMaterialRevision]
+		revisions.set(component, dep.Spec.Template.Annotations[resources.AnnotationTelemetryMaterialRevision])
 	}
 	return revisions
 }

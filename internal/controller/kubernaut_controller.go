@@ -1937,7 +1937,7 @@ func (r *KubernautReconciler) enabledDeploymentBuilders(
 // builders, stamping ConfigMap-hash pod-template annotations from cmHashes
 // so configuration changes trigger rolling restarts.
 func (r *KubernautReconciler) ensureDeployments(
-	ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, builders []deploymentBuilderFunc, cmHashes map[string]string, telemetryRevisions map[string]string,
+	ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, builders []deploymentBuilderFunc, cmHashes map[string]string, telemetryRevisions telemetryMaterialRevisionSet,
 ) error {
 	for _, build := range builders {
 		dep, err := build(kn, knV2)
@@ -1953,7 +1953,7 @@ func (r *KubernautReconciler) ensureDeployments(
 	return nil
 }
 
-func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, cmHashes map[string]string, sidecar resources.KagentiSidecarMode, telemetryRevisions map[string]string) (hasRoute bool, _ error) {
+func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, cmHashes map[string]string, sidecar resources.KagentiSidecarMode, telemetryRevisions telemetryMaterialRevisionSet) (hasRoute bool, _ error) {
 	depBuilders, err := r.enabledDeploymentBuilders(ctx, kn, knV2, sidecar)
 	if err != nil {
 		return false, err

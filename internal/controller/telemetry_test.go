@@ -180,8 +180,8 @@ var _ = Describe("Telemetry controller material lifecycle", func() {
 
 		first, err := r.telemetryMaterialRevisions(context.Background(), kn)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(first).To(HaveKey(resources.ComponentDataStorage))
-		Expect(first[resources.ComponentDataStorage]).NotTo(ContainSubstring("telemetry-ca"))
+		Expect(first.DataStorage).NotTo(BeEmpty())
+		Expect(first.DataStorage).NotTo(ContainSubstring("telemetry-ca"))
 
 		rotatedCA := telemetryCASecret("telemetry-ca", "ca.crt")
 		rotatedCA.ResourceVersion = "8"
@@ -192,13 +192,13 @@ var _ = Describe("Telemetry controller material lifecycle", func() {
 		rotatedReconciler := newTelemetryUnitReconciler(kn, rotatedCA, rotatedClient, rotatedTrust)
 		second, err := rotatedReconciler.telemetryMaterialRevisions(context.Background(), kn)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(second[resources.ComponentDataStorage]).NotTo(Equal(first[resources.ComponentDataStorage]))
+		Expect(second.DataStorage).NotTo(Equal(first.DataStorage))
 
 		dep := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": resources.ComponentDataStorage}},
 		}}}
 		stampTelemetryMaterialRevision(dep, second)
-		Expect(dep.Spec.Template.Annotations).To(HaveKeyWithValue(resources.AnnotationTelemetryMaterialRevision, second[resources.ComponentDataStorage]))
+		Expect(dep.Spec.Template.Annotations).To(HaveKeyWithValue(resources.AnnotationTelemetryMaterialRevision, second.DataStorage))
 		Expect(dep.Spec.Template.Annotations[resources.AnnotationTelemetryMaterialRevision]).NotTo(ContainSubstring("not a certificate"))
 	})
 
@@ -208,7 +208,7 @@ var _ = Describe("Telemetry controller material lifecycle", func() {
 
 		revisions, err := r.telemetryMaterialRevisions(context.Background(), kn)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(revisions).To(BeEmpty())
+		Expect(revisions).To(Equal(telemetryMaterialRevisionSet{}))
 	})
 
 	It("tracks a manual runtime CA Secret as ambient trust without exposing its contents", func() {
@@ -232,8 +232,8 @@ var _ = Describe("Telemetry controller material lifecycle", func() {
 		rotatedReconciler := newTelemetryUnitReconciler(kn, rotatedCA)
 		second, err := rotatedReconciler.telemetryMaterialRevisions(context.Background(), kn)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(second[resources.ComponentDataStorage]).NotTo(Equal(first[resources.ComponentDataStorage]))
-		Expect(second[resources.ComponentDataStorage]).NotTo(ContainSubstring("telemetry-test-ca"))
+		Expect(second.DataStorage).NotTo(Equal(first.DataStorage))
+		Expect(second.DataStorage).NotTo(ContainSubstring("telemetry-test-ca"))
 	})
 
 	It("maps effective ambient trust ConfigMap events only to network telemetry producers", func() {
