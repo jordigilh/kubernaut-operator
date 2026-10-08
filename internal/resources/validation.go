@@ -18,8 +18,10 @@ package resources
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,15 +34,112 @@ const maxJWKSURLLength = 2048
 // sidecar indicates whether kagenti is active; when it is, issuerURL is not
 // required because the operator auto-detects it from kagenti's authbridge-config.
 func ValidateKubernaut(kn *kubernautv1alpha2.Kubernaut, sidecar KagentiSidecarMode) []error {
-	errs := make([]error, 0, 4)
+	errs := make([]error, 0, 8)
 	errs = append(errs, validatePostgreSQLSSLMode(kn)...)
 	errs = append(errs, validatePolicyPrerequisites(kn)...)
 	errs = append(errs, validateLLMProfiles(kn)...)
+	errs = append(errs, validateTelemetry(kn)...)
 	errs = append(errs, validateAPIFrontend(kn, sidecar)...)
 	errs = append(errs, validateAlignmentCheck(kn)...)
 	errs = append(errs, validateDryRun(kn)...)
 	errs = append(errs, validateInteractive(kn)...)
 	return errs
+}
+
+// validateTelemetry validates the shared OTLP contract for every telemetry
+// producer. Gateway is optional, so its lane is checked only when the
+// component is enabled; DataStorage and Kubernaut Agent are always deployed.
+func validateTelemetry(kn *kubernautv1alpha2.Kubernaut) []error {
+	var errs []error
+	if kn.Spec.GatewayEnabled() {
+		errs = append(errs, validateTelemetrySpec("spec.gateway.config.telemetry", kn.Spec.Gateway.Config.Telemetry)...)
+	}
+	errs = append(errs, validateTelemetrySpec("spec.dataStorage.telemetry", kn.Spec.DataStorage.Telemetry)...)
+	errs = append(errs, validateTelemetrySpec("spec.kubernautAgent.telemetry", kn.Spec.KubernautAgent.Telemetry)...)
+	return errs
+}
+
+func validateTelemetrySpec(base string, telemetry kubernautv1alpha2.TelemetrySpec) []error {
+	var errs []error
+	if err := validateTelemetryEndpoint(telemetry.Endpoint); err != nil {
+		errs = append(errs, fmt.Errorf("%s.endpoint: %w", base, err))
+	}
+	errs = append(errs, validateTelemetryCA(base, telemetry.TLS)...)
+	errs = append(errs, validateTelemetryClient(base, telemetry.TLS)...)
+	return errs
+}
+
+func validateTelemetryCA(base string, tls kubernautv1alpha2.TelemetryTLSConfig) []error {
+	var errs []error
+	if tls.CAFile != "" && tls.CACertSecretRef != nil {
+		errs = append(errs, fmt.Errorf("%s.tls.caFile and %s.tls.caCertSecretRef are mutually exclusive", base, base))
+	}
+	if tls.CAFile != "" && !filepath.IsAbs(tls.CAFile) {
+		errs = append(errs, fmt.Errorf("%s.tls.caFile must be an absolute path", base))
+	}
+	if tls.CACertSecretRef != nil && tls.CACertSecretRef.Name == "" {
+		errs = append(errs, fmt.Errorf("%s.tls.caCertSecretRef.name must not be empty", base))
+	}
+	return errs
+}
+
+func validateTelemetryClient(base string, tls kubernautv1alpha2.TelemetryTLSConfig) []error {
+	var errs []error
+	certSet := tls.CertFile != "" || tls.KeyFile != ""
+	if certSet && (tls.CertFile == "" || tls.KeyFile == "") {
+		errs = append(errs, fmt.Errorf("%s.tls.certFile and %s.tls.keyFile must be set together", base, base))
+	}
+	if tls.TLSClientSecretRef != "" && !certSet {
+		errs = append(errs, fmt.Errorf("%s.tls.tlsClientSecretRef requires both certFile and keyFile", base))
+	}
+	if certSet {
+		if !filepath.IsAbs(tls.CertFile) {
+			errs = append(errs, fmt.Errorf("%s.tls.certFile must be an absolute path", base))
+		}
+		if !filepath.IsAbs(tls.KeyFile) {
+			errs = append(errs, fmt.Errorf("%s.tls.keyFile must be an absolute path", base))
+		}
+		if tls.TLSClientSecretRef != "" && filepath.Dir(tls.CertFile) != filepath.Dir(tls.KeyFile) {
+			errs = append(errs, fmt.Errorf("%s.tls.certFile and %s.tls.keyFile must use the same directory for Secret-backed mTLS", base, base))
+		}
+	}
+	return errs
+}
+
+func validateTelemetryEndpoint(endpoint string) error {
+	if endpoint == "" || endpoint == "stdout" {
+		return nil
+	}
+	if strings.TrimSpace(endpoint) != endpoint || strings.Contains(endpoint, " ") || strings.Contains(endpoint, "\t") || strings.Contains(endpoint, "\n") {
+		return fmt.Errorf("must be a host:port value without whitespace; TLS is implicit and mandatory")
+	}
+	if strings.Contains(endpoint, "://") {
+		return fmt.Errorf("must be a host:port value without a URI scheme; TLS is implicit and mandatory")
+	}
+	host, port, err := net.SplitHostPort(endpoint)
+	if err != nil || host == "" || port == "" {
+		return fmt.Errorf("must be a host:port value without a URI scheme; TLS is implicit and mandatory")
+	}
+	if _, err := strconv.Atoi(port); err != nil || !allASCIIDigits(port) {
+		return fmt.Errorf("must use a numeric TCP port; TLS is implicit and mandatory")
+	}
+	portNumber, _ := strconv.Atoi(port)
+	if portNumber < 1 || portNumber > 65535 {
+		return fmt.Errorf("must use a TCP port from 1 to 65535; TLS is implicit and mandatory")
+	}
+	return nil
+}
+
+func allASCIIDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // ValidateFleet runs Fleet-specific validations against the v1alpha2 CR. It is

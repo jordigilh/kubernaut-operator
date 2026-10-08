@@ -1158,48 +1158,60 @@ func (s *AuditSpec) AuditEnabled() bool {
 }
 
 // TelemetrySpec configures optional OpenTelemetry distributed-trace export
-// for this component (see ADR-068, DD-OTEL-001). Off by default (zero
-// overhead) -- tracing stays disabled while Endpoint is empty, regardless
-// of the other fields. Shared by Gateway, DataStorage, and Kubernaut Agent,
+// for this component (see ADR-068, DD-OTEL-001). Network export is always TLS
+// protected; an empty Endpoint disables network export while LogSink remains a
+// local-only option. Shared by Gateway, DataStorage, and Kubernaut Agent,
 // mirroring the upstream Helm chart's single top-level telemetry: block.
 type TelemetrySpec struct {
-	// OTLP collector endpoint (e.g. "otel-collector.observability.svc:4317").
-	// Tracing is disabled while this is empty.
+	// OTLP collector endpoint in host:port form (e.g.
+	// "otel-collector.observability.svc:4317"). An empty value disables network
+	// export. The special value "stdout" is local-only debugging output.
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
 
-	// Mirror trace spans into the component's structured log output in
-	// addition to exporting them via OTLP. Has no effect while Endpoint is
-	// empty.
+	// Mirror trace spans into the component's structured log output. This is a
+	// local-only mode when Endpoint is empty and may also be enabled alongside
+	// network OTLP export.
 	// +kubebuilder:default=false
 	// +optional
 	LogSink *bool `json:"logSink,omitempty"`
 
-	// TLS configures the connection to the OTLP collector.
+	// TLS configures the mandatory, certificate-verifying connection to the OTLP
+	// collector for network endpoints.
 	// +optional
 	TLS TelemetryTLSConfig `json:"tls,omitempty"`
 }
 
-// TelemetryTLSConfig configures TLS for the OTLP collector connection.
+// TelemetryTLSConfig configures the mandatory TLS connection for a network
+// OTLP collector endpoint. Empty CA fields use the process system trust pool.
 type TelemetryTLSConfig struct {
-	// Use TLS when connecting to the OTLP collector. False (default) uses
-	// plain HTTP/gRPC, matching most in-cluster collector deployments.
-	// +kubebuilder:default=false
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// CA bundle path for a self-signed or private collector certificate.
+	// CA bundle path for a self-signed or private collector certificate. The
+	// path is administrator-provided and must already exist in the container.
 	// Empty trusts the system CA pool.
 	// +optional
 	CAFile string `json:"caFile,omitempty"`
 
-	// Optional mTLS client certificate path.
+	// Optional administrator-owned Secret containing a CA PEM. The default key
+	// is "ca.crt". The operator mounts the selected key read-only for the
+	// network telemetry producer and never adopts or mutates the Secret.
+	// +optional
+	CACertSecretRef *CACertSecretRef `json:"caCertSecretRef,omitempty"`
+
+	// Optional mTLS client certificate path. CertFile and KeyFile must be set
+	// together. Without TLSClientSecretRef these are administrator-provided
+	// paths and their rotation requires a manual workload rollout.
 	// +optional
 	CertFile string `json:"certFile,omitempty"`
 
 	// Optional mTLS client key path.
 	// +optional
 	KeyFile string `json:"keyFile,omitempty"`
+
+	// Optional administrator-owned Secret containing the mTLS client pair under
+	// the fixed keys "tls.crt" and "tls.key". When set, CertFile and KeyFile
+	// identify the mounted paths and must share one parent directory.
+	// +optional
+	TLSClientSecretRef string `json:"tlsClientSecretRef,omitempty"`
 }
 
 // AlignmentCheckSpec configures the shadow agent alignment check.

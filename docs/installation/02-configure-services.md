@@ -2,6 +2,42 @@
 
 This section covers the ConfigMaps and Secrets required by each Kubernaut service before deploying the CR.
 
+> For the approved OTLP telemetry TLS contract, Secret ownership, rotation
+> behavior, and rollout verification, see [OTLP telemetry TLS and operational
+> rotation](../security/credentials-and-tls.md#otlp-telemetry-tls-and-operational-rotation).
+
+## OTLP telemetry (optional)
+
+Configure telemetry independently for Gateway, DataStorage, and Kubernaut
+Agent. Network endpoints use `host:port` syntax and always use
+certificate-verifying TLS; do not include `http://` or `https://`:
+
+```yaml
+spec:
+  gateway:
+    config:
+      telemetry:
+        endpoint: otel-collector.observability.svc:4317
+        tls:
+          caCertSecretRef:
+            name: otlp-ca
+          certFile: /etc/telemetry/tls.crt
+          keyFile: /etc/telemetry/tls.key
+          tlsClientSecretRef: otlp-client
+  dataStorage:
+    telemetry:
+      endpoint: otel-collector.observability.svc:4317
+  kubernautAgent:
+    telemetry:
+      endpoint: stdout                 # local-only debugging mode
+```
+
+`otlp-ca` must contain `ca.crt` (or the key named by `key`), and `otlp-client`
+must contain the matching `tls.crt` and `tls.key`. Secret-backed material is
+mounted read-only. Omit `tls` for a public collector using system trust, or
+use `logSink: true` with an empty endpoint for log-only spans. Existing
+`telemetry.tls.enabled` fields must be removed; there is no plaintext mode.
+
 ## LLM Profiles
 
 LLM configuration lives in a top-level, named-profile map at `spec.llmProfiles`, not nested under any one component. Each component then *references* a profile by name:

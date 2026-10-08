@@ -326,6 +326,37 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(err).NotTo(HaveOccurred())
 			assertTelemetryYAML(cm.Data["config.yaml"])
 		})
+
+		It("renders log-sink-only telemetry without a network endpoint", func() {
+			kn := testKubernaut()
+			kn.Spec.Gateway.Config.Telemetry = kubernautv1alpha2.TelemetrySpec{LogSink: boolPtr(true)}
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			var root struct {
+				Telemetry *telemetryYAML `yaml:"telemetry"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Telemetry).NotTo(BeNil())
+			Expect(root.Telemetry.Endpoint).To(BeEmpty())
+			Expect(root.Telemetry.LogSink).To(BeTrue())
+			Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("enabled:"))
+		})
+
+		It("renders a Secret-backed CA at the shared telemetry path", func() {
+			kn := testKubernaut()
+			telemetry := kubernautv1alpha2.TelemetrySpec{Endpoint: "otel-collector:4317"}
+			telemetry.TLS.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "telemetry-ca", Key: "collector.pem"}
+			kn.Spec.Gateway.Config.Telemetry = telemetry
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			var root struct {
+				Telemetry telemetryYAML `yaml:"telemetry"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Telemetry.TLS.CAFile).To(Equal("/etc/telemetry/ca.crt"))
+		})
 	})
 
 	// #259 [CM-6]: server.maxConcurrentRequests/readTimeout/writeTimeout/
@@ -471,6 +502,18 @@ var _ = Describe("ConfigMaps", func() {
 			cm, err := DataStorageConfigMap(kn, knV2, "kubernautdb", "kubernautuser")
 			Expect(err).NotTo(HaveOccurred())
 			assertTelemetryYAML(cm.Data["config.yaml"])
+		})
+
+		It("renders the ambient trust source without enabling Valkey TLS", func() {
+			kn := testKubernaut()
+			cm, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+
+			var root dataStorageConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Redis.TLS).NotTo(BeNil())
+			Expect(root.Redis.TLS.Enabled).To(BeFalse())
+			Expect(root.Redis.TLS.CAFile).To(Equal(InterServiceTLSCAFile))
 		})
 
 		It("passes through PostgreSQL SSL mode", func() {
@@ -4328,12 +4371,13 @@ var _ = Describe("DataStorage Redis TLS Config", func() {
 		Expect(data).To(ContainSubstring("keyFile: /etc/valkey-tls/client/tls.key"))
 	})
 
-	It("omits TLS block when Valkey TLS is not configured", func() {
+	It("renders disabled Valkey TLS with the ambient trust source", func() {
 		kn := testKubernaut()
 		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
-		Expect(data).NotTo(ContainSubstring("caFile:"))
+		Expect(data).To(ContainSubstring("enabled: false"))
+		Expect(data).To(ContainSubstring("caFile: " + InterServiceTLSCAFile))
 	})
 })
 

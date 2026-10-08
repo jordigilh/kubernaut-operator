@@ -95,6 +95,8 @@ const (
 	ReasonTLSNotReady               = "TLSNotReady"
 	ReasonTLSWaitingForServiceCA    = "WaitingForServiceCA"
 	ReasonFleetTrustSecretInvalid   = "FleetTrustSecretInvalid"
+	ReasonTelemetrySecretInvalid    = "TelemetrySecretInvalid"
+	ReasonTelemetryAmbientInvalid   = "TelemetryAmbientTrustInvalid"
 	ReasonExposureReady             = "ExposureReady"
 	ReasonExposureInternal          = "InternalOnly"
 	ReasonMonitoringAvailable       = "MonitoringAvailable"
@@ -253,28 +255,52 @@ func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernaut
 
 // ---------- Phase: Validate ----------
 
+func (r *KubernautReconciler) validateDatabaseInputs(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (ctrl.Result, error, bool) {
+	checks := []struct {
+		validation func() error
+		reason     string
+		message    string
+	}{
+		{
+			validation: func() error { return resources.ValidateHostname(kn.Spec.PostgreSQL.Host) },
+			reason:     "PostgreSQLHostInvalid",
+			message:    "PostgreSQL host validation failed",
+		},
+		{
+			validation: func() error { return resources.ValidateHostname(kn.Spec.Valkey.Host) },
+			reason:     "ValkeyHostInvalid",
+			message:    "Valkey host validation failed",
+		},
+		{
+			validation: func() error {
+				return r.validateSecret(ctx, kn.Namespace, kn.Spec.PostgreSQL.SecretName, []string{"POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB"})
+			},
+			reason:  "PostgreSQLSecretInvalid",
+			message: "PostgreSQL secret validation failed",
+		},
+		{
+			validation: func() error {
+				return r.validateSecret(ctx, kn.Namespace, kn.Spec.Valkey.SecretName, []string{"valkey-secrets.yaml"})
+			},
+			reason:  "ValkeySecretInvalid",
+			message: "Valkey secret validation failed",
+		},
+	}
+	for _, check := range checks {
+		if err := check.validation(); err != nil {
+			result, statusErr := r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
+				check.reason, fmt.Sprintf("%s: %v", check.message, err))
+			return result, statusErr, true
+		}
+	}
+	return ctrl.Result{}, nil, false
+}
+
 func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	if err := resources.ValidateHostname(kn.Spec.PostgreSQL.Host); err != nil {
-		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
-			"PostgreSQLHostInvalid", fmt.Sprintf("PostgreSQL host validation failed: %v", err))
-	}
-	if err := resources.ValidateHostname(kn.Spec.Valkey.Host); err != nil {
-		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
-			"ValkeyHostInvalid", fmt.Sprintf("Valkey host validation failed: %v", err))
-	}
-
-	if err := r.validateSecret(ctx, kn.Namespace, kn.Spec.PostgreSQL.SecretName,
-		[]string{"POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB"}); err != nil {
-		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
-			"PostgreSQLSecretInvalid", fmt.Sprintf("PostgreSQL secret validation failed: %v", err))
-	}
-
-	if err := r.validateSecret(ctx, kn.Namespace, kn.Spec.Valkey.SecretName,
-		[]string{"valkey-secrets.yaml"}); err != nil {
-		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
-			"ValkeySecretInvalid", fmt.Sprintf("Valkey secret validation failed: %v", err))
+	if result, err, handled := r.validateDatabaseInputs(ctx, kn); handled {
+		return result, err
 	}
 
 	sidecar := r.detectKagentiSidecarMode(ctx, kn)
@@ -289,6 +315,10 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 			"SpecValidationFailed", fmt.Sprintf("CR validation failed: %s", strings.Join(msgs, "; ")))
 	}
 
+	if result, err, handled := r.validateTelemetryMaterial(ctx, kn, knV2); handled {
+		return result, err
+	}
+
 	if err := r.validateFleetTrustSecrets(ctx, knV2); err != nil {
 		log.Error(err, "Fleet trust Secret validation failed",
 			"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
@@ -301,7 +331,12 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionTLSReady,
 			ReasonTLSNotReady, err.Error())
 	}
-
+	if err := r.validateTelemetryAmbientTrust(ctx, kn); err != nil {
+		log.Error(err, "Ambient telemetry trust validation failed",
+			"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
+			ReasonTelemetryAmbientInvalid, fmt.Sprintf("ambient telemetry trust validation failed: %v", err))
+	}
 	log.Info("BYO and runtime TLS sources validated",
 		"generation", kn.Generation,
 		"resourceVersion", kn.ResourceVersion,
@@ -332,6 +367,21 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 		})
 		r.setPhase(kn, kubernautv1alpha2.PhaseValidating)
 	})
+}
+
+func (r *KubernautReconciler) validateTelemetryMaterial(
+	ctx context.Context,
+	kn *kubernautv1alpha2.Kubernaut,
+	knV2 *kubernautv1alpha2.Kubernaut,
+) (ctrl.Result, error, bool) {
+	if err := r.validateTelemetrySecrets(ctx, knV2); err != nil {
+		logf.FromContext(ctx).Error(err, "Telemetry Secret validation failed",
+			"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+		result, statusErr := r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
+			ReasonTelemetrySecretInvalid, fmt.Sprintf("telemetry material validation failed: %v", err))
+		return result, statusErr, true
+	}
+	return ctrl.Result{}, nil, false
 }
 
 // ---------- Phase: Migrate ----------
@@ -583,6 +633,10 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 			return err
 		}
 	}
+	telemetryRevisions, err := r.telemetryMaterialRevisions(ctx, knV2)
+	if err != nil {
+		return fmt.Errorf("resolving telemetry material revision: %w", err)
+	}
 	if err := r.deployAdmissionWebhooks(ctx, kn, tlsMaterial, tlsBundle); err != nil {
 		return err
 	}
@@ -598,7 +652,7 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 	if err := r.ensureAuthbridgeClientID(ctx, kn, sidecar); err != nil {
 		return err
 	}
-	hasRoute, err := r.deployWorkloads(ctx, kn, runtimeKnV2, cmHashes, sidecar)
+	hasRoute, err := r.deployWorkloads(ctx, kn, runtimeKnV2, cmHashes, sidecar, telemetryRevisions)
 	if err != nil {
 		return err
 	}
@@ -1859,7 +1913,7 @@ func (r *KubernautReconciler) enabledDeploymentBuilders(
 // builders, stamping ConfigMap-hash pod-template annotations from cmHashes
 // so configuration changes trigger rolling restarts.
 func (r *KubernautReconciler) ensureDeployments(
-	ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, builders []deploymentBuilderFunc, cmHashes map[string]string,
+	ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, builders []deploymentBuilderFunc, cmHashes map[string]string, telemetryRevisions map[string]string,
 ) error {
 	for _, build := range builders {
 		dep, err := build(kn, knV2)
@@ -1867,6 +1921,7 @@ func (r *KubernautReconciler) ensureDeployments(
 			return fmt.Errorf("building deployment: %w", err)
 		}
 		stampConfigMapHash(dep, cmHashes)
+		stampTelemetryMaterialRevision(dep, telemetryRevisions)
 		if err := r.ensureNamespaced(ctx, kn, dep); err != nil {
 			return fmt.Errorf("ensuring Deployment %s: %w", dep.Name, err)
 		}
@@ -1874,12 +1929,12 @@ func (r *KubernautReconciler) ensureDeployments(
 	return nil
 }
 
-func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, cmHashes map[string]string, sidecar resources.KagentiSidecarMode) (hasRoute bool, _ error) {
+func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, cmHashes map[string]string, sidecar resources.KagentiSidecarMode, telemetryRevisions map[string]string) (hasRoute bool, _ error) {
 	depBuilders, err := r.enabledDeploymentBuilders(ctx, kn, knV2, sidecar)
 	if err != nil {
 		return false, err
 	}
-	if err := r.ensureDeployments(ctx, kn, knV2, depBuilders, cmHashes); err != nil {
+	if err := r.ensureDeployments(ctx, kn, knV2, depBuilders, cmHashes, telemetryRevisions); err != nil {
 		return false, err
 	}
 
@@ -4279,8 +4334,10 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&corev1.Service{}, handler.EnqueueRequestsFromMapFunc(r.monitoringObjectToKubernaut)).
 		Watches(&discoveryv1.EndpointSlice{}, handler.EnqueueRequestsFromMapFunc(r.monitoringObjectToKubernaut)).
 		Owns(&corev1.ConfigMap{}).
+		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.telemetryAmbientConfigMapToKubernaut)).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&corev1.Secret{}).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.telemetrySecretToKubernaut)).
 		Owns(&batchv1.Job{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Owns(&networkingv1.Ingress{}).

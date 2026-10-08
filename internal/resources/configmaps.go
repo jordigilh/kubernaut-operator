@@ -151,6 +151,7 @@ type gatewayDatastorageYAML struct {
 
 type gatewayConfigYAML struct {
 	TLSProfile  string                 `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
+	TLSCAFile   string                 `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 	Logging     loggingYAML            `json:"logging" yaml:"logging"`
 	Processing  gatewayProcessingYAML  `json:"processing" yaml:"processing"`
 	Server      gatewayServerYAML      `json:"server" yaml:"server"`
@@ -173,29 +174,31 @@ type telemetryYAML struct {
 }
 
 type telemetryTLSYAML struct {
-	Enabled  bool   `json:"enabled,omitempty" yaml:"enabled,omitempty"`
 	CAFile   string `json:"caFile,omitempty" yaml:"caFile,omitempty"`
 	CertFile string `json:"certFile,omitempty" yaml:"certFile,omitempty"`
 	KeyFile  string `json:"keyFile,omitempty" yaml:"keyFile,omitempty"`
 }
 
 // resolveTelemetryConfig converts a CRD TelemetrySpec into the rendered
-// telemetry YAML block, omitting the block entirely (nil) while tracing is
-// disabled (Endpoint empty) -- matching upstream's zero-overhead-when-off
-// default so existing CRs render byte-for-byte the same config.yaml as
-// before this field existed.
+// telemetry YAML block. The block is omitted only when both network export and
+// local log-sink output are disabled. Network endpoints always use the
+// upstream TLS shape; there is deliberately no rendered TLS disable switch.
 func resolveTelemetryConfig(t kubernautv1alpha2.TelemetrySpec) *telemetryYAML {
-	if t.Endpoint == "" {
+	logSink := t.LogSink != nil && *t.LogSink
+	if t.Endpoint == "" && !logSink {
 		return nil
+	}
+	material := resolveTelemetryMaterial(t)
+	if !material.network {
+		return &telemetryYAML{Endpoint: t.Endpoint, LogSink: logSink}
 	}
 	return &telemetryYAML{
 		Endpoint: t.Endpoint,
-		LogSink:  t.LogSink != nil && *t.LogSink,
+		LogSink:  logSink,
 		TLS: telemetryTLSYAML{
-			Enabled:  t.TLS.Enabled != nil && *t.TLS.Enabled,
-			CAFile:   t.TLS.CAFile,
-			CertFile: t.TLS.CertFile,
-			KeyFile:  t.TLS.KeyFile,
+			CAFile:   material.caFile,
+			CertFile: material.certFile,
+			KeyFile:  material.keyFile,
 		},
 	}
 }
@@ -919,6 +922,7 @@ type kaRuntimeServerYAML struct {
 	MetricsAddr string                      `json:"metricsAddr" yaml:"metricsAddr"`
 	TLS         kubernautAgentServerTLSYAML `json:"tls" yaml:"tls"`
 	TLSProfile  string                      `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
+	TLSCAFile   string                      `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 	RateLimit   kaRateLimitYAML             `json:"rateLimit" yaml:"rateLimit"`
 }
 
@@ -1254,6 +1258,7 @@ func GatewayConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.K
 
 	cfg := gatewayConfigYAML{
 		TLSProfile: o.tlsProfile,
+		TLSCAFile:  InterServiceTLSCAFileFor(knV2),
 		Logging: loggingYAML{
 			Level: withDefault(kn.Spec.Gateway.Logging.Level, "info"),
 		},
@@ -1408,8 +1413,11 @@ func dataStorageRedisConfig(kn *kubernautv1alpha2.Kubernaut) dataStorageRedisYAM
 		SecretsFile:      "/etc/datastorage/secrets/valkey-secrets.yaml",
 		PasswordKey:      "password",
 	}
+	t := &dataStorageRedisTLSYAML{
+		Enabled: kn.Spec.Valkey.ValkeyTLSEnabled(),
+		CAFile:  InterServiceTLSCAFileFor(kn),
+	}
 	if kn.Spec.Valkey.ValkeyTLSEnabled() {
-		t := &dataStorageRedisTLSYAML{Enabled: true}
 		if kn.Spec.Valkey.TLS.CASecretName != "" {
 			t.CAFile = "/etc/valkey-tls/ca/ca.crt"
 		}
@@ -1417,8 +1425,8 @@ func dataStorageRedisConfig(kn *kubernautv1alpha2.Kubernaut) dataStorageRedisYAM
 			t.CertFile = "/etc/valkey-tls/client/tls.crt"
 			t.KeyFile = "/etc/valkey-tls/client/tls.key"
 		}
-		r.TLS = t
 	}
+	r.TLS = t
 	return r
 }
 
@@ -1960,6 +1968,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1a
 				MetricsAddr: ":9090",
 				TLS:         kubernautAgentServerTLSYAML{CertDir: InterServiceTLSCertDirFor(knV2)},
 				TLSProfile:  o.tlsProfile,
+				TLSCAFile:   InterServiceTLSCAFileFor(knV2),
 				RateLimit:   kaRateLimitFromSpec(ka.ServerRateLimit),
 			},
 			Shutdown: kaShutdownYAML{

@@ -1089,35 +1089,59 @@ spec:
                     properties:
                       endpoint:
                         description: |-
-                          OTLP collector endpoint (e.g. "otel-collector.observability.svc:4317").
-                          Tracing is disabled while this is empty.
+                          OTLP collector endpoint in host:port form (e.g.
+                          "otel-collector.observability.svc:4317"). An empty value disables network
+                          export. The special value "stdout" is local-only debugging output.
                         type: string
                       logSink:
                         default: false
                         description: |-
-                          Mirror trace spans into the component's structured log output in
-                          addition to exporting them via OTLP. Has no effect while Endpoint is
-                          empty.
+                          Mirror trace spans into the component's structured log output. This is a
+                          local-only mode when Endpoint is empty and may also be enabled alongside
+                          network OTLP export.
                         type: boolean
                       tls:
-                        description: TLS configures the connection to the OTLP collector.
+                        description: |-
+                          TLS configures the mandatory, certificate-verifying connection to the OTLP
+                          collector for network endpoints.
                         properties:
+                          caCertSecretRef:
+                            description: |-
+                              Optional administrator-owned Secret containing a CA PEM. The default key
+                              is "ca.crt". The operator mounts the selected key read-only for the
+                              network telemetry producer and never adopts or mutates the Secret.
+                            properties:
+                              key:
+                                default: ca.crt
+                                description: Key within the Secret containing the
+                                  CA PEM.
+                                type: string
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                            required:
+                            - name
+                            type: object
                           caFile:
                             description: |-
-                              CA bundle path for a self-signed or private collector certificate.
+                              CA bundle path for a self-signed or private collector certificate. The
+                              path is administrator-provided and must already exist in the container.
                               Empty trusts the system CA pool.
                             type: string
                           certFile:
-                            description: Optional mTLS client certificate path.
-                            type: string
-                          enabled:
-                            default: false
                             description: |-
-                              Use TLS when connecting to the OTLP collector. False (default) uses
-                              plain HTTP/gRPC, matching most in-cluster collector deployments.
-                            type: boolean
+                              Optional mTLS client certificate path. CertFile and KeyFile must be set
+                              together. Without TLSClientSecretRef these are administrator-provided
+                              paths and their rotation requires a manual workload rollout.
+                            type: string
                           keyFile:
                             description: Optional mTLS client key path.
+                            type: string
+                          tlsClientSecretRef:
+                            description: |-
+                              Optional administrator-owned Secret containing the mTLS client pair under
+                              the fixed keys "tls.crt" and "tls.key". When set, CertFile and KeyFile
+                              identify the mounted paths and must share one parent directory.
                             type: string
                         type: object
                     type: object
@@ -1651,36 +1675,59 @@ spec:
                         properties:
                           endpoint:
                             description: |-
-                              OTLP collector endpoint (e.g. "otel-collector.observability.svc:4317").
-                              Tracing is disabled while this is empty.
+                              OTLP collector endpoint in host:port form (e.g.
+                              "otel-collector.observability.svc:4317"). An empty value disables network
+                              export. The special value "stdout" is local-only debugging output.
                             type: string
                           logSink:
                             default: false
                             description: |-
-                              Mirror trace spans into the component's structured log output in
-                              addition to exporting them via OTLP. Has no effect while Endpoint is
-                              empty.
+                              Mirror trace spans into the component's structured log output. This is a
+                              local-only mode when Endpoint is empty and may also be enabled alongside
+                              network OTLP export.
                             type: boolean
                           tls:
-                            description: TLS configures the connection to the OTLP
-                              collector.
+                            description: |-
+                              TLS configures the mandatory, certificate-verifying connection to the OTLP
+                              collector for network endpoints.
                             properties:
+                              caCertSecretRef:
+                                description: |-
+                                  Optional administrator-owned Secret containing a CA PEM. The default key
+                                  is "ca.crt". The operator mounts the selected key read-only for the
+                                  network telemetry producer and never adopts or mutates the Secret.
+                                properties:
+                                  key:
+                                    default: ca.crt
+                                    description: Key within the Secret containing
+                                      the CA PEM.
+                                    type: string
+                                  name:
+                                    description: Name of the Secret.
+                                    type: string
+                                required:
+                                - name
+                                type: object
                               caFile:
                                 description: |-
-                                  CA bundle path for a self-signed or private collector certificate.
+                                  CA bundle path for a self-signed or private collector certificate. The
+                                  path is administrator-provided and must already exist in the container.
                                   Empty trusts the system CA pool.
                                 type: string
                               certFile:
-                                description: Optional mTLS client certificate path.
-                                type: string
-                              enabled:
-                                default: false
                                 description: |-
-                                  Use TLS when connecting to the OTLP collector. False (default) uses
-                                  plain HTTP/gRPC, matching most in-cluster collector deployments.
-                                type: boolean
+                                  Optional mTLS client certificate path. CertFile and KeyFile must be set
+                                  together. Without TLSClientSecretRef these are administrator-provided
+                                  paths and their rotation requires a manual workload rollout.
+                                type: string
                               keyFile:
                                 description: Optional mTLS client key path.
+                                type: string
+                              tlsClientSecretRef:
+                                description: |-
+                                  Optional administrator-owned Secret containing the mTLS client pair under
+                                  the fixed keys "tls.crt" and "tls.key". When set, CertFile and KeyFile
+                                  identify the mounted paths and must share one parent directory.
                                 type: string
                             type: object
                         type: object
@@ -2171,35 +2218,59 @@ spec:
                     properties:
                       endpoint:
                         description: |-
-                          OTLP collector endpoint (e.g. "otel-collector.observability.svc:4317").
-                          Tracing is disabled while this is empty.
+                          OTLP collector endpoint in host:port form (e.g.
+                          "otel-collector.observability.svc:4317"). An empty value disables network
+                          export. The special value "stdout" is local-only debugging output.
                         type: string
                       logSink:
                         default: false
                         description: |-
-                          Mirror trace spans into the component's structured log output in
-                          addition to exporting them via OTLP. Has no effect while Endpoint is
-                          empty.
+                          Mirror trace spans into the component's structured log output. This is a
+                          local-only mode when Endpoint is empty and may also be enabled alongside
+                          network OTLP export.
                         type: boolean
                       tls:
-                        description: TLS configures the connection to the OTLP collector.
+                        description: |-
+                          TLS configures the mandatory, certificate-verifying connection to the OTLP
+                          collector for network endpoints.
                         properties:
+                          caCertSecretRef:
+                            description: |-
+                              Optional administrator-owned Secret containing a CA PEM. The default key
+                              is "ca.crt". The operator mounts the selected key read-only for the
+                              network telemetry producer and never adopts or mutates the Secret.
+                            properties:
+                              key:
+                                default: ca.crt
+                                description: Key within the Secret containing the
+                                  CA PEM.
+                                type: string
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                            required:
+                            - name
+                            type: object
                           caFile:
                             description: |-
-                              CA bundle path for a self-signed or private collector certificate.
+                              CA bundle path for a self-signed or private collector certificate. The
+                              path is administrator-provided and must already exist in the container.
                               Empty trusts the system CA pool.
                             type: string
                           certFile:
-                            description: Optional mTLS client certificate path.
-                            type: string
-                          enabled:
-                            default: false
                             description: |-
-                              Use TLS when connecting to the OTLP collector. False (default) uses
-                              plain HTTP/gRPC, matching most in-cluster collector deployments.
-                            type: boolean
+                              Optional mTLS client certificate path. CertFile and KeyFile must be set
+                              together. Without TLSClientSecretRef these are administrator-provided
+                              paths and their rotation requires a manual workload rollout.
+                            type: string
                           keyFile:
                             description: Optional mTLS client key path.
+                            type: string
+                          tlsClientSecretRef:
+                            description: |-
+                              Optional administrator-owned Secret containing the mTLS client pair under
+                              the fixed keys "tls.crt" and "tls.key". When set, CertFile and KeyFile
+                              identify the mounted paths and must share one parent directory.
                             type: string
                         type: object
                     type: object
@@ -4221,6 +4292,14 @@ rules:
   - clusterversions
   - ingresses
   - networks
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
   verbs:
   - get
   - list

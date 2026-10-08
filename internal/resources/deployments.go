@@ -45,20 +45,22 @@ func GatewayDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
 		{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFileFor(kn)},
-		{Name: "SSL_CERT_FILE", Value: InterServiceTLSCAFileFor(kn)},
 	}
 
 	volumes := []corev1.Volume{
 		configMapVolume("config", "gateway-config"),
 		secretVolume("tls-certs", TLSSecretName(kn, TLSServiceGateway)),
 		InterServiceTLSCAVolume(kn),
+		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: "config", MountPath: "/etc/gateway", ReadOnly: true},
 		{Name: "tls-certs", MountPath: InterServiceTLSCertDirFor(kn), ReadOnly: true},
 		InterServiceTLSCAMount(kn),
+		{Name: "tmp", MountPath: "/tmp"},
 	}
 	volumes, mounts = appendFleetSecretMounts(volumes, mounts, knV2, "/etc/gateway", effectiveFleetOAuth2SecretRef(knV2.Spec.Gateway.Fleet, ""))
+	volumes, mounts = AppendTelemetrySecretMounts(knV2.Spec.Gateway.Config.Telemetry, volumes, mounts)
 
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentGateway, ImageName: "gateway",
@@ -82,6 +84,7 @@ func DataStorageDeployment(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment,
 		return nil, err
 	}
 	volumes, mounts := dataStorageVolumesAndMounts(kn)
+	volumes, mounts = AppendTelemetrySecretMounts(kn.Spec.DataStorage.Telemetry, volumes, mounts)
 
 	sslMode := withDefault(kn.Spec.PostgreSQL.SSLMode, DefaultSSLMode)
 	env := []corev1.EnvVar{
@@ -90,7 +93,6 @@ func DataStorageDeployment(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment,
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
 		{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFileFor(kn)},
-		{Name: "SSL_CERT_FILE", Value: InterServiceTLSCAFileFor(kn)},
 	}
 	if sslMode == DefaultSSLMode {
 		env = append(env, corev1.EnvVar{Name: "PGSSLROOTCERT", Value: InterServiceTLSCAFileFor(kn)})
@@ -532,6 +534,7 @@ func KubernautAgentDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1
 
 	volumes, mounts, envVars := kaCoreVolumesMountsEnv(kn, kaProfile)
 	volumes, mounts, envVars = appendInterServiceTLSCA(kn, volumes, mounts, envVars)
+	volumes, mounts = AppendTelemetrySecretMounts(knV2.Spec.KubernautAgent.Telemetry, volumes, mounts)
 	volumes, mounts = kaCredentialVolumesAndMounts(kn, kaProfile, volumes, mounts)
 	// #413: upstream KA now reads fleet OAuth2 credentials from the
 	// hyphenated /etc/kubernaut-agent path (kubernaut#1729), matching the

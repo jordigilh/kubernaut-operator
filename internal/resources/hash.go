@@ -37,6 +37,11 @@ const (
 	// a rolling restart when the content of a service's ConfigMap changes.
 	// Services read config once at startup, so a pod restart is required.
 	AnnotationConfigMapHash = "kubernaut.ai/configmap-hash"
+
+	// AnnotationTelemetryMaterialRevision is a non-sensitive pod-template
+	// revision for effective OTLP trust/client material. It contains only a
+	// controller-derived digest of Secret/ConfigMap resource-version metadata.
+	AnnotationTelemetryMaterialRevision = "kubernaut.ai/telemetry-material-revision"
 )
 
 // ConfigMapDataHash computes a stable SHA-256 hex digest of a ConfigMap's
