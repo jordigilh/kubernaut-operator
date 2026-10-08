@@ -75,8 +75,8 @@ const (
 	// namespace-scoped policy selectors are exercised by the real workload.
 	probeNamespace = kubernautNamespace
 
-	defaultOperatorImage   = "localhost/kubernaut-operator:1.6.0-rc20"
-	defaultContractImage   = "localhost/kubernaut-operator-e2e-contract:1.6.0-rc20"
+	defaultOperatorImage   = "localhost/kubernaut-operator:ci"
+	defaultContractImage   = "localhost/kubernaut-operator-e2e-contract:ci"
 	operatorDeploymentName = "kubernaut-operator-controller-manager"
 
 	managedPolicyLabel = "kubernaut.ai/managed-policy=true"

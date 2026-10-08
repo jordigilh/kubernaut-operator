@@ -108,8 +108,8 @@ jobs:
   # STAGE 0c: OPERATOR-LOCAL RELEASE GATES
   #
   # These checks remain deliberately independent of the upstream qualification
-  # gate. They prove the tagged operator itself is buildable, testable, and
-  # contract-compatible before either architecture image is published.
+  # gate. They prove the tagged operator itself is buildable and testable
+  # before the post-test contract image is built.
   # ========================================
 
   operator-gates:
@@ -154,23 +154,100 @@ jobs:
         run: git diff --exit-code -- api config
 
       - name: Shellcheck hack/ scripts
-        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/validate-security-traceability.sh hack/verify-test-pyramid.sh hack/verify-ci-boundary.sh hack/verify-ci-boundary.test.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
+        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/validate-security-traceability.sh hack/test-helm-openshift.sh hack/verify-helm-chart.sh hack/verify-test-pyramid.sh hack/verify-ci-boundary.sh hack/verify-ci-boundary.test.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
 
-      - name: Install pinned Kind and kubectl
+  # ========================================
+  # STAGE 0d: POST-TEST CONTRACT IMAGE
+  #
+  # Build the exact operator image consumed by the release contract E2E. The
+  # publish jobs below still produce architecture-specific release images, but
+  # the E2E gate must not rebuild a different operator image in its runner.
+  # ========================================
+
+  operator-e2e-image:
+    name: Build operator image for contract E2E
+    needs: [prepare, qualification, operator-gates]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout operator source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build contract E2E operator image
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          GIT_COMMIT: ${{ github.sha }}
+          IMAGE: localhost/kubernaut-operator:ci
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg VERSION="${VERSION}" \
+            --build-arg GIT_COMMIT="${GIT_COMMIT}" \
+            -t "${IMAGE}" .
+          docker save "${IMAGE}" --output operator-e2e-image.tar
+          sha256sum operator-e2e-image.tar > operator-e2e-image.tar.sha256
+
+      - name: Upload contract E2E operator image
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
+        with:
+          name: operator-e2e-image-${{ needs.prepare.outputs.version }}
+          path: |
+            operator-e2e-image.tar
+            operator-e2e-image.tar.sha256
+          retention-days: 1
+
+  # ========================================
+  # STAGE 0e: CONTRACT E2E GATE
+  # ========================================
+
+  operator-e2e:
+    name: Run contract-only Kind E2E
+    needs: [prepare, qualification, operator-e2e-image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout operator source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install pinned Kind, kubectl, and Helm
         run: |
           set -euo pipefail
           KIND_VERSION=v0.31.0
           KUBECTL_VERSION=v1.35.0
+          HELM_VERSION=v3.17.3
           curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
           printf '%s  /tmp/kind\n' \
             eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa | sha256sum -c -
           curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
           printf '%s  /tmp/kubectl\n' \
             a2e984a18a0c063279d692533031c1eff93a262afcc0afdc517375432d060989 | sha256sum -c -
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz -C /tmp
           sudo install -m 0755 /tmp/kind /usr/local/bin/kind
           sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
           kind version
           kubectl version --client
+          helm version --short
+
+      - name: Download contract E2E operator image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.0
+        with:
+          name: operator-e2e-image-${{ needs.prepare.outputs.version }}
+
+      - name: Load contract E2E operator image
+        run: |
+          set -euo pipefail
+          sha256sum --check operator-e2e-image.tar.sha256
+          docker load --input operator-e2e-image.tar
 
       - name: Pull pinned dependency images
         run: |
@@ -179,20 +256,12 @@ jobs:
 
       - name: Run contract-only Kind gate
         env:
-          KIND_OPERATOR_VERSION: ${{ needs.prepare.outputs.version }}
+          KIND_OPERATOR_VERSION: ci
+          KUBERNAUT_OPERATOR_IMAGE: localhost/kubernaut-operator:ci
           KUBERNAUT_E2E_PROVIDER: generic
           KUBERNAUT_E2E_TLS_SOURCE: development
           KIND_CLUSTER_NAME: kubernaut-kind-release
         run: make test-e2e-kind
-
-      - name: Run operator-only Helm Kind gate
-        env:
-          KIND_OPERATOR_VERSION: ${{ needs.prepare.outputs.version }}
-          KUBERNAUT_HELM_E2E_CLUSTER: kubernaut-operator-helm-release
-          KUBERNAUT_HELM_E2E_TLS_PROFILE: development
-          KUBERNAUT_HELM_E2E_METRICS: "true"
-          KUBERNAUT_HELM_E2E_DISCONNECTED: "false"
-        run: make test-e2e-kind-helm
 
   # ========================================
   # STAGE 1a: BUILD & PUSH amd64 IMAGE
@@ -201,7 +270,7 @@ jobs:
 
   build-amd64:
     name: Build Operator (amd64)
-    needs: [prepare, qualification, operator-gates]
+    needs: [prepare, qualification, operator-e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -317,7 +386,7 @@ jobs:
 
   build-arm64:
     name: Build Operator (arm64)
-    needs: [prepare, qualification, operator-gates]
+    needs: [prepare, qualification, operator-e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -638,7 +707,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [prepare, qualification, operator-gates, create-manifests, bundle, catalog, sbom, sign, provenance-amd64, provenance-arm64]
+    needs: [prepare, qualification, operator-e2e, create-manifests, bundle, catalog, sbom, sign, provenance-amd64, provenance-arm64]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

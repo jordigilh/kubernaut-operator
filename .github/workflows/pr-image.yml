@@ -1,70 +1,76 @@
 name: PR Image Build
 
-# Builds an amd64 operator image on PR to validate the Dockerfile and
-# provide a deployable preview image for testing on OCP clusters.
-# Image is tagged as: ghcr.io/jordigilh/kubernaut-operator:pr-<number>
+# Publish the exact operator image that passed the Tests workflow. This is a
+# post-test preview publication; it deliberately does not rebuild the image.
+# Images are tagged as: ghcr.io/jordigilh/kubernaut-operator:pr-<number>
 #
-# Uses GHCR for PR images; Quay.io is reserved for releases only.
+# workflow_run is used so this workflow can download the artifact created by
+# Tests. It only publishes same-repository pull requests because fork tokens do
+# not have permission to write packages.
 
 on:
-  pull_request:
-    branches: [main, 'release/**']
-    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_run:
+    workflows: [Tests]
+    types: [completed]
 
 permissions:
-  packages: write
+  actions: read
+  contents: read
 
 env:
   IMAGE_REGISTRY: ghcr.io/jordigilh
   IMAGE_NAME: kubernaut-operator
 
 jobs:
-  build-image:
-    name: Build & Push PR Image (amd64)
+  publish-image:
+    name: Publish tested PR image (amd64)
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.pull_requests[0].number != '' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: github.event.pull_request.draft == false
+    permissions:
+      actions: read
+      contents: read
+      packages: write
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
+      - name: Download tested operator image artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: operator-image
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Load tested operator image
+        run: |
+          set -euo pipefail
+          sha256sum --check operator-image.tar.sha256
+          docker load --input operator-image.tar
 
       - name: Login to GHCR
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | \
-            podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+            docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Build image
+      - name: Tag and push tested PR image
         env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          GIT_COMMIT: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
         run: |
+          set -euo pipefail
           IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:pr-${PR_NUMBER}"
-          VERSION="pr-${PR_NUMBER}"
-          echo "Building ${IMAGE} (commit: ${GIT_COMMIT:0:8})..."
-          podman build \
-            --platform linux/amd64 \
-            --build-arg TARGETOS=linux \
-            --build-arg TARGETARCH=amd64 \
-            --build-arg VERSION="${VERSION}" \
-            --build-arg GIT_COMMIT="${GIT_COMMIT}" \
-            -t "${IMAGE}" .
-
-      - name: Push image
-        env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:pr-${PR_NUMBER}"
-          echo "Pushing ${IMAGE}..."
-          podman push "${IMAGE}"
-          echo ""
+          docker tag localhost/kubernaut-operator:ci "${IMAGE}"
+          docker push "${IMAGE}"
           {
             echo "## Preview image ready"
             echo '```'
             echo "${IMAGE}"
             echo '```'
-            echo ""
-            echo "Deploy with the operator Helm chart:"
+            echo ''
+            echo 'Deploy with:'
             echo '```bash'
-            echo "helm install kubernaut-operator ./charts/kubernaut-operator --namespace kubernaut-operator-system --create-namespace --set-string image.repository=${IMAGE%:*} --set-string image.tag=${IMAGE##*:} --wait"
+            echo "make deploy IMG=${IMAGE}"
             echo '```'
-          } >> "${GITHUB_STEP_SUMMARY}"
+          } >> "$GITHUB_STEP_SUMMARY"

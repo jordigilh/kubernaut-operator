@@ -72,6 +72,8 @@ const (
 const helmCertManagerManifest = "https://github.com/cert-manager/cert-manager/releases/download/" +
 	helmCertManagerVersion + "/cert-manager.yaml"
 
+const helmKindNodeImage = "kindest/node:v1.35.0"
+
 const helmCertBootstrapDigest = "sha256:6e2cdb22d6ab7264ea198c717f555e30536b54029d26c8781b9f25f78951b564"
 
 const helmCertBootstrapSourceImage = "docker.io/bitnami/kubectl@" + helmCertBootstrapDigest
@@ -100,7 +102,8 @@ var _ = BeforeSuite(func() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	Expect(runChecked(ctx, "kind", "create", "cluster", "--name", clusterName(), "--wait", "90s")).To(Succeed())
+	Expect(runChecked(ctx, "kind", "create", "cluster", "--name", clusterName(),
+		"--image", helmKindNodeImage, "--wait", "90s")).To(Succeed())
 	DeferCleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cleanupCancel()
@@ -1188,7 +1191,7 @@ func operatorImage() string {
 	if value := strings.TrimSpace(os.Getenv("KUBERNAUT_OPERATOR_IMAGE")); value != "" {
 		return value
 	}
-	return "localhost/kubernaut-operator:1.6.0-rc20"
+	return "localhost/kubernaut-operator:ci"
 }
 
 func chartPath() string {

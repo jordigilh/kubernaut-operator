@@ -55,7 +55,10 @@ IMG ?= $(IMAGE_TAG_BASE):$(VERSION)
 # Kind E2E uses a locally loaded operator image and a local contract image.
 # The operator CI harness must not pull or deploy upstream Kubernaut images;
 # full application qualification belongs to upstream/release validation.
-KIND_OPERATOR_VERSION ?= 1.6.0-rc20
+# All operator E2E lanes consume the post-test CI image. Release and local
+# callers may still override the binary version passed to the image build, but
+# the harness tag remains the stable :ci contract.
+KIND_OPERATOR_VERSION ?= ci
 KIND_OPERATOR_IMAGE ?= localhost/kubernaut-operator:$(KIND_OPERATOR_VERSION)
 KIND_CONTRACT_IMAGE ?= localhost/kubernaut-operator-e2e-contract:$(KIND_OPERATOR_VERSION)
 
@@ -193,9 +196,14 @@ test-e2e-kind: fmt vet ## Run the isolated Helm-backed operator contract Kind E2
 	@command -v kubectl >/dev/null 2>&1 || { echo "kubectl CLI not found."; exit 1; }
 	@command -v $(HELM_BIN) >/dev/null 2>&1 || { echo "Helm CLI not found: $(HELM_BIN)"; exit 1; }
 	@command -v $(CONTAINER_TOOL) >/dev/null 2>&1 || { echo "$(CONTAINER_TOOL) CLI not found."; exit 1; }
-	$(CONTAINER_TOOL) build --build-arg VERSION=$(KIND_OPERATOR_VERSION) --build-arg GIT_COMMIT=$(GIT_COMMIT) -t $(KIND_OPERATOR_IMAGE) .
-	$(CONTAINER_TOOL) build -f test/e2e/kind/contract/Dockerfile -t $(KIND_CONTRACT_IMAGE) test/e2e/kind/contract
-	HELM_BIN=$(HELM_BIN) KUBERNAUT_OPERATOR_IMAGE=$(KIND_OPERATOR_IMAGE) KUBERNAUT_E2E_CONTRACT_IMAGE=$(KIND_CONTRACT_IMAGE) go test ./test/e2e/kind/ -v -ginkgo.v -timeout 30m
+	@operator_image="$${KUBERNAUT_OPERATOR_IMAGE:-$(KIND_OPERATOR_IMAGE)}"; \
+	if [ -z "$${KUBERNAUT_OPERATOR_IMAGE:-}" ]; then \
+		$(CONTAINER_TOOL) build --build-arg VERSION=$(KIND_OPERATOR_VERSION) --build-arg GIT_COMMIT=$(GIT_COMMIT) -t "$$operator_image" .; \
+	else \
+		echo "Using prebuilt operator image $$operator_image"; \
+	fi; \
+	$(CONTAINER_TOOL) build -f test/e2e/kind/contract/Dockerfile -t $(KIND_CONTRACT_IMAGE) test/e2e/kind/contract; \
+	HELM_BIN=$(HELM_BIN) KUBERNAUT_OPERATOR_IMAGE="$$operator_image" KUBERNAUT_E2E_CONTRACT_IMAGE=$(KIND_CONTRACT_IMAGE) go test ./test/e2e/kind/ -v -ginkgo.v -timeout 30m
 
 .PHONY: test-e2e-kind-helm
 test-e2e-kind-helm: fmt vet ## Run the isolated operator-only Helm bootstrap Kind E2E suite.
@@ -203,8 +211,13 @@ test-e2e-kind-helm: fmt vet ## Run the isolated operator-only Helm bootstrap Kin
 	@command -v kubectl >/dev/null 2>&1 || { echo "kubectl CLI not found."; exit 1; }
 	@command -v $(HELM_BIN) >/dev/null 2>&1 || { echo "Helm CLI not found: $(HELM_BIN)"; exit 1; }
 	@command -v $(CONTAINER_TOOL) >/dev/null 2>&1 || { echo "$(CONTAINER_TOOL) CLI not found."; exit 1; }
-	$(CONTAINER_TOOL) build --build-arg VERSION=$(KIND_OPERATOR_VERSION) --build-arg GIT_COMMIT=$(GIT_COMMIT) -t $(KIND_OPERATOR_IMAGE) .
-	HELM_BIN=$(HELM_BIN) KUBERNAUT_OPERATOR_IMAGE=$(KIND_OPERATOR_IMAGE) KUBERNAUT_HELM_E2E_CLUSTER=$${KUBERNAUT_HELM_E2E_CLUSTER:-kubernaut-operator-helm-e2e} go test ./test/e2e/helm/ -v -ginkgo.v -timeout 30m
+	@operator_image="$${KUBERNAUT_OPERATOR_IMAGE:-$(KIND_OPERATOR_IMAGE)}"; \
+	if [ -z "$${KUBERNAUT_OPERATOR_IMAGE:-}" ]; then \
+		$(CONTAINER_TOOL) build --build-arg VERSION=$(KIND_OPERATOR_VERSION) --build-arg GIT_COMMIT=$(GIT_COMMIT) -t "$$operator_image" .; \
+	else \
+		echo "Using prebuilt operator image $$operator_image"; \
+	fi; \
+	HELM_BIN=$(HELM_BIN) KUBERNAUT_OPERATOR_IMAGE="$$operator_image" KUBERNAUT_HELM_E2E_CLUSTER="$${KUBERNAUT_HELM_E2E_CLUSTER:-kubernaut-operator-helm-e2e}" go test ./test/e2e/helm/ -v -ginkgo.v -timeout 30m
 
 .PHONY: test-e2e-helm-openshift
 test-e2e-helm-openshift: ## Run the opt-in operator-only Helm bootstrap OpenShift qualification lane.

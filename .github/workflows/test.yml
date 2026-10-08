@@ -10,35 +10,10 @@ on:
 permissions:
   contents: read
 
+env:
+  OPERATOR_IMAGE: localhost/kubernaut-operator:ci
+
 jobs:
-  sbom-scan:
-    name: SBOM and Vulnerability Scan
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-
-      - name: Build image
-        run: docker build -t kubernaut-operator:ci .
-
-      - name: Install Syft
-        run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin v1.20.0
-
-      - name: Generate SBOM
-        run: syft packages kubernaut-operator:ci -o cyclonedx-json > sbom.cdx.json
-
-      - name: Install Trivy
-        run: curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.70.0
-
-      - name: Scan image
-        run: trivy image --severity CRITICAL,HIGH,MEDIUM --exit-code 1 --ignorefile .trivyignore kubernaut-operator:ci
-
   test:
     name: Unit & Integration Tests
     runs-on: ubuntu-latest
@@ -64,7 +39,7 @@ jobs:
         run: make test
 
       - name: Shellcheck hack/ scripts
-        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/validate-security-traceability.sh hack/test-helm-openshift.sh hack/verify-test-pyramid.sh hack/verify-helm-chart.sh hack/verify-ci-boundary.sh hack/verify-ci-boundary.test.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
+        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/validate-security-traceability.sh hack/test-helm-openshift.sh hack/verify-helm-chart.sh hack/verify-test-pyramid.sh hack/verify-ci-boundary.sh hack/verify-ci-boundary.test.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
 
       - name: Run hack/ script tests
         run: make test-hack-scripts
@@ -94,12 +69,106 @@ jobs:
             exit 1
           fi
 
-  # These jobs intentionally have no `needs` relationship with `test`: each
-  # provisions an isolated Kind cluster and runs in parallel with the IT lane.
-  kind-generic:
-    name: Kind E2E (generic)
+  build-image:
+    name: Build operator image
+    needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Build operator image
+        env:
+          GIT_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg VERSION=ci \
+            --build-arg GIT_COMMIT="${GIT_COMMIT}" \
+            -t "${OPERATOR_IMAGE}" .
+
+      - name: Save operator image artifact
+        run: |
+          set -euo pipefail
+          docker save "${OPERATOR_IMAGE}" --output operator-image.tar
+          sha256sum operator-image.tar > operator-image.tar.sha256
+
+      - name: Upload operator image artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: operator-image
+          path: |
+            operator-image.tar
+            operator-image.tar.sha256
+          retention-days: 1
+          overwrite: true
+
+  sbom-scan:
+    name: SBOM and Vulnerability Scan
+    needs: build-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Download operator image artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: operator-image
+
+      - name: Load operator image
+        run: |
+          set -euo pipefail
+          sha256sum --check operator-image.tar.sha256
+          docker load --input operator-image.tar
+
+      - name: Install Syft
+        run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin v1.20.0
+
+      - name: Generate SBOM
+        run: syft packages "${OPERATOR_IMAGE}" -o cyclonedx-json > sbom.cdx.json
+
+      - name: Install Trivy
+        run: curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.70.0
+
+      - name: Scan image
+        run: trivy image --severity CRITICAL,HIGH,MEDIUM --exit-code 1 --ignorefile .trivyignore "${OPERATOR_IMAGE}"
+
+  kind-e2e:
+    name: Kind E2E (${{ matrix.lane }})
+    needs: build-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: generic
+            provider: generic
+            tls_source: development
+            cluster_name: kubernaut-kind-generic
+          - lane: hook TLS
+            provider: generic
+            tls_source: hook
+            cluster_name: kubernaut-kind-hook
+          - lane: manual/administrator-managed TLS
+            provider: generic
+            tls_source: manual-admin
+            cluster_name: kubernaut-kind-manual-admin
+          - lane: cert-manager TLS
+            provider: generic
+            tls_source: certmanager
+            cluster_name: kubernaut-kind-certmanager
+          - lane: Cilium
+            provider: cilium
+            tls_source: development
+            cluster_name: kubernaut-kind-cilium
+          - lane: Calico
+            provider: calico
+            tls_source: development
+            cluster_name: kubernaut-kind-calico
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -125,20 +194,34 @@ jobs:
           kubectl version --client
           helm version --short
 
+      - name: Download operator image artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: operator-image
+
+      - name: Load operator image
+        run: |
+          set -euo pipefail
+          sha256sum --check operator-image.tar.sha256
+          docker load --input operator-image.tar
+
       - name: Pull pinned dependency images
         run: |
           docker pull docker.io/library/postgres:16.4
           docker pull docker.io/valkey/valkey:8.0.2
 
-      - name: Run generic Kind E2E
+      - name: Run Kind E2E
         env:
-          KUBERNAUT_E2E_PROVIDER: generic
-          KUBERNAUT_E2E_TLS_SOURCE: development
-          KIND_CLUSTER_NAME: kubernaut-kind-generic
+          KIND_OPERATOR_VERSION: ci
+          KUBERNAUT_OPERATOR_IMAGE: ${{ env.OPERATOR_IMAGE }}
+          KUBERNAUT_E2E_PROVIDER: ${{ matrix.provider }}
+          KUBERNAUT_E2E_TLS_SOURCE: ${{ matrix.tls_source }}
+          KIND_CLUSTER_NAME: ${{ matrix.cluster_name }}
         run: make test-e2e-kind
 
   helm-bootstrap:
     name: Kind E2E (operator Helm bootstrap / ${{ matrix.tls_profile }} / disconnected=${{ matrix.disconnected }})
+    needs: build-image
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -178,213 +261,23 @@ jobs:
           kubectl version --client
           helm version --short
 
+      - name: Download operator image artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: operator-image
+
+      - name: Load operator image
+        run: |
+          set -euo pipefail
+          sha256sum --check operator-image.tar.sha256
+          docker load --input operator-image.tar
+
       - name: Run Helm bootstrap Kind E2E
         env:
+          KIND_OPERATOR_VERSION: ci
+          KUBERNAUT_OPERATOR_IMAGE: ${{ env.OPERATOR_IMAGE }}
           KUBERNAUT_HELM_E2E_CLUSTER: kubernaut-operator-helm-e2e
           KUBERNAUT_HELM_E2E_TLS_PROFILE: ${{ matrix.tls_profile }}
           KUBERNAUT_HELM_E2E_METRICS: "true"
           KUBERNAUT_HELM_E2E_DISCONNECTED: ${{ matrix.disconnected }}
         run: make test-e2e-kind-helm
-
-  kind-hook:
-    name: Kind E2E (hook TLS)
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-
-      - name: Install pinned Kind, kubectl, and Helm
-        run: |
-          set -euo pipefail
-          KIND_VERSION=v0.31.0
-          KUBECTL_VERSION=v1.35.0
-          HELM_VERSION=v3.17.3
-          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
-          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
-          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz -C /tmp
-          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
-          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
-          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
-          kind version
-          kubectl version --client
-          helm version --short
-
-      - name: Pull pinned dependency images
-        run: |
-          docker pull docker.io/library/postgres:16.4
-          docker pull docker.io/valkey/valkey:8.0.2
-
-      - name: Run Kind hook TLS E2E
-        env:
-          KUBERNAUT_E2E_PROVIDER: generic
-          KUBERNAUT_E2E_TLS_SOURCE: hook
-          KIND_CLUSTER_NAME: kubernaut-kind-hook
-        run: make test-e2e-kind
-
-  kind-manual-admin:
-    name: Kind E2E (manual/administrator-managed TLS)
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-
-      - name: Install pinned Kind, kubectl, and Helm
-        run: |
-          set -euo pipefail
-          KIND_VERSION=v0.31.0
-          KUBECTL_VERSION=v1.35.0
-          HELM_VERSION=v3.17.3
-          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
-          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
-          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz -C /tmp
-          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
-          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
-          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
-          kind version
-          kubectl version --client
-          helm version --short
-
-      - name: Pull pinned dependency images
-        run: |
-          docker pull docker.io/library/postgres:16.4
-          docker pull docker.io/valkey/valkey:8.0.2
-
-      - name: Run Kind manual/admin TLS E2E
-        env:
-          KUBERNAUT_E2E_PROVIDER: generic
-          KUBERNAUT_E2E_TLS_SOURCE: manual-admin
-          KIND_CLUSTER_NAME: kubernaut-kind-manual-admin
-        run: make test-e2e-kind
-
-  kind-certmanager:
-    name: Kind E2E (cert-manager TLS)
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-
-      - name: Install pinned Kind, kubectl, and Helm
-        run: |
-          set -euo pipefail
-          KIND_VERSION=v0.31.0
-          KUBECTL_VERSION=v1.35.0
-          HELM_VERSION=v3.17.3
-          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
-          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
-          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz -C /tmp
-          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
-          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
-          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
-          kind version
-          kubectl version --client
-          helm version --short
-
-      - name: Pull pinned dependency images
-        run: |
-          docker pull docker.io/library/postgres:16.4
-          docker pull docker.io/valkey/valkey:8.0.2
-
-      - name: Run Kind cert-manager TLS E2E
-        env:
-          KUBERNAUT_E2E_PROVIDER: generic
-          KUBERNAUT_E2E_TLS_SOURCE: certmanager
-          KIND_CLUSTER_NAME: kubernaut-kind-certmanager
-        run: make test-e2e-kind
-
-  kind-cilium:
-    name: Kind E2E (Cilium)
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-
-      - name: Install pinned Kind, kubectl, and Helm
-        run: |
-          set -euo pipefail
-          KIND_VERSION=v0.31.0
-          KUBECTL_VERSION=v1.35.0
-          HELM_VERSION=v3.17.3
-          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
-          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
-          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz -C /tmp
-          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
-          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
-          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
-          kind version
-          kubectl version --client
-          helm version
-
-      - name: Pull pinned dependency images
-        run: |
-          docker pull docker.io/library/postgres:16.4
-          docker pull docker.io/valkey/valkey:8.0.2
-
-      - name: Run Kind+Cilium E2E
-        env:
-          KUBERNAUT_E2E_PROVIDER: cilium
-          KIND_CLUSTER_NAME: kubernaut-kind-cilium
-        run: make test-e2e-kind
-
-  kind-calico:
-    name: Kind E2E (Calico)
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-
-      - name: Install pinned Kind, kubectl, and Helm
-        run: |
-          set -euo pipefail
-          KIND_VERSION=v0.31.0
-          KUBECTL_VERSION=v1.35.0
-          HELM_VERSION=v3.17.3
-          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind
-          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
-          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz -C /tmp
-          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
-          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
-          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
-          kind version
-          kubectl version --client
-          helm version --short
-
-      - name: Pull pinned dependency images
-        run: |
-          docker pull docker.io/library/postgres:16.4
-          docker pull docker.io/valkey/valkey:8.0.2
-
-      - name: Run Kind+Calico E2E
-        env:
-          KUBERNAUT_E2E_PROVIDER: calico
-          KIND_CLUSTER_NAME: kubernaut-kind-calico
-        run: make test-e2e-kind
