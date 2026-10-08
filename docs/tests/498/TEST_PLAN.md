@@ -141,7 +141,7 @@ Every source mode must satisfy all three tiers:
   workloads and webhooks, preserves ownership boundaries, and refuses to claim
   readiness when material is invalid or unavailable. Direct builder tests do
   not satisfy this tier.
-- **E2E (Kind):** production manifests install the operator, a user applies a
+- **E2E (Kind):** the operator Helm chart installs the operator, a user applies a
   real `Kubernaut` CR, and workloads complete a real TLS trust/identity journey.
   The lane must observe readiness, usable workload trust, webhook behavior,
   source-specific ownership, rotation/failure behavior, and cleanup. E2E tests
@@ -192,7 +192,7 @@ evidence exists and the source-specific E2E job actually executes it. Existing
 #491 tests may satisfy a cell only when their assertions cover the same source
 contract; a test name or shared helper alone is not evidence.
 
-| Scenario ID | Unit evidence (pure logic) | Integration evidence (envtest/reconciler) | E2E evidence (production manifests + Kind) | Required assertions |
+| Scenario ID | Unit evidence (pure logic) | Integration evidence (envtest/reconciler) | E2E evidence (operator Helm chart + Kind) | Required assertions |
 |---|---|---|---|---|
 | `PYR-TLS-DEV-001` Development source | `UT-TLS-DEV-001`: resolves `DevelopmentSelfSigned`, generated ownership, SANs, signing material, and invalid-input behavior | `IT-TLS-DEV-001`: reconciliation creates generated material, trust ConfigMaps, webhook bundles, and `TLSReady` only after validation | `E2E-TLS-DEV-001`: explicit `development` lane applies a real CR, reaches Running, performs a workload TLS probe, and removes owned objects | No plaintext fallback; generated objects are Kubernaut-owned; cleanup is source-specific |
 | `PYR-TLS-HOOK-001` Hook readiness and ownership | `UT-TLS-491-002`, `UT-TLS-491-003`, plus hook ownership assertions | `IT-TLS-HOOK-001`: real reconciler path publishes hook trust/webhook/signing material and status | `E2E-TLS-HOOK-001`: `spec.tls.mode=hook`, real CA/SAN probe, non-empty webhook bundles, and owner-reference checks | The fixture must not select development mode |
@@ -253,7 +253,7 @@ Add failing tests before production wiring:
 - Add `kind-hook` and `kind-manual-admin` workflow jobs.
 - Set the existing generic lane's selector explicitly to `development` so its
   meaning is not inferred from an empty environment variable.
-- Wire each scenario through the real production-manifest install and
+- Wire each scenario through the real operator Helm-chart install and
   reconciliation journey (CHECKPOINT W).
 
 Implementation evidence currently being assembled is present in
@@ -308,7 +308,7 @@ following:
 5. No E2E test uses `Skip`, `XIt`, `PIt`, or a missing-source early return that
    can hide an unconfigured lane.
 
-The live job then proves the final tier: production manifests are installed,
+The live job then proves the final tier: the operator Helm chart is installed,
 the CR is applied through the Kubernetes API, the reconciler reaches the
 expected status, and a real workload trust/identity probe succeeds.
 

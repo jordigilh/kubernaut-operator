@@ -57,12 +57,14 @@ jobs:
           echo "Pushing ${IMAGE}..."
           podman push "${IMAGE}"
           echo ""
-          echo "## Preview image ready" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "${IMAGE}" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Deploy with:" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "make deploy IMG=${IMAGE}" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Preview image ready"
+            echo '```'
+            echo "${IMAGE}"
+            echo '```'
+            echo ""
+            echo "Deploy with the operator Helm chart:"
+            echo '```bash'
+            echo "helm install kubernaut-operator ./charts/kubernaut-operator --namespace kubernaut-operator-system --create-namespace --set-string image.repository=${IMAGE%:*} --set-string image.tag=${IMAGE##*:} --wait"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"

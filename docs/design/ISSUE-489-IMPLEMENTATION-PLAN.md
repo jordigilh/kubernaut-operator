@@ -52,7 +52,7 @@ prerequisites referenced by the user-applied CR.
 | `internal/resources/crds.go` | `EnsureCRDs` reads shared application CRDs from `kubernaut/pkg/shared/assets` during the operator's migration phase. | The chart must not package those runtime application CRDs. The chart owns only `kubernauts.kubernaut.ai`; the operator/runtime path owns the post-CR application CRDs. |
 | `config/rbac/role.yaml` | The generated manager ClusterRole includes core, optional OpenShift, cert-manager, monitoring, Cilium, Calico, OVN, SPIRE, Kagenti, and `discovery.k8s.io/endpointslices` rules. | Chart RBAC must be sourced from the current generated contract, including the new EndpointSlice watch permission, without adding hook privileges. |
 | `Makefile` and `.github/workflows/test.yml` | `make manifests generate`, independent unit/integration coverage, security traceability, CI-boundary, and test-pyramid checks are established. | Chart checks must extend these gates without collapsing the existing tiers or changing OLM/Kustomize generation semantics. |
-| `test/e2e/kind/` | The existing Kind suite installs the operator through Kustomize and separately exercises runtime TLS/provider lanes. | Add a separate Helm bootstrap lane; do not reinterpret the existing Kustomize E2E as Helm evidence. |
+| `test/e2e/kind/` | The Kind suite exercises runtime TLS/provider lanes and must use the production operator installation contract. | Install the operator through the repository Helm chart in every Kind CI lane; keep the runtime TLS/provider assertions unchanged. |
 
 The current `origin/main` delta also adds native monitoring policy resolution,
 EndpointSlice watches, and the corresponding RBAC rule. Any chart ClusterRole
@@ -665,6 +665,12 @@ follows:
    applies a `Kubernaut` CR.
 8. **Harness:** use Ginkgo render tests, Helm v3.17.3 in CI, and a dedicated
    Kind journey; local validation additionally exercised Helm 4.1.1.
+9. **Kind CI deployment:** every operator installation in the Kind CI/CD lanes
+   uses the repository Helm chart, including the generic, hook, manual,
+   cert-manager, Cilium, Calico, and release contract journeys. OpenShift is
+   outside the CI/CD Kind scope and continues to use its OLM installation
+   path; repository Kustomize artifacts remain available but are not used to
+   deploy the operator in Kind CI.
 
 Implementation evidence now includes the chart render suite, source-sync checks,
 `make test`, `make lint`, a release-gated operator-only Helm Kind journey,

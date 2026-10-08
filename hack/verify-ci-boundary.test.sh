@@ -37,12 +37,18 @@ assert_contains() {
 new_fixture() {
   cleanup
   tmp_dir="$(mktemp -d)"
-  mkdir -p "$tmp_dir/.github/workflows" "$tmp_dir/test/e2e/kind/contract" "$tmp_dir/config/kind-e2e"
+  mkdir -p "$tmp_dir/.github/workflows" "$tmp_dir/test/e2e/kind/contract" "$tmp_dir/charts/kubernaut-operator"
   cat > "$tmp_dir/Makefile" <<'EOF'
 KIND_CONTRACT_IMAGE ?= localhost/kubernaut-operator-e2e-contract:test
-test-e2e-kind:
+test-e2e-kind: fmt vet ## Run the isolated Helm-backed operator contract Kind E2E suite.
+	command -v $(HELM_BIN)
 	docker build -f test/e2e/kind/contract/Dockerfile -t $(KIND_CONTRACT_IMAGE) test/e2e/kind/contract
 	KUBERNAUT_E2E_CONTRACT_IMAGE=$(KIND_CONTRACT_IMAGE) go test ./test/e2e/kind/
+EOF
+  cat > "$tmp_dir/charts/kubernaut-operator/Chart.yaml" <<'EOF'
+apiVersion: v2
+name: kubernaut-operator
+version: 0.0.0
 EOF
   cat > "$tmp_dir/.github/workflows/test.yml" <<'EOF'
 name: Tests
@@ -59,6 +65,11 @@ func kubernautCR() {
 }
 EOF
   cat > "$tmp_dir/test/e2e/kind/cluster.go" <<'EOF'
+func installOperator() {
+	_ = helmInCluster("install", "kubernaut-operator", operatorChartPath())
+	_ = "webhook.tls.mode=development"
+}
+
 func loadInfrastructureImages() {
 	_ = contractImage()
 }
@@ -133,6 +144,18 @@ EOF
   run_boundary
   assert_exit "$LAST_EXIT" 1
   assert_contains "$LAST_OUTPUT" "upstream CI invocation"
+}
+
+test_CI_501_BOUNDARY_007_rejects_kind_kustomize_operator_install() {
+  new_fixture
+  cat >> "$tmp_dir/test/e2e/kind/cluster.go" <<'EOF'
+func legacyInstall() {
+	_ = "kustomize build config/kind-e2e"
+}
+EOF
+  run_boundary
+  assert_exit "$LAST_EXIT" 1
+  assert_contains "$LAST_OUTPUT" "Kind operator installation must not use Kustomize"
 }
 
 for test_name in $(declare -F | awk '{print $3}' | grep '^test_'); do

@@ -64,9 +64,24 @@ scan_forbidden() {
 workflow_root="$repo_root/.github/workflows"
 require_file ".github/workflows/test.yml" "operator test workflow"
 require_file "Makefile" "operator Makefile"
+require_file "charts/kubernaut-operator/Chart.yaml" "operator Helm chart"
 require_file "test/e2e/kind/contract/Dockerfile" "contract fixture"
 require_file "test/e2e/kind/journey.go" "Kind contract journey"
 require_file "test/e2e/kind/cluster.go" "Kind image-loading harness"
+
+require_text "Makefile" '^test-e2e-kind: fmt vet .*Helm-backed operator contract Kind E2E suite' \
+  "Kind E2E target must use the operator Helm chart"
+require_text "Makefile" 'command -v \$\(HELM_BIN\)' \
+  "Kind E2E target must require Helm"
+require_text "test/e2e/kind/cluster.go" '"install", "kubernaut-operator", operatorChartPath\(\)' \
+  "Kind harness must install the operator Helm chart"
+require_text "test/e2e/kind/cluster.go" 'webhook\.tls\.mode=development' \
+  "Kind harness must select a chart TLS profile"
+
+scan_forbidden \
+  '(kustomizeBinary|KUSTOMIZE_BIN|config/kind-e2e|kustomize[[:space:]]+build)' \
+  "Kind operator installation must not use Kustomize" \
+  "$repo_root/test/e2e/kind"
 
 # These patterns are intentionally scoped to workflow files, the Kind harness,
 # and Makefile. Production manager defaults may legitimately contain operand
