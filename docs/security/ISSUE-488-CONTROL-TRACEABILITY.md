@@ -36,9 +36,9 @@ The versioned ASVS source is the official `v5.0.0` CSV:
 |---|---|
 | `UT-*` | Ginkgo resource/webhook/policy unit tests; no API server |
 | `IT-*` | Ginkgo controller tests using envtest or a fake client at the controller seam |
-| `E2E-*` | Real production-manifest Kind journey; the cert-manager ID is executed with `KUBERNAUT_E2E_TLS_SOURCE=certmanager` and pinned cert-manager `v1.20.2` |
+| `E2E-*` | Real operator Helm-chart Kind journey; the cert-manager ID is executed with `KUBERNAUT_E2E_TLS_SOURCE=certmanager` and pinned cert-manager `v1.20.2` |
 | `CI-*` | Repository workflow, generated-artifact, lint, SBOM, or vulnerability-scan evidence |
-| `HELM-*` | Helm render/schema tests and the pinned Helm v3.17.3 operator-only Kind lifecycle, including TLS, RBAC, disconnected, conflict, upgrade, uninstall, and reinstall assertions |
+| `HELM-*` | Helm render/schema tests and the pinned Helm v4.3.0 operator-only Kind lifecycle, including TLS, RBAC, disconnected, conflict, upgrade, uninstall, and reinstall assertions |
 
 ## NIST SP 800-53 Rev. 5 / FedRAMP-oriented objectives
 

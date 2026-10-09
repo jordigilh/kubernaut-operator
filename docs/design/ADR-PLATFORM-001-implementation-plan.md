@@ -20,7 +20,7 @@ The initiative is complete only when all of the following are true:
 5. Unsupported, ambiguous, inactive, or out-of-range providers render no provider policy resources and produce actionable status/events.
 6. No provider adapter installs CRDs/operators, uses static API-server CIDRs, or falls back to raw Kubernetes `NetworkPolicy`.
 7. `v1alpha2` is the only CRD version in the redesigned API; no conversion webhook or v1alpha1 reconcile path remains.
-8. The current OLM/Kustomize installation bootstraps the operator and CRD boundary, never creates a `Kubernaut` CR, and does not compete with the operator for managed workload ownership; a dedicated operator Helm chart is deferred.
+8. The OLM/Kustomize installation and the operator-only Helm chart bootstrap the operator and CRD boundary, never create a `Kubernaut` CR, and do not compete with the operator for managed workload ownership; Helm is the supported generic-Kubernetes/Kind path and OLM remains the OpenShift production path.
 9. The separate `kubernaut-dependencies` chart is explicitly limited to non-production testing, demos, and CI; it is not required by, or a dependency of, the current production installation.
 10. Generic Kubernetes and Kind can select an approved certificate source for the manager webhook, managed AuthWebhook, inter-service leaves/trust, and external Ingress without OpenShift annotations or fixed OpenShift ConfigMaps.
 11. Certificate rotation, webhook `caBundle` publication, trust-bundle readiness, and certificate-source failures are observable and never silently downgrade required TLS to plaintext.
@@ -42,7 +42,7 @@ The initiative is complete only when all of the following are true:
 | Monitoring | OCP Thanos/AlertManager defaults and optional `monitoring.coreos.com` resources | Explicit endpoints and capability-gated ServiceMonitor/PrometheusRule/AlertmanagerConfig |
 | Policy | `internal/resources/networkpolicies.go` emits raw NetworkPolicy and API-server CIDRs | Common policy intent plus Cilium, Calico, and OVN adapters; no raw fallback |
 | RBAC | Core generated RBAC includes Route, OCP config, monitoring, and raw NetworkPolicy permissions | Split core and optional integration permissions; add exact provider GVK verbs |
-| Packaging | OLM/Kustomize only; no dedicated operator Helm chart | Keep current artifacts; add chart, ownership tests, chart lint/template tests, and clean-install docs in a follow-up |
+| Packaging | OLM/Kustomize plus the operator-only Helm bootstrap chart | Keep OLM/Kustomize artifacts; Helm owns generic Kubernetes/Kind bootstrap with chart ownership tests, lint/template tests, and clean-install evidence |
 | Tests | OCP-heavy integration/E2E and Calico-specific enforcement | Add plain Kind, capability fixtures, provider rendering, and separate live enforcement lanes |
 
 ### Required preflight checks
@@ -77,7 +77,7 @@ separation must not:
 
 | Artifact | Generic source modes | Owner and readiness proof |
 |---|---|---|
-| Operator manager serving Secret and bootstrap webhook CA | Administrator-managed, cert-manager, explicit development self-signed | OLM/Kustomize owns bootstrap resources; manager starts only with a valid leaf, and the corresponding webhook configuration has the matching CA. A dedicated Helm path is deferred. |
+| Operator manager serving Secret and bootstrap webhook CA | Administrator-managed, cert-manager, explicit development self-signed | OLM/Kustomize owns the OpenShift/compatibility bootstrap paths and the operator-only Helm chart owns generic Kubernetes/Kind bootstrap; manager starts only with a valid leaf, and the corresponding webhook configuration has the matching CA. |
 | AuthWebhook serving Secret and mutating/validating `caBundle` | Administrator-managed, cert-manager, explicit development self-signed, or OpenShift service-CA adapter | Operator owns the per-instance runtime objects; tests verify SANs, Secret keys, exact CA bytes, and fail-closed readiness. |
 | Dedicated inter-service CA, leaf Secrets, and public trust ConfigMap | Administrator-managed, cert-manager, explicit development self-signed, or OpenShift service-CA adapter | Operator owns runtime trust artifacts; tests verify every enabled TLS server has a leaf and every client mounts the matching public bundle. |
 | Ingress TLS Secret / Route termination | Administrator-managed or cert-manager; OpenShift router adapter | Exposure adapter references the configured host/Secret and reports unavailable exposure; it does not invent a generic hostname. |
@@ -254,12 +254,13 @@ Each adapter follows the same sequence: fixture-first RED, minimal GREEN rendere
 
 **Integration ID**: `IT-POLICY-LIFECYCLE-001`.
 
-### Phase 6 — Deferred production Helm bootstrap and non-production dependencies chart
+### Phase 6 — Production Helm bootstrap and non-production dependencies chart
 
-The dedicated operator Helm bootstrap chart is deferred and is not part of the
-current release claim. The current installation path remains OLM/Kustomize;
-the checks below are the follow-up acceptance contract, not completion gates
-for this work.
+The operator-only Helm bootstrap chart is implemented under Issue #489 and is
+the supported generic Kubernetes/Kind installation path. OLM remains the
+OpenShift production path, and Kustomize remains available for compatibility
+and development workflows. The checks below are the chart acceptance contract;
+they do not transfer application workload ownership from the operator.
 
 **RED**
 
@@ -275,11 +276,11 @@ for this work.
 
 **GREEN/REFACTOR**
 
-- When the follow-up starts, add the `kubernaut-operator` chart with image registry/pull-secret/operator bootstrap values.
+- Add and maintain the `kubernaut-operator` chart with image registry/pull-secret/operator bootstrap values.
 - Add the separate `kubernaut-dependencies` chart for testing, demos, and CI only, with explicit non-production documentation and no production-readiness claim.
 - Add CRD installation and document the separate user/GitOps CR application step; do not add chart values or templates that construct application configuration.
 - Add bootstrap certificate resources only for the operator manager path; delegate per-instance AuthWebhook/inter-service certificate reconciliation to the operator or the explicitly selected certificate provider.
-- Add chart CI and Make targets without removing OLM/Kustomize paths.
+- Keep chart CI and Make targets gated before image publication without removing OLM/Kustomize paths.
 - Add explicit ownership labels and conflict detection.
 
 **Integration ID**: `IT-HELM-BOOTSTRAP-001`.

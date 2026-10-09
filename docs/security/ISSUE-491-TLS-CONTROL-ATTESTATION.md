@@ -64,7 +64,7 @@ The ASVS source is the versioned official CSV:
 
 ## Issue #498 dedicated Kind-lane evidence
 
-Issue #498 extends the #491 repository contract with production-manifest Kind
+Issue #498 extends the #491 repository contract with Helm-backed Kind
 journeys for every generic TLS source. The status below is intentionally
 `partially verified` until the hosted #498 jobs execute; local unit and
 integration evidence does not substitute for that runtime evidence.

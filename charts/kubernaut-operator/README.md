@@ -162,7 +162,7 @@ make test-e2e-kind-helm
 
 Set `KUBERNAUT_HELM_E2E_TLS_PROFILE=manual` or `certmanager` to exercise the
 administrator-managed or cert-manager profile in the same journey. CI runs the
-development, manual, cert-manager, and disconnected profiles with Helm v3.17.3.
+development, manual, cert-manager, and disconnected profiles with Helm v4.3.0.
 
 ## OpenShift security defaults
 

@@ -877,9 +877,10 @@ image lanes:
 4. Do not pull or deploy full Kubernaut application images in this repository.
    Full application lifecycle and Fleet compatibility are qualified by the
    upstream workflow against the exact operator SHA under #501.
-5. Validate the operator through current Kustomize/OLM production manifests;
-   when the future operator Helm chart exists, it must install the operator
-   only and expose no second Fleet configuration API.
+5. Validate the operator through the operator-only Helm chart on generic
+   Kubernetes/Kind and through OLM on OpenShift; Kustomize remains available
+   for compatibility. The Helm chart installs the operator only and exposes no
+   second Fleet configuration API.
 
 Update operator-installation, security/TLS, Fleet, and
 `docs/upgrade-v1alpha1-to-v1alpha2.md` guidance. Documentation must state that
