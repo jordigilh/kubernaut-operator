@@ -2304,13 +2304,39 @@ func (r *KubernautReconciler) deployMonitoring(ctx context.Context, kn *kubernau
 		resources.WorkflowExecutionServiceMonitor(kn),
 		resources.EffectivenessMonitorServiceMonitor(kn),
 		resources.NotificationServiceMonitor(kn),
-		resources.AuthWebhookServiceMonitor(kn),
 	}
 	for _, sm := range componentMonitors {
 		if err := r.ensureNamespaced(ctx, kn, sm); err != nil {
 			return fmt.Errorf("ensuring %s ServiceMonitor: %w", sm.Name, err)
 		}
 	}
+	if err := r.pruneLegacyAuthWebhookServiceMonitor(ctx, kn); err != nil {
+		return err
+	}
+	return nil
+}
+
+// pruneLegacyAuthWebhookServiceMonitor removes the ServiceMonitor rendered by
+// older releases even though AuthWebhook does not expose a metrics endpoint.
+// Only an object controlled by this Kubernaut is eligible for deletion; a
+// same-named user-owned object must remain untouched.
+func (r *KubernautReconciler) pruneLegacyAuthWebhookServiceMonitor(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	const legacyName = "authwebhook-monitor"
+	legacy := &monitoringv1.ServiceMonitor{}
+	key := client.ObjectKey{Namespace: kn.Namespace, Name: legacyName}
+	if err := r.Get(ctx, key, legacy); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("getting legacy AuthWebhook ServiceMonitor: %w", err)
+	}
+	if !metav1.IsControlledBy(legacy, kn) {
+		return nil
+	}
+	if err := r.deleteIfExists(ctx, legacy); err != nil {
+		return fmt.Errorf("deleting legacy AuthWebhook ServiceMonitor: %w", err)
+	}
+	logf.FromContext(ctx).Info("pruned legacy AuthWebhook ServiceMonitor", "name", legacyName, "namespace", kn.Namespace)
 	return nil
 }
 

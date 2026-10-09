@@ -412,11 +412,6 @@ func NotificationServiceMonitor(kn *kubernautv1alpha2.Kubernaut) *monitoringv1.S
 	return componentServiceMonitor(kn, ComponentNotification, "notification")
 }
 
-// AuthWebhookServiceMonitor builds the ServiceMonitor for the authwebhook service.
-func AuthWebhookServiceMonitor(kn *kubernautv1alpha2.Kubernaut) *monitoringv1.ServiceMonitor {
-	return componentServiceMonitor(kn, ComponentAuthWebhook, "authwebhook")
-}
-
 func componentServiceMonitor(kn *kubernautv1alpha2.Kubernaut, component, jobName string) *monitoringv1.ServiceMonitor {
 	return &monitoringv1.ServiceMonitor{
 		ObjectMeta: ObjectMeta(kn, component+"-monitor", component),
