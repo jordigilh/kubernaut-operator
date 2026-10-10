@@ -2262,14 +2262,10 @@ func (r *KubernautReconciler) reconcileMonitoringAndAlerts(ctx context.Context, 
 	// cause OpenShift-oriented monitoring objects to be created without a
 	// configured destination.
 	monitoring := r.monitoringConfigView(ctx, knV2).Spec.Monitoring
-	if monitoring.Prometheus.PrometheusEnabled() {
-		serviceMonitorsAvailable := r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com")
-		prometheusRulesAvailable := r.hasCRD(ctx, "prometheusrules.monitoring.coreos.com")
-		if serviceMonitorsAvailable || prometheusRulesAvailable {
-			if err := r.deployMonitoring(ctx, kn, serviceMonitorsAvailable, prometheusRulesAvailable); err != nil {
-				return err
-			}
-		}
+	serviceMonitorsAvailable := r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com")
+	prometheusRulesAvailable := r.hasCRD(ctx, "prometheusrules.monitoring.coreos.com")
+	if err := r.reconcilePrometheusMonitoring(ctx, kn, monitoring.Prometheus.PrometheusEnabled(), serviceMonitorsAvailable, prometheusRulesAvailable); err != nil {
+		return err
 	}
 	if kn.Spec.GatewayEnabled() && monitoring.AlertManager.AlertManagerEnabled() {
 		if amCfg := resources.GatewayAlertManagerConfig(kn); amCfg != nil && r.hasCRD(ctx, "alertmanagerconfigs.monitoring.coreos.com") {
@@ -2279,6 +2275,22 @@ func (r *KubernautReconciler) reconcileMonitoringAndAlerts(ctx context.Context, 
 		}
 	}
 	return nil
+}
+
+func (r *KubernautReconciler) reconcilePrometheusMonitoring(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, prometheusEnabled, serviceMonitorsAvailable, prometheusRulesAvailable bool) error {
+	if !prometheusEnabled {
+		if !serviceMonitorsAvailable {
+			return nil
+		}
+		// Cleanup is an upgrade obligation, not a provisioning side effect:
+		// disabling Prometheus must still remove the operator-owned legacy
+		// AuthWebhook monitor while preserving user-owned objects.
+		return r.pruneLegacyAuthWebhookServiceMonitor(ctx, kn)
+	}
+	if !serviceMonitorsAvailable && !prometheusRulesAvailable {
+		return nil
+	}
+	return r.deployMonitoring(ctx, kn, serviceMonitorsAvailable, prometheusRulesAvailable)
 }
 
 func (r *KubernautReconciler) deployMonitoring(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, serviceMonitorsAvailable, prometheusRulesAvailable bool) error {
@@ -2298,14 +2310,18 @@ func (r *KubernautReconciler) deployMonitoring(ctx context.Context, kn *kubernau
 	componentMonitors := []*monitoringv1.ServiceMonitor{
 		resources.DataStorageServiceMonitor(kn),
 		resources.KubernautAgentServiceMonitor(kn),
-		resources.GatewayServiceMonitor(kn),
+	}
+	if kn.Spec.GatewayEnabled() {
+		componentMonitors = append(componentMonitors, resources.GatewayServiceMonitor(kn))
+	}
+	componentMonitors = append(componentMonitors,
 		resources.AIAnalysisServiceMonitor(kn),
 		resources.SignalProcessingServiceMonitor(kn),
 		resources.RemediationOrchestratorServiceMonitor(kn),
 		resources.WorkflowExecutionServiceMonitor(kn),
 		resources.EffectivenessMonitorServiceMonitor(kn),
 		resources.NotificationServiceMonitor(kn),
-	}
+	)
 	for _, sm := range componentMonitors {
 		if err := r.ensureNamespaced(ctx, kn, sm); err != nil {
 			return fmt.Errorf("ensuring %s ServiceMonitor: %w", sm.Name, err)
@@ -2337,7 +2353,13 @@ func (r *KubernautReconciler) pruneLegacyAuthWebhookServiceMonitor(ctx context.C
 	if err := r.deleteIfExists(ctx, legacy); err != nil {
 		return fmt.Errorf("deleting legacy AuthWebhook ServiceMonitor: %w", err)
 	}
-	logf.FromContext(ctx).Info("pruned legacy AuthWebhook ServiceMonitor", "name", legacyName, "namespace", kn.Namespace)
+	logf.FromContext(ctx).Info("pruned legacy AuthWebhook ServiceMonitor",
+		"kind", "ServiceMonitor",
+		"name", legacyName,
+		"namespace", kn.Namespace,
+		"generation", legacy.GetGeneration(),
+		"resourceVersion", legacy.GetResourceVersion(),
+	)
 	return nil
 }
 

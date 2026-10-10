@@ -4,8 +4,8 @@
 
 **Date:** 2026-10-09
 
-**Status:** Implementation and fleet Kind qualification complete; upstream
-Helm-to-operator lane migration remains pending
+**Status:** Implementation, envtest reconciliation, and fleet Kind
+qualification complete; upstream Helm-to-operator lane migration remains pending
 
 **Methodology:** RED → GREEN → REFACTOR → CHECK
 
@@ -44,6 +44,11 @@ Kubernetes whenever the Prometheus Operator `ServiceMonitor` API is installed.
 | Integration | `IT-MON-513-003` | `internal/controller/monitoring_wiring_integration_test.go` | Operator-owned legacy AuthWebhook monitor is removed. |
 | Integration | `IT-MON-513-004` | `internal/controller/monitoring_wiring_integration_test.go` | User-owned same-named monitor is preserved. |
 | Integration | `IT-MON-513-005` | `internal/controller/monitoring_wiring_integration_test.go` | APIFrontend monitor/rule wiring follows CRD discovery. |
+| Integration | `IT-MON-513-006` | `internal/controller/monitoring_wiring_integration_test.go` | Gateway-disabled reconciliation does not create a Gateway ServiceMonitor. |
+| Integration | `IT-MON-513-007` | `internal/controller/monitoring_wiring_integration_test.go` | Legacy cleanup records kind, name, namespace, generation, and resourceVersion. |
+| Integration | `IT-MON-513-008` | `internal/controller/monitoring_wiring_integration_test.go` | Real reconciliation with Gateway disabled produces no orphan Gateway monitor. |
+| Integration | `IT-MON-513-009` | `internal/controller/monitoring_wiring_integration_test.go` | Real reconciliation prunes an owned legacy monitor when Prometheus is disabled. |
+| Integration | `IT-MON-513-010` | `internal/controller/monitoring_wiring_integration_test.go` | Real reconciliation reaches Running when optional monitoring CRDs are unavailable. |
 | Live Kind | `E2E-MON-513-001` | Fleet Kind qualification on `helios08` | Real API discovery and rendered Service/ServiceMonitor contract. **Verified.** |
 | Upstream E2E | `E2E-FP/FLEET-MON-513-001` | Future operator-backed upstream FP/Fleet lanes | Full application journeys after the Helm-to-operator replacement. **Pending lane migration.** |
 
@@ -90,7 +95,28 @@ was preserved on the hub run.
 The temporary namespaces, operator releases, CRs, and CRD were removed after
 verification. The pre-existing Helm workloads remained present.
 
-## 6. Verification commands
+## 6. Reproducible live-contract checker
+
+The fleet qualification is reproducible with the repository checker below. It
+reads only the selected namespace and validates operator-owned ServiceMonitor
+selectors, named endpoint ports, Service target ports, and Deployment container
+ports. Optional expected counts make the hub/remote qualification assertions
+fail closed rather than relying on a manually transcribed output line.
+
+```bash
+EXPECTED_MONITORS=9 EXPECTED_OPERATOR_SERVICES=10 \
+  hack/verify-monitoring-contract.sh kubernaut-hub-issue-513
+
+EXPECTED_MONITORS=10 EXPECTED_OPERATOR_SERVICES=11 \
+  hack/verify-monitoring-contract.sh kubernaut-remote-cluster-issue-513
+```
+
+The expected output is `LIVE_MONITORING_CONTRACT_PASS` with the observed
+monitor and Service counts. Set `KUBECTL_CONTEXT` when the namespace is on a
+named context. The checker requires `kubectl` and `jq`; it does not mutate the
+cluster.
+
+## 7. Verification commands
 
 ```bash
 go test ./internal/resources ./internal/controller -timeout 15m
@@ -100,5 +126,7 @@ make test
 make manifests generate
 ```
 
-The issue does not change the CRD schema, so manifest generation must produce no
+`make test-unit` additionally enforces 100% unit coverage for the changed
+business entry points through `hack/verify-business-unit-coverage.sh`. The
+issue does not change the CRD schema, so manifest generation must produce no
 unrelated CRD diff.

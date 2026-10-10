@@ -39,7 +39,7 @@ jobs:
         run: make test
 
       - name: Shellcheck hack/ scripts
-        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/validate-security-traceability.sh hack/test-helm-openshift.sh hack/verify-helm-chart.sh hack/verify-test-pyramid.sh hack/verify-ci-boundary.sh hack/verify-ci-boundary.test.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
+        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/validate-security-traceability.sh hack/test-helm-openshift.sh hack/verify-helm-chart.sh hack/verify-test-pyramid.sh hack/verify-business-unit-coverage.sh hack/verify-monitoring-contract.sh hack/verify-ci-boundary.sh hack/verify-ci-boundary.test.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
 
       - name: Run hack/ script tests
         run: make test-hack-scripts

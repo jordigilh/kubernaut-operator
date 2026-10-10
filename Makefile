@@ -136,6 +136,7 @@ test-unit: fmt vet ## Run unit tests (no envtest, no API server).
 		if awk -v coverage="$${coverage}" -v threshold="$(UNIT_COVERAGE_THRESHOLD)" 'BEGIN { exit !(coverage < threshold) }'; then \
 			echo "Internal unit coverage is below the $(UNIT_COVERAGE_THRESHOLD)% threshold"; exit 1; \
 		fi
+	@./hack/verify-business-unit-coverage.sh cover-unit-internal-final.out
 
 # Integration-test packages that DO need envtest (controller reconciler).
 IT_PKGS := ./internal/controller/...

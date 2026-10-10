@@ -147,6 +147,35 @@ var _ = Describe("Services", func() {
 			Fail("data-storage-service not found")
 		})
 
+		It("uses configured APIFrontend health and metrics Service ports", func() {
+			kn := testKubernautWithAF()
+			metricsPort := int32(19090)
+			healthPort := int32(19081)
+			kn.Spec.APIFrontend.MetricsPort = &metricsPort
+			kn.Spec.APIFrontend.HealthPort = &healthPort
+
+			var apifrontend *corev1.Service
+			for _, service := range Services(kn, testKnV2(kn)) {
+				if service.Name == "apifrontend" {
+					apifrontend = service
+					break
+				}
+			}
+			Expect(apifrontend).NotTo(BeNil())
+			Expect(apifrontend.Spec.Ports).To(ContainElements(
+				HaveField("Name", "metrics"),
+				HaveField("Name", "health"),
+			))
+			Expect(apifrontend.Spec.Ports).To(ContainElement(And(
+				HaveField("Name", "metrics"),
+				HaveField("Port", metricsPort),
+			)))
+			Expect(apifrontend.Spec.Ports).To(ContainElement(And(
+				HaveField("Name", "health"),
+				HaveField("Port", healthPort),
+			)))
+		})
+
 		It("UT-MON-513-004 [CM-8, SI-4]: routes every generated Service port to a declared workload container port", func() {
 			kn := testKubernautWithAF()
 			services := append(Services(kn, testKnV2(kn)), MetricsServices(kn)...)
