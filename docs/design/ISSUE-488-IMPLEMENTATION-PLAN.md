@@ -7,7 +7,8 @@
 **Status:** Core clean-break, platform-capability, TLS/exposure, monitoring,
 native-policy, RBAC, packaging, and generic/Cilium/Calico Kind qualification are
 complete on the working branch. Live OpenShift qualification is explicitly
-deferred; the dedicated operator Helm bootstrap chart is a separate follow-up.
+deferred; operator Helm bootstrap is owned and evidenced separately under Issue
+#489 without duplicating its lifecycle coverage here.
 
 **Methodology:** RED → GREEN → REFACTOR, with controller wiring verified in
 GREEN and the full unit/integration/E2E pyramid required before completion.
@@ -212,14 +213,16 @@ Calico profiles. OVN remains an OpenShift-only qualification lane; upstream
 OVN-Kubernetes on Kind is not added without a separate provider-contract
 decision.
 
-The three isolated Kind lanes are implemented in `test/e2e/kind/` and run as
-independent jobs in `.github/workflows/test.yml`, without a `needs` dependency
-on the unit/integration job. The generic lane verifies fail-closed provider
-detection and the absence of raw fallback policies; the Cilium and Calico
-lanes install pinned providers, discover their live APIs, submit the native
-rendered policy, probe allow/deny enforcement, and clean up managed objects.
-The cleanup scenario also leaves a differently owned provider-native object in
-place to verify ownership filtering.
+The isolated Kind lanes are implemented in `test/e2e/kind/` and run as a
+matrix in `.github/workflows/test.yml` after the unit/integration job builds a
+single operator image artifact. Every lane loads that same image, so the
+generic, TLS, Cilium, and Calico results qualify one operator build rather than
+silently testing per-lane rebuilds. The generic lane verifies fail-closed
+provider detection and the absence of raw fallback policies; the Cilium and
+Calico lanes install pinned providers, discover their live APIs, submit the
+native rendered policy, probe allow/deny enforcement, and clean up managed
+objects. The cleanup scenario also leaves a differently owned provider-native
+object in place to verify ownership filtering.
 
 ## 5. Wiring manifest
 

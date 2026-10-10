@@ -64,7 +64,7 @@ The ASVS source is the versioned official CSV:
 
 ## Issue #498 dedicated Kind-lane evidence
 
-Issue #498 extends the #491 repository contract with production-manifest Kind
+Issue #498 extends the #491 repository contract with Helm-backed Kind
 journeys for every generic TLS source. The status below is intentionally
 `partially verified` until the hosted #498 jobs execute; local unit and
 integration evidence does not substitute for that runtime evidence.
@@ -103,7 +103,7 @@ The control assertions are wired through these production entry points:
 |---|---|---|
 | Unit | Resource builders and pure TLS policy validate shapes, defaults, ownership, SANs, algorithms, paths, and failure behavior without an API server. | `internal/resources/tls_test.go`; `internal/resources/tls_certmanager_test.go`; `internal/resources/webhooks_test.go`; `make test-unit` |
 | Integration | Controller seams exercise source validation, manual preservation, cert-manager resource ownership/readiness, webhook behavior, generic trust publication, and failed rotation. | `internal/controller/tls_source_integration_test.go`; `internal/controller/kubernaut_lifecycle_test.go`; `make test-integration` |
-| E2E | Production manifests are installed, a real Kubernaut CR is reconciled, TLS readiness and webhook trust are observed, cert-manager-owned Secrets and rotation are checked, and finalizer cleanup runs. | `test/e2e/kind/`; `.github/workflows/test.yml`; `make test-e2e-kind` |
+| E2E | The operator Helm chart is installed, a real Kubernaut CR is reconciled, TLS readiness and webhook trust are observed, cert-manager-owned Secrets and rotation are checked, and finalizer cleanup runs. | `test/e2e/kind/`; `.github/workflows/test.yml`; `make test-e2e-kind` |
 | Wiring | Every new resolver/builder has a production caller plus focused unit and controller evidence; no direct policy helper calls are used by E2E. | `hack/verify-test-pyramid.sh`; `make test-pyramid` |
 
 ## Verification record

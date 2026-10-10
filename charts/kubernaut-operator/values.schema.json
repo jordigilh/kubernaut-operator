@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "image": { "$ref": "#/$defs/image" },
+    "relatedImages": {
+      "type": "object",
+      "description": "RELATED_IMAGE references consumed by the operator after a user applies a Kubernaut CR.",
+      "patternProperties": {
+        "^[A-Z][A-Z0-9_]*$": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string", "minLength": 1 },
+        "annotations": { "$ref": "#/$defs/stringMap" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "annotations": { "$ref": "#/$defs/stringMap" }
+          }
+        }
+      }
+    },
+    "webhook": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "annotations": { "$ref": "#/$defs/stringMap" }
+          }
+        },
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "type": "string", "enum": ["development", "manual", "certManager", "openshift"] },
+            "existingSecret": { "type": "string" },
+            "caBundle": { "type": "string" },
+            "development": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "image": { "$ref": "#/$defs/image" },
+                "rotateOnUpgrade": { "type": "boolean" },
+                "validityDays": { "type": "integer", "minimum": 1, "maximum": 3650 }
+              }
+            },
+            "certManager": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "issuerRef": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": { "type": "string" },
+                    "kind": { "type": "string", "enum": ["Issuer", "ClusterIssuer"] }
+                  }
+                },
+                "duration": { "type": "string", "minLength": 1 },
+                "renewBefore": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "crd": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "install": { "type": "boolean" } }
+    },
+    "podAnnotations": { "$ref": "#/$defs/stringMap" },
+    "podLabels": { "$ref": "#/$defs/stringMap" },
+    "hostUsers": { "type": ["boolean", "null"] },
+    "nodeSelector": { "$ref": "#/$defs/stringMap" },
+    "tolerations": { "type": "array" },
+    "affinity": { "type": "object" },
+    "priorityClassName": { "type": "string" },
+    "resources": { "type": "object" },
+    "replicas": { "type": "integer", "minimum": 1 }
+  },
+  "$defs": {
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string", "minLength": 1 },
+        "digest": { "type": "string", "pattern": "^(|sha256:[a-f0-9]{64})$" },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
+        "pullSecrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": { "name": { "type": "string", "minLength": 1 } }
+          }
+        }
+      }
+    }
+  }
+}

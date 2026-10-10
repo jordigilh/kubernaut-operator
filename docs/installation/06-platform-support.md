@@ -136,9 +136,12 @@ retain an overlap window or perform a coordinated restart. DataStorage signing
 and audit-HMAC material are integrity keys, not network certificates, and are
 managed as separate prerequisites.
 
-The dedicated operator Helm chart is deferred to a follow-up. The current
-production installation artifacts are the repository's Kustomize/OLM
-manifests; they own the operator manager's serving-certificate prerequisites.
+The dedicated `kubernaut-operator` Helm chart is the supported bootstrap path
+for generic Kubernetes and Kind. OpenShift production installations use the
+OLM bundle and its service-CA integration. The repository's Kustomize
+manifests remain available for compatibility and development workflows; they
+are not used by the Kind CI deployment lanes. These installation paths own the
+operator manager's serving-certificate prerequisites.
 For generated `DevelopmentSelfSigned` and `hook` modes, the operator owns
 per-instance AuthWebhook, inter-service, and runtime trust artifacts once a
 `Kubernaut` instance is reconciled. In `manual` and `AdministratorManaged`
@@ -160,10 +163,11 @@ Missing OpenShift APIs must not prevent the generic operator manager from starti
 
 ## Helm and ownership
 
-The dedicated `kubernaut-operator` Helm chart is deferred to a follow-up and is
-not a supported installation path in this work. The `kubernaut.ai/v1alpha2` CRD
-remains the sole application schema; users or GitOps controllers apply the CR
-separately after installing the current production manifests.
+The `kubernaut-operator` Helm chart installs only operator bootstrap resources;
+it does not create a `Kubernaut` CR or application workloads. The
+`kubernaut.ai/v1alpha2` CRD remains the sole application schema; users or
+GitOps controllers apply the CR separately after installing the Helm chart or
+the OLM package.
 
 The separate `kubernaut-dependencies` chart is an explicitly non-production
 convenience chart for testing, demos, and CI. It may deploy single-replica,
@@ -172,9 +176,10 @@ backup, or upgrade solution and is never installed as a dependency of the
 operator chart. Production users should provide managed PostgreSQL and Valkey
 outside this chart.
 
-The current installation sequence is:
+The installation sequence is:
 
-1. Install the repository's Kustomize/OLM package.
+1. On generic Kubernetes or Kind, install the operator Helm chart. On
+   OpenShift, install the operator through OLM.
 2. Wait for the operator manager and CRD to become ready.
 3. For testing/demo/CI only, optionally install `kubernaut-dependencies`; in
    production, provision managed PostgreSQL and Valkey externally.
@@ -184,9 +189,8 @@ The current installation sequence is:
 6. Observe the operator's status conditions and events as it reconciles the
    application workloads and optional integrations.
 
-The deferred Helm chart, when implemented, must validate bootstrap values only.
-CR validation is performed by the Kubernetes CRD schema and the operator's
-admission/reconciliation paths.
+The Helm chart validates bootstrap values only. CR validation is performed by
+the Kubernetes CRD schema and the operator's admission/reconciliation paths.
 
 Do not use Helm and the operator to manage the same Deployments, Services, ConfigMaps, Secrets, RBAC objects, exposure objects, or policy objects. The initial migration contract is clean install/reinstall; in-place adoption of old Helm-owned workloads requires a separate readiness-gated design.
 
