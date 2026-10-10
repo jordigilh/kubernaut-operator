@@ -1,9 +1,10 @@
 name: Retest Command
 
 # Handles the "/retest" slash command dispatched by slash-command-dispatch.yml.
-# Re-runs the PR's CI checks (Go Lint, Unit & Integration Tests, PR Image
-# Build) against the current head commit -- no empty commit or manual
-# Actions-UI click needed.
+# Re-runs the PR's CI checks (Go Lint and Unit & Integration Tests) against the
+# current head commit -- no empty commit or manual Actions-UI click needed.
+# The tested PR image is published automatically by pr-image.yml after the
+# Tests workflow completes successfully.
 
 on:
   repository_dispatch:
@@ -32,7 +33,7 @@ jobs:
           echo "PR #${PR_NUMBER} head commit: ${HEAD_SHA}"
 
           rerun_any=false
-          for wf in lint.yml test.yml pr-image.yml; do
+          for wf in lint.yml test.yml; do
             run_id=$(gh run list --repo "$REPO" --workflow "$wf" --limit 20 \
               --json databaseId,headSha \
               -q "[.[] | select(.headSha == \"${HEAD_SHA}\")][0].databaseId")
@@ -57,4 +58,4 @@ jobs:
           PR_NUMBER: ${{ github.event.client_payload.pull_request.number }}
         run: |
           gh pr comment "$PR_NUMBER" --repo "$REPO" \
-            --body "🔄 Re-running CI checks (Go Lint, Unit & Integration Tests, PR Image Build) for the latest commit."
+            --body "🔄 Re-running CI checks (Go Lint and Unit & Integration Tests) for the latest commit. The tested PR image will publish after Tests passes."
