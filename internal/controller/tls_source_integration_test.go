@@ -116,6 +116,54 @@ var _ = Describe("runtime TLS source wiring", func() {
 		Expect(trust.Data["ca.crt"]).To(Equal(string(caPEM)))
 	})
 
+	It("IT-TLS-ROTATION-GAP-002 reads development TLS Secrets from the API server during cache lag", func() {
+		ctx := context.Background()
+		kn := newMinimalCR()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeHook}
+		initialTime := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
+		initial, err := resources.DevelopmentSelfSignedTLSSecrets(kn, nil, initialTime)
+		Expect(err).NotTo(HaveOccurred())
+
+		scheme := runtime.NewScheme()
+		Expect(clientgoscheme.AddToScheme(scheme)).To(Succeed())
+		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
+		cachedObjects := make([]runtime.Object, 0, len(initial))
+		apiObjects := make([]runtime.Object, 0, len(initial)-1)
+		for _, secret := range initial {
+			cachedObjects = append(cachedObjects, secret.DeepCopy())
+			if secret.Name != resources.GatewayTLSSecretName {
+				apiObjects = append(apiObjects, secret.DeepCopy())
+			}
+		}
+		initialGateway := &corev1.Secret{}
+		for _, secret := range initial {
+			if secret.Name == resources.GatewayTLSSecretName {
+				initialGateway = secret
+				break
+			}
+		}
+		cachedClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(cachedObjects...).Build()
+		apiReader := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(apiObjects...).Build()
+		r := &KubernautReconciler{
+			Client:    cachedClient,
+			APIReader: apiReader,
+			Scheme:    scheme,
+			Recorder:  events.NewFakeRecorder(100),
+			now:       func() time.Time { return initialTime.Add(time.Minute) },
+		}
+		material, err := resources.ResolveTLSMaterial(kn)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, _, err = r.ensureDevelopmentSelfSignedTLS(ctx, kn, material)
+		Expect(err).NotTo(HaveOccurred())
+
+		gateway := &corev1.Secret{}
+		Expect(cachedClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.GatewayTLSSecretName}, gateway)).To(Succeed())
+		Expect(gateway.Data[corev1.TLSCertKey]).NotTo(Equal(
+			initialGateway.Data[corev1.TLSCertKey],
+		))
+	})
+
 	It("IT-TLS-HOOK-001 [AC-6, SC-8, SC-12, SC-13; SOC2 CC6, CC7, A1; ASVS v5.0.0-V11.1.1, v5.0.0-V12.1.1, v5.0.0-V13.2.1] wires hook TLS through the reconciler", func() {
 		ctx := context.Background()
 		kn := newMinimalCR()

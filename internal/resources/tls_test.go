@@ -24,6 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
@@ -352,6 +353,26 @@ var _ = Describe("runtime TLS source", func() {
 			TLSServiceGateway,
 			kn.Namespace,
 		)).To(Succeed(), "the previous leaf must remain trusted after failed rotation reuse")
+	})
+
+	It("UT-TLS-ROTATION-GAP-003 does not reuse a serving Secret that is being deleted", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
+			DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
+		}
+		initialTime := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
+		initial, err := DevelopmentSelfSignedTLSSecrets(kn, nil, initialTime)
+		Expect(err).NotTo(HaveOccurred())
+		existing := secretsByName(initial)
+		deletedAt := metav1.NewTime(initialTime.Add(time.Minute))
+		existing[GatewayTLSSecretName].DeletionTimestamp = &deletedAt
+
+		rotated, err := DevelopmentSelfSignedTLSSecrets(kn, existing, initialTime.Add(2*time.Minute))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(secretsByName(rotated)[GatewayTLSSecretName].Data[corev1.TLSCertKey]).NotTo(Equal(
+			existing[GatewayTLSSecretName].Data[corev1.TLSCertKey],
+		))
 	})
 })
 

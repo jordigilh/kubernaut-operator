@@ -125,10 +125,11 @@ const maxFinalizerAttempts = 20
 // KubernautReconciler reconciles a Kubernaut object.
 type KubernautReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder events.EventRecorder
-	RestCfg  *rest.Config
-	now      func() time.Time
+	Scheme    *runtime.Scheme
+	Recorder  events.EventRecorder
+	RestCfg   *rest.Config
+	APIReader client.Reader
+	now       func() time.Time
 }
 
 // +kubebuilder:rbac:groups=kubernaut.ai,resources=kubernauts,verbs=get;list;watch;create;update;patch;delete
@@ -3434,6 +3435,10 @@ func (r *KubernautReconciler) ensureDevelopmentSelfSignedTLS(
 	kn *kubernautv1alpha2.Kubernaut,
 	material resources.TLSMaterial,
 ) (resources.TLSMaterial, []byte, error) {
+	reader := client.Reader(r.Client)
+	if r.APIReader != nil {
+		reader = r.APIReader
+	}
 	existing := make(map[string]*corev1.Secret, len(material.ServiceTLSSecretNames)+1)
 	names := make([]string, 0, len(material.ServiceTLSSecretNames)+1)
 	names = append(names, material.InternalCASecretName)
@@ -3445,7 +3450,7 @@ func (r *KubernautReconciler) ensureDevelopmentSelfSignedTLS(
 	}
 	for _, name := range names {
 		secret := &corev1.Secret{}
-		err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: name}, secret)
+		err := reader.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: name}, secret)
 		if apierrors.IsNotFound(err) {
 			continue
 		}
@@ -3930,6 +3935,7 @@ func (r *KubernautReconciler) deleteIfExists(ctx context.Context, obj client.Obj
 // owned, so they rely on the periodic requeue timer for drift detection.
 func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorder("kubernaut-controller")
+	r.APIReader = mgr.GetAPIReader()
 	if r.now == nil {
 		r.now = time.Now
 	}
