@@ -38,7 +38,7 @@ var apiServices = []serviceDefinition{
 		[]corev1.ServicePort{ServicePort("https", PortHTTPS), ServicePort("health", PortHealthProbe), ServicePort("metrics", PortMetrics)},
 		nil},
 	{ComponentDataStorage, "data-storage-service",
-		[]corev1.ServicePort{ServicePort("https", PortHTTPS), ServicePort("health", PortHealthProbe)},
+		[]corev1.ServicePort{ServicePort("https", PortHTTPS), ServicePort("metrics", PortMetrics), ServicePort("health", PortHealthProbe)},
 		nil},
 	{ComponentAIAnalysis, "aianalysis-service",
 		[]corev1.ServicePort{ServicePort("https", PortHTTPS), ServicePort("metrics", PortMetrics), ServicePort("health", PortHealthProbe)},

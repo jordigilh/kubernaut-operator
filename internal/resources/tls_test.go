@@ -18,12 +18,15 @@ package resources
 
 import (
 	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
@@ -352,6 +355,89 @@ var _ = Describe("runtime TLS source", func() {
 			TLSServiceGateway,
 			kn.Namespace,
 		)).To(Succeed(), "the previous leaf must remain trusted after failed rotation reuse")
+	})
+
+	It("UT-TLS-ROTATION-GAP-003 does not reuse development TLS material from Secrets being deleted", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
+			DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
+		}
+		initialTime := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
+		initial, err := DevelopmentSelfSignedTLSSecrets(kn, nil, initialTime)
+		Expect(err).NotTo(HaveOccurred())
+
+		for _, testCase := range []struct {
+			name       string
+			secretName string
+			dataKey    string
+		}{
+			{name: "CA", secretName: defaultDevelopmentSelfSignedCASecretName, dataKey: "ca.key"},
+			{name: "serving leaf", secretName: GatewayTLSSecretName, dataKey: corev1.TLSCertKey},
+			{name: "signing certificate", secretName: defaultCertManagerSigningSecretName, dataKey: corev1.TLSCertKey},
+		} {
+			existing := secretsByName(initial)
+			deletedAt := metav1.NewTime(initialTime.Add(time.Minute))
+			existing[testCase.secretName].DeletionTimestamp = &deletedAt
+			previous := append([]byte(nil), existing[testCase.secretName].Data[testCase.dataKey]...)
+
+			rotated, err := DevelopmentSelfSignedTLSSecrets(kn, existing, initialTime.Add(2*time.Minute))
+			Expect(err).NotTo(HaveOccurred(), testCase.name)
+			Expect(secretsByName(rotated)[testCase.secretName].Data[testCase.dataKey]).NotTo(Equal(previous), testCase.name)
+		}
+	})
+
+	It("covers rejected development serving and signing material reuse paths", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
+			DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
+		}
+		now := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
+		generated, err := DevelopmentSelfSignedTLSSecrets(kn, nil, now)
+		Expect(err).NotTo(HaveOccurred())
+		existing := secretsByName(generated)
+		caPEM := existing[defaultDevelopmentSelfSignedCASecretName].Data[tlsCACertificateKey]
+		leaf := existing[GatewayTLSSecretName]
+
+		Expect(reusableDevelopmentLeaf(nil, caPEM, "gateway-service", kn.Namespace, now, defaultDevelopmentTLSRotation, nil)).To(BeFalse())
+		invalidCertificate := leaf.DeepCopy()
+		invalidCertificate.Data[corev1.TLSCertKey] = []byte("invalid")
+		Expect(reusableDevelopmentLeaf(invalidCertificate, caPEM, "gateway-service", kn.Namespace, now, defaultDevelopmentTLSRotation, nil)).To(BeFalse())
+		Expect(reusableDevelopmentLeaf(leaf, caPEM, "gateway-service", kn.Namespace, now.Add(29*24*time.Hour), defaultDevelopmentTLSRotation, nil)).To(BeFalse())
+		invalidKey := leaf.DeepCopy()
+		invalidKey.Data[corev1.TLSPrivateKeyKey] = []byte("invalid")
+		Expect(reusableDevelopmentLeaf(invalidKey, caPEM, "gateway-service", kn.Namespace, now, defaultDevelopmentTLSRotation, nil)).To(BeFalse())
+		mismatchedKey := leaf.DeepCopy()
+		mismatchedKey.Data[corev1.TLSPrivateKeyKey] = existing[DataStorageTLSSecretName].Data[corev1.TLSPrivateKeyKey]
+		Expect(reusableDevelopmentLeaf(mismatchedKey, caPEM, "gateway-service", kn.Namespace, now, defaultDevelopmentTLSRotation, nil)).To(BeFalse())
+		Expect(reusableDevelopmentLeaf(leaf, []byte("invalid"), "gateway-service", kn.Namespace, now, defaultDevelopmentTLSRotation, nil)).To(BeFalse())
+		Expect(reusableDevelopmentLeaf(leaf, caPEM, "not-gateway-service", kn.Namespace, now, defaultDevelopmentTLSRotation, nil)).To(BeFalse())
+
+		signing := existing[defaultCertManagerSigningSecretName]
+		Expect(reusableDevelopmentSigningCertificate(signing, now, defaultDevelopmentTLSRotation)).To(BeTrue())
+		Expect(reusableDevelopmentSigningCertificate(nil, now, defaultDevelopmentTLSRotation)).To(BeFalse())
+		invalidSigningCertificate := signing.DeepCopy()
+		invalidSigningCertificate.Data[corev1.TLSCertKey] = []byte("invalid")
+		Expect(reusableDevelopmentSigningCertificate(invalidSigningCertificate, now, defaultDevelopmentTLSRotation)).To(BeFalse())
+		Expect(reusableDevelopmentSigningCertificate(signing, now.Add(29*24*time.Hour), defaultDevelopmentTLSRotation)).To(BeFalse())
+		invalidSigningKey := signing.DeepCopy()
+		invalidSigningKey.Data[corev1.TLSPrivateKeyKey] = []byte("invalid")
+		Expect(reusableDevelopmentSigningCertificate(invalidSigningKey, now, defaultDevelopmentTLSRotation)).To(BeFalse())
+		//nolint:gosec // an undersized key is intentional here: the production validator must reject it.
+		smallKey, err := rsa.GenerateKey(rand.Reader, 1024)
+		Expect(err).NotTo(HaveOccurred())
+		smallSigningKey := signing.DeepCopy()
+		smallSigningKey.Data[corev1.TLSPrivateKeyKey] = pemEncode("RSA PRIVATE KEY", x509.MarshalPKCS1PrivateKey(smallKey))
+		Expect(reusableDevelopmentSigningCertificate(smallSigningKey, now, defaultDevelopmentTLSRotation)).To(BeFalse())
+		_, alternateSigningKey, err := generateDevelopmentSigningCertificate(now)
+		Expect(err).NotTo(HaveOccurred())
+		mismatchedSigningKey := signing.DeepCopy()
+		mismatchedSigningKey.Data[corev1.TLSPrivateKeyKey] = alternateSigningKey
+		Expect(reusableDevelopmentSigningCertificate(mismatchedSigningKey, now, defaultDevelopmentTLSRotation)).To(BeFalse())
+		ecdsaCertificate := signing.DeepCopy()
+		ecdsaCertificate.Data[corev1.TLSCertKey] = leaf.Data[corev1.TLSCertKey]
+		Expect(reusableDevelopmentSigningCertificate(ecdsaCertificate, now, defaultDevelopmentTLSRotation)).To(BeFalse())
 	})
 })
 

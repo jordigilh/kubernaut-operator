@@ -19,6 +19,9 @@ package resources
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
@@ -125,6 +128,80 @@ var _ = Describe("Services", func() {
 				}
 			}
 			Expect(found).To(BeTrue(), "gateway-service not found")
+		})
+
+		It("UT-MON-513-003 [CM-8, SI-4]: exposes the DataStorage metrics port used by its ServiceMonitor", func() {
+			kn := testKubernaut()
+			for _, svc := range Services(kn, testKnV2(kn)) {
+				if svc.Name != "data-storage-service" {
+					continue
+				}
+				for _, port := range svc.Spec.Ports {
+					if port.Name == "metrics" {
+						Expect(port.Port).To(Equal(PortMetrics))
+						return
+					}
+				}
+				Fail("data-storage-service should expose a named metrics port")
+			}
+			Fail("data-storage-service not found")
+		})
+
+		It("uses configured APIFrontend health and metrics Service ports", func() {
+			kn := testKubernautWithAF()
+			metricsPort := int32(19090)
+			healthPort := int32(19081)
+			kn.Spec.APIFrontend.MetricsPort = &metricsPort
+			kn.Spec.APIFrontend.HealthPort = &healthPort
+
+			var apifrontend *corev1.Service
+			for _, service := range Services(kn, testKnV2(kn)) {
+				if service.Name == "apifrontend" {
+					apifrontend = service
+					break
+				}
+			}
+			Expect(apifrontend).NotTo(BeNil())
+			Expect(apifrontend.Spec.Ports).To(ContainElements(
+				HaveField("Name", "metrics"),
+				HaveField("Name", "health"),
+			))
+			Expect(apifrontend.Spec.Ports).To(ContainElement(And(
+				HaveField("Name", "metrics"),
+				HaveField("Port", metricsPort),
+			)))
+			Expect(apifrontend.Spec.Ports).To(ContainElement(And(
+				HaveField("Name", "health"),
+				HaveField("Port", healthPort),
+			)))
+		})
+
+		It("UT-MON-513-004 [CM-8, SI-4]: routes every generated Service port to a declared workload container port", func() {
+			kn := testKubernautWithAF()
+			services := append(Services(kn, testKnV2(kn)), MetricsServices(kn)...)
+			deployments := generatedDeploymentsByComponent(kn)
+
+			for _, service := range services {
+				component := service.Spec.Selector["app"]
+				deployment, ok := deployments[component]
+				Expect(ok).To(BeTrue(), "Service %q selects component %q without a generated Deployment", service.Name, component)
+
+				for _, servicePort := range service.Spec.Ports {
+					found := false
+					for _, container := range deployment.Spec.Template.Spec.Containers {
+						for _, containerPort := range container.Ports {
+							if servicePortTargetsContainerPort(servicePort, containerPort) {
+								found = true
+								break
+							}
+						}
+						if found {
+							break
+						}
+					}
+					Expect(found).To(BeTrue(), "Service %q port %q must target a declared port on Deployment %q", service.Name, servicePort.Name, deployment.Name)
+				}
+			}
 		})
 
 		It("annotates kubernaut-agent with serving cert secret name", func() {
@@ -243,3 +320,27 @@ var _ = Describe("Services", func() {
 		})
 	})
 })
+
+func generatedDeploymentsByComponent(kn *kubernautv1alpha2.Kubernaut) map[string]*appsv1.Deployment {
+	deployments := getAllDeployments(kn)
+	apiFrontend, err := APIFrontendDeployment(kn, testKnV2(kn))
+	Expect(err).NotTo(HaveOccurred())
+	deployments = append(deployments, apiFrontend)
+
+	byComponent := make(map[string]*appsv1.Deployment, len(deployments))
+	for _, deployment := range deployments {
+		byComponent[deployment.Spec.Template.Labels["app"]] = deployment
+	}
+	return byComponent
+}
+
+func servicePortTargetsContainerPort(servicePort corev1.ServicePort, containerPort corev1.ContainerPort) bool {
+	switch servicePort.TargetPort.Type {
+	case intstr.Int:
+		return servicePort.TargetPort.IntVal == containerPort.ContainerPort
+	case intstr.String:
+		return servicePort.TargetPort.StrVal == containerPort.Name
+	default:
+		return false
+	}
+}

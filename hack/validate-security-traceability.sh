@@ -9,6 +9,7 @@ matrix="${repo_root}/docs/security/ISSUE-488-CONTROL-TRACEABILITY.md"
 tls_matrix="${repo_root}/docs/security/ISSUE-491-TLS-CONTROL-ATTESTATION.md"
 ci_matrix="${repo_root}/docs/design/ISSUE-501-OPERATOR-UPSTREAM-CI-BOUNDARY.md"
 otlp_matrix="${repo_root}/docs/security/ISSUE-478-CONTROL-TRACEABILITY.md"
+monitoring_matrix="${repo_root}/docs/security/ISSUE-513-CONTROL-TRACEABILITY.md"
 
 fail() {
 	echo "security traceability validation failed: $*" >&2
@@ -19,6 +20,7 @@ fail() {
 [[ -f "${tls_matrix}" ]] || fail "missing ${tls_matrix}"
 [[ -f "${ci_matrix}" ]] || fail "missing ${ci_matrix}"
 [[ -f "${otlp_matrix}" ]] || fail "missing ${otlp_matrix}"
+[[ -f "${monitoring_matrix}" ]] || fail "missing ${monitoring_matrix}"
 
 grep -Fq 'NIST SP 800-53 Rev. 5' "${matrix}" || fail "missing NIST SP 800-53 Rev. 5 declaration"
 grep -Fq 'OWASP ASVS 5.0.0' "${matrix}" || fail "missing OWASP ASVS 5.0.0 declaration"
@@ -145,6 +147,7 @@ for test_id in \
 	'IT-TLS-GAP-001' \
 	'IT-TLS-GAP-002' \
 	'IT-TLS-ROTATION-GAP-001' \
+	'IT-TLS-ROTATION-GAP-002' \
 	'IT-TLS-GAP-003' \
 	'E2E-TLS-CERTMANAGER-001' \
 	'E2E-TLS-CERTMANAGER-002' \
@@ -152,6 +155,7 @@ for test_id in \
 	'UT-TLS-498-002' \
 	'UT-TLS-498-003' \
 	'UT-TLS-498-004' \
+	'UT-TLS-ROTATION-GAP-003' \
 	'E2E-TLS-HOOK-001' \
 	'E2E-TLS-HOOK-002' \
 	'E2E-TLS-MANUAL-001' \
@@ -165,5 +169,51 @@ done
 
 grep -Eiq 'does not claim (a )?formal (FedRAMP|SOC 2|OWASP ASVS)' "${tls_matrix}" \
 	|| fail "TLS matrix must state that formal control claims are not made"
+
+# Issue #513 monitoring contract evidence is validated separately from the
+# broader #488 matrix so a generated-resource change cannot silently lose its
+# Service/ServiceMonitor ownership and port evidence.
+grep -Fq 'NIST/FedRAMP' "${monitoring_matrix}" || fail "Issue #513 matrix is missing NIST/FedRAMP scope"
+grep -Fq 'SOC 2' "${monitoring_matrix}" || fail "Issue #513 matrix is missing SOC 2 scope"
+grep -Fq 'OWASP ASVS 5.0.0' "${monitoring_matrix}" || fail "Issue #513 matrix is missing OWASP ASVS scope"
+grep -Eiq 'does not claim formal (FedRAMP|SOC 2|ASVS)' "${monitoring_matrix}" \
+	|| fail "Issue #513 matrix must reject formal control claims"
+for control in AC-6 CM-3 CM-6 CM-8 SI-4 AU-2 AU-3 AU-12; do
+	grep -Eq "(^|[^A-Za-z0-9-])${control}([^A-Za-z0-9-]|$)" "${monitoring_matrix}" \
+		|| fail "Issue #513 matrix is missing NIST/FedRAMP control ${control}"
+done
+for requirement in v5.0.0-V8.2.1 v5.0.0-V8.3.1 v5.0.0-V16.1.1 v5.0.0-V16.2.1 v5.0.0-V16.5.2; do
+	grep -Fq "${requirement}" "${monitoring_matrix}" \
+		|| fail "Issue #513 matrix is missing ASVS requirement ${requirement}"
+done
+for artifact in \
+	'internal/resources/services.go' \
+	'internal/resources/monitoring.go' \
+	'internal/controller/kubernaut_controller.go' \
+	'docs/tests/513/TEST_PLAN.md' \
+	'hack/verify-monitoring-contract.sh' \
+	'hack/verify-business-unit-coverage.sh' \
+	'hack/verify-test-pyramid.sh'; do
+	grep -Fq "${artifact}" "${monitoring_matrix}" || fail "Issue #513 matrix is missing evidence artifact ${artifact}"
+done
+for test_id in \
+	'UT-MON-513-001' \
+	'UT-MON-513-002' \
+	'UT-MON-513-003' \
+	'UT-MON-513-004' \
+	'IT-MON-513-001' \
+	'IT-MON-513-002' \
+	'IT-MON-513-003' \
+	'IT-MON-513-004' \
+	'IT-MON-513-005' \
+	'IT-MON-513-006' \
+	'IT-MON-513-007' \
+	'IT-MON-513-008' \
+	'IT-MON-513-009' \
+	'IT-MON-513-010'; do
+	grep -R -n --include='*_test.go' -F "${test_id}" "${repo_root}/internal" >/dev/null \
+		|| fail "Issue #513 evidence ID ${test_id} has no executable test"
+	grep -Fq "${test_id}" "${monitoring_matrix}" || fail "Issue #513 matrix omits evidence ID ${test_id}"
+done
 
 echo "security traceability validation passed"

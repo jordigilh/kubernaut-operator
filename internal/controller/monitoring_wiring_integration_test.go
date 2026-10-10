@@ -17,20 +17,30 @@ limitations under the License.
 package controller
 
 import (
+	"context"
+
+	"github.com/go-logr/zapr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	routev1 "github.com/openshift/api/route/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
+	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
 var _ = Describe("monitoring reconciliation wiring", func() {
@@ -70,7 +80,7 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 		Expect(hasRoute).To(BeFalse())
 	})
 
-	It("creates rules and service monitors when their APIs are available", func() {
+	It("IT-MON-513-001 [CM-3, CM-6, CM-8, SI-4]: creates rules and service monitors when their APIs are available", func() {
 		scheme := runtime.NewScheme()
 		Expect(corev1.AddToScheme(scheme)).To(Succeed())
 		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
@@ -79,7 +89,7 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 		reconciler := &KubernautReconciler{Client: fakeClient, Scheme: scheme}
 		kn := newMinimalCR()
-		kn.UID = "monitoring-test"
+		kn.UID = types.UID("monitoring-test")
 
 		Expect(reconciler.deployMonitoring(ctx, kn, true, true)).To(Succeed())
 
@@ -89,6 +99,296 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 
 		monitors := &monitoringv1.ServiceMonitorList{}
 		Expect(fakeClient.List(ctx, monitors, client.InNamespace(kn.Namespace))).To(Succeed())
-		Expect(monitors.Items).To(HaveLen(10))
+		Expect(monitors.Items).To(HaveLen(9))
+		Expect(monitors.Items).NotTo(ContainElement(HaveField("Name", "authwebhook-monitor")))
+	})
+
+	It("IT-MON-513-002 [CM-6, CM-8, SI-4]: does not create optional monitoring objects when the ServiceMonitor API is unavailable", func() {
+		scheme := runtime.NewScheme()
+		Expect(corev1.AddToScheme(scheme)).To(Succeed())
+		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
+		Expect(monitoringv1.AddToScheme(scheme)).To(Succeed())
+
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		reconciler := &KubernautReconciler{Client: fakeClient, Scheme: scheme}
+		kn := newMinimalCR()
+		Expect(reconciler.deployMonitoring(ctx, kn, false, false)).To(Succeed())
+
+		monitors := &monitoringv1.ServiceMonitorList{}
+		Expect(fakeClient.List(ctx, monitors, client.InNamespace(kn.Namespace))).To(Succeed())
+		Expect(monitors.Items).To(BeEmpty())
+	})
+
+	It("IT-MON-513-006 [CM-6, CM-8, SI-4]: does not create a Gateway monitor when Gateway is disabled", func() {
+		scheme := runtime.NewScheme()
+		Expect(corev1.AddToScheme(scheme)).To(Succeed())
+		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
+		Expect(monitoringv1.AddToScheme(scheme)).To(Succeed())
+
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		reconciler := &KubernautReconciler{Client: fakeClient, Scheme: scheme}
+		kn := newMinimalCR()
+		kn.Spec.Gateway.Enabled = ptr.To(false)
+
+		Expect(reconciler.deployMonitoring(ctx, kn, true, false)).To(Succeed())
+
+		monitors := &monitoringv1.ServiceMonitorList{}
+		Expect(fakeClient.List(ctx, monitors, client.InNamespace(kn.Namespace))).To(Succeed())
+		Expect(monitors.Items).NotTo(ContainElement(HaveField("Name", "gateway-monitor")))
+	})
+
+	It("IT-MON-513-005 [CM-3, CM-6, CM-8, SI-4]: wires APIFrontend monitoring through optional CRD discovery", func() {
+		scheme := runtime.NewScheme()
+		Expect(corev1.AddToScheme(scheme)).To(Succeed())
+		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
+		Expect(monitoringv1.AddToScheme(scheme)).To(Succeed())
+		Expect(apiextensionsv1.AddToScheme(scheme)).To(Succeed())
+
+		kn := newMinimalCR()
+		kn.UID = types.UID("monitoring-test")
+		serviceMonitorCRD := &apiextensionsv1.CustomResourceDefinition{ObjectMeta: metav1.ObjectMeta{
+			Name: "servicemonitors.monitoring.coreos.com",
+		}}
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(serviceMonitorCRD).Build()
+		reconciler := &KubernautReconciler{Client: fakeClient, Scheme: scheme}
+
+		Expect(reconciler.ensureAPIFrontendMonitoring(ctx, kn)).To(Succeed())
+
+		serviceMonitor := &monitoringv1.ServiceMonitor{}
+		Expect(fakeClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: "apifrontend-monitor"}, serviceMonitor)).To(Succeed())
+		prometheusRule := &monitoringv1.PrometheusRule{}
+		Expect(fakeClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: "apifrontend-rules"}, prometheusRule)).To(Succeed())
+	})
+
+	It("IT-MON-513-003 [AC-6, CM-3, CM-6, CM-8]: removes an operator-owned legacy AuthWebhook monitor", func() {
+		scheme := runtime.NewScheme()
+		Expect(corev1.AddToScheme(scheme)).To(Succeed())
+		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
+		Expect(monitoringv1.AddToScheme(scheme)).To(Succeed())
+
+		kn := newMinimalCR()
+		kn.UID = types.UID("monitoring-test")
+		stale := &monitoringv1.ServiceMonitor{ObjectMeta: metav1.ObjectMeta{
+			Name: "authwebhook-monitor", Namespace: kn.Namespace,
+			Generation: 7, ResourceVersion: "42",
+		}}
+		Expect(resources.SetOwnerReference(kn, stale, scheme)).To(Succeed())
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(stale).Build()
+		reconciler := &KubernautReconciler{Client: fakeClient, Scheme: scheme}
+
+		Expect(reconciler.deployMonitoring(ctx, kn, true, false)).To(Succeed())
+		remaining := &monitoringv1.ServiceMonitor{}
+		err := fakeClient.Get(ctx, client.ObjectKeyFromObject(stale), remaining)
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+	})
+
+	It("IT-MON-513-004 [AC-6, CM-3, CM-6]: preserves a same-named user-owned AuthWebhook monitor", func() {
+		scheme := runtime.NewScheme()
+		Expect(corev1.AddToScheme(scheme)).To(Succeed())
+		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
+		Expect(monitoringv1.AddToScheme(scheme)).To(Succeed())
+
+		kn := newMinimalCR()
+		stale := &monitoringv1.ServiceMonitor{ObjectMeta: metav1.ObjectMeta{
+			Name: "authwebhook-monitor", Namespace: kn.Namespace,
+		}}
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(stale).Build()
+		reconciler := &KubernautReconciler{Client: fakeClient, Scheme: scheme}
+
+		Expect(reconciler.deployMonitoring(ctx, kn, true, false)).To(Succeed())
+		remaining := &monitoringv1.ServiceMonitor{}
+		Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(stale), remaining)).To(Succeed())
+	})
+
+	It("IT-MON-513-007 [AU-2, AU-3, AU-12; ASVS v5.0.0-V16.1.1, v5.0.0-V16.2.1]: records cleanup identity metadata", func() {
+		scheme := runtime.NewScheme()
+		Expect(corev1.AddToScheme(scheme)).To(Succeed())
+		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
+		Expect(monitoringv1.AddToScheme(scheme)).To(Succeed())
+
+		kn := newMinimalCR()
+		kn.UID = types.UID("monitoring-test")
+		stale := &monitoringv1.ServiceMonitor{ObjectMeta: metav1.ObjectMeta{
+			Name: "authwebhook-monitor", Namespace: kn.Namespace,
+		}}
+		Expect(resources.SetOwnerReference(kn, stale, scheme)).To(Succeed())
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(stale).Build()
+		reconciler := &KubernautReconciler{Client: fakeClient, Scheme: scheme}
+		stored := &monitoringv1.ServiceMonitor{}
+		Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(stale), stored)).To(Succeed())
+
+		core, logs := observer.New(zap.InfoLevel)
+		logCtx := logf.IntoContext(ctx, zapr.NewLogger(zap.New(core)))
+		Expect(reconciler.pruneLegacyAuthWebhookServiceMonitor(logCtx, kn)).To(Succeed())
+		Expect(logs.All()).To(HaveLen(1))
+		Expect(logs.All()[0].Message).To(Equal("pruned legacy AuthWebhook ServiceMonitor"))
+		Expect(logs.All()[0].ContextMap()).To(HaveKeyWithValue("kind", "ServiceMonitor"))
+		Expect(logs.All()[0].ContextMap()).To(HaveKeyWithValue("name", "authwebhook-monitor"))
+		Expect(logs.All()[0].ContextMap()).To(HaveKeyWithValue("namespace", kn.Namespace))
+		Expect(logs.All()[0].ContextMap()).To(HaveKeyWithValue("generation", BeEquivalentTo(stored.GetGeneration())))
+		Expect(logs.All()[0].ContextMap()).To(HaveKeyWithValue("resourceVersion", stored.GetResourceVersion()))
+	})
+
+	Describe("envtest reconciliation paths", func() {
+		BeforeEach(func() {
+			installMonitoringCRDs(ctx)
+		})
+		AfterEach(func() {
+			cleanupMonitoringObjects(ctx)
+			cleanupNamespacedResources(ctx)
+			deleteCRIfExists(ctx)
+			deleteBYOSecrets(ctx)
+			cleanupClusterScoped(ctx)
+			deleteMonitoringCRDs(ctx)
+		})
+		It("IT-MON-513-008 [CM-3, CM-6, CM-8, SI-4; ASVS v5.0.0-V16.5.2]: reconciles Gateway-disabled monitoring without an orphan monitor", func() {
+			createBYOSecrets(ctx)
+
+			kn := newMinimalCR()
+			kn.Spec.Gateway.Enabled = ptr.To(false)
+			kn.Spec.APIFrontend.Enabled = ptr.To(false)
+			kn.Spec.Monitoring.Prometheus.URL = "https://prometheus.example.com:9090"
+			kn.Spec.Monitoring.AlertManager.Enabled = ptr.To(false)
+			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			service := &corev1.Service{}
+			err := k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: "gateway-service"}, service)
+			Expect(apierrors.IsNotFound(err)).To(BeTrue(), "Gateway Service must not be rendered when Gateway is disabled")
+			monitors := &monitoringv1.ServiceMonitorList{}
+			Expect(k8sClient.List(ctx, monitors, client.InNamespace(kn.Namespace))).To(Succeed())
+			Expect(monitors.Items).NotTo(ContainElement(HaveField("Name", "gateway-monitor")))
+		})
+
+		It("IT-MON-513-009 [CM-3, CM-6, CM-8, SI-4; ASVS v5.0.0-V16.5.2]: prunes an owned legacy monitor when Prometheus monitoring is disabled", func() {
+			createBYOSecrets(ctx)
+
+			kn := newMinimalCR()
+			kn.Spec.Gateway.Enabled = ptr.To(false)
+			kn.Spec.APIFrontend.Enabled = ptr.To(false)
+			kn.Spec.Monitoring.Prometheus.Enabled = ptr.To(false)
+			kn.Spec.Monitoring.AlertManager.Enabled = ptr.To(false)
+			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
+
+			stale := &monitoringv1.ServiceMonitor{ObjectMeta: metav1.ObjectMeta{
+				Name: "authwebhook-monitor", Namespace: kn.Namespace,
+			}}
+			Expect(resources.SetOwnerReference(kn, stale, k8sClient.Scheme())).To(Succeed())
+			Expect(k8sClient.Create(ctx, stale)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			remaining := &monitoringv1.ServiceMonitor{}
+			err := k8sClient.Get(ctx, client.ObjectKeyFromObject(stale), remaining)
+			Expect(apierrors.IsNotFound(err)).To(BeTrue(), "owned legacy monitor must be removed even when Prometheus is disabled")
+		})
+
+		It("IT-MON-513-010 [CM-6, CM-8, SI-4; ASVS v5.0.0-V16.5.2]: reaches Running through real reconciliation when monitoring CRDs are unavailable", func() {
+			deleteMonitoringCRDs(ctx)
+			createBYOSecrets(ctx)
+
+			kn := newMinimalCR()
+			kn.Spec.Gateway.Enabled = ptr.To(false)
+			kn.Spec.APIFrontend.Enabled = ptr.To(false)
+			kn.Spec.Monitoring.Prometheus.URL = "https://prometheus.example.com:9090"
+			kn.Spec.Monitoring.AlertManager.Enabled = ptr.To(false)
+			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			updated := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), updated)).To(Succeed())
+			Expect(updated.Status.Phase).To(Equal(kubernautv1alpha2.PhaseRunning))
+		})
 	})
 })
+
+func installMonitoringCRDs(ctx context.Context) {
+	for _, crd := range monitoringTestCRDs() {
+		existing := &apiextensionsv1.CustomResourceDefinition{}
+		err := k8sClient.Get(ctx, client.ObjectKeyFromObject(crd), existing)
+		if apierrors.IsNotFound(err) {
+			Expect(k8sClient.Create(ctx, crd)).To(Succeed())
+			continue
+		}
+		Expect(err).NotTo(HaveOccurred())
+	}
+
+	Eventually(func() error {
+		return k8sClient.List(ctx, &monitoringv1.ServiceMonitorList{}, client.InNamespace(testNamespace))
+	}, timeout, interval).Should(Succeed())
+	Eventually(func() error {
+		return k8sClient.List(ctx, &monitoringv1.PrometheusRuleList{}, client.InNamespace(testNamespace))
+	}, timeout, interval).Should(Succeed())
+}
+
+func monitoringTestCRDs() []*apiextensionsv1.CustomResourceDefinition {
+	preserveUnknownFields := true
+	return []*apiextensionsv1.CustomResourceDefinition{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "servicemonitors.monitoring.coreos.com"},
+			Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+				Group: "monitoring.coreos.com",
+				Names: apiextensionsv1.CustomResourceDefinitionNames{
+					Plural: "servicemonitors", Singular: "servicemonitor", Kind: "ServiceMonitor",
+				},
+				Scope: apiextensionsv1.NamespaceScoped,
+				Versions: []apiextensionsv1.CustomResourceDefinitionVersion{{
+					Name: "v1", Served: true, Storage: true,
+					Schema: &apiextensionsv1.CustomResourceValidation{OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
+						Type:                   "object",
+						XPreserveUnknownFields: &preserveUnknownFields,
+					}},
+				}},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "prometheusrules.monitoring.coreos.com"},
+			Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+				Group: "monitoring.coreos.com",
+				Names: apiextensionsv1.CustomResourceDefinitionNames{
+					Plural: "prometheusrules", Singular: "prometheusrule", Kind: "PrometheusRule",
+				},
+				Scope: apiextensionsv1.NamespaceScoped,
+				Versions: []apiextensionsv1.CustomResourceDefinitionVersion{{
+					Name: "v1", Served: true, Storage: true,
+					Schema: &apiextensionsv1.CustomResourceValidation{OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
+						Type:                   "object",
+						XPreserveUnknownFields: &preserveUnknownFields,
+					}},
+				}},
+			},
+		},
+	}
+}
+
+func deleteMonitoringCRDs(ctx context.Context) {
+	for _, crd := range monitoringTestCRDs() {
+		existing := &apiextensionsv1.CustomResourceDefinition{}
+		err := k8sClient.Get(ctx, client.ObjectKeyFromObject(crd), existing)
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		Expect(err).NotTo(HaveOccurred())
+		Expect(k8sClient.Delete(ctx, existing)).To(Succeed())
+		Eventually(func() bool {
+			return apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(crd), &apiextensionsv1.CustomResourceDefinition{}))
+		}, timeout, interval).Should(BeTrue())
+	}
+}
+
+func cleanupMonitoringObjects(ctx context.Context) {
+	monitors := &monitoringv1.ServiceMonitorList{}
+	if err := k8sClient.List(ctx, monitors, client.InNamespace(testNamespace)); err == nil {
+		for index := range monitors.Items {
+			_ = k8sClient.Delete(ctx, &monitors.Items[index])
+		}
+	}
+	rules := &monitoringv1.PrometheusRuleList{}
+	if err := k8sClient.List(ctx, rules, client.InNamespace(testNamespace)); err == nil {
+		for index := range rules.Items {
+			_ = k8sClient.Delete(ctx, &rules.Items[index])
+		}
+	}
+}

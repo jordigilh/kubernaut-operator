@@ -721,7 +721,7 @@ func reusableDevelopmentCA(secret *corev1.Secret, now time.Time, rotationBefore 
 }
 
 func existingDevelopmentCA(secret *corev1.Secret, now time.Time, rotationBefore time.Duration) ([]byte, []byte, []byte, bool) {
-	if secret == nil {
+	if secret == nil || secret.DeletionTimestamp != nil {
 		return nil, nil, nil, false
 	}
 	certificates, certErr := parseCertificates(secret.Data[tlsCACertificateKey])
@@ -833,7 +833,7 @@ func parseCertificatesOrNil(data []byte) []*x509.Certificate {
 }
 
 func reusableDevelopmentLeaf(secret *corev1.Secret, caPEM []byte, serviceName, namespace string, now time.Time, rotationBefore time.Duration, extraSANs []string) bool {
-	if secret == nil {
+	if secret == nil || secret.DeletionTimestamp != nil {
 		return false
 	}
 	cert, err := parseCertificate(secret.Data[corev1.TLSCertKey])
@@ -899,7 +899,7 @@ func signDevelopmentLeaf(caPEM, caKeyPEM []byte, serviceName, namespace string, 
 }
 
 func reusableDevelopmentSigningCertificate(secret *corev1.Secret, now time.Time, rotationBefore time.Duration) bool {
-	if secret == nil {
+	if secret == nil || secret.DeletionTimestamp != nil {
 		return false
 	}
 	certificate, err := parseCertificate(secret.Data[corev1.TLSCertKey])

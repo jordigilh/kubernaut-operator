@@ -125,10 +125,11 @@ const maxFinalizerAttempts = 20
 // KubernautReconciler reconciles a Kubernaut object.
 type KubernautReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder events.EventRecorder
-	RestCfg  *rest.Config
-	now      func() time.Time
+	Scheme    *runtime.Scheme
+	Recorder  events.EventRecorder
+	RestCfg   *rest.Config
+	APIReader client.Reader
+	now       func() time.Time
 }
 
 // +kubebuilder:rbac:groups=kubernaut.ai,resources=kubernauts,verbs=get;list;watch;create;update;patch;delete
@@ -2261,14 +2262,10 @@ func (r *KubernautReconciler) reconcileMonitoringAndAlerts(ctx context.Context, 
 	// cause OpenShift-oriented monitoring objects to be created without a
 	// configured destination.
 	monitoring := r.monitoringConfigView(ctx, knV2).Spec.Monitoring
-	if monitoring.Prometheus.PrometheusEnabled() {
-		serviceMonitorsAvailable := r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com")
-		prometheusRulesAvailable := r.hasCRD(ctx, "prometheusrules.monitoring.coreos.com")
-		if serviceMonitorsAvailable || prometheusRulesAvailable {
-			if err := r.deployMonitoring(ctx, kn, serviceMonitorsAvailable, prometheusRulesAvailable); err != nil {
-				return err
-			}
-		}
+	serviceMonitorsAvailable := r.hasCRD(ctx, "servicemonitors.monitoring.coreos.com")
+	prometheusRulesAvailable := r.hasCRD(ctx, "prometheusrules.monitoring.coreos.com")
+	if err := r.reconcilePrometheusMonitoring(ctx, kn, monitoring.Prometheus.PrometheusEnabled(), serviceMonitorsAvailable, prometheusRulesAvailable); err != nil {
+		return err
 	}
 	if kn.Spec.GatewayEnabled() && monitoring.AlertManager.AlertManagerEnabled() {
 		if amCfg := resources.GatewayAlertManagerConfig(kn); amCfg != nil && r.hasCRD(ctx, "alertmanagerconfigs.monitoring.coreos.com") {
@@ -2278,6 +2275,22 @@ func (r *KubernautReconciler) reconcileMonitoringAndAlerts(ctx context.Context, 
 		}
 	}
 	return nil
+}
+
+func (r *KubernautReconciler) reconcilePrometheusMonitoring(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, prometheusEnabled, serviceMonitorsAvailable, prometheusRulesAvailable bool) error {
+	if !prometheusEnabled {
+		if !serviceMonitorsAvailable {
+			return nil
+		}
+		// Cleanup is an upgrade obligation, not a provisioning side effect:
+		// disabling Prometheus must still remove the operator-owned legacy
+		// AuthWebhook monitor while preserving user-owned objects.
+		return r.pruneLegacyAuthWebhookServiceMonitor(ctx, kn)
+	}
+	if !serviceMonitorsAvailable && !prometheusRulesAvailable {
+		return nil
+	}
+	return r.deployMonitoring(ctx, kn, serviceMonitorsAvailable, prometheusRulesAvailable)
 }
 
 func (r *KubernautReconciler) deployMonitoring(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, serviceMonitorsAvailable, prometheusRulesAvailable bool) error {
@@ -2297,20 +2310,56 @@ func (r *KubernautReconciler) deployMonitoring(ctx context.Context, kn *kubernau
 	componentMonitors := []*monitoringv1.ServiceMonitor{
 		resources.DataStorageServiceMonitor(kn),
 		resources.KubernautAgentServiceMonitor(kn),
-		resources.GatewayServiceMonitor(kn),
+	}
+	if kn.Spec.GatewayEnabled() {
+		componentMonitors = append(componentMonitors, resources.GatewayServiceMonitor(kn))
+	}
+	componentMonitors = append(componentMonitors,
 		resources.AIAnalysisServiceMonitor(kn),
 		resources.SignalProcessingServiceMonitor(kn),
 		resources.RemediationOrchestratorServiceMonitor(kn),
 		resources.WorkflowExecutionServiceMonitor(kn),
 		resources.EffectivenessMonitorServiceMonitor(kn),
 		resources.NotificationServiceMonitor(kn),
-		resources.AuthWebhookServiceMonitor(kn),
-	}
+	)
 	for _, sm := range componentMonitors {
 		if err := r.ensureNamespaced(ctx, kn, sm); err != nil {
 			return fmt.Errorf("ensuring %s ServiceMonitor: %w", sm.Name, err)
 		}
 	}
+	if err := r.pruneLegacyAuthWebhookServiceMonitor(ctx, kn); err != nil {
+		return err
+	}
+	return nil
+}
+
+// pruneLegacyAuthWebhookServiceMonitor removes the ServiceMonitor rendered by
+// older releases even though AuthWebhook does not expose a metrics endpoint.
+// Only an object controlled by this Kubernaut is eligible for deletion; a
+// same-named user-owned object must remain untouched.
+func (r *KubernautReconciler) pruneLegacyAuthWebhookServiceMonitor(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	const legacyName = "authwebhook-monitor"
+	legacy := &monitoringv1.ServiceMonitor{}
+	key := client.ObjectKey{Namespace: kn.Namespace, Name: legacyName}
+	if err := r.Get(ctx, key, legacy); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("getting legacy AuthWebhook ServiceMonitor: %w", err)
+	}
+	if !metav1.IsControlledBy(legacy, kn) {
+		return nil
+	}
+	if err := r.deleteIfExists(ctx, legacy); err != nil {
+		return fmt.Errorf("deleting legacy AuthWebhook ServiceMonitor: %w", err)
+	}
+	logf.FromContext(ctx).Info("pruned legacy AuthWebhook ServiceMonitor",
+		"kind", "ServiceMonitor",
+		"name", legacyName,
+		"namespace", kn.Namespace,
+		"generation", legacy.GetGeneration(),
+		"resourceVersion", legacy.GetResourceVersion(),
+	)
 	return nil
 }
 
@@ -3408,6 +3457,10 @@ func (r *KubernautReconciler) ensureDevelopmentSelfSignedTLS(
 	kn *kubernautv1alpha2.Kubernaut,
 	material resources.TLSMaterial,
 ) (resources.TLSMaterial, []byte, error) {
+	reader := client.Reader(r.Client)
+	if r.APIReader != nil {
+		reader = r.APIReader
+	}
 	existing := make(map[string]*corev1.Secret, len(material.ServiceTLSSecretNames)+1)
 	names := make([]string, 0, len(material.ServiceTLSSecretNames)+1)
 	names = append(names, material.InternalCASecretName)
@@ -3419,7 +3472,7 @@ func (r *KubernautReconciler) ensureDevelopmentSelfSignedTLS(
 	}
 	for _, name := range names {
 		secret := &corev1.Secret{}
-		err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: name}, secret)
+		err := reader.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: name}, secret)
 		if apierrors.IsNotFound(err) {
 			continue
 		}
@@ -3904,6 +3957,7 @@ func (r *KubernautReconciler) deleteIfExists(ctx context.Context, obj client.Obj
 // owned, so they rely on the periodic requeue timer for drift detection.
 func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorder("kubernaut-controller")
+	r.APIReader = mgr.GetAPIReader()
 	if r.now == nil {
 		r.now = time.Now
 	}

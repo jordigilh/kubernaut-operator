@@ -19,10 +19,72 @@ package resources
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	corev1 "k8s.io/api/core/v1"
+
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
+
+type serviceMonitorContract struct {
+	name        string
+	serviceName string
+	build       func(*kubernautv1alpha2.Kubernaut) *monitoringv1.ServiceMonitor
+}
+
+func generatedServiceMonitorContracts() []serviceMonitorContract {
+	return []serviceMonitorContract{
+		{name: "apifrontend", serviceName: "apifrontend", build: APIFrontendServiceMonitor},
+		{name: "datastorage", serviceName: "data-storage-service", build: DataStorageServiceMonitor},
+		{name: "kubernautagent", serviceName: "kubernaut-agent", build: KubernautAgentServiceMonitor},
+		{name: "gateway", serviceName: "gateway-service", build: GatewayServiceMonitor},
+		{name: "aianalysis", serviceName: "aianalysis-service", build: AIAnalysisServiceMonitor},
+		{name: "signalprocessing", serviceName: "signalprocessing-controller-metrics", build: SignalProcessingServiceMonitor},
+		{name: "remediationorchestrator", serviceName: "remediationorchestrator-controller", build: RemediationOrchestratorServiceMonitor},
+		{name: "workflowexecution", serviceName: "workflowexecution-controller-metrics", build: WorkflowExecutionServiceMonitor},
+		{name: "effectivenessmonitor", serviceName: "effectivenessmonitor-metrics", build: EffectivenessMonitorServiceMonitor},
+		{name: "notification", serviceName: "notification-metrics", build: NotificationServiceMonitor},
+	}
+}
 
 var _ = Describe("Monitoring Builders", func() {
 	var kn = testKubernaut
+
+	Describe("generated ServiceMonitor and Service contracts", func() {
+		It("UT-MON-513-001 [CM-8, SI-4]: targets a named port exposed by every generated Service", func() {
+			kn := testKubernautWithAF()
+			services := append(Services(kn, testKnV2(kn)), MetricsServices(kn)...)
+			servicesByName := make(map[string]*corev1.Service, len(services))
+			for _, service := range services {
+				servicesByName[service.Name] = service
+			}
+
+			for _, contract := range generatedServiceMonitorContracts() {
+				service, ok := servicesByName[contract.serviceName]
+				Expect(ok).To(BeTrue(), "ServiceMonitor %q references missing Service %q", contract.name, contract.serviceName)
+
+				monitor := contract.build(kn)
+				Expect(monitor.Spec.Endpoints).NotTo(BeEmpty(), "ServiceMonitor %q must define an endpoint", monitor.Name)
+				for _, endpoint := range monitor.Spec.Endpoints {
+					found := false
+					for _, port := range service.Spec.Ports {
+						if port.Name == endpoint.Port {
+							found = true
+							break
+						}
+					}
+					Expect(found).To(BeTrue(), "ServiceMonitor %q endpoint port %q must exist on Service %q", monitor.Name, endpoint.Port, service.Name)
+				}
+			}
+		})
+
+		It("UT-MON-513-002 [CM-8, SI-4]: does not generate an AuthWebhook monitor without a metrics endpoint", func() {
+			kn := testKubernautWithAF()
+			for _, contract := range generatedServiceMonitorContracts() {
+				Expect(contract.serviceName).NotTo(Equal("authwebhook-service"))
+				Expect(contract.build(kn).Name).NotTo(Equal("authwebhook-monitor"))
+			}
+		})
+	})
 
 	Describe("APIFrontendServiceMonitor", func() {
 		It("scrapes the metrics port at /metrics with 15s interval", func() {
