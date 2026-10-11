@@ -10,6 +10,7 @@ tls_matrix="${repo_root}/docs/security/ISSUE-491-TLS-CONTROL-ATTESTATION.md"
 ci_matrix="${repo_root}/docs/design/ISSUE-501-OPERATOR-UPSTREAM-CI-BOUNDARY.md"
 otlp_matrix="${repo_root}/docs/security/ISSUE-478-CONTROL-TRACEABILITY.md"
 monitoring_matrix="${repo_root}/docs/security/ISSUE-513-CONTROL-TRACEABILITY.md"
+ownership_matrix="${repo_root}/docs/security/ISSUE-514-CONTROL-TRACEABILITY.md"
 
 fail() {
 	echo "security traceability validation failed: $*" >&2
@@ -215,5 +216,41 @@ for test_id in \
 		|| fail "Issue #513 evidence ID ${test_id} has no executable test"
 	grep -Fq "${test_id}" "${monitoring_matrix}" || fail "Issue #513 matrix omits evidence ID ${test_id}"
 done
+
+# Issue #514's deny-by-default ownership boundary must have independent logic,
+# real-Reconcile wiring, and installed-operator journey artifacts. This static
+# check does not claim that a live lane has executed.
+[[ -f "${ownership_matrix}" ]] || fail "missing ${ownership_matrix}"
+for scope in 'NIST SP 800-53 Rev. 5' 'SOC 2' 'OWASP ASVS 5.0.0'; do
+	grep -Fq "${scope}" "${ownership_matrix}" || fail "ownership matrix is missing ${scope}"
+done
+grep -Fq 'does not claim formal' "${ownership_matrix}" || fail 'ownership matrix must reject formal compliance claims'
+for control in AC-3 AC-6 CM-3 CM-6 CM-8 SI-4 SI-10 AU-2 AU-3 AU-12; do
+	grep -Fq "${control}" "${ownership_matrix}" || fail "ownership matrix is missing ${control}"
+done
+for requirement in v5.0.0-V8.2.1 v5.0.0-V8.3.1 v5.0.0-V13.3.1 v5.0.0-V13.3.2 v5.0.0-V16.1.1 v5.0.0-V16.2.1 v5.0.0-V16.5.2; do
+	grep -Fq "${requirement}" "${ownership_matrix}" || fail "ownership matrix is missing ${requirement}"
+done
+for test_id in UT-OWN-514-001 UT-OWN-514-002 UT-OWN-514-003 UT-OWN-514-004 UT-OWN-514-005 \
+	UT-OWN-514-006 UT-OWN-514-007 UT-OWN-514-008 UT-OWN-514-009 \
+	IT-OWN-514-001 IT-OWN-514-002 IT-OWN-514-003 IT-OWN-514-004 IT-OWN-514-005 \
+	IT-OWN-514-006 IT-OWN-514-007 IT-OWN-514-008 IT-OWN-514-009 IT-OWN-514-010 \
+	IT-OWN-514-011 IT-OWN-514-012 IT-OWN-514-013 IT-OWN-514-014 IT-OWN-514-015 \
+	IT-OWN-514-016 IT-OWN-514-017 IT-OWN-514-018 IT-OWN-514-019 IT-OWN-514-020 \
+	IT-OWN-514-021 IT-OWN-514-022 IT-OWN-514-023 E2E-OWN-514-001; do
+	grep -R -n --include='*_test.go' -F "${test_id}" "${repo_root}/internal" "${repo_root}/test" >/dev/null \
+		|| fail "ownership evidence ID ${test_id} has no executable test"
+	grep -Fq "${test_id}" "${ownership_matrix}" || fail "ownership matrix omits ${test_id}"
+done
+
+# Every executable test identifier is a unique traceability key. Duplicate IDs
+# make a passing result ambiguous and can silently satisfy the wrong matrix row.
+duplicate_ids=$(
+	{
+		grep -RhoE --include='*_test.go' '\b(UT|IT|E2E)-[A-Z0-9]+-[0-9]+-[0-9]+\b' \
+			"${repo_root}/internal" "${repo_root}/test" || true
+	} | sort | uniq -c | awk '$1 > 1 {print $2}'
+)
+[[ -z "${duplicate_ids}" ]] || fail "duplicate executable test IDs: ${duplicate_ids//$'\n'/, }"
 
 echo "security traceability validation passed"

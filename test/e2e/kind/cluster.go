@@ -607,6 +607,8 @@ func collectDiagnostics(ctx context.Context) {
 	_, _ = kubectl(ctx, "get", "pods", "-A", "-o", "wide")                          //nolint:errcheck
 	_, _ = kubectl(ctx, "get", "events", "-A", "--sort-by=.lastTimestamp")          //nolint:errcheck
 	_, _ = kubectl(ctx, "get", "kubernaut", "-n", kubernautNamespace, "-o", "yaml") //nolint:errcheck
+	_, _ = kubectl(ctx, "logs", "deployment/"+operatorDeploymentName, "-n", operatorNamespace,
+		"--all-containers", "--tail=200") //nolint:errcheck
 	if configuredProvider == providerCilium {
 		_, _ = kubectl(ctx, "get", "ciliumnetworkpolicies.cilium.io", "-A", "-o", "yaml") //nolint:errcheck
 	}

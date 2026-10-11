@@ -39,6 +39,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -118,10 +119,6 @@ const (
 	ReasonAlertManagerAuthGatewayDisabled = "GatewayDisabled"
 )
 
-// maxFinalizerAttempts is the number of consecutive reconcile attempts during
-// deletion cleanup before the finalizer is force-removed.
-const maxFinalizerAttempts = 20
-
 // KubernautReconciler reconciles a Kubernaut object.
 type KubernautReconciler struct {
 	client.Client
@@ -195,6 +192,7 @@ func (r *KubernautReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		log.Info("ignoring CR with unexpected name", "name", kn.Name, "expected", kubernautv1alpha2.SingletonName)
 		return ctrl.Result{}, nil
 	}
+	ctx = logf.IntoContext(ctx, log.WithValues("generation", kn.Generation, "resourceVersion", kn.ResourceVersion))
 
 	if !kn.DeletionTimestamp.IsZero() {
 		return r.reconcileDelete(ctx, kn, kn)
@@ -398,6 +396,9 @@ func (r *KubernautReconciler) validateTelemetryMaterial(
 
 func (r *KubernautReconciler) phaseMigrate(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
 	if err := r.ensureMigrationPrereqs(ctx, kn); err != nil {
+		if errors.Is(err, resources.ErrOwnershipConflict) {
+			r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "OwnershipConflict", "Reconcile", "%v", err)
+		}
 		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionCRDsInstalled,
 			"CRDInstallFailed", err.Error())
 	}
@@ -475,9 +476,9 @@ func (r *KubernautReconciler) ensureMigrationPrereqs(ctx context.Context, kn *ku
 // status. Returns a zero Result when the job has completed successfully;
 // returns a non-zero Result (requeue) when the job is still running or failed.
 //
-// A completed Job with a matching spec-hash annotation is considered
-// up-to-date and short-circuits the entire migration phase, avoiding
-// unnecessary pod churn on operator restarts.
+// A live, authorized Job with a matching migration status hash is considered
+// up-to-date and short-circuits the migration phase, avoiding unnecessary pod
+// churn on operator restarts. Authorization must precede this shortcut.
 func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -488,10 +489,6 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 	desiredHash := resources.SpecHash(migrationJob)
 	setHashAnnotation(migrationJob, desiredHash)
 
-	if kn.Status.LastMigrationHash == desiredHash {
-		return ctrl.Result{}, nil
-	}
-
 	existingJob := &batchv1.Job{}
 	created, err := r.createIfNotFound(ctx, kn, migrationJob, existingJob)
 	if err != nil {
@@ -499,6 +496,11 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 	}
 	if created {
 		existingJob = migrationJob
+	}
+	// The status hash is only a no-op shortcut after the live Job has been
+	// fetched and authorized. A name or matching status hash is not ownership.
+	if kn.Status.LastMigrationHash == desiredHash {
+		return ctrl.Result{}, nil
 	}
 
 	for _, cond := range existingJob.Status.Conditions {
@@ -544,7 +546,7 @@ func (r *KubernautReconciler) handleCompleteMigrationJob(
 
 	log.Info("completed migration job has stale spec-hash, deleting for re-run")
 	propagation := metav1.DeletePropagationBackground
-	if err := r.Delete(ctx, existingJob, &client.DeleteOptions{
+	if err := r.deleteObservedResource(ctx, existingJob, &client.DeleteOptions{
 		PropagationPolicy: &propagation,
 	}); err != nil && !apierrors.IsNotFound(err) {
 		return ctrl.Result{}, fmt.Errorf("deleting stale migration job: %w", err)
@@ -569,7 +571,7 @@ func (r *KubernautReconciler) handleFailedMigrationJob(
 
 	log.Info("migration job failed, deleting for retry", "attempt", existingJob.Status.Failed)
 	propagation := metav1.DeletePropagationBackground
-	if err := r.Delete(ctx, existingJob, &client.DeleteOptions{
+	if err := r.deleteObservedResource(ctx, existingJob, &client.DeleteOptions{
 		PropagationPolicy: &propagation,
 	}); err != nil && !apierrors.IsNotFound(err) {
 		return ctrl.Result{}, fmt.Errorf("deleting failed migration job: %w", err)
@@ -809,25 +811,41 @@ func (r *KubernautReconciler) monitoringCondition(ctx context.Context, kn *kuber
 
 func (r *KubernautReconciler) deployWorkflowNamespace(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
 	wfNs := resources.WorkflowNamespace(kn)
+	resources.StampOwnership(kn, wfNs)
 	existing := &corev1.Namespace{}
-	if err := r.Get(ctx, types.NamespacedName{Name: wfNs.Name}, existing); err != nil {
+	if err := r.ownershipReader().Get(ctx, types.NamespacedName{Name: wfNs.Name}, existing); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return fmt.Errorf("checking workflow namespace: %w", err)
 		}
-		if err := r.Create(ctx, wfNs); err != nil && !apierrors.IsAlreadyExists(err) {
+		if err := r.Create(ctx, wfNs); err == nil {
+			r.resourceLogger(ctx, kn, wfNs).Info("resource created")
+			return nil
+		} else if !apierrors.IsAlreadyExists(err) {
 			return fmt.Errorf("creating workflow namespace: %w", err)
 		}
-		return nil
+		if err := r.ownershipReader().Get(ctx, client.ObjectKeyFromObject(wfNs), existing); err != nil {
+			return fmt.Errorf("reading raced workflow namespace: %w", err)
+		}
 	}
 
-	// #208: converge a pre-existing kubernaut-workflows namespace (created
-	// by an older operator version, before this defense-in-depth backstop
-	// existed) to carry the restricted PSA labels too, not just namespaces
-	// created after this upgrade.
+	// #514: administrator namespaces are read-only inputs, not adoption targets.
+	// #208's restricted PSA requirement still applies, but only an authorized
+	// operator namespace may be mutated to converge those labels.
+	if resources.ResourceOwnershipError(kn, existing, false) != nil {
+		// Read-only reuse is not a fallback for contradictory operator identity
+		// or an invalid owner/terminating namespace; see the #514 contract.
+		if administratorWorkflowNamespaceReady(existing) {
+			r.resourceLogger(ctx, kn, existing).Info("reusing administrator workflow namespace read-only")
+			return nil
+		}
+		return r.checkResourceOwnership(ctx, kn, existing, false)
+	}
 	if existing.Labels == nil {
 		existing.Labels = make(map[string]string)
 	}
-	if resources.EnsureRestrictedPSALabels(existing.Labels) {
+	changed := resources.EnsureRestrictedPSALabels(existing.Labels)
+	if changed || !ownershipMetadataMatches(wfNs, existing) {
+		resources.StampOwnership(kn, existing)
 		logf.FromContext(ctx).Info("setting restricted pod security labels on workflow namespace", "namespace", existing.Name)
 		if err := r.Update(ctx, existing); err != nil {
 			return fmt.Errorf("patching restricted PSA labels on workflow namespace: %w", err)
@@ -844,7 +862,7 @@ func (r *KubernautReconciler) deployServiceAccounts(ctx context.Context, kn *kub
 		}
 	}
 	wfRunnerSA := resources.WorkflowRunnerServiceAccount(kn)
-	if err := r.ensureUnowned(ctx, wfRunnerSA); err != nil {
+	if err := r.ensureUnowned(ctx, kn, wfRunnerSA); err != nil {
 		return fmt.Errorf("ensuring workflow runner SA: %w", err)
 	}
 	return nil
@@ -878,12 +896,12 @@ func (r *KubernautReconciler) deployConsoleAccessRBAC(ctx context.Context, kn *k
 	if crb == nil {
 		staleCRB := &rbacv1.ClusterRoleBinding{}
 		staleCRB.Name = resources.ConsoleAccessCRBName(kn)
-		if err := r.deleteIfExists(ctx, staleCRB); err != nil {
+		if err := r.deleteIfExists(ctx, kn, staleCRB); err != nil {
 			return fmt.Errorf("deleting console-access CRB: %w", err)
 		}
 		return nil
 	}
-	if err := r.ensureUnowned(ctx, crb); err != nil {
+	if err := r.ensureUnowned(ctx, kn, crb); err != nil {
 		return fmt.Errorf("ensuring console-access CRB %s: %w", crb.Name, err)
 	}
 	return nil
@@ -910,13 +928,13 @@ func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv
 func (r *KubernautReconciler) deployClusterScopedCoreRBAC(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
 	desiredCRs := resources.ClusterRoles(kn, knV2)
 	for _, cr := range desiredCRs {
-		if err := r.ensureUnowned(ctx, cr); err != nil {
+		if err := r.ensureUnowned(ctx, kn, cr); err != nil {
 			return fmt.Errorf("ensuring ClusterRole %s: %w", cr.Name, err)
 		}
 	}
 	desiredCRBs := resources.ClusterRoleBindings(kn, knV2)
 	for _, crb := range desiredCRBs {
-		if err := r.ensureUnowned(ctx, crb); err != nil {
+		if err := r.ensureUnowned(ctx, kn, crb); err != nil {
 			return fmt.Errorf("ensuring CRB %s: %w", crb.Name, err)
 		}
 	}
@@ -985,18 +1003,16 @@ func pointersOf[T any](items []T) []*T {
 // pruneOrphanedCoreClusterRBAC (#341) and
 // pruneOrphanedAdditionalComponentRBAC (#277) so the list-diff-delete shape
 // is defined once regardless of which RBAC object kind is being pruned.
-func pruneUndesired[T client.Object](r *KubernautReconciler, ctx context.Context, kind string, live []T, desiredNames map[string]bool) []error {
-	log := logf.FromContext(ctx)
+func pruneUndesired[T client.Object](r *KubernautReconciler, ctx context.Context, kn *kubernautv1alpha2.Kubernaut, kind string, live []T, desiredNames map[string]bool) []error {
 	var errs []error
 	for _, obj := range live {
 		if desiredNames[obj.GetName()] {
 			continue
 		}
-		if err := r.deleteIfExists(ctx, obj); err != nil {
+		if err := r.deleteIfExists(ctx, kn, obj); err != nil {
 			errs = append(errs, fmt.Errorf("pruning orphaned %s %s: %w", kind, obj.GetName(), err))
 			continue
 		}
-		log.Info("pruned orphaned RBAC object", "kind", kind, "name", obj.GetName())
 	}
 	return errs
 }
@@ -1029,13 +1045,13 @@ func (r *KubernautReconciler) pruneOrphanedCoreClusterRBAC(
 	if err := r.List(ctx, liveCRs, selector); err != nil {
 		return append(errs, fmt.Errorf("listing core ClusterRoles for pruning: %w", err))
 	}
-	errs = append(errs, pruneUndesired(r, ctx, "ClusterRole", pointersOf(liveCRs.Items), namesOf(desiredCRs))...)
+	errs = append(errs, pruneUndesired(r, ctx, kn, "ClusterRole", pointersOf(liveCRs.Items), namesOf(desiredCRs))...)
 
 	liveCRBs := &rbacv1.ClusterRoleBindingList{}
 	if err := r.List(ctx, liveCRBs, selector); err != nil {
 		return append(errs, fmt.Errorf("listing core ClusterRoleBindings for pruning: %w", err))
 	}
-	errs = append(errs, pruneUndesired(r, ctx, "ClusterRoleBinding", pointersOf(liveCRBs.Items), namesOf(desiredCRBs))...)
+	errs = append(errs, pruneUndesired(r, ctx, kn, "ClusterRoleBinding", pointersOf(liveCRBs.Items), namesOf(desiredCRBs))...)
 
 	return errs
 }
@@ -1061,12 +1077,12 @@ func (r *KubernautReconciler) pruneOrphanedCoreClusterRBAC(
 func (r *KubernautReconciler) deployMCPGatewayNamespaceRBAC(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
 	roles, rbs := resources.MCPGatewayNamespaceRBAC(kn, knV2)
 	for _, role := range roles {
-		if err := r.ensureUnowned(ctx, role); err != nil {
+		if err := r.ensureUnowned(ctx, kn, role); err != nil {
 			return fmt.Errorf("ensuring mcp gateway namespace role %s/%s: %w", role.Namespace, role.Name, err)
 		}
 	}
 	for _, rb := range rbs {
-		if err := r.ensureUnowned(ctx, rb); err != nil {
+		if err := r.ensureUnowned(ctx, kn, rb); err != nil {
 			return fmt.Errorf("ensuring mcp gateway namespace rolebinding %s/%s: %w", rb.Namespace, rb.Name, err)
 		}
 	}
@@ -1098,19 +1114,17 @@ func namespacedKeysOf[T client.Object](objs []T) map[types.NamespacedName]bool {
 // same-named object in a since-abandoned namespace is correctly treated as
 // orphaned even though an object with the same name is still desired
 // elsewhere.
-func pruneUndesiredNamespaced[T client.Object](r *KubernautReconciler, ctx context.Context, kind string, live []T, desiredKeys map[types.NamespacedName]bool) []error {
-	log := logf.FromContext(ctx)
+func pruneUndesiredNamespaced[T client.Object](r *KubernautReconciler, ctx context.Context, kn *kubernautv1alpha2.Kubernaut, kind string, live []T, desiredKeys map[types.NamespacedName]bool) []error {
 	var errs []error
 	for _, obj := range live {
 		key := types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()}
 		if desiredKeys[key] {
 			continue
 		}
-		if err := r.deleteIfExists(ctx, obj); err != nil {
+		if err := r.deleteIfExists(ctx, kn, obj); err != nil {
 			errs = append(errs, fmt.Errorf("pruning orphaned %s %s: %w", kind, key, err))
 			continue
 		}
-		log.Info("pruned orphaned RBAC object", "kind", kind, "namespace", key.Namespace, "name", key.Name)
 	}
 	return errs
 }
@@ -1142,13 +1156,13 @@ func (r *KubernautReconciler) pruneOrphanedMCPGatewayNamespaceRBAC(
 	if err := r.List(ctx, liveRoles, selector); err != nil {
 		return append(errs, fmt.Errorf("listing mcp gateway namespace Roles for pruning: %w", err))
 	}
-	errs = append(errs, pruneUndesiredNamespaced(r, ctx, "Role", pointersOf(liveRoles.Items), namespacedKeysOf(desiredRoles))...)
+	errs = append(errs, pruneUndesiredNamespaced(r, ctx, kn, "Role", pointersOf(liveRoles.Items), namespacedKeysOf(desiredRoles))...)
 
 	liveRBs := &rbacv1.RoleBindingList{}
 	if err := r.List(ctx, liveRBs, selector); err != nil {
 		return append(errs, fmt.Errorf("listing mcp gateway namespace RoleBindings for pruning: %w", err))
 	}
-	errs = append(errs, pruneUndesiredNamespaced(r, ctx, "RoleBinding", pointersOf(liveRBs.Items), namespacedKeysOf(desiredRBs))...)
+	errs = append(errs, pruneUndesiredNamespaced(r, ctx, kn, "RoleBinding", pointersOf(liveRBs.Items), namespacedKeysOf(desiredRBs))...)
 
 	return errs
 }
@@ -1191,7 +1205,7 @@ func (r *KubernautReconciler) deployAdditionalComponentRBAC(ctx context.Context,
 	for _, comp := range components {
 		for _, crName := range desiredNames {
 			crb := resources.AdditionalComponentCRB(kn, comp.name, comp.sa, crName)
-			if err := r.ensureUnowned(ctx, crb); err != nil {
+			if err := r.ensureUnowned(ctx, kn, crb); err != nil {
 				return fmt.Errorf("ensuring additional CRB for %s/%s: %w", comp.name, crName, err)
 			}
 			desiredCRBs = append(desiredCRBs, crb)
@@ -1250,7 +1264,7 @@ func (r *KubernautReconciler) pruneOrphanedAdditionalComponentRBAC(
 	}); err != nil {
 		return []error{fmt.Errorf("listing additional component CRBs for pruning: %w", err)}
 	}
-	return pruneUndesired(r, ctx, "additional component ClusterRoleBinding", pointersOf(liveCRBs.Items), namesOf(desiredCRBs))
+	return pruneUndesired(r, ctx, kn, "additional component ClusterRoleBinding", pointersOf(liveCRBs.Items), namesOf(desiredCRBs))
 }
 
 // recordAdditionalRBACBoundEvents emits a "bound" event for every entry in
@@ -1315,13 +1329,13 @@ func (r *KubernautReconciler) deployToolRBAC(ctx context.Context, kn *kubernautv
 	log := logf.FromContext(ctx)
 
 	for _, cr := range resources.ToolClusterRoles(kn) {
-		if err := r.ensureUnowned(ctx, cr); err != nil {
+		if err := r.ensureUnowned(ctx, kn, cr); err != nil {
 			return fmt.Errorf("ensuring tool ClusterRole %s: %w", cr.Name, err)
 		}
 	}
 
 	for _, crb := range resources.ToolClusterRoleBindings(kn) {
-		if err := r.ensureUnowned(ctx, crb); err != nil {
+		if err := r.ensureUnowned(ctx, kn, crb); err != nil {
 			return fmt.Errorf("ensuring tool CRB %s: %w", crb.Name, err)
 		}
 	}
@@ -1335,7 +1349,7 @@ func (r *KubernautReconciler) deployToolRBAC(ctx context.Context, kn *kubernautv
 		if _, ok := desiredMap[name]; !ok {
 			staleCRB := &rbacv1.ClusterRoleBinding{}
 			staleCRB.Name = name
-			if err := r.deleteIfExists(ctx, staleCRB); err != nil {
+			if err := r.deleteIfExists(ctx, kn, staleCRB); err != nil {
 				return fmt.Errorf("pruning stale tool CRB %s: %w", name, err)
 			}
 			log.Info("pruned stale tool CRB", "name", name)
@@ -1345,7 +1359,7 @@ func (r *KubernautReconciler) deployToolRBAC(ctx context.Context, kn *kubernautv
 	legacyCM := &corev1.ConfigMap{}
 	legacyCM.Name = "apifrontend-rbac-roles"
 	legacyCM.Namespace = kn.Namespace
-	if err := r.deleteIfExists(ctx, legacyCM); err != nil {
+	if err := r.deleteIfExists(ctx, kn, legacyCM); err != nil {
 		return fmt.Errorf("deleting orphaned apifrontend-rbac-roles ConfigMap: %w", err)
 	}
 
@@ -1394,12 +1408,12 @@ func contains(ss []string, s string) bool {
 func (r *KubernautReconciler) deployWorkflowRBAC(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
 	wfRoles, wfRBs := resources.WorkflowNamespaceRBAC(kn)
 	for _, role := range wfRoles {
-		if err := r.ensureUnowned(ctx, role); err != nil {
+		if err := r.ensureUnowned(ctx, kn, role); err != nil {
 			return fmt.Errorf("ensuring wf role %s: %w", role.Name, err)
 		}
 	}
 	for _, rb := range wfRBs {
-		if err := r.ensureUnowned(ctx, rb); err != nil {
+		if err := r.ensureUnowned(ctx, kn, rb); err != nil {
 			return fmt.Errorf("ensuring wf rb %s: %w", rb.Name, err)
 		}
 	}
@@ -1412,17 +1426,17 @@ func (r *KubernautReconciler) deployWorkflowRBAC(ctx context.Context, kn *kubern
 func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
 	cr, crb := resources.AnsibleRBAC(kn)
 	if kn.Spec.WorkflowExecution.Ansible.Enabled {
-		if err := r.ensureUnowned(ctx, cr); err != nil {
+		if err := r.ensureUnowned(ctx, kn, cr); err != nil {
 			return fmt.Errorf("ensuring AWX ClusterRole: %w", err)
 		}
-		if err := r.ensureUnowned(ctx, crb); err != nil {
+		if err := r.ensureUnowned(ctx, kn, crb); err != nil {
 			return fmt.Errorf("ensuring AWX CRB: %w", err)
 		}
 	}
 
 	var errs []error
 	if !kn.Spec.WorkflowExecution.Ansible.Enabled {
-		errs = append(errs, r.pruneStaleAnsibleRBAC(ctx, cr, crb)...)
+		errs = append(errs, r.pruneStaleAnsibleRBAC(ctx, kn, cr, crb)...)
 	}
 	if !kn.Spec.GatewayEnabled() {
 		errs = append(errs, r.pruneStaleGatewayRBAC(ctx, kn)...)
@@ -1436,12 +1450,12 @@ func (r *KubernautReconciler) deployToggleRBAC(ctx context.Context, kn *kubernau
 
 // pruneStaleAnsibleRBAC deletes the AWX ClusterRole/ClusterRoleBinding when
 // Ansible integration is disabled.
-func (r *KubernautReconciler) pruneStaleAnsibleRBAC(ctx context.Context, cr *rbacv1.ClusterRole, crb *rbacv1.ClusterRoleBinding) []error {
+func (r *KubernautReconciler) pruneStaleAnsibleRBAC(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, cr *rbacv1.ClusterRole, crb *rbacv1.ClusterRoleBinding) []error {
 	var errs []error
-	if err := r.deleteIfExists(ctx, cr); err != nil {
+	if err := r.deleteIfExists(ctx, kn, cr); err != nil {
 		errs = append(errs, fmt.Errorf("removing stale AWX ClusterRole: %w", err))
 	}
-	if err := r.deleteIfExists(ctx, crb); err != nil {
+	if err := r.deleteIfExists(ctx, kn, crb); err != nil {
 		errs = append(errs, fmt.Errorf("removing stale AWX CRB: %w", err))
 	}
 	return errs
@@ -1460,7 +1474,7 @@ func (r *KubernautReconciler) pruneStaleGatewayRBAC(ctx context.Context, kn *kub
 	staleRB := &rbacv1.RoleBinding{}
 	staleRB.Name = "data-storage-client-gateway"
 	staleRB.Namespace = kn.Namespace
-	if err := r.deleteIfExists(ctx, staleRB); err != nil {
+	if err := r.deleteIfExists(ctx, kn, staleRB); err != nil {
 		errs = append(errs, fmt.Errorf("removing stale gateway DS client RoleBinding: %w", err))
 	}
 	return errs
@@ -1476,28 +1490,28 @@ func (r *KubernautReconciler) cleanupDisabledGateway(ctx context.Context, kn *ku
 	dep := &appsv1.Deployment{}
 	dep.Name = resources.DeploymentName(resources.ComponentGateway)
 	dep.Namespace = ns
-	if err := r.deleteIfExists(ctx, dep); err != nil {
+	if err := r.deleteIfExists(ctx, kn, dep); err != nil {
 		errs = append(errs, fmt.Errorf("deleting gateway Deployment: %w", err))
 	}
 
 	svc := &corev1.Service{}
 	svc.Name = "gateway-service"
 	svc.Namespace = ns
-	if err := r.deleteIfExists(ctx, svc); err != nil {
+	if err := r.deleteIfExists(ctx, kn, svc); err != nil {
 		errs = append(errs, fmt.Errorf("deleting gateway Service: %w", err))
 	}
 
 	sa := &corev1.ServiceAccount{}
 	sa.Name = resources.ServiceAccountName(resources.ComponentGateway)
 	sa.Namespace = ns
-	if err := r.deleteIfExists(ctx, sa); err != nil {
+	if err := r.deleteIfExists(ctx, kn, sa); err != nil {
 		errs = append(errs, fmt.Errorf("deleting gateway ServiceAccount: %w", err))
 	}
 
 	cm := &corev1.ConfigMap{}
 	cm.Name = "gateway-config"
 	cm.Namespace = ns
-	if err := r.deleteIfExists(ctx, cm); err != nil {
+	if err := r.deleteIfExists(ctx, kn, cm); err != nil {
 		errs = append(errs, fmt.Errorf("deleting gateway ConfigMap: %w", err))
 	}
 
@@ -1505,7 +1519,7 @@ func (r *KubernautReconciler) cleanupDisabledGateway(ctx context.Context, kn *ku
 		amCfg := &monitoringv1alpha1.AlertmanagerConfig{}
 		amCfg.Name = "kubernaut-gateway-alerts"
 		amCfg.Namespace = ns
-		if err := r.deleteIfExists(ctx, amCfg); err != nil {
+		if err := r.deleteIfExists(ctx, kn, amCfg); err != nil {
 			errs = append(errs, fmt.Errorf("deleting gateway AlertManagerConfig: %w", err))
 		}
 	}
@@ -1532,21 +1546,21 @@ func (r *KubernautReconciler) cleanupDisabledFleetMetadataCache(ctx context.Cont
 	dep := &appsv1.Deployment{}
 	dep.Name = resources.DeploymentName(resources.ComponentFleetMetadataCache)
 	dep.Namespace = ns
-	if err := r.deleteIfExists(ctx, dep); err != nil {
+	if err := r.deleteIfExists(ctx, kn, dep); err != nil {
 		errs = append(errs, fmt.Errorf("deleting fleetmetadatacache Deployment: %w", err))
 	}
 
 	svc := &corev1.Service{}
 	svc.Name = "fleetmetadatacache-service"
 	svc.Namespace = ns
-	if err := r.deleteIfExists(ctx, svc); err != nil {
+	if err := r.deleteIfExists(ctx, kn, svc); err != nil {
 		errs = append(errs, fmt.Errorf("deleting fleetmetadatacache Service: %w", err))
 	}
 
 	cm := &corev1.ConfigMap{}
 	cm.Name = "fleetmetadatacache-config"
 	cm.Namespace = ns
-	if err := r.deleteIfExists(ctx, cm); err != nil {
+	if err := r.deleteIfExists(ctx, kn, cm); err != nil {
 		errs = append(errs, fmt.Errorf("deleting fleetmetadatacache ConfigMap: %w", err))
 	}
 
@@ -1719,11 +1733,11 @@ func (r *KubernautReconciler) deployAdmissionWebhooks(
 	tlsBundle []byte,
 ) error {
 	mwc := mutatingWebhookConfigurationForTLS(kn, tlsMaterial, tlsBundle)
-	if err := r.ensureWebhookConfiguration(ctx, mwc); err != nil {
+	if err := r.ensureWebhookConfiguration(ctx, kn, mwc); err != nil {
 		return fmt.Errorf("ensuring MutatingWebhookConfiguration: %w", err)
 	}
 	vwc := validatingWebhookConfigurationForTLS(kn, tlsMaterial, tlsBundle)
-	if err := r.ensureWebhookConfiguration(ctx, vwc); err != nil {
+	if err := r.ensureWebhookConfiguration(ctx, kn, vwc); err != nil {
 		return fmt.Errorf("ensuring ValidatingWebhookConfiguration: %w", err)
 	}
 	return nil
@@ -1771,15 +1785,20 @@ func validatingWebhookConfigurationForTLS(
 // an external TLS controller. In particular, OpenShift service-ca, cert-manager
 // cainjector, and manual administrators all own webhook clientConfig.caBundle;
 // a normal desired-object update would erase that field on every reconcile.
-func (r *KubernautReconciler) ensureWebhookConfiguration(ctx context.Context, desired client.Object) error {
+func (r *KubernautReconciler) ensureWebhookConfiguration(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, desired client.Object) error {
 	live := desired.DeepCopyObject().(client.Object)
 	key := client.ObjectKey{Name: desired.GetName(), Namespace: desired.GetNamespace()}
 	err := r.Get(ctx, key, live)
 	if apierrors.IsNotFound(err) {
-		return r.ensureUnowned(ctx, desired)
+		return r.ensureUnowned(ctx, kn, desired)
 	}
 	if err != nil {
 		return fmt.Errorf("getting webhook configuration %s: %w", key, err)
+	}
+	// #514: authorize the observation before preserving trust or metadata. A
+	// later authorized read must not legitimize CA material from a foreign one.
+	if err := r.checkResourceOwnership(ctx, kn, live, false); err != nil {
+		return err
 	}
 
 	desiredAnnotations := desired.GetAnnotations()
@@ -1792,7 +1811,7 @@ func (r *KubernautReconciler) ensureWebhookConfiguration(ctx context.Context, de
 	}
 	desired.SetAnnotations(annotations)
 	preserveWebhookCABundle(desired, live)
-	return r.ensureUnowned(ctx, desired)
+	return r.ensureUnowned(ctx, kn, desired)
 }
 
 func preserveWebhookCABundle(desired, live client.Object) {
@@ -1957,7 +1976,7 @@ func (r *KubernautReconciler) ensureServices(ctx context.Context, kn *kubernautv
 		if err := r.ensureNamespaced(ctx, kn, svc); err != nil {
 			return fmt.Errorf("ensuring Service %s: %w", svc.Name, err)
 		}
-		if err := r.clearStaleServingCertErrors(ctx, svc); err != nil {
+		if err := r.clearStaleServingCertErrors(ctx, kn, svc); err != nil {
 			return fmt.Errorf("clearing stale serving-cert annotations on %s: %w", svc.Name, err)
 		}
 	}
@@ -2057,6 +2076,9 @@ func (r *KubernautReconciler) ensureRenderedProviderPolicies(
 			}
 		}
 		if err := r.ensureProviderPolicy(ctx, object); err != nil {
+			if errors.Is(err, resources.ErrOwnershipConflict) && r.Recorder != nil {
+				r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "OwnershipConflict", "Reconcile", "native %s policy %s: %v", object.GetKind(), object.GetName(), err)
+			}
 			return nil, fmt.Errorf("ensuring native %s policy %s: %w", object.GetKind(), object.GetName(), err)
 		}
 	}
@@ -2125,7 +2147,7 @@ func (r *KubernautReconciler) ensureProviderPolicy(ctx context.Context, desired 
 	if !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("creating native policy %s: %w", key, err)
 	}
-	if err := r.Get(ctx, key, existing); err != nil {
+	if err := r.ownershipReader().Get(ctx, key, existing); err != nil {
 		return fmt.Errorf("getting raced native policy %s: %w", key, err)
 	}
 	return r.updateProviderPolicy(ctx, existing, desired, desiredHash)
@@ -2133,9 +2155,12 @@ func (r *KubernautReconciler) ensureProviderPolicy(ctx context.Context, desired 
 
 func (r *KubernautReconciler) updateProviderPolicy(ctx context.Context, existing, desired *unstructured.Unstructured, desiredHash string) error {
 	if err := providerPolicyOwnershipError(existing, desired); err != nil {
+		logf.FromContext(ctx).Error(err, "native policy ownership conflict", "kind", existing.GetKind(),
+			"namespace", existing.GetNamespace(), "name", existing.GetName(), "ownerReferences", existing.GetOwnerReferences(), "ownershipLabels", existing.GetLabels())
 		return err
 	}
-	if existing.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash {
+	if existing.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash &&
+		equality.Semantic.DeepEqual(existing.GetOwnerReferences(), desired.GetOwnerReferences()) {
 		return nil
 	}
 	desired.SetResourceVersion(existing.GetResourceVersion())
@@ -2143,16 +2168,8 @@ func (r *KubernautReconciler) updateProviderPolicy(ctx context.Context, existing
 }
 
 func providerPolicyOwnershipError(existing, desired *unstructured.Unstructured) error {
-	key := client.ObjectKey{Name: desired.GetName(), Namespace: desired.GetNamespace()}
-	labels := existing.GetLabels()
-	if labels[policy.ManagedPolicyLabel] != "true" {
-		return fmt.Errorf("refusing to overwrite unmanaged native policy %s", key)
-	}
-	desiredLabels := desired.GetLabels()
-	for _, label := range []string{policy.ManagedByLabel, policy.PolicyNamespaceLabel, "app.kubernetes.io/instance", policy.ProviderLabel} {
-		if labels[label] != desiredLabels[label] {
-			return fmt.Errorf("refusing to overwrite native policy %s with different %s ownership", key, label)
-		}
+	if err := policy.OwnershipError(existing, desired); err != nil {
+		return fmt.Errorf("%w: %w", resources.ErrOwnershipConflict, err)
 	}
 	return nil
 }
@@ -2242,7 +2259,7 @@ func (r *KubernautReconciler) pruneProviderPolicies(ctx context.Context, namespa
 			if _, ok := desired[policyObjectKey(object)]; ok {
 				continue
 			}
-			if err := r.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
+			if err := r.deleteObservedProviderPolicy(ctx, object); err != nil {
 				return fmt.Errorf("deleting stale native %s policy %s: %w", kind.GVK.Kind, object.GetName(), err)
 			}
 		}
@@ -2347,19 +2364,9 @@ func (r *KubernautReconciler) pruneLegacyAuthWebhookServiceMonitor(ctx context.C
 		}
 		return fmt.Errorf("getting legacy AuthWebhook ServiceMonitor: %w", err)
 	}
-	if !metav1.IsControlledBy(legacy, kn) {
-		return nil
-	}
-	if err := r.deleteIfExists(ctx, legacy); err != nil {
+	if err := r.deleteIfExists(ctx, kn, legacy); err != nil {
 		return fmt.Errorf("deleting legacy AuthWebhook ServiceMonitor: %w", err)
 	}
-	logf.FromContext(ctx).Info("pruned legacy AuthWebhook ServiceMonitor",
-		"kind", "ServiceMonitor",
-		"name", legacyName,
-		"namespace", kn.Namespace,
-		"generation", legacy.GetGeneration(),
-		"resourceVersion", legacy.GetResourceVersion(),
-	)
 	return nil
 }
 
@@ -2426,7 +2433,7 @@ func (r *KubernautReconciler) reconcileGenericIngresses(ctx context.Context, kn 
 			continue
 		}
 		stale := &networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: kn.Namespace}}
-		if err := r.deleteIfExists(ctx, stale); err != nil {
+		if err := r.deleteIfExists(ctx, kn, stale); err != nil {
 			return false, fmt.Errorf("deleting stale generic Ingress %s: %w", name, err)
 		}
 	}
@@ -2457,7 +2464,10 @@ func (r *KubernautReconciler) reconcileOptionalRoute(
 		}
 		return true, nil
 	}
-	if err := r.deleteIfExists(ctx, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
+	if !r.Scheme.Recognizes(routev1.GroupVersion.WithKind("Route")) {
+		return false, nil
+	}
+	if err := r.deleteIfExists(ctx, kn, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
 		return false, fmt.Errorf("deleting stale %s Route: %w", label, err)
 	}
 	return false, nil
@@ -2582,21 +2592,18 @@ func (r *KubernautReconciler) reconcileDelete(ctx context.Context, kn *kubernaut
 }
 
 // runFinalizerCleanup deletes cluster-scoped resources and removes the
-// finalizer once cleanup succeeds. If cleanup keeps failing past
-// maxFinalizerAttempts, it force-removes the finalizer instead of blocking
-// deletion forever. retry is true when the caller should return immediately
-// with (result, err) to requeue and try again later.
+// finalizer once cleanup succeeds. Cleanup failures retain the finalizer and
+// return an error so Kubernetes retries instead of orphaning resources.
+// retry is true when the caller should return immediately with (result, err)
+// to requeue and try again later.
 func (r *KubernautReconciler) runFinalizerCleanup(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (result ctrl.Result, err error, retry bool) {
 	log := logf.FromContext(ctx)
 
 	if err := r.deleteClusterScopedResources(ctx, kn, knV2); err != nil {
-		deletionAge := r.now().Sub(kn.DeletionTimestamp.Time)
-		if deletionAge <= time.Duration(maxFinalizerAttempts)*requeueError {
-			return ctrl.Result{RequeueAfter: requeueError}, err, true
-		}
-		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "FinalizerTimeout", "Reconcile",
-			"cleanup failed after %s; force-removing finalizer: %v", deletionAge.Round(time.Second), err)
-		log.Error(err, "cleanup failed past timeout, force-removing finalizer")
+		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "CleanupFailed", "Reconcile",
+			"cleanup failed; retaining finalizer and retrying: %v", err)
+		log.Error(err, "cleanup failed, retaining finalizer and retrying")
+		return ctrl.Result{RequeueAfter: requeueError}, err, true
 	}
 	r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "CleanupComplete", "Reconcile", "Cluster-scoped resources cleaned up")
 
@@ -2652,7 +2659,7 @@ func (r *KubernautReconciler) deleteProviderPolicies(ctx context.Context, namesp
 		}
 		for index := range list.Items {
 			object := &list.Items[index]
-			if err := r.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
+			if err := r.deleteObservedProviderPolicy(ctx, object); err != nil {
 				errs = append(errs, fmt.Errorf("deleting %s policy %s: %w", kind.GVK.Kind, object.GetName(), err))
 			}
 		}
@@ -2689,10 +2696,10 @@ func (r *KubernautReconciler) deleteCoreClusterRBAC(ctx context.Context, kn *kub
 func (r *KubernautReconciler) deleteAnsibleClusterRBAC(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) []error {
 	var errs []error
 	cr, crb := resources.AnsibleRBAC(kn)
-	if err := r.deleteIfExists(ctx, cr); err != nil {
+	if err := r.deleteIfExists(ctx, kn, cr); err != nil {
 		errs = append(errs, fmt.Errorf("deleting AWX ClusterRole: %w", err))
 	}
-	if err := r.deleteIfExists(ctx, crb); err != nil {
+	if err := r.deleteIfExists(ctx, kn, crb); err != nil {
 		errs = append(errs, fmt.Errorf("deleting AWX CRB: %w", err))
 	}
 	return errs
@@ -2705,14 +2712,14 @@ func (r *KubernautReconciler) deleteMonitoringClusterRBAC(ctx context.Context, k
 	for _, name := range resources.MonitoringCRBNames(kn) {
 		monCRB := &rbacv1.ClusterRoleBinding{}
 		monCRB.Name = name
-		if err := r.deleteIfExists(ctx, monCRB); err != nil {
+		if err := r.deleteIfExists(ctx, kn, monCRB); err != nil {
 			errs = append(errs, fmt.Errorf("deleting monitoring CRB %s: %w", name, err))
 		}
 	}
 	for _, name := range resources.MonitoringClusterRoleNames(kn) {
 		monCR := &rbacv1.ClusterRole{}
 		monCR.Name = name
-		if err := r.deleteIfExists(ctx, monCR); err != nil {
+		if err := r.deleteIfExists(ctx, kn, monCR); err != nil {
 			errs = append(errs, fmt.Errorf("deleting monitoring ClusterRole %s: %w", name, err))
 		}
 	}
@@ -2729,14 +2736,14 @@ func (r *KubernautReconciler) deleteAdditionalAgentAndToolRBAC(ctx context.Conte
 	for _, name := range resources.ToolClusterRoleNames(kn) {
 		toolCR := &rbacv1.ClusterRole{}
 		toolCR.Name = name
-		if err := r.deleteIfExists(ctx, toolCR); err != nil {
+		if err := r.deleteIfExists(ctx, kn, toolCR); err != nil {
 			errs = append(errs, fmt.Errorf("deleting tool ClusterRole %s: %w", name, err))
 		}
 	}
 	for _, name := range kn.Status.BoundToolRoleBindings {
 		toolCRB := &rbacv1.ClusterRoleBinding{}
 		toolCRB.Name = name
-		if err := r.deleteIfExists(ctx, toolCRB); err != nil {
+		if err := r.deleteIfExists(ctx, kn, toolCRB); err != nil {
 			errs = append(errs, fmt.Errorf("deleting tool CRB %s: %w", name, err))
 		}
 	}
@@ -2746,7 +2753,7 @@ func (r *KubernautReconciler) deleteAdditionalAgentAndToolRBAC(ctx context.Conte
 	// static-name delete here.
 	consoleCRB := &rbacv1.ClusterRoleBinding{}
 	consoleCRB.Name = resources.ConsoleAccessCRBName(kn)
-	if err := r.deleteIfExists(ctx, consoleCRB); err != nil {
+	if err := r.deleteIfExists(ctx, kn, consoleCRB); err != nil {
 		errs = append(errs, fmt.Errorf("deleting console-access CRB: %w", err))
 	}
 
@@ -2770,11 +2777,11 @@ func (r *KubernautReconciler) deleteMCPGatewayNamespaceRBAC(ctx context.Context,
 func (r *KubernautReconciler) deleteWebhookResources(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) []error {
 	var errs []error
 	mwc := resources.MutatingWebhookConfiguration(kn)
-	if err := r.deleteIfExists(ctx, mwc); err != nil {
+	if err := r.deleteIfExists(ctx, kn, mwc); err != nil {
 		errs = append(errs, fmt.Errorf("deleting MutatingWebhookConfiguration: %w", err))
 	}
 	vwc := resources.ValidatingWebhookConfiguration(kn)
-	if err := r.deleteIfExists(ctx, vwc); err != nil {
+	if err := r.deleteIfExists(ctx, kn, vwc); err != nil {
 		errs = append(errs, fmt.Errorf("deleting ValidatingWebhookConfiguration: %w", err))
 	}
 	return errs
@@ -2787,49 +2794,30 @@ func (r *KubernautReconciler) deleteWorkflowResources(ctx context.Context, kn *k
 
 	wfRoles, wfRBs := resources.WorkflowNamespaceRBAC(kn)
 	for _, role := range wfRoles {
-		if err := r.deleteIfExists(ctx, role); err != nil {
+		if err := r.deleteIfExists(ctx, kn, role); err != nil {
 			errs = append(errs, fmt.Errorf("deleting wf role %s: %w", role.Name, err))
 		}
 	}
 	for _, rb := range wfRBs {
-		if err := r.deleteIfExists(ctx, rb); err != nil {
+		if err := r.deleteIfExists(ctx, kn, rb); err != nil {
 			errs = append(errs, fmt.Errorf("deleting wf rb %s: %w", rb.Name, err))
 		}
 	}
 
 	wfRunnerSA := resources.WorkflowRunnerServiceAccount(kn)
-	if err := r.deleteIfExists(ctx, wfRunnerSA); err != nil {
+	if err := r.deleteIfExists(ctx, kn, wfRunnerSA); err != nil {
 		errs = append(errs, fmt.Errorf("deleting workflow runner SA: %w", err))
 	}
 
-	if err := r.deleteOperatorManagedWorkflowNamespace(ctx, resources.WorkflowNamespace(kn)); err != nil {
-		errs = append(errs, err)
-	}
+	// #514: ownership of a namespace never delegates ownership of its contents.
+	// Provisioning-owned workflow artifacts are outside the operator's cleanup
+	// contract; see docs/design/ISSUE-514-OWNERSHIP-CONTRACT.md. The CR namespace
+	// is likewise never deleted, preserving DB/Valkey and administrator inputs.
+	logf.FromContext(ctx).Info("workflow namespace retained for provisioning-owned content",
+		"kind", "Namespace", "name", resources.WorkflowNamespace(kn).Name,
+		"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
 
 	return errs
-}
-
-// deleteOperatorManagedWorkflowNamespace deletes the workflow namespace only
-// if it exists and was created by this operator (see the #208 backstop
-// comment in deployWorkflowNamespace); a user-provided pre-existing
-// namespace is left alone.
-func (r *KubernautReconciler) deleteOperatorManagedWorkflowNamespace(ctx context.Context, wfNs *corev1.Namespace) error {
-	existingNs := &corev1.Namespace{}
-	if err := r.Get(ctx, types.NamespacedName{Name: wfNs.Name}, existingNs); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("getting workflow namespace %s: %w", wfNs.Name, err)
-	}
-
-	if existingNs.Annotations[resources.AnnotationCreatedBy] != "kubernaut-operator" {
-		logf.FromContext(ctx).Info("skipping deletion of workflow namespace (not created by operator)", "namespace", wfNs.Name)
-		return nil
-	}
-	if err := r.deleteIfExists(ctx, existingNs); err != nil {
-		return fmt.Errorf("deleting workflow namespace %s: %w", wfNs.Name, err)
-	}
-	return nil
 }
 
 // ---------- Helpers ----------
@@ -3361,10 +3349,10 @@ func certManagerReadyCondition(conditions []interface{}) (bool, string, string) 
 // before TLS readiness is reported. This gives cert-manager cainjector an
 // object to patch while keeping caBundle outside the operator's ownership.
 func (r *KubernautReconciler) ensureCertManagerWebhookConfigurations(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
-	if err := r.ensureWebhookConfiguration(ctx, resources.MutatingWebhookConfigurationWithCertManagerInjection(kn)); err != nil {
+	if err := r.ensureWebhookConfiguration(ctx, kn, resources.MutatingWebhookConfigurationWithCertManagerInjection(kn)); err != nil {
 		return fmt.Errorf("ensuring cert-manager MutatingWebhookConfiguration: %w", err)
 	}
-	if err := r.ensureWebhookConfiguration(ctx, resources.ValidatingWebhookConfigurationWithCertManagerInjection(kn)); err != nil {
+	if err := r.ensureWebhookConfiguration(ctx, kn, resources.ValidatingWebhookConfigurationWithCertManagerInjection(kn)); err != nil {
 		return fmt.Errorf("ensuring cert-manager ValidatingWebhookConfiguration: %w", err)
 	}
 	return nil
@@ -3373,12 +3361,12 @@ func (r *KubernautReconciler) ensureCertManagerWebhookConfigurations(ctx context
 func (r *KubernautReconciler) ensureManualWebhookConfigurations(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
 	mwc := resources.MutatingWebhookConfiguration(kn)
 	delete(mwc.Annotations, resources.OCPServiceCAInjectAnnotation)
-	if err := r.ensureWebhookConfiguration(ctx, mwc); err != nil {
+	if err := r.ensureWebhookConfiguration(ctx, kn, mwc); err != nil {
 		return fmt.Errorf("ensuring manual MutatingWebhookConfiguration: %w", err)
 	}
 	vwc := resources.ValidatingWebhookConfiguration(kn)
 	delete(vwc.Annotations, resources.OCPServiceCAInjectAnnotation)
-	if err := r.ensureWebhookConfiguration(ctx, vwc); err != nil {
+	if err := r.ensureWebhookConfiguration(ctx, kn, vwc); err != nil {
 		return fmt.Errorf("ensuring manual ValidatingWebhookConfiguration: %w", err)
 	}
 	return nil
@@ -3478,6 +3466,9 @@ func (r *KubernautReconciler) ensureDevelopmentSelfSignedTLS(
 		}
 		if err != nil {
 			return resources.TLSMaterial{}, nil, fmt.Errorf("reading development TLS secret %q: %w", name, err)
+		}
+		if err := r.checkResourceOwnership(ctx, kn, secret, true); err != nil {
+			return resources.TLSMaterial{}, nil, err
 		}
 		existing[name] = secret
 	}
@@ -3582,6 +3573,7 @@ func (r *KubernautReconciler) ensureCertManagerResource(
 	if err := resources.SetOwnerReference(kn, desired, r.Scheme); err != nil {
 		return err
 	}
+	resources.StampOwnership(kn, desired)
 	setHashAnnotation(desired, resources.SpecHash(desired))
 
 	live := &unstructured.Unstructured{}
@@ -3589,25 +3581,34 @@ func (r *KubernautReconciler) ensureCertManagerResource(
 	live.SetKind(desired.GetKind())
 	key := client.ObjectKey{Name: desired.GetName(), Namespace: desired.GetNamespace()}
 	if err := r.Get(ctx, key, live); apierrors.IsNotFound(err) {
-		if err := r.Create(ctx, desired); err != nil {
-			if apierrors.IsAlreadyExists(err) {
-				return nil
-			}
-			return err
+		created, createErr := r.createOrReadExisting(ctx, desired, live, key)
+		if createErr != nil {
+			return createErr
 		}
-		return nil
+		if created {
+			r.resourceLogger(ctx, kn, desired).Info("resource created")
+			return nil
+		}
 	} else if err != nil {
 		return fmt.Errorf("getting %s: %w", key, err)
 	}
+	if err := r.checkResourceOwnership(ctx, kn, live, true); err != nil {
+		return err
+	}
+	if live.GetAnnotations()[resources.AnnotationSpecHash] == desired.GetAnnotations()[resources.AnnotationSpecHash] && ownershipMetadataMatches(desired, live) {
+		return nil
+	}
 
 	desired.SetResourceVersion(live.GetResourceVersion())
-	desired.SetOwnerReferences(live.GetOwnerReferences())
 	desired.SetLabels(mergeStringMap(live.GetLabels(), desired.GetLabels()))
 	desired.SetAnnotations(mergeStringMap(live.GetAnnotations(), desired.GetAnnotations()))
-	if err := resources.SetOwnerReference(kn, desired, r.Scheme); err != nil {
-		return fmt.Errorf("setting cert-manager resource owner reference: %w", err)
+	desired.SetFinalizers(mergeStringSlice(live.GetFinalizers(), desired.GetFinalizers()))
+	if err := r.Update(ctx, desired); err != nil {
+		r.resourceLogger(ctx, kn, desired).Error(err, "cert-manager resource update failed")
+		return fmt.Errorf("updating cert-manager resource %s: %w", key, err)
 	}
-	return r.Update(ctx, desired)
+	r.resourceLogger(ctx, kn, desired).Info("resource updated")
+	return nil
 }
 
 func mergeStringMap(existing, desired map[string]string) map[string]string {
@@ -3617,6 +3618,24 @@ func mergeStringMap(existing, desired map[string]string) map[string]string {
 	}
 	for key, value := range desired {
 		merged[key] = value
+	}
+	return merged
+}
+
+func mergeStringSlice(existing, desired []string) []string {
+	if len(existing) == 0 && len(desired) == 0 {
+		return nil
+	}
+	merged := make([]string, 0, len(existing)+len(desired))
+	seen := make(map[string]struct{}, len(existing)+len(desired))
+	for _, values := range [][]string{existing, desired} {
+		for _, value := range values {
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			merged = append(merged, value)
+		}
 	}
 	return merged
 }
@@ -3744,15 +3763,15 @@ func (r *KubernautReconciler) ensureNamespaced(ctx context.Context, kn *kubernau
 	if err := resources.SetOwnerReference(kn, obj, r.Scheme); err != nil {
 		return err
 	}
-	return r.ensureResource(ctx, obj)
+	return r.ensureResource(ctx, kn, obj)
 }
 
 // ensureUnowned creates or updates a resource without setting an owner
 // reference. Used for cluster-scoped resources (ClusterRoles, CRBs, webhooks)
 // and cross-namespace resources (workflow Roles/RoleBindings) where
 // OwnerReferences cannot be used. Cleanup is handled by the finalizer.
-func (r *KubernautReconciler) ensureUnowned(ctx context.Context, obj client.Object) error {
-	return r.ensureResource(ctx, obj)
+func (r *KubernautReconciler) ensureUnowned(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, obj client.Object) error {
+	return r.ensureResource(ctx, kn, obj)
 }
 
 // ensureResource is the shared create-or-update implementation for both
@@ -3764,7 +3783,8 @@ func (r *KubernautReconciler) ensureUnowned(ctx context.Context, obj client.Obje
 // When the spec-hash annotation matches (no spec change), ensureResource
 // additionally checks for content drift on ConfigMaps — detecting external
 // modifications that preserved the annotation but altered the data.
-func (r *KubernautReconciler) ensureResource(ctx context.Context, obj client.Object) error {
+func (r *KubernautReconciler) ensureResource(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, obj client.Object) error {
+	resources.StampOwnership(kn, obj)
 	desiredHash := resources.SpecHash(obj)
 	setHashAnnotation(obj, desiredHash)
 
@@ -3772,35 +3792,44 @@ func (r *KubernautReconciler) ensureResource(ctx context.Context, obj client.Obj
 	key := types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}
 	err := r.Get(ctx, key, existing)
 	if apierrors.IsNotFound(err) {
-		created, err := r.createOrAdoptExisting(ctx, obj, existing, key)
+		created, err := r.createOrReadExisting(ctx, obj, existing, key)
 		if err != nil {
 			return err
 		}
 		if created {
+			r.resourceLogger(ctx, kn, obj).Info("resource created")
 			return nil
 		}
 	} else if err != nil {
 		return fmt.Errorf("getting %s: %w", key, err)
 	}
 
-	if existing.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash && !contentDrifted(obj, existing) {
+	if err := r.checkResourceOwnership(ctx, kn, existing, metav1.GetControllerOf(obj) != nil); err != nil {
+		return err
+	}
+	if existing.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash && !contentDrifted(obj, existing) && ownershipMetadataMatches(obj, existing) {
 		return nil
 	}
 
 	obj.SetResourceVersion(existing.GetResourceVersion())
-	return r.Update(ctx, obj)
+	if err := r.Update(ctx, obj); err != nil {
+		r.resourceLogger(ctx, kn, obj).Error(err, "resource update failed")
+		return fmt.Errorf("updating %s: %w", key, err)
+	}
+	r.resourceLogger(ctx, kn, obj).Info("resource updated")
+	return nil
 }
 
-// createOrAdoptExisting attempts to Create obj. If Create raced with another
+// createOrReadExisting attempts to Create obj. If Create raced with another
 // writer (AlreadyExists), it re-Gets the now-existing object into existing
 // so the caller's update-or-skip comparison has current state to work with.
 // created is true when Create succeeded and no further action is needed.
-func (r *KubernautReconciler) createOrAdoptExisting(ctx context.Context, obj, existing client.Object, key types.NamespacedName) (bool, error) {
+func (r *KubernautReconciler) createOrReadExisting(ctx context.Context, obj, existing client.Object, key types.NamespacedName) (bool, error) {
 	if err := r.Create(ctx, obj); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
 			return false, err
 		}
-		if err := r.Get(ctx, key, existing); err != nil {
+		if err := r.ownershipReader().Get(ctx, key, existing); err != nil {
 			return false, fmt.Errorf("getting %s after AlreadyExists: %w", key, err)
 		}
 		return false, nil
@@ -3876,24 +3905,37 @@ func setHashAnnotation(obj client.Object, hash string) {
 // createIfNotFound gets an existing resource into `existing`; if not found it
 // sets an owner reference and creates `desired`. Returns (true, nil) when
 // a create occurred, (false, nil) when the resource already existed.
-// AlreadyExists from a concurrent create is treated as success.
+// AlreadyExists is re-read and authorized before using status or repairing metadata.
 func (r *KubernautReconciler) createIfNotFound(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, desired, existing client.Object) (bool, error) {
+	if err := resources.SetOwnerReference(kn, desired, r.Scheme); err != nil {
+		return false, err
+	}
+	resources.StampOwnership(kn, desired)
 	key := types.NamespacedName{Name: desired.GetName(), Namespace: desired.GetNamespace()}
 	err := r.Get(ctx, key, existing)
 	if apierrors.IsNotFound(err) {
-		if setErr := resources.SetOwnerReference(kn, desired, r.Scheme); setErr != nil {
-			return false, setErr
+		created, createErr := r.createOrReadExisting(ctx, desired, existing, key)
+		if createErr != nil {
+			return false, createErr
 		}
-		if err := r.Create(ctx, desired); err != nil {
-			if apierrors.IsAlreadyExists(err) {
-				return false, nil
-			}
-			return false, err
+		if created {
+			r.resourceLogger(ctx, kn, desired).Info("resource created")
+			return true, nil
 		}
-		return true, nil
-	}
-	if err != nil {
+	} else if err != nil {
 		return false, fmt.Errorf("getting %s: %w", key, err)
+	}
+	if err := r.checkResourceOwnership(ctx, kn, existing, true); err != nil {
+		return false, err
+	}
+	if !ownershipMetadataMatches(desired, existing) {
+		// Preserve immutable Job spec and observed status during reinstall repair.
+		existing.SetOwnerReferences(desired.GetOwnerReferences())
+		resources.StampOwnership(kn, existing)
+		if err := r.Update(ctx, existing); err != nil {
+			return false, fmt.Errorf("repairing migration ownership: %w", err)
+		}
+		r.resourceLogger(ctx, kn, existing).Info("resource ownership repaired")
 	}
 	return false, nil
 }
@@ -3902,7 +3944,7 @@ func (r *KubernautReconciler) createIfNotFound(ctx context.Context, kn *kubernau
 // serving-cert annotation has stale generation-error annotations (e.g. after
 // a service rename) and clears them so the service-CA controller retries
 // certificate generation.
-func (r *KubernautReconciler) clearStaleServingCertErrors(ctx context.Context, desired *corev1.Service) error {
+func (r *KubernautReconciler) clearStaleServingCertErrors(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, desired *corev1.Service) error {
 	secretName, ok := desired.Annotations[resources.OCPServingCertAnnotation]
 	if !ok || secretName == "" {
 		return nil
@@ -3911,6 +3953,9 @@ func (r *KubernautReconciler) clearStaleServingCertErrors(ctx context.Context, d
 	live := &corev1.Service{}
 	if err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, live); err != nil {
 		return client.IgnoreNotFound(err)
+	}
+	if err := r.checkResourceOwnership(ctx, kn, live, true); err != nil {
+		return err
 	}
 
 	const errAnnotation = "service.beta.openshift.io/serving-cert-generation-error"
@@ -3943,12 +3988,30 @@ func (r *KubernautReconciler) clearStaleServingCertErrors(ctx context.Context, d
 	return r.Update(ctx, live)
 }
 
-func (r *KubernautReconciler) deleteIfExists(ctx context.Context, obj client.Object) error {
-	err := r.Delete(ctx, obj)
+func (r *KubernautReconciler) deleteIfExists(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, obj client.Object) error {
+	live := obj.DeepCopyObject().(client.Object)
+	err := r.ownershipReader().Get(ctx, client.ObjectKeyFromObject(obj), live)
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
-	return err
+	if err != nil {
+		r.resourceLogger(ctx, kn, obj).Error(err, "reading resource for deletion failed")
+		return fmt.Errorf("reading resource for deletion: %w", err)
+	}
+	if err := resources.ResourceOwnershipError(kn, live, live.GetNamespace() != "" && live.GetNamespace() == kn.Namespace); err != nil {
+		conflict := r.reportOwnershipConflict(ctx, kn, live, err)
+		r.resourceLogger(ctx, kn, live).Info("resource preserved outside ownership contract", "ownershipError", conflict.Error())
+		return nil //nolint:nilerr // a diagnosed ownership denial is a successful preservation, not a cleanup failure
+	}
+	if err := r.deleteObservedResource(ctx, live); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		r.resourceLogger(ctx, kn, live).Error(err, "resource deletion failed")
+		return fmt.Errorf("deleting resource: %w", err)
+	}
+	r.resourceLogger(ctx, kn, live).Info("resource deleted")
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

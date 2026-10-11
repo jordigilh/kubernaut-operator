@@ -452,6 +452,95 @@ var _ = Describe("InterServiceTLSCAFile", func() {
 		Expect(volume.ConfigMap.Items).To(ConsistOf(corev1.KeyToPath{Key: "ca.crt", Path: "ca.pem"}))
 		Expect(InterServiceTLSCAMount(kn).MountPath).To(Equal("/custom/ca"))
 	})
+
+	It("uses chart defaults when the explicit inter-service block omits paths", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS.InterService = &kubernautv1alpha2.InterServiceTLSConfig{}
+
+		Expect(InterServiceTLSCertDirFor(kn)).To(Equal("/etc/tls"))
+		Expect(InterServiceTLSCAFileFor(kn)).To(Equal("/etc/tls-ca/ca.crt"))
+	})
+
+	It("mounts an administrator-managed Secret directly in manual mode", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
+		kn.Spec.TLS.AdministratorManaged = &kubernautv1alpha2.AdministratorManagedTLSConfig{
+			InternalCASecretName: "customer-ca",
+		}
+
+		volume := InterServiceTLSCAVolume(kn)
+		Expect(volume.Secret).NotTo(BeNil())
+		Expect(volume.Secret.SecretName).To(Equal("customer-ca"))
+		Expect(volume.Secret.Items).To(ConsistOf(corev1.KeyToPath{Key: "ca.crt", Path: "ca.crt"}))
+	})
+
+	It("uses the operator-managed ConfigMap directly in manual mode when no Secret is configured", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
+
+		volume := InterServiceTLSCAVolume(kn)
+		Expect(volume.ConfigMap).NotTo(BeNil())
+		Expect(volume.ConfigMap.Name).To(Equal(InterServiceCAConfigMapName))
+		Expect(volume.ConfigMap.Items).To(ConsistOf(corev1.KeyToPath{Key: "ca.crt", Path: "ca.crt"}))
+	})
+
+	It("exposes capability-aware monitoring endpoints and nil Helm-mode handling", func() {
+		kn := testKubernaut()
+		disabled := false
+		kn.Spec.Monitoring.Prometheus.Enabled = &disabled
+		kn.Spec.Monitoring.AlertManager.Enabled = &disabled
+		Expect(EffectivePrometheusURL(kn)).To(BeEmpty())
+		Expect(EffectiveAlertManagerURL(kn)).To(BeEmpty())
+		Expect(isHelmTLSMode(nil)).To(BeFalse())
+
+		enabled := true
+		kn.Spec.Monitoring.Prometheus.Enabled = &enabled
+		kn.Spec.Monitoring.AlertManager.Enabled = &enabled
+		Expect(EffectivePrometheusURL(kn)).To(Equal(OCPPrometheusURL))
+		Expect(EffectiveAlertManagerURL(kn)).To(Equal(OCPAlertManagerURL))
+	})
+
+	It("handles console activity and unknown image suffixes", func() {
+		kn := testKubernaut()
+		Expect(isComponentActive(kn, testKnV2(kn), ComponentConsole)).To(BeFalse())
+		enabled := true
+		kn.Spec.Console.Enabled = &enabled
+		Expect(isComponentActive(kn, testKnV2(kn), ComponentConsole)).To(BeTrue())
+		disabled := false
+		kn.Spec.Console.Enabled = &disabled
+		Expect(isComponentActive(kn, testKnV2(kn), ComponentConsole)).To(BeFalse())
+
+		originalImage, hadImage := os.LookupEnv("RELATED_IMAGE_CUSTOM_COMPONENT")
+		Expect(os.Setenv("RELATED_IMAGE_CUSTOM_COMPONENT", "quay.io/example/custom:v1")).To(Succeed())
+		DeferCleanup(func() {
+			if hadImage {
+				Expect(os.Setenv("RELATED_IMAGE_CUSTOM_COMPONENT", originalImage)).To(Succeed())
+				return
+			}
+			Expect(os.Unsetenv("RELATED_IMAGE_CUSTOM_COMPONENT")).To(Succeed())
+		})
+		image, err := ResolveImage(kn, "custom-component")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(image).To(Equal("quay.io/example/custom:v1"))
+	})
+
+	It("resolves policy and runtime ConfigMap overrides", func() {
+		kn := testKubernaut()
+		kn.Spec.AIAnalysis.Policy.ConfigMapName = ""
+		kn.Spec.SignalProcessing.Policy.ConfigMapName = ""
+		Expect(AIAnalysisPolicyName(kn)).To(Equal("aianalysis-policy"))
+		Expect(SignalProcessingPolicyName(kn)).To(Equal("signalprocessing-policy"))
+		Expect(KubernautAgentLLMRuntimeConfigName(kn)).To(Equal("kubernaut-agent-llm-runtime"))
+
+		kn.Spec.AIAnalysis.Policy.ConfigMapName = "custom-ai-policy"
+		kn.Spec.SignalProcessing.Policy.ConfigMapName = "custom-signal-policy"
+		kn.Spec.KubernautAgent.RuntimeConfigMapName = "custom-runtime"
+		Expect(AIAnalysisPolicyName(kn)).To(Equal("custom-ai-policy"))
+		Expect(SignalProcessingPolicyName(kn)).To(Equal("custom-signal-policy"))
+		Expect(KubernautAgentLLMRuntimeConfigName(kn)).To(Equal("custom-runtime"))
+		_, found := ResolveLLMProfile(kn, "")
+		Expect(found).To(BeFalse())
+	})
 })
 
 var _ = Describe("ValkeyAddr", func() {
