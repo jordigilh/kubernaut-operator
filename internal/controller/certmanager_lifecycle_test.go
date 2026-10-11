@@ -150,7 +150,7 @@ var _ = Describe("cert-manager independent lifecycle decisions", Label("unit"), 
 			r := businessUnitReconciler(kn, faults)
 			err = r.ensureCertManagerResource(ctx, kn, objects[0].DeepCopy())
 			if index == 2 {
-				Expect(err).NotTo(HaveOccurred())
+				Expect(err).To(MatchError(ContainSubstring("after AlreadyExists")))
 			} else {
 				Expect(err).To(MatchError(ContainSubstring(unitAPIDenial)))
 			}

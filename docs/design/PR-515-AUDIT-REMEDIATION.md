@@ -35,8 +35,11 @@ primitives and unchanged permissions. This is not atomic pre-CREATE admission
 or protection against an administrator deliberately removing finalizers or
 force-deleting an active instance. Such destructive recovery remains an
 administrator action requiring orphan-resource review; #517's ownership contract
-must still protect those resources. The existing forced-cleanup timeout is also
-reported honestly, not treated as successful cleanup.
+protects those resources. On integration, the user explicitly selected #517's
+fail-closed cleanup contract: failures retain the finalizer and retry regardless
+of deletion age. No automatic timeout-based removal or namespace deletion is
+restored. `CleanupComplete` is emitted only after successful cleanup and finalizer
+persistence; a failure remains observable as `CleanupFailed`.
 
 Alternatives not selected: a namespace restriction (breaks existing namespace
 flexibility), cluster-scoped CR migration (breaking storage/API change), and a
@@ -55,6 +58,11 @@ new reservation Lease (new lifecycle/RBAC without necessity for this invariant).
 - Depend on the separately reviewed #517 ownership changes rather than copying
   or overwriting that work. Full application qualification remains upstream
   under the approved issue #501 CI boundary.
+- Integrate #517 through its merged `main` commit
+  `19ec481b198ab9e2f3c950070b1b4a7015231908`, preserving the six existing remediation
+  commits. Preserve owner authorization before hash fast paths, authoritative
+  race reads, UID/resource-version delete preconditions, provisioning namespace
+  retention and the two independently tested TLS-fixture CI corrections.
 - Required (default) native isolation blocks migration and new workloads on
   failed provider discovery; Inherited explicitly acknowledges administrator
   isolation without attesting it. Existing policies are retained on failure or
@@ -86,6 +94,7 @@ These are production paths, not test-only builder substitutes.
 | Required isolation and retained policies | `reconcilePhases`/`deployWorkloads` → `reconcileProviderPolicies` | UT-AUDIT-515-POLICY-001–003; IT-AUDIT-515-POLICY-001 |
 | Typed scraper ingress | `reconcileProviderPolicies` → generated Service port intent → `policy.Render` | UT-AUDIT-515-SCRAPE-001–007; provider policy reconciliation including custom AF port 19180 |
 | Truthful audit | `patchStatus` and `runFinalizerCleanup` | UT-AUDIT-515-AUDIT-001/002 and real-API phase/cleanup assertions |
+| Integrated ownership and conditional cleanup | `Reconcile` → write/cleanup subfunctions → `checkResourceOwnership`/`deleteObservedResource` | UT-AUDIT-515-OWNERSHIP-001–006; IT-OWN-514-001–022; IT-OWN-514-019 explicitly selects Required isolation |
 | Complete telemetry client-chain validation | `phaseValidate` → `validateTelemetrySecrets` → strict PEM parser | UT-AUDIT-515-TELEMETRY-006; IT-TELEMETRY-AUDIT-515-001 |
 | Stable automatic issuer selection | `ensureRuntimeTLS` → `resolveCertManagerIssuer` → `selectSingleCertManagerIssuer` | UT-AUDIT-515-CERTMANAGER-008; IT-TLS-AUDIT-515-004 |
 | Internal issuer identities | `selectSingleCertManagerIssuer` → `resources.CertManagerBootstrapIssuerNames` | UT-AUDIT-515-SERIALIZATION-001; UT-AUDIT-515-CERTMANAGER-008; IT-TLS-AUDIT-515-004 |

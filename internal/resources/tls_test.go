@@ -21,6 +21,8 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"math/big"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -30,6 +32,8 @@ import (
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
+
+const invalidRotationBefore = "not-a-duration"
 
 var _ = Describe("runtime TLS source", func() {
 	It("resolves administrator-managed material without adopting its Secrets", func() {
@@ -441,6 +445,289 @@ var _ = Describe("runtime TLS source", func() {
 	})
 })
 
+var _ = Describe("runtime TLS resolver edge cases", func() {
+	It("rejects nil input and resolves manual mode without taking ownership", func() {
+		_, err := ResolveTLSMaterial(nil)
+		Expect(err).To(MatchError("kubernaut is required"))
+
+		kn := testKubernaut()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode: kubernautv1alpha2.TLSModeManual,
+			AdministratorManaged: &kubernautv1alpha2.AdministratorManagedTLSConfig{
+				ServiceTLSSecretNames: map[string]string{TLSServiceGateway: "custom-gateway-tls"},
+			},
+		}
+		material, err := ResolveTLSMaterial(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(material.Source).To(Equal(TLSMaterialSourceAdministratorManaged))
+		Expect(material.InternalCAConfigMapName).To(Equal(InterServiceCAConfigMapName))
+		Expect(material.ServiceTLSSecretNames).To(HaveKeyWithValue(TLSServiceGateway, "custom-gateway-tls"))
+		Expect(material.ServiceTLSSecretNames).To(HaveKeyWithValue(TLSServiceAuthWebhook, "authwebhook-tls"))
+		Expect(material.OwnsSecrets).To(BeFalse())
+
+		kn.Spec.TLS.AdministratorManaged.InternalCASecretName = "customer-ca"
+		material, err = ResolveTLSMaterial(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(material.InternalCASecretName).To(Equal("customer-ca"))
+	})
+
+	It("validates administrator-managed, cert-manager, and development references", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode: kubernautv1alpha2.TLSModeAdministratorManaged,
+			AdministratorManaged: &kubernautv1alpha2.AdministratorManagedTLSConfig{
+				InternalCASecretName:  "customer-ca",
+				ServiceTLSSecretNames: validServiceTLSSecretNames(),
+			},
+		}
+		delete(kn.Spec.TLS.AdministratorManaged.ServiceTLSSecretNames, TLSServiceGateway)
+		_, err := ResolveTLSMaterial(kn)
+		Expect(err).To(MatchError(ContainSubstring("serviceTLSSecretNames")))
+
+		kn.Spec.TLS.AdministratorManaged.ServiceTLSSecretNames = validServiceTLSSecretNames()
+		kn.Spec.TLS.AdministratorManaged.InternalCASecretName = ""
+		_, err = ResolveTLSMaterial(kn)
+		Expect(err).To(MatchError(ContainSubstring("internalCASecretName")))
+
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeCertManager}
+		_, err = ResolveTLSMaterial(kn)
+		Expect(err).To(MatchError(ContainSubstring("certManager is required")))
+
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode: kubernautv1alpha2.TLSModeCertManager,
+			CertManager: &kubernautv1alpha2.CertManagerTLSConfig{
+				Issuer:                kubernautv1alpha2.TLSIssuerRef{Name: "customer-issuer"},
+				InternalCASecretName:  "customer-ca",
+				ServiceTLSSecretNames: validServiceTLSSecretNames(),
+			},
+		}
+		material, err := ResolveTLSMaterial(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(material.Source).To(Equal(TLSMaterialSourceCertManager))
+		Expect(material.InternalCASecretName).To(Equal("customer-ca"))
+
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode:        kubernautv1alpha2.TLSModeCertManager,
+			CertManager: &kubernautv1alpha2.CertManagerTLSConfig{Issuer: kubernautv1alpha2.TLSIssuerRef{Name: "customer-issuer"}},
+		}
+		_, err = ResolveTLSMaterial(kn)
+		Expect(err).To(MatchError(ContainSubstring("serviceTLSSecretNames")))
+
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeDevelopmentSelfSigned}
+		_, err = ResolveTLSMaterial(kn)
+		Expect(err).To(MatchError(ContainSubstring("developmentSelfSigned is required")))
+
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeHelmCertManager}
+		material, err = ResolveTLSMaterial(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(material.Source).To(Equal(TLSMaterialSourceCertManager))
+		Expect(CertManagerTLSProvisioningEnabled(kn)).To(BeTrue())
+	})
+})
+
+var _ = Describe("TLS Secret validation", func() {
+	var (
+		kn      *kubernautv1alpha2.Kubernaut
+		secrets map[string]*corev1.Secret
+		ca      *corev1.Secret
+		leaf    *corev1.Secret
+		auth    *corev1.Secret
+		signing *corev1.Secret
+		now     = time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC)
+	)
+
+	BeforeEach(func() {
+		kn = testKubernautWithDevelopmentTLS()
+		generated, err := DevelopmentSelfSignedTLSSecrets(kn, nil, now)
+		Expect(err).NotTo(HaveOccurred())
+		secrets = secretsByName(generated)
+		ca = secrets[defaultDevelopmentSelfSignedCASecretName]
+		leaf = secrets[GatewayTLSSecretName]
+		auth = secrets["authwebhook-tls"]
+		signing = secrets[defaultCertManagerSigningSecretName]
+	})
+
+	It("rejects missing, malformed, and non-CA internal material", func() {
+		_, err := InternalCAPEMForSource(nil, "")
+		Expect(err).To(MatchError("internal CA Secret is required"))
+
+		missing := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "missing-ca"}, Data: map[string][]byte{}}
+		_, err = InternalCAPEMForSource(missing, "")
+		Expect(err).To(MatchError(ContainSubstring("missing ca.crt")))
+		_, err = InternalCAPEMForSource(missing, TLSMaterialSourceCertManager)
+		Expect(err).To(MatchError(ContainSubstring("missing ca.crt or tls.crt")))
+
+		nonCA := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "not-a-ca"},
+			Data:       map[string][]byte{"ca.crt": append([]byte(nil), leaf.Data[corev1.TLSCertKey]...)},
+		}
+		_, err = InternalCAPEMForSource(nonCA, "")
+		Expect(err).To(MatchError(ContainSubstring("non-CA certificate")))
+
+		certManagerCA := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "cert-manager-ca"},
+			Data:       map[string][]byte{corev1.TLSCertKey: append([]byte(nil), ca.Data[tlsCACertificateKey]...)},
+		}
+		pemBytes, err := InternalCAPEMForSource(certManagerCA, TLSMaterialSourceCertManager)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pemBytes).To(Equal(ca.Data[tlsCACertificateKey]))
+	})
+
+	It("rejects invalid serving and signing Secret formats", func() {
+		Expect(ValidateServingTLSSecret(nil)).To(MatchError("serving TLS Secret is required"))
+		Expect(ValidateServingTLSSecret(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "empty"}})).To(MatchError(ContainSubstring("tls.crt and tls.key")))
+
+		invalid := leaf.DeepCopy()
+		invalid.Data[corev1.TLSPrivateKeyKey] = []byte("not-a-key")
+		Expect(ValidateServingTLSSecret(invalid)).To(MatchError(ContainSubstring("invalid TLS key pair")))
+
+		invalidCertificate := signing.DeepCopy()
+		invalidCertificate.Data[corev1.TLSCertKey] = []byte("not-a-certificate")
+		Expect(ValidateDataStorageSigningTLSSecret(invalidCertificate)).To(HaveOccurred())
+
+		signingKey, err := parseRSAKey(signing.Data[corev1.TLSPrivateKeyKey])
+		Expect(err).NotTo(HaveOccurred())
+		pkcs8Key, err := x509.MarshalPKCS8PrivateKey(signingKey)
+		Expect(err).NotTo(HaveOccurred())
+		pkcs8Signing := signing.DeepCopy()
+		pkcs8Signing.Data[corev1.TLSPrivateKeyKey] = pemEncode("PRIVATE KEY", pkcs8Key)
+		Expect(ValidateDataStorageSigningTLSSecret(pkcs8Signing)).To(Succeed())
+
+		smallKey := mustRSAKey(1024)
+		smallSigning := signing.DeepCopy()
+		smallSigning.Data[corev1.TLSCertKey] = mustRSACertificate(smallKey)
+		smallSigning.Data[corev1.TLSPrivateKeyKey] = pemEncode("RSA PRIVATE KEY", x509.MarshalPKCS1PrivateKey(smallKey))
+		Expect(ValidateDataStorageSigningTLSSecret(smallSigning)).To(MatchError(ContainSubstring("RSA-2048")))
+	})
+
+	It("enforces service identity, AuthWebhook identity, and ingress-host identity", func() {
+		Expect(ValidateServingTLSSecretForService(nil, ca, TLSServiceGateway, kn.Namespace)).To(HaveOccurred())
+		Expect(ValidateServingTLSSecretForService(leaf, nil, TLSServiceGateway, kn.Namespace)).To(HaveOccurred())
+		Expect(ValidateServingTLSSecretForService(leaf, ca, "not-a-service", kn.Namespace)).To(MatchError(ContainSubstring("not signed")))
+		Expect(ValidateServingTLSSecretForServiceWithSource(leaf, ca, TLSServiceGateway, kn.Namespace, TLSMaterialSourceCertManager)).To(Succeed())
+
+		Expect(ValidateAuthWebhookTLSSecret(nil, kn.Namespace)).To(HaveOccurred())
+		invalidAuth := auth.DeepCopy()
+		invalidAuth.Data[corev1.TLSPrivateKeyKey] = []byte("not-a-key")
+		Expect(ValidateAuthWebhookTLSSecret(invalidAuth, kn.Namespace)).To(HaveOccurred())
+		wrongAuth := leaf.DeepCopy()
+		Expect(ValidateAuthWebhookTLSSecret(wrongAuth, kn.Namespace)).To(MatchError(ContainSubstring("does not cover")))
+		Expect(ValidateAuthWebhookTLSSecret(auth, kn.Namespace)).To(Succeed())
+
+		Expect(ValidateServingTLSSecretForHost(nil, "gateway.example.test")).To(HaveOccurred())
+		invalidHost := leaf.DeepCopy()
+		invalidHost.Data[corev1.TLSPrivateKeyKey] = []byte("not-a-key")
+		Expect(ValidateServingTLSSecretForHost(invalidHost, "gateway.example.test")).To(HaveOccurred())
+		Expect(ValidateServingTLSSecretForHost(leaf, "gateway-service."+kn.Namespace)).To(Succeed())
+		Expect(ValidateServingTLSSecretForHost(leaf, "not-gateway.example.test")).To(MatchError(ContainSubstring("does not cover ingress host")))
+	})
+
+	It("validates AuthWebhook CA bundles and required service-name maps", func() {
+		_, err := AuthWebhookCABundle(nil)
+		Expect(err).To(MatchError(ContainSubstring("missing ca.crt")))
+		invalid := auth.DeepCopy()
+		invalid.Data[tlsCACertificateKey] = []byte("invalid")
+		_, err = AuthWebhookCABundle(invalid)
+		Expect(err).To(MatchError(ContainSubstring("invalid ca.crt")))
+		nonCA := auth.DeepCopy()
+		nonCA.Data[tlsCACertificateKey] = append([]byte(nil), leaf.Data[corev1.TLSCertKey]...)
+		_, err = AuthWebhookCABundle(nonCA)
+		Expect(err).To(MatchError(ContainSubstring("non-CA certificate")))
+		bundle, err := AuthWebhookCABundle(auth)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(bundle).To(Equal(auth.Data[tlsCACertificateKey]))
+
+		_, err = requiredServiceTLSSecretNames(nil, false)
+		Expect(err).To(MatchError(ContainSubstring("serviceTLSSecretNames is required")))
+		_, err = requiredServiceTLSSecretNames(map[string]string{TLSServiceGateway: "gateway-tls"}, false)
+		Expect(err).To(MatchError(ContainSubstring("serviceTLSSecretNames[\"datastorage\"] is required")))
+	})
+})
+
+var _ = Describe("TLS helper edge cases", func() {
+	It("covers manual defaults, unknown service mappings, and cert-manager validation", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode: kubernautv1alpha2.TLSModeCertManager,
+			CertManager: &kubernautv1alpha2.CertManagerTLSConfig{
+				Issuer:                kubernautv1alpha2.TLSIssuerRef{Name: "customer-issuer"},
+				ServiceTLSSecretNames: validServiceTLSSecretNames(),
+			},
+		}
+		_, err := ResolveTLSMaterial(kn)
+		Expect(err).To(MatchError(ContainSubstring("internalCASecretName")))
+
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeManual}
+		material, err := ResolveTLSMaterial(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(material.InternalCAConfigMapName).To(Equal(InterServiceCAConfigMapName))
+		Expect(material.ServiceTLSSecretNames).To(HaveKey(TLSServiceGateway))
+
+		Expect(boolToInt(false)).To(Equal(0))
+		Expect(ResolveDevelopmentTLSSecretName("unknown")).To(BeEmpty())
+		Expect(developmentTLSComponent("unknown")).To(Equal("inter-service-tls"))
+		Expect(TLSServiceDNSNames("unknown", kn.Namespace)).To(BeNil())
+	})
+
+	It("covers development configuration and parser rejection paths", func() {
+		now := time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC)
+		_, err := DevelopmentSelfSignedTLSSecrets(nil, nil, now)
+		Expect(err).To(MatchError("kubernaut is required"))
+
+		kn := testKubernautWithDevelopmentTLS()
+		kn.Spec.TLS.DevelopmentSelfSigned.RotationBefore = invalidRotationBefore
+		_, err = DevelopmentSelfSignedTLSSecrets(kn, nil, now)
+		Expect(err).To(MatchError(ContainSubstring("non-negative duration")))
+		kn.Spec.TLS.DevelopmentSelfSigned.RotationBefore = "-1h"
+		_, err = DevelopmentSelfSignedTLSSecrets(kn, nil, now)
+		Expect(err).To(MatchError(ContainSubstring("non-negative duration")))
+		kn.Spec.TLS.DevelopmentSelfSigned.RotationBefore = ""
+		kn.Spec.TLS.DevelopmentSelfSigned.CASecretName = "custom-development-ca"
+		generated, err := DevelopmentSelfSignedTLSSecrets(kn, nil, now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(secretsByName(generated)).To(HaveKey("custom-development-ca"))
+
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeAdministratorManaged
+		settings, err := developmentTLSSettingsFor(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(settings.signingSecretName).To(Equal(defaultCertManagerSigningSecretName))
+
+		ca := secretsByName(generated)["custom-development-ca"]
+		existing := secretsByName(generated)
+		Expect(allDevelopmentLeavesUseCA(existing, []byte("invalid"), kn, nil)).To(BeFalse())
+		missingLeaf := secretsByName(generated)
+		delete(missingLeaf, GatewayTLSSecretName)
+		Expect(allDevelopmentLeavesUseCA(missingLeaf, ca.Data[tlsCACertificateKey], kn, nil)).To(BeFalse())
+		wrongDNS := secretsByName(generated)
+		wrongGateway := wrongDNS[GatewayTLSSecretName].DeepCopy()
+		wrongGateway.Data[corev1.TLSCertKey] = wrongDNS[DataStorageTLSSecretName].Data[corev1.TLSCertKey]
+		wrongDNS[GatewayTLSSecretName] = wrongGateway
+		Expect(allDevelopmentLeavesUseCA(wrongDNS, ca.Data[tlsCACertificateKey], kn, nil)).To(BeFalse())
+
+		bundle := developmentCABundle(&corev1.Secret{Data: map[string][]byte{tlsCACertificateKey: []byte("invalid")}}, now, []byte("active-der"), []byte("active-pem"))
+		Expect(bundle).To(Equal([]byte("active-pem")))
+		Expect(parseCertificatesOrNil([]byte("invalid"))).To(BeNil())
+		_, err = parseCertificates(nil)
+		Expect(err).To(MatchError("certificate bundle is empty"))
+		_, err = parseCertificates(pemEncode("PRIVATE KEY", []byte("invalid")))
+		Expect(err).To(MatchError(ContainSubstring("contains PEM block")))
+		_, err = parseCertificates(pemEncode("CERTIFICATE", []byte("invalid")))
+		Expect(err).To(HaveOccurred())
+		_, err = parsePrivateKey(pemEncode("PRIVATE KEY", []byte("invalid")))
+		Expect(err).To(HaveOccurred())
+
+		_, _, err = signDevelopmentLeaf([]byte("invalid"), ca.Data["ca.key"], "gateway-service", kn.Namespace, now, nil)
+		Expect(err).To(MatchError(ContainSubstring("parsing CA certificate")))
+		_, _, err = signDevelopmentLeaf(ca.Data[tlsCACertificateKey], []byte("invalid"), "gateway-service", kn.Namespace, now, nil)
+		Expect(err).To(MatchError(ContainSubstring("parsing CA key")))
+
+		_, ips := developmentDNSNamesAndIPs("gateway-service", kn.Namespace, []string{" ", "10.0.0.1", "127.0.0.1"})
+		Expect(ips).To(HaveLen(2))
+		Expect(ips[0].String()).To(Equal("10.0.0.1"))
+		Expect(ips[1].String()).To(Equal("127.0.0.1"))
+	})
+})
+
 func validServiceTLSSecretNames() map[string]string {
 	return map[string]string{
 		TLSServiceGateway:        "gateway-tls",
@@ -463,4 +750,24 @@ func parseCertificatesForTest(data []byte) []*x509.Certificate {
 	certificates, err := parseCertificates(data)
 	Expect(err).NotTo(HaveOccurred())
 	return certificates
+}
+
+func mustRSAKey(bits int) *rsa.PrivateKey {
+	key, err := rsa.GenerateKey(rand.Reader, bits)
+	Expect(err).NotTo(HaveOccurred())
+	return key
+}
+
+func mustRSACertificate(key *rsa.PrivateKey) []byte {
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "test-signing"},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	Expect(err).NotTo(HaveOccurred())
+	return pemEncode("CERTIFICATE", der)
 }

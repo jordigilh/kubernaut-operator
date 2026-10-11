@@ -31,22 +31,11 @@ import (
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
-// #358, #359: the internal/controller suite shares one hardcoded workflow
-// namespace (resources.DefaultWorkflowNamespace) across effectively every
-// spec. Without the BeforeSuite namespace-finalizer watcher (suite_test.go's
-// finalizeTerminatingNamespaces), envtest -- which runs a real kube-apiserver
-// but no kube-controller-manager -- leaves a deleted Namespace wedged in
-// Terminating forever (its default "kubernetes" finalizer is never cleared),
-// so any spec whose finalizer cleanup legitimately deletes the shared
-// namespace would permanently break every later spec in the same test
-// binary that tries to create content in it: "forbidden: unable to create
-// new content ... because it is being terminated". This spec exercises that
-// exact real-delete path end-to-end (deliberately WITHOUT
-// stripWorkflowNamespaceCreatedByAnnotation, unlike every other spec in this
-// suite) and proves the namespace not only finishes deleting but can be
-// recreated afterward in the same process -- the scenario that was
-// structurally impossible before the fix.
-var _ = Describe("envtest namespace-termination lifecycle (#358, #359)", func() {
+// #514: even an operator-created namespace must survive CR removal because
+// namespace ownership is not authority over provisioning-owned contents.
+// The #358/#359 envtest finalizer watcher still supports explicit fixture/admin
+// deletion, but production uninstall must not start namespace termination.
+var _ = Describe("envtest workflow namespace retention and reuse (#514)", func() {
 	ctx := context.Background()
 
 	AfterEach(func() {
@@ -56,7 +45,7 @@ var _ = Describe("envtest namespace-termination lifecycle (#358, #359)", func() 
 		cleanupClusterScoped(ctx)
 	})
 
-	It("fully finalizes the shared workflow namespace on operator-driven deletion, so a later spec can recreate it", func() {
+	It("retains an operator-created workflow namespace and reuses its UID after CR reinstall", func() {
 		wfNsName := resources.DefaultWorkflowNamespace
 
 		// The workflow namespace is shared across every spec in this suite and
@@ -80,11 +69,10 @@ var _ = Describe("envtest namespace-termination lifecycle (#358, #359)", func() 
 
 		ns := &corev1.Namespace{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: wfNsName}, ns)).To(Succeed())
-		Expect(ns.Annotations[resources.AnnotationCreatedBy]).To(Equal("kubernaut-operator"),
-			"precondition: the workflow namespace must be operator-managed for the finalizer's real "+
-				"delete path (deleteOperatorManagedWorkflowNamespace) to trigger below")
+		Expect(ns.Annotations[resources.AnnotationCreatedBy]).To(Equal("kubernaut-operator"))
+		originalUID := ns.UID
 
-		By("deleting the CR WITHOUT stripping the created-by annotation, exercising the real namespace-delete path")
+		By("deleting the CR without stripping namespace provenance")
 		kn := &kubernautv1alpha2.Kubernaut{}
 		Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 		Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
@@ -93,14 +81,11 @@ var _ = Describe("envtest namespace-termination lifecycle (#358, #359)", func() 
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 		Expect(err).NotTo(HaveOccurred())
 
-		By("verifying the namespace fully finalizes instead of hanging Terminating forever (#358/#359 root cause)")
-		Eventually(func() bool {
-			getErr := k8sClient.Get(ctx, types.NamespacedName{Name: wfNsName}, &corev1.Namespace{})
-			return errors.IsNotFound(getErr)
-		}, "10s", "100ms").Should(BeTrue(),
-			"without the BeforeSuite namespace-finalizer watcher, envtest leaves a deleted Namespace stuck "+
-				"in Terminating forever (no kube-controller-manager to clear spec.finalizers) -- the exact "+
-				"#358/#359 cascading-failure root cause")
+		By("verifying CR finalization completed without starting namespace termination")
+		Expect(k8sClient.Get(ctx, singletonKey(), &kubernautv1alpha2.Kubernaut{})).To(MatchError(ContainSubstring("not found")))
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: wfNsName}, ns)).To(Succeed())
+		Expect(ns.UID).To(Equal(originalUID))
+		Expect(ns.DeletionTimestamp).To(BeNil())
 
 		// envtest also has no garbage-collector controller, so the deleted
 		// CR's owned namespaced resources (e.g. the migration Job) outlive
@@ -110,12 +95,13 @@ var _ = Describe("envtest namespace-termination lifecycle (#358, #359)", func() 
 		// spec's AfterEach already does between specs).
 		cleanupNamespacedResources(ctx)
 
-		By("recreating the CR and verifying the workflow namespace can be provisioned again in the SAME process")
+		By("recreating the CR and reusing the retained namespace")
 		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 		reconcileToRunning(ctx)
 
 		recreated := &corev1.Namespace{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: wfNsName}, recreated)).To(Succeed())
-		Expect(recreated.DeletionTimestamp).To(BeNil(), "recreated workflow namespace should not be terminating")
+		Expect(recreated.UID).To(Equal(originalUID))
+		Expect(recreated.DeletionTimestamp).To(BeNil())
 	})
 })

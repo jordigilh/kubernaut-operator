@@ -59,10 +59,16 @@ changes intentionally from best-effort provider submission to **Required**.
   uses authoritative persisted state to block activation if concurrent admission
   or webhook bypass created duplicates. Conflicts require explicit administrator
   recovery, not automatic winner selection or resource takeover.
-- A deleting, finalizer-protected holder continues to block another CR. A forced
-  cleanup timeout emits `FinalizerTimeout`, never a false `CleanupComplete`.
-  Inspect orphan resources before reinstallation; ownership safety depends on
-  PR #517. Do not force-remove finalizers as an ordinary upgrade step.
+- A deleting, finalizer-protected holder continues to block another CR. Cleanup
+  failures emit `CleanupFailed`, retain the finalizer and retry even after the
+  former timeout; they never emit `CleanupComplete`. Fix the reported API or
+  permission failure instead of stripping the finalizer. Merged PR #517's
+  ownership checks and conditional deletes remain in force. Administrator force
+  removal is outside ordinary recovery and requires explicit orphan review.
+- Operator uninstall retains the CR's namespace and the workflow namespace, provisioning-owned
+  workflow artifacts, database/Valkey resources and administrator inputs.
+  Reinstall can reuse these namespaces; an administrator-supplied workflow
+  namespace must already satisfy restricted PSA and is reused read-only.
 - On provider API/discovery failure, diagnose `ProviderDetected` and
   `ProviderPolicyReady`. Restore the provider; do not opt out merely to hide the
   failure. Required mode must not be presented as `Running` with failed policy

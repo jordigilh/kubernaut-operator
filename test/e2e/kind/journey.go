@@ -666,9 +666,9 @@ func selectedTrustBundlePresent(ctx context.Context) (bool, error) {
 	return strings.TrimSpace(output) != "", err
 }
 
-func secretTLSCertificate(ctx context.Context) (string, error) {
+func secretTLSCertificate(ctx context.Context, name string) (string, error) {
 	output, err := kubectl(
-		ctx, "get", "secret", "gateway-tls", "-n", kubernautNamespace,
+		ctx, "get", "secret", name, "-n", kubernautNamespace,
 		"-o", "jsonpath={.data.tls\\.crt}",
 	)
 	return strings.TrimSpace(output), err

@@ -11,6 +11,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -103,6 +104,8 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 				}
 			}
 			r := businessUnitReconciler(kn, faults)
+			role, _ := resources.AnsibleRBAC(kn)
+			seedBusinessOwnedResources(r, kn, role)
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)})
 			Expect(err).To(MatchError(ContainSubstring("injected")))
 			refreshBusinessUnitCR(r, kn)
@@ -117,6 +120,13 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 			client.Object, ...client.DeleteOption) error {
 			return fmt.Errorf("injected cleanup failure")
 		}})
+		role, binding := resources.AnsibleRBAC(kn)
+		seedBusinessOwnedResources(r, kn, role, binding,
+			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resources.DeploymentName(resources.ComponentGateway), Namespace: kn.Namespace}},
+			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resources.DeploymentName(resources.ComponentFleetMetadataCache), Namespace: kn.Namespace}},
+			&rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: resources.ConsoleAccessCRBName(kn)}},
+			&networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: "gateway-ingress", Namespace: kn.Namespace}},
+			&rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "stale-role"}})
 		for _, cleanup := range []func() error{
 			func() error { return r.cleanupDisabledGateway(ctx, kn) },
 			func() error { return r.cleanupDisabledFleetMetadataCache(ctx, kn) },
@@ -191,7 +201,7 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 				client.Object, ...client.GetOption) error {
 				return fmt.Errorf("injected webhook read failure")
 			}})
-			Expect(r.ensureWebhookConfiguration(ctx, object)).To(MatchError(ContainSubstring("injected webhook read failure")))
+			Expect(r.ensureWebhookConfiguration(ctx, kn, object)).To(MatchError(ContainSubstring("injected webhook read failure")))
 		}
 		preserveWebhookCABundle(&admissionv1.MutatingWebhookConfiguration{}, &admissionv1.ValidatingWebhookConfiguration{})
 		preserveWebhookCABundle(&admissionv1.ValidatingWebhookConfiguration{}, &admissionv1.MutatingWebhookConfiguration{})

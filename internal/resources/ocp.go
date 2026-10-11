@@ -245,8 +245,8 @@ func yamlSecret(metadata metav1.ObjectMeta, key string, config any) (*corev1.Sec
 }
 
 // AnnotationCreatedBy marks resources created (not adopted) by the operator.
-// Used to distinguish operator-created namespaces from pre-existing ones so
-// that deletion does not destroy foreign namespaces.
+// This is provenance only: #514 retains every workflow namespace on uninstall,
+// regardless of its creator, to preserve provisioning-owned content.
 const AnnotationCreatedBy = "kubernaut.ai/created-by"
 
 // WorkflowNamespace builds the Namespace resource for workflow execution.

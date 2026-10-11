@@ -271,6 +271,7 @@ var _ = Describe("embedded CRD publication over a simulated external API", func(
 					"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
 					"metadata": map[string]interface{}{"name": "fixture", "resourceVersion": "1"},
 				}}
+				object.SetLabels(map[string]string{"app.kubernetes.io/managed-by": "kubernaut-operator"})
 				if request.Method != http.MethodGet {
 					Expect(json.NewDecoder(request.Body).Decode(&object.Object)).To(Succeed())
 					Expect(object.Object).To(HaveKey("spec"))

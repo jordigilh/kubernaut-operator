@@ -36,17 +36,27 @@ import (
 )
 
 var _ = Describe("independent Kubernetes API boundary decisions", Label("unit"), func() {
-	It("UT-AUDIT-515-API-001: converges pre-existing workflow namespace security without adopting its lifecycle", func() {
+	It("UT-AUDIT-515-API-001: reuses prepared administrator namespaces read-only and converges only owned namespace security", func() {
 		kn := newMinimalCR()
 		r := businessUnitReconciler(kn, interceptor.Funcs{})
 		namespace := resources.WorkflowNamespace(kn)
 		namespace.Labels, namespace.Annotations = nil, nil
 		Expect(r.Create(ctx, namespace)).To(Succeed())
+		Expect(r.deployWorkflowNamespace(ctx, kn)).To(MatchError(ContainSubstring("ownership conflict")))
+		namespace.Labels = make(map[string]string)
+		resources.EnsureRestrictedPSALabels(namespace.Labels)
+		Expect(r.Update(ctx, namespace)).To(Succeed())
+		before := namespace.DeepCopy()
 		Expect(r.deployWorkflowNamespace(ctx, kn)).To(Succeed())
 		Expect(r.Get(ctx, client.ObjectKeyFromObject(namespace), namespace)).To(Succeed())
-		Expect(namespace.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/enforce", "restricted"))
-		Expect(r.deleteOperatorManagedWorkflowNamespace(ctx, namespace)).To(Succeed())
+		Expect(namespace).To(Equal(before))
+		Expect(r.deleteWorkflowResources(ctx, kn)).To(BeEmpty())
 		Expect(r.Get(ctx, client.ObjectKeyFromObject(namespace), namespace)).To(Succeed(), "external namespace must survive")
+		Expect(namespace).To(Equal(before))
+		Expect(r.Delete(ctx, namespace)).To(Succeed())
+		namespace = resources.WorkflowNamespace(kn)
+		resources.StampOwnership(kn, namespace)
+		Expect(r.Create(ctx, namespace)).To(Succeed())
 		for _, operation := range []string{"get", unitUpdateOperation, policyDeleteOperation} {
 			api := r.Client.(client.WithWatch)
 			faults := interceptor.Funcs{}
@@ -54,21 +64,24 @@ var _ = Describe("independent Kubernetes API boundary decisions", Label("unit"),
 			case "get":
 				faults.Get = deniedUnitGet
 			case unitUpdateOperation:
-				namespace.Labels = nil
+				namespace.Labels = resources.CommonLabels(kn)
 				Expect(api.Update(ctx, namespace)).To(Succeed())
 				faults.Update = deniedUnitUpdate
 			case "delete":
-				namespace.Annotations = map[string]string{resources.AnnotationCreatedBy: "kubernaut-operator"}
-				Expect(api.Update(ctx, namespace)).To(Succeed())
+				runner := resources.WorkflowRunnerServiceAccount(kn)
+				resources.StampOwnership(kn, runner)
+				Expect(api.Create(ctx, runner)).To(Succeed())
 				faults.Delete = deniedUnitDelete
 			}
 			r.Client = interceptor.NewClient(api, faults)
+			r.APIReader = r.Client
 			if operation == "delete" {
 				Expect(r.deleteWorkflowResources(ctx, kn)).NotTo(BeEmpty())
 			} else {
 				Expect(r.deployWorkflowNamespace(ctx, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
 			}
 			r.Client = api
+			r.APIReader = api
 		}
 	})
 
@@ -97,7 +110,7 @@ var _ = Describe("independent Kubernetes API boundary decisions", Label("unit"),
 	})
 
 	It("UT-AUDIT-515-API-003: propagates additional and persona binding write, prune, role-read and status errors", func() {
-		for _, operation := range []string{unitCreateOperation, unitListOperation, "role-read", "status", "prune", "legacy-delete"} {
+		for _, operation := range []string{unitCreateOperation, unitListOperation, "role-read", "status", unitPruneOperation, "legacy-delete"} {
 			kn := newMinimalCR()
 			kn.Spec.AdditionalClusterRoles = []string{"customer-role"}
 			kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{RoleBindings: []kubernautv1alpha2.ToolRoleBinding{{
@@ -121,14 +134,17 @@ var _ = Describe("independent Kubernetes API boundary decisions", Label("unit"),
 				faults.SubResourcePatch = deniedUnitStatus
 			default:
 				faults.Delete = func(ctx context.Context, api client.WithWatch, object client.Object, options ...client.DeleteOption) error {
-					if operation == "prune" || object.GetName() == "apifrontend-rbac-roles" {
+					if operation == unitPruneOperation || object.GetName() == "apifrontend-rbac-roles" {
 						return fmt.Errorf("%s", unitAPIDenial)
 					}
 					return api.Delete(ctx, object, options...)
 				}
 			}
 			r := businessUnitReconciler(kn, faults)
-			if operation == "prune" || operation == "legacy-delete" {
+			if operation == unitPruneOperation || operation == "legacy-delete" {
+				seedBusinessOwnedResources(r, kn,
+					&rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "stale-binding"}},
+					&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "apifrontend-rbac-roles", Namespace: kn.Namespace}})
 				Expect(r.deployToolRBAC(ctx, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
 				continue
 			}
@@ -199,7 +215,7 @@ var _ = Describe("independent Kubernetes API boundary decisions", Label("unit"),
 				}
 				return apierrors.NewAlreadyExists(schema.GroupResource{Resource: "configmaps"}, object.GetName())
 			}})
-			err := r.ensureResource(ctx, object)
+			err := r.ensureResource(ctx, kn, object)
 			if racePersists {
 				Expect(err).NotTo(HaveOccurred())
 			} else {
@@ -208,7 +224,7 @@ var _ = Describe("independent Kubernetes API boundary decisions", Label("unit"),
 		}
 		r := businessUnitReconciler(kn, interceptor.Funcs{Get: deniedUnitGet})
 		object := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "blocked", Namespace: kn.Namespace}}
-		Expect(r.ensureResource(ctx, object)).To(MatchError(ContainSubstring(unitAPIDenial)))
+		Expect(r.ensureResource(ctx, kn, object)).To(MatchError(ContainSubstring(unitAPIDenial)))
 		_, err := r.createIfNotFound(ctx, kn, object, object.DeepCopy())
 		Expect(err).To(MatchError(ContainSubstring(unitAPIDenial)))
 		for index, faults := range []interceptor.Funcs{{Create: deniedUnitCreate}, {Create: func(context.Context, client.WithWatch,
@@ -221,7 +237,7 @@ var _ = Describe("independent Kubernetes API boundary decisions", Label("unit"),
 			if index == 0 {
 				Expect(createErr).To(MatchError(ContainSubstring(unitAPIDenial)))
 			} else {
-				Expect(createErr).NotTo(HaveOccurred())
+				Expect(createErr).To(MatchError(ContainSubstring("after AlreadyExists")))
 			}
 		}
 		r = businessUnitReconciler(kn, interceptor.Funcs{})
@@ -278,15 +294,15 @@ var _ = Describe("independent Kubernetes API boundary decisions", Label("unit"),
 		Expect(r.Create(ctx, service)).To(Succeed())
 		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: kn.Namespace, Name: service.Annotations[resources.OCPServingCertAnnotation]}}
 		Expect(r.Create(ctx, secret)).To(Succeed())
-		Expect(r.clearStaleServingCertErrors(ctx, service)).To(Succeed())
+		Expect(r.clearStaleServingCertErrors(ctx, kn, service)).To(Succeed())
 		Expect(r.Delete(ctx, secret)).To(Succeed())
-		Expect(r.clearStaleServingCertErrors(ctx, service)).To(Succeed())
+		Expect(r.clearStaleServingCertErrors(ctx, kn, service)).To(Succeed())
 		live := &corev1.Service{}
 		Expect(r.Get(ctx, client.ObjectKeyFromObject(service), live)).To(Succeed())
 		Expect(live.Annotations).NotTo(HaveKey("service.beta.openshift.io/serving-cert-generation-error"))
 		Expect(live.Annotations).NotTo(HaveKey("service.alpha.openshift.io/serving-cert-generation-error-num"))
 		Expect(r.Delete(ctx, live)).To(Succeed())
-		Expect(r.clearStaleServingCertErrors(ctx, service)).To(Succeed())
+		Expect(r.clearStaleServingCertErrors(ctx, kn, service)).To(Succeed())
 		service.ResourceVersion = ""
 		Expect(r.Create(ctx, service)).To(Succeed())
 		r.Client = interceptor.NewClient(r.Client.(client.WithWatch), interceptor.Funcs{Get: func(ctx context.Context,
@@ -468,6 +484,7 @@ var _ = Describe("independent activation and exposure failure decisions", Label(
 		hasRoute, err = r.reconcileOpenShiftRoutes(ctx, kn)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(hasRoute).To(BeFalse())
+		seedBusinessOwnedResources(r, kn, resources.GatewayRouteStub(kn))
 		r.Client = interceptor.NewClient(base.(client.WithWatch), interceptor.Funcs{Delete: deniedUnitDelete})
 		_, err = r.reconcileOptionalRoute(ctx, kn, "Gateway", nil, resources.GatewayRouteStub(kn))
 		Expect(err).To(MatchError(ContainSubstring(unitAPIDenial)))
@@ -654,6 +671,9 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		kn.Spec.Fleet.Enabled = ptr.To(false)
 		Expect(r.cleanupDisabledGateway(ctx, kn)).To(Succeed())
 		failing := businessUnitReconciler(kn, interceptor.Funcs{Delete: deniedUnitDelete})
+		seedBusinessOwnedResources(failing, kn,
+			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resources.DeploymentName(resources.ComponentGateway), Namespace: kn.Namespace}},
+			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resources.DeploymentName(resources.ComponentFleetMetadataCache), Namespace: kn.Namespace}})
 		_, err = failing.deployWorkloads(ctx, kn, kn, nil, telemetryMaterialRevisionSet{})
 		Expect(err).To(HaveOccurred())
 		kn.Spec.Gateway.Enabled = ptr.To(true)
@@ -678,14 +698,14 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		Expect(r.ensureDeployments(ctx, kn, kn, builders, nil, telemetryMaterialRevisionSet{})).To(HaveOccurred())
 	})
 
-	It("UT-AUDIT-515-API-019: rejects unreadable readiness, roles, cleanup namespaces and migration images", func() {
+	It("UT-AUDIT-515-API-019: rejects unreadable readiness, roles, cleanup resources and migration images", func() {
 		kn := newMinimalCR()
 		r := businessUnitReconciler(kn, interceptor.Funcs{Get: deniedUnitGet})
 		_, err := r.phaseRunning(ctx, kn, kn)
 		Expect(err).To(HaveOccurred())
 		_, err = r.detectMissingClusterRoles(ctx, []string{"customer-role"})
 		Expect(err).To(HaveOccurred())
-		Expect(r.deleteOperatorManagedWorkflowNamespace(ctx, resources.WorkflowNamespace(kn))).To(HaveOccurred())
+		Expect(r.deleteWorkflowResources(ctx, kn)).NotTo(BeEmpty())
 		kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 		r = businessUnitReconciler(kn, interceptor.Funcs{})
 		_, err = r.phaseRunning(ctx, kn, kn)
@@ -777,6 +797,8 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		Expect(r.phaseDeploy(ctx, kn, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
 		kn = newMinimalCR()
 		r = businessUnitReconciler(kn, interceptor.Funcs{Delete: deniedUnitDelete})
+		role, _ := resources.AnsibleRBAC(kn)
+		seedBusinessOwnedResources(r, kn, role)
 		Expect(r.deployRBAC(ctx, kn, kn)).To(MatchError(ContainSubstring("toggle cleanup")))
 		kn.Spec.AdditionalClusterRoles = []string{"customer-role"}
 		r = businessUnitReconciler(kn, interceptor.Funcs{Get: func(ctx context.Context, api client.WithWatch,
@@ -834,6 +856,7 @@ const (
 	unitAPIDenial       = "injected Kubernetes API denial"
 	unitCreateOperation = "create"
 	unitUpdateOperation = "update"
+	unitPruneOperation  = "prune"
 	unitListOperation   = "list"
 )
 

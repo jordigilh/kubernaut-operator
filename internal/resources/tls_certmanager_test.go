@@ -25,6 +25,57 @@ import (
 )
 
 var _ = Describe("cert-manager TLS provisioning", func() {
+	It("handles nil inputs and signing Secret name overrides", func() {
+		Expect(CertManagerTLSProvisioningEnabled(nil)).To(BeFalse())
+		Expect(DataStorageSigningSecretName(nil)).To(BeEmpty())
+
+		kn := testKubernaut()
+		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha2.SigningCertSpec{SecretName: "customer-signing-cert"}
+		Expect(DataStorageSigningSecretName(kn)).To(Equal("customer-signing-cert"))
+
+		kn.Spec.DataStorage.SigningCert = nil
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHelmCertManager
+		Expect(DataStorageSigningSecretName(kn)).To(Equal(defaultCertManagerSigningSecretName))
+
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeDevelopmentSelfSigned
+		Expect(DataStorageSigningSecretName(kn)).To(Equal(defaultCertManagerSigningSecretName))
+	})
+
+	It("uses Helm cert-manager defaults when the config block is omitted", func() {
+		_, err := CertManagerTLSResources(nil)
+		Expect(err).To(MatchError("kubernaut is required"))
+
+		kn := testKubernaut()
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHelmCertManager
+		objects, err := CertManagerTLSResources(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(objects).NotTo(BeEmpty())
+	})
+
+	It("handles blank, DNS, and explicit IP extra SANs", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode: kubernautv1alpha2.TLSModeHelmCertManager,
+			CertManager: &kubernautv1alpha2.CertManagerTLSConfig{
+				Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{
+					ExtraSANs: []string{" ", "10.0.0.1", "127.0.0.1"},
+				},
+			},
+		}
+		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha2.SigningCertSpec{SecretName: "customer-signing-cert"}
+
+		objects, err := CertManagerTLSResources(kn)
+		Expect(err).NotTo(HaveOccurred())
+		byName := make(map[string]*unstructured.Unstructured, len(objects))
+		for _, object := range objects {
+			byName[object.GetName()] = object
+		}
+		gatewaySpec := byName[GatewayTLSSecretName].Object["spec"].(map[string]interface{})
+		Expect(gatewaySpec["ipAddresses"]).To(Equal([]interface{}{"10.0.0.1", "127.0.0.1"}))
+		signingSpec := byName["datastorage-signing-cert"].Object["spec"].(map[string]interface{})
+		Expect(signingSpec["secretName"]).To(Equal("customer-signing-cert"))
+	})
+
 	It("uses the legacy issuer when issuerRef contains only the API-defaulted group", func() {
 		cfg := &kubernautv1alpha2.CertManagerTLSConfig{
 			Issuer: kubernautv1alpha2.TLSIssuerRef{

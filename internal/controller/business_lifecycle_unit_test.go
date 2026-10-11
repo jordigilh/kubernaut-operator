@@ -39,7 +39,7 @@ const unitMissingReference = "missing"
 func (crdUnitTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	return &http.Response{
 		StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Request: request,
-		Body: io.NopCloser(strings.NewReader(`{"apiVersion":"apiextensions.k8s.io/v1","kind":"CustomResourceDefinition","metadata":{"name":"fixture","resourceVersion":"1"}}`)),
+		Body: io.NopCloser(strings.NewReader(`{"apiVersion":"apiextensions.k8s.io/v1","kind":"CustomResourceDefinition","metadata":{"name":"fixture","resourceVersion":"1","labels":{"app.kubernetes.io/managed-by":"kubernaut-operator"}}}`)),
 	}, nil
 }
 
@@ -72,6 +72,14 @@ func businessUnitReconciler(kn *kubernautv1alpha2.Kubernaut, faults interceptor.
 
 func refreshBusinessUnitCR(r *KubernautReconciler, kn *kubernautv1alpha2.Kubernaut) {
 	ExpectWithOffset(1, r.Get(ctx, client.ObjectKeyFromObject(kn), kn)).To(Succeed())
+}
+
+// Seed only external API state. Ownership checks and cleanup execute unchanged.
+func seedBusinessOwnedResources(r *KubernautReconciler, kn *kubernautv1alpha2.Kubernaut, objects ...client.Object) {
+	for _, object := range objects {
+		resources.StampOwnership(kn, object)
+		ExpectWithOffset(1, r.Create(ctx, object)).To(Succeed())
+	}
 }
 
 var _ = Describe("independent business lifecycle decisions", Label("unit"), func() {
@@ -119,7 +127,9 @@ var _ = Describe("independent business lifecycle decisions", Label("unit"), func
 			Expect(err).NotTo(HaveOccurred())
 			roles := &corev1.NamespaceList{}
 			Expect(r.List(ctx, roles)).To(Succeed())
-			Expect(roles.Items).To(BeEmpty(), "the operator-owned workflow namespace is cleaned up")
+			Expect(roles.Items).To(HaveLen(1), "the workflow namespace survives for provisioning-owned contents")
+			Expect(roles.Items[0].Name).To(Equal(resources.WorkflowNamespace(kn).Name))
+			Expect(roles.Items[0].DeletionTimestamp).To(BeNil())
 		})
 	}
 

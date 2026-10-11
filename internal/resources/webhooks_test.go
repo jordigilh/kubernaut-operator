@@ -299,3 +299,21 @@ var _ = Describe("WebhookConfigurations", func() {
 		}
 	})
 })
+
+var _ = Describe("SingletonValidatingWebhookConfiguration", func() {
+	It("targets the operator webhook service with a cluster-scoped create rule", func() {
+		labels := map[string]string{"app": "kubernaut-operator"}
+		cfg := SingletonValidatingWebhookConfiguration(testSystemNamespace, labels)
+
+		Expect(cfg.Name).To(Equal(testSystemNamespace + "-kubernaut-singleton"))
+		Expect(cfg.Labels).To(Equal(labels))
+		Expect(cfg.Webhooks).To(HaveLen(1))
+		webhook := cfg.Webhooks[0]
+		Expect(webhook.ClientConfig.Service).NotTo(BeNil())
+		Expect(webhook.ClientConfig.Service.Name).To(Equal("kubernaut-operator-webhook"))
+		Expect(webhook.ClientConfig.Service.Namespace).To(Equal(testSystemNamespace))
+		Expect(*webhook.ClientConfig.Service.Port).To(Equal(PortWebhookServer))
+		Expect(webhook.Rules[0].Operations).To(ConsistOf(admissionregistrationv1.Create))
+		Expect(webhook.Rules[0].Resources).To(ConsistOf("kubernauts"))
+	})
+})

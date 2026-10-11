@@ -847,7 +847,7 @@ var _ = Describe("contentDrifted", Label("unit"), func() {
 		live.Annotations["platform.example/marker"] = "preserve"
 		api := fake.NewClientBuilder().WithScheme(k8sClient.Scheme()).WithObjects(live).Build()
 		r := &KubernautReconciler{Client: api}
-		Expect(r.ensureResource(ctx, desired)).To(Succeed())
+		Expect(r.ensureResource(ctx, newMinimalCR(), desired)).To(Succeed())
 		updated := &corev1.Service{}
 		Expect(api.Get(ctx, client.ObjectKeyFromObject(desired), updated)).To(Succeed())
 		Expect(updated.Spec.Ports).To(Equal(desired.Spec.Ports))

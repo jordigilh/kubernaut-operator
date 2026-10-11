@@ -19,6 +19,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
+	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
 var _ = Describe("truthful reconciliation audit", Label("unit"), func() {
@@ -41,24 +42,28 @@ var _ = Describe("truthful reconciliation audit", Label("unit"), func() {
 		Expect(transitions[0].ContextMap()).To(HaveKeyWithValue("resourceVersion", kn.ResourceVersion))
 	})
 
-	It("UT-AUDIT-515-AUDIT-002: never emits CleanupComplete after forced failed cleanup", func() {
+	It("UT-AUDIT-515-AUDIT-002: retains finalizer and records incomplete cleanup even past the old timeout", func() {
 		kn := newMinimalCR()
+		kn.UID = "audit-cleanup-owner"
 		kn.Finalizers = []string{kubernautv1alpha2.FinalizerName}
 		kn.DeletionTimestamp = &metav1.Time{Time: time.Now().Add(-time.Hour)}
-		api := fake.NewClientBuilder().WithScheme(k8sClient.Scheme()).WithObjects(kn).
+		role, _ := resources.AnsibleRBAC(kn)
+		api := fake.NewClientBuilder().WithScheme(k8sClient.Scheme()).WithObjects(kn, role).
 			WithInterceptorFuncs(interceptor.Funcs{Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
 				return fmt.Errorf("injected cleanup failure")
 			}}).Build()
 		recorder := events.NewFakeRecorder(100)
 		r := &KubernautReconciler{Client: api, Scheme: api.Scheme(), Recorder: recorder, now: time.Now}
 		_, err, retry := r.runFinalizerCleanup(ctx, kn, kn)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(retry).To(BeFalse())
+		Expect(err).To(HaveOccurred())
+		Expect(retry).To(BeTrue())
+		Expect(kn.Finalizers).To(ContainElement(kubernautv1alpha2.FinalizerName))
 		messages := make([]string, 0, len(recorder.Events))
 		for len(recorder.Events) > 0 {
 			messages = append(messages, <-recorder.Events)
 		}
-		Expect(strings.Join(messages, "\n")).To(ContainSubstring("FinalizerTimeout"))
+		Expect(strings.Join(messages, "\n")).To(ContainSubstring("CleanupFailed"))
+		Expect(strings.Join(messages, "\n")).NotTo(ContainSubstring("FinalizerTimeout"))
 		Expect(strings.Join(messages, "\n")).NotTo(ContainSubstring("CleanupComplete"))
 	})
 })
