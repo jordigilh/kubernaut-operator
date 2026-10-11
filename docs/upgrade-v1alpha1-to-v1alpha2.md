@@ -56,6 +56,13 @@ conditions and service readiness after recreation.
 
 ## 3. Recreate during the maintenance window
 
+Review [runtime resource ownership](resource-ownership.md) before recreating.
+This is not an implicit Helm/administrator takeover: same-named unmarked
+resources block reconciliation. Shared operand CRDs from an old/Helm install
+need individual schema/ownership review and an explicit approved transfer;
+they are not removed with the old CR. A pre-existing workflow namespace must
+already carry the restricted PSA labels to be reused read-only.
+
 1. Upgrade/install the operator and apply the v1alpha2-only CRD.
 2. Confirm the manager is ready and that the CRD reports only `v1alpha2`:
 

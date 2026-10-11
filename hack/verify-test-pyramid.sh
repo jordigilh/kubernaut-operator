@@ -162,6 +162,25 @@ require_text hack/verify-monitoring-contract.sh 'LIVE_MONITORING_CONTRACT_PASS' 
 require_text docs/tests/513/TEST_PLAN.md 'verify-monitoring-contract\.sh' \
 	'Issue #513 test plan does not record the live contract checker'
 
+# Issue #514: the shared ownership gate must be used by production writes and
+# deletes, with logic, actual envtest Reconcile, and live API-only journey tests.
+require_text internal/controller/ownership.go 'resources.ResourceOwnershipError\(' \
+	'Issue #514 ownership predicate has no controller caller'
+require_text internal/controller/kubernaut_controller.go 'r.checkResourceOwnership\(' \
+	'Issue #514 authorization gate is not wired to reconciliation'
+require_text internal/controller/kubernaut_controller.go 'r.deleteObservedResource\(' \
+	'Issue #514 conditional deletion is not wired to production cleanup'
+require_text internal/controller/kubernaut_controller.go 'policy.OwnershipError\(' \
+	'Issue #514 native policy authorization has no controller caller'
+require_text internal/policy/ownership_test.go 'UT-OWN-514-005' \
+	'Issue #514 native policy authorization has no independent unit evidence'
+require_text internal/resources/ownership_test.go 'UT-OWN-514-001' \
+	'Issue #514 ownership logic has no independent unit matrix'
+require_text internal/controller/ownership_integration_test.go 'r.Reconcile\(.*singletonKey\(' \
+	'Issue #514 wiring evidence does not drive actual reconciliation'
+require_text test/e2e/kind/scenarios_test.go 'E2E-OWN-514-001' \
+	'Issue #514 has no installed-operator ownership journey'
+
 grep -Fq 'OVN/OpenShift' docs/test-plans/issue-488-gap-closure-test-plan.md \
 	|| fail 'deferred OVN/OpenShift status is not recorded in the approved test plan'
 grep -Fq 'Owned by Issue #489' docs/test-plans/issue-488-gap-closure-test-plan.md \

@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/yaml"
 
 	"github.com/jordigilh/kubernaut/pkg/shared/assets"
@@ -73,23 +74,66 @@ func EnsureCRDs(ctx context.Context, cfg *rest.Config) error {
 			return fmt.Errorf("parsing CRD %s: %w", entry.Name(), err)
 		}
 
-		existing, err := crdClient.Get(ctx, desired.GetName(), metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			if _, createErr := crdClient.Create(ctx, desired, metav1.CreateOptions{}); createErr != nil {
-				return fmt.Errorf("creating CRD %s: %w", desired.GetName(), createErr)
-			}
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("getting CRD %s: %w", desired.GetName(), err)
-		}
-
-		desired.SetResourceVersion(existing.GetResourceVersion())
-		if _, err := crdClient.Update(ctx, desired, metav1.UpdateOptions{}); err != nil {
-			return fmt.Errorf("updating CRD %s: %w", desired.GetName(), err)
+		if err := ensureSharedCRD(ctx, crdClient, desired); err != nil {
+			logf.FromContext(ctx).Error(err, "operand CRD reconciliation failed", "kind", desired.GetKind(), "namespace", "", "name", desired.GetName())
+			return err
 		}
 	}
 
+	return nil
+}
+
+// ensureSharedCRD applies the shared-schema exception from
+// docs/design/ISSUE-514-OWNERSHIP-CONTRACT.md. Instance owner references are
+// invalid for these cluster-wide schemas; explicit operator marking is required.
+func ensureSharedCRD(ctx context.Context, api dynamic.ResourceInterface, desired *unstructured.Unstructured) error {
+	labels := desired.GetLabels()
+	if labels == nil {
+		labels = make(map[string]string, 1)
+	}
+	labels["app.kubernetes.io/managed-by"] = "kubernaut-operator"
+	desired.SetLabels(labels)
+	annotations := desired.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string, 1)
+	}
+	annotations[AnnotationSpecHash] = SpecHash(desired)
+	desired.SetAnnotations(annotations)
+
+	live, err := api.Get(ctx, desired.GetName(), metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		if _, createErr := api.Create(ctx, desired, metav1.CreateOptions{}); createErr == nil {
+			logf.FromContext(ctx).Info("shared operand CRD created", "kind", desired.GetKind(), "namespace", "", "name", desired.GetName())
+			return nil
+		} else if !apierrors.IsAlreadyExists(createErr) {
+			return fmt.Errorf("creating CRD %s: %w", desired.GetName(), createErr)
+		}
+		live, err = api.Get(ctx, desired.GetName(), metav1.GetOptions{})
+	}
+	if err != nil {
+		return fmt.Errorf("getting CRD %s: %w", desired.GetName(), err)
+	}
+	if live.GetLabels()["app.kubernetes.io/managed-by"] != "kubernaut-operator" || len(live.GetOwnerReferences()) != 0 || !live.GetDeletionTimestamp().IsZero() {
+		return fmt.Errorf("%w for CustomResourceDefinition %q: existing manager=%q owners=%v; review schema compatibility and explicitly transfer shared CRD ownership before upgrade", ErrOwnershipConflict, desired.GetName(), live.GetLabels()["app.kubernetes.io/managed-by"], live.GetOwnerReferences())
+	}
+	if live.GetAnnotations()[AnnotationSpecHash] == desired.GetAnnotations()[AnnotationSpecHash] {
+		return nil
+	}
+	for key, value := range live.GetLabels() {
+		labels[key] = value
+	}
+	desired.SetLabels(labels)
+	for key, value := range live.GetAnnotations() {
+		if key != AnnotationSpecHash {
+			annotations[key] = value
+		}
+	}
+	desired.SetAnnotations(annotations)
+	desired.SetResourceVersion(live.GetResourceVersion())
+	if _, err := api.Update(ctx, desired, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("updating CRD %s: %w", desired.GetName(), err)
+	}
+	logf.FromContext(ctx).Info("shared operand CRD updated", "kind", desired.GetKind(), "namespace", "", "name", desired.GetName())
 	return nil
 }
 

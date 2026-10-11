@@ -152,18 +152,12 @@ var _ = BeforeSuite(func() {
 // keeps its default "kubernetes" finalizer and its object is never actually
 // removed from etcd for the life of the test binary (a documented envtest
 // limitation: https://github.com/kubernetes-sigs/controller-runtime/issues/880).
-// Every operator-managed Kubernaut CR shares one hardcoded workflow
-// namespace (resources.DefaultWorkflowNamespace) across the whole
-// internal/controller suite; any spec whose finalizer cleanup legitimately
-// deletes it (KubernautReconciler.deleteOperatorManagedWorkflowNamespace)
-// would otherwise permanently wedge that namespace in Terminating, and every
-// later spec in the same test binary that tries to create content in it
-// fails with "forbidden: unable to create new content ... because it is
-// being terminated" -- the exact cascading-failure signature reported in
-// #358/#359. This makes namespace deletion behave like a real cluster for
-// the rest of the suite, eliminating the wedge at its structural root
-// instead of relying on every current and future spec remembering to call
-// stripWorkflowNamespaceCreatedByAnnotation before it deletes the CR.
+// Most tests share resources.DefaultWorkflowNamespace. The operator now retains
+// it on uninstall (#514), but fixture teardown still deletes test namespaces.
+// Without this watcher, a teardown would permanently wedge a namespace in
+// Terminating and later fixtures could not create content (#358/#359).
+// This emulates Namespace-object finalization only, not child cleanup/GC: live
+// Kind tests separately prove that uninstall preserves namespace contents.
 func finalizeTerminatingNamespaces(ctx context.Context, clientset *kubernetes.Clientset) {
 	go func() {
 		defer GinkgoRecover()

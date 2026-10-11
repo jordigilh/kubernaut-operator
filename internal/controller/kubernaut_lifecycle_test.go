@@ -2408,6 +2408,11 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
+			By("creating an owned ClusterRole so the injected delete failure exercises cleanup")
+			owned := resources.ClusterRoles(newCRWithRouteDisabled(), newCRWithRouteDisabled())[0]
+			Expect(k8sClient.Create(ctx, owned)).To(Succeed())
+			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, owned))).To(Succeed()) })
+
 			By("swapping client to one that fails on Delete for ClusterRoles")
 			r.Client = &deleteFailingClient{Client: k8sClient}
 
@@ -2833,6 +2838,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "apifrontend-rbac-roles",
 					Namespace: testNamespace,
+					Labels:    resources.CommonLabels(newCRWithRouteDisabled()),
 				},
 				Data: map[string]string{"rbac_roles.yaml": "roles:\n  admin: [\"*\"]"},
 			}
@@ -3048,7 +3054,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}},
 			}
 			r := newFakeUnitReconciler(svc)
-			Expect(r.clearStaleServingCertErrors(ctx, svc)).To(Succeed())
+			Expect(r.clearStaleServingCertErrors(ctx, unitTestKubernautCR(), svc)).To(Succeed())
 		})
 
 		It("UT-SC-02 [SI-4, CC7.2]: clears stale error annotations when backing TLS secret is absent", func() {
@@ -3056,6 +3062,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "stale-svc",
 					Namespace: "default",
+					Labels:    resources.CommonLabels(unitTestKubernautCR()),
 					Annotations: map[string]string{
 						resources.OCPServingCertAnnotation:                            "my-tls",
 						"service.beta.openshift.io/serving-cert-generation-error":     "UID mismatch",
@@ -3065,7 +3072,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 443, Protocol: corev1.ProtocolTCP}}},
 			}
 			r := newFakeUnitReconciler(svc)
-			Expect(r.clearStaleServingCertErrors(ctx, svc)).To(Succeed())
+			Expect(r.clearStaleServingCertErrors(ctx, unitTestKubernautCR(), svc)).To(Succeed())
 
 			updated := &corev1.Service{}
 			Expect(r.Get(ctx, types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace}, updated)).To(Succeed())
@@ -3082,6 +3089,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "ok-svc",
 					Namespace: "default",
+					Labels:    resources.CommonLabels(unitTestKubernautCR()),
 					Annotations: map[string]string{
 						resources.OCPServingCertAnnotation:                            "existing-tls",
 						"service.beta.openshift.io/serving-cert-generation-error":     "some error",
@@ -3091,7 +3099,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 443, Protocol: corev1.ProtocolTCP}}},
 			}
 			r := newFakeUnitReconciler(svc, secret)
-			Expect(r.clearStaleServingCertErrors(ctx, svc)).To(Succeed())
+			Expect(r.clearStaleServingCertErrors(ctx, unitTestKubernautCR(), svc)).To(Succeed())
 
 			updated := &corev1.Service{}
 			Expect(r.Get(ctx, types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace}, updated)).To(Succeed())
@@ -3113,8 +3121,8 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		}
 
 		It("WNS-010 [AC-4]: patches an existing kubernaut-workflows namespace that is missing the restricted PSA labels, so upgrades of pre-existing clusters converge to the defense-in-depth backstop, not just fresh installs", func() {
-			ns := wfNamespace(map[string]string{"app.kubernetes.io/managed-by": "kubernaut-operator"})
 			kn := unitTestKubernautCR()
+			ns := wfNamespace(resources.CommonLabels(kn))
 			r := newFakeUnitReconciler(ns)
 
 			Expect(r.deployWorkflowNamespace(ctx, kn)).To(Succeed())
@@ -3147,8 +3155,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		})
 
 		It("WNS-012 [CM-6]: patching preserves pre-existing unrelated labels on the namespace", func() {
-			ns := wfNamespace(map[string]string{"custom-team-label": "sre"})
 			kn := unitTestKubernautCR()
+			ns := wfNamespace(resources.CommonLabels(kn))
+			ns.Labels["custom-team-label"] = "sre"
 			r := newFakeUnitReconciler(ns)
 
 			Expect(r.deployWorkflowNamespace(ctx, kn)).To(Succeed())
