@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
@@ -65,5 +66,33 @@ var _ = Describe("truthful reconciliation audit", Label("unit"), func() {
 		Expect(strings.Join(messages, "\n")).To(ContainSubstring("CleanupFailed"))
 		Expect(strings.Join(messages, "\n")).NotTo(ContainSubstring("FinalizerTimeout"))
 		Expect(strings.Join(messages, "\n")).NotTo(ContainSubstring("CleanupComplete"))
+	})
+
+	It("UT-AUDIT-515-AUDIT-003: keeps CR identity distinct from a cluster-scoped child in reconciliation logs", func() {
+		kn := newMinimalCR()
+		kn.UID = "audit-distinct-identity"
+		kn.Generation = 9
+		kn.Finalizers = []string{kubernautv1alpha2.FinalizerName}
+		kn.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+		r := businessUnitReconciler(kn, interceptor.Funcs{Delete: deniedUnitDelete})
+		role, _ := resources.AnsibleRBAC(kn)
+		seedBusinessOwnedResources(r, kn, role)
+		refreshBusinessUnitCR(r, kn)
+		core, logs := observer.New(zap.InfoLevel)
+		logCtx := logf.IntoContext(ctx, zapr.NewLogger(zap.New(core)))
+		_, err := r.Reconcile(logCtx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)})
+		Expect(err).To(MatchError(ContainSubstring(unitAPIDenial)))
+		failures := logs.FilterMessage("resource deletion failed").All()
+		Expect(failures).To(HaveLen(1))
+		fields := failures[0].ContextMap()
+		Expect(fields).To(HaveKeyWithValue("kubernautName", kn.Name))
+		Expect(fields).To(HaveKeyWithValue("kubernautNamespace", kn.Namespace))
+		Expect(fields).To(HaveKeyWithValue("kubernautUID", BeEquivalentTo(kn.UID)))
+		Expect(fields).To(HaveKeyWithValue("kind", "ClusterRole"))
+		Expect(fields).To(HaveKeyWithValue("name", role.Name))
+		Expect(fields).To(HaveKeyWithValue("namespace", ""))
+		Expect(fields).To(HaveKeyWithValue("generation", BeEquivalentTo(kn.Generation)))
+		Expect(fields).To(HaveKeyWithValue("resourceVersion", kn.ResourceVersion))
+		Expect(fields).To(HaveKeyWithValue("objectResourceVersion", role.ResourceVersion))
 	})
 })

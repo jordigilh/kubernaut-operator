@@ -193,8 +193,10 @@ func (r *KubernautReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		log.Info("ignoring CR with unexpected name", "name", kn.Name, "expected", kubernautv1alpha2.SingletonName)
 		return ctrl.Result{}, nil
 	}
-	ctx = logf.IntoContext(ctx, log.WithValues("name", kn.Name, "namespace", kn.Namespace,
-		"uid", kn.UID, "generation", kn.Generation, "resourceVersion", kn.ResourceVersion))
+	// Child-resource loggers use name/namespace for the child, including empty
+	// namespaces on cluster-scoped objects. Keep the CR identity unambiguous.
+	ctx = logf.IntoContext(ctx, log.WithValues("kubernautName", kn.Name, "kubernautNamespace", kn.Namespace,
+		"kubernautUID", kn.UID, "generation", kn.Generation, "resourceVersion", kn.ResourceVersion))
 
 	if !kn.DeletionTimestamp.IsZero() {
 		return r.reconcileDelete(ctx, kn, kn)
