@@ -114,6 +114,13 @@ ownership/shared-CRD functions. No coverage threshold was reduced.
 
 ## Platform and CI evidence
 
+- A later source head, `67d0a7bbbda6396c48a7f56c1c66c53b537a250a`, failed
+  the Hook TLS Kind job in run `38112936915`. The startup-only OpenSSL fixture
+  retained a pre-reinstall serving certificate while projected trust/material
+  changed. See [the root-cause analysis](CI-HOOK-TLS-RCA.md) for exact failure,
+  deterministic RED/GREEN evidence, bounded convergence/current-leaf checks,
+  and the still-pending corrective hosted run. Earlier green CI below is
+  historical, not verification of this later head or correction.
 - GitHub PR #517 validation run
   [`38109685938`](https://github.com/jordigilh/kubernaut-operator/actions/runs/38109685938)
   for source head `060b851d4268c138db8e390db7f2027842aa27d2` completed
