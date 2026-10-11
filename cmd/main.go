@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	webhookserver "sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	configv1 "github.com/openshift/api/config/v1"
 	routev1 "github.com/openshift/api/route/v1"
@@ -80,13 +81,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsServerOptions,
-		HealthProbeBindAddress: f.probeAddr,
-		LeaderElection:         f.enableLeaderElection,
-		LeaderElectionID:       "kubernaut-operator.kubernaut.ai",
-	})
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), buildManagerOptions(f, metricsServerOptions))
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
@@ -168,18 +163,10 @@ func parseFlags() *operatorFlags {
 // configured. The returned watcher, when non-nil, must be registered with
 // the manager via mgr.Add so it starts/stops with the manager's lifecycle.
 func buildMetricsServerOptions(f *operatorFlags) (metricsserver.Options, *certwatcher.CertWatcher, error) {
-	var tlsOpts []func(*tls.Config)
-	if !f.enableHTTP2 {
-		tlsOpts = append(tlsOpts, func(c *tls.Config) {
-			setupLog.Info("disabling http/2")
-			c.NextProtos = []string{"http/1.1"}
-		})
-	}
-
 	opts := metricsserver.Options{
 		BindAddress:   f.metricsAddr,
 		SecureServing: f.secureMetrics,
-		TLSOpts:       tlsOpts,
+		TLSOpts:       serverTLSOptions(f.enableHTTP2),
 	}
 	if f.secureMetrics {
 		opts.FilterProvider = filters.WithAuthenticationAndAuthorization
@@ -190,6 +177,26 @@ func buildMetricsServerOptions(f *operatorFlags) (metricsserver.Options, *certwa
 	}
 	watcher, err := setupMetricsCertWatcher(f.metricsCertPath, f.metricsCertName, f.metricsCertKey, &opts)
 	return opts, watcher, err
+}
+
+func buildManagerOptions(f *operatorFlags, metrics metricsserver.Options) ctrl.Options {
+	return ctrl.Options{
+		Scheme: scheme, Metrics: metrics, HealthProbeBindAddress: f.probeAddr,
+		LeaderElection: f.enableLeaderElection, LeaderElectionID: "kubernaut-operator.kubernaut.ai",
+		WebhookServer: webhookserver.NewServer(webhookserver.Options{TLSOpts: serverTLSOptions(f.enableHTTP2)}),
+	}
+}
+
+// serverTLSOptions applies the same explicit protocol policy to both actual
+// servers. Metrics options cannot configure the manager's default webhook.
+// See docs/design/PR-515-AUDIT-REMEDIATION.md.
+func serverTLSOptions(enableHTTP2 bool) []func(*tls.Config) {
+	return []func(*tls.Config){func(config *tls.Config) {
+		config.MinVersion = tls.VersionTLS12
+		if !enableHTTP2 {
+			config.NextProtos = []string{"http/1.1"}
+		}
+	}}
 }
 
 // setupMetricsCertWatcher initializes a certificate watcher for the metrics
@@ -222,7 +229,7 @@ func registerSingletonWebhook(mgr ctrl.Manager) {
 	}
 	setupLog.Info("webhook TLS certs found, registering singleton validating webhook")
 	mgr.GetWebhookServer().Register("/validate-kubernaut-singleton", &admission.Webhook{
-		Handler: webhook.NewSingletonValidator(mgr.GetClient(), mgr.GetScheme()),
+		Handler: webhook.NewSingletonValidator(mgr.GetAPIReader(), mgr.GetScheme()),
 	})
 }
 

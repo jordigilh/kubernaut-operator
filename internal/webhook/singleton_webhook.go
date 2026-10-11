@@ -38,13 +38,13 @@ import (
 // (the old DecoderInjector/InjectDecoder mechanism was removed), so a
 // zero-value decoder field here is nil and Handle panics on every request.
 type SingletonValidator struct {
-	Client  client.Client
+	Client  client.Reader
 	decoder admission.Decoder
 }
 
 // NewSingletonValidator builds a SingletonValidator with a working decoder
 // bound to scheme. This is the only supported way to construct one.
-func NewSingletonValidator(c client.Client, scheme *runtime.Scheme) *SingletonValidator {
+func NewSingletonValidator(c client.Reader, scheme *runtime.Scheme) *SingletonValidator {
 	return &SingletonValidator{
 		Client:  c,
 		decoder: admission.NewDecoder(scheme),

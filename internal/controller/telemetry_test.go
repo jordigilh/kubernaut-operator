@@ -287,6 +287,12 @@ var _ = Describe("Telemetry controller material lifecycle", func() {
 		kn.Spec.TLS.AdministratorManaged.InternalCASecretName = ""
 		Expect(ambientTrustConfigMapRelevant(kn, trust)).To(BeTrue())
 	})
+	It("UT-AUDIT-515-TELEMETRY-006: rejects an invalid trailing client-chain certificate even when the leaf key pair is valid", func() {
+		secret := telemetryClientSecret()
+		secret.Data[corev1.TLSCertKey] = append(secret.Data[corev1.TLSCertKey],
+			pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("invalid trailing DER")})...)
+		Expect(validateTelemetryClientSecret(secret)).To(MatchError(ContainSubstring("invalid client certificate")))
+	})
 })
 
 func telemetryUnitKubernaut() *kubernautv1alpha2.Kubernaut {

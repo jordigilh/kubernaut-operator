@@ -224,17 +224,16 @@ func validateTelemetryClientSecret(secret *corev1.Secret) error {
 	if !keyOK || len(keyPEM) == 0 {
 		return fmt.Errorf("secret %q is missing key %q", secret.Name, corev1.TLSPrivateKeyKey)
 	}
-	pair, err := tls.X509KeyPair(certificatePEM, keyPEM)
-	if err != nil {
-		return fmt.Errorf("secret %q contains an invalid tls key pair: %w", secret.Name, err)
-	}
-	if len(pair.Certificate) == 0 {
-		return fmt.Errorf("secret %q does not contain a client certificate", secret.Name)
-	}
-	certificate, err := x509.ParseCertificate(pair.Certificate[0])
+	// Validate the complete chain, not just crypto/tls's leaf. Reuse the strict
+	// parser so trailing malformed certificates cannot bypass material checks.
+	certificates, err := parseTelemetryCertificates(certificatePEM)
 	if err != nil {
 		return fmt.Errorf("secret %q contains an invalid client certificate: %w", secret.Name, err)
 	}
+	if _, err := tls.X509KeyPair(certificatePEM, keyPEM); err != nil {
+		return fmt.Errorf("secret %q contains an invalid tls key pair: %w", secret.Name, err)
+	}
+	certificate := certificates[0]
 	now := time.Now()
 	if now.Before(certificate.NotBefore) || now.After(certificate.NotAfter) {
 		return fmt.Errorf("secret %q contains an expired or not-yet-valid client certificate", secret.Name)
