@@ -13,8 +13,9 @@ fail() {
 
 [[ -f "${profile}" ]] || fail "coverage profile is missing: ${profile}"
 
-# These are the business-logic entry points changed by Issue #513 and its
-# development-TLS rotation follow-up. The repository-wide unit floor remains
+# These are the business-logic entry points changed by Issue #513, its
+# development-TLS rotation follow-up, and Issue #514 ownership authorization.
+# The repository-wide unit floor remains
 # intentionally separate because unrelated policy and resource packages have
 # existing, independently tracked coverage debt.
 required_functions=(
@@ -23,6 +24,13 @@ required_functions=(
 	"internal/resources/tls.go:existingDevelopmentCA"
 	"internal/resources/tls.go:reusableDevelopmentLeaf"
 	"internal/resources/tls.go:reusableDevelopmentSigningCertificate"
+	"internal/resources/ownership.go:ResourceOwnershipError"
+	"internal/resources/ownership.go:resourceOwnerMatches"
+	"internal/resources/ownership.go:ownershipMarkerMatches"
+	"internal/resources/ownership.go:StampOwnership"
+	"internal/resources/crds.go:EnsureCRDs"
+	"internal/resources/crds.go:ensureSharedCRD"
+	"internal/policy/ownership.go:OwnershipError"
 )
 
 coverage_output=$(go tool cover -func="${profile}")

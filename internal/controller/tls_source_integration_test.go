@@ -263,6 +263,47 @@ var _ = Describe("runtime TLS source wiring", func() {
 		Expect(updatedVWC.Webhooks[0].ClientConfig.CABundle).To(Equal([]byte("administrator-webhook-ca")))
 	})
 
+	It("IT-OWN-514-023 [AC-6, IA-5; ASVS v5.0.0-V13.3.1] preserves cert-manager finalizers during a full resource update", func() {
+		ctx := context.Background()
+		kn := newMinimalCR()
+		kn.UID = "owner-uid"
+		kn.Generation = 1
+		scheme := schemeForTLSResource()
+
+		desired := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "cert-manager.io/v1",
+			"kind":       "Certificate",
+			"metadata": map[string]interface{}{
+				"name":      "gateway-tls",
+				"namespace": kn.Namespace,
+			},
+			"spec": map[string]interface{}{"secretName": "gateway-tls"},
+		}}
+		Expect(resources.SetOwnerReference(kn, desired, scheme)).To(Succeed())
+		resources.StampOwnership(kn, desired)
+		setHashAnnotation(desired, resources.SpecHash(desired))
+		live := desired.DeepCopy()
+		live.SetFinalizers([]string{"cert-manager.io/finalizer", "acme.example/cleanup"})
+		annotations := live.GetAnnotations()
+		annotations[resources.AnnotationSpecHash] = "stale-hash"
+		annotations["cert-manager.io/issue-temporary-certificate"] = "true"
+		live.SetAnnotations(annotations)
+
+		r := &KubernautReconciler{
+			Client:   fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(live).Build(),
+			Scheme:   scheme,
+			Recorder: events.NewFakeRecorder(100),
+		}
+		Expect(r.ensureCertManagerResource(ctx, kn, desired)).To(Succeed())
+
+		updated := &unstructured.Unstructured{}
+		updated.SetAPIVersion("cert-manager.io/v1")
+		updated.SetKind("Certificate")
+		Expect(r.Get(ctx, client.ObjectKey{Name: "gateway-tls", Namespace: kn.Namespace}, updated)).To(Succeed())
+		Expect(updated.GetFinalizers()).To(Equal([]string{"cert-manager.io/finalizer", "acme.example/cleanup"}))
+		Expect(updated.GetAnnotations()).To(HaveKeyWithValue("cert-manager.io/issue-temporary-certificate", "true"))
+	})
+
 	It("IT-TLS-PARITY-001 [AC-6, CM-6, SC-12, SC-13, SI-4; SOC2 CC6, CC7, CC8; ASVS v5.0.0-V11.1.1, v5.0.0-V12.1.1, v5.0.0-V13.3.1, v5.0.0-V13.3.2] provisions chart-compatible cert-manager resources and owns only those resources", func() {
 		ctx := context.Background()
 		kn := newMinimalCR()
@@ -450,6 +491,13 @@ var _ = Describe("runtime TLS source wiring", func() {
 		Expect(resources.ValidateServingTLSSecretForService(gateway, ca, resources.TLSServiceGateway, kn.Namespace)).To(Succeed())
 	})
 })
+
+func schemeForTLSResource() *runtime.Scheme {
+	scheme := runtime.NewScheme()
+	Expect(clientgoscheme.AddToScheme(scheme)).To(Succeed())
+	Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
+	return scheme
+}
 
 func certManagerServiceTLSSecretNames() map[string]string {
 	return map[string]string{

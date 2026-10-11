@@ -221,12 +221,13 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 		logCtx := logf.IntoContext(ctx, zapr.NewLogger(zap.New(core)))
 		Expect(reconciler.pruneLegacyAuthWebhookServiceMonitor(logCtx, kn)).To(Succeed())
 		Expect(logs.All()).To(HaveLen(1))
-		Expect(logs.All()[0].Message).To(Equal("pruned legacy AuthWebhook ServiceMonitor"))
+		Expect(logs.All()[0].Message).To(Equal("resource deleted"))
 		Expect(logs.All()[0].ContextMap()).To(HaveKeyWithValue("kind", "ServiceMonitor"))
 		Expect(logs.All()[0].ContextMap()).To(HaveKeyWithValue("name", "authwebhook-monitor"))
 		Expect(logs.All()[0].ContextMap()).To(HaveKeyWithValue("namespace", kn.Namespace))
-		Expect(logs.All()[0].ContextMap()).To(HaveKeyWithValue("generation", BeEquivalentTo(stored.GetGeneration())))
-		Expect(logs.All()[0].ContextMap()).To(HaveKeyWithValue("resourceVersion", stored.GetResourceVersion()))
+		Expect(logs.All()[0].ContextMap()).To(HaveKeyWithValue("generation", kn.Generation))
+		Expect(logs.All()[0].ContextMap()).To(HaveKeyWithValue("resourceVersion", kn.ResourceVersion))
+		Expect(logs.All()[0].ContextMap()).To(HaveKeyWithValue("objectResourceVersion", stored.GetResourceVersion()))
 	})
 
 	Describe("envtest reconciliation paths", func() {

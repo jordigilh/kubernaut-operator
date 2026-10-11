@@ -18,15 +18,18 @@ package kind
 
 import (
 	"context"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
 	. "github.com/onsi/gomega"    //nolint:revive,staticcheck
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 var _ = Describe("Kind operator journey and native provider contract", Ordered, func() {
 	var ctx context.Context
+	var provisioned, namespaces []ownershipWitness
 
 	BeforeAll(func() {
 		ctx = context.Background()
@@ -34,7 +37,9 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 		if configuredProvider != providerGeneric {
 			Expect(ensureMonitoringWorkloads(ctx)).To(Succeed())
 		}
-		Expect(applyKubernautCR(ctx)).To(Succeed())
+		var err error
+		provisioned, err = captureProvisioningWitnesses(ctx)
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	AfterEach(func() {
@@ -42,6 +47,99 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			collectDiagnostics(ctx)
 			collectProbeDiagnostics(ctx)
 		}
+	})
+
+	It("E2E-OWN-514-001 [AC-3, AC-6, CM-3, SI-4; SOC2 CC6.1, CC6.6, CC7.2, CC8.1; "+
+		"ASVS v5.0.0-V8.3.1, v5.0.0-V16.2.1] preserves administrator resources across failed install, "+
+		"recovery, upgrade, uninstall and marked reinstall", func() {
+		By("creating administrator resources before the real CR")
+		witnesses, err := createOwnershipConflicts(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(deleteOwnershipConflicts(ctx)).To(Succeed()) })
+		Expect(applyKubernautCR(ctx)).To(Succeed())
+		Eventually(func(g Gomega) {
+			kn, getErr := ownershipObject(ctx, "kubernaut", "kubernaut", kubernautNamespace)
+			g.Expect(getErr).NotTo(HaveOccurred())
+			encoded, encodeErr := kn.MarshalJSON()
+			g.Expect(encodeErr).NotTo(HaveOccurred())
+			g.Expect(string(encoded)).To(ContainSubstring("ownership conflict"))
+			g.Expect(kubernautCondition(ctx, "CRDsInstalled")).To(Equal("False"))
+			events, eventErr := kubectl(ctx, "get", "events", "-n", kubernautNamespace,
+				"--field-selector=reason=OwnershipConflict", "-o", "name")
+			g.Expect(eventErr).NotTo(HaveOccurred())
+			g.Expect(strings.TrimSpace(events)).NotTo(BeEmpty())
+			g.Expect(assertOwnershipWitnesses(ctx, witnesses)).To(Succeed())
+		}).Should(Succeed())
+
+		By("uninstalling the failed CR without destroying the conflicting resources")
+		Expect(deleteKubernautCR(ctx)).To(Succeed())
+		Expect(assertOwnershipWitnesses(ctx, witnesses)).To(Succeed())
+		Expect(assertProvisioningWitnesses(ctx, provisioned)).To(Succeed())
+		_, err = kubectl(ctx, "delete", "secret", "datastorage-db-secret", "-n", kubernautNamespace)
+		Expect(err).NotTo(HaveOccurred())
+		witnesses = witnesses[1:]
+		if configuredTLS == tlsManualAdmin {
+			Expect(ensureManualTLSWebhookFixtures(ctx, activeManualTLSSelection)).To(Succeed())
+		}
+		Expect(applyKubernautCR(ctx)).To(Succeed())
+		Expect(completeMigrationJob(ctx)).To(Succeed())
+		Eventually(kubernautPhase).WithArguments(ctx).Should(Equal(string(kubernautv1alpha2.PhaseRunning)))
+		Expect(assertOwnershipWitnesses(ctx, witnesses)).To(Succeed())
+		namespaces, err = captureOwnershipWitnesses(ctx, []ownershipWitness{
+			{resource: "namespace", name: kubernautNamespace},
+			{resource: "namespace", name: workflowNamespaceName},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		content, err := createWorkflowOwnershipContent(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		provisioned = append(provisioned, content...)
+		old, err := ownershipObject(ctx, "kubernaut", "kubernaut", kubernautNamespace)
+		Expect(err).NotTo(HaveOccurred())
+		leftover, err := managedOwnershipRole(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(leftover.GetAnnotations()).To(HaveKeyWithValue("kubernaut.ai/owner-uid", string(old.GetUID())))
+
+		By("upgrading a real CR and waiting for the new generation to reconcile")
+		_, err = kubectl(ctx, "patch", "kubernaut", "kubernaut", "-n", kubernautNamespace, "--type=merge", "-p",
+			`{"spec":{"workflowExecution":{"cooldownPeriod":"2m"}}}`)
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			g.Expect(ownershipGenerationReady(ctx)).To(Succeed())
+		}).Should(Succeed())
+
+		By("uninstalling successfully while preserving foreign ingress and partially marked RBAC")
+		Expect(deleteKubernautCR(ctx)).To(Succeed())
+		Expect(assertOwnershipWitnesses(ctx, witnesses)).To(Succeed())
+		Expect(assertRetainedNamespaces(ctx, namespaces)).To(Succeed())
+		Expect(assertProvisioningWitnesses(ctx, provisioned)).To(Succeed())
+		Eventually(func(g Gomega) {
+			output, getErr := kubectl(ctx, "get", "deployment", "workflowexecution-controller", "-n", kubernautNamespace,
+				"--ignore-not-found", "-o", "name")
+			g.Expect(getErr).NotTo(HaveOccurred())
+			g.Expect(strings.TrimSpace(output)).To(BeEmpty())
+		}).Should(Succeed())
+
+		By("recreating a deliberately marked leftover and proving bounded new-UID reinstall repair")
+		leftover.SetUID("")
+		leftover.SetResourceVersion("")
+		leftover.SetManagedFields(nil)
+		leftover.SetCreationTimestamp(metav1.Time{})
+		Expect(applyYAML(ctx, leftover)).To(Succeed())
+		if configuredTLS == tlsManualAdmin {
+			Expect(ensureManualTLSWebhookFixtures(ctx, activeManualTLSSelection)).To(Succeed())
+		}
+		Expect(applyKubernautCR(ctx)).To(Succeed())
+		Expect(completeMigrationJob(ctx)).To(Succeed())
+		Eventually(kubernautPhase).WithArguments(ctx).Should(Equal(string(kubernautv1alpha2.PhaseRunning)))
+		fresh, err := ownershipObject(ctx, "kubernaut", "kubernaut", kubernautNamespace)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fresh.GetUID()).NotTo(Equal(old.GetUID()))
+		repaired, err := ownershipObject(ctx, "clusterrole", leftover.GetName(), "")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(repaired.GetAnnotations()).To(HaveKeyWithValue("kubernaut.ai/owner-uid", string(fresh.GetUID())))
+		Expect(assertOwnershipWitnesses(ctx, witnesses)).To(Succeed())
+		Expect(assertRetainedNamespaces(ctx, namespaces)).To(Succeed())
+		Expect(assertProvisioningWitnesses(ctx, provisioned)).To(Succeed())
 	})
 
 	It(
@@ -312,6 +410,8 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 		By("deleting the Kubernaut CR through its finalizer path")
 		Expect(deleteKubernautCR(ctx)).To(Succeed())
 		Eventually(func(g Gomega) {
+			g.Expect(assertRetainedNamespaces(ctx, namespaces)).To(Succeed())
+			g.Expect(assertProvisioningWitnesses(ctx, provisioned)).To(Succeed())
 			g.Expect(noManagedPolicies(ctx)).To(Succeed())
 			g.Expect(ensureNoRawNetworkPolicy(ctx)).To(Succeed())
 			if configuredProvider != providerGeneric {

@@ -453,8 +453,16 @@ func manualMutatingWebhookFixture(fixture manualTLSFixture) *admissionregistrati
 	return &admissionregistrationv1.MutatingWebhookConfiguration{
 		TypeMeta: metav1.TypeMeta{APIVersion: "admissionregistration.k8s.io/v1", Kind: "MutatingWebhookConfiguration"},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   kubernautNamespace + "-authwebhook-mutating",
-			Labels: manualTLSFixtureLabels(string(fixture.mode)),
+			Name: kubernautNamespace + "-authwebhook-mutating",
+			// Explicitly entrust the configuration (not the CA/Secrets) to the
+			// operator. Manual TLS input is not automatic adoption permission.
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "kubernaut-operator",
+				"app.kubernetes.io/part-of":    "kubernaut",
+				"app.kubernetes.io/instance":   "kubernaut",
+				"kubernaut.ai/tls-fixture":     string(fixture.mode),
+			},
+			Annotations: map[string]string{"kubernaut.ai/owner-namespace": kubernautNamespace},
 		},
 		Webhooks: webhooks,
 	}
@@ -474,8 +482,14 @@ func manualValidatingWebhookFixture(fixture manualTLSFixture) *admissionregistra
 	return &admissionregistrationv1.ValidatingWebhookConfiguration{
 		TypeMeta: metav1.TypeMeta{APIVersion: "admissionregistration.k8s.io/v1", Kind: "ValidatingWebhookConfiguration"},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   kubernautNamespace + "-authwebhook-validating",
-			Labels: manualTLSFixtureLabels(string(fixture.mode)),
+			Name: kubernautNamespace + "-authwebhook-validating",
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "kubernaut-operator",
+				"app.kubernetes.io/part-of":    "kubernaut",
+				"app.kubernetes.io/instance":   "kubernaut",
+				"kubernaut.ai/tls-fixture":     string(fixture.mode),
+			},
+			Annotations: map[string]string{"kubernaut.ai/owner-namespace": kubernautNamespace},
 		},
 		Webhooks: webhooks,
 	}
