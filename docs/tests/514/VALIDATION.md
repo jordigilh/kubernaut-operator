@@ -11,8 +11,8 @@
 The implementation follows the approved ownership and namespace-retention
 contract. No public CRD field, reconciliation phase/condition type, RBAC rule or
 OLM bundle change was introduced. Neither the CR namespace nor workflow namespace
-is an operator cleanup target. The handoff stops at commit/push; PR creation,
-merge, issue closure and release qualification belong to the next session.
+is an operator cleanup target. This record covers PR #517 remediation evidence;
+release qualification remains separate.
 
 ## TDD evidence
 
@@ -25,6 +25,7 @@ committed: `/private/var/folders/r7/gktmmltd1zq7wqhsjjslwsm80000gn/T/opencode/`.
 | Restricted PSA overriding foreign namespace identity | `514-red-workflow-identity.log` | `IT-OWN-514-016`, `017`: reject foreign identity; reuse a prepared administrator namespace without changing it |
 | Foreign webhook CA copied before authorization | `514-red-webhook-trust.log`: expected ownership error, got nil | `514-green-webhook-trust.log`; `IT-OWN-514-018`: authorize the observation before preserving CA/metadata |
 | Provider markers overriding foreign owners | `514-red-provider-unit.log`: two failing unit cases; `514-red-provider-wiring.log`: update/prune/finalizer failures | `514-green-provider-unit.log`, `514-green-ownership-final.log`; `UT-OWN-514-005` and `IT-OWN-514-019`: retain all five markers, preserve foreign policies and repair only same-identity owners |
+| CRD conversion/configuration error paths | Focused Ginkgo cases cover invalid dynamic-client configuration, nested YAML conversion, malformed YAML, and non-object YAML | `UT-OWN-514-004` expanded; resources package rerun: **90.4%**; `EnsureCRDs` **100.0%**, `ensureSharedCRD` **100.0%**, `yamlToUnstructured` **100.0%** |
 
 Unit logic runs independently of the controller/envtest package. Integration
 contracts drive actual `Reconcile`, including completed administrator migration
@@ -39,7 +40,7 @@ ownership changes. Only external Kubernetes API/cache behavior is injected.
 | `golangci-lint run` | Passed; `514-final-lint-green.log` |
 | `go test ./... -run=^$ -timeout=30s` | Passed; `514-final-compile-only.log` |
 | `make manifests generate`; `git diff --exit-code config/ api/v1alpha2/zz_generated.deepcopy.go` | Passed; generated CRD/RBAC/deepcopy unchanged; `514-final-codegen.log` |
-| `make test` | Passed on final implementation; `514-final-make-test-complete.log`; controller suite 219.782 seconds |
+| `make test` | Passed on remediation source; `514-make-test-remediation.log`; controller suite 278.318 seconds |
 | `make test-security-traceability test-hack-scripts test-pyramid` | Passed; `514-final-static-gates.log` |
 
 Earlier `514-final-make-test.log` failed because Kubernetes 1.37 rejects a Job
@@ -60,9 +61,16 @@ below the methodology's 96% target; the unchanged configured unit gate is 80%
 across `internal/`, with controller integration gated at 78%. Passing configured
 gates does not waive the higher target or turn coverage into proof of all branches.
 
-Final coverage: resources **90.1%**, policy **84.5%**, all internal unit packages
-**88.9%** (80% configured floor), controller integration **81.8%** (78% floor).
-All **11** gated business entry points passed at **100%**; six are the #514
+Final pre-remediation coverage: resources **90.1%**, policy **84.5%**, all
+internal unit packages **88.9%** (80% configured floor), controller integration
+**81.8%** (78% floor). The remediation adds focused CRD error/conversion
+coverage and reruns the scoped changed-business-logic gate; aggregate historical
+coverage debt is not hidden by exclusions or a lowered threshold. The current
+remediation run reports resources **90.4%**, policy **84.5%**, all internal unit
+packages **89.1%**, and controller integration **82.2%**. The resources package's
+96% project target remains an explicit residual gap requiring broader non-#514
+test work.
+All **12** gated business entry points passed at **100%**; six are the #514
 ownership/shared-CRD functions. No coverage threshold was reduced.
 
 ## Live journey evidence and blockers
@@ -78,9 +86,21 @@ ownership/shared-CRD functions. No coverage threshold was reduced.
   writing Go build-cache layers and overlay metadata. Capacity was restored by
   removing only stale #514/operator-tagged images and recent dangling layers;
   no broad prune, VM restart or unrelated containers/images were removed.
-- Final-source OpenShift/OVN, Cilium/Calico, and upstream exact-SHA application-
-  service qualification remain unqualified. The Kind contract fixtures do not
-  establish those lanes.
+- Final-source OpenShift/OVN and upstream exact-SHA application-service
+  qualification are separate live lanes. The Kind contract fixtures do not
+  establish them; see the platform evidence section below for exact attempts.
+
+## Platform and CI evidence
+
+- GitHub PR #517 check-runs for head `0e80af91c12c7d5402587650c85b99b3c1bebf30`
+  were **15/15 successful**, including Cilium, Calico, TLS, Helm, SBOM, unit,
+  and integration checks. The legacy combined status is misleadingly pending
+  with zero statuses; it is not treated as a test failure.
+- SNO platform attempts and their exact cluster/image evidence are recorded in
+  the remediation run log. A lane is marked verified only when its command,
+  timestamp, cluster/operator/application versions and immutable image SHA are
+  available; unavailable lanes remain explicit blockers with an owner and next
+  action.
 
 ## Control-objective interpretation
 

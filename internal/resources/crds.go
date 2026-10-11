@@ -48,13 +48,17 @@ var crdGVR = schema.GroupVersionResource{
 // nested JSONSchemaProps properties (e.g. serviceAccountName under
 // execution.properties). The dynamic client sends the raw JSON as-is.
 func EnsureCRDs(ctx context.Context, cfg *rest.Config) error {
+	return ensureCRDs(ctx, cfg, assets.CRDsFS)
+}
+
+func ensureCRDs(ctx context.Context, cfg *rest.Config, crdFS fs.FS) error {
 	dyn, err := dynamic.NewForConfig(cfg)
 	if err != nil {
 		return fmt.Errorf("creating dynamic client for CRDs: %w", err)
 	}
 	crdClient := dyn.Resource(crdGVR)
 
-	entries, err := fs.ReadDir(assets.CRDsFS, "crds")
+	entries, err := fs.ReadDir(crdFS, "crds")
 	if err != nil {
 		return fmt.Errorf("reading embedded CRD directory: %w", err)
 	}
@@ -64,7 +68,7 @@ func EnsureCRDs(ctx context.Context, cfg *rest.Config) error {
 			continue
 		}
 
-		data, err := fs.ReadFile(assets.CRDsFS, "crds/"+entry.Name())
+		data, err := fs.ReadFile(crdFS, "crds/"+entry.Name())
 		if err != nil {
 			return fmt.Errorf("reading embedded CRD %s: %w", entry.Name(), err)
 		}

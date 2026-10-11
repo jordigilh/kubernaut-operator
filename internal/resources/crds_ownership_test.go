@@ -25,6 +25,7 @@ import (
 	"net/http/httptest"
 	"path"
 	"sync"
+	"testing/fstest"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -101,6 +102,57 @@ var _ = Describe("UT-OWN-514-004 [AC-3, AC-6, CM-3; SOC2 CC6.6; ASVS v5.0.0-V8.3
 		Expect(api.writes).To(BeZero())
 	})
 
+	It("surfaces an invalid dynamic-client configuration before CRD reconciliation", func() {
+		err := EnsureCRDs(context.Background(), &rest.Config{Host: "://invalid"})
+		Expect(err).To(MatchError(ContainSubstring("creating dynamic client for CRDs")))
+	})
+
+	It("covers embedded CRD filesystem errors and directory entries", func() {
+		cfg := &rest.Config{Host: server.URL}
+		Expect(ensureCRDs(context.Background(), cfg, fstest.MapFS{})).To(MatchError(ContainSubstring("reading embedded CRD directory")))
+
+		directoryOnly := fstest.MapFS{
+			"crds/ignored": &fstest.MapFile{Mode: fs.ModeDir},
+		}
+		Expect(ensureCRDs(context.Background(), cfg, directoryOnly)).To(Succeed())
+
+		Expect(ensureCRDs(context.Background(), cfg, failingCRDFS{
+			entries: []fs.DirEntry{namedCRDDirEntry{name: "broken.yaml"}},
+		})).To(MatchError(ContainSubstring("reading embedded CRD")))
+
+		malformed := fstest.MapFS{
+			"crds/broken.yaml": &fstest.MapFile{Data: []byte("metadata: [")},
+		}
+		Expect(ensureCRDs(context.Background(), cfg, malformed)).To(MatchError(ContainSubstring("parsing CRD broken.yaml")))
+	})
+
+	It("converts nested YAML objects and rejects malformed or non-object documents", func() {
+		desired, err := yamlToUnstructured([]byte(`
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: conversion-fixture.kubernaut.ai
+spec:
+  names:
+    plural: conversion-fixtures
+  versions:
+    - name: v1
+      served: true
+      storage: true
+`))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(desired.GetName()).To(Equal("conversion-fixture.kubernaut.ai"))
+		versions, found, err := unstructured.NestedSlice(desired.Object, "spec", "versions")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(versions).To(HaveLen(1))
+
+		_, err = yamlToUnstructured([]byte("metadata: ["))
+		Expect(err).To(HaveOccurred())
+		_, err = yamlToUnstructured([]byte("- list-item\n"))
+		Expect(err).To(HaveOccurred())
+	})
+
 	It("updates an explicitly operator-managed schema and preserves unrelated metadata", func() {
 		api.seed(map[string]string{"app.kubernetes.io/managed-by": "kubernaut-operator", "team": "sre"}, nil)
 		api.mu.Lock()
@@ -145,6 +197,29 @@ type sharedCRDAPIFixture struct {
 	writes     int
 	race       bool
 	failMethod string
+}
+
+type failingCRDFS struct {
+	entries []fs.DirEntry
+}
+
+func (failingCRDFS) Open(name string) (fs.File, error) {
+	return nil, fmt.Errorf("unable to read %s", name)
+}
+
+func (f failingCRDFS) ReadDir(string) ([]fs.DirEntry, error) {
+	return f.entries, nil
+}
+
+type namedCRDDirEntry struct {
+	name string
+}
+
+func (e namedCRDDirEntry) Name() string    { return e.name }
+func (namedCRDDirEntry) IsDir() bool       { return false }
+func (namedCRDDirEntry) Type() fs.FileMode { return 0 }
+func (namedCRDDirEntry) Info() (fs.FileInfo, error) {
+	return nil, fmt.Errorf("directory entry info unavailable")
 }
 
 func (a *sharedCRDAPIFixture) seed(labels map[string]string, refs []metav1.OwnerReference) {

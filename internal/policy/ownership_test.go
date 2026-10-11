@@ -56,26 +56,26 @@ var _ = Describe("Native policy ownership authorization", func() {
 		Entry("foreign provider", ProviderLabel, "calico"),
 	)
 
-	It("UT-OWN-514-005 [AC-6] rejects a foreign owner even with all five matching markers", func() {
+	It("UT-OWN-514-006 [AC-6] rejects a foreign owner even with all five matching markers", func() {
 		existing := desired.DeepCopy()
 		existing.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "v1", Kind: "ConfigMap", Name: "platform", UID: types.UID("platform-uid")}})
 		Expect(OwnershipError(existing, desired)).To(MatchError(ContainSubstring("owner")))
 	})
 
-	It("UT-OWN-514-005 [AC-6] rejects terminating policies instead of reinstalling them", func() {
+	It("UT-OWN-514-007 [AC-6] rejects terminating policies instead of reinstalling them", func() {
 		existing := desired.DeepCopy()
 		now := metav1.Now()
 		existing.SetDeletionTimestamp(&now)
 		Expect(OwnershipError(existing, desired)).To(MatchError(ContainSubstring("terminating")))
 	})
 
-	It("UT-OWN-514-005 [CM-3] accepts the complete provider identity without adding generic adoption markers", func() {
+	It("UT-OWN-514-008 [CM-3] accepts the complete provider identity without adding generic adoption markers", func() {
 		existing := desired.DeepCopy()
 		Expect(OwnershipError(existing, desired)).To(Succeed())
 		Expect(existing).To(Equal(desired))
 	})
 
-	It("UT-OWN-514-005 [CM-3] allows a controller reference only to the same namespaced Kubernaut identity", func() {
+	It("UT-OWN-514-009 [CM-3] allows a controller reference only to the same namespaced Kubernaut identity", func() {
 		existing := desired.DeepCopy()
 		existing.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "kubernaut.ai/v1alpha2", Kind: "Kubernaut", Name: "kubernaut", UID: types.UID("old-install-uid"), Controller: new(true)}})
 		Expect(OwnershipError(existing, desired)).To(Succeed(), "complete markers authorize bounded same-identity reinstall")

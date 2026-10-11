@@ -232,13 +232,25 @@ for requirement in v5.0.0-V8.2.1 v5.0.0-V8.3.1 v5.0.0-V13.3.1 v5.0.0-V13.3.2 v5.
 	grep -Fq "${requirement}" "${ownership_matrix}" || fail "ownership matrix is missing ${requirement}"
 done
 for test_id in UT-OWN-514-001 UT-OWN-514-002 UT-OWN-514-003 UT-OWN-514-004 UT-OWN-514-005 \
+	UT-OWN-514-006 UT-OWN-514-007 UT-OWN-514-008 UT-OWN-514-009 \
 	IT-OWN-514-001 IT-OWN-514-002 IT-OWN-514-003 IT-OWN-514-004 IT-OWN-514-005 \
 	IT-OWN-514-006 IT-OWN-514-007 IT-OWN-514-008 IT-OWN-514-009 IT-OWN-514-010 \
 	IT-OWN-514-011 IT-OWN-514-012 IT-OWN-514-013 IT-OWN-514-014 IT-OWN-514-015 \
-	IT-OWN-514-016 IT-OWN-514-017 IT-OWN-514-018 IT-OWN-514-019 E2E-OWN-514-001; do
+	IT-OWN-514-016 IT-OWN-514-017 IT-OWN-514-018 IT-OWN-514-019 IT-OWN-514-020 \
+	IT-OWN-514-021 IT-OWN-514-022 IT-OWN-514-023 E2E-OWN-514-001; do
 	grep -R -n --include='*_test.go' -F "${test_id}" "${repo_root}/internal" "${repo_root}/test" >/dev/null \
 		|| fail "ownership evidence ID ${test_id} has no executable test"
 	grep -Fq "${test_id}" "${ownership_matrix}" || fail "ownership matrix omits ${test_id}"
 done
+
+# Every executable test identifier is a unique traceability key. Duplicate IDs
+# make a passing result ambiguous and can silently satisfy the wrong matrix row.
+duplicate_ids=$(
+	{
+		grep -RhoE --include='*_test.go' '\b(UT|IT|E2E)-[A-Z0-9]+-[0-9]+-[0-9]+\b' \
+			"${repo_root}/internal" "${repo_root}/test" || true
+	} | sort | uniq -c | awk '$1 > 1 {print $2}'
+)
+[[ -z "${duplicate_ids}" ]] || fail "duplicate executable test IDs: ${duplicate_ids//$'\n'/, }"
 
 echo "security traceability validation passed"

@@ -1,9 +1,10 @@
 # Issue #514 — Ownership safety test plan
 
 **Contract:** `docs/design/ISSUE-514-OWNERSHIP-CONTRACT.md`
-**Status:** ownership implementation complete; final configured host gates passed.
-Final-image live qualification is blocked by Podman storage exhaustion. No
-release/compliance claim. Results: [VALIDATION.md](VALIDATION.md).
+**Status:** ownership implementation complete; final configured host gates and
+final-source Kind qualification passed. OpenShift/OVN and upstream exact-SHA
+application-service qualification remain separately tracked environment lanes;
+no release/compliance claim. Results: [VALIDATION.md](VALIDATION.md).
 
 Ginkgo/Gomega tests assert business outcomes, not just helper invocation. All
 existing resource builders and controller logic are real; mocks inject only
@@ -14,8 +15,8 @@ separate journey. No sleep, pending tests, or skipped security scenarios.
 |---|---|---|---|
 | `BA-OWN-514-01`: administrator same-name objects are unchanged, including forged matching hashes and AlreadyExists races | `UT-OWN-514-001` ownership rejection matrix | `IT-OWN-514-001`, `002`; `IT-OWN-514-009` API race | `E2E-OWN-514-001` installed operator conflict, recovery and preservation |
 | `BA-OWN-514-02`: authorized creation/upgrade/reinstall is idempotent; no foreign-owner/namespace takeover | `UT-OWN-514-002`, `003` identity/reinstall matrix | `IT-OWN-514-003`, `004`, `016` | `E2E-OWN-514-001` recovery and new-UID reinstall |
-| `BA-OWN-514-03`: disable, stale pruning and uninstall remove only eligible operator resources, with identity/version preconditions | `UT-OWN-514-001`, `002` shared authorization predicate | `IT-OWN-514-005`, `006`, `011`; actual Reconcile deletion/replacement race | `E2E-OWN-514-001` failed-install/uninstall preservation |
-| `BA-OWN-514-04`: TLS, migration and shared CRD seams cannot bypass ownership | `UT-OWN-514-004` shared CRD real dynamic-client requests | `IT-OWN-514-007`, `008`, `013`, `018`; actual Reconcile rejects completed foreign Job/Certificate, shared CRD and stale foreign webhook CA before metadata preservation | existing TLS/provider E2E lanes plus `E2E-OWN-514-001` |
+| `BA-OWN-514-03`: disable, stale pruning and uninstall remove only eligible operator resources, with identity/version preconditions | `UT-OWN-514-001`, `002` shared authorization predicate | `IT-OWN-514-005`, `006`, `011`, `022`; actual Reconcile deletion/replacement race and cleanup-failure finalizer retention | `E2E-OWN-514-001` failed-install/uninstall preservation |
+| `BA-OWN-514-04`: TLS, migration and shared CRD seams cannot bypass ownership | `UT-OWN-514-004` shared CRD real dynamic-client requests | `IT-OWN-514-007`, `IT-OWN-514-008`, `IT-OWN-514-013`, `IT-OWN-514-018`, `IT-OWN-514-020`, `IT-OWN-514-021`, `IT-OWN-514-023`; actual Reconcile rejects completed/foreign migration Jobs and Certificates, shared CRD and stale foreign webhook CA before metadata preservation, and preserves cert-manager finalizers | existing TLS/provider E2E lanes plus `E2E-OWN-514-001` |
 | `BA-OWN-514-05`: conflicts expose object/owner identity without logging credential data | rejection tests have owner/marker diagnostics | `IT-OWN-514-001`, `002` capture Warning events, structured logs and false readiness | `E2E-OWN-514-001` CR condition/event observation |
 | `BA-OWN-514-06`: provider/platform policies retain their five-marker ownership boundary, reject foreign owners and repair only same-identity reinstall references | `UT-OWN-514-005` independent policy authorization matrix; existing provider logic tests | `IT-OWN-514-019` actual Reconcile update/prune/finalizer and matching-hash owner repair; existing provider lifecycle tests | existing Cilium/Calico unmanaged-policy preservation journey |
 | `BA-OWN-514-07`: neither namespace is deleted; provisioning-owned workflows, DB/Valkey and administrator inputs survive uninstall/reinstall; prepared administrator namespaces remain read-only | `UT-OWN-514-001`, `002` authorization matrix and existing workflow namespace builder tests | `IT-OWN-514-010`, `012`, `015`, `016`, `017`; namespace UID retention/reuse regression | `E2E-OWN-514-001` namespace UID, workflow ConfigMap, DB/Valkey Deployment/Service and input Secret/ConfigMap witnesses; final journey cleanup rechecks preservation |
@@ -50,11 +51,14 @@ Historical evidence is retained in the session's `opencode` temporary directory:
   DevelopmentSelfSigned evidence **predates** the final retention/identity
   refinements and cannot qualify the final change.
 - `514-kind-hook.log`: earlier Hook rotation failure (unchanged certificate after
-  deleting `gateway-tls`); the retention-image rerun in
-  `514-kind-hook-final.log` passed all eight journey specs, including rotation.
+  deleting `gateway-tls`); the final-source rerun in
+  `514-kind-final-source.log` passed all eight journey specs, including rotation.
 - `514-red-webhook-trust.log`: `IT-OWN-514-018` failed with "Expected an error,
   got nil", proving a stale foreign webhook observation could supply CA material
   before a later owned read. The authorization gate now precedes preservation.
+- `IT-OWN-514-008` is the completed administrator migration Job case; the
+  previously duplicated cert-manager Certificate case is now uniquely
+  `IT-OWN-514-020`.
 - `514-red-provider-unit.log` / `514-red-provider-wiring.log`: RED proved matching
   provider markers could override foreign owners in update/prune/finalization.
   `UT-OWN-514-005` and `IT-OWN-514-019` now also protect owner identity and scope;

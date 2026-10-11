@@ -28,6 +28,7 @@ required_functions=(
 	"internal/resources/ownership.go:resourceOwnerMatches"
 	"internal/resources/ownership.go:ownershipMarkerMatches"
 	"internal/resources/ownership.go:StampOwnership"
+	"internal/resources/crds.go:EnsureCRDs"
 	"internal/resources/crds.go:ensureSharedCRD"
 	"internal/policy/ownership.go:OwnershipError"
 )

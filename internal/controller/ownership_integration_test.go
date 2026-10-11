@@ -482,7 +482,43 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		Expect(meta.IsStatusConditionTrue(kn.Status.Conditions, kubernautv1alpha2.ConditionMigrationComplete)).To(BeFalse())
 	})
 
-	It("IT-OWN-514-008 [AC-6, SI-10; ASVS v5.0.0-V8.3.1] refuses an administrator cert-manager Certificate through Reconcile", func() {
+	It("IT-OWN-514-021 [AC-6, SI-10; ASVS v5.0.0-V8.3.1] authorizes a live migration Job before a matching status-hash no-op", func() {
+		createBYOSecrets(ctx)
+		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		r := newReconciler()
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+		Expect(err).NotTo(HaveOccurred())
+
+		job := &batchv1.Job{}
+		jobKey := client.ObjectKey{Name: "kubernaut-db-migration", Namespace: testNamespace}
+		Expect(k8sClient.Get(ctx, jobKey, job)).To(Succeed())
+		kn := fetchKnV2(ctx)
+		desired, err := resources.MigrationJob(kn)
+		Expect(err).NotTo(HaveOccurred())
+		desiredHash := resources.SpecHash(desired)
+		kn.Status.LastMigrationHash = desiredHash
+		Expect(k8sClient.Status().Update(ctx, kn)).To(Succeed())
+
+		job.Labels = map[string]string{"app.kubernetes.io/managed-by": "administrator"}
+		job.OwnerReferences = nil
+		job.Annotations = map[string]string{resources.AnnotationSpecHash: desiredHash}
+		Expect(k8sClient.Update(ctx, job)).To(Succeed())
+		before := job.DeepCopy()
+		foreign := &batchv1.Job{}
+		Expect(k8sClient.Get(ctx, jobKey, foreign)).To(Succeed())
+		Expect(foreign.GetOwnerReferences()).To(BeEmpty())
+		Expect(foreign.GetLabels()).To(HaveKeyWithValue("app.kubernetes.io/managed-by", "administrator"))
+
+		_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+		Expect(err).To(MatchError(ContainSubstring("ownership conflict")))
+		live := &batchv1.Job{}
+		Expect(k8sClient.Get(ctx, jobKey, live)).To(Succeed())
+		Expect(live).To(Equal(before), "matching status/hash markers must not authorize a foreign migration Job")
+	})
+
+	It("IT-OWN-514-020 [AC-6, SI-10; ASVS v5.0.0-V8.3.1] refuses an administrator cert-manager Certificate through Reconcile", func() {
 		createBYOSecrets(ctx)
 		// Only the external cert-manager API is simulated. Builders and the full
 		// TLS/migration reconciliation path run against the envtest API server.

@@ -119,10 +119,6 @@ const (
 	ReasonAlertManagerAuthGatewayDisabled = "GatewayDisabled"
 )
 
-// maxFinalizerAttempts is the number of consecutive reconcile attempts during
-// deletion cleanup before the finalizer is force-removed.
-const maxFinalizerAttempts = 20
-
 // KubernautReconciler reconciles a Kubernaut object.
 type KubernautReconciler struct {
 	client.Client
@@ -480,9 +476,9 @@ func (r *KubernautReconciler) ensureMigrationPrereqs(ctx context.Context, kn *ku
 // status. Returns a zero Result when the job has completed successfully;
 // returns a non-zero Result (requeue) when the job is still running or failed.
 //
-// A completed Job with a matching spec-hash annotation is considered
-// up-to-date and short-circuits the entire migration phase, avoiding
-// unnecessary pod churn on operator restarts.
+// A live, authorized Job with a matching migration status hash is considered
+// up-to-date and short-circuits the migration phase, avoiding unnecessary pod
+// churn on operator restarts. Authorization must precede this shortcut.
 func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -493,10 +489,6 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 	desiredHash := resources.SpecHash(migrationJob)
 	setHashAnnotation(migrationJob, desiredHash)
 
-	if kn.Status.LastMigrationHash == desiredHash {
-		return ctrl.Result{}, nil
-	}
-
 	existingJob := &batchv1.Job{}
 	created, err := r.createIfNotFound(ctx, kn, migrationJob, existingJob)
 	if err != nil {
@@ -504,6 +496,11 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 	}
 	if created {
 		existingJob = migrationJob
+	}
+	// The status hash is only a no-op shortcut after the live Job has been
+	// fetched and authorized. A name or matching status hash is not ownership.
+	if kn.Status.LastMigrationHash == desiredHash {
+		return ctrl.Result{}, nil
 	}
 
 	for _, cond := range existingJob.Status.Conditions {
@@ -2595,21 +2592,18 @@ func (r *KubernautReconciler) reconcileDelete(ctx context.Context, kn *kubernaut
 }
 
 // runFinalizerCleanup deletes cluster-scoped resources and removes the
-// finalizer once cleanup succeeds. If cleanup keeps failing past
-// maxFinalizerAttempts, it force-removes the finalizer instead of blocking
-// deletion forever. retry is true when the caller should return immediately
-// with (result, err) to requeue and try again later.
+// finalizer once cleanup succeeds. Cleanup failures retain the finalizer and
+// return an error so Kubernetes retries instead of orphaning resources.
+// retry is true when the caller should return immediately with (result, err)
+// to requeue and try again later.
 func (r *KubernautReconciler) runFinalizerCleanup(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (result ctrl.Result, err error, retry bool) {
 	log := logf.FromContext(ctx)
 
 	if err := r.deleteClusterScopedResources(ctx, kn, knV2); err != nil {
-		deletionAge := r.now().Sub(kn.DeletionTimestamp.Time)
-		if deletionAge <= time.Duration(maxFinalizerAttempts)*requeueError {
-			return ctrl.Result{RequeueAfter: requeueError}, err, true
-		}
-		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "FinalizerTimeout", "Reconcile",
-			"cleanup failed after %s; force-removing finalizer: %v", deletionAge.Round(time.Second), err)
-		log.Error(err, "cleanup failed past timeout, force-removing finalizer")
+		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "CleanupFailed", "Reconcile",
+			"cleanup failed; retaining finalizer and retrying: %v", err)
+		log.Error(err, "cleanup failed, retaining finalizer and retrying")
+		return ctrl.Result{RequeueAfter: requeueError}, err, true
 	}
 	r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "CleanupComplete", "Reconcile", "Cluster-scoped resources cleaned up")
 
@@ -3608,6 +3602,7 @@ func (r *KubernautReconciler) ensureCertManagerResource(
 	desired.SetResourceVersion(live.GetResourceVersion())
 	desired.SetLabels(mergeStringMap(live.GetLabels(), desired.GetLabels()))
 	desired.SetAnnotations(mergeStringMap(live.GetAnnotations(), desired.GetAnnotations()))
+	desired.SetFinalizers(mergeStringSlice(live.GetFinalizers(), desired.GetFinalizers()))
 	if err := r.Update(ctx, desired); err != nil {
 		r.resourceLogger(ctx, kn, desired).Error(err, "cert-manager resource update failed")
 		return fmt.Errorf("updating cert-manager resource %s: %w", key, err)
@@ -3623,6 +3618,24 @@ func mergeStringMap(existing, desired map[string]string) map[string]string {
 	}
 	for key, value := range desired {
 		merged[key] = value
+	}
+	return merged
+}
+
+func mergeStringSlice(existing, desired []string) []string {
+	if len(existing) == 0 && len(desired) == 0 {
+		return nil
+	}
+	merged := make([]string, 0, len(existing)+len(desired))
+	seen := make(map[string]struct{}, len(existing)+len(desired))
+	for _, values := range [][]string{existing, desired} {
+		for _, value := range values {
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			merged = append(merged, value)
+		}
 	}
 	return merged
 }
