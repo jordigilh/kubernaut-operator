@@ -53,6 +53,9 @@ const (
 var (
 	readServiceCAFunc          = readServiceCA
 	readDefaultIngressCertFunc = readDefaultIngressCert
+	// Configuration discovery is an external Kubernetes dependency too. This
+	// seam lets unit tests exercise the real clientset and HTTP error paths.
+	trustBundleInClusterConfigFunc = rest.InClusterConfig
 )
 
 // readServiceCA reads the OCP service-ca-operator-injected CA bundle from
@@ -91,7 +94,7 @@ func readDefaultIngressCert() (string, error) {
 // the in-cluster config. Bypassing the manager's cached client keeps the RBAC
 // surface to `get` only, no `list`/`watch`.
 func trustBundleClientset() (*kubernetes.Clientset, error) {
-	cfg, err := rest.InClusterConfig()
+	cfg, err := trustBundleInClusterConfigFunc()
 	if err != nil {
 		return nil, fmt.Errorf("load in-cluster config: %w", err)
 	}

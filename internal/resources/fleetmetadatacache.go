@@ -148,14 +148,7 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernau
 		Debug: debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
 
-	data, err := marshalYAML(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("fleetmetadatacache config: %w", err)
-	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, fleetMetadataCacheConfigMapName, ComponentFleetMetadataCache),
-		Data:       map[string]string{"config.yaml": data},
-	}, nil
+	return yamlConfigMap(ObjectMeta(kn, fleetMetadataCacheConfigMapName, ComponentFleetMetadataCache), "config.yaml", "fleetmetadatacache config", cfg)
 }
 
 // resolveFleetMetadataCacheValkeyTLS mirrors DataStorageConfigMap's identical

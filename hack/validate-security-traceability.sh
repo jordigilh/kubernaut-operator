@@ -50,7 +50,8 @@ done
 for artifact in \
 	'internal/resources/tls.go' \
 	'internal/controller/kubernaut_controller.go' \
-	'internal/controller/tls_source_integration_test.go' \
+	'internal/controller/tls_source_unit_test.go' \
+	'internal/controller/runtime_tls_wiring_integration_test.go' \
 	'internal/resources/tls_test.go' \
 	'test/e2e/kind/' \
 	'.github/workflows/test.yml' \
@@ -113,7 +114,9 @@ for artifact in \
 	'internal/resources/tls.go' \
 	'internal/resources/tls_certmanager.go' \
 	'internal/resources/tls_certmanager_test.go' \
-	'internal/controller/tls_source_integration_test.go' \
+	'internal/controller/tls_source_unit_test.go' \
+	'internal/controller/runtime_tls_wiring_integration_test.go' \
+	'internal/controller/certmanager_lifecycle_test.go' \
 	'internal/controller/kubernaut_lifecycle_test.go' \
 	'internal/resources/webhooks_test.go' \
 	'test/e2e/kind/' \
@@ -139,15 +142,19 @@ for test_id in \
 	'UT-TLS-491-009' \
 	'UT-TLS-491-010' \
 	'UT-TLS-491-011' \
-	'IT-TLS-MANUAL-001' \
-	'IT-TLS-MANUAL-002' \
-	'IT-TLS-WEBHOOK-001' \
-	'IT-TLS-PARITY-001' \
-	'IT-TLS-CERTMANAGER-READY-001' \
-	'IT-TLS-GAP-001' \
-	'IT-TLS-GAP-002' \
-	'IT-TLS-ROTATION-GAP-001' \
-	'IT-TLS-ROTATION-GAP-002' \
+	'UT-TLS-MANUAL-001' \
+	'UT-TLS-MANUAL-002' \
+	'UT-TLS-WEBHOOK-001' \
+	'UT-TLS-PARITY-001' \
+	'UT-TLS-CERTMANAGER-READY-001' \
+	'UT-TLS-GAP-001' \
+	'UT-TLS-GAP-002' \
+	'UT-TLS-ROTATION-GAP-001' \
+	'UT-TLS-ROTATION-GAP-002' \
+	'IT-TLS-AUDIT-515-001' \
+	'IT-TLS-AUDIT-515-002' \
+	'IT-TLS-AUDIT-515-003' \
+	'IT-TLS-AUDIT-515-004' \
 	'IT-TLS-GAP-003' \
 	'E2E-TLS-CERTMANAGER-001' \
 	'E2E-TLS-CERTMANAGER-002' \
@@ -201,13 +208,13 @@ for test_id in \
 	'UT-MON-513-002' \
 	'UT-MON-513-003' \
 	'UT-MON-513-004' \
-	'IT-MON-513-001' \
-	'IT-MON-513-002' \
-	'IT-MON-513-003' \
-	'IT-MON-513-004' \
-	'IT-MON-513-005' \
-	'IT-MON-513-006' \
-	'IT-MON-513-007' \
+	'UT-MON-513-CTRL-001' \
+	'UT-MON-513-CTRL-002' \
+	'UT-MON-513-CTRL-003' \
+	'UT-MON-513-CTRL-004' \
+	'UT-MON-513-CTRL-005' \
+	'UT-MON-513-CTRL-006' \
+	'UT-MON-513-CTRL-007' \
 	'IT-MON-513-008' \
 	'IT-MON-513-009' \
 	'IT-MON-513-010'; do

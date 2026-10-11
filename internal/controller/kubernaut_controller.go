@@ -1622,6 +1622,11 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	return cmHashes, nil
 }
 
+type cmBuilder struct {
+	name string
+	fn   func() (*corev1.ConfigMap, error)
+}
+
 // buildCoreConfigMaps constructs the ConfigMaps that are always considered
 // regardless of component toggles: the strategy-table-driven builder set,
 // the proactive-signal-mappings ConfigMap, and the
@@ -1632,10 +1637,6 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 func buildCoreConfigMaps(
 	kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, tlsOpt resources.ConfigMapOption, dbName, dbUser string,
 ) ([]*corev1.ConfigMap, map[string]string, error) {
-	type cmBuilder struct {
-		name string
-		fn   func() (*corev1.ConfigMap, error)
-	}
 	builders := []cmBuilder{
 		{"datastorage", func() (*corev1.ConfigMap, error) {
 			return resources.DataStorageConfigMap(kn, knV2, dbName, dbUser, tlsOpt)
@@ -1660,20 +1661,9 @@ func buildCoreConfigMaps(
 	}
 
 	cmHashes := make(map[string]string, len(builders))
-	var configMaps []*corev1.ConfigMap
-	for _, b := range builders {
-		cm, err := b.fn()
-		if err != nil {
-			return nil, nil, fmt.Errorf("building %s ConfigMap: %w", b.name, err)
-		}
-		// A nil result (no error) means the builder deliberately has nothing to
-		// create -- e.g. notification-routing when the caller supplied their
-		// own ConfigMap via spec.notification.routing.configMapName.
-		if cm == nil {
-			continue
-		}
-		configMaps = append(configMaps, cm)
-		cmHashes[b.name] = resources.ConfigMapDataHash(cm.Data)
+	configMaps, err := buildConfigMapSet(builders, make([]*corev1.ConfigMap, 0, len(builders)+2), cmHashes)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	if cm := resources.ProactiveSignalMappingsConfigMap(kn); cm != nil {
@@ -1700,29 +1690,39 @@ func (r *KubernautReconciler) appendOptionalComponentConfigMaps(
 	kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut,
 	tlsOpt resources.ConfigMapOption, configMaps []*corev1.ConfigMap, cmHashes map[string]string,
 ) ([]*corev1.ConfigMap, error) {
+	builders := make([]cmBuilder, 0, 3)
 	if kn.Spec.GatewayEnabled() {
-		gwCM, err := resources.GatewayConfigMap(kn, knV2, tlsOpt)
-		if err != nil {
-			return nil, fmt.Errorf("building gateway ConfigMap: %w", err)
-		}
-		configMaps = append(configMaps, gwCM)
-		cmHashes["gateway"] = resources.ConfigMapDataHash(gwCM.Data)
+		builders = append(builders, cmBuilder{"gateway", func() (*corev1.ConfigMap, error) {
+			return resources.GatewayConfigMap(kn, knV2, tlsOpt)
+		}})
 	}
 	if kn.Spec.APIFrontendEnabled() {
-		afCM, err := resources.APIFrontendConfigMap(kn, knV2)
-		if err != nil {
-			return nil, fmt.Errorf("building apifrontend ConfigMap: %w", err)
-		}
-		configMaps = append(configMaps, afCM)
-		cmHashes["apifrontend"] = resources.ConfigMapDataHash(afCM.Data)
+		builders = append(builders, cmBuilder{"apifrontend", func() (*corev1.ConfigMap, error) {
+			return resources.APIFrontendConfigMap(kn, knV2)
+		}})
 	}
 	if knV2.Spec.FleetMetadataCacheEnabled() {
-		fmcCM, err := resources.FleetMetadataCacheConfigMap(kn, knV2)
+		builders = append(builders, cmBuilder{"fleetmetadatacache", func() (*corev1.ConfigMap, error) {
+			return resources.FleetMetadataCacheConfigMap(kn, knV2)
+		}})
+	}
+	return buildConfigMapSet(builders, configMaps, cmHashes)
+}
+
+// Both core and optional builders share one fail-closed assembly path. No
+// serializer or resource builder is replaced: builder errors retain component
+// context, and deliberate nil results remain an explicit opt-out sentinel.
+func buildConfigMapSet(builders []cmBuilder, configMaps []*corev1.ConfigMap, cmHashes map[string]string) ([]*corev1.ConfigMap, error) {
+	for _, builder := range builders {
+		cm, err := builder.fn()
 		if err != nil {
-			return nil, fmt.Errorf("building fleetmetadatacache ConfigMap: %w", err)
+			return nil, fmt.Errorf("building %s ConfigMap: %w", builder.name, err)
 		}
-		configMaps = append(configMaps, fmcCM)
-		cmHashes["fleetmetadatacache"] = resources.ConfigMapDataHash(fmcCM.Data)
+		if cm == nil {
+			continue
+		}
+		configMaps = append(configMaps, cm)
+		cmHashes[builder.name] = resources.ConfigMapDataHash(cm.Data)
 	}
 	return configMaps, nil
 }

@@ -217,7 +217,7 @@ func deleteCRIfExists(ctx context.Context) {
 }
 
 var _ = Describe("Kubernaut Controller", func() {
-	Describe("native policy ownership", func() {
+	Describe("native policy ownership", Label("unit"), func() {
 		It("rejects managed objects with missing or mismatched ownership labels", func() {
 			desired := nativePolicyOwnershipFixture()
 			existing := desired.DeepCopy()

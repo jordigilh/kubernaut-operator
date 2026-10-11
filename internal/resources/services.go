@@ -192,12 +192,12 @@ func tlsServiceKey(component string) string {
 }
 
 func applyTLSServiceMetadata(kn *kubernautv1alpha2.Kubernaut, svc *corev1.Service, component string) {
-	secretName := TLSSecretName(kn, component)
-	if secretName == "" {
-		return
-	}
 	material, err := ResolveTLSMaterial(kn)
 	if err != nil {
+		return
+	}
+	secretName := material.ServiceTLSSecretNames[tlsServiceKey(component)]
+	if secretName == "" {
 		return
 	}
 	if material.Source == TLSMaterialSourceOpenShiftServiceCA {

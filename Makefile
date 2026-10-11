@@ -122,30 +122,33 @@ vet: ## Run go vet against code.
 # Unit-test packages that do NOT need envtest (fast, no API server).
 # api/... covers the v1alpha2 API schema and clean-break contract; pure Go, no
 # API server needed.
-UT_PKGS := ./internal/resources/... ./internal/webhook/... ./internal/policy/... ./api/... ./test/e2e/kind/contract/...
+UT_PKGS := ./internal/resources/... ./internal/webhook/... ./internal/policy/... ./api/... ./cmd ./internal/controller ./test/e2e/kind/contract/... ./hack/businesscoverage
+BUSINESS_COVER_PKGS := ./internal/...,./api/...,./cmd/...
 HELM_PKGS := ./test/helm/...
 UNIT_COVERAGE_THRESHOLD ?= 80
 
 .PHONY: test-unit
-test-unit: fmt vet ## Run unit tests (no envtest, no API server).
-	go test $(UT_PKGS) -coverprofile cover-unit.out
+test-unit: fmt vet ## Run independent unit tests and require zero missed handwritten business statements (no envtest).
+	KUBERNAUT_CONTROLLER_TEST_TIER=unit go test $(UT_PKGS) -count=1 -covermode=atomic -coverpkg=$(BUSINESS_COVER_PKGS) -coverprofile cover-unit.out
+	KUBERNAUT_CONTROLLER_TEST_TIER=unit go test $(UT_PKGS) -run='^$$' -count=1 -covermode=atomic -coverpkg=$(BUSINESS_COVER_PKGS) -coverprofile cover-unit-baseline.out
 	@grep 'internal/' cover-unit.out > cover-unit-internal.out || true
-	@{ echo "mode: set"; cat cover-unit-internal.out; } > cover-unit-internal-final.out
+	@{ echo "mode: atomic"; cat cover-unit-internal.out; } > cover-unit-internal-final.out
+	@./hack/verify-business-unit-coverage.sh cover-unit.out
 	@coverage=$$(go tool cover -func=cover-unit-internal-final.out | grep '^total:' | awk '{print $$3}' | tr -d '%'); \
 		echo "Internal unit coverage: $${coverage}% (threshold $(UNIT_COVERAGE_THRESHOLD)%)"; \
 		if awk -v coverage="$${coverage}" -v threshold="$(UNIT_COVERAGE_THRESHOLD)" 'BEGIN { exit !(coverage < threshold) }'; then \
 			echo "Internal unit coverage is below the $(UNIT_COVERAGE_THRESHOLD)% threshold"; exit 1; \
 		fi
-	@./hack/verify-business-unit-coverage.sh cover-unit-internal-final.out
 
 # Integration-test packages that DO need envtest (controller reconciler).
-IT_PKGS := ./internal/controller/...
+IT_PKGS := ./internal/controller/... ./cmd
 INTEGRATION_COVERAGE_THRESHOLD ?= 78
 
 .PHONY: test-integration
 test-integration: manifests generate fmt vet setup-envtest ## Run integration tests (envtest API server).
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $(IT_PKGS) -coverprofile cover-integration.out
-	@coverage=$$(go tool cover -func=cover-integration.out | grep '^total:' | awk '{print $$3}' | tr -d '%'); \
+	KUBERNAUT_BOOTSTRAP_TEST_TIER=integration KUBERNAUT_CONTROLLER_TEST_TIER=integration KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $(IT_PKGS) -tags=integration -count=1 -covermode=atomic -coverprofile cover-integration.out
+	@{ echo "mode: atomic"; grep '/internal/controller/' cover-integration.out; } > cover-integration-controller.out
+	@coverage=$$(go tool cover -func=cover-integration-controller.out | grep '^total:' | awk '{print $$3}' | tr -d '%'); \
 		echo "Controller integration coverage: $${coverage}% (threshold $(INTEGRATION_COVERAGE_THRESHOLD)%)"; \
 		if awk -v coverage="$${coverage}" -v threshold="$(INTEGRATION_COVERAGE_THRESHOLD)" 'BEGIN { exit !(coverage < threshold) }'; then \
 			echo "Controller integration coverage is below the $(INTEGRATION_COVERAGE_THRESHOLD)% threshold"; exit 1; \
@@ -172,7 +175,7 @@ test-helm: ## Validate the operator-only Helm chart and its render contracts.
 
 .PHONY: test
 test: test-unit test-integration test-pyramid ## Run all tests (unit + integration).
-	@echo "mode: set" > cover.out
+	@echo "mode: atomic" > cover.out
 	@tail -n +2 cover-unit.out >> cover.out 2>/dev/null || true
 	@tail -n +2 cover-integration.out >> cover.out 2>/dev/null || true
 

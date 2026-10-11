@@ -29,7 +29,9 @@ import (
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
-var _ = Describe("generic monitoring defaults", func() {
+const monitoringPrometheusServiceURL = "https://prometheus.monitoring.svc:9090"
+
+var _ = Describe("generic monitoring defaults", Label("unit"), func() {
 	newGenericReconciler := func() *KubernautReconciler {
 		scheme := runtime.NewScheme()
 		Expect(corev1.AddToScheme(scheme)).To(Succeed())
@@ -57,7 +59,7 @@ var _ = Describe("generic monitoring defaults", func() {
 	It("preserves explicitly configured generic monitoring endpoints", func() {
 		reconciler := newGenericReconciler()
 		kn := &kubernautv1alpha2.Kubernaut{}
-		kn.Spec.Monitoring.Prometheus.URL = "https://prometheus.monitoring.svc:9090"
+		kn.Spec.Monitoring.Prometheus.URL = monitoringPrometheusServiceURL
 		kn.Spec.Monitoring.AlertManager.URL = "https://alertmanager.monitoring.svc:9093"
 
 		view := reconciler.monitoringConfigView(ctx, kn)

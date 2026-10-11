@@ -124,10 +124,6 @@ func ResolveMonitoringDestinations(ctx context.Context, reader client.Reader, op
 			resolutionErrors = append(resolutionErrors, fmt.Errorf("resolving %s monitoring endpoint: %w", name, err))
 			continue
 		}
-		if err := validateMonitoringDestination(options.Provider, destination); err != nil {
-			resolutionErrors = append(resolutionErrors, fmt.Errorf("resolving %s monitoring endpoint: %w", name, err))
-			continue
-		}
 		destinationsByName[name] = destination
 	}
 
@@ -139,9 +135,9 @@ func ResolveMonitoringDestinations(ctx context.Context, reader client.Reader, op
 			delete(destinationsByName, name)
 		}
 	}
-	if err := ValidateMonitoringDestinations(options.Provider, destinations); err != nil {
-		return nil, errors.Join(append(resolutionErrors, err)...)
-	}
+	// Each resolved destination has already passed provider validation, and
+	// supported normalized names are unique by seen. Rendering independently
+	// validates caller-supplied collections via ValidateMonitoringDestinations.
 	return destinations, errors.Join(resolutionErrors...)
 }
 
@@ -168,7 +164,7 @@ func resolveMonitoringEndpoint(ctx context.Context, reader client.Reader, provid
 			return MonitoringDestination{}, fmt.Errorf("resolving monitoring service %s/%s targetPort: %w", namespace, serviceName, err)
 		}
 	}
-	return MonitoringDestination{
+	destination := MonitoringDestination{
 		Name:            endpoint.Name,
 		ServiceName:     serviceName,
 		Namespace:       namespace,
@@ -176,7 +172,8 @@ func resolveMonitoringEndpoint(ctx context.Context, reader client.Reader, provid
 		BackendPort:     backendPort,
 		ServiceSelector: copyStringMap(service.Spec.Selector),
 		ServicePorts:    servicePorts,
-	}, nil
+	}
+	return destination, validateMonitoringDestination(provider, destination)
 }
 
 // ValidateMonitoringDestinations checks the provider-specific representation

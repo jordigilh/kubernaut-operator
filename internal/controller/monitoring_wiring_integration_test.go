@@ -44,11 +44,11 @@ import (
 )
 
 var _ = Describe("monitoring reconciliation wiring", func() {
-	It("does not register optional monitoring watches without discovery", func() {
+	It("does not register optional monitoring watches without discovery", Label("unit"), func() {
 		Expect(monitoringResourceSupported(nil, "ServiceMonitor")).To(BeFalse())
 	})
 
-	It("maps external monitoring Services and EndpointSlices to the configured Kubernaut", func() {
+	It("maps external monitoring Services and EndpointSlices to the configured Kubernaut", Label("unit"), func() {
 		scheme := runtime.NewScheme()
 		Expect(corev1.AddToScheme(scheme)).To(Succeed())
 		Expect(discoveryv1.AddToScheme(scheme)).To(Succeed())
@@ -80,7 +80,7 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 		Expect(hasRoute).To(BeFalse())
 	})
 
-	It("IT-MON-513-001 [CM-3, CM-6, CM-8, SI-4]: creates rules and service monitors when their APIs are available", func() {
+	It("UT-MON-513-CTRL-001 [CM-3, CM-6, CM-8, SI-4]: creates rules and service monitors when their APIs are available", Label("unit"), func() {
 		scheme := runtime.NewScheme()
 		Expect(corev1.AddToScheme(scheme)).To(Succeed())
 		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
@@ -103,7 +103,7 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 		Expect(monitors.Items).NotTo(ContainElement(HaveField("Name", "authwebhook-monitor")))
 	})
 
-	It("IT-MON-513-002 [CM-6, CM-8, SI-4]: does not create optional monitoring objects when the ServiceMonitor API is unavailable", func() {
+	It("UT-MON-513-CTRL-002 [CM-6, CM-8, SI-4]: does not create optional monitoring objects when the ServiceMonitor API is unavailable", Label("unit"), func() {
 		scheme := runtime.NewScheme()
 		Expect(corev1.AddToScheme(scheme)).To(Succeed())
 		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
@@ -119,7 +119,7 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 		Expect(monitors.Items).To(BeEmpty())
 	})
 
-	It("IT-MON-513-006 [CM-6, CM-8, SI-4]: does not create a Gateway monitor when Gateway is disabled", func() {
+	It("UT-MON-513-CTRL-006 [CM-6, CM-8, SI-4]: does not create a Gateway monitor when Gateway is disabled", Label("unit"), func() {
 		scheme := runtime.NewScheme()
 		Expect(corev1.AddToScheme(scheme)).To(Succeed())
 		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
@@ -137,7 +137,7 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 		Expect(monitors.Items).NotTo(ContainElement(HaveField("Name", "gateway-monitor")))
 	})
 
-	It("IT-MON-513-005 [CM-3, CM-6, CM-8, SI-4]: wires APIFrontend monitoring through optional CRD discovery", func() {
+	It("UT-MON-513-CTRL-005 [CM-3, CM-6, CM-8, SI-4]: wires APIFrontend monitoring through optional CRD discovery", Label("unit"), func() {
 		scheme := runtime.NewScheme()
 		Expect(corev1.AddToScheme(scheme)).To(Succeed())
 		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
@@ -160,7 +160,7 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 		Expect(fakeClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: "apifrontend-rules"}, prometheusRule)).To(Succeed())
 	})
 
-	It("IT-MON-513-003 [AC-6, CM-3, CM-6, CM-8]: removes an operator-owned legacy AuthWebhook monitor", func() {
+	It("UT-MON-513-CTRL-003 [AC-6, CM-3, CM-6, CM-8]: removes an operator-owned legacy AuthWebhook monitor", Label("unit"), func() {
 		scheme := runtime.NewScheme()
 		Expect(corev1.AddToScheme(scheme)).To(Succeed())
 		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
@@ -182,7 +182,7 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 	})
 
-	It("IT-MON-513-004 [AC-6, CM-3, CM-6]: preserves a same-named user-owned AuthWebhook monitor", func() {
+	It("UT-MON-513-CTRL-004 [AC-6, CM-3, CM-6]: preserves a same-named user-owned AuthWebhook monitor", Label("unit"), func() {
 		scheme := runtime.NewScheme()
 		Expect(corev1.AddToScheme(scheme)).To(Succeed())
 		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
@@ -200,7 +200,7 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 		Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(stale), remaining)).To(Succeed())
 	})
 
-	It("IT-MON-513-007 [AU-2, AU-3, AU-12; ASVS v5.0.0-V16.1.1, v5.0.0-V16.2.1]: records cleanup identity metadata", func() {
+	It("UT-MON-513-CTRL-007 [AU-2, AU-3, AU-12; ASVS v5.0.0-V16.1.1, v5.0.0-V16.2.1]: records cleanup identity metadata", Label("unit"), func() {
 		scheme := runtime.NewScheme()
 		Expect(corev1.AddToScheme(scheme)).To(Succeed())
 		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
@@ -259,6 +259,14 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 			monitors := &monitoringv1.ServiceMonitorList{}
 			Expect(k8sClient.List(ctx, monitors, client.InNamespace(kn.Namespace))).To(Succeed())
 			Expect(monitors.Items).NotTo(ContainElement(HaveField("Name", "gateway-monitor")))
+			Expect(monitors.Items).To(HaveLen(8), "enabled monitoring must be created through Reconcile, not just remain absent")
+			Expect(monitors.Items).To(ContainElement(HaveField("Name", "datastorage-monitor")))
+			rules := &monitoringv1.PrometheusRuleList{}
+			Expect(k8sClient.List(ctx, rules, client.InNamespace(kn.Namespace))).To(Succeed())
+			Expect(rules.Items).To(HaveLen(2), "enabled rules must be wired through Reconcile")
+			dataStorage := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: "data-storage-service"}, dataStorage)).To(Succeed())
+			Expect(dataStorage.Spec.Ports).To(ContainElement(And(HaveField("Name", "metrics"), HaveField("Port", int32(9090)))))
 		})
 
 		It("IT-MON-513-009 [CM-3, CM-6, CM-8, SI-4; ASVS v5.0.0-V16.5.2]: prunes an owned legacy monitor when Prometheus monitoring is disabled", func() {

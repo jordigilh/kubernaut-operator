@@ -4,8 +4,9 @@
 
 **Date:** 2026-10-09
 
-**Status:** Implementation, envtest reconciliation, and fleet Kind
-qualification complete; upstream Helm-to-operator lane migration remains pending
+**Status:** Repository evidence tier-corrected by PR #515 remediation; reported
+fleet Kind results are historical resource-contract evidence, not independent
+application/scrape qualification of the remediation; upstream lane migration pending
 
 **Methodology:** RED → GREEN → REFACTOR → CHECK
 
@@ -39,23 +40,30 @@ Kubernetes whenever the Prometheus Operator `ServiceMonitor` API is installed.
 | Unit | `UT-MON-513-002` | `internal/resources/monitoring_test.go` | AuthWebhook is not included in the generated monitor set. |
 | Unit | `UT-MON-513-003` | `internal/resources/services_test.go` | DataStorage exposes the named metrics Service port. |
 | Unit | `UT-MON-513-004` | `internal/resources/services_test.go` | Every generated Service target resolves to a workload container port. |
-| Integration | `IT-MON-513-001` | `internal/controller/monitoring_wiring_integration_test.go` | Available monitoring APIs create the expected rules and nine component monitors. |
-| Integration | `IT-MON-513-002` | `internal/controller/monitoring_wiring_integration_test.go` | Missing ServiceMonitor API creates no optional monitors. |
-| Integration | `IT-MON-513-003` | `internal/controller/monitoring_wiring_integration_test.go` | Operator-owned legacy AuthWebhook monitor is removed. |
-| Integration | `IT-MON-513-004` | `internal/controller/monitoring_wiring_integration_test.go` | User-owned same-named monitor is preserved. |
-| Integration | `IT-MON-513-005` | `internal/controller/monitoring_wiring_integration_test.go` | APIFrontend monitor/rule wiring follows CRD discovery. |
-| Integration | `IT-MON-513-006` | `internal/controller/monitoring_wiring_integration_test.go` | Gateway-disabled reconciliation does not create a Gateway ServiceMonitor. |
-| Integration | `IT-MON-513-007` | `internal/controller/monitoring_wiring_integration_test.go` | Legacy cleanup records kind, name, namespace, generation, and resourceVersion. |
-| Integration | `IT-MON-513-008` | `internal/controller/monitoring_wiring_integration_test.go` | Real reconciliation with Gateway disabled produces no orphan Gateway monitor. |
+| Unit (simulated API) | `UT-MON-513-CTRL-001` | `internal/controller/monitoring_wiring_integration_test.go` | Available monitoring APIs create the expected rules and nine component monitors. |
+| Unit (simulated API) | `UT-MON-513-CTRL-002` | `internal/controller/monitoring_wiring_integration_test.go` | Missing ServiceMonitor API creates no optional monitors. |
+| Unit (simulated API) | `UT-MON-513-CTRL-003` | `internal/controller/monitoring_wiring_integration_test.go` | Operator-owned legacy AuthWebhook monitor is removed. |
+| Unit (simulated API) | `UT-MON-513-CTRL-004` | `internal/controller/monitoring_wiring_integration_test.go` | User-owned same-named monitor is preserved. |
+| Unit (simulated API) | `UT-MON-513-CTRL-005` | `internal/controller/monitoring_wiring_integration_test.go` | APIFrontend monitor/rule wiring follows CRD discovery. |
+| Unit (simulated API) | `UT-MON-513-CTRL-006` | `internal/controller/monitoring_wiring_integration_test.go` | Gateway-disabled reconciliation does not create a Gateway ServiceMonitor. |
+| Unit (simulated API) | `UT-MON-513-CTRL-007` | `internal/controller/monitoring_wiring_integration_test.go` | Legacy cleanup records kind, name, namespace, generation, and resourceVersion. |
+| Integration | `IT-MON-513-008` | `internal/controller/monitoring_wiring_integration_test.go` | Real reconciliation with Gateway disabled asserts every expected monitor/rule and the full monitor→Service→workload port contract, not only absence of a Gateway monitor. |
 | Integration | `IT-MON-513-009` | `internal/controller/monitoring_wiring_integration_test.go` | Real reconciliation prunes an owned legacy monitor when Prometheus is disabled. |
 | Integration | `IT-MON-513-010` | `internal/controller/monitoring_wiring_integration_test.go` | Real reconciliation reaches Running when optional monitoring CRDs are unavailable. |
-| Live Kind | `E2E-MON-513-001` | Fleet Kind qualification on `helios08` | Real API discovery and rendered Service/ServiceMonitor contract. **Verified.** |
+| Live Kind (historical, reported) | `E2E-MON-513-001` | Earlier fleet Kind qualification on `helios08` | Real API discovery and rendered Service/ServiceMonitor contract; not rerun for the remediation and not scrape/alert evidence. |
 | Upstream E2E | `E2E-FP/FLEET-MON-513-001` | Future operator-backed upstream FP/Fleet lanes | Full application journeys after the Helm-to-operator replacement. **Pending lane migration.** |
 
 Unit tests prove the generated-object contract. Controller integration tests
 prove production reconciliation and ownership wiring. Live Kind and upstream
 FP/Fleet tests prove the real API-server journey; they are not replaced by
 builder tests.
+
+PR #515 remediation separated fake-client controller cases from envtest and
+strengthened `IT-MON-513-008` after the audit's disconnected-caller mutation
+survived all original monitoring specs. In the new isolated mutation, direct
+helper units still pass but this positive envtest assertion fails when the
+production monitoring caller is removed. Monitoring CRDs in envtest are minimal
+fixtures, not a running Prometheus Operator or proof of live target `up=1`.
 
 ## 4. Qualification environments
 
@@ -72,7 +80,7 @@ builder tests.
 
 ## 5. Completed fleet Kind evidence
 
-On 2026-10-09, the operator image built from this checkout was loaded into the
+The historical implementation record reports that on 2026-10-09 its operator image was loaded into the
 existing fleet Kind nodes on `helios08`. The operator chart, CRD, and Kubernaut
 CR were installed only in temporary `*-issue-513` namespaces; the existing
 Helm-managed `kubernaut-system` workloads were not replaced or modified.
@@ -126,7 +134,10 @@ make test
 make manifests generate
 ```
 
-`make test-unit` additionally enforces 100% unit coverage for the changed
-business entry points through `hack/verify-business-unit-coverage.sh`. The
-issue does not change the CRD schema, so manifest generation must produce no
-unrelated CRD diff.
+`make test-unit` now enforces zero missed handwritten business statements and
+zero missing functions across `api/`, `internal/` and `cmd/` through
+`hack/verify-business-unit-coverage.sh`. Only generated code and four explicitly
+listed bootstrap/registration functions are excluded; integration/merged
+coverage cannot satisfy the unit gate. `make test-integration` separately
+requires 78% controller-only coverage. PR #515 remediation intentionally changes
+the isolation/scraper schema; repeat generation must produce no additional drift.
