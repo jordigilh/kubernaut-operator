@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -805,7 +806,51 @@ func findCondition(conditions []metav1.Condition, condType string) *metav1.Condi
 // contentDrifted Unit Tests (TDD Red — Phase 1, Issue #16)
 // ======================================================================
 
-var _ = Describe("contentDrifted", func() {
+var _ = Describe("contentDrifted", Label("unit"), func() {
+	It("UT-AUDIT-515-DRIFT-001: detects Service metrics-port, selector and target-port drift despite the preserved hash", func() {
+		desired := resources.Services(newMinimalCR(), newMinimalCR())[1]
+		for _, mutate := range []func(*corev1.Service){
+			func(s *corev1.Service) { s.Spec.Ports = s.Spec.Ports[:1] },
+			func(s *corev1.Service) { s.Spec.Selector = map[string]string{"app": "unmanaged"} },
+			func(s *corev1.Service) { s.Spec.Ports[1].Port++ },
+			func(s *corev1.Service) { s.Spec.Ports[1].TargetPort = intstr.FromInt32(9999) },
+			func(s *corev1.Service) { s.Spec.Ports[1].Protocol = corev1.ProtocolUDP },
+			func(s *corev1.Service) { s.Spec.Type = corev1.ServiceTypeNodePort },
+		} {
+			live := desired.DeepCopy()
+			mutate(live)
+			Expect(contentDrifted(desired, live)).To(BeTrue())
+		}
+	})
+
+	It("UT-AUDIT-515-DRIFT-002: ignores allocated Service addressing and API defaults", func() {
+		desired := resources.Services(newMinimalCR(), newMinimalCR())[1]
+		live := desired.DeepCopy()
+		live.Spec.ClusterIP = "10.96.0.12"
+		live.Spec.ClusterIPs = []string{"10.96.0.12"}
+		live.Spec.Type = corev1.ServiceTypeClusterIP
+		live.Spec.SessionAffinity = corev1.ServiceAffinityNone
+		Expect(contentDrifted(desired, live)).To(BeFalse())
+	})
+
+	It("UT-AUDIT-515-DRIFT-003: repairs owned Service ports without losing platform metadata or allocated addresses", func() {
+		desired := resources.Services(newMinimalCR(), newMinimalCR())[1]
+		live := desired.DeepCopy()
+		setHashAnnotation(live, resources.SpecHash(desired))
+		live.Spec.ClusterIP = "10.96.0.12"
+		live.Spec.ClusterIPs = []string{"10.96.0.12"}
+		live.Spec.Ports = live.Spec.Ports[:1]
+		live.Annotations["platform.example/marker"] = "preserve"
+		api := fake.NewClientBuilder().WithScheme(k8sClient.Scheme()).WithObjects(live).Build()
+		r := &KubernautReconciler{Client: api}
+		Expect(r.ensureResource(ctx, desired)).To(Succeed())
+		updated := &corev1.Service{}
+		Expect(api.Get(ctx, client.ObjectKeyFromObject(desired), updated)).To(Succeed())
+		Expect(updated.Spec.Ports).To(Equal(desired.Spec.Ports))
+		Expect(updated.Spec.ClusterIP).To(Equal("10.96.0.12"))
+		Expect(updated.Spec.ClusterIPs).To(Equal([]string{"10.96.0.12"}))
+		Expect(updated.Annotations).To(HaveKeyWithValue("platform.example/marker", "preserve"))
+	})
 
 	It("D1: should return true when a desired key has a different value in the live ConfigMap", func() {
 		desired := &corev1.ConfigMap{

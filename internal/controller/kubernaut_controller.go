@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -39,6 +40,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -195,9 +197,18 @@ func (r *KubernautReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		log.Info("ignoring CR with unexpected name", "name", kn.Name, "expected", kubernautv1alpha2.SingletonName)
 		return ctrl.Result{}, nil
 	}
+	ctx = logf.IntoContext(ctx, log.WithValues("name", kn.Name, "namespace", kn.Namespace,
+		"uid", kn.UID, "generation", kn.Generation, "resourceVersion", kn.ResourceVersion))
 
 	if !kn.DeletionTimestamp.IsZero() {
 		return r.reconcileDelete(ctx, kn, kn)
+	}
+	// Preserve the existing cluster-wide contract even if concurrent CREATEs
+	// bypass admission's pre-persistence check. See PR-515-AUDIT-REMEDIATION.md.
+	if err := r.authorizeSingleton(ctx, kn); err != nil {
+		log.Error(err, "cluster-wide singleton activation blocked", "namespace", kn.Namespace,
+			"name", kn.Name, "generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+		return ctrl.Result{}, err
 	}
 
 	if !controllerutil.ContainsFinalizer(kn, kubernautv1alpha2.FinalizerName) {
@@ -206,6 +217,30 @@ func (r *KubernautReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	return r.reconcilePhases(ctx, kn, kn)
+}
+
+// authorizeSingleton uses persisted cluster-wide state, not an admission-time
+// check or a potentially stale manager cache. The existing finalizer keeps the
+// authorized instance present through ordinary deletion/cleanup.
+func (r *KubernautReconciler) authorizeSingleton(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	reader := r.APIReader
+	if reader == nil {
+		// Directly constructed test reconcilers use an uncached API or fake client;
+		// SetupWithManager always provides the production uncached APIReader.
+		reader = r.Client
+	}
+	instances := &kubernautv1alpha2.KubernautList{}
+	if err := reader.List(ctx, instances); err != nil {
+		return fmt.Errorf("checking cluster-wide singleton: %w", err)
+	}
+	if len(instances.Items) != 1 {
+		return fmt.Errorf("cluster-wide singleton conflict: found %d Kubernaut CRs; remove competing objects before retrying", len(instances.Items))
+	}
+	sole := &instances.Items[0]
+	if client.ObjectKeyFromObject(sole) != client.ObjectKeyFromObject(kn) || sole.UID != kn.UID || !sole.DeletionTimestamp.IsZero() {
+		return fmt.Errorf("cluster-wide singleton is absent, replaced or terminating; activation denied")
+	}
+	return nil
 }
 
 func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
@@ -2589,22 +2624,28 @@ func (r *KubernautReconciler) reconcileDelete(ctx context.Context, kn *kubernaut
 func (r *KubernautReconciler) runFinalizerCleanup(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (result ctrl.Result, err error, retry bool) {
 	log := logf.FromContext(ctx)
 
-	if err := r.deleteClusterScopedResources(ctx, kn, knV2); err != nil {
+	cleanupErr := r.deleteClusterScopedResources(ctx, kn, knV2)
+	if cleanupErr != nil {
 		deletionAge := r.now().Sub(kn.DeletionTimestamp.Time)
 		if deletionAge <= time.Duration(maxFinalizerAttempts)*requeueError {
-			return ctrl.Result{RequeueAfter: requeueError}, err, true
+			log.Error(cleanupErr, "cleanup incomplete; retaining finalizer")
+			return ctrl.Result{RequeueAfter: requeueError}, cleanupErr, true
 		}
 		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "FinalizerTimeout", "Reconcile",
-			"cleanup failed after %s; force-removing finalizer: %v", deletionAge.Round(time.Second), err)
-		log.Error(err, "cleanup failed past timeout, force-removing finalizer")
+			"cleanup failed after %s; force-removing finalizer: %v", deletionAge.Round(time.Second), cleanupErr)
+		log.Error(cleanupErr, "cleanup failed past timeout, force-removing finalizer", "cleanupOutcome", "Incomplete")
 	}
-	r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "CleanupComplete", "Reconcile", "Cluster-scoped resources cleaned up")
 
 	// Write the v1alpha2 object directly so the finalizer update preserves the
 	// complete storage representation, including Fleet fields.
 	controllerutil.RemoveFinalizer(knV2, kubernautv1alpha2.FinalizerName)
 	if err := r.Update(ctx, knV2); err != nil {
+		log.Error(err, "failed to remove cleanup finalizer")
 		return ctrl.Result{}, err, true
+	}
+	if cleanupErr == nil {
+		r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "CleanupComplete", "Reconcile", "Cluster-scoped resources cleaned up")
+		log.Info("cleanup finalizer removed", "cleanupOutcome", "Complete")
 	}
 	return ctrl.Result{}, nil, false
 }
@@ -2870,7 +2911,15 @@ func (r *KubernautReconciler) patchStatus(ctx context.Context, kn *kubernautv1al
 
 	if err := r.Status().Patch(ctx, kn, client.MergeFrom(patched)); err != nil {
 		*kn = *patched
+		logf.FromContext(ctx).Error(err, "failed to patch reconciliation status", "namespace", kn.Namespace,
+			"name", kn.Name, "generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
 		return err
+	}
+	if patched.Status.Phase != kn.Status.Phase {
+		logf.FromContext(ctx).Info("reconciliation phase transitioned",
+			"oldPhase", patched.Status.Phase, "newPhase", kn.Status.Phase,
+			"namespace", kn.Namespace, "name", kn.Name, "uid", kn.UID,
+			"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
 	}
 	return nil
 }
@@ -3814,6 +3863,9 @@ func (r *KubernautReconciler) ensureResource(ctx context.Context, obj client.Obj
 	}
 
 	obj.SetResourceVersion(existing.GetResourceVersion())
+	if service, ok := obj.(*corev1.Service); ok {
+		preserveServiceFields(service, existing.(*corev1.Service))
+	}
 	return r.Update(ctx, obj)
 }
 
@@ -3840,8 +3892,13 @@ func (r *KubernautReconciler) createOrAdoptExisting(ctx context.Context, obj, ex
 //
 // Only keys present in the desired object are compared; extra keys in the
 // live object (e.g., OCP-injected service-ca.crt) are ignored to prevent
-// false positives. Returns false for non-ConfigMap types.
+// false positives. Services compare normalized operator-owned fields rather
+// than allocated addressing. See docs/design/PR-515-AUDIT-REMEDIATION.md.
 func contentDrifted(desired, existing client.Object) bool {
+	if desiredService, ok := desired.(*corev1.Service); ok {
+		existingService, sameType := existing.(*corev1.Service)
+		return sameType && !equality.Semantic.DeepEqual(ownedServiceSpec(desiredService), ownedServiceSpec(existingService))
+	}
 	desiredCM, ok := desired.(*corev1.ConfigMap)
 	if !ok {
 		return false
@@ -3865,6 +3922,56 @@ func contentDrifted(desired, existing client.Object) bool {
 	}
 
 	return false
+}
+
+func ownedServiceSpec(service *corev1.Service) corev1.ServiceSpec {
+	spec := corev1.ServiceSpec{
+		Selector: service.Spec.Selector, Ports: append([]corev1.ServicePort(nil), service.Spec.Ports...),
+		Type: service.Spec.Type, SessionAffinity: service.Spec.SessionAffinity,
+		ExternalName: service.Spec.ExternalName, PublishNotReadyAddresses: service.Spec.PublishNotReadyAddresses,
+	}
+	if spec.Type == "" {
+		spec.Type = corev1.ServiceTypeClusterIP
+	}
+	if spec.SessionAffinity == "" {
+		spec.SessionAffinity = corev1.ServiceAffinityNone
+	}
+	for index := range spec.Ports {
+		port := &spec.Ports[index]
+		port.NodePort = 0 // allocated by the API, not managed by these builders
+		if port.Protocol == "" {
+			port.Protocol = corev1.ProtocolTCP
+		}
+	}
+	return spec
+}
+
+func preserveServiceFields(desired, existing *corev1.Service) {
+	owned := ownedServiceSpec(desired)
+	live := existing.Spec.DeepCopy()
+	live.Selector, live.Ports, live.Type = owned.Selector, owned.Ports, owned.Type
+	live.SessionAffinity = owned.SessionAffinity
+	live.ExternalName, live.PublishNotReadyAddresses = owned.ExternalName, owned.PublishNotReadyAddresses
+	if live.Type == corev1.ServiceTypeClusterIP {
+		live.ExternalTrafficPolicy = ""
+		live.HealthCheckNodePort = 0
+		live.LoadBalancerClass = nil
+		live.AllocateLoadBalancerNodePorts = nil
+	}
+	desired.Spec = *live
+	annotations := maps.Clone(existing.Annotations)
+	if annotations == nil {
+		annotations = make(map[string]string, len(desired.Annotations))
+	}
+	delete(annotations, resources.OCPServingCertAnnotation)
+	maps.Copy(annotations, desired.Annotations)
+	desired.Annotations = annotations
+	labels := maps.Clone(existing.Labels)
+	if labels == nil {
+		labels = make(map[string]string, len(desired.Labels))
+	}
+	maps.Copy(labels, desired.Labels)
+	desired.Labels = labels
 }
 
 // setHashAnnotation merges the spec-hash annotation into the object's
