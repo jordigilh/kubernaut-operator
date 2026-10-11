@@ -3272,9 +3272,6 @@ func (r *KubernautReconciler) ensureRuntimeTLS(
 	if err != nil {
 		return resources.TLSMaterial{}, nil, err
 	}
-	if err := resources.ValidateInternalCASecretForSource(ca, material.Source); err != nil {
-		return resources.TLSMaterial{}, nil, err
-	}
 	caPEM, err := resources.InternalCAPEMForSource(ca, material.Source)
 	if err != nil {
 		return resources.TLSMaterial{}, nil, err
@@ -3557,6 +3554,10 @@ func (r *KubernautReconciler) ensureCertManagerTLSResources(ctx context.Context,
 		Group: issuerRef.group,
 	}
 
+	return r.ensureCertManagerDesiredTLSResources(ctx, kn, desiredKn)
+}
+
+func (r *KubernautReconciler) ensureCertManagerDesiredTLSResources(ctx context.Context, kn, desiredKn *kubernautv1alpha2.Kubernaut) error {
 	objects, err := resources.CertManagerTLSResources(desiredKn)
 	if err != nil {
 		return fmt.Errorf("building cert-manager TLS resources: %w", err)
@@ -3661,7 +3662,7 @@ func (r *KubernautReconciler) resolveCertManagerIssuer(ctx context.Context, kn *
 	name := issuerConfig.Name
 	var err error
 	if name == "" {
-		name, err = r.selectSingleCertManagerIssuer(ctx, kn.Namespace, group, kind)
+		name, err = r.selectSingleCertManagerIssuer(ctx, kn, group, kind)
 		if err != nil {
 			return certManagerIssuerReference{}, err
 		}
@@ -3679,24 +3680,49 @@ func (r *KubernautReconciler) resolveCertManagerIssuer(ctx context.Context, kn *
 	return certManagerIssuerReference{name: name, kind: kind, group: group}, nil
 }
 
-func (r *KubernautReconciler) selectSingleCertManagerIssuer(ctx context.Context, namespace, group, kind string) (string, error) {
+func (r *KubernautReconciler) selectSingleCertManagerIssuer(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, group, kind string) (string, error) {
 	list := &unstructured.UnstructuredList{}
 	list.SetAPIVersion(group + "/v1")
 	list.SetKind(kind + "List")
 	var options []client.ListOption
 	if kind == certManagerIssuerKind {
-		options = append(options, client.InNamespace(namespace))
+		options = append(options, client.InNamespace(kn.Namespace))
 	}
 	if err := r.List(ctx, list, options...); err != nil {
 		return "", fmt.Errorf("listing cert-manager %s resources: %w", kind, err)
 	}
-	if len(list.Items) == 0 {
+	// Provisioning adds internal bootstrap Issuers to this same namespace.
+	// They are not external issuer candidates. Names/labels alone are not proof:
+	// require both an expected generated identity and current-UID control.
+	// See docs/design/PR-515-AUDIT-REMEDIATION.md (issuer selection regression).
+	internalNames := make(map[string]struct{}, 2)
+	if kind == certManagerIssuerKind && group == "cert-manager.io" {
+		for _, name := range resources.CertManagerBootstrapIssuerNames(kn) {
+			internalNames[name] = struct{}{}
+		}
+	}
+	names := make([]string, 0, len(list.Items))
+	for index := range list.Items {
+		object := &list.Items[index]
+		_, expectedIdentity := internalNames[object.GetName()]
+		if expectedIdentity && currentCertManagerIssuerController(kn, object) {
+			continue
+		}
+		names = append(names, object.GetName())
+	}
+	if len(names) == 0 {
 		return "", fmt.Errorf("no cert-manager %s found for automatic issuer selection", kind)
 	}
-	if len(list.Items) > 1 {
+	if len(names) > 1 {
 		return "", fmt.Errorf("multiple cert-manager %s resources found; set tls.certManager.issuer.name", kind)
 	}
-	return list.Items[0].GetName(), nil
+	return names[0], nil
+}
+
+func currentCertManagerIssuerController(kn *kubernautv1alpha2.Kubernaut, object *unstructured.Unstructured) bool {
+	owner := metav1.GetControllerOf(object)
+	return owner != nil && kn.UID != "" && owner.UID == kn.UID &&
+		owner.APIVersion == kubernautv1alpha2.GroupVersion.String() && owner.Kind == "Kubernaut" && owner.Name == kn.Name
 }
 
 func (r *KubernautReconciler) currentTime() time.Time {
