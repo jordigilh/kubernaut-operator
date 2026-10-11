@@ -90,17 +90,38 @@ ownership/shared-CRD functions. No coverage threshold was reduced.
   qualification are separate live lanes. The Kind contract fixtures do not
   establish them; see the platform evidence section below for exact attempts.
 
+### SNO OVN attempt
+
+- `514-ovn-e2e-remediation.log` records the exact-source attempt on
+  `kubernaut492-sno-a`: OpenShift **4.22.16**, Kubernetes **1.35.8**,
+  `OVNKubernetes`, source commit **`46d74bd`**, and internal-registry image
+  `image-registry.openshift-image-registry.svc:5000/kubernaut-operator-system/kubernaut-operator@sha256:c4a08513cab4a214c05b2ed9ce88fbf5746db25edb9c9953e954a52ff8142a95`.
+- The executed lane ran `make manifests generate` followed by
+  `IMG=<immutable-image> go test ./test/e2e/ -v -ginkgo.v -timeout 30m` from
+  the remediation checkout. It ran from **2026-10-11T03:15:08Z** through
+  **2026-10-11T03:26:37Z** and returned **1**: **3 passed, 1 failed, 0
+  pending, 16 skipped** out of 20 ordered specs.
+- The failed spec, `should reach Running phase (all services deployed)`, timed
+  out after 600 seconds because `ServicesDeployed` never became `True`.
+  Controller logs repeatedly reported the ownership contract rejecting the
+  pre-existing unmarked shared CRD `actiontypes.kubernaut.ai`:
+  `existing manager="" owners=[]`. The CRD was not implicitly adopted,
+  transferred, or deleted.
+- This is **not SNO qualification evidence**. The lane must be rerun on a
+  clean cluster or after an administrator-approved explicit shared-CRD transfer;
+  the deny-by-default behavior is intentional. No upstream exact-SHA
+  application-service qualification was run, so that lane also remains
+  unqualified.
+
 ## Platform and CI evidence
 
-- GitHub PR #517 check-runs for head `0e80af91c12c7d5402587650c85b99b3c1bebf30`
-  were **15/15 successful**, including Cilium, Calico, TLS, Helm, SBOM, unit,
-  and integration checks. The legacy combined status is misleadingly pending
-  with zero statuses; it is not treated as a test failure.
-- SNO platform attempts and their exact cluster/image evidence are recorded in
-  the remediation run log. A lane is marked verified only when its command,
-  timestamp, cluster/operator/application versions and immutable image SHA are
-  available; unavailable lanes remain explicit blockers with an owner and next
-  action.
+- GitHub PR #517 check-runs for head `46d74bd8ef89fb9c7fc3b074306603597c35b96b`
+  were **14 successful**, with `auto-merge` skipped and no failed checks,
+  including Cilium, Calico, TLS, Helm, SBOM, unit, and integration checks.
+- The SNO attempt above is recorded with its command, timestamps, cluster and
+  component versions, immutable image SHA, result, and blocking condition. A
+  lane is marked verified only when it passes; failed or unavailable lanes
+  remain explicit qualification blockers.
 
 ## Control-objective interpretation
 

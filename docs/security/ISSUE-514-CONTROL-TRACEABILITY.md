@@ -8,8 +8,10 @@
 
 **Scope:** authorization of operator runtime resource mutations and cleanup
 
-**Status:** final host gates and final-source Kind qualification verified; SNO
-OVN qualification attempted; broader exact-SHA application qualification remains unqualified
+**Status:** final host gates and final-source Kind qualification verified; the
+exact-source SNO OVN attempt is unqualified because the deny-by-default shared
+CRD boundary blocked a pre-existing unowned CRD; broader exact-SHA application
+qualification remains unqualified.
 
 **Contract:** `docs/design/ISSUE-514-OWNERSHIP-CONTRACT.md`
 

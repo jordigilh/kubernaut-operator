@@ -2,9 +2,10 @@
 
 **Contract:** `docs/design/ISSUE-514-OWNERSHIP-CONTRACT.md`
 **Status:** ownership implementation complete; final configured host gates and
-final-source Kind qualification passed. OpenShift/OVN and upstream exact-SHA
-application-service qualification remain separately tracked environment lanes;
-no release/compliance claim. Results: [VALIDATION.md](VALIDATION.md).
+final-source Kind qualification passed. The exact-source OpenShift/OVN attempt
+was unqualified because the operator correctly denied an unowned shared CRD;
+upstream exact-SHA application-service qualification was not run. No
+release/compliance claim. Results: [VALIDATION.md](VALIDATION.md).
 
 Ginkgo/Gomega tests assert business outcomes, not just helper invocation. All
 existing resource builders and controller logic are real; mocks inject only
@@ -66,12 +67,20 @@ Historical evidence is retained in the session's `opencode` temporary directory:
 - `514-green-ownership-final.log`: focused real envtest reconciliation passed
   after the webhook/provider refinements (39.707 seconds). Full verification
   follows refactoring the shared provider-delete path.
+- `514-ovn-e2e-remediation.log`: exact-source SNO OVN attempt on
+  `kubernaut492-sno-a` (OCP 4.22.16, Kubernetes 1.35.8) used commit `46d74bd`
+  and an immutable internal-registry image. It returned 1 after the ordered
+  lifecycle spec timed out on `ServicesDeployed`; the controller preserved the
+  unowned `actiontypes.kubernaut.ai` CRD and reported an ownership conflict.
 
-Record final full-gate and live results here after execution; never count a static
-pyramid check or a compiling E2E scenario as live execution. Required commands:
+The final configured gates and final-source Kind journey are recorded above.
+Never count a static pyramid check or a compiling E2E scenario as live
+execution. The SNO lane remains blocked until it is rerun on a clean or
+explicitly transferred shared-CRD state; do not weaken the deny-by-default
+contract to make that environment pass. Required host commands remain
 `go build ./...`, `golangci-lint run`, `make test`, `make test-hack-scripts`,
-`make manifests generate`, `git diff --exit-code config/`, compile-only tests;
-`make test-e2e-kind` on isolated clusters for the applicable TLS/provider lanes.
+`make manifests generate`, `git diff --exit-code config/`, compile-only tests,
+and `make test-e2e-kind` on isolated clusters for applicable TLS/provider lanes.
 
 The live suite uses the real Helm-installed operator and public CR APIs. Its
 application containers and migration completion are contract fixtures: this
