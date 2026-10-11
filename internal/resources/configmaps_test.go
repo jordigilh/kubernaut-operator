@@ -2982,6 +2982,24 @@ var _ = Describe("ConfigMaps", func() {
 	})
 })
 
+var _ = Describe("ConfigMap helper edge cases", func() {
+	It("maps each Fleet trust source to the expected CA path", func() {
+		Expect(resolveFleetTrustCAFile(nil, "default-ca", "secret-ca")).To(Equal("default-ca"))
+		Expect(resolveFleetTrustCAFile(&kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSystem}, "default-ca", "secret-ca")).To(BeEmpty())
+		Expect(resolveFleetTrustCAFile(&kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceFile, CAFile: "file-ca"}, "default-ca", "secret-ca")).To(Equal("file-ca"))
+		Expect(resolveFleetTrustCAFile(&kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret}, "default-ca", "secret-ca")).To(Equal("secret-ca"))
+		Expect(resolveFleetTrustCAFile(&kubernautv1alpha2.FleetTrustSpec{Source: "unknown"}, "default-ca", "secret-ca")).To(Equal("default-ca"))
+
+		opts := resolveOpts([]ConfigMapOption{WithTLSProfile("restricted")})
+		Expect(opts.tlsProfile).To(Equal("restricted"))
+	})
+
+	It("returns a contextual error for unsupported YAML values", func() {
+		_, err := marshalYAML(make(chan int))
+		Expect(err).To(MatchError(ContainSubstring("resources: yaml marshal")))
+	})
+})
+
 var _ = Describe("APIFrontendConfigMap", func() {
 	It("generates a valid config.yaml", func() {
 		kn := testKubernautWithAF()

@@ -18,6 +18,7 @@ package resources
 
 import (
 	"errors"
+	"os"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -98,6 +99,47 @@ var _ = Describe("TrustBundleConfigMap", func() {
 		cm := TrustBundleConfigMap(kn)
 
 		Expect(cm.Annotations).NotTo(HaveKey(OCPServiceCAInjectAnnotation))
+	})
+})
+
+var _ = Describe("trust bundle live reads", func() {
+	BeforeEach(func() {
+		// Unit tests must not accidentally depend on a projected in-cluster
+		// service-account environment when they exercise the fail-open seams.
+		keys := []string{"KUBERNETES_SERVICE_HOST", "KUBERNETES_SERVICE_PORT", "KUBERNETES_SERVICE_PORT_HTTPS"}
+		originals := make(map[string]struct {
+			value string
+			set   bool
+		}, len(keys))
+		for _, key := range keys {
+			value, set := os.LookupEnv(key)
+			originals[key] = struct {
+				value string
+				set   bool
+			}{value: value, set: set}
+			Expect(os.Unsetenv(key)).To(Succeed())
+		}
+		DeferCleanup(func() {
+			for key, original := range originals {
+				if original.set {
+					Expect(os.Setenv(key, original.value)).To(Succeed())
+					continue
+				}
+				Expect(os.Unsetenv(key)).To(Succeed())
+			}
+		})
+	})
+
+	It("returns the in-cluster configuration error for the service CA read", func() {
+		_, err := readServiceCA(testSystemNamespace)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("load in-cluster config"))
+	})
+
+	It("returns the in-cluster configuration error for the ingress CA read", func() {
+		_, err := readDefaultIngressCert()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("load in-cluster config"))
 	})
 })
 

@@ -318,3 +318,13 @@ var _ = Describe("WorkflowNamespace", func() {
 		Expect(ns.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/enforce", "restricted"))
 	})
 })
+
+var _ = Describe("EnsureRestrictedPSALabels", func() {
+	It("fills missing labels and reports whether an update was needed", func() {
+		labels := map[string]string{}
+
+		Expect(EnsureRestrictedPSALabels(labels)).To(BeTrue())
+		Expect(labels).To(Equal(RestrictedPSALabels()))
+		Expect(EnsureRestrictedPSALabels(labels)).To(BeFalse())
+	})
+})

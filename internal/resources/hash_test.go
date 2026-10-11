@@ -116,3 +116,14 @@ var _ = Describe("SpecHash", func() {
 		Expect(cm.Annotations["keep"]).To(Equal("this"))
 	})
 })
+
+var _ = Describe("ConfigMapDataHash", func() {
+	It("is deterministic across map iteration order and changes with content", func() {
+		first := ConfigMapDataHash(map[string]string{"z": "last", "a": "first"})
+		second := ConfigMapDataHash(map[string]string{"a": "first", "z": "last"})
+
+		Expect(first).To(Equal(second))
+		Expect(first).NotTo(Equal(ConfigMapDataHash(map[string]string{"a": "changed", "z": "last"})))
+		Expect(ConfigMapDataHash(nil)).NotTo(BeEmpty())
+	})
+})
