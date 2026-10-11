@@ -238,7 +238,6 @@ func stringMap(input map[string]string) string {
 }
 
 func verifyTLSWorkloadTrust(ctx context.Context, caKey string) error {
-	const probeName = "tls-trust-probe"
 	material, err := resources.ResolveTLSMaterial(kubernautCR())
 	if err != nil {
 		return fmt.Errorf("resolving TLS probe serving material: %w", err)
@@ -268,31 +267,20 @@ func verifyTLSWorkloadTrust(ctx context.Context, caKey string) error {
 			Items:                []corev1.KeyToPath{{Key: caKey, Path: tlsCACertificateKey}},
 		}}
 	}
-	pod := &corev1.Pod{
-		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      probeName,
-			Namespace: kubernautNamespace,
-			Labels:    TLSProbeLabels(),
-		},
-		Spec: corev1.PodSpec{
-			RestartPolicy: corev1.RestartPolicyNever,
-			Containers: []corev1.Container{{
-				Name:    "curl",
-				Image:   probeImage,
-				Command: []string{"sh", "-c"},
-				Args:    []string{"sleep 3600"},
-				VolumeMounts: []corev1.VolumeMount{{
-					Name:      "tls-ca",
-					MountPath: "/etc/tls",
-					ReadOnly:  true,
-				}},
-			}},
-			Volumes: []corev1.Volume{trustVolume},
-		},
+	encoded, err := yaml.Marshal(TLSProbePod(trustVolume))
+	if err != nil {
+		return fmt.Errorf("marshalling TLS trust probe: %w", err)
 	}
-	if err := applyYAML(ctx, pod); err != nil {
-		return err
+	// A previous probe may still be terminating after asynchronous cleanup.
+	// Create a new generated identity; apply can update that doomed Pod without
+	// cancelling its deletion. Use the returned name for every lifecycle action.
+	output, err := kubectlStdin(ctx, string(encoded), "create", "-f", "-", "-o", "jsonpath={.metadata.name}")
+	if err != nil {
+		return fmt.Errorf("creating TLS trust probe: %w", err)
+	}
+	probeName := strings.TrimSpace(output)
+	if probeName == "" {
+		return fmt.Errorf("tls trust probe creation returned an empty name")
 	}
 	defer func() {
 		_, _ = kubectl(
@@ -324,6 +312,35 @@ func verifyTLSWorkloadTrust(ctx context.Context, caKey string) error {
 		return fmt.Errorf("verifying TLS trust to data-storage-service: %w", err)
 	}
 	return nil
+}
+
+// TLSProbePod constructs the disposable policy-allowed client, not a managed
+// application workload. The caller supplies the selected public trust volume
+// and must create (not apply) it to obtain a fresh server-assigned identity.
+func TLSProbePod(trustVolume corev1.Volume) *corev1.Pod {
+	return &corev1.Pod{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"},
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "tls-trust-probe-",
+			Namespace:    kubernautNamespace,
+			Labels:       TLSProbeLabels(),
+		},
+		Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
+			Containers: []corev1.Container{{
+				Name:    "curl",
+				Image:   probeImage,
+				Command: []string{"sh", "-c"},
+				Args:    []string{"sleep 3600"},
+				VolumeMounts: []corev1.VolumeMount{{
+					Name:      "tls-ca",
+					MountPath: "/etc/tls",
+					ReadOnly:  true,
+				}},
+			}},
+			Volumes: []corev1.Volume{trustVolume},
+		},
+	}
 }
 
 // TLSProbeCertificateMatches requires the authenticated peer's first certificate

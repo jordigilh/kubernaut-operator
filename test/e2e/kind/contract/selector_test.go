@@ -22,6 +22,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
 	. "github.com/onsi/gomega"    //nolint:revive,staticcheck
+	corev1 "k8s.io/api/core/v1"
 
 	kind "github.com/jordigilh/kubernaut-operator/test/e2e/kind"
 )
@@ -117,5 +118,27 @@ var _ = Describe("Kind TLS source selector", func() {
 		Expect(kind.TLSProbeCertificateMatches([]byte("invalid"), "Cert:"+string(expected))).To(HaveOccurred())
 		wrongType := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: []byte("public-key")})
 		Expect(kind.TLSProbeCertificateMatches(wrongType, "Cert:"+string(expected))).To(HaveOccurred())
+	})
+
+	It("UT-TLS-498-008 requests a fresh server-assigned probe identity without changing its trust or policy", func() {
+		volume := corev1.Volume{
+			Name: "tls-ca",
+			VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "selected-public-trust"},
+				Items:                []corev1.KeyToPath{{Key: "selected-ca.pem", Path: "ca.crt"}},
+			}},
+		}
+		pod := kind.TLSProbePod(volume)
+		Expect(pod.Name).To(BeEmpty(), "never apply a previous terminating Pod by a reusable fixed name")
+		Expect(pod.GenerateName).To(Equal("tls-trust-probe-"))
+		Expect(pod.Namespace).To(Equal("kubernaut-system"))
+		Expect(pod.Labels).To(Equal(kind.TLSProbeLabels()))
+		Expect(pod.OwnerReferences).To(BeEmpty())
+		Expect(pod.Spec.RestartPolicy).To(Equal(corev1.RestartPolicyNever))
+		Expect(pod.Spec.Volumes).To(Equal([]corev1.Volume{volume}))
+		Expect(pod.Spec.Containers).To(HaveLen(1))
+		Expect(pod.Spec.Containers[0].VolumeMounts).To(Equal([]corev1.VolumeMount{{
+			Name: "tls-ca", MountPath: "/etc/tls", ReadOnly: true,
+		}}))
 	})
 })
