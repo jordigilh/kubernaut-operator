@@ -40,7 +40,8 @@ ownership changes. Only external Kubernetes API/cache behavior is injected.
 | `golangci-lint run` | Passed; `514-final-lint-green.log` |
 | `go test ./... -run=^$ -timeout=30s` | Passed; `514-final-compile-only.log` |
 | `make manifests generate`; `git diff --exit-code config/ api/v1alpha2/zz_generated.deepcopy.go` | Passed; generated CRD/RBAC/deepcopy unchanged; `514-final-codegen.log` |
-| `make test` | Passed on remediation source; `514-make-test-remediation.log`; controller suite 278.318 seconds |
+| `make test` | Passed on remediation source; `514-make-test-remediation.log`; controller suite 278.318 seconds. GitHub Unit & Integration Tests also passed after the pipefail-safe coverage-gate fix in run `38108818693`. |
+| `make test-unit` after the coverage-gate fix | Passed; internal unit coverage **89.1%**, all 12 business entry points **100%** |
 | `make test-security-traceability test-hack-scripts test-pyramid` | Passed; `514-final-static-gates.log` |
 
 Earlier `514-final-make-test.log` failed because Kubernetes 1.37 rejects a Job
@@ -115,7 +116,7 @@ ownership/shared-CRD functions. No coverage threshold was reduced.
 
 ## Platform and CI evidence
 
-- GitHub PR #517 check-runs for head `46d74bd8ef89fb9c7fc3b074306603597c35b96b`
+- GitHub PR #517 check-runs for final head `2cc06331698e70730368a4a92f5beab94abb7652`
   were **14 successful**, with `auto-merge` skipped and no failed checks,
   including Cilium, Calico, TLS, Helm, SBOM, unit, and integration checks.
 - The SNO attempt above is recorded with its command, timestamps, cluster and
