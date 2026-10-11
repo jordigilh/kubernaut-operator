@@ -93,7 +93,7 @@ These are production paths, not test-only builder substitutes.
 | Positive monitoring wiring | `Reconcile` → `reconcilePrometheusMonitoring` → `deployMonitoring` | strengthened IT-MON-513-008 and wiring-disconnection mutation |
 | Required isolation and retained policies | `reconcilePhases`/`deployWorkloads` → `reconcileProviderPolicies` | UT-AUDIT-515-POLICY-001–003; IT-AUDIT-515-POLICY-001 |
 | Typed scraper ingress | `reconcileProviderPolicies` → generated Service port intent → `policy.Render` | UT-AUDIT-515-SCRAPE-001–007; provider policy reconciliation including custom AF port 19180 |
-| Truthful audit | `patchStatus` and `runFinalizerCleanup` | UT-AUDIT-515-AUDIT-001/002 and real-API phase/cleanup assertions |
+| Truthful audit | `Reconcile`, `patchStatus` and `runFinalizerCleanup` | UT-AUDIT-515-AUDIT-001–003 and real-API phase/cleanup assertions; distinct CR/child identity fields |
 | Integrated ownership and conditional cleanup | `Reconcile` → write/cleanup subfunctions → `checkResourceOwnership`/`deleteObservedResource` | UT-AUDIT-515-OWNERSHIP-001–006; IT-OWN-514-001–022; IT-OWN-514-019 explicitly selects Required isolation |
 | Complete telemetry client-chain validation | `phaseValidate` → `validateTelemetrySecrets` → strict PEM parser | UT-AUDIT-515-TELEMETRY-006; IT-TELEMETRY-AUDIT-515-001 |
 | Stable automatic issuer selection | `ensureRuntimeTLS` → `resolveCertManagerIssuer` → `selectSingleCertManagerIssuer` | UT-AUDIT-515-CERTMANAGER-008; IT-TLS-AUDIT-515-004 |

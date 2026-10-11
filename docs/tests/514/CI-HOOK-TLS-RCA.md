@@ -164,3 +164,19 @@ responsibility. The PR #515 remediation branch is not stacked or merged here.
 failing assertion, surviving-Pod diagnostics, deterministic RED/GREEN results
 on host and Linux, source wiring, and unchanged security gates. Hosted Kind
 matrix verification remains the final CI gate, not broad release qualification.
+
+## Completed hosted verification (2026-10-11)
+
+The pending status above is the historical follow-up handoff, not the final
+pipeline outcome. Exact PR head `d61bbd6bb7f36a2245ab307081f15a3592defc18`
+passed all 14 test/lint jobs; Hook TLS job `114464554980` passed 8/8 specs with
+zero failed/pending/skipped. The user merged #517 at
+`19ec481b198ab9e2f3c950070b1b4a7015231908`. Post-merge
+[Tests run 38142327539](https://github.com/jordigilh/kubernaut-operator/actions/runs/38142327539)
+passes all 13 jobs and
+[Lint run 38142327486](https://github.com/jordigilh/kubernaut-operator/actions/runs/38142327486)
+passes at that same main SHA. Monitoring is complete; no #517 CI correction
+remains pending. The final receipt is also posted in
+[the PR](https://github.com/jordigilh/kubernaut-operator/pull/517#issuecomment-6109767349).
+These are operator contract receipts, not full-application or production
+qualification, and do not replace the new remediation PR's exact-head CI.
