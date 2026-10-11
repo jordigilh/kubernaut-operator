@@ -17,6 +17,7 @@ limitations under the License.
 package contract
 
 import (
+	"encoding/pem"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
@@ -101,5 +102,20 @@ var _ = Describe("Kind TLS source selector", func() {
 		Expect(labels).To(HaveKeyWithValue("kubernaut.ai/tls-probe", "true"))
 		Expect(labels).To(HaveKeyWithValue("app.kubernetes.io/managed-by", "kubernaut-operator"))
 		Expect(labels).To(HaveKeyWithValue("app.kubernetes.io/instance", "kubernaut"))
+	})
+
+	It("UT-TLS-498-007 requires the current peer certificate rather than a stale leaf under the same CA", func() {
+		expected := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("current-public-certificate")})
+		stale := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("stale-public-certificate")})
+		Expect(kind.TLSProbeCertificateMatches(expected, "Subject:current\nCert:"+string(expected))).To(Succeed())
+		for _, output := range []string{
+			"", "curl verification failed", "Cert:-----BEGIN CERTIFICATE-----\ninvalid PEM",
+			"Cert:" + string(stale) + "Cert:" + string(expected),
+		} {
+			Expect(kind.TLSProbeCertificateMatches(expected, output)).To(HaveOccurred())
+		}
+		Expect(kind.TLSProbeCertificateMatches([]byte("invalid"), "Cert:"+string(expected))).To(HaveOccurred())
+		wrongType := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: []byte("public-key")})
+		Expect(kind.TLSProbeCertificateMatches(wrongType, "Cert:"+string(expected))).To(HaveOccurred())
 	})
 })

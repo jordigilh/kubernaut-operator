@@ -17,6 +17,7 @@ limitations under the License.
 package kind
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -24,9 +25,11 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
@@ -236,6 +239,18 @@ func stringMap(input map[string]string) string {
 
 func verifyTLSWorkloadTrust(ctx context.Context, caKey string) error {
 	const probeName = "tls-trust-probe"
+	material, err := resources.ResolveTLSMaterial(kubernautCR())
+	if err != nil {
+		return fmt.Errorf("resolving TLS probe serving material: %w", err)
+	}
+	expected, err := secretTLSCertificate(ctx, material.ServiceTLSSecretNames[resources.TLSServiceDataStorage])
+	if err != nil {
+		return fmt.Errorf("reading TLS probe serving certificate: %w", err)
+	}
+	expectedPEM, err := base64.StdEncoding.DecodeString(expected)
+	if err != nil {
+		return fmt.Errorf("decoding TLS probe serving certificate: %w", err)
+	}
 	trustVolume := corev1.Volume{
 		Name: "tls-ca",
 		VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
@@ -291,12 +306,42 @@ func verifyTLSWorkloadTrust(ctx context.Context, caKey string) error {
 	); err != nil {
 		return fmt.Errorf("waiting for TLS trust probe: %w", err)
 	}
-	if _, err := kubectl(
-		ctx, "exec", "-n", kubernautNamespace, probeName, "--", "curl", "--silent", "--show-error",
-		"--output", "/dev/null", "--connect-timeout", "5", "--max-time", "10", "--cacert", "/etc/tls/ca.crt",
-		"https://data-storage-service:8443/readyz",
-	); err != nil {
+	// Ready/Running do not synchronize kubelet's projected Secret/ConfigMap
+	// refresh with the fixture's serving-certificate reload. Retry the same
+	// authenticated TLS handshake, bounded by the volume convergence window.
+	if err := pollUntilSuccess(ctx, 3*time.Minute, 2*time.Second, func() error {
+		output, err := kubectl(
+			ctx, "exec", "-n", kubernautNamespace, probeName, "--", "curl", "--silent", "--show-error",
+			"--output", "/dev/null", "--write-out", "%{certs}",
+			"--connect-timeout", "5", "--max-time", "10", "--cacert", "/etc/tls/ca.crt",
+			"https://data-storage-service:8443/readyz",
+		)
+		if err != nil {
+			return err
+		}
+		return TLSProbeCertificateMatches(expectedPEM, output)
+	}); err != nil {
 		return fmt.Errorf("verifying TLS trust to data-storage-service: %w", err)
+	}
+	return nil
+}
+
+// TLSProbeCertificateMatches requires the authenticated peer's first certificate
+// to match the current serving Secret, not merely any leaf under the same CA.
+// curl's %{certs} prefixes the PEM header with "Cert:", so strip that diagnostic
+// prefix before decoding; missing or malformed certificate output fails closed.
+func TLSProbeCertificateMatches(expectedPEM []byte, curlOutput string) error {
+	expected, _ := pem.Decode(expectedPEM)
+	if expected == nil || expected.Type != "CERTIFICATE" {
+		return fmt.Errorf("tls probe serving secret does not contain a PEM certificate")
+	}
+	start := strings.Index(curlOutput, "-----BEGIN CERTIFICATE-----")
+	if start < 0 {
+		return fmt.Errorf("tls probe output does not contain a peer certificate")
+	}
+	served, _ := pem.Decode([]byte(curlOutput[start:]))
+	if served == nil || served.Type != "CERTIFICATE" || !bytes.Equal(served.Bytes, expected.Bytes) {
+		return fmt.Errorf("tls probe endpoint is not serving the current datastorage certificate")
 	}
 	return nil
 }

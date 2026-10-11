@@ -285,19 +285,21 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 				return
 			}
 
-			before, err := secretTLSCertificate(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			By("deleting one operator-owned hook leaf to request reissuance")
-			Expect(deleteTLSSecret(ctx, "gateway-tls")).To(Succeed())
-			Eventually(func(g Gomega) {
-				current, getErr := secretTLSCertificate(ctx)
-				g.Expect(getErr).NotTo(HaveOccurred())
-				g.Expect(current).NotTo(Equal(before))
-				owner, ownerErr := secretOwnerKind(ctx, "gateway-tls")
-				g.Expect(ownerErr).NotTo(HaveOccurred())
-				g.Expect(owner).To(Equal("Kubernaut"))
-				g.Expect(kubernautCondition(ctx, "TLSReady")).To(Equal(conditionTrue))
-			}).Should(Succeed())
+			for _, name := range []string{"gateway-tls", "datastorage-tls"} {
+				before, err := secretTLSCertificate(ctx, name)
+				Expect(err).NotTo(HaveOccurred())
+				By("deleting operator-owned hook leaf " + name + " to request reissuance")
+				Expect(deleteTLSSecret(ctx, name)).To(Succeed())
+				Eventually(func(g Gomega) {
+					current, getErr := secretTLSCertificate(ctx, name)
+					g.Expect(getErr).NotTo(HaveOccurred())
+					g.Expect(current).NotTo(Equal(before))
+					owner, ownerErr := secretOwnerKind(ctx, name)
+					g.Expect(ownerErr).NotTo(HaveOccurred())
+					g.Expect(owner).To(Equal("Kubernaut"))
+					g.Expect(kubernautCondition(ctx, "TLSReady")).To(Equal(conditionTrue))
+				}).Should(Succeed())
+			}
 			caKey, caErr := tlsProbeCAKey()
 			Expect(caErr).NotTo(HaveOccurred())
 			Expect(verifyTLSWorkloadTrust(ctx, caKey)).To(Succeed())
@@ -381,13 +383,13 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			return
 		}
 
-		before, err := secretTLSCertificate(ctx)
+		before, err := secretTLSCertificate(ctx, "gateway-tls")
 		Expect(err).NotTo(HaveOccurred())
 		By("requesting a cert-manager reissuance through the Certificate spec")
 		Expect(patchCertificateForRotation(ctx, "gateway")).To(Succeed())
 
 		Eventually(func(g Gomega) {
-			current, getErr := secretTLSCertificate(ctx)
+			current, getErr := secretTLSCertificate(ctx, "gateway-tls")
 			g.Expect(getErr).NotTo(HaveOccurred())
 			g.Expect(current).NotTo(Equal(before))
 		}).Should(Succeed())
