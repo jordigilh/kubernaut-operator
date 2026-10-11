@@ -116,9 +116,10 @@ ownership/shared-CRD functions. No coverage threshold was reduced.
 
 ## Platform and CI evidence
 
-- GitHub PR #517 check-runs for final head `2cc06331698e70730368a4a92f5beab94abb7652`
-  were **14 successful**, with `auto-merge` skipped and no failed checks,
-  including Cilium, Calico, TLS, Helm, SBOM, unit, and integration checks.
+- GitHub PR #517 validation run `38108818693` for source head
+  `2cc06331698e70730368a4a92f5beab94abb7652` had **14 successful** checks,
+  with `auto-merge` skipped and no failed checks, including Cilium, Calico,
+  TLS, Helm, SBOM, unit, and integration checks.
 - The SNO attempt above is recorded with its command, timestamps, cluster and
   component versions, immutable image SHA, result, and blocking condition. A
   lane is marked verified only when it passes; failed or unavailable lanes
