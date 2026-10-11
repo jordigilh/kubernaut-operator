@@ -19,6 +19,9 @@ package policy
 import (
 	"fmt"
 	"sort"
+	"strings"
+
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -46,6 +49,14 @@ func Render(result DetectionResult, intent Intent) ([]RenderedPolicy, error) {
 	}
 	if err := ValidateMonitoringDestinations(result.Provider, intent.Monitoring); err != nil {
 		return nil, err
+	}
+	if err := validateScrapeSources(intent.ScrapeSources); err != nil {
+		return nil, err
+	}
+	for component, port := range intent.MetricsPorts {
+		if port < 1 || port > 65535 {
+			return nil, fmt.Errorf("invalid metrics port for component %s", component)
+		}
 	}
 	switch result.Provider {
 	case ProviderCilium:
@@ -104,18 +115,20 @@ func renderCilium(intent Intent) []RenderedPolicy {
 				egress = append(egress, ciliumMonitoringRule(destination))
 			}
 		}
+		ingress := []interface{}{map[string]interface{}{"fromEndpoints": []interface{}{managedSelector}}}
+		if port := intent.MetricsPorts[component]; port != 0 {
+			for _, source := range intent.ScrapeSources {
+				ingress = append(ingress, ciliumScrapeRule(source, port))
+			}
+		}
 		spec := map[string]interface{}{
 			"endpointSelector": selector,
 			"enableDefaultDeny": map[string]interface{}{
 				"ingress": true,
 				"egress":  true,
 			},
-			"ingress": []interface{}{
-				map[string]interface{}{
-					"fromEndpoints": []interface{}{managedSelector},
-				},
-			},
-			"egress": egress,
+			"ingress": ingress,
+			"egress":  egress,
 		}
 		objects = append(objects, RenderedPolicy{
 			Object: newPolicyObject(
@@ -166,17 +179,20 @@ func renderCalico(intent Intent) []RenderedPolicy {
 				egress = append(egress, calicoMonitoringRule(destination))
 			}
 		}
+		ingress := []interface{}{map[string]interface{}{
+			"action": "Allow", "source": map[string]interface{}{"selector": managedSelector},
+		}}
+		if port := intent.MetricsPorts[component]; port != 0 {
+			for _, source := range intent.ScrapeSources {
+				ingress = append(ingress, calicoScrapeRule(source, port))
+			}
+		}
 		spec := map[string]interface{}{
 			"selector": selector,
 			"order":    float64(100),
 			"types":    []interface{}{"Ingress", "Egress"},
-			"ingress": []interface{}{
-				map[string]interface{}{
-					"action": "Allow",
-					"source": map[string]interface{}{"selector": managedSelector},
-				},
-			},
-			"egress": egress,
+			"ingress":  ingress,
+			"egress":   egress,
 		}
 		objects = append(objects, RenderedPolicy{
 			Object: newPolicyObject(
@@ -216,6 +232,40 @@ func calicoMonitoringRule(destination MonitoringDestination) map[string]interfac
 				"namespace": destination.Namespace,
 			},
 		},
+	}
+}
+
+func ciliumScrapeRule(source kubernautv1alpha2.MetricsScrapeSource, port int32) map[string]interface{} {
+	labels := make(map[string]interface{}, len(source.PodLabels)+1)
+	labels["k8s:io.kubernetes.pod.namespace"] = source.Namespace
+	for key, value := range source.PodLabels {
+		labels[ciliumKubernetesLabel(key)] = value
+	}
+	return map[string]interface{}{
+		"fromEndpoints": []interface{}{map[string]interface{}{"matchLabels": labels}},
+		"toPorts": []interface{}{map[string]interface{}{
+			"ports": []interface{}{map[string]interface{}{"port": fmt.Sprintf("%d", port), "protocol": "TCP"}},
+		}},
+	}
+}
+
+func calicoScrapeRule(source kubernautv1alpha2.MetricsScrapeSource, port int32) map[string]interface{} {
+	keys := make([]string, 0, len(source.PodLabels))
+	for key := range source.PodLabels {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	terms := make([]string, 0, len(keys))
+	for _, key := range keys {
+		terms = append(terms, fmt.Sprintf("%s == '%s'", key, source.PodLabels[key]))
+	}
+	return map[string]interface{}{
+		"action": "Allow", "protocol": "TCP",
+		"source": map[string]interface{}{
+			"namespaceSelector": fmt.Sprintf("projectcalico.org/name == '%s'", source.Namespace),
+			"selector":          strings.Join(terms, " && "),
+		},
+		"destination": map[string]interface{}{"ports": []interface{}{int64(port)}},
 	}
 }
 
@@ -279,6 +329,37 @@ func renderOVN(intent Intent) []RenderedPolicy {
 				"kubernaut-agent-monitoring", "",
 				policyLabelsForIntent(ProviderOVN, MonitoringAgentComponent, intent), monitoringSpec,
 			),
+			Namespaced: false,
+		})
+	}
+	return append(objects, ovnScrapePolicies(intent, instance)...)
+}
+
+func ovnScrapePolicies(intent Intent, instance string) []RenderedPolicy {
+	objects := make([]RenderedPolicy, 0, len(intent.Components))
+	for _, component := range intent.Components {
+		port := intent.MetricsPorts[component]
+		if port == 0 || len(intent.ScrapeSources) == 0 {
+			continue
+		}
+		from := make([]interface{}, 0, len(intent.ScrapeSources))
+		for _, source := range intent.ScrapeSources {
+			from = append(from, ovnPodsPeerWithLabels(source.Namespace, source.PodLabels))
+		}
+		spec := map[string]interface{}{
+			// Subjects are disjoint by component; a shared priority therefore
+			// cannot authorize another component's differently numbered port.
+			"priority": float64(88),
+			"subject": ovnPodsPeerWithLabels(intent.Namespace, map[string]string{
+				ManagedByLabel: "kubernaut-operator", instanceLabel: instance, "app": component,
+			}),
+			"ingress": []interface{}{map[string]interface{}{
+				"name": "allow-metrics-scrapers", "action": "Allow", "from": from, "ports": ovnTCPPortRules(int(port)),
+			}},
+		}
+		objects = append(objects, RenderedPolicy{
+			Object: newPolicyObject("policy.networking.k8s.io/v1alpha1", "AdminNetworkPolicy",
+				fmt.Sprintf("kubernaut-%s-metrics", component), "", policyLabelsForIntent(ProviderOVN, component, intent), spec),
 			Namespaced: false,
 		})
 	}

@@ -37,6 +37,7 @@ import (
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/policy"
+	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
 const agentPolicyName = "kubernaut-kubernaut-agent"
@@ -95,6 +96,10 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 
 		cr := newCRWithRouteDisabled()
 		cr.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderCilium
+		cr.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
+		cr.Spec.NetworkPolicies.ScrapeSources = []kubernautv1alpha2.MetricsScrapeSource{{
+			Namespace: monitoringNamespace.Name, PodLabels: map[string]string{"app": "prometheus"},
+		}}
 		cr.Spec.Monitoring.Prometheus.URL = "https://prometheus.monitoring-policy.svc:9090"
 		cr.Spec.Monitoring.AlertManager.URL = "https://alertmanager.monitoring-policy.svc:9093"
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
@@ -165,6 +170,16 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 			}
 		}
 		Expect(monitoringPorts).To(Equal(map[string]string{"prometheus": "8080", "alertmanager": "8081"}))
+		ingress, found, err := unstructured.NestedSlice(spec, "ingress")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(ingress).To(HaveLen(2), "actual Reconcile must wire the external scraper identity, not just monitoring egress")
+		scrapeRule := ingress[1].(map[string]interface{})
+		from := scrapeRule["fromEndpoints"].([]interface{})[0].(map[string]interface{})
+		Expect(from["matchLabels"]).To(HaveKeyWithValue("k8s:io.kubernetes.pod.namespace", monitoringNamespace.Name))
+		Expect(from["matchLabels"]).To(HaveKeyWithValue("k8s:app", "prometheus"))
+		ports := scrapeRule["toPorts"].([]interface{})[0].(map[string]interface{})["ports"]
+		Expect(ports).To(Equal([]interface{}{map[string]interface{}{"port": "9090", "protocol": "TCP"}}))
 
 		status := &kubernautv1alpha2.Kubernaut{}
 		Expect(k8sClient.Get(ctx, singletonKey(), status)).To(Succeed())
@@ -197,6 +212,7 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 
 		cr := newCRWithRouteDisabled()
 		cr.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderCilium
+		cr.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 		cr.Spec.Monitoring.Prometheus.URL = "https://missing.monitoring-policy.svc:9090"
 		cr.Spec.Monitoring.AlertManager.URL = "https://missing-alertmanager.monitoring-policy.svc:9093"
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
@@ -277,6 +293,7 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 
 		cr := newCRWithRouteDisabled()
 		cr.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderCilium
+		cr.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 		cr.Spec.Monitoring.Prometheus.URL = "https://prometheus.monitoring-policy-partial.svc:9090"
 		cr.Spec.Monitoring.AlertManager.URL = "https://missing.monitoring-policy-partial.svc:9093"
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
@@ -387,6 +404,10 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 
 		cr := newCRWithRouteDisabled()
 		cr.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderCalico
+		cr.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
+		cr.Spec.NetworkPolicies.ScrapeSources = []kubernautv1alpha2.MetricsScrapeSource{{
+			Namespace: monitoringNamespace.Name, PodLabels: map[string]string{"app": "prometheus"},
+		}}
 		cr.Spec.Monitoring.Prometheus.URL = "https://prometheus.monitoring-policy-calico.svc:9090"
 		cr.Spec.Monitoring.AlertManager.URL = "https://alertmanager.monitoring-policy-calico.svc:9093"
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
@@ -433,6 +454,14 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 			}
 		}
 		Expect(monitoringServicesFound).To(Equal(map[string]bool{"prometheus": true, "alertmanager": true}))
+		ingress, found, err := unstructured.NestedSlice(spec, "ingress")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(ingress).To(HaveLen(2), "Reconcile must positively authorize the Calico scraper")
+		Expect(ingress[1]).To(HaveKeyWithValue("source", map[string]interface{}{
+			"namespaceSelector": "projectcalico.org/name == 'monitoring-policy-calico'", "selector": "app == 'prometheus'",
+		}))
+		Expect(ingress[1]).To(HaveKeyWithValue("destination", map[string]interface{}{"ports": []interface{}{int64(9090)}}))
 
 		status := &kubernautv1alpha2.Kubernaut{}
 		Expect(k8sClient.Get(ctx, singletonKey(), status)).To(Succeed())
@@ -516,7 +545,13 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 
 		cr := newCRWithRouteDisabled()
 		cr.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderOVN
+		cr.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
+		cr.Spec.NetworkPolicies.ScrapeSources = []kubernautv1alpha2.MetricsScrapeSource{{
+			Namespace: monitoringNamespace.Name, PodLabels: map[string]string{"app": "prometheus"},
+		}}
 		cr.Spec.Monitoring.Prometheus.URL = "https://prometheus.monitoring-policy-ovn.svc:9091"
+		cr.Spec.APIFrontend.Enabled = ptr.To(true)
+		cr.Spec.APIFrontend.MetricsPort = ptr.To[int32](19180)
 		cr.Spec.Monitoring.AlertManager.URL = "https://alertmanager.monitoring-policy-ovn.svc:9094"
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
@@ -563,6 +598,41 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 		}
 		Expect(alertmanagerRuleFound).To(BeTrue())
 		Expect(denyRuleFound).To(BeTrue())
+		metricsPolicy := &unstructured.Unstructured{}
+		metricsPolicy.SetGroupVersionKind(schema.GroupVersionKind{
+			Group: "policy.networking.k8s.io", Version: "v1alpha1", Kind: "AdminNetworkPolicy",
+		})
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: "kubernaut-data-storage-metrics"}, metricsPolicy)).To(Succeed())
+		metricsSpec, found, err := unstructured.NestedMap(metricsPolicy.Object, "spec")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		subjectLabels, found, err := unstructured.NestedStringMap(metricsSpec, "subject", "pods", "podSelector", "matchLabels")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(subjectLabels).To(HaveKeyWithValue("app", "data-storage"))
+		ingress := metricsSpec["ingress"].([]interface{})
+		Expect(ingress).To(HaveLen(1))
+		Expect(ingress[0]).To(HaveKeyWithValue("ports", []interface{}{map[string]interface{}{"portNumber": map[string]interface{}{
+			"port": int64(9090), "protocol": "TCP",
+		}}}))
+		Expect(ingress[0]).To(HaveKeyWithValue("from", []interface{}{map[string]interface{}{"pods": map[string]interface{}{
+			"namespaceSelector": map[string]interface{}{"matchLabels": map[string]interface{}{
+				"kubernetes.io/metadata.name": monitoringNamespace.Name,
+			}},
+			"podSelector": map[string]interface{}{"matchLabels": map[string]interface{}{"app": "prometheus"}},
+		}}}))
+		metricsPolicy.SetName("kubernaut-apifrontend-metrics")
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(metricsPolicy), metricsPolicy)).To(Succeed())
+		customIngress, found, err := unstructured.NestedSlice(metricsPolicy.Object, "spec", "ingress")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(customIngress).To(HaveLen(1))
+		Expect(customIngress[0]).To(HaveKeyWithValue("ports", []interface{}{map[string]interface{}{"portNumber": map[string]interface{}{
+			"port": int64(19180), "protocol": "TCP",
+		}}}))
+		customService := &corev1.Service{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: cr.Namespace, Name: resources.ComponentAPIFrontend}, customService)).To(Succeed())
+		Expect(customService.Spec.Ports).To(ContainElement(HaveField("Port", int32(19180))))
 
 		banps := &unstructured.UnstructuredList{}
 		banps.SetGroupVersionKind(schema.GroupVersionKind{

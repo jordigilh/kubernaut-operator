@@ -21,6 +21,8 @@ import (
 	"sort"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/util/validation"
+
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
@@ -42,6 +44,8 @@ type Intent struct {
 	DNSNamespace         string
 	StaticAPIServerCIDRs []string
 	Monitoring           []MonitoringDestination
+	ScrapeSources        []kubernautv1alpha2.MetricsScrapeSource
+	MetricsPorts         map[string]int32
 }
 
 // BuildIntent constructs the common policy intent for one Kubernaut namespace.
@@ -87,6 +91,21 @@ func BuildIntent(namespace string, components, staticAPIServerCIDRs []string) (I
 // refusing reconciliation because the user could believe the policy was
 // narrowed when the provider object did not change.
 func ValidateNativeOverrides(spec kubernautv1alpha2.NetworkPoliciesSpec) error {
+	if err := validateIsolationMode(spec); err != nil {
+		return err
+	}
+	if err := validateScrapeSources(spec.ScrapeSources); err != nil {
+		return err
+	}
+	unsupported := unsupportedLegacyFields(spec)
+	if len(unsupported) == 0 {
+		return nil
+	}
+	sort.Strings(unsupported)
+	return fmt.Errorf("network policy fields are not supported by native adapters: %s", strings.Join(unsupported, ", "))
+}
+
+func unsupportedLegacyFields(spec kubernautv1alpha2.NetworkPoliciesSpec) []string {
 	unsupported := make([]string, 0, 16)
 	if spec.APIServerCIDR != "" {
 		unsupported = append(unsupported, "apiServerCIDR")
@@ -130,11 +149,49 @@ func ValidateNativeOverrides(spec kubernautv1alpha2.NetworkPoliciesSpec) error {
 			unsupported = append(unsupported, name)
 		}
 	}
-	if len(unsupported) == 0 {
+	return unsupported
+}
+
+func validateIsolationMode(spec kubernautv1alpha2.NetworkPoliciesSpec) error {
+	if spec.Mode != "" && spec.Mode != kubernautv1alpha2.NetworkIsolationRequired && spec.Mode != kubernautv1alpha2.NetworkIsolationInherited {
+		return fmt.Errorf("network isolation mode must be Required or Inherited")
+	}
+	if spec.Mode != kubernautv1alpha2.NetworkIsolationInherited {
 		return nil
 	}
-	sort.Strings(unsupported)
-	return fmt.Errorf("network policy fields are not supported by native adapters: %s", strings.Join(unsupported, ", "))
+	if spec.Provider != "" && spec.Provider != kubernautv1alpha2.NetworkPolicyProviderAuto {
+		return fmt.Errorf("inherited isolation cannot select an operator-managed native provider")
+	}
+	if len(spec.ScrapeSources) > 0 {
+		return fmt.Errorf("inherited isolation cannot request operator-managed scraper ingress")
+	}
+	return nil
+}
+
+// validateScrapeSources also protects programmatic callers that bypass CRD
+// validation, including selector-expression injection and reserved Cilium
+// namespace identity keys. See PR-515-AUDIT-REMEDIATION.md.
+func validateScrapeSources(sources []kubernautv1alpha2.MetricsScrapeSource) error {
+	if len(sources) > 16 {
+		return fmt.Errorf("at most 16 metrics scrape sources are supported")
+	}
+	for index, source := range sources {
+		if len(validation.IsDNS1123Label(source.Namespace)) != 0 {
+			return fmt.Errorf("metrics scrape source %d requires a valid exact namespace", index)
+		}
+		if len(source.PodLabels) == 0 || len(source.PodLabels) > 16 {
+			return fmt.Errorf("metrics scrape source %d requires 1 to 16 exact pod labels", index)
+		}
+		for key, value := range source.PodLabels {
+			if len(validation.IsQualifiedName(key)) != 0 || len(validation.IsValidLabelValue(value)) != 0 {
+				return fmt.Errorf("metrics scrape source %d has an invalid pod label", index)
+			}
+			if key == "io.kubernetes.pod.namespace" || strings.HasPrefix(key, "io.cilium.k8s.namespace.labels.") {
+				return fmt.Errorf("metrics scrape source %d cannot override reserved namespace identity", index)
+			}
+		}
+	}
+	return nil
 }
 
 func hasEgressOverride(cidr string, ports ...int32) bool {

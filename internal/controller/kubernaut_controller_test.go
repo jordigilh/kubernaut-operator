@@ -113,6 +113,9 @@ func newMinimalCR() *kubernautv1alpha2.Kubernaut {
 			Namespace: testNamespace,
 		},
 		Spec: kubernautv1alpha2.KubernautSpec{
+			// Generic envtest has no CNI. Explicit acknowledgement must not be
+			// confused with default-required native isolation qualification.
+			NetworkPolicies: kubernautv1alpha2.NetworkPoliciesSpec{Mode: kubernautv1alpha2.NetworkIsolationInherited},
 			Image: kubernautv1alpha2.ImageSpec{
 				PullPolicy: corev1.PullIfNotPresent,
 			},
@@ -599,7 +602,8 @@ var _ = Describe("Kubernaut Controller", func() {
 			status := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), status)).To(Succeed())
 			condition := findCondition(status.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady)
-			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(condition.Reason).To(Equal("InheritedIsolation"), "envtest explicitly acknowledges inherited isolation; no native provider is claimed")
 		})
 	})
 

@@ -898,8 +898,13 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("[SC-7] reports unavailable native policy without creating a raw fallback", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
+			cr.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
-			reconcileToRunning(ctx)
+			r := newReconciler()
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).To(MatchError(ContainSubstring("native network isolation")))
 
 			npList := &networkingv1.NetworkPolicyList{}
 			Expect(k8sClient.List(ctx, npList, client.InNamespace(testNamespace), client.MatchingLabels{
@@ -909,6 +914,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady).Status).To(Equal(metav1.ConditionFalse))
+			Expect(kn.Status.Phase).NotTo(Equal(kubernautv1alpha2.PhaseRunning))
 		})
 
 		It("[SC-7] keeps the no-fallback policy result after a CR update", func() {

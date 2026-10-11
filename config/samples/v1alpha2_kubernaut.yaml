@@ -311,12 +311,17 @@ spec:
     logging:
       level: INFO
 
-  # Native policy selection is capability-gated. Auto is the safe default: a
-  # provider must be positively identified before any provider policy object
-  # is submitted. No raw Kubernetes NetworkPolicy or static API-server CIDR
-  # fallback is used.
+  # Native isolation is required by default before migration/workload activation.
+  # Auto requires a supported, active provider. Generic Kubernetes deployments
+  # must explicitly select mode: Inherited and supply their own isolation.
+  # No raw NetworkPolicy fallback or external scraper identity is inferred.
   # networkPolicies:
+  #   mode: Required
   #   provider: Auto
+  #   scrapeSources:
+  #     - namespace: monitoring
+  #       podLabels:
+  #         app.kubernetes.io/name: prometheus
 
   console:
     enabled: true

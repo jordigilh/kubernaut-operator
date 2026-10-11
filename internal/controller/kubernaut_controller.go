@@ -246,6 +246,12 @@ func (r *KubernautReconciler) authorizeSingleton(ctx context.Context, kn *kubern
 func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 	log.Info("reconciling phases", "currentPhase", kn.Status.Phase)
+	// Required isolation must exist before a migration Job or service workload
+	// can start. Failure never prunes the last known-good provider policy.
+	if err := r.reconcileProviderPolicies(ctx, kn, knV2); err != nil {
+		log.Error(err, "native isolation blocks active reconciliation")
+		return ctrl.Result{}, err
+	}
 
 	// Validate and migrate always run (cheap: secret checks + Job status).
 	for _, phase := range []func(context.Context, *kubernautv1alpha2.Kubernaut) (ctrl.Result, error){
@@ -1947,6 +1953,9 @@ func (r *KubernautReconciler) ensureDeployments(
 }
 
 func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, cmHashes map[string]string, telemetryRevisions telemetryMaterialRevisionSet) (hasRoute bool, _ error) {
+	if err := r.reconcileProviderPolicies(ctx, kn, knV2); err != nil {
+		return false, err
+	}
 	depBuilders, err := r.enabledDeploymentBuilders(ctx, kn, knV2)
 	if err != nil {
 		return false, err
@@ -1963,10 +1972,6 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		if err := r.ensureNamespaced(ctx, kn, pdb); err != nil {
 			return false, fmt.Errorf("ensuring PDB %s: %w", pdb.Name, err)
 		}
-	}
-
-	if err := r.reconcileProviderPolicies(ctx, kn, knV2); err != nil {
-		return false, err
 	}
 
 	dsHPA := resources.DataStorageHPA(kn)
@@ -2021,12 +2026,14 @@ func (r *KubernautReconciler) reconcileProviderPolicies(ctx context.Context, kn 
 			Message:  err.Error(),
 		}, false, err)
 	}
-	staticCIDRs := make([]string, 0, 1+len(kn.Spec.NetworkPolicies.APIServerCIDRs))
-	if kn.Spec.NetworkPolicies.APIServerCIDR != "" {
-		staticCIDRs = append(staticCIDRs, kn.Spec.NetworkPolicies.APIServerCIDR)
+	if kn.Spec.NetworkPolicies.Mode == kubernautv1alpha2.NetworkIsolationInherited {
+		return r.patchProviderPolicyStatus(ctx, kn, policy.DetectionResult{
+			Provider: policy.ProviderNone, Reason: "InheritedIsolation",
+			Message: "administrator explicitly supplies inherited isolation; external enforcement is not verified by the operator",
+		}, true, nil)
 	}
-	staticCIDRs = append(staticCIDRs, kn.Spec.NetworkPolicies.APIServerCIDRs...)
-	intent, err := policy.BuildIntent(kn.Namespace, components, staticCIDRs)
+	// ValidateNativeOverrides already rejected every legacy static-CIDR input.
+	intent, err := policy.BuildIntent(kn.Namespace, components, nil)
 	if err != nil {
 		return r.patchProviderPolicyStatus(ctx, kn, policy.DetectionResult{
 			Provider: policy.ProviderNone,
@@ -2035,9 +2042,16 @@ func (r *KubernautReconciler) reconcileProviderPolicies(ctx context.Context, kn 
 		}, false, err)
 	}
 	intent.InstanceName = kn.Name
+	intent.ScrapeSources = kn.Spec.NetworkPolicies.ScrapeSources
+	intent.MetricsPorts = generatedMetricsPorts(kn, knV2)
 
 	detector := policy.Detector{Client: r.Client, RESTMapper: r.RESTMapper()}
 	detection := policy.Detect(detector.Discover(ctx), policy.Provider(kn.Spec.NetworkPolicies.Provider))
+	if !detection.Ready {
+		err := fmt.Errorf("native network isolation is required but unavailable: %s", detection.Message)
+		logf.FromContext(ctx).Error(err, "retaining existing native policies; activation denied", "reason", detection.Reason)
+		return r.patchProviderPolicyStatus(ctx, kn, detection, false, err)
+	}
 	if detection.Provider == policy.ProviderOVN && detection.Platform == "OpenShift" {
 		intent.DNSNamespace = resources.OCPDNSNamespace
 	}
@@ -2075,6 +2089,21 @@ func (r *KubernautReconciler) reconcileProviderPolicies(ctx context.Context, kn 
 		detection.PolicyMessage = fmt.Sprintf("native provider is ready but monitoring egress is unavailable: %v", monitoringErr)
 	}
 	return r.patchProviderPolicyStatus(ctx, kn, detection, detection.Ready && monitoringErr == nil, nil)
+}
+
+// generatedMetricsPorts derives authorization from the actual Service builders,
+// including AF's custom port, and never grants ports to metrics-less components.
+func generatedMetricsPorts(kn, knV2 *kubernautv1alpha2.Kubernaut) map[string]int32 {
+	ports := make(map[string]int32, len(resources.ActiveComponents(kn, knV2)))
+	services := append(resources.Services(kn, knV2), resources.MetricsServices(kn)...)
+	for _, service := range services {
+		for _, port := range service.Spec.Ports {
+			if port.Name == "metrics" {
+				ports[service.Spec.Selector["app"]] = port.Port
+			}
+		}
+	}
+	return ports
 }
 
 func (r *KubernautReconciler) ensureRenderedProviderPolicies(
@@ -2201,41 +2230,15 @@ func (r *KubernautReconciler) patchProviderPolicyStatus(
 ) error {
 	if reconcileErr != nil {
 		detection.Message = reconcileErr.Error()
+		logf.FromContext(ctx).Error(reconcileErr, "native policy reconciliation failed", "provider", detection.Provider)
 	}
 	if err := r.patchStatus(ctx, kn, func() {
-		providerStatus := metav1.ConditionFalse
-		providerReason := detection.Reason
-		if detection.Provider != policy.ProviderNone && detection.Ready {
-			providerStatus = metav1.ConditionTrue
+		if !ready && kn.Status.Phase == kubernautv1alpha2.PhaseRunning {
+			r.setPhase(kn, kubernautv1alpha2.PhaseDegraded)
 		}
-		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-			Type:               kubernautv1alpha2.ConditionProviderDetected,
-			Status:             providerStatus,
-			Reason:             providerReason,
-			Message:            detection.Message,
-			ObservedGeneration: kn.Generation,
-		})
-		policyStatus := metav1.ConditionFalse
-		policyReason := detection.Reason
-		policyMessage := detection.Message
-		if detection.PolicyReason != "" {
-			policyReason = detection.PolicyReason
+		for _, condition := range providerPolicyConditions(kn.Generation, detection, ready) {
+			meta.SetStatusCondition(&kn.Status.Conditions, condition)
 		}
-		if detection.PolicyMessage != "" {
-			policyMessage = detection.PolicyMessage
-		}
-		if ready {
-			policyStatus = metav1.ConditionTrue
-			policyReason = policy.ReasonProviderReady
-			policyMessage = detection.Message
-		}
-		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-			Type:               kubernautv1alpha2.ConditionProviderPolicyReady,
-			Status:             policyStatus,
-			Reason:             policyReason,
-			Message:            policyMessage,
-			ObservedGeneration: kn.Generation,
-		})
 	}); err != nil {
 		return fmt.Errorf("patching provider policy status: %w", err)
 	}
@@ -2250,6 +2253,33 @@ func (r *KubernautReconciler) patchProviderPolicyStatus(
 		r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "ProviderPolicyUnavailable", "Reconcile", "%s", eventMessage)
 	}
 	return nil
+}
+
+func providerPolicyConditions(generation int64, detection policy.DetectionResult, ready bool) []metav1.Condition {
+	providerStatus := metav1.ConditionFalse
+	if detection.Provider != policy.ProviderNone && detection.Ready {
+		providerStatus = metav1.ConditionTrue
+	}
+	policyStatus := metav1.ConditionFalse
+	policyReason, policyMessage := detection.Reason, detection.Message
+	if detection.PolicyReason != "" {
+		policyReason = detection.PolicyReason
+	}
+	if detection.PolicyMessage != "" {
+		policyMessage = detection.PolicyMessage
+	}
+	if ready {
+		policyStatus, policyReason, policyMessage = metav1.ConditionTrue, policy.ReasonProviderReady, detection.Message
+		if detection.Reason == "InheritedIsolation" {
+			policyReason = detection.Reason
+		}
+	}
+	return []metav1.Condition{
+		{Type: kubernautv1alpha2.ConditionProviderDetected, Status: providerStatus,
+			Reason: detection.Reason, Message: detection.Message, ObservedGeneration: generation},
+		{Type: kubernautv1alpha2.ConditionProviderPolicyReady, Status: policyStatus,
+			Reason: policyReason, Message: policyMessage, ObservedGeneration: generation},
+	}
 }
 
 func (r *KubernautReconciler) pruneProviderPolicies(ctx context.Context, namespace, instance string, desired map[string]struct{}) error {
@@ -2565,6 +2595,10 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 		})
 	}
 
+	if kn.Spec.NetworkPolicies.Mode != kubernautv1alpha2.NetworkIsolationInherited &&
+		!meta.IsStatusConditionTrue(kn.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady) {
+		allReady = false
+	}
 	finalStatuses := serviceStatuses
 	finalAllReady := allReady
 
