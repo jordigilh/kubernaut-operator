@@ -118,9 +118,13 @@ ownership/shared-CRD functions. No coverage threshold was reduced.
   the Hook TLS Kind job in run `38112936915`. The startup-only OpenSSL fixture
   retained a pre-reinstall serving certificate while projected trust/material
   changed. See [the root-cause analysis](CI-HOOK-TLS-RCA.md) for exact failure,
-  deterministic RED/GREEN evidence, bounded convergence/current-leaf checks,
-  and the still-pending corrective hosted run. Earlier green CI below is
-  historical, not verification of this later head or correction.
+  deterministic RED/GREEN evidence and bounded convergence/current-leaf checks.
+  First corrective run `38135457048` passed that initial TLS check, then exposed
+  fixed-name probe reuse during pending deletion in the new leaf-rotation check.
+  The follow-up uses fresh server-assigned Pod names, with real-API RED/GREEN
+  lifecycle evidence and a persistent identity regression. Its new hosted run
+  remains pending. Earlier green CI below is historical, not verification of
+  either later failed head or the follow-up correction.
 - GitHub PR #517 validation run
   [`38109685938`](https://github.com/jordigilh/kubernaut-operator/actions/runs/38109685938)
   for source head `060b851d4268c138db8e390db7f2027842aa27d2` completed

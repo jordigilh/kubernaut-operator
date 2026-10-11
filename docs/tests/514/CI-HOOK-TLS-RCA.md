@@ -96,10 +96,68 @@ envtest or real-application E2E qualification. Focused RED runs exclude unrelate
 specs by command-line selection; no pending or skipped test implementation is
 introduced.
 
-**Hosted pipeline disposition:** pending the corrective push. Do not attribute
-the local/Linux regressions to a successful new Kind run before CI completes.
-The prior successful head recorded in `VALIDATION.md` remains historical; it
-does not erase this later failed run. Review approval and merge remain the user's
+## Corrective hosted run: a second probe-lifecycle race
+
+Tests run [38135457048](https://github.com/jordigilh/kubernaut-operator/actions/runs/38135457048)
+at `e890600db69fc05f28854bb78e138de68bcb7ac7` passed the initial, current-leaf
+authenticated TLS check after reinstall. Hook TLS subsequently failed the new
+DataStorage leaf-rotation check. All other test jobs and hosted lint passed.
+This was not another CA verification failure:
+
+| Time (UTC) | Hosted witness |
+|---|---|
+| 11:36:41 | Initial TLS probe succeeds, then requests Pod deletion with `--wait=false` |
+| 11:36:45 | Next probe applies the same fixed name; kubectl warns it is **currently being deleted**, then reports `configured` and `Ready` |
+| 11:37:14 | Probe execution reports a completed/Failed Pod; subsequent attempts report `NotFound` |
+| 11:39:46 | Bounded rotation check fails because its probe no longer exists |
+
+The fixed `tls-trust-probe` name was being reused before the previous probe's
+termination grace period completed. The old Pod stayed executable briefly, but
+applying it could not cancel the pending deletion. Current-leaf verification
+correctly refused the old serving bytes during projected-volume convergence;
+the doomed probe then disappeared before the refresh completed.
+
+The follow-up correction creates each probe with
+`metadata.generateName: tls-trust-probe-` rather than applying a fixed name.
+Every wait, exec and cleanup uses that creation's returned name. Probe policy
+labels, selected read-only CA volume, ownership, curl verification and the
+three-minute convergence bound remain unchanged. Cleanup need not block other
+probes, and a previous Pod cannot be accidentally reconfigured or deleted by
+the next call.
+The follow-up implementation is recorded in `4d33cb2`; its companion evidence
+commit changes only documentation.
+
+The persistent `UT-TLS-498-008` regression requires generated identity, unchanged
+policy labels, public trust projection and read-only mount. An isolated real
+etcd/API-server spike holds a previous Pod in deletion with a finalizer, proves
+an update succeeds without clearing deletion, and executes the same
+`kubectl create -f - -o jsonpath={.metadata.name}` command twice. Before the fix
+it fails with `AlreadyExists: object is being deleted`; afterward both new names
+and UIDs are distinct and neither has a deletion timestamp. No fake API client
+is used. This spike proves API lifecycle semantics only: there is no kubelet,
+operator reconciler or upstream application, so it is not a replacement for
+the hosted Kind journey or operator integration coverage.
+
+| Follow-up receipt | Outcome |
+|---|---|
+| `pr517-corrective-failures.log` | Exact first corrective hosted failure, including deletion/update/NotFound timeline |
+| `pr517-probe-identity-red.log` | Fixed-name probe fails the persistent identity regression |
+| `pr517-probe-api-red.log` / `pr517-probe-api-green.log` | Real-API lifecycle spike fails before and passes after generated-name correction |
+| `pr517-probe-identity-green.log` | Complete affected contract suite **11/11 pass**, zero pending/skipped |
+| `pr517-probe-ci-toolchain-green.log` | Complete contract suite also passes on configured Go 1.26.6 |
+| Build, lint, codegen and compile-only | Build passes, lint has zero issues, generated manifests remain unchanged and all packages test-compile |
+
+The earlier full `make test` evidence is explicitly bound to the first
+correction. This follow-up changes only the disposable probe lifecycle and its
+unit regression; production implementation and coverage gates are unchanged.
+The full affected contract suite and real-API lifecycle check were rerun, not
+substituted with compilation or another retry of unchanged hosted code.
+
+**Hosted pipeline disposition:** first corrective run failed as recorded above;
+the fresh generated-identity correction awaits its own pushed-head pipeline.
+No successful new Kind rotation is claimed before that run completes. The prior
+successful head recorded in `VALIDATION.md` remains historical; it does not erase
+either later failed run. Review approval and merge remain the user's
 responsibility. The PR #515 remediation branch is not stacked or merged here.
 
 **Confidence: 96%** in the bounded RCA and fixture correction, based on the exact
