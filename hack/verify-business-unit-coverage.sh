@@ -38,8 +38,7 @@ for requirement in "${required_functions[@]}"; do
 	path=${requirement%%:*}
 	fn=${requirement#*:}
 	coverage=$(
-		printf '%s\n' "${coverage_output}" |
-			awk -v path="/${path}" -v fn="${fn}" 'index($1, path ":") > 0 && $2 == fn { print $3; exit }'
+		awk -v path="/${path}" -v fn="${fn}" 'index($1, path ":") > 0 && $2 == fn { print $3; exit }' <<<"${coverage_output}"
 	)
 	[[ "${coverage}" == "100.0%" ]] || fail "${path}:${fn} is ${coverage:-unreported}; expected 100.0%"
 	done
