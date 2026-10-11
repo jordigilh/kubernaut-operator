@@ -86,6 +86,7 @@ const (
 	ReasonSchemaInvalid         = "SchemaInvalid"
 	ReasonProviderUnavailable   = "ProviderUnavailable"
 	ReasonMonitoringUnavailable = "MonitoringUnavailable"
+	ReasonDNSUnavailable        = "DNSUnavailable"
 )
 
 // ResourceCapability records discovery and schema evidence for one provider

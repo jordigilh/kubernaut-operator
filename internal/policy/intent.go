@@ -42,6 +42,7 @@ type Intent struct {
 	Components           []string
 	APIServerIdentity    APIServerIdentity
 	DNSNamespace         string
+	DNS                  DNSDestination
 	StaticAPIServerCIDRs []string
 	Monitoring           []MonitoringDestination
 	ScrapeSources        []kubernautv1alpha2.MetricsScrapeSource

@@ -73,6 +73,7 @@ var _ = Describe("bounded external metrics scraper authorization", func() {
 	It("UT-AUDIT-515-SCRAPE-004: scopes OVN scraper policies to each metrics component and its own port", func() {
 		intent, err := BuildIntent("kubernaut-system", []string{"authwebhook", "datastorage", "apifrontend"}, nil)
 		Expect(err).NotTo(HaveOccurred())
+		intent.DNS = ovnDNSDestinationForTest()
 		Expect(json.Unmarshal([]byte(`{"ScrapeSources":[{"namespace":"monitoring","podLabels":{"app":"prometheus"}}],"MetricsPorts":{"datastorage":9090,"apifrontend":9180}}`), &intent)).To(Succeed())
 		objects, err := Render(DetectionResult{Provider: ProviderOVN, Ready: true}, intent)
 		Expect(err).NotTo(HaveOccurred())
@@ -140,6 +141,7 @@ var _ = Describe("bounded external metrics scraper authorization", func() {
 		}})).To(MatchError(ContainSubstring("reserved namespace identity")))
 		intent, err := BuildIntent("kubernaut-system", []string{"apifrontend"}, nil)
 		Expect(err).NotTo(HaveOccurred())
+		intent.DNS = ovnDNSDestinationForTest()
 		intent.ScrapeSources = []kubernautv1alpha2.MetricsScrapeSource{{Namespace: "monitoring", PodLabels: map[string]string{"app": "prometheus"}}}
 		for _, provider := range []Provider{ProviderCilium, ProviderCalico, ProviderOVN} {
 			for _, port := range []int32{-1, 0, 65536} {

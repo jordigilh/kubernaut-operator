@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
@@ -470,13 +471,19 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 		Expect(condition.Status).To(Equal(metav1.ConditionTrue))
 	})
 
-	It("submits OVN monitoring policies through the deployment phase", func() {
+	It("IT-AUDIT-518-DNS-001: wires discovered DNS backends and terminal denies through deployment reconciliation", func() {
 		createBYOSecrets(ctx)
 		waitForOVNPolicyCRDDeletion(ctx)
 		adminCRD := ovnPolicyCRD("AdminNetworkPolicy", "adminnetworkpolicies", true)
 		baselineCRD := ovnPolicyCRD("BaselineAdminNetworkPolicy", "baselineadminnetworkpolicies", false)
 		Expect(k8sClient.Create(ctx, adminCRD)).To(Succeed())
 		Expect(k8sClient.Create(ctx, baselineCRD)).To(Succeed())
+		dnsNamespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: resources.OCPDNSNamespace}}
+		Expect(k8sClient.Create(ctx, dnsNamespace)).To(Succeed())
+		dnsService := ovnDNSServiceFixture()
+		Expect(k8sClient.Create(ctx, dnsService)).To(Succeed())
+		dnsEndpoints := ovnDNSEndpointSliceFixture(dnsService)
+		Expect(k8sClient.Create(ctx, dnsEndpoints)).To(Succeed())
 		monitoringNamespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "monitoring-policy-ovn"}}
 		Expect(k8sClient.Create(ctx, monitoringNamespace)).To(Succeed())
 		prometheus := &corev1.Service{
@@ -536,8 +543,10 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 			cleanupNamespacedResources(cleanupCtx)
 			deleteBYOSecrets(cleanupCtx)
 			cleanupClusterScoped(cleanupCtx)
-			for _, object := range []client.Object{alertmanagerEndpoints, alertmanager, prometheus, monitoringNamespace} {
-				_ = k8sClient.Delete(cleanupCtx, object)
+			for _, object := range []client.Object{alertmanagerEndpoints, alertmanager, prometheus, monitoringNamespace,
+				dnsEndpoints, dnsService, dnsNamespace} {
+				deleteErr := k8sClient.Delete(cleanupCtx, object)
+				Expect(deleteErr == nil || apierrors.IsNotFound(deleteErr)).To(BeTrue())
 			}
 			_ = k8sClient.Delete(cleanupCtx, clusterVersion)
 			_ = k8sClient.Delete(cleanupCtx, network)
@@ -568,6 +577,33 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 			Group: "policy.networking.k8s.io", Version: "v1alpha1", Kind: "AdminNetworkPolicyList",
 		})
 		Expect(k8sClient.List(ctx, anps)).To(Succeed())
+		common := &unstructured.Unstructured{}
+		common.SetGroupVersionKind(policy.RequiredGVKs(policy.ProviderOVN)[0])
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: "kubernaut-admin"}, common)).To(Succeed())
+		dnsEgress, found, err := unstructured.NestedSlice(common.Object, "spec", "egress")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(dnsEgress).To(ContainElement(HaveKeyWithValue("name", "allow-dns")))
+		for _, item := range dnsEgress {
+			rule := item.(map[string]interface{})
+			if rule["name"] != "allow-dns" {
+				continue
+			}
+			peer := rule["to"].([]interface{})[0].(map[string]interface{})
+			selector, selectorFound, selectorErr := unstructured.NestedStringMap(peer, "pods", "podSelector", "matchLabels")
+			Expect(selectorErr).NotTo(HaveOccurred())
+			Expect(selectorFound).To(BeTrue())
+			Expect(selector).To(Equal(dnsService.Spec.Selector), "the DNS peer must come from the persisted Service")
+			Expect(rule["ports"]).To(ConsistOf(
+				map[string]interface{}{"portNumber": map[string]interface{}{"protocol": "UDP", "port": int64(5353)}},
+				map[string]interface{}{"portNumber": map[string]interface{}{"protocol": "TCP", "port": int64(5454)}},
+			))
+		}
+		Expect(dnsEgress[len(dnsEgress)-1]).To(HaveKeyWithValue("action", "Deny"))
+		commonIngress, found, err := unstructured.NestedSlice(common.Object, "spec", "ingress")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(commonIngress[len(commonIngress)-1]).To(HaveKeyWithValue("action", "Deny"))
 		var monitoringPolicy *unstructured.Unstructured
 		for index := range anps.Items {
 			if anps.Items[index].GetName() == "kubernaut-agent-monitoring" {
@@ -646,8 +682,80 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 		condition := findCondition(status.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady)
 		Expect(condition).NotTo(BeNil())
 		Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+
+		Expect(newReconciler().monitoringObjectToKubernaut(ctx, dnsService)).To(HaveLen(1))
+		Expect(newReconciler().monitoringObjectToKubernaut(ctx, dnsEndpoints)).To(HaveLen(1))
+		// Reconcile dependency changes from the actual persisted objects. Old
+		// frontend/metrics/backend ports must not survive in the desired rule.
+		dnsService.Spec.Selector = map[string]string{"test.kubernaut.ai/dns-backend": "changed"}
+		Expect(k8sClient.Update(ctx, dnsService)).To(Succeed())
+		dnsEndpoints.Ports[0].Port = ptr.To[int32](5555)
+		dnsEndpoints.Ports[1].Port = ptr.To[int32](5656)
+		Expect(k8sClient.Update(ctx, dnsEndpoints)).To(Succeed())
+		_, reconcileErr := newReconciler().Reconcile(ctx, ctrl.Request{NamespacedName: singletonKey()})
+		Expect(reconcileErr).NotTo(HaveOccurred())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(common), common)).To(Succeed())
+		updatedEgress, found, err := unstructured.NestedSlice(common.Object, "spec", "egress")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		Expect(updatedEgress).To(ContainElement(HaveKeyWithValue("ports", ConsistOf(
+			map[string]interface{}{"portNumber": map[string]interface{}{"protocol": "UDP", "port": int64(5555)}},
+			map[string]interface{}{"portNumber": map[string]interface{}{"protocol": "TCP", "port": int64(5656)}},
+		))))
+		for _, item := range updatedEgress {
+			rule := item.(map[string]interface{})
+			if rule["name"] == "allow-dns" {
+				peer := rule["to"].([]interface{})[0].(map[string]interface{})
+				selector, _, selectorErr := unstructured.NestedStringMap(peer, "pods", "podSelector", "matchLabels")
+				Expect(selectorErr).NotTo(HaveOccurred())
+				Expect(selector).To(Equal(dnsService.Spec.Selector))
+			}
+		}
+		retained := common.DeepCopy()
+		Expect(k8sClient.Delete(ctx, dnsService)).To(Succeed())
+		_, reconcileErr = newReconciler().Reconcile(ctx, ctrl.Request{NamespacedName: singletonKey()})
+		Expect(reconcileErr).To(MatchError(ContainSubstring("dns-default")))
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(common), common)).To(Succeed())
+		Expect(common.Object["spec"]).To(Equal(retained.Object["spec"]), "DNS failures must not remove existing native policies")
+		Expect(k8sClient.Get(ctx, singletonKey(), status)).To(Succeed())
+		condition = findCondition(status.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady)
+		Expect(condition).NotTo(BeNil())
+		Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+		Expect(condition.Reason).To(Equal("DNSUnavailable"))
 	})
 })
+
+func ovnDNSServiceFixture() *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "dns-default", Namespace: resources.OCPDNSNamespace},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"test.kubernaut.ai/dns-backend": "platform"},
+			Ports: []corev1.ServicePort{
+				{Name: "dns", Protocol: corev1.ProtocolUDP, Port: 53, TargetPort: intstr.FromString("dns-udp")},
+				{Name: "dns-tcp", Protocol: corev1.ProtocolTCP, Port: 53, TargetPort: intstr.FromString("dns-tcp")},
+				{Name: "metrics", Protocol: corev1.ProtocolTCP, Port: 9154, TargetPort: intstr.FromInt(9154)},
+			},
+		},
+	}
+}
+
+func ovnDNSEndpointSliceFixture(service *corev1.Service) *discoveryv1.EndpointSlice {
+	return &discoveryv1.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "dns-default-backends", Namespace: service.Namespace,
+			Labels:          map[string]string{discoveryv1.LabelServiceName: service.Name},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "v1", Kind: "Service", Name: service.Name, UID: service.UID}},
+		},
+		AddressType: discoveryv1.AddressTypeIPv4,
+		Ports: []discoveryv1.EndpointPort{
+			{Name: ptr.To("dns"), Protocol: ptr.To(corev1.ProtocolUDP), Port: ptr.To[int32](5353)},
+			{Name: ptr.To("dns-tcp"), Protocol: ptr.To(corev1.ProtocolTCP), Port: ptr.To[int32](5454)},
+			{Name: ptr.To("metrics"), Protocol: ptr.To(corev1.ProtocolTCP), Port: ptr.To[int32](9154)},
+		},
+		Endpoints: []discoveryv1.Endpoint{{Addresses: []string{"10.0.0.53"},
+			Conditions: discoveryv1.EndpointConditions{Ready: ptr.To(true)}}},
+	}
+}
 
 func ovnPolicyCRD(kind, plural string, includesPriority bool) *apiextensionsv1.CustomResourceDefinition {
 	object := &apiextensionsv1.JSONSchemaProps{Type: "object", XPreserveUnknownFields: ptr.To(true)}

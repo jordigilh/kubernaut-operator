@@ -2071,7 +2071,16 @@ func (r *KubernautReconciler) reconcileProviderPolicies(ctx context.Context, kn 
 		return r.patchProviderPolicyStatus(ctx, kn, detection, false, err)
 	}
 	if detection.Provider == policy.ProviderOVN && detection.Platform == "OpenShift" {
-		intent.DNSNamespace = resources.OCPDNSNamespace
+		// Resolve the platform Service rather than assuming app=dns or copying
+		// frontend ports. See docs/design/PR-518-OVN-ISOLATION-DNS.md.
+		intent.DNS, err = policy.ResolveDNSDestination(ctx, r.Client, client.ObjectKey{
+			Namespace: resources.OCPDNSNamespace, Name: resources.OCPDNSServiceName,
+		})
+		if err != nil {
+			detection.PolicyReason = policy.ReasonDNSUnavailable
+			detection.PolicyMessage = err.Error()
+			return r.patchProviderPolicyStatus(ctx, kn, detection, false, err)
+		}
 	}
 	monitoringDestinations, monitoringErr := r.resolveMonitoringDestinations(ctx, knV2, detection)
 	intent.Monitoring = monitoringDestinations
@@ -4271,9 +4280,9 @@ func (r *KubernautReconciler) apiServerToKubernaut(ctx context.Context, _ client
 	return reqs
 }
 
-// monitoringObjectToKubernaut maps external monitoring Service and
-// EndpointSlice changes to Kubernaut instances whose configured endpoint
-// addresses that Service. This keeps native policy rules exact when selectors,
+// monitoringObjectToKubernaut maps monitoring and platform DNS Service and
+// EndpointSlice changes to Kubernaut instances using those dependencies.
+// This keeps native policy rules exact when selectors,
 // Service ports, or resolved backends change instead of waiting for the
 // periodic reconciliation timer.
 func (r *KubernautReconciler) monitoringObjectToKubernaut(ctx context.Context, object client.Object) []reconcile.Request {
@@ -4291,7 +4300,7 @@ func (r *KubernautReconciler) monitoringObjectToKubernaut(ctx context.Context, o
 
 	list := &kubernautv1alpha2.KubernautList{}
 	if err := r.List(ctx, list); err != nil {
-		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for monitoring event",
+		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for policy dependency event",
 			"namespace", object.GetNamespace(), "service", serviceName)
 		return nil
 	}
@@ -4299,6 +4308,14 @@ func (r *KubernautReconciler) monitoringObjectToKubernaut(ctx context.Context, o
 	requests := make([]reconcile.Request, 0, len(list.Items))
 	for index := range list.Items {
 		kn := &list.Items[index]
+		if object.GetNamespace() == resources.OCPDNSNamespace && serviceName == resources.OCPDNSServiceName &&
+			kn.Spec.NetworkPolicies.Mode != kubernautv1alpha2.NetworkIsolationInherited {
+			switch kn.Spec.NetworkPolicies.Provider {
+			case "", kubernautv1alpha2.NetworkPolicyProviderAuto, kubernautv1alpha2.NetworkPolicyProviderOVN:
+				requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)})
+				continue
+			}
+		}
 		monitoring := r.monitoringConfigView(ctx, kn)
 		for _, endpoint := range monitoringEndpoints(monitoring) {
 			reference, err := policy.MonitoringServiceReferenceFromURL(endpoint.URL)

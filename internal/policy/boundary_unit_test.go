@@ -49,6 +49,7 @@ var _ = Describe("native policy boundary decisions", func() {
 			Expect(objects).To(BeEmpty())
 		}
 		intent := Intent{Namespace: "kubernaut", Components: []string{"gateway"}}
+		intent.DNS = ovnDNSDestinationForTest()
 		for _, provider := range []Provider{ProviderCilium, ProviderCalico, ProviderOVN} {
 			objects, err = Render(DetectionResult{Ready: true, Provider: provider}, intent)
 			Expect(err).NotTo(HaveOccurred())
@@ -182,7 +183,7 @@ var _ = Describe("native policy boundary decisions", func() {
 			{Name: ptr.To("metrics")}, {Name: ptr.To("metrics"), Port: ptr.To[int32](0)},
 			{Name: ptr.To("metrics"), Port: ptr.To[int32](9090), Protocol: ptr.To(corev1.ProtocolUDP)},
 		} {
-			_, _, err = endpointSliceTargetPort(discoveryv1.EndpointSlice{Ports: []discoveryv1.EndpointPort{invalid}}, "metrics", "web")
+			_, _, err = endpointSliceTargetPort(discoveryv1.EndpointSlice{Ports: []discoveryv1.EndpointPort{invalid}}, "metrics", "web", corev1.ProtocolTCP)
 			Expect(err).To(HaveOccurred())
 			slice := &discoveryv1.EndpointSlice{
 				ObjectMeta: metav1.ObjectMeta{Name: "ready-invalid", Namespace: service.Namespace,

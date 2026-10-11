@@ -11,6 +11,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -189,6 +190,9 @@ var _ = Describe("independent provider policy lifecycle", Label("unit"), func() 
 		} {
 			Expect(r.Create(ctx, object)).To(Succeed())
 		}
+		dnsService := ovnDNSServiceFixture()
+		Expect(r.Create(ctx, dnsService)).To(Succeed())
+		Expect(r.Create(ctx, ovnDNSEndpointSliceFixture(dnsService))).To(Succeed())
 		Expect(r.reconcileProviderPolicies(ctx, kn, kn)).To(Succeed())
 		policies := &unstructured.UnstructuredList{}
 		policies.SetAPIVersion("policy.networking.k8s.io/v1alpha1")
@@ -196,6 +200,13 @@ var _ = Describe("independent provider policy lifecycle", Label("unit"), func() 
 		Expect(r.List(ctx, policies)).To(Succeed())
 		Expect(policies.Items).NotTo(BeEmpty())
 		Expect(fmt.Sprint(policies.Items)).To(ContainSubstring(resources.OCPDNSNamespace))
+		Expect(fmt.Sprint(policies.Items)).To(ContainSubstring("test.kubernaut.ai/dns-backend"))
+		Expect(r.Delete(ctx, dnsService)).To(Succeed())
+		Expect(r.reconcileProviderPolicies(ctx, kn, kn)).To(MatchError(ContainSubstring("dns-default")))
+		condition := meta.FindStatusCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady)
+		Expect(condition).NotTo(BeNil())
+		Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+		Expect(condition.Reason).To(Equal(policy.ReasonDNSUnavailable))
 	})
 
 	It("UT-AUDIT-515-SCRAPE-007: derives custom metrics authorization from generated Services and excludes metrics-less components", func() {
@@ -208,6 +219,41 @@ var _ = Describe("independent provider policy lifecycle", Label("unit"), func() 
 		kn.Spec.APIFrontend.Enabled = ptr.To(false)
 		Expect(generatedMetricsPorts(kn, kn)).NotTo(HaveKey(resources.ComponentAPIFrontend))
 	})
+
+	DescribeTable("UT-AUDIT-518-DNS-WATCH-001: requeues only eligible instances on exact DNS dependency changes",
+		func(provider kubernautv1alpha2.NetworkPolicyProvider, mode string, expected bool) {
+			kn := newMinimalCR()
+			kn.Spec.NetworkPolicies.Provider = provider
+			kn.Spec.NetworkPolicies.Mode = mode
+			kn.Spec.Monitoring.Prometheus.Enabled = ptr.To(false)
+			kn.Spec.Monitoring.AlertManager.Enabled = ptr.To(false)
+			r := businessUnitReconciler(kn, interceptor.Funcs{})
+			service := ovnDNSServiceFixture()
+			for _, object := range []client.Object{service, ovnDNSEndpointSliceFixture(service)} {
+				requests := r.monitoringObjectToKubernaut(ctx, object)
+				if expected {
+					Expect(requests).To(HaveLen(1))
+					Expect(requests[0].NamespacedName).To(Equal(client.ObjectKeyFromObject(kn)))
+				} else {
+					Expect(requests).To(BeEmpty())
+				}
+			}
+			wrongNamespace := service.DeepCopy()
+			wrongNamespace.Namespace = "another-dns"
+			wrongName := service.DeepCopy()
+			wrongName.Name = "another-dns"
+			unlabeledSlice := &discoveryv1.EndpointSlice{ObjectMeta: metav1.ObjectMeta{Name: service.Name, Namespace: service.Namespace}}
+			for _, object := range []client.Object{wrongNamespace, wrongName, unlabeledSlice} {
+				Expect(r.monitoringObjectToKubernaut(ctx, object)).To(BeEmpty())
+			}
+		},
+		Entry("default provider", kubernautv1alpha2.NetworkPolicyProvider(""), "", true),
+		Entry("Auto", kubernautv1alpha2.NetworkPolicyProviderAuto, kubernautv1alpha2.NetworkIsolationRequired, true),
+		Entry("OVN", kubernautv1alpha2.NetworkPolicyProviderOVN, kubernautv1alpha2.NetworkIsolationRequired, true),
+		Entry("Inherited", kubernautv1alpha2.NetworkPolicyProviderOVN, kubernautv1alpha2.NetworkIsolationInherited, false),
+		Entry("Cilium", kubernautv1alpha2.NetworkPolicyProviderCilium, kubernautv1alpha2.NetworkIsolationRequired, false),
+		Entry("Calico", kubernautv1alpha2.NetworkPolicyProviderCalico, kubernautv1alpha2.NetworkIsolationRequired, false),
+	)
 
 	It("UT-AUDIT-515-WATCH-001: configures actual controller registration without starting an API server", func() {
 		mapper := meta.NewDefaultRESTMapper(k8sClient.Scheme().PrioritizedVersionsAllGroups())

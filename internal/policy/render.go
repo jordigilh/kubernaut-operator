@@ -64,6 +64,9 @@ func Render(result DetectionResult, intent Intent) ([]RenderedPolicy, error) {
 	case ProviderCalico:
 		return renderCalico(intent), nil
 	case ProviderOVN:
+		if err := validateDNSDestination(intent.DNS); err != nil {
+			return nil, err
+		}
 		return renderOVN(intent), nil
 	default:
 		return nil, nil
@@ -274,14 +277,23 @@ func renderOVN(intent Intent) []RenderedPolicy {
 	if instance == "" {
 		instance = intent.Namespace
 	}
-	dnsNamespace := effectiveDNSNamespace(intent)
 	subject := ovnPodsPeer(intent.Namespace, instance)
 	allowIngress := map[string]interface{}{
 		"name":   "allow-kubernaut-namespace",
 		"action": "Allow",
 		"from":   []interface{}{ovnPodsPeer(intent.Namespace, instance)},
 	}
-	allowEgress := ovnEgressRules(intent.Namespace, instance, dnsNamespace)
+	// Unlike namespace NetworkPolicy, an ANP Allow list does not imply a deny
+	// for unmatched flows. Preserve managed-peer allowances before these scoped
+	// terminal denies. See docs/design/PR-518-OVN-ISOLATION-DNS.md.
+	ingress := []interface{}{allowIngress, map[string]interface{}{
+		"name": "deny-other-pods", "action": "Deny",
+		"from": []interface{}{map[string]interface{}{"namespaces": map[string]interface{}{}}},
+	}}
+	allowEgress := append(ovnEgressRules(intent.Namespace, instance, intent.DNS), map[string]interface{}{
+		"name": "deny-other-egress", "action": "Deny",
+		"to": []interface{}{map[string]interface{}{"networks": []interface{}{"0.0.0.0/0", "::/0"}}},
+	})
 
 	anpSpec := map[string]interface{}{
 		// AdminNetworkPolicy priorities are 0-99; lower values have higher
@@ -289,12 +301,12 @@ func renderOVN(intent Intent) []RenderedPolicy {
 		// remaining valid for the v1alpha1 API.
 		"priority": float64(90),
 		"subject":  subject,
-		"ingress":  []interface{}{allowIngress},
+		"ingress":  ingress,
 		"egress":   allowEgress,
 	}
 	banpSpec := map[string]interface{}{
 		"subject": subject,
-		"ingress": []interface{}{allowIngress},
+		"ingress": ingress,
 		"egress":  allowEgress,
 	}
 	labels := policyLabelsForIntent(ProviderOVN, "namespace", intent)
@@ -315,7 +327,7 @@ func renderOVN(intent Intent) []RenderedPolicy {
 		},
 	}
 	if hasPolicyComponent(intent.Components, MonitoringAgentComponent) && len(intent.Monitoring) > 0 {
-		monitoringEgress := append(ovnEgressRules(intent.Namespace, instance, dnsNamespace), ovnMonitoringEgressRules(intent.Monitoring)...)
+		monitoringEgress := append(ovnEgressRules(intent.Namespace, instance, intent.DNS), ovnMonitoringEgressRules(intent.Monitoring)...)
 		monitoringSpec := map[string]interface{}{
 			// Priority 89 is higher precedence than the common namespace policy
 			// at 90, while remaining below platform-owned priorities.
@@ -456,7 +468,7 @@ func hasPolicyComponent(components []string, wanted string) bool {
 	return false
 }
 
-func ovnEgressRules(namespace, instance, dnsNamespace string) []interface{} {
+func ovnEgressRules(namespace, instance string, dns DNSDestination) []interface{} {
 	return []interface{}{
 		map[string]interface{}{
 			"name":   "allow-kubernetes-api",
@@ -475,19 +487,11 @@ func ovnEgressRules(namespace, instance, dnsNamespace string) []interface{} {
 		map[string]interface{}{
 			"name":   "allow-dns",
 			"action": "Allow",
-			"to": []interface{}{map[string]interface{}{
-				"pods": map[string]interface{}{
-					"namespaceSelector": map[string]interface{}{
-						"matchLabels": map[string]interface{}{
-							"kubernetes.io/metadata.name": dnsNamespace,
-						},
-					},
-					"podSelector": map[string]interface{}{
-						"matchLabels": map[string]interface{}{"app": "dns"},
-					},
-				},
-			}},
-			"ports": ovnPortRules(53, 5353),
+			"to":     []interface{}{ovnPodsPeerWithLabels(dns.Namespace, dns.ServiceSelector)},
+			"ports": []interface{}{
+				map[string]interface{}{"portNumber": map[string]interface{}{"protocol": "TCP", "port": float64(dns.TCPPort)}},
+				map[string]interface{}{"portNumber": map[string]interface{}{"protocol": "UDP", "port": float64(dns.UDPPort)}},
+			},
 		},
 	}
 }
@@ -510,10 +514,6 @@ func ovnNodePeer(label string) map[string]interface{} {
 			},
 		},
 	}
-}
-
-func ovnPortRules(ports ...int) []interface{} {
-	return ovnPortRulesForProtocols([]string{"TCP", "UDP"}, ports...)
 }
 
 func ovnTCPPortRules(ports ...int) []interface{} {
