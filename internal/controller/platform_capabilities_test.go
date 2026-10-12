@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-var _ = Describe("optional OpenShift capabilities", func() {
+var _ = Describe("optional OpenShift capabilities", Label("unit"), func() {
 	Describe("OpenShift API-server watch discovery", func() {
 		It("does not enable the watch when the API is absent", func() {
 			mapper := meta.NewDefaultRESTMapper(nil)

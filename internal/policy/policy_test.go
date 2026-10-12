@@ -184,6 +184,30 @@ var _ = Describe("common policy intent", func() {
 })
 
 var _ = Describe("native policy rendering", func() {
+	It("UT-AUDIT-518-ISOLATION-001: ends common OVN allowances with scoped ingress and egress denies", func() {
+		intent, err := BuildIntent("kubernaut-system", []string{"gateway"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		intent.DNS = ovnDNSDestinationForTest()
+		objects, err := Render(DiscoveryResultForTest(ProviderOVN, "4.22.16"), intent)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(objects).To(HaveLen(2))
+		for _, object := range objects {
+			spec := object.Object.Object["spec"].(map[string]interface{})
+			ingress := spec["ingress"].([]interface{})
+			Expect(ingress).To(HaveLen(2))
+			Expect(ingress[0]).NotTo(HaveKey("ports"), "managed peers retain the existing all-port trust domain")
+			Expect(ingress[1]).To(Equal(map[string]interface{}{
+				"name": "deny-other-pods", "action": "Deny",
+				"from": []interface{}{map[string]interface{}{"namespaces": map[string]interface{}{}}},
+			}))
+			egress := spec["egress"].([]interface{})
+			Expect(egress[len(egress)-1]).To(Equal(map[string]interface{}{
+				"name": "deny-other-egress", "action": "Deny",
+				"to": []interface{}{map[string]interface{}{"networks": []interface{}{"0.0.0.0/0", "::/0"}}},
+			}))
+		}
+	})
+
 	It("renders deterministic Cilium policies without CIDR fallback", func() {
 		intent, err := BuildIntent(policyTestInstance, []string{"gateway", "datastorage"}, nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -300,6 +324,7 @@ var _ = Describe("native policy rendering", func() {
 		Expect(err).NotTo(HaveOccurred())
 		intent.InstanceName = policyTestInstance
 		intent.DNSNamespace = "openshift-dns"
+		intent.DNS = ovnDNSDestinationForTest()
 
 		result := DiscoveryResultForTest(ProviderOVN, "4.19.3")
 		objects, err := Render(result, intent)
@@ -343,9 +368,9 @@ var _ = Describe("native policy rendering", func() {
 			dnsNamespace, _, err := unstructured.NestedString(pods, "namespaceSelector", "matchLabels", "kubernetes.io/metadata.name")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dnsNamespace).To(Equal("openshift-dns"))
-			dnsApp, _, err := unstructured.NestedString(pods, "podSelector", "matchLabels", "app")
+			dnsLabels, _, err := unstructured.NestedStringMap(pods, "podSelector", "matchLabels")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(dnsApp).To(Equal("dns"))
+			Expect(dnsLabels).To(Equal(intent.DNS.ServiceSelector))
 			Expect(rule).NotTo(HaveKey("namespaces"))
 		}
 		Expect(foundDNS).To(BeTrue())
@@ -362,6 +387,7 @@ var _ = Describe("native policy rendering", func() {
 		Expect(err).NotTo(HaveOccurred())
 		intent.InstanceName = policyTestInstance
 		intent.DNSNamespace = "openshift-dns"
+		intent.DNS = ovnDNSDestinationForTest()
 		intent.Monitoring = []MonitoringDestination{{
 			Name: "alertmanager", ServiceName: "alertmanager-main", Namespace: "openshift-monitoring",
 			ServicePort: 9094, BackendPort: 9095,
@@ -433,4 +459,9 @@ func DiscoveryResultForTest(provider Provider, version string) DetectionResult {
 		Reason:   ReasonProviderReady,
 		Version:  version,
 	}
+}
+
+func ovnDNSDestinationForTest() DNSDestination {
+	return DNSDestination{ServiceName: "dns-default", Namespace: "openshift-dns",
+		ServiceSelector: map[string]string{"test.kubernaut.ai/dns-backend": "platform"}, UDPPort: 5353, TCPPort: 5454}
 }

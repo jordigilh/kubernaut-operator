@@ -225,7 +225,7 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 					g.Expect(kubernautCondition(ctx, "ProviderDetected")).To(Equal("False"))
 				}).Should(Succeed())
 				Eventually(func(g Gomega) {
-					g.Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal("False"))
+					g.Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal(conditionTrue))
 				}).Should(Succeed())
 				Expect(noManagedPolicies(ctx)).To(Succeed())
 				return

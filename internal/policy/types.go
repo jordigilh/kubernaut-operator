@@ -86,6 +86,7 @@ const (
 	ReasonSchemaInvalid         = "SchemaInvalid"
 	ReasonProviderUnavailable   = "ProviderUnavailable"
 	ReasonMonitoringUnavailable = "MonitoringUnavailable"
+	ReasonDNSUnavailable        = "DNSUnavailable"
 )
 
 // ResourceCapability records discovery and schema evidence for one provider
@@ -219,9 +220,6 @@ func Detect(snapshot DiscoverySnapshot, requested Provider) DetectionResult {
 	} else {
 		result.Reason = firstFailureReason(failureReasons)
 	}
-	if result.Reason == "" {
-		result.Reason = ReasonNoSupportedProvider
-	}
 	if requested == ProviderAuto {
 		result.Message = "no single supported native policy provider is active; no provider policy objects were created"
 	} else {
@@ -300,7 +298,7 @@ func firstFailureReason(reasons []string) string {
 			}
 		}
 	}
-	return ""
+	return ReasonNoSupportedProvider
 }
 
 func versionSupported(provider Provider, version, platformVersion string) bool {

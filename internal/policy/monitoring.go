@@ -124,10 +124,6 @@ func ResolveMonitoringDestinations(ctx context.Context, reader client.Reader, op
 			resolutionErrors = append(resolutionErrors, fmt.Errorf("resolving %s monitoring endpoint: %w", name, err))
 			continue
 		}
-		if err := validateMonitoringDestination(options.Provider, destination); err != nil {
-			resolutionErrors = append(resolutionErrors, fmt.Errorf("resolving %s monitoring endpoint: %w", name, err))
-			continue
-		}
 		destinationsByName[name] = destination
 	}
 
@@ -139,9 +135,9 @@ func ResolveMonitoringDestinations(ctx context.Context, reader client.Reader, op
 			delete(destinationsByName, name)
 		}
 	}
-	if err := ValidateMonitoringDestinations(options.Provider, destinations); err != nil {
-		return nil, errors.Join(append(resolutionErrors, err)...)
-	}
+	// Each resolved destination has already passed provider validation, and
+	// supported normalized names are unique by seen. Rendering independently
+	// validates caller-supplied collections via ValidateMonitoringDestinations.
 	return destinations, errors.Join(resolutionErrors...)
 }
 
@@ -168,7 +164,7 @@ func resolveMonitoringEndpoint(ctx context.Context, reader client.Reader, provid
 			return MonitoringDestination{}, fmt.Errorf("resolving monitoring service %s/%s targetPort: %w", namespace, serviceName, err)
 		}
 	}
-	return MonitoringDestination{
+	destination := MonitoringDestination{
 		Name:            endpoint.Name,
 		ServiceName:     serviceName,
 		Namespace:       namespace,
@@ -176,7 +172,8 @@ func resolveMonitoringEndpoint(ctx context.Context, reader client.Reader, provid
 		BackendPort:     backendPort,
 		ServiceSelector: copyStringMap(service.Spec.Selector),
 		ServicePorts:    servicePorts,
-	}, nil
+	}
+	return destination, validateMonitoringDestination(provider, destination)
 }
 
 // ValidateMonitoringDestinations checks the provider-specific representation
@@ -414,12 +411,16 @@ func resolveNamedTargetPort(ctx context.Context, reader client.Reader, service *
 	}
 	var resolved int32
 	readyEndpoint := false
+	protocol := corev1.Protocol(servicePort.Protocol)
+	if protocol == "" {
+		protocol = corev1.ProtocolTCP
+	}
 	for _, slice := range slices.Items {
 		if !endpointSliceHasReadyEndpoint(slice) {
 			continue
 		}
 		readyEndpoint = true
-		port, found, err := endpointSliceTargetPort(slice, servicePort.ServicePortName, targetPortName)
+		port, found, err := endpointSliceTargetPort(slice, servicePort.ServicePortName, targetPortName, protocol)
 		if err != nil {
 			return 0, err
 		}
@@ -448,7 +449,7 @@ func endpointSliceHasReadyEndpoint(slice discoveryv1.EndpointSlice) bool {
 	return false
 }
 
-func endpointSliceTargetPort(slice discoveryv1.EndpointSlice, servicePortName, targetPortName string) (int32, bool, error) {
+func endpointSliceTargetPort(slice discoveryv1.EndpointSlice, servicePortName, targetPortName string, expectedProtocol corev1.Protocol) (int32, bool, error) {
 	for _, port := range slice.Ports {
 		if port.Name == nil || *port.Name != servicePortName {
 			continue
@@ -457,8 +458,8 @@ func endpointSliceTargetPort(slice discoveryv1.EndpointSlice, servicePortName, t
 		if port.Protocol != nil {
 			protocol = *port.Protocol
 		}
-		if protocol != corev1.ProtocolTCP || port.Port == nil || *port.Port < 1 || *port.Port > 65535 {
-			return 0, false, fmt.Errorf("named targetPort %q has no valid TCP backend port", targetPortName)
+		if protocol != expectedProtocol || port.Port == nil || *port.Port < 1 || *port.Port > 65535 {
+			return 0, false, fmt.Errorf("named targetPort %q has no valid %s backend port", targetPortName, expectedProtocol)
 		}
 		return *port.Port, true, nil
 	}

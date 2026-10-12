@@ -51,7 +51,8 @@ done
 for artifact in \
 	'internal/resources/tls.go' \
 	'internal/controller/kubernaut_controller.go' \
-	'internal/controller/tls_source_integration_test.go' \
+	'internal/controller/tls_source_unit_test.go' \
+	'internal/controller/runtime_tls_wiring_integration_test.go' \
 	'internal/resources/tls_test.go' \
 	'test/e2e/kind/' \
 	'.github/workflows/test.yml' \
@@ -114,7 +115,9 @@ for artifact in \
 	'internal/resources/tls.go' \
 	'internal/resources/tls_certmanager.go' \
 	'internal/resources/tls_certmanager_test.go' \
-	'internal/controller/tls_source_integration_test.go' \
+	'internal/controller/tls_source_unit_test.go' \
+	'internal/controller/runtime_tls_wiring_integration_test.go' \
+	'internal/controller/certmanager_lifecycle_test.go' \
 	'internal/controller/kubernaut_lifecycle_test.go' \
 	'internal/resources/webhooks_test.go' \
 	'test/e2e/kind/' \
@@ -140,15 +143,19 @@ for test_id in \
 	'UT-TLS-491-009' \
 	'UT-TLS-491-010' \
 	'UT-TLS-491-011' \
-	'IT-TLS-MANUAL-001' \
-	'IT-TLS-MANUAL-002' \
-	'IT-TLS-WEBHOOK-001' \
-	'IT-TLS-PARITY-001' \
-	'IT-TLS-CERTMANAGER-READY-001' \
-	'IT-TLS-GAP-001' \
-	'IT-TLS-GAP-002' \
-	'IT-TLS-ROTATION-GAP-001' \
-	'IT-TLS-ROTATION-GAP-002' \
+	'UT-TLS-MANUAL-001' \
+	'UT-TLS-MANUAL-002' \
+	'UT-TLS-WEBHOOK-001' \
+	'UT-TLS-PARITY-001' \
+	'UT-TLS-CERTMANAGER-READY-001' \
+	'UT-TLS-GAP-001' \
+	'UT-TLS-GAP-002' \
+	'UT-TLS-ROTATION-GAP-001' \
+	'UT-TLS-ROTATION-GAP-002' \
+	'IT-TLS-AUDIT-515-001' \
+	'IT-TLS-AUDIT-515-002' \
+	'IT-TLS-AUDIT-515-003' \
+	'IT-TLS-AUDIT-515-004' \
 	'IT-TLS-GAP-003' \
 	'E2E-TLS-CERTMANAGER-001' \
 	'E2E-TLS-CERTMANAGER-002' \
@@ -202,13 +209,13 @@ for test_id in \
 	'UT-MON-513-002' \
 	'UT-MON-513-003' \
 	'UT-MON-513-004' \
-	'IT-MON-513-001' \
-	'IT-MON-513-002' \
-	'IT-MON-513-003' \
-	'IT-MON-513-004' \
-	'IT-MON-513-005' \
-	'IT-MON-513-006' \
-	'IT-MON-513-007' \
+	'UT-MON-513-CTRL-001' \
+	'UT-MON-513-CTRL-002' \
+	'UT-MON-513-CTRL-003' \
+	'UT-MON-513-CTRL-004' \
+	'UT-MON-513-CTRL-005' \
+	'UT-MON-513-CTRL-006' \
+	'UT-MON-513-CTRL-007' \
 	'IT-MON-513-008' \
 	'IT-MON-513-009' \
 	'IT-MON-513-010'; do
@@ -237,7 +244,7 @@ for test_id in UT-OWN-514-001 UT-OWN-514-002 UT-OWN-514-003 UT-OWN-514-004 UT-OW
 	IT-OWN-514-006 IT-OWN-514-007 IT-OWN-514-008 IT-OWN-514-009 IT-OWN-514-010 \
 	IT-OWN-514-011 IT-OWN-514-012 IT-OWN-514-013 IT-OWN-514-014 IT-OWN-514-015 \
 	IT-OWN-514-016 IT-OWN-514-017 IT-OWN-514-018 IT-OWN-514-019 IT-OWN-514-020 \
-	IT-OWN-514-021 IT-OWN-514-022 IT-OWN-514-023 E2E-OWN-514-001; do
+	IT-OWN-514-021 IT-OWN-514-022 UT-OWN-514-023 E2E-OWN-514-001; do
 	grep -R -n --include='*_test.go' -F "${test_id}" "${repo_root}/internal" "${repo_root}/test" >/dev/null \
 		|| fail "ownership evidence ID ${test_id} has no executable test"
 	grep -Fq "${test_id}" "${ownership_matrix}" || fail "ownership matrix omits ${test_id}"

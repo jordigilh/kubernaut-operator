@@ -72,6 +72,21 @@ func CertManagerTLSProvisioningEnabled(kn *kubernautv1alpha2.Kubernaut) bool {
 	return cfg.Provisioning.Enabled == nil || *cfg.Provisioning.Enabled
 }
 
+// CertManagerBootstrapIssuerNames reports only the internal Issuers provisioned
+// by this CR. Automatic external issuer selection uses these identities together
+// with exact controller ownership, never names or labels alone.
+func CertManagerBootstrapIssuerNames(kn *kubernautv1alpha2.Kubernaut) []string {
+	if !CertManagerTLSProvisioningEnabled(kn) {
+		return nil
+	}
+	cfg := kn.Spec.TLS.CertManager
+	if cfg == nil {
+		cfg = &kubernautv1alpha2.CertManagerTLSConfig{}
+	}
+	settings := certManagerProvisioningValuesFor(kn, cfg)
+	return []string{settings.bootstrapIssuerName, settings.caIssuerName}
+}
+
 // DataStorageSigningSecretName resolves the chart-compatible AU-9 signing
 // Secret name. Explicit development and Helm hook modes use the dedicated
 // RSA signing Secret; legacy OpenShift/cert-manager reference modes retain the

@@ -19,6 +19,7 @@ package webhook
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -26,7 +27,9 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
@@ -105,5 +108,39 @@ var _ = Describe("NewSingletonValidator wiring", func() {
 		resp := wh.Handle(context.Background(), req)
 
 		Expect(resp.Allowed).To(BeFalse())
+	})
+
+	It("UT-AUDIT-515-ADMISSION-001: allows non-CREATE operations without performing an admission-time singleton read", func() {
+		api := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+			List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+				Fail("updates and deletion must not depend on a CREATE-only admission check")
+				return nil
+			},
+		}).Build()
+		validator := NewSingletonValidator(api, scheme)
+		for _, operation := range []admissionv1.Operation{admissionv1.Update, admissionv1.Delete, admissionv1.Connect} {
+			response := validator.Handle(context.Background(), admission.Request{AdmissionRequest: admissionv1.AdmissionRequest{Operation: operation}})
+			Expect(response.Allowed).To(BeTrue())
+		}
+	})
+
+	It("UT-AUDIT-515-ADMISSION-002: rejects malformed objects and fails closed on authoritative API errors", func() {
+		api := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+			List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+				return fmt.Errorf("authoritative singleton API unavailable")
+			},
+		}).Build()
+		validator := NewSingletonValidator(api, scheme)
+		request := admission.Request{AdmissionRequest: admissionv1.AdmissionRequest{Operation: admissionv1.Create,
+			Object: runtime.RawExtension{Raw: []byte("not-json")}}}
+		response := validator.Handle(context.Background(), request)
+		Expect(response.Allowed).To(BeFalse())
+		Expect(response.Result.Code).To(Equal(int32(400)))
+		response = validator.Handle(context.Background(), createRequestFor(&kubernautv1alpha2.Kubernaut{
+			ObjectMeta: metav1.ObjectMeta{Name: kubernautv1alpha2.SingletonName},
+		}))
+		Expect(response.Allowed).To(BeFalse())
+		Expect(response.Result.Code).To(Equal(int32(500)))
+		Expect(response.Result.Message).To(ContainSubstring("authoritative singleton API unavailable"))
 	})
 })

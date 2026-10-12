@@ -23,6 +23,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -36,13 +37,14 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
-var _ = Describe("Telemetry controller material lifecycle", func() {
+var _ = Describe("Telemetry controller material lifecycle", Label("unit"), func() {
 	It("validates administrator-owned CA and client Secrets without mutating them", func() {
 		kn := telemetryUnitKubernaut()
 		kn.Spec.DataStorage.Telemetry = telemetrySecretSpec()
@@ -95,7 +97,7 @@ var _ = Describe("Telemetry controller material lifecycle", func() {
 		Expect(r.validateTelemetrySecrets(context.Background(), kn)).To(MatchError(ContainSubstring("client authentication")))
 	})
 
-	It("IT-TELEMETRY-TLS-008 rejects malformed ambient trust before a rollout revision is accepted", func() {
+	It("UT-TELEMETRY-TLS-008 rejects malformed ambient trust before a rollout revision is accepted", func() {
 		kn := telemetryUnitKubernaut()
 		kn.Spec.DataStorage.Telemetry = kubernautv1alpha2.TelemetrySpec{Endpoint: "otel-collector:4317"}
 		trust := telemetryTrustBundle(kn.Namespace)
@@ -164,7 +166,7 @@ var _ = Describe("Telemetry controller material lifecycle", func() {
 		Expect(r.validateTelemetryAmbientTrust(context.Background(), kn)).To(Succeed())
 	})
 
-	It("IT-TELEMETRY-TLS-005/007 maps referenced Secret events and changes only non-sensitive revision metadata", func() {
+	It("UT-TELEMETRY-TLS-005/007 maps referenced Secret events and changes only non-sensitive revision metadata", func() {
 		kn := telemetryUnitKubernaut()
 		kn.Spec.DataStorage.Telemetry = telemetrySecretSpec()
 		ca := telemetryCASecret("telemetry-ca", "ca.crt")
@@ -287,7 +289,181 @@ var _ = Describe("Telemetry controller material lifecycle", func() {
 		kn.Spec.TLS.AdministratorManaged.InternalCASecretName = ""
 		Expect(ambientTrustConfigMapRelevant(kn, trust)).To(BeTrue())
 	})
+
+	It("UT-AUDIT-515-TELEMETRY-001: rejects invalid certificates, missing client certificates and out-of-window credentials", func() {
+		_, err := parseTelemetryCertificates(nil)
+		Expect(err).To(HaveOccurred())
+		_, err = parseTelemetryCertificates(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("bad DER")}))
+		Expect(err).To(HaveOccurred())
+		Expect(validateTelemetryClientSecret(&corev1.Secret{})).To(HaveOccurred())
+		clientSecret := telemetryClientSecret()
+		clientSecret.Data[corev1.TLSPrivateKeyKey] = []byte("bad key")
+		Expect(validateTelemetryClientSecret(clientSecret)).To(HaveOccurred())
+		for _, isCA := range []bool{false, true} {
+			template := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Now().Add(-2 * time.Hour),
+				NotAfter: time.Now().Add(-time.Hour), BasicConstraintsValid: true, IsCA: isCA,
+				KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign}
+			secret := telemetrySecretForTemplate(template)
+			Expect(validateTelemetryClientSecret(secret)).To(MatchError(ContainSubstring("expired")))
+			if isCA {
+				Expect(validateTelemetryCASecret(secret, corev1.TLSCertKey)).To(MatchError(ContainSubstring("expired")))
+			}
+		}
+		ca := telemetrySecretForTemplate(&x509.Certificate{SerialNumber: big.NewInt(2),
+			NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+			BasicConstraintsValid: true, IsCA: true, KeyUsage: x509.KeyUsageCertSign})
+		Expect(validateTelemetryClientSecret(ca)).To(MatchError(ContainSubstring("CA certificate")))
+	})
+
+	It("UT-AUDIT-515-TELEMETRY-002: rejects unreadable material and distinguishes manual ConfigMap and Secret revision sources", func() {
+		kn := telemetryUnitKubernaut()
+		kn.Spec.DataStorage.Telemetry = telemetrySecretSpec()
+		r := newTelemetryUnitReconciler(kn)
+		Expect(r.validateTelemetrySecrets(ctx, kn)).To(HaveOccurred())
+		kn.Spec.TLS.Mode = unitInvalidTLSMode
+		Expect(r.validateTelemetryAmbientTrust(ctx, kn)).To(HaveOccurred())
+		_, err := r.telemetryAmbientTrustRevision(ctx, kn)
+		Expect(err).To(HaveOccurred())
+		Expect(ambientTrustSecretReferenced(kn, "internal-ca")).To(BeFalse())
+		kn.Spec.TLS.Mode = ""
+		Expect(ambientTrustSecretReferenced(kn, "internal-ca")).To(BeFalse())
+		kn.Spec.DataStorage.Telemetry.Endpoint = "stdout"
+		Expect(ambientTrustSecretReferenced(kn, "internal-ca")).To(BeFalse())
+		kn.Spec.DataStorage.Telemetry.Endpoint = unitTelemetryEndpoint
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
+		Expect(r.validateTelemetryAmbientTrust(ctx, kn)).To(HaveOccurred())
+		revision, err := r.telemetryAmbientTrustRevision(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(revision).To(ContainSubstring("@missing"))
+		trust := telemetryTrustBundle(kn.Namespace)
+		trust.Name = resources.InterServiceCAConfigMapName
+		trust.Data = map[string]string{"ca.crt": string(telemetryCAPEM())}
+		Expect(r.Create(ctx, trust)).To(Succeed())
+		Expect(r.validateTelemetryAmbientTrust(ctx, kn)).To(Succeed())
+		_, err = r.telemetryAmbientTrustRevision(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		kn.Spec.TLS.AdministratorManaged = &kubernautv1alpha2.AdministratorManagedTLSConfig{InternalCASecretName: "absent"}
+		_, err = r.telemetryAmbientTrustRevision(ctx, kn)
+		Expect(err).To(HaveOccurred())
+		_, err = r.telemetryMaterialRevisions(ctx, kn)
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("UT-AUDIT-515-TELEMETRY-003: prevents rollout on read failures or expired/non-CA ambient trust", func() {
+		kn := telemetryUnitKubernaut()
+		kn.Spec.DataStorage.Telemetry = telemetrySecretSpec()
+		trust := telemetryTrustBundle(kn.Namespace)
+		r := newTelemetryUnitReconciler(kn, trust)
+		_, err := r.telemetryMaterialRevisions(ctx, kn)
+		Expect(err).To(MatchError(ContainSubstring("reading telemetry Secret")))
+		for _, isCA := range []bool{false, true} {
+			template := &x509.Certificate{SerialNumber: big.NewInt(3), IsCA: isCA, BasicConstraintsValid: true,
+				NotBefore: time.Now().Add(-2 * time.Hour), NotAfter: time.Now().Add(-time.Hour), KeyUsage: x509.KeyUsageCertSign}
+			trust.Data["service-ca.crt"] = string(telemetrySecretForTemplate(template).Data[corev1.TLSCertKey])
+			Expect(r.Update(ctx, trust)).To(Succeed())
+			Expect(r.validateTelemetryAmbientTrust(ctx, kn)).To(HaveOccurred())
+		}
+		for _, failOnRead := range []int{1, 2} {
+			reads := 0
+			r = businessUnitReconciler(kn, interceptor.Funcs{Get: func(ctx context.Context, api client.WithWatch,
+				key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+				if _, ok := object.(*corev1.ConfigMap); ok {
+					reads++
+					if reads == failOnRead {
+						return fmt.Errorf("injected ambient read failure")
+					}
+				}
+				return api.Get(ctx, key, object, options...)
+			}})
+			trust = telemetryTrustBundle(kn.Namespace)
+			Expect(r.Create(ctx, trust)).To(Succeed())
+			_, err = r.telemetryMaterialRevisions(ctx, kn)
+			Expect(err).To(MatchError(ContainSubstring("injected ambient read failure")))
+		}
+	})
+
+	It("UT-AUDIT-515-TELEMETRY-004: preserves error outcomes during trust preparation and pending status writes", func() {
+		for _, name := range []string{resources.InterServiceCAConfigMapName, resources.TrustBundleConfigMapName} {
+			kn := newMinimalCR()
+			kn.Spec.DataStorage.Telemetry.Endpoint = unitTelemetryEndpoint
+			r := businessUnitReconciler(kn, interceptor.Funcs{Create: func(ctx context.Context, api client.WithWatch,
+				object client.Object, options ...client.CreateOption) error {
+				if object.GetName() == name {
+					return fmt.Errorf("injected trust write failure")
+				}
+				return api.Create(ctx, object, options...)
+			}})
+			Expect(r.ensureTelemetryAmbientTrustSource(ctx, kn)).To(MatchError(ContainSubstring("injected trust write failure")))
+			_, err, handled := r.validateTelemetryTrust(ctx, kn)
+			Expect(handled).To(BeTrue())
+			Expect(err).NotTo(HaveOccurred())
+			kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
+			Expect(r.ensureTelemetryAmbientTrustSource(ctx, kn)).To(MatchError(ContainSubstring("injected trust write failure")))
+		}
+		kn := newMinimalCR()
+		kn.Spec.DataStorage.Telemetry.Endpoint = unitTelemetryEndpoint
+		kn.Spec.TLS.Mode = unitInvalidTLSMode
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
+		Expect(r.ensureTelemetryAmbientTrustSource(ctx, kn)).To(HaveOccurred())
+		kn.Spec.TLS.Mode = ""
+		Expect(r.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: resources.TrustBundleConfigMapName,
+			Namespace: kn.Namespace}, Data: map[string]string{"service-ca.crt": "bad PEM"}})).To(Succeed())
+		_, err, handled := r.validateTelemetryTrust(ctx, kn)
+		Expect(handled).To(BeTrue())
+		Expect(err).NotTo(HaveOccurred())
+		kn.Spec.DataStorage.Telemetry = telemetrySecretSpec()
+		_, err, handled = r.validateTelemetryMaterial(ctx, kn, kn)
+		Expect(handled).To(BeTrue())
+		Expect(err).NotTo(HaveOccurred())
+		r = businessUnitReconciler(kn, interceptor.Funcs{SubResourcePatch: func(context.Context, client.Client,
+			string, client.Object, client.Patch, ...client.SubResourcePatchOption) error {
+			return fmt.Errorf("injected status failure")
+		}})
+		_, err = r.setTelemetryAmbientTrustPending(ctx, kn, errTelemetryAmbientTrustPending)
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("UT-AUDIT-515-TELEMETRY-005: maps no unrelated events and reports list failures without enqueueing", func() {
+		kn := newMinimalCR()
+		r := businessUnitReconciler(kn, interceptor.Funcs{List: func(context.Context, client.WithWatch,
+			client.ObjectList, ...client.ListOption) error {
+			return fmt.Errorf("injected list failure")
+		}})
+		Expect(r.telemetrySecretToKubernaut(ctx, nil)).To(BeEmpty())
+		Expect(r.telemetrySecretToKubernaut(ctx, &corev1.Secret{})).To(BeEmpty())
+		Expect(r.telemetryAmbientConfigMapToKubernaut(ctx, &corev1.Secret{})).To(BeEmpty())
+		Expect(r.telemetryAmbientConfigMapToKubernaut(ctx, telemetryTrustBundle(kn.Namespace))).To(BeEmpty())
+		Expect(ambientTrustConfigMapRelevant(kn, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "unrelated"}})).To(BeFalse())
+		revisions := telemetryMaterialRevisionSet{}
+		revisions.set(resources.ComponentGateway, "gateway-revision")
+		revisions.set(resources.ComponentKubernautAgent, "agent-revision")
+		Expect(revisions.Gateway).To(Equal("gateway-revision"))
+		Expect(revisions.KubernautAgent).To(Equal("agent-revision"))
+	})
+
+	It("UT-AUDIT-515-TELEMETRY-006: rejects an invalid trailing client-chain certificate even when the leaf key pair is valid", func() {
+		secret := telemetryClientSecret()
+		secret.Data[corev1.TLSCertKey] = append(secret.Data[corev1.TLSCertKey],
+			pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("invalid trailing DER")})...)
+		Expect(validateTelemetryClientSecret(secret)).To(MatchError(ContainSubstring("invalid client certificate")))
+	})
 })
+
+const (
+	unitInvalidTLSMode    kubernautv1alpha2.TLSMode = "invalid"
+	unitTelemetryEndpoint string                    = "otel:4317"
+)
+
+func telemetrySecretForTemplate(template *x509.Certificate) *corev1.Secret {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	return &corev1.Secret{Data: map[string][]byte{
+		corev1.TLSCertKey:       pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		corev1.TLSPrivateKeyKey: pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}),
+	}}
+}
 
 func telemetryUnitKubernaut() *kubernautv1alpha2.Kubernaut {
 	return &kubernautv1alpha2.Kubernaut{

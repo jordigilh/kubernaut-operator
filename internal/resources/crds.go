@@ -56,9 +56,11 @@ func ensureCRDs(ctx context.Context, cfg *rest.Config, crdFS fs.FS) error {
 	if err != nil {
 		return fmt.Errorf("creating dynamic client for CRDs: %w", err)
 	}
-	crdClient := dyn.Resource(crdGVR)
+	return ensureEmbeddedCRDs(ctx, dyn.Resource(crdGVR), crdFS)
+}
 
-	entries, err := fs.ReadDir(crdFS, "crds")
+func ensureEmbeddedCRDs(ctx context.Context, crdClient dynamic.NamespaceableResourceInterface, source fs.FS) error {
+	entries, err := fs.ReadDir(source, "crds")
 	if err != nil {
 		return fmt.Errorf("reading embedded CRD directory: %w", err)
 	}
@@ -68,7 +70,7 @@ func ensureCRDs(ctx context.Context, cfg *rest.Config, crdFS fs.FS) error {
 			continue
 		}
 
-		data, err := fs.ReadFile(crdFS, "crds/"+entry.Name())
+		data, err := fs.ReadFile(source, "crds/"+entry.Name())
 		if err != nil {
 			return fmt.Errorf("reading embedded CRD %s: %w", entry.Name(), err)
 		}

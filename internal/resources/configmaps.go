@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/yaml"
 
@@ -1232,6 +1233,17 @@ func marshalYAML(v any) (string, error) {
 	return string(b), nil
 }
 
+// yamlConfigMap is the shared serialization boundary for heterogeneous,
+// strongly typed service configs. The any parameter is confined to the YAML
+// library boundary; builders keep their concrete production config structs.
+func yamlConfigMap(metadata metav1.ObjectMeta, key, errorContext string, config any) (*corev1.ConfigMap, error) {
+	data, err := marshalYAML(config)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", errorContext, err)
+	}
+	return &corev1.ConfigMap{ObjectMeta: metadata, Data: map[string]string{key: data}}, nil
+}
+
 // GatewayConfigMap builds the gateway-config ConfigMap.
 func GatewayConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
@@ -1292,14 +1304,7 @@ func GatewayConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.K
 		Telemetry: resolveTelemetryConfig(knV2.Spec.Gateway.Config.Telemetry),
 		Debug:     debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
-	data, err := marshalYAML(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("gateway config: %w", err)
-	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "gateway-config", ComponentGateway),
-		Data:       map[string]string{"config.yaml": data},
-	}, nil
+	return yamlConfigMap(ObjectMeta(kn, "gateway-config", ComponentGateway), "config.yaml", "gateway config", cfg)
 }
 
 // DataStorageConfigMap builds the data-storage config ConfigMap. The dbName and
@@ -1351,14 +1356,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 		Telemetry:                resolveTelemetryConfig(knV2.Spec.DataStorage.Telemetry),
 		Debug:                    debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
-	data, err := marshalYAML(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("datastorage config: %w", err)
-	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "datastorage-config", ComponentDataStorage),
-		Data:       map[string]string{"config.yaml": data},
-	}, nil
+	return yamlConfigMap(ObjectMeta(kn, "datastorage-config", ComponentDataStorage), "config.yaml", "datastorage config", cfg)
 }
 
 func dataStorageRetentionConfig(kn *kubernautv1alpha2.Kubernaut) *dataStorageRetentionYAML {
@@ -1467,14 +1465,7 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha
 		Rego:  rego,
 		Debug: debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
-	data, err := marshalYAML(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("aianalysis config: %w", err)
-	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "aianalysis-config", ComponentAIAnalysis),
-		Data:       map[string]string{"config.yaml": data},
-	}, nil
+	return yamlConfigMap(ObjectMeta(kn, "aianalysis-config", ComponentAIAnalysis), "config.yaml", "aianalysis config", cfg)
 }
 
 // SignalProcessingConfigMap builds the signalprocessing-config ConfigMap.
@@ -1509,14 +1500,7 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv
 		Fleet: resolveSignalProcessingFleetConfig(knV2),
 		Debug: debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
-	data, err := marshalYAML(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("signalprocessing config: %w", err)
-	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "signalprocessing-config", ComponentSignalProcessing),
-		Data:       map[string]string{"config.yaml": data},
-	}, nil
+	return yamlConfigMap(ObjectMeta(kn, "signalprocessing-config", ComponentSignalProcessing), "config.yaml", "signalprocessing config", cfg)
 }
 
 // ProactiveSignalMappingsConfigMap builds the default signalprocessing-proactive-signal-mappings
@@ -1600,14 +1584,7 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kub
 		Fleet:            resolveFleetConfig(knV2, effectiveFleetOAuth2SecretRef(knV2.Spec.RemediationOrchestrator.Fleet, ""), InterServiceTLSCAFileFor(knV2)),
 		Debug:            debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
-	data, err := marshalYAML(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("remediationorchestrator config: %w", err)
-	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "remediationorchestrator-config", ComponentRemediationOrchestrator),
-		Data:       map[string]string{"remediationorchestrator.yaml": data},
-	}, nil
+	return yamlConfigMap(ObjectMeta(kn, "remediationorchestrator-config", ComponentRemediationOrchestrator), "remediationorchestrator.yaml", "remediationorchestrator config", cfg)
 }
 
 // WorkflowExecutionConfigMap builds the workflowexecution-config ConfigMap.
@@ -1663,14 +1640,7 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernaut
 	}
 	cfg.Fleet = resolveWEFleetConfig(knV2, InterServiceTLSCAFileFor(knV2))
 	cfg.Debug = debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled}
-	data, err := marshalYAML(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("workflowexecution config: %w", err)
-	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "workflowexecution-config", ComponentWorkflowExecution),
-		Data:       map[string]string{"workflowexecution.yaml": data},
-	}, nil
+	return yamlConfigMap(ObjectMeta(kn, "workflowexecution-config", ComponentWorkflowExecution), "workflowexecution.yaml", "workflowexecution config", cfg)
 }
 
 // EffectivenessMonitorConfigMap builds the effectivenessmonitor-config ConfigMap.
@@ -1707,14 +1677,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubern
 		ConnectionTimeout:   "10s",
 		TLSCaFile:           effectiveEMTLSCaFile(knV2, effectiveEMDefaultTLSCAFile(kn)),
 	}
-	data, err := marshalYAML(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("effectivenessmonitor config: %w", err)
-	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "effectivenessmonitor-config", ComponentEffectivenessMonitor),
-		Data:       map[string]string{"effectivenessmonitor.yaml": data},
-	}, nil
+	return yamlConfigMap(ObjectMeta(kn, "effectivenessmonitor-config", ComponentEffectivenessMonitor), "effectivenessmonitor.yaml", "effectivenessmonitor config", cfg)
 }
 
 // NotificationControllerConfigMap builds the notification-controller-config ConfigMap.
@@ -1755,14 +1718,7 @@ func NotificationControllerConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kube
 		Datastorage: ds,
 		Debug:       debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
-	data, err := marshalYAML(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("notification-controller config: %w", err)
-	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "notification-controller-config", ComponentNotification),
-		Data:       map[string]string{"config.yaml": data},
-	}, nil
+	return yamlConfigMap(ObjectMeta(kn, "notification-controller-config", ComponentNotification), "config.yaml", "notification-controller config", cfg)
 }
 
 // NotificationRoutingConfigMap builds the notification-routing-config ConfigMap.
@@ -1773,7 +1729,7 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.Conf
 	if channel == "" {
 		channel = "#kubernaut-alerts"
 	}
-	var routing string
+	metadata := ObjectMeta(kn, "notification-routing-config", ComponentNotification)
 	if slack.SecretName != "" {
 		cfg := notificationRoutingSlackYAML{
 			Route: notificationRoutingSlackRoute{
@@ -1786,30 +1742,17 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.Conf
 		}
 		cfg.Receivers[0].Slack.Channel = channel
 		cfg.Receivers[0].Slack.CredentialsSecretName = slack.SecretName
-		var err error
-		routing, err = marshalYAML(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("notification-routing slack config: %w", err)
-		}
-	} else {
-		console := notificationRoutingConsoleYAML{
-			Route: notificationRoutingSlackRoute{
-				Receiver: "console",
-			},
-			Receivers: []notificationRoutingConsoleReceiver{
-				{Name: "console"},
-			},
-		}
-		var err error
-		routing, err = marshalYAML(console)
-		if err != nil {
-			return nil, fmt.Errorf("notification-routing console config: %w", err)
-		}
+		return yamlConfigMap(metadata, "routing.yaml", "notification-routing slack config", cfg)
 	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "notification-routing-config", ComponentNotification),
-		Data:       map[string]string{"routing.yaml": routing},
-	}, nil
+	console := notificationRoutingConsoleYAML{
+		Route: notificationRoutingSlackRoute{
+			Receiver: "console",
+		},
+		Receivers: []notificationRoutingConsoleReceiver{
+			{Name: "console"},
+		},
+	}
+	return yamlConfigMap(metadata, "routing.yaml", "notification-routing console config", console)
 }
 
 // KubernautAgentConfigMap builds the kubernaut-agent-config ConfigMap.
@@ -2023,14 +1966,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1a
 
 	cfg.Interactive = kaInteractiveConfig(ka.Interactive)
 
-	data, err := marshalYAML(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("kubernaut-agent config: %w", err)
-	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "kubernaut-agent-config", ComponentKubernautAgent),
-		Data:       map[string]string{"config.yaml": data},
-	}, nil
+	return yamlConfigMap(ObjectMeta(kn, "kubernaut-agent-config", ComponentKubernautAgent), "config.yaml", "kubernaut-agent config", cfg)
 }
 
 // KubernautAgentLLMRuntimeConfigMap builds the kubernaut-agent-llm-runtime ConfigMap
@@ -2115,14 +2051,7 @@ func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1
 			cfg.PhaseModels[phase] = resolveKAPhaseModelOverride(kn, phase, ref, kaProfile)
 		}
 	}
-	data, err := marshalYAML(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("kubernaut-agent-llm-runtime config: %w", err)
-	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, KubernautAgentLLMRuntimeConfigName(kn), ComponentKubernautAgent),
-		Data:       map[string]string{"llm-runtime.yaml": data},
-	}, nil
+	return yamlConfigMap(ObjectMeta(kn, KubernautAgentLLMRuntimeConfigName(kn), ComponentKubernautAgent), "llm-runtime.yaml", "kubernaut-agent-llm-runtime config", cfg)
 }
 
 // AuthWebhookConfigMap builds the authwebhook-config ConfigMap.
@@ -2151,14 +2080,7 @@ func AuthWebhookConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 		Datastorage: ds,
 		Debug:       debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
-	data, err := marshalYAML(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("authwebhook config: %w", err)
-	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "authwebhook-config", ComponentAuthWebhook),
-		Data:       map[string]string{"authwebhook.yaml": data},
-	}, nil
+	return yamlConfigMap(ObjectMeta(kn, "authwebhook-config", ComponentAuthWebhook), "authwebhook.yaml", "authwebhook config", cfg)
 }
 
 // InterServiceCAConfigMap returns the ConfigMap used for OCP service-ca
@@ -2605,14 +2527,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 		Debug:          debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
 
-	data, err := marshalYAML(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("apifrontend config: %w", err)
-	}
-	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "apifrontend-config", ComponentAPIFrontend),
-		Data:       map[string]string{"config.yaml": data},
-	}, nil
+	return yamlConfigMap(ObjectMeta(kn, "apifrontend-config", ComponentAPIFrontend), "config.yaml", "apifrontend config", cfg)
 }
 
 // afSeverityTriageConfig builds the severityTriage config section. #234

@@ -2566,7 +2566,29 @@ const (
 	NetworkPolicyProviderOVN    NetworkPolicyProvider = "OVN"
 )
 
+const (
+	NetworkIsolationRequired  = "Required"
+	NetworkIsolationInherited = "Inherited"
+)
+
 type NetworkPoliciesSpec struct {
+	// Mode requires a qualified native provider by default. Inherited is an
+	// explicit administrator acknowledgement that isolation is supplied outside
+	// this operator; it does not attest that such protection has been verified.
+	// Existing native policies are retained in Inherited mode, not silently
+	// pruned on a discovery failure or opt-out. See PR-515-AUDIT-REMEDIATION.md.
+	// +kubebuilder:validation:Enum=Required;Inherited
+	// +kubebuilder:default=Required
+	// +optional
+	Mode string `json:"mode,omitempty"`
+
+	// ScrapeSources authorizes explicitly identified scraper pods, only on
+	// generated component metrics ports. An empty list grants no external
+	// scraper access; a Prometheus query URL is not a scraper identity.
+	// +kubebuilder:validation:MaxItems=16
+	// +optional
+	ScrapeSources []MetricsScrapeSource `json:"scrapeSources,omitempty"`
+
 	// NetworkPoliciesSpec configures the common traffic intent submitted to a
 	// positively identified native policy provider. Provider resources are
 	// created only when the selected provider is active, schema-compatible, and
@@ -2632,6 +2654,21 @@ type NetworkPoliciesSpec struct {
 
 	// +optional
 	KubernautAgent NetworkPolicyIngressOverride `json:"kubernautAgent,omitempty"`
+}
+
+// MetricsScrapeSource is a bounded native-policy ingress identity. Only exact
+// pod label matches are accepted, never namespace-only or wildcard access.
+type MetricsScrapeSource struct {
+	// Namespace is the exact, administrator-selected scraper namespace.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Namespace string `json:"namespace"`
+
+	// PodLabels is a nonempty set of exact Kubernetes pod label matches.
+	// +kubebuilder:validation:MinProperties=1
+	// +kubebuilder:validation:MaxProperties=16
+	PodLabels map[string]string `json:"podLabels"`
 }
 
 // NetworkPolicyIngressOverride adds allowed ingress sources beyond the
@@ -2795,12 +2832,9 @@ const (
 const FinalizerName = "kubernaut.ai/cleanup"
 
 // SingletonName is the only accepted CR name; the reconciler rejects others.
-// NOTE: The singleton guard operates at the namespace level. Two namespaces
-// could each contain a CR named "kubernaut", and both controllers would
-// compete over the same cluster-scoped resources (ClusterRoles, CRBs,
-// webhook configurations). A validating admission webhook that enforces
-// cluster-wide uniqueness is planned for a future release. Until then,
-// only one Kubernaut CR should exist per cluster.
+// Admission rejects a second CR cluster-wide. Reconcile independently checks
+// authoritative persisted state before activation, including cross-namespace
+// competitors admitted concurrently or while admission was bypassed.
 const SingletonName = "kubernaut"
 
 // +kubebuilder:object:root=true

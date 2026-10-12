@@ -388,6 +388,7 @@ func effectiveEMDefaultTLSCAFile(kn *kubernautv1alpha2.Kubernaut) string {
 // OCP well-known namespaces.
 const (
 	OCPDNSNamespace        = "openshift-dns"
+	OCPDNSServiceName      = "dns-default"
 	OCPMonitoringNamespace = "openshift-monitoring"
 	OCPAlertManagerSAName  = "alertmanager-main"
 	OCPIngressNamespace    = "openshift-ingress"

@@ -219,21 +219,27 @@ func DataStorageDBSecret(kn *kubernautv1alpha2.Kubernaut, pgSecret *corev1.Secre
 	// source PostgreSQL Secret above -- this builds a derived Kubernetes
 	// Secret's data (RBAC-protected, encrypted at rest), not a log line or
 	// ConfigMap, so re-encoding it here is the function's whole purpose.
-	content, err := yaml.Marshal(dbSecretsYAML{ //nolint:gosec // G117: Secret-to-Secret transform, not exposure
+	return yamlSecret(ObjectMeta(kn, "datastorage-db-secret", ComponentDataStorage), "db-secrets.yaml", dbSecretsYAML{ //nolint:gosec // G117: Secret-to-Secret transform, not exposure
 		Host:     kn.Spec.PostgreSQL.Host,
 		Port:     PostgreSQLPort(kn),
 		DBName:   string(pgSecret.Data["POSTGRES_DB"]),
 		User:     string(pgSecret.Data["POSTGRES_USER"]),
 		Password: string(pgSecret.Data["POSTGRES_PASSWORD"]),
 	})
+}
+
+// yamlSecret confines heterogeneous values to the real YAML serializer while
+// preserving the Secret-to-Secret boundary and observable encoding errors.
+func yamlSecret(metadata metav1.ObjectMeta, key string, config any) (*corev1.Secret, error) {
+	content, err := yaml.Marshal(config)
 	if err != nil {
-		return nil, fmt.Errorf("marshalling db-secrets.yaml: %w", err)
+		return nil, fmt.Errorf("marshalling %s: %w", key, err)
 	}
 
 	return &corev1.Secret{
-		ObjectMeta: ObjectMeta(kn, "datastorage-db-secret", ComponentDataStorage),
+		ObjectMeta: metadata,
 		Data: map[string][]byte{
-			"db-secrets.yaml": content,
+			key: content,
 		},
 	}, nil
 }

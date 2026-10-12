@@ -458,11 +458,16 @@ func applyKubernautCR(ctx context.Context) error {
 
 func kubernautCR() *kubernautv1alpha2.Kubernaut {
 	provider := kubernautv1alpha2.NetworkPolicyProviderAuto
+	isolationMode := kubernautv1alpha2.NetworkIsolationRequired
 	switch configuredProvider {
 	case providerCilium:
 		provider = kubernautv1alpha2.NetworkPolicyProviderCilium
 	case providerCalico:
 		provider = kubernautv1alpha2.NetworkPolicyProviderCalico
+	case providerGeneric:
+		// The generic lane qualifies an explicit administrator-owned isolation
+		// acknowledgement, not a supported native CNI or an implicit opt-out.
+		isolationMode = kubernautv1alpha2.NetworkIsolationInherited
 	}
 	tlsMode, err := TLSModeForSource(string(configuredTLS), string(activeManualTLSSelection))
 	if err != nil {
@@ -551,7 +556,7 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 			Gateway:         kubernautv1alpha2.GatewaySpec{Enabled: ptr.To(false)},
 			APIFrontend:     apiFrontend,
 			TLS:             tls,
-			NetworkPolicies: kubernautv1alpha2.NetworkPoliciesSpec{Provider: provider},
+			NetworkPolicies: kubernautv1alpha2.NetworkPoliciesSpec{Provider: provider, Mode: isolationMode},
 		},
 	}
 }

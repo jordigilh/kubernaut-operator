@@ -2,7 +2,7 @@
 #
 # Base images follow the Kubernaut platform convention (ADR-027):
 #   builder:    ubi10/go-toolset   -- RHEL-native Go cross-compile
-#   production: scratch            -- zero CVE surface, no shell
+#   production: scratch            -- no shell; Go/dependency CVEs still apply
 #
 # Usage:
 #   podman build --build-arg VERSION=v1.4.0 -t quay.io/kubernaut-ai/kubernaut-operator:v1.4.0 .
@@ -31,7 +31,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a \
     -o manager cmd/main.go
 
 # ============================================================================
-# Stage 2: Production runtime (scratch -- zero CVE surface)
+# Stage 2: Production runtime (scratch -- binary vulnerabilities are still scanned)
 # ============================================================================
 FROM scratch
 

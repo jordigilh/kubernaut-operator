@@ -39,6 +39,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -58,10 +59,18 @@ var (
 	k8sClient client.Client
 )
 
+const controllerUnitTier = "unit"
+
 func TestControllers(t *testing.T) {
 	RegisterFailHandler(Fail)
 
-	RunSpecs(t, "Controller Suite")
+	suiteConfig, reporterConfig := GinkgoConfiguration()
+	if os.Getenv("KUBERNAUT_CONTROLLER_TEST_TIER") == controllerUnitTier {
+		suiteConfig.LabelFilter = controllerUnitTier
+	} else if os.Getenv("KUBERNAUT_CONTROLLER_TEST_TIER") == "integration" {
+		suiteConfig.LabelFilter = "!unit"
+	}
+	RunSpecs(t, "Controller Suite", suiteConfig, reporterConfig)
 }
 
 var _ = BeforeSuite(func() {
@@ -102,6 +111,12 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
+	// The independent unit lane mocks only the external Kubernetes API. It
+	// never starts envtest or merges real-API execution into unit coverage.
+	if os.Getenv("KUBERNAUT_CONTROLLER_TEST_TIER") == controllerUnitTier {
+		k8sClient = fake.NewClientBuilder().WithScheme(scheme.Scheme).Build()
+		return
+	}
 
 	By("bootstrapping test environment")
 	openshiftModDir := modDir("github.com/openshift/api")
@@ -212,6 +227,9 @@ func drainNamespaceTerminationEvents(ctx context.Context, clientset *kubernetes.
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
 	cancel()
+	if testEnv == nil {
+		return
+	}
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })

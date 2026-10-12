@@ -12,6 +12,7 @@ Dockerfile.cross
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
+cover-business-unit.json
 
 # Generated SBOM (make sbom / CI)
 sbom.cdx.json

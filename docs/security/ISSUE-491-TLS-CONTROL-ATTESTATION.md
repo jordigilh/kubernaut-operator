@@ -1,10 +1,10 @@
 # Issue #491 TLS parity control-objective attestation
 
 **Matrix ID:** `KO-SEC-AT-491-001`  
-**Version:** `0.2`  
-**Date:** `2026-10-03`  
+**Version:** `0.3`<br>
+**Date:** `2026-10-10`<br>
 **Scope:** Kubernaut Operator Issue #491 / PR #493  
-**Status:** repository and hosted Kind runtime evidence complete; OpenShift qualification and external-assessment evidence pending
+**Status:** repository evidence tier-corrected by PR #515 remediation; earlier hosted Kind records are historical, not qualification of the uncommitted remediation; OpenShift qualification and external-assessment evidence pending
 
 ## Attestation boundary
 
@@ -53,13 +53,13 @@ The ASVS source is the versioned official CSV:
 
 | Assertion | Business behavior verified | FedRAMP/NIST | SOC 2 | OWASP ASVS 5.0.0 | Automated evidence | Repository status |
 |---|---|---|---|---|---|---|
-| `BA-491-TLS-01` Source selection is explicit and safe | `hook`, lower-case `cert-manager`, legacy reference-only `CertManager`, and `manual` resolve to distinct ownership paths; unsupported values do not fall back to plaintext. | `AC-6`, `SC-8`, `CM-6`, `SI-10` | `CC6`, `CC8` | `V12.2.1`, `V13.3.1`, `V16.5.2` | `UT-TLS-GAP-002`; `UT-TLS-491-001`; `UT-TLS-491-002`; `IT-TLS-GAP-002` | verified |
-| `BA-491-TLS-02` Administrator material is read-only | Manual trust ConfigMaps, serving Secrets, signing material, and webhook bundles are validated and consumed without adoption, owner references, overwrite, or deletion. | `AC-6`, `IA-5`, `SC-8`, `SC-17` | `CC6`, `CC7` | `V12.1.3`, `V13.3.1`, `V13.3.2` | `IT-TLS-MANUAL-001`; `IT-TLS-MANUAL-002`; `IT-TLS-WEBHOOK-001`; existing `UT-TLS-GAP-001` | verified |
-| `BA-491-TLS-03` cert-manager owns generated Secrets | The operator creates only the intended Issuer/Certificate resources, owner-references Certificates to the Kubernaut CR, never adopts output Secrets, and waits for every Certificate to become Ready. | `AC-6`, `CM-6`, `SC-12`, `SC-13`, `SI-4` | `CC6`, `CC7`, `CC8` | `V11.1.1`, `V12.1.1`, `V13.3.1`, `V13.3.2`, `V16.5.2` | `IT-TLS-PARITY-001`; `IT-TLS-CERTMANAGER-READY-001`; `IT-TLS-GAP-001`; `UT-TLS-491-003`; `UT-TLS-491-004`; `UT-TLS-491-005`; `E2E-TLS-CERTMANAGER-001` | verified |
-| `BA-491-TLS-04` Cryptography and identity are correct | Inter-service CA/leaves use ECDSA, DataStorage signing uses RSA-2048, server/client usages are explicit, stable service DNS SANs are present, and configured extra SANs plus loopback are honored. | `IA-5`, `SC-8`, `SC-12`, `SC-13`, `SC-17` | `CC6`, `CC7` | `V11.1.1`, `V11.1.2`, `V12.1.1`, `V12.1.2`, `V12.1.3`, `V13.2.1` | `UT-TLS-491-002`; `UT-TLS-491-004`; `IT-TLS-MANUAL-002`; `test/e2e/kind/scenarios_test.go` | verified |
+| `BA-491-TLS-01` Source selection is explicit and safe | `hook`, lower-case `cert-manager`, legacy reference-only `CertManager`, and `manual` resolve to distinct ownership paths; unsupported values do not fall back to plaintext. | `AC-6`, `SC-8`, `CM-6`, `SI-10` | `CC6`, `CC8` | `V12.2.1`, `V13.3.1`, `V16.5.2` | `UT-TLS-GAP-002`; `UT-TLS-491-001`; `UT-TLS-491-002`; `IT-TLS-AUDIT-515-001`–`003` | verified |
+| `BA-491-TLS-02` Administrator material is read-only | Manual trust ConfigMaps, serving Secrets, signing material, and webhook bundles are validated and consumed without adoption, owner references, overwrite, or deletion. | `AC-6`, `IA-5`, `SC-8`, `SC-17` | `CC6`, `CC7` | `V12.1.3`, `V13.3.1`, `V13.3.2` | `UT-TLS-MANUAL-001`; `UT-TLS-MANUAL-002`; `UT-TLS-WEBHOOK-001`; `UT-TLS-GAP-001`; `IT-TLS-AUDIT-515-002` | verified |
+| `BA-491-TLS-03` cert-manager owns generated Secrets | The operator creates only the intended Issuer/Certificate resources, owner-references Certificates to the Kubernaut CR, never adopts output Secrets, and waits for every Certificate to become Ready. | `AC-6`, `CM-6`, `SC-12`, `SC-13`, `SI-4` | `CC6`, `CC7`, `CC8` | `V11.1.1`, `V12.1.1`, `V13.3.1`, `V13.3.2`, `V16.5.2` | `UT-TLS-PARITY-001`; `UT-TLS-CERTMANAGER-READY-001`; `UT-TLS-GAP-001`; `UT-TLS-491-003`; `UT-TLS-491-004`; `UT-TLS-491-005`; `IT-TLS-AUDIT-515-003/004`; `E2E-TLS-CERTMANAGER-001` | verified |
+| `BA-491-TLS-04` Cryptography and identity are correct | Inter-service CA/leaves use ECDSA, DataStorage signing uses RSA-2048, server/client usages are explicit, stable service DNS SANs are present, and configured extra SANs plus loopback are honored. | `IA-5`, `SC-8`, `SC-12`, `SC-13`, `SC-17` | `CC6`, `CC7` | `V11.1.1`, `V11.1.2`, `V12.1.1`, `V12.1.2`, `V12.1.3`, `V13.2.1` | `UT-TLS-491-002`; `UT-TLS-491-004`; `UT-TLS-MANUAL-002`; `test/e2e/kind/scenarios_test.go` | verified |
 | `BA-491-TLS-05` Trust reaches every consumer | Dynamic certificate/CA paths are propagated to workloads, Console, Fleet Metadata Cache, migration, generic trust ConfigMaps, webhooks, and Ingress without OpenShift-only annotations in generic mode. | `SC-8`, `SC-17`, `SI-4` | `CC6`, `CC7`, `A1` | `V12.1.3`, `V13.2.1`, `V16.5.2` | `UT-TLS-491-007`; `UT-TLS-491-008`; `UT-TLS-491-009`; `IT-TLS-GAP-003`; `test/e2e/kind/scenarios_test.go` | verified |
-| `BA-491-TLS-06` Webhook trust fails closed | Provisioned webhook configurations use cert-manager cainjector metadata; manually injected bundles are preserved; readiness is not reported until a usable bundle exists. | `SC-8`, `SC-13`, `SC-17`, `SI-4`, `SI-10` | `CC6`, `CC7` | `V12.1.3`, `V12.2.1`, `V13.2.1`, `V16.5.2` | `UT-TLS-491-010`; `UT-TLS-491-011`; `IT-TLS-WEBHOOK-001`; `IT-TLS-CERTMANAGER-READY-001`; `test/e2e/kind/scenarios_test.go` | verified |
-| `BA-491-TLS-07` Rotation preserves service availability | Development rotation retains the previous root until consumers move; cert-manager leaf reissuance preserves Certificate ownership, TLS readiness, and webhook trust; failed writes preserve the last working root; deleting Secrets are never reused. | `SC-8`, `SC-12`, `SC-13`, `SI-4` | `CC7`, `A1` | `V11.1.1`, `V11.1.2`, `V12.1.1`, `V16.5.2` | `UT-TLS-ROTATION-GAP-001`; `UT-TLS-ROTATION-GAP-002`; `UT-TLS-ROTATION-GAP-003`; `IT-TLS-ROTATION-GAP-001`; `IT-TLS-ROTATION-GAP-002`; `E2E-TLS-CERTMANAGER-002` | verified |
+| `BA-491-TLS-06` Webhook trust fails closed | Provisioned webhook configurations use cert-manager cainjector metadata; manually injected bundles are preserved; readiness is not reported until a usable bundle exists. | `SC-8`, `SC-13`, `SC-17`, `SI-4`, `SI-10` | `CC6`, `CC7` | `V12.1.3`, `V12.2.1`, `V13.2.1`, `V16.5.2` | `UT-TLS-491-010`; `UT-TLS-491-011`; `UT-TLS-WEBHOOK-001`; `UT-TLS-CERTMANAGER-READY-001`; `IT-TLS-AUDIT-515-002/003`; `test/e2e/kind/scenarios_test.go` | verified |
+| `BA-491-TLS-07` Rotation preserves service availability | Development rotation retains the previous root until consumers move; cert-manager leaf reissuance preserves Certificate ownership, TLS readiness, and webhook trust; failed writes preserve the last working root; deleting Secrets are never reused. | `SC-8`, `SC-12`, `SC-13`, `SI-4` | `CC7`, `A1` | `V11.1.1`, `V11.1.2`, `V12.1.1`, `V16.5.2` | `UT-TLS-ROTATION-GAP-001`; `UT-TLS-ROTATION-GAP-002`; `UT-TLS-ROTATION-GAP-003`; `IT-TLS-AUDIT-515-001`; `E2E-TLS-CERTMANAGER-002` | verified |
 | `BA-491-TLS-08` Configuration remains compatible and bounded | Helm defaults, issuer precedence, stable names, legacy aliases, optional component selection, and explicit exclusion of PostgreSQL/Valkey server PKI remain deterministic and migration-safe. | `AC-6`, `CM-6`, `SI-10` | `CC6`, `CC8` | `V13.3.1`, `V15.2.4`, `V16.5.2` | `UT-TLS-491-001`; `UT-TLS-491-005`; `UT-TLS-491-006`; migration/resource tests; generated CRD/RBAC; `make manifests generate` | verified |
 
 ## Issue #498 dedicated Kind-lane evidence
@@ -72,8 +72,8 @@ integration evidence does not substitute for that runtime evidence.
 | Assertion | Business behavior verified | FedRAMP/NIST | SOC 2 | OWASP ASVS 5.0.0 | Automated evidence | Repository status |
 |---|---|---|---|---|---|---|
 | `BA-498-TLS-01` Source selectors are explicit | Development, hook, manual/admin, and cert-manager selectors map deterministically; unsupported input never falls back to plaintext. | `AC-6`, `SC-8`, `CM-6`, `SI-10` | `CC6`, `CC8` | `V12.2.1`, `V13.3.1`, `V16.5.2` | `UT-TLS-498-001`; `UT-TLS-498-002`; `UT-TLS-498-003`; `UT-TLS-498-004`; `E2E-TLS-HOOK-001`; `E2E-TLS-MANUAL-001`; `E2E-TLS-ADMIN-001`; `E2E-TLS-FAIL-CLOSED-001`; `test/e2e/kind/contract/selector_test.go`; `.github/workflows/test.yml` | partially verified |
-| `BA-498-TLS-02` Hook material is operator-owned | The real `hook` CR mode generates usable CA/leaves/signing material, publishes trust, rotates a leaf, and removes only operator-owned TLS Secrets during cleanup. | `AC-6`, `SC-8`, `SC-12`, `SC-13`, `SI-4` | `CC6`, `CC7`, `A1` | `V11.1.1`, `V11.1.2`, `V12.1.1`, `V16.5.2` | `E2E-TLS-HOOK-001`; `E2E-TLS-HOOK-002`; `internal/resources/tls_test.go`; `internal/controller/tls_source_integration_test.go`; `test/e2e/kind/scenarios_test.go` | partially verified |
-| `BA-498-TLS-03` Manual/admin material is read-only | Both `manual` and `AdministratorManaged` CR selections consume pre-created CA, serving, webhook, and signing material without owner references, mutation, OpenShift CA injection, or cleanup deletion. | `AC-6`, `IA-5`, `SC-8`, `SC-17` | `CC6`, `CC7` | `V12.1.3`, `V13.3.1`, `V13.3.2` | `IT-TLS-MANUAL-001`; `IT-TLS-MANUAL-002`; `IT-TLS-WEBHOOK-001`; `E2E-TLS-MANUAL-001`; `E2E-TLS-ADMIN-001`; `E2E-TLS-CLEANUP-001`; `test/e2e/kind/tls_fixtures.go` | partially verified |
+| `BA-498-TLS-02` Hook material is operator-owned | The real `hook` CR mode generates usable CA/leaves/signing material, publishes trust, rotates a leaf, and removes only operator-owned TLS Secrets during cleanup. | `AC-6`, `SC-8`, `SC-12`, `SC-13`, `SI-4` | `CC6`, `CC7`, `A1` | `V11.1.1`, `V11.1.2`, `V12.1.1`, `V16.5.2` | `E2E-TLS-HOOK-001`; `E2E-TLS-HOOK-002`; `internal/resources/tls_test.go`; `internal/controller/tls_source_unit_test.go`; `internal/controller/runtime_tls_wiring_integration_test.go`; `test/e2e/kind/scenarios_test.go` | partially verified |
+| `BA-498-TLS-03` Manual/admin material is read-only | Both `manual` and `AdministratorManaged` CR selections consume pre-created CA, serving, webhook, and signing material without owner references, mutation, OpenShift CA injection, or cleanup deletion. | `AC-6`, `IA-5`, `SC-8`, `SC-17` | `CC6`, `CC7` | `V12.1.3`, `V13.3.1`, `V13.3.2` | `UT-TLS-MANUAL-001`; `UT-TLS-MANUAL-002`; `UT-TLS-WEBHOOK-001`; `IT-TLS-AUDIT-515-002`; `E2E-TLS-MANUAL-001`; `E2E-TLS-ADMIN-001`; `E2E-TLS-CLEANUP-001`; `test/e2e/kind/tls_fixtures.go` | partially verified |
 | `BA-498-TLS-04` Trust and failure behavior are observable | Each lane proves TLS readiness, webhook CA trust, a real workload handshake, invalid-source fail-closed status, and source-specific cleanup. | `SC-8`, `SC-13`, `SI-4`, `SI-10` | `CC7`, `A1` | `V12.1.3`, `V12.2.1`, `V13.2.1`, `V16.5.2` | `E2E-TLS-HOOK-001`; `E2E-TLS-MANUAL-001`; `E2E-TLS-ADMIN-001`; `E2E-TLS-FAIL-CLOSED-001`; `hack/verify-test-pyramid.sh` | partially verified |
 
 The issue-specific design and gate artifacts are
@@ -101,15 +101,32 @@ The control assertions are wired through these production entry points:
 
 | Tier | Contract | Evidence |
 |---|---|---|
-| Unit | Resource builders and pure TLS policy validate shapes, defaults, ownership, SANs, algorithms, paths, and failure behavior without an API server. | `internal/resources/tls_test.go`; `internal/resources/tls_certmanager_test.go`; `internal/resources/webhooks_test.go`; `make test-unit` |
-| Integration | Controller seams exercise source validation, manual preservation, cert-manager resource ownership/readiness, webhook behavior, generic trust publication, and failed rotation. | `internal/controller/tls_source_integration_test.go`; `internal/controller/kubernaut_lifecycle_test.go`; `make test-integration` |
+| Unit | Real resource builders and TLS/controller decisions validate shapes, defaults, ownership, SANs, algorithms, paths, and failure behavior against simulated external APIs; no envtest control plane. | `internal/resources/tls_test.go`; `internal/resources/tls_certmanager_test.go`; `internal/resources/webhooks_test.go`; `internal/controller/tls_source_unit_test.go`; `make test-unit` |
+| Integration | Production `Reconcile` persists trust/webhooks, rotates leaves and consumes external TLS against envtest's API server. cert-manager journeys simulate issuer output and cainjector writes rather than running cert-manager itself. | `internal/controller/runtime_tls_wiring_integration_test.go`; `internal/controller/certmanager_lifecycle_test.go`; `internal/controller/kubernaut_lifecycle_test.go`; `make test-integration` |
 | E2E | The operator Helm chart is installed, a real Kubernaut CR is reconciled, TLS readiness and webhook trust are observed, cert-manager-owned Secrets and rotation are checked, and finalizer cleanup runs. | `test/e2e/kind/`; `.github/workflows/test.yml`; `make test-e2e-kind` |
 | Wiring | Every new resolver/builder has a production caller plus focused unit and controller evidence; no direct policy helper calls are used by E2E. | `hack/verify-test-pyramid.sh`; `make test-pyramid` |
 
 ## Verification record
 
-The following repository gates passed for the implementation and the evidence
-gate:
+The earlier helper specs formerly named `IT-TLS-MANUAL-*`,
+`IT-TLS-WEBHOOK-*`, `IT-TLS-PARITY-*`, `IT-TLS-CERTMANAGER-READY-*`,
+`IT-TLS-GAP-001/002` and `IT-TLS-ROTATION-GAP-*` are now honestly named
+`UT-*` in `tls_source_unit_test.go`; they used fake clients, not envtest.
+`IT-TLS-GAP-003` remains a real-API lifecycle case. The new
+`IT-TLS-AUDIT-515-001`–`004` provide separate real-API activation evidence.
+The executable IDs are `IT-TLS-AUDIT-515-001`, `IT-TLS-AUDIT-515-002`,
+`IT-TLS-AUDIT-515-003` and `IT-TLS-AUDIT-515-004`.
+This correction does not promote historical helper execution to integration
+evidence or qualify FIPS, live cert-manager, CNI, or application behavior.
+
+PR #515 remediation's local unit and integration runs currently establish
+zero missed handwritten business statements and the controller-only 78% floor.
+Snapshot-bound results and outstanding ownership/qualification dependencies
+are recorded separately in `docs/security/PR-515-REMEDIATION-EVIDENCE.md`.
+The original audit's NO-GO verdict is not rewritten by these new runs.
+
+The following are historical #491 implementation/evidence-gate results, not
+verification of the remediation revision:
 
 - `make test`: unit coverage `87.3%`; controller integration coverage `78.4%`.
 - `make test-pyramid`: passed, including `make test-security-traceability`.

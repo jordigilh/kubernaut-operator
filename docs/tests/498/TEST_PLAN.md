@@ -33,8 +33,12 @@ seams on the `feat/491-tls-parity` line:
 
 - `api/v1alpha2/kubernaut_types.go` defines `hook`, `cert-manager`, `manual`,
   `AdministratorManaged`, `CertManager`, and `DevelopmentSelfSigned` modes.
-- `internal/controller/tls_source_integration_test.go` covers manual ownership
-  preservation and cert-manager resource/readiness behavior through envtest.
+- The original TLS source helper tests used fake clients, not envtest. They
+  are now `internal/controller/tls_source_unit_test.go` unit evidence for manual
+  preservation and cert-manager resource/readiness decisions. PR #515 remediation
+  adds separate real-API `Reconcile` journeys in
+  `internal/controller/runtime_tls_wiring_integration_test.go` and
+  `internal/controller/certmanager_lifecycle_test.go`.
 - `.github/workflows/test.yml` currently has a generic/development Kind lane and
   a cert-manager Kind lane, but no hook or manual/administrator-managed lane.
 - `test/e2e/kind/tlsSourceFromEnvironment` currently accepts only development and

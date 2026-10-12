@@ -1,0 +1,75 @@
+{
+  "schema": "kubernaut-scoped-engineering-evidence/v1",
+  "kind": "derived-receipt-summary",
+  "not_release_qualification": true,
+  "implementation_commit": "a30477bc5b621c19fe8e7773dcd3e56ad2cf8339",
+  "implementation_tree": "bf201fbaebc284458fa82dda741742f1c2fe103f",
+  "baseline_head": "d602a3949c4938300a282f8e6a5b2d6740e6de17",
+  "runtime_source_sha256": {
+    "internal/policy/dns.go": "151ede546cd507a58a592b19e883e521bf06c4cbbafb0da0e742a216d7c95548",
+    "internal/policy/intent.go": "936ed474c99383ecfd03c14b73cfab481dbb7386625ecfec79293086ed50acad",
+    "internal/policy/monitoring.go": "294baeb5171ccd6b03fc4f4583b7313e7cd18777b51efebc11f2e5adefa97515",
+    "internal/policy/render.go": "8f64248a85006deb8e040f294fff41abe8b1305598ddfb44e56d16a7964e50c7",
+    "internal/policy/types.go": "aad0bb8c158810ec2491eb65f5b70b27518ac8789f19cd459f9fa92635dd5d59",
+    "internal/controller/kubernaut_controller.go": "0816e3555ebfb6abb854ed38615726592c2811ef1f8ffc953bad02917e8b518e",
+    "internal/resources/common.go": "33a609d3027f43e556613d21c00708f246d35a52468d2038f9b8ec5165b10fcb"
+  },
+  "repository_checks": {
+    "business_unit_statements": 5813,
+    "covered_business_unit_statements": 5813,
+    "business_functions": 733,
+    "missing_functions": 0,
+    "baseline_only_executions": 0,
+    "raw_unit_statements": 7096,
+    "raw_covered_unit_statements": 6388,
+    "controller_integration_percent": 79.8,
+    "bootstrap_integration_percent": 22.7,
+    "unit_and_integration_independent": true,
+    "complete_make_test_passes": 2,
+    "build_pass": true,
+    "lint_issues": 0,
+    "generation_tracked_diff": false,
+    "fresh_rbac_generation_qualified": false,
+    "negative_probes": [
+      {"mutation": "controller overwrites resolved DNS selector with app=dns", "test": "IT-AUDIT-518-DNS-001", "result": "expected-assertion-failure"},
+      {"mutation": "renderer substitutes UDP backend port for TCP", "test": "UT-AUDIT-518-DNS-001", "result": "expected-assertion-failure"}
+    ]
+  },
+  "live": {
+    "cluster": "kubernaut492-sno-a",
+    "openshift_version": "4.22.16",
+    "network_type": "OVNKubernetes",
+    "started_at": "2026-10-11T23:46:09.626920+00:00",
+    "finished_at": "2026-10-11T23:56:35.739263+00:00",
+    "namespace": "audit518-route-fcf117c2d6",
+    "admin_network_policy": "audit518-route-fcf117c2d6-anp",
+    "route": {"name": "managed-http", "service_type": "ClusterIP", "protocol": "HTTP", "admitted": true, "router_host_networked": true},
+    "dns": {"service": "openshift-dns/dns-default", "frontend_port": 53, "udp_backend_port": 5353, "tcp_backend_port": 5353, "selector": {"dns.operator.openshift.io/daemonset-dns": "default"}},
+    "stable_observations_per_stage": 2,
+    "dns_queries_independent_protocol_and_service_backend": true,
+    "stages": [
+      {"name": "no_policy", "managed_pod_and_clusterip": true, "route": true, "outsider_pod_ingress": true, "unmanaged_pod_egress": true, "dns_udp": true, "dns_tcp": true},
+      {"name": "repaired_render", "managed_pod_and_clusterip": true, "route": true, "outsider_pod_ingress": false, "unmanaged_pod_egress": false, "dns_udp": true, "dns_tcp": true},
+      {"name": "nonmatching_dns_peer_negative", "managed_pod_and_clusterip": true, "route": true, "outsider_pod_ingress": false, "unmanaged_pod_egress": false, "dns_udp": false, "dns_tcp": false},
+      {"name": "restored_repaired_dns_peer", "managed_pod_and_clusterip": true, "route": true, "outsider_pod_ingress": false, "unmanaged_pod_egress": false, "dns_udp": true, "dns_tcp": true},
+      {"name": "test_policy_removed", "managed_pod_and_clusterip": true, "route": true, "outsider_pod_ingress": true, "unmanaged_pod_egress": true, "dns_udp": true, "dns_tcp": true}
+    ],
+    "negative_packet_error": "timeout",
+    "pod_server_listening_port": 8080,
+    "native_policy_setup_succeeded": true,
+    "cleanup": {"uid_and_resource_version_preconditions": true, "namespace_absent_independently_verified": true, "anp_absent_independently_verified": true, "admin_and_baseline_policy_lists_empty": true, "removed_finalizers": false, "modified_existing_workloads_or_permissions": false}
+  },
+  "artifacts_sha256": {
+    "dns-isolation-final-checks.log": "3284f97a80adc027c6423909fca9917c0d3189fa407260b5a2a595c97a5f12f2",
+    "dns-isolation-independent-coverage-final.json": "6bdef39a7e26a27a6f8769d11dc7c8dba21c0d6c2f14497305c4f77cfd62bb23",
+    "negative-dns-probe-receipt.json": "0061a07abca4eefc84e6bdf94ce14e7f544e3b1aa7035617256f8d4b4d53b46e",
+    "repaired-ovn-render.json": "dc21c0297ab9371885443c68996544483d9a9745e9d70a1b7b9e69f9b31ab2a4",
+    "repaired-dns-live-snapshot.json": "f00004f444e91c0bddfa7dcaa145630672c05590430ad009c1c654ef37e72d30",
+    "sno-a-route-dns-repair-receipt.json": "871bbb6ab3d9827407f8e8a29d9b0a427379e609d750fbe79a51947337928d8e",
+    "sno-a-route-dns-independent-cleanup.json": "81e07ddb78c52659d0d9229994e09cc9b7e6bcf3e25901be892244b713affc96",
+    "sno-a-route-dns-repair.jsonl": "c7a371ffb68c729021331bc8390952f18c4941b8fede6726a97bb9b57b6c08a2",
+    "sno_route_dns_repair.py": "35f8af23f4d5e346d2402ffaf78e859fc8a263b5b8965c16fa2e7f4a331cae61",
+    "render-repaired.go": "b0a9044bb9c228ca1ae2d320819e7addec032e0f3e3b177b6c7dfd0e58770aab"
+  },
+  "limits": ["one SNO", "IPv4 packets", "adapted common ANP only", "supplied adapter detection readiness", "fixture HTTP and DNS", "no installed operator or full ANP/BANP lifecycle", "no application NodePorts", "no internal port microsegmentation", "no complete external application dependencies", "no application TLS, OIDC, scrapes, alerts or recovery", "no final or upstream release qualification"]
+}

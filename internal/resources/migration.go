@@ -32,7 +32,11 @@ const migrationJobName = "kubernaut-db-migration"
 
 // MigrationConfigMap builds the ConfigMap containing all embedded SQL migration files.
 func MigrationConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
-	entries, err := fs.ReadDir(assets.MigrationsFS, "migrations")
+	return migrationConfigMapFromFS(kn, assets.MigrationsFS)
+}
+
+func migrationConfigMapFromFS(kn *kubernautv1alpha2.Kubernaut, source fs.FS) (*corev1.ConfigMap, error) {
+	entries, err := fs.ReadDir(source, "migrations")
 	if err != nil {
 		return nil, fmt.Errorf("reading embedded migrations: %w", err)
 	}
@@ -42,7 +46,7 @@ func MigrationConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, err
 		if entry.IsDir() {
 			continue
 		}
-		content, err := fs.ReadFile(assets.MigrationsFS, "migrations/"+entry.Name())
+		content, err := fs.ReadFile(source, "migrations/"+entry.Name())
 		if err != nil {
 			return nil, fmt.Errorf("reading migration %s: %w", entry.Name(), err)
 		}

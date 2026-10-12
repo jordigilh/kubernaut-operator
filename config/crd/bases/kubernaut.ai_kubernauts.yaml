@@ -2877,6 +2877,18 @@ spec:
                         minimum: 1
                         type: integer
                     type: object
+                  mode:
+                    default: Required
+                    description: |-
+                      Mode requires a qualified native provider by default. Inherited is an
+                      explicit administrator acknowledgement that isolation is supplied outside
+                      this operator; it does not attest that such protection has been verified.
+                      Existing native policies are retained in Inherited mode, not silently
+                      pruned on a discovery failure or opt-out. See PR-515-AUDIT-REMEDIATION.md.
+                    enum:
+                    - Required
+                    - Inherited
+                    type: string
                   monitoring:
                     description: |-
                       NetworkPolicyMonitoringOverride overrides where/how the monitoring-stack
@@ -2928,6 +2940,37 @@ spec:
                     - Calico
                     - OVN
                     type: string
+                  scrapeSources:
+                    description: |-
+                      ScrapeSources authorizes explicitly identified scraper pods, only on
+                      generated component metrics ports. An empty list grants no external
+                      scraper access; a Prometheus query URL is not a scraper identity.
+                    items:
+                      description: |-
+                        MetricsScrapeSource is a bounded native-policy ingress identity. Only exact
+                        pod label matches are accepted, never namespace-only or wildcard access.
+                      properties:
+                        namespace:
+                          description: Namespace is the exact, administrator-selected
+                            scraper namespace.
+                          maxLength: 63
+                          minLength: 1
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        podLabels:
+                          additionalProperties:
+                            type: string
+                          description: PodLabels is a nonempty set of exact Kubernetes
+                            pod label matches.
+                          maxProperties: 16
+                          minProperties: 1
+                          type: object
+                      required:
+                      - namespace
+                      - podLabels
+                      type: object
+                    maxItems: 16
+                    type: array
                 type: object
               notification:
                 description: Notification controller settings.

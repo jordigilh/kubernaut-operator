@@ -19,6 +19,9 @@ package policy
 import (
 	"fmt"
 	"sort"
+	"strings"
+
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -47,12 +50,23 @@ func Render(result DetectionResult, intent Intent) ([]RenderedPolicy, error) {
 	if err := ValidateMonitoringDestinations(result.Provider, intent.Monitoring); err != nil {
 		return nil, err
 	}
+	if err := validateScrapeSources(intent.ScrapeSources); err != nil {
+		return nil, err
+	}
+	for component, port := range intent.MetricsPorts {
+		if port < 1 || port > 65535 {
+			return nil, fmt.Errorf("invalid metrics port for component %s", component)
+		}
+	}
 	switch result.Provider {
 	case ProviderCilium:
 		return renderCilium(intent), nil
 	case ProviderCalico:
 		return renderCalico(intent), nil
 	case ProviderOVN:
+		if err := validateDNSDestination(intent.DNS); err != nil {
+			return nil, err
+		}
 		return renderOVN(intent), nil
 	default:
 		return nil, nil
@@ -104,18 +118,20 @@ func renderCilium(intent Intent) []RenderedPolicy {
 				egress = append(egress, ciliumMonitoringRule(destination))
 			}
 		}
+		ingress := []interface{}{map[string]interface{}{"fromEndpoints": []interface{}{managedSelector}}}
+		if port := intent.MetricsPorts[component]; port != 0 {
+			for _, source := range intent.ScrapeSources {
+				ingress = append(ingress, ciliumScrapeRule(source, port))
+			}
+		}
 		spec := map[string]interface{}{
 			"endpointSelector": selector,
 			"enableDefaultDeny": map[string]interface{}{
 				"ingress": true,
 				"egress":  true,
 			},
-			"ingress": []interface{}{
-				map[string]interface{}{
-					"fromEndpoints": []interface{}{managedSelector},
-				},
-			},
-			"egress": egress,
+			"ingress": ingress,
+			"egress":  egress,
 		}
 		objects = append(objects, RenderedPolicy{
 			Object: newPolicyObject(
@@ -166,17 +182,20 @@ func renderCalico(intent Intent) []RenderedPolicy {
 				egress = append(egress, calicoMonitoringRule(destination))
 			}
 		}
+		ingress := []interface{}{map[string]interface{}{
+			"action": "Allow", "source": map[string]interface{}{"selector": managedSelector},
+		}}
+		if port := intent.MetricsPorts[component]; port != 0 {
+			for _, source := range intent.ScrapeSources {
+				ingress = append(ingress, calicoScrapeRule(source, port))
+			}
+		}
 		spec := map[string]interface{}{
 			"selector": selector,
 			"order":    float64(100),
 			"types":    []interface{}{"Ingress", "Egress"},
-			"ingress": []interface{}{
-				map[string]interface{}{
-					"action": "Allow",
-					"source": map[string]interface{}{"selector": managedSelector},
-				},
-			},
-			"egress": egress,
+			"ingress":  ingress,
+			"egress":   egress,
 		}
 		objects = append(objects, RenderedPolicy{
 			Object: newPolicyObject(
@@ -219,19 +238,62 @@ func calicoMonitoringRule(destination MonitoringDestination) map[string]interfac
 	}
 }
 
+func ciliumScrapeRule(source kubernautv1alpha2.MetricsScrapeSource, port int32) map[string]interface{} {
+	labels := make(map[string]interface{}, len(source.PodLabels)+1)
+	labels["k8s:io.kubernetes.pod.namespace"] = source.Namespace
+	for key, value := range source.PodLabels {
+		labels[ciliumKubernetesLabel(key)] = value
+	}
+	return map[string]interface{}{
+		"fromEndpoints": []interface{}{map[string]interface{}{"matchLabels": labels}},
+		"toPorts": []interface{}{map[string]interface{}{
+			"ports": []interface{}{map[string]interface{}{"port": fmt.Sprintf("%d", port), "protocol": "TCP"}},
+		}},
+	}
+}
+
+func calicoScrapeRule(source kubernautv1alpha2.MetricsScrapeSource, port int32) map[string]interface{} {
+	keys := make([]string, 0, len(source.PodLabels))
+	for key := range source.PodLabels {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	terms := make([]string, 0, len(keys))
+	for _, key := range keys {
+		terms = append(terms, fmt.Sprintf("%s == '%s'", key, source.PodLabels[key]))
+	}
+	return map[string]interface{}{
+		"action": "Allow", "protocol": "TCP",
+		"source": map[string]interface{}{
+			"namespaceSelector": fmt.Sprintf("projectcalico.org/name == '%s'", source.Namespace),
+			"selector":          strings.Join(terms, " && "),
+		},
+		"destination": map[string]interface{}{"ports": []interface{}{int64(port)}},
+	}
+}
+
 func renderOVN(intent Intent) []RenderedPolicy {
 	instance := intent.InstanceName
 	if instance == "" {
 		instance = intent.Namespace
 	}
-	dnsNamespace := effectiveDNSNamespace(intent)
 	subject := ovnPodsPeer(intent.Namespace, instance)
 	allowIngress := map[string]interface{}{
 		"name":   "allow-kubernaut-namespace",
 		"action": "Allow",
 		"from":   []interface{}{ovnPodsPeer(intent.Namespace, instance)},
 	}
-	allowEgress := ovnEgressRules(intent.Namespace, instance, dnsNamespace)
+	// Unlike namespace NetworkPolicy, an ANP Allow list does not imply a deny
+	// for unmatched flows. Preserve managed-peer allowances before these scoped
+	// terminal denies. See docs/design/PR-518-OVN-ISOLATION-DNS.md.
+	ingress := []interface{}{allowIngress, map[string]interface{}{
+		"name": "deny-other-pods", "action": "Deny",
+		"from": []interface{}{map[string]interface{}{"namespaces": map[string]interface{}{}}},
+	}}
+	allowEgress := append(ovnEgressRules(intent.Namespace, instance, intent.DNS), map[string]interface{}{
+		"name": "deny-other-egress", "action": "Deny",
+		"to": []interface{}{map[string]interface{}{"networks": []interface{}{"0.0.0.0/0", "::/0"}}},
+	})
 
 	anpSpec := map[string]interface{}{
 		// AdminNetworkPolicy priorities are 0-99; lower values have higher
@@ -239,12 +301,12 @@ func renderOVN(intent Intent) []RenderedPolicy {
 		// remaining valid for the v1alpha1 API.
 		"priority": float64(90),
 		"subject":  subject,
-		"ingress":  []interface{}{allowIngress},
+		"ingress":  ingress,
 		"egress":   allowEgress,
 	}
 	banpSpec := map[string]interface{}{
 		"subject": subject,
-		"ingress": []interface{}{allowIngress},
+		"ingress": ingress,
 		"egress":  allowEgress,
 	}
 	labels := policyLabelsForIntent(ProviderOVN, "namespace", intent)
@@ -265,7 +327,7 @@ func renderOVN(intent Intent) []RenderedPolicy {
 		},
 	}
 	if hasPolicyComponent(intent.Components, MonitoringAgentComponent) && len(intent.Monitoring) > 0 {
-		monitoringEgress := append(ovnEgressRules(intent.Namespace, instance, dnsNamespace), ovnMonitoringEgressRules(intent.Monitoring)...)
+		monitoringEgress := append(ovnEgressRules(intent.Namespace, instance, intent.DNS), ovnMonitoringEgressRules(intent.Monitoring)...)
 		monitoringSpec := map[string]interface{}{
 			// Priority 89 is higher precedence than the common namespace policy
 			// at 90, while remaining below platform-owned priorities.
@@ -279,6 +341,37 @@ func renderOVN(intent Intent) []RenderedPolicy {
 				"kubernaut-agent-monitoring", "",
 				policyLabelsForIntent(ProviderOVN, MonitoringAgentComponent, intent), monitoringSpec,
 			),
+			Namespaced: false,
+		})
+	}
+	return append(objects, ovnScrapePolicies(intent, instance)...)
+}
+
+func ovnScrapePolicies(intent Intent, instance string) []RenderedPolicy {
+	objects := make([]RenderedPolicy, 0, len(intent.Components))
+	for _, component := range intent.Components {
+		port := intent.MetricsPorts[component]
+		if port == 0 || len(intent.ScrapeSources) == 0 {
+			continue
+		}
+		from := make([]interface{}, 0, len(intent.ScrapeSources))
+		for _, source := range intent.ScrapeSources {
+			from = append(from, ovnPodsPeerWithLabels(source.Namespace, source.PodLabels))
+		}
+		spec := map[string]interface{}{
+			// Subjects are disjoint by component; a shared priority therefore
+			// cannot authorize another component's differently numbered port.
+			"priority": float64(88),
+			"subject": ovnPodsPeerWithLabels(intent.Namespace, map[string]string{
+				ManagedByLabel: "kubernaut-operator", instanceLabel: instance, "app": component,
+			}),
+			"ingress": []interface{}{map[string]interface{}{
+				"name": "allow-metrics-scrapers", "action": "Allow", "from": from, "ports": ovnTCPPortRules(int(port)),
+			}},
+		}
+		objects = append(objects, RenderedPolicy{
+			Object: newPolicyObject("policy.networking.k8s.io/v1alpha1", "AdminNetworkPolicy",
+				fmt.Sprintf("kubernaut-%s-metrics", component), "", policyLabelsForIntent(ProviderOVN, component, intent), spec),
 			Namespaced: false,
 		})
 	}
@@ -375,7 +468,7 @@ func hasPolicyComponent(components []string, wanted string) bool {
 	return false
 }
 
-func ovnEgressRules(namespace, instance, dnsNamespace string) []interface{} {
+func ovnEgressRules(namespace, instance string, dns DNSDestination) []interface{} {
 	return []interface{}{
 		map[string]interface{}{
 			"name":   "allow-kubernetes-api",
@@ -394,19 +487,11 @@ func ovnEgressRules(namespace, instance, dnsNamespace string) []interface{} {
 		map[string]interface{}{
 			"name":   "allow-dns",
 			"action": "Allow",
-			"to": []interface{}{map[string]interface{}{
-				"pods": map[string]interface{}{
-					"namespaceSelector": map[string]interface{}{
-						"matchLabels": map[string]interface{}{
-							"kubernetes.io/metadata.name": dnsNamespace,
-						},
-					},
-					"podSelector": map[string]interface{}{
-						"matchLabels": map[string]interface{}{"app": "dns"},
-					},
-				},
-			}},
-			"ports": ovnPortRules(53, 5353),
+			"to":     []interface{}{ovnPodsPeerWithLabels(dns.Namespace, dns.ServiceSelector)},
+			"ports": []interface{}{
+				map[string]interface{}{"portNumber": map[string]interface{}{"protocol": "TCP", "port": float64(dns.TCPPort)}},
+				map[string]interface{}{"portNumber": map[string]interface{}{"protocol": "UDP", "port": float64(dns.UDPPort)}},
+			},
 		},
 	}
 }
@@ -429,10 +514,6 @@ func ovnNodePeer(label string) map[string]interface{} {
 			},
 		},
 	}
-}
-
-func ovnPortRules(ports ...int) []interface{} {
-	return ovnPortRulesForProtocols([]string{"TCP", "UDP"}, ports...)
 }
 
 func ovnTCPPortRules(ports ...int) []interface{} {

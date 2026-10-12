@@ -39,8 +39,8 @@ import (
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
-var _ = Describe("runtime TLS source wiring", func() {
-	It("IT-TLS-MANUAL-001 [AC-6, IA-5, SC-8, SC-17; SOC2 CC6, CC7; ASVS v5.0.0-V12.1.3, v5.0.0-V13.3.1, v5.0.0-V13.3.2] leaves the administrator-owned trust ConfigMap unchanged", func() {
+var _ = Describe("runtime TLS source decisions with a simulated API", Label("unit"), func() {
+	It("UT-TLS-MANUAL-001 [AC-6, IA-5, SC-8, SC-17; SOC2 CC6, CC7; ASVS v5.0.0-V12.1.3, v5.0.0-V13.3.1, v5.0.0-V13.3.2] leaves the administrator-owned trust ConfigMap unchanged", func() {
 		ctx := context.Background()
 		kn := newMinimalCR()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeManual}
@@ -62,7 +62,7 @@ var _ = Describe("runtime TLS source wiring", func() {
 		Expect(volume.ConfigMap.Name).To(Equal(resources.InterServiceCAConfigMapName))
 	})
 
-	It("IT-TLS-ADMIN-001 [AC-6, IA-5, SC-8, SC-17; SOC2 CC6, CC7; ASVS v5.0.0-V12.1.3, v5.0.0-V13.3.1, v5.0.0-V13.3.2] leaves the explicit administrator-managed trust ConfigMap unchanged", func() {
+	It("UT-TLS-ADMIN-001 [AC-6, IA-5, SC-8, SC-17; SOC2 CC6, CC7; ASVS v5.0.0-V12.1.3, v5.0.0-V13.3.1, v5.0.0-V13.3.2] leaves the explicit administrator-managed trust ConfigMap unchanged", func() {
 		ctx := context.Background()
 		kn := newMinimalCR()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
@@ -90,7 +90,7 @@ var _ = Describe("runtime TLS source wiring", func() {
 		Expect(derived.Data["ca.crt"]).To(Equal("operator-ca"))
 	})
 
-	It("IT-TLS-DEV-001 [AC-6, SC-8, SC-12, SC-13; SOC2 CC6, CC7; ASVS v5.0.0-V11.1.1, v5.0.0-V12.1.1, v5.0.0-V13.2.1] wires development TLS through the reconciler", func() {
+	It("UT-TLS-DEV-001 [AC-6, SC-8, SC-12, SC-13; SOC2 CC6, CC7; ASVS v5.0.0-V11.1.1, v5.0.0-V12.1.1, v5.0.0-V13.2.1] wires development TLS through the reconciler", func() {
 		ctx := context.Background()
 		kn := newMinimalCR()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
@@ -116,7 +116,7 @@ var _ = Describe("runtime TLS source wiring", func() {
 		Expect(trust.Data["ca.crt"]).To(Equal(string(caPEM)))
 	})
 
-	It("IT-TLS-ROTATION-GAP-002 reads development TLS Secrets from the API server during cache lag", func() {
+	It("UT-TLS-ROTATION-GAP-002 reads development TLS Secrets from the simulated uncached reader during cache lag", func() {
 		ctx := context.Background()
 		kn := newMinimalCR()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeHook}
@@ -164,7 +164,7 @@ var _ = Describe("runtime TLS source wiring", func() {
 		))
 	})
 
-	It("IT-TLS-HOOK-001 [AC-6, SC-8, SC-12, SC-13; SOC2 CC6, CC7, A1; ASVS v5.0.0-V11.1.1, v5.0.0-V12.1.1, v5.0.0-V13.2.1] wires hook TLS through the reconciler", func() {
+	It("UT-TLS-HOOK-001 [AC-6, SC-8, SC-12, SC-13; SOC2 CC6, CC7, A1; ASVS v5.0.0-V11.1.1, v5.0.0-V12.1.1, v5.0.0-V13.2.1] wires hook TLS through the reconciler", func() {
 		ctx := context.Background()
 		kn := newMinimalCR()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
@@ -194,7 +194,7 @@ var _ = Describe("runtime TLS source wiring", func() {
 		Expect(mwc.Webhooks[0].ClientConfig.CABundle).To(Equal(caPEM))
 	})
 
-	It("IT-TLS-MANUAL-002 [IA-5, SC-8, SC-13, SC-17; SOC2 CC6, CC7; ASVS v5.0.0-V11.1.1, v5.0.0-V12.1.3, v5.0.0-V13.3.1] validates administrator-owned serving, signing, and webhook material", func() {
+	It("UT-TLS-MANUAL-002 [IA-5, SC-8, SC-13, SC-17; SOC2 CC6, CC7; ASVS v5.0.0-V11.1.1, v5.0.0-V12.1.3, v5.0.0-V13.3.1] validates administrator-owned serving, signing, and webhook material", func() {
 		ctx := context.Background()
 		kn := newMinimalCR()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeManual}
@@ -235,7 +235,7 @@ var _ = Describe("runtime TLS source wiring", func() {
 		Expect(caPEM).To(Equal(generated[0].Data["ca.crt"]))
 	})
 
-	It("IT-TLS-WEBHOOK-001 [SC-8, SC-13, SC-17, SI-4; SOC2 CC6, CC7; ASVS v5.0.0-V12.1.3, v5.0.0-V13.2.1, v5.0.0-V16.5.2] preserves manual webhook CA bundles", func() {
+	It("UT-TLS-WEBHOOK-001 [SC-8, SC-13, SC-17, SI-4; SOC2 CC6, CC7; ASVS v5.0.0-V12.1.3, v5.0.0-V13.2.1, v5.0.0-V16.5.2] preserves manual webhook CA bundles", func() {
 		ctx := context.Background()
 		kn := newMinimalCR()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeManual}
@@ -263,7 +263,7 @@ var _ = Describe("runtime TLS source wiring", func() {
 		Expect(updatedVWC.Webhooks[0].ClientConfig.CABundle).To(Equal([]byte("administrator-webhook-ca")))
 	})
 
-	It("IT-OWN-514-023 [AC-6, IA-5; ASVS v5.0.0-V13.3.1] preserves cert-manager finalizers during a full resource update", func() {
+	It("UT-OWN-514-023 [AC-6, IA-5; ASVS v5.0.0-V13.3.1] preserves cert-manager finalizers during a full resource update", func() {
 		ctx := context.Background()
 		kn := newMinimalCR()
 		kn.UID = "owner-uid"
@@ -304,7 +304,7 @@ var _ = Describe("runtime TLS source wiring", func() {
 		Expect(updated.GetAnnotations()).To(HaveKeyWithValue("cert-manager.io/issue-temporary-certificate", "true"))
 	})
 
-	It("IT-TLS-PARITY-001 [AC-6, CM-6, SC-12, SC-13, SI-4; SOC2 CC6, CC7, CC8; ASVS v5.0.0-V11.1.1, v5.0.0-V12.1.1, v5.0.0-V13.3.1, v5.0.0-V13.3.2] provisions chart-compatible cert-manager resources and owns only those resources", func() {
+	It("UT-TLS-PARITY-001 [AC-6, CM-6, SC-12, SC-13, SI-4; SOC2 CC6, CC7, CC8; ASVS v5.0.0-V11.1.1, v5.0.0-V12.1.1, v5.0.0-V13.3.1, v5.0.0-V13.3.2] provisions chart-compatible cert-manager resources and owns only those resources", func() {
 		ctx := context.Background()
 		kn := newMinimalCR()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
@@ -345,7 +345,7 @@ var _ = Describe("runtime TLS source wiring", func() {
 		Expect(r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: "gateway-tls"}, outputSecret)).To(MatchError(ContainSubstring("not found")))
 	})
 
-	It("IT-TLS-CERTMANAGER-READY-001 [SC-8, SI-4, SI-10; SOC2 CC7, A1; ASVS v5.0.0-V12.2.1, v5.0.0-V16.5.2] waits for every Certificate Ready condition", func() {
+	It("UT-TLS-CERTMANAGER-READY-001 [SC-8, SI-4, SI-10; SOC2 CC7, A1; ASVS v5.0.0-V12.2.1, v5.0.0-V16.5.2] waits for every Certificate Ready condition", func() {
 		kn := newMinimalCR()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeHelmCertManager}
 		certificates, err := resources.CertManagerTLSResources(kn)
@@ -353,7 +353,7 @@ var _ = Describe("runtime TLS source wiring", func() {
 
 		objects := make([]runtime.Object, 0, len(certificates))
 		for _, certificate := range certificates {
-			if certificate.GetKind() == "Certificate" {
+			if certificate.GetKind() == unitCertificateKind {
 				certificate.Object["status"] = map[string]interface{}{
 					"conditions": []interface{}{map[string]interface{}{
 						"type": "Ready", "status": "True",
@@ -378,7 +378,7 @@ var _ = Describe("runtime TLS source wiring", func() {
 		Expect(r.validateCertManagerCertificatesReady(context.Background(), kn)).To(MatchError(ContainSubstring("Pending")))
 	})
 
-	It("IT-TLS-GAP-001 [AC-6, IA-5, SC-8, SC-12, SC-13, SC-17; SOC2 CC6, CC7; ASVS v5.0.0-V11.1.1, v5.0.0-V12.1.1, v5.0.0-V12.1.3, v5.0.0-V13.2.1, v5.0.0-V13.3.1] validates cert-manager output and issuer discovery without adopting Secrets", func() {
+	It("UT-TLS-GAP-001 [AC-6, IA-5, SC-8, SC-12, SC-13, SC-17; SOC2 CC6, CC7; ASVS v5.0.0-V11.1.1, v5.0.0-V12.1.1, v5.0.0-V12.1.3, v5.0.0-V13.2.1, v5.0.0-V13.3.1] validates cert-manager output and issuer discovery without adopting Secrets", func() {
 		ctx := context.Background()
 		kn := newMinimalCR()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
@@ -440,7 +440,7 @@ var _ = Describe("runtime TLS source wiring", func() {
 		}
 	})
 
-	It("IT-TLS-GAP-002 [SC-8, SI-4, SI-10; SOC2 CC7, A1; ASVS v5.0.0-V12.2.1, v5.0.0-V16.5.2] fails closed when cert-manager discovery is absent", func() {
+	It("UT-TLS-GAP-002 [SC-8, SI-4, SI-10; SOC2 CC7, A1; ASVS v5.0.0-V12.2.1, v5.0.0-V16.5.2] fails closed when cert-manager discovery is absent", func() {
 		kn := newMinimalCR()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
 			Mode: kubernautv1alpha2.TLSModeCertManager,
@@ -456,7 +456,7 @@ var _ = Describe("runtime TLS source wiring", func() {
 		Expect(err).To(MatchError(ContainSubstring("cert-manager api is not installed")))
 	})
 
-	It("IT-TLS-ROTATION-GAP-001 [SC-8, SC-12, SC-13, SI-4; SOC2 CC7, A1; ASVS v5.0.0-V11.1.1, v5.0.0-V11.1.2, v5.0.0-V12.1.1, v5.0.0-V16.5.2] preserves the previous trust root when a leaf write fails", func() {
+	It("UT-TLS-ROTATION-GAP-001 [SC-8, SC-12, SC-13, SI-4; SOC2 CC7, A1; ASVS v5.0.0-V11.1.1, v5.0.0-V11.1.2, v5.0.0-V12.1.1, v5.0.0-V16.5.2] preserves the previous trust root when a leaf write fails", func() {
 		kn := newMinimalCR()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
 			Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,

@@ -657,6 +657,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 			})
 			kn := newCRWithRouteDisabled()
 			kn.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderCilium
+			kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 			r := reconcileToRunning(ctx)
 			foreign := &unstructured.Unstructured{}
@@ -668,7 +669,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 			if operation == "repair" {
 				foreign.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "kubernaut.ai/v1alpha2", Kind: "Kubernaut", Name: kn.Name, UID: types.UID("old-install-uid"), Controller: new(true), BlockOwnerDeletion: new(true)}})
 			}
-			if operation == "prune" {
+			if operation == unitPruneOperation {
 				foreign.SetName(agentPolicyName + "-stale")
 				foreign.SetUID("")
 				foreign.SetResourceVersion("")
@@ -683,7 +684,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 				Expect(k8sClient.Delete(ctx, fetchKnV2(ctx))).To(Succeed())
 			}
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			if operation == "update" {
+			if operation == unitUpdateOperation {
 				Expect(err).To(MatchError(ContainSubstring("owner")))
 			} else {
 				Expect(err).NotTo(HaveOccurred())
@@ -703,8 +704,8 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 				Expect(k8sClient.Get(ctx, singletonKey(), &kubernautv1alpha2.Kubernaut{})).To(MatchError(ContainSubstring("not found")))
 			}
 		},
-		Entry("reconciliation", "update"),
-		Entry("stale policy pruning", "prune"),
+		Entry("reconciliation", unitUpdateOperation),
+		Entry("stale policy pruning", unitPruneOperation),
 		Entry("finalizer cleanup", "finalize"),
 		Entry("same-identity reinstall owner repair", "repair"),
 	)

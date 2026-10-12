@@ -24,17 +24,22 @@ require_text() {
 require_text Makefile '^UT_PKGS := .*internal/resources' 'unit package set is missing resource tests'
 require_text Makefile '^IT_PKGS := \.\/internal\/controller' 'integration package set is missing controller tests'
 require_text Makefile '^test-unit: .*fmt vet' 'unit target is missing formatting/vet prerequisites'
-require_text Makefile 'go test \$\(UT_PKGS\) -coverprofile cover-unit\.out' 'unit target does not write independent coverage'
+require_text Makefile 'KUBERNAUT_CONTROLLER_TEST_TIER=unit go test \$\(UT_PKGS\).* -coverprofile cover-unit\.out' 'unit target does not write independent no-envtest coverage'
 require_text Makefile 'UNIT_COVERAGE_THRESHOLD' 'unit target does not enforce its coverage floor'
 require_text Makefile '^test-integration: .*setup-envtest' 'integration target is missing envtest setup'
-require_text Makefile 'go test \$\(IT_PKGS\) -coverprofile cover-integration\.out' 'integration target does not write independent coverage'
+require_text Makefile 'KUBERNAUT_CONTROLLER_TEST_TIER=integration .*go test \$\(IT_PKGS\).* -coverprofile cover-integration\.out' 'integration target does not write independent coverage'
 require_text Makefile 'INTEGRATION_COVERAGE_THRESHOLD' 'integration target does not enforce its coverage floor'
+require_text Makefile 'go tool cover -func=cover-integration-controller\.out' \
+	'integration floor is not evaluated on the controller independently of process bootstrap'
+require_text .github/workflows/test.yml 'name: Run independent unit tests' 'CI has no independent unit lane'
+require_text .github/workflows/test.yml 'name: Run independent integration tests' 'CI has no independent integration lane'
 require_text Makefile '^test-ci-boundary:' 'CI boundary target is missing'
 require_text Makefile '^test-pyramid: .*test-ci-boundary' 'test pyramid does not enforce the CI boundary'
-require_text Makefile 'verify-business-unit-coverage\.sh cover-unit-internal-final\.out' \
-	'unit target does not enforce 100% coverage for changed business entry points'
-require_text hack/verify-business-unit-coverage.sh '100\.0%' \
-	'business coverage verifier does not enforce a 100% target'
+require_text Makefile 'verify-business-unit-coverage\.sh cover-unit\.out' \
+	'unit target does not enforce full handwritten business coverage'
+require_text Makefile 'cover-unit-baseline\.out' 'unit target does not establish complete instrumentation'
+require_text hack/businesscoverage/main.go 'summary\.Missed > 0' \
+	'business coverage verifier does not reject raw missed statements'
 
 # A release tag must not publish before both upstream qualification and the
 # operator-local gates have completed successfully.
@@ -125,14 +130,14 @@ check_wiring() {
 	grep -Fq 'IT-TLS-' "${integration_path}" || fail "${symbol} has no controller wiring evidence"
 }
 
-check_wiring 'ResolveTLSMaterial' internal/controller internal/resources/tls_test.go internal/controller/tls_source_integration_test.go
-check_wiring 'DevelopmentSelfSignedTLSSecrets' internal/controller internal/resources/tls_test.go internal/controller/tls_source_integration_test.go
-check_wiring 'GenericTLSConfigMaps' internal/controller internal/resources/tlsconfigmaps_test.go internal/controller/tls_source_integration_test.go
-check_wiring 'MutatingWebhookConfigurationWithCABundle' internal/controller internal/resources/webhooks_test.go internal/controller/tls_source_integration_test.go
+check_wiring 'ResolveTLSMaterial' internal/controller internal/resources/tls_test.go internal/controller/runtime_tls_wiring_integration_test.go
+check_wiring 'DevelopmentSelfSignedTLSSecrets' internal/controller internal/resources/tls_test.go internal/controller/runtime_tls_wiring_integration_test.go
+check_wiring 'GenericTLSConfigMaps' internal/controller internal/resources/tlsconfigmaps_test.go internal/controller/runtime_tls_wiring_integration_test.go
+check_wiring 'MutatingWebhookConfigurationWithCABundle' internal/controller internal/resources/webhooks_test.go internal/controller/runtime_tls_wiring_integration_test.go
 
-# Issue #513 has a complete unit -> reconciliation -> live-contract evidence
-# chain. Keep the static rows here so a future resource-builder change cannot
-# be declared complete from a builder-only test.
+# Keep unit and real-API reconciliation evidence explicit. These static checks
+# do not execute or attest the live-contract checker, CNI enforcement, application
+# scraping or alert delivery; those require exact-revision qualification artifacts.
 for test_id in \
 	'UT-MON-513-001' \
 	'UT-MON-513-002' \
@@ -142,19 +147,18 @@ for test_id in \
 		|| fail "${test_id} has no unit evidence"
 done
 for test_id in \
-	'IT-MON-513-001' \
-	'IT-MON-513-002' \
-	'IT-MON-513-003' \
-	'IT-MON-513-004' \
-	'IT-MON-513-005' \
-	'IT-MON-513-006' \
-	'IT-MON-513-007' \
 	'IT-MON-513-008' \
 	'IT-MON-513-009' \
 	'IT-MON-513-010'; do
 	grep -R -n --include='*_test.go' -F "${test_id}" internal/controller >/dev/null \
 		|| fail "${test_id} has no controller-wiring evidence"
 done
+# The original 001-007 controller specs used fake clients. Their unit labels and
+# IDs must not be presented as envtest evidence after this audit correction.
+require_text internal/controller/monitoring_wiring_integration_test.go 'UT-MON-513-CTRL-001.*Label\("unit"\)' \
+	'fake monitoring decisions are not explicitly classified as unit tests'
+require_text internal/controller/runtime_tls_wiring_integration_test.go 'r := reconcileToRunning\(ctx\)' \
+	'runtime TLS wiring specs do not enter production reconciliation through the API server'
 require_text internal/controller/kubernaut_controller.go 'pruneLegacyAuthWebhookServiceMonitor' \
 	'Issue #513 legacy-monitor cleanup has no production caller'
 require_text hack/verify-monitoring-contract.sh 'LIVE_MONITORING_CONTRACT_PASS' \

@@ -899,8 +899,13 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("[SC-7] reports unavailable native policy without creating a raw fallback", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
+			cr.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
-			reconcileToRunning(ctx)
+			r := newReconciler()
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).To(MatchError(ContainSubstring("native network isolation")))
 
 			npList := &networkingv1.NetworkPolicyList{}
 			Expect(k8sClient.List(ctx, npList, client.InNamespace(testNamespace), client.MatchingLabels{
@@ -910,6 +915,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady).Status).To(Equal(metav1.ConditionFalse))
+			Expect(kn.Status.Phase).NotTo(Equal(kubernautv1alpha2.PhaseRunning))
 		})
 
 		It("[SC-7] keeps the no-fallback policy result after a CR update", func() {
@@ -1606,6 +1612,35 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	// ======================================================================
 
 	Context("Spec-Hash Reconcile Optimization", func() {
+		It("IT-AUDIT-515-DRIFT-001 [CM-6, SI-4]: repairs live Service metrics drift through Reconcile while preserving allocation and platform metadata", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			r := reconcileToRunning(ctx)
+			key := client.ObjectKey{Namespace: testNamespace, Name: "data-storage-service"}
+			service := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, key, service)).To(Succeed())
+			clusterIP, clusterIPs := service.Spec.ClusterIP, append([]string(nil), service.Spec.ClusterIPs...)
+			hash := service.Annotations[resources.AnnotationSpecHash]
+			service.Spec.Ports = []corev1.ServicePort{service.Spec.Ports[0]}
+			service.Annotations["platform.example/marker"] = "retain"
+			service.Labels["platform.example/marker"] = "retain"
+			Expect(k8sClient.Update(ctx, service)).To(Succeed())
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, key, service)).To(Succeed())
+			Expect(service.Spec.Ports).To(ContainElement(And(HaveField("Name", "metrics"), HaveField("Port", int32(9090)))))
+			Expect(service.Spec.ClusterIP).To(Equal(clusterIP))
+			Expect(service.Spec.ClusterIPs).To(Equal(clusterIPs))
+			Expect(service.Annotations).To(HaveKeyWithValue(resources.AnnotationSpecHash, hash))
+			Expect(service.Annotations).To(HaveKeyWithValue("platform.example/marker", "retain"))
+			Expect(service.Labels).To(HaveKeyWithValue("platform.example/marker", "retain"))
+			rv := service.ResourceVersion
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, key, service)).To(Succeed())
+			Expect(service.ResourceVersion).To(Equal(rv), "normalization must not create an update loop")
+		})
+
 		It("should stamp spec-hash annotation on created resources", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())

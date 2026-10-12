@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -192,10 +193,20 @@ func (r *KubernautReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		log.Info("ignoring CR with unexpected name", "name", kn.Name, "expected", kubernautv1alpha2.SingletonName)
 		return ctrl.Result{}, nil
 	}
-	ctx = logf.IntoContext(ctx, log.WithValues("generation", kn.Generation, "resourceVersion", kn.ResourceVersion))
+	// Child-resource loggers use name/namespace for the child, including empty
+	// namespaces on cluster-scoped objects. Keep the CR identity unambiguous.
+	ctx = logf.IntoContext(ctx, log.WithValues("kubernautName", kn.Name, "kubernautNamespace", kn.Namespace,
+		"kubernautUID", kn.UID, "generation", kn.Generation, "resourceVersion", kn.ResourceVersion))
 
 	if !kn.DeletionTimestamp.IsZero() {
 		return r.reconcileDelete(ctx, kn, kn)
+	}
+	// Preserve the existing cluster-wide contract even if concurrent CREATEs
+	// bypass admission's pre-persistence check. See PR-515-AUDIT-REMEDIATION.md.
+	if err := r.authorizeSingleton(ctx, kn); err != nil {
+		log.Error(err, "cluster-wide singleton activation blocked", "namespace", kn.Namespace,
+			"name", kn.Name, "generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+		return ctrl.Result{}, err
 	}
 
 	if !controllerutil.ContainsFinalizer(kn, kubernautv1alpha2.FinalizerName) {
@@ -206,9 +217,39 @@ func (r *KubernautReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return r.reconcilePhases(ctx, kn, kn)
 }
 
+// authorizeSingleton uses persisted cluster-wide state, not an admission-time
+// check or a potentially stale manager cache. The existing finalizer keeps the
+// authorized instance present through ordinary deletion/cleanup.
+func (r *KubernautReconciler) authorizeSingleton(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	reader := r.APIReader
+	if reader == nil {
+		// Directly constructed test reconcilers use an uncached API or fake client;
+		// SetupWithManager always provides the production uncached APIReader.
+		reader = r.Client
+	}
+	instances := &kubernautv1alpha2.KubernautList{}
+	if err := reader.List(ctx, instances); err != nil {
+		return fmt.Errorf("checking cluster-wide singleton: %w", err)
+	}
+	if len(instances.Items) != 1 {
+		return fmt.Errorf("cluster-wide singleton conflict: found %d Kubernaut CRs; remove competing objects before retrying", len(instances.Items))
+	}
+	sole := &instances.Items[0]
+	if client.ObjectKeyFromObject(sole) != client.ObjectKeyFromObject(kn) || sole.UID != kn.UID || !sole.DeletionTimestamp.IsZero() {
+		return fmt.Errorf("cluster-wide singleton is absent, replaced or terminating; activation denied")
+	}
+	return nil
+}
+
 func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 	log.Info("reconciling phases", "currentPhase", kn.Status.Phase)
+	// Required isolation must exist before a migration Job or service workload
+	// can start. Failure never prunes the last known-good provider policy.
+	if err := r.reconcileProviderPolicies(ctx, kn, knV2); err != nil {
+		log.Error(err, "native isolation blocks active reconciliation")
+		return ctrl.Result{}, err
+	}
 
 	// Validate and migrate always run (cheap: secret checks + Job status).
 	for _, phase := range []func(context.Context, *kubernautv1alpha2.Kubernaut) (ctrl.Result, error){
@@ -840,9 +881,8 @@ func (r *KubernautReconciler) deployWorkflowNamespace(ctx context.Context, kn *k
 		}
 		return r.checkResourceOwnership(ctx, kn, existing, false)
 	}
-	if existing.Labels == nil {
-		existing.Labels = make(map[string]string)
-	}
+	// Authorization above requires complete ownership labels, so this map is
+	// already nonnil. Unmarked administrator namespaces are never mutated here.
 	changed := resources.EnsureRestrictedPSALabels(existing.Labels)
 	if changed || !ownershipMetadataMatches(wfNs, existing) {
 		resources.StampOwnership(kn, existing)
@@ -1595,6 +1635,11 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	return cmHashes, nil
 }
 
+type cmBuilder struct {
+	name string
+	fn   func() (*corev1.ConfigMap, error)
+}
+
 // buildCoreConfigMaps constructs the ConfigMaps that are always considered
 // regardless of component toggles: the strategy-table-driven builder set,
 // the proactive-signal-mappings ConfigMap, and the
@@ -1605,10 +1650,6 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 func buildCoreConfigMaps(
 	kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, tlsOpt resources.ConfigMapOption, dbName, dbUser string,
 ) ([]*corev1.ConfigMap, map[string]string, error) {
-	type cmBuilder struct {
-		name string
-		fn   func() (*corev1.ConfigMap, error)
-	}
 	builders := []cmBuilder{
 		{"datastorage", func() (*corev1.ConfigMap, error) {
 			return resources.DataStorageConfigMap(kn, knV2, dbName, dbUser, tlsOpt)
@@ -1633,20 +1674,9 @@ func buildCoreConfigMaps(
 	}
 
 	cmHashes := make(map[string]string, len(builders))
-	var configMaps []*corev1.ConfigMap
-	for _, b := range builders {
-		cm, err := b.fn()
-		if err != nil {
-			return nil, nil, fmt.Errorf("building %s ConfigMap: %w", b.name, err)
-		}
-		// A nil result (no error) means the builder deliberately has nothing to
-		// create -- e.g. notification-routing when the caller supplied their
-		// own ConfigMap via spec.notification.routing.configMapName.
-		if cm == nil {
-			continue
-		}
-		configMaps = append(configMaps, cm)
-		cmHashes[b.name] = resources.ConfigMapDataHash(cm.Data)
+	configMaps, err := buildConfigMapSet(builders, make([]*corev1.ConfigMap, 0, len(builders)+2), cmHashes)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	if cm := resources.ProactiveSignalMappingsConfigMap(kn); cm != nil {
@@ -1673,29 +1703,39 @@ func (r *KubernautReconciler) appendOptionalComponentConfigMaps(
 	kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut,
 	tlsOpt resources.ConfigMapOption, configMaps []*corev1.ConfigMap, cmHashes map[string]string,
 ) ([]*corev1.ConfigMap, error) {
+	builders := make([]cmBuilder, 0, 3)
 	if kn.Spec.GatewayEnabled() {
-		gwCM, err := resources.GatewayConfigMap(kn, knV2, tlsOpt)
-		if err != nil {
-			return nil, fmt.Errorf("building gateway ConfigMap: %w", err)
-		}
-		configMaps = append(configMaps, gwCM)
-		cmHashes["gateway"] = resources.ConfigMapDataHash(gwCM.Data)
+		builders = append(builders, cmBuilder{"gateway", func() (*corev1.ConfigMap, error) {
+			return resources.GatewayConfigMap(kn, knV2, tlsOpt)
+		}})
 	}
 	if kn.Spec.APIFrontendEnabled() {
-		afCM, err := resources.APIFrontendConfigMap(kn, knV2)
-		if err != nil {
-			return nil, fmt.Errorf("building apifrontend ConfigMap: %w", err)
-		}
-		configMaps = append(configMaps, afCM)
-		cmHashes["apifrontend"] = resources.ConfigMapDataHash(afCM.Data)
+		builders = append(builders, cmBuilder{"apifrontend", func() (*corev1.ConfigMap, error) {
+			return resources.APIFrontendConfigMap(kn, knV2)
+		}})
 	}
 	if knV2.Spec.FleetMetadataCacheEnabled() {
-		fmcCM, err := resources.FleetMetadataCacheConfigMap(kn, knV2)
+		builders = append(builders, cmBuilder{"fleetmetadatacache", func() (*corev1.ConfigMap, error) {
+			return resources.FleetMetadataCacheConfigMap(kn, knV2)
+		}})
+	}
+	return buildConfigMapSet(builders, configMaps, cmHashes)
+}
+
+// Both core and optional builders share one fail-closed assembly path. No
+// serializer or resource builder is replaced: builder errors retain component
+// context, and deliberate nil results remain an explicit opt-out sentinel.
+func buildConfigMapSet(builders []cmBuilder, configMaps []*corev1.ConfigMap, cmHashes map[string]string) ([]*corev1.ConfigMap, error) {
+	for _, builder := range builders {
+		cm, err := builder.fn()
 		if err != nil {
-			return nil, fmt.Errorf("building fleetmetadatacache ConfigMap: %w", err)
+			return nil, fmt.Errorf("building %s ConfigMap: %w", builder.name, err)
 		}
-		configMaps = append(configMaps, fmcCM)
-		cmHashes["fleetmetadatacache"] = resources.ConfigMapDataHash(fmcCM.Data)
+		if cm == nil {
+			continue
+		}
+		configMaps = append(configMaps, cm)
+		cmHashes[builder.name] = resources.ConfigMapDataHash(cm.Data)
 	}
 	return configMaps, nil
 }
@@ -1931,6 +1971,9 @@ func (r *KubernautReconciler) ensureDeployments(
 }
 
 func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, cmHashes map[string]string, telemetryRevisions telemetryMaterialRevisionSet) (hasRoute bool, _ error) {
+	if err := r.reconcileProviderPolicies(ctx, kn, knV2); err != nil {
+		return false, err
+	}
 	depBuilders, err := r.enabledDeploymentBuilders(ctx, kn, knV2)
 	if err != nil {
 		return false, err
@@ -1947,10 +1990,6 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		if err := r.ensureNamespaced(ctx, kn, pdb); err != nil {
 			return false, fmt.Errorf("ensuring PDB %s: %w", pdb.Name, err)
 		}
-	}
-
-	if err := r.reconcileProviderPolicies(ctx, kn, knV2); err != nil {
-		return false, err
 	}
 
 	dsHPA := resources.DataStorageHPA(kn)
@@ -2005,12 +2044,14 @@ func (r *KubernautReconciler) reconcileProviderPolicies(ctx context.Context, kn 
 			Message:  err.Error(),
 		}, false, err)
 	}
-	staticCIDRs := make([]string, 0, 1+len(kn.Spec.NetworkPolicies.APIServerCIDRs))
-	if kn.Spec.NetworkPolicies.APIServerCIDR != "" {
-		staticCIDRs = append(staticCIDRs, kn.Spec.NetworkPolicies.APIServerCIDR)
+	if kn.Spec.NetworkPolicies.Mode == kubernautv1alpha2.NetworkIsolationInherited {
+		return r.patchProviderPolicyStatus(ctx, kn, policy.DetectionResult{
+			Provider: policy.ProviderNone, Reason: "InheritedIsolation",
+			Message: "administrator explicitly supplies inherited isolation; external enforcement is not verified by the operator",
+		}, true, nil)
 	}
-	staticCIDRs = append(staticCIDRs, kn.Spec.NetworkPolicies.APIServerCIDRs...)
-	intent, err := policy.BuildIntent(kn.Namespace, components, staticCIDRs)
+	// ValidateNativeOverrides already rejected every legacy static-CIDR input.
+	intent, err := policy.BuildIntent(kn.Namespace, components, nil)
 	if err != nil {
 		return r.patchProviderPolicyStatus(ctx, kn, policy.DetectionResult{
 			Provider: policy.ProviderNone,
@@ -2019,11 +2060,27 @@ func (r *KubernautReconciler) reconcileProviderPolicies(ctx context.Context, kn 
 		}, false, err)
 	}
 	intent.InstanceName = kn.Name
+	intent.ScrapeSources = kn.Spec.NetworkPolicies.ScrapeSources
+	intent.MetricsPorts = generatedMetricsPorts(kn, knV2)
 
 	detector := policy.Detector{Client: r.Client, RESTMapper: r.RESTMapper()}
 	detection := policy.Detect(detector.Discover(ctx), policy.Provider(kn.Spec.NetworkPolicies.Provider))
+	if !detection.Ready {
+		err := fmt.Errorf("native network isolation is required but unavailable: %s", detection.Message)
+		logf.FromContext(ctx).Error(err, "retaining existing native policies; activation denied", "reason", detection.Reason)
+		return r.patchProviderPolicyStatus(ctx, kn, detection, false, err)
+	}
 	if detection.Provider == policy.ProviderOVN && detection.Platform == "OpenShift" {
-		intent.DNSNamespace = resources.OCPDNSNamespace
+		// Resolve the platform Service rather than assuming app=dns or copying
+		// frontend ports. See docs/design/PR-518-OVN-ISOLATION-DNS.md.
+		intent.DNS, err = policy.ResolveDNSDestination(ctx, r.Client, client.ObjectKey{
+			Namespace: resources.OCPDNSNamespace, Name: resources.OCPDNSServiceName,
+		})
+		if err != nil {
+			detection.PolicyReason = policy.ReasonDNSUnavailable
+			detection.PolicyMessage = err.Error()
+			return r.patchProviderPolicyStatus(ctx, kn, detection, false, err)
+		}
 	}
 	monitoringDestinations, monitoringErr := r.resolveMonitoringDestinations(ctx, knV2, detection)
 	intent.Monitoring = monitoringDestinations
@@ -2059,6 +2116,21 @@ func (r *KubernautReconciler) reconcileProviderPolicies(ctx context.Context, kn 
 		detection.PolicyMessage = fmt.Sprintf("native provider is ready but monitoring egress is unavailable: %v", monitoringErr)
 	}
 	return r.patchProviderPolicyStatus(ctx, kn, detection, detection.Ready && monitoringErr == nil, nil)
+}
+
+// generatedMetricsPorts derives authorization from the actual Service builders,
+// including AF's custom port, and never grants ports to metrics-less components.
+func generatedMetricsPorts(kn, knV2 *kubernautv1alpha2.Kubernaut) map[string]int32 {
+	ports := make(map[string]int32, len(resources.ActiveComponents(kn, knV2)))
+	services := append(resources.Services(kn, knV2), resources.MetricsServices(kn)...)
+	for _, service := range services {
+		for _, port := range service.Spec.Ports {
+			if port.Name == "metrics" {
+				ports[service.Spec.Selector["app"]] = port.Port
+			}
+		}
+	}
+	return ports
 }
 
 func (r *KubernautReconciler) ensureRenderedProviderPolicies(
@@ -2183,41 +2255,15 @@ func (r *KubernautReconciler) patchProviderPolicyStatus(
 ) error {
 	if reconcileErr != nil {
 		detection.Message = reconcileErr.Error()
+		logf.FromContext(ctx).Error(reconcileErr, "native policy reconciliation failed", "provider", detection.Provider)
 	}
 	if err := r.patchStatus(ctx, kn, func() {
-		providerStatus := metav1.ConditionFalse
-		providerReason := detection.Reason
-		if detection.Provider != policy.ProviderNone && detection.Ready {
-			providerStatus = metav1.ConditionTrue
+		if !ready && kn.Status.Phase == kubernautv1alpha2.PhaseRunning {
+			r.setPhase(kn, kubernautv1alpha2.PhaseDegraded)
 		}
-		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-			Type:               kubernautv1alpha2.ConditionProviderDetected,
-			Status:             providerStatus,
-			Reason:             providerReason,
-			Message:            detection.Message,
-			ObservedGeneration: kn.Generation,
-		})
-		policyStatus := metav1.ConditionFalse
-		policyReason := detection.Reason
-		policyMessage := detection.Message
-		if detection.PolicyReason != "" {
-			policyReason = detection.PolicyReason
+		for _, condition := range providerPolicyConditions(kn.Generation, detection, ready) {
+			meta.SetStatusCondition(&kn.Status.Conditions, condition)
 		}
-		if detection.PolicyMessage != "" {
-			policyMessage = detection.PolicyMessage
-		}
-		if ready {
-			policyStatus = metav1.ConditionTrue
-			policyReason = policy.ReasonProviderReady
-			policyMessage = detection.Message
-		}
-		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-			Type:               kubernautv1alpha2.ConditionProviderPolicyReady,
-			Status:             policyStatus,
-			Reason:             policyReason,
-			Message:            policyMessage,
-			ObservedGeneration: kn.Generation,
-		})
 	}); err != nil {
 		return fmt.Errorf("patching provider policy status: %w", err)
 	}
@@ -2232,6 +2278,33 @@ func (r *KubernautReconciler) patchProviderPolicyStatus(
 		r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "ProviderPolicyUnavailable", "Reconcile", "%s", eventMessage)
 	}
 	return nil
+}
+
+func providerPolicyConditions(generation int64, detection policy.DetectionResult, ready bool) []metav1.Condition {
+	providerStatus := metav1.ConditionFalse
+	if detection.Provider != policy.ProviderNone && detection.Ready {
+		providerStatus = metav1.ConditionTrue
+	}
+	policyStatus := metav1.ConditionFalse
+	policyReason, policyMessage := detection.Reason, detection.Message
+	if detection.PolicyReason != "" {
+		policyReason = detection.PolicyReason
+	}
+	if detection.PolicyMessage != "" {
+		policyMessage = detection.PolicyMessage
+	}
+	if ready {
+		policyStatus, policyReason, policyMessage = metav1.ConditionTrue, policy.ReasonProviderReady, detection.Message
+		if detection.Reason == "InheritedIsolation" {
+			policyReason = detection.Reason
+		}
+	}
+	return []metav1.Condition{
+		{Type: kubernautv1alpha2.ConditionProviderDetected, Status: providerStatus,
+			Reason: detection.Reason, Message: detection.Message, ObservedGeneration: generation},
+		{Type: kubernautv1alpha2.ConditionProviderPolicyReady, Status: policyStatus,
+			Reason: policyReason, Message: policyMessage, ObservedGeneration: generation},
+	}
 }
 
 func (r *KubernautReconciler) pruneProviderPolicies(ctx context.Context, namespace, instance string, desired map[string]struct{}) error {
@@ -2540,6 +2613,10 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 		})
 	}
 
+	if kn.Spec.NetworkPolicies.Mode != kubernautv1alpha2.NetworkIsolationInherited &&
+		!meta.IsStatusConditionTrue(kn.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady) {
+		allReady = false
+	}
 	finalStatuses := serviceStatuses
 	finalAllReady := allReady
 
@@ -2605,14 +2682,16 @@ func (r *KubernautReconciler) runFinalizerCleanup(ctx context.Context, kn *kuber
 		log.Error(err, "cleanup failed, retaining finalizer and retrying")
 		return ctrl.Result{RequeueAfter: requeueError}, err, true
 	}
-	r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "CleanupComplete", "Reconcile", "Cluster-scoped resources cleaned up")
 
 	// Write the v1alpha2 object directly so the finalizer update preserves the
 	// complete storage representation, including Fleet fields.
 	controllerutil.RemoveFinalizer(knV2, kubernautv1alpha2.FinalizerName)
 	if err := r.Update(ctx, knV2); err != nil {
+		log.Error(err, "failed to remove cleanup finalizer")
 		return ctrl.Result{}, err, true
 	}
+	r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "CleanupComplete", "Reconcile", "Cluster-scoped resources cleaned up")
+	log.Info("cleanup finalizer removed", "cleanupOutcome", "Complete")
 	return ctrl.Result{}, nil, false
 }
 
@@ -2858,7 +2937,15 @@ func (r *KubernautReconciler) patchStatus(ctx context.Context, kn *kubernautv1al
 
 	if err := r.Status().Patch(ctx, kn, client.MergeFrom(patched)); err != nil {
 		*kn = *patched
+		logf.FromContext(ctx).Error(err, "failed to patch reconciliation status", "namespace", kn.Namespace,
+			"name", kn.Name, "generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
 		return err
+	}
+	if patched.Status.Phase != kn.Status.Phase {
+		logf.FromContext(ctx).Info("reconciliation phase transitioned",
+			"oldPhase", patched.Status.Phase, "newPhase", kn.Status.Phase,
+			"namespace", kn.Namespace, "name", kn.Name, "uid", kn.UID,
+			"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
 	}
 	return nil
 }
@@ -3260,9 +3347,6 @@ func (r *KubernautReconciler) ensureRuntimeTLS(
 	if err != nil {
 		return resources.TLSMaterial{}, nil, err
 	}
-	if err := resources.ValidateInternalCASecretForSource(ca, material.Source); err != nil {
-		return resources.TLSMaterial{}, nil, err
-	}
 	caPEM, err := resources.InternalCAPEMForSource(ca, material.Source)
 	if err != nil {
 		return resources.TLSMaterial{}, nil, err
@@ -3548,6 +3632,10 @@ func (r *KubernautReconciler) ensureCertManagerTLSResources(ctx context.Context,
 		Group: issuerRef.group,
 	}
 
+	return r.ensureCertManagerDesiredTLSResources(ctx, kn, desiredKn)
+}
+
+func (r *KubernautReconciler) ensureCertManagerDesiredTLSResources(ctx context.Context, kn, desiredKn *kubernautv1alpha2.Kubernaut) error {
 	objects, err := resources.CertManagerTLSResources(desiredKn)
 	if err != nil {
 		return fmt.Errorf("building cert-manager TLS resources: %w", err)
@@ -3680,7 +3768,7 @@ func (r *KubernautReconciler) resolveCertManagerIssuer(ctx context.Context, kn *
 	name := issuerConfig.Name
 	var err error
 	if name == "" {
-		name, err = r.selectSingleCertManagerIssuer(ctx, kn.Namespace, group, kind)
+		name, err = r.selectSingleCertManagerIssuer(ctx, kn, group, kind)
 		if err != nil {
 			return certManagerIssuerReference{}, err
 		}
@@ -3698,24 +3786,49 @@ func (r *KubernautReconciler) resolveCertManagerIssuer(ctx context.Context, kn *
 	return certManagerIssuerReference{name: name, kind: kind, group: group}, nil
 }
 
-func (r *KubernautReconciler) selectSingleCertManagerIssuer(ctx context.Context, namespace, group, kind string) (string, error) {
+func (r *KubernautReconciler) selectSingleCertManagerIssuer(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, group, kind string) (string, error) {
 	list := &unstructured.UnstructuredList{}
 	list.SetAPIVersion(group + "/v1")
 	list.SetKind(kind + "List")
 	var options []client.ListOption
 	if kind == certManagerIssuerKind {
-		options = append(options, client.InNamespace(namespace))
+		options = append(options, client.InNamespace(kn.Namespace))
 	}
 	if err := r.List(ctx, list, options...); err != nil {
 		return "", fmt.Errorf("listing cert-manager %s resources: %w", kind, err)
 	}
-	if len(list.Items) == 0 {
+	// Provisioning adds internal bootstrap Issuers to this same namespace.
+	// They are not external issuer candidates. Names/labels alone are not proof:
+	// require both an expected generated identity and current-UID control.
+	// See docs/design/PR-515-AUDIT-REMEDIATION.md (issuer selection regression).
+	internalNames := make(map[string]struct{}, 2)
+	if kind == certManagerIssuerKind && group == "cert-manager.io" {
+		for _, name := range resources.CertManagerBootstrapIssuerNames(kn) {
+			internalNames[name] = struct{}{}
+		}
+	}
+	names := make([]string, 0, len(list.Items))
+	for index := range list.Items {
+		object := &list.Items[index]
+		_, expectedIdentity := internalNames[object.GetName()]
+		if expectedIdentity && currentCertManagerIssuerController(kn, object) {
+			continue
+		}
+		names = append(names, object.GetName())
+	}
+	if len(names) == 0 {
 		return "", fmt.Errorf("no cert-manager %s found for automatic issuer selection", kind)
 	}
-	if len(list.Items) > 1 {
+	if len(names) > 1 {
 		return "", fmt.Errorf("multiple cert-manager %s resources found; set tls.certManager.issuer.name", kind)
 	}
-	return list.Items[0].GetName(), nil
+	return names[0], nil
+}
+
+func currentCertManagerIssuerController(kn *kubernautv1alpha2.Kubernaut, object *unstructured.Unstructured) bool {
+	owner := metav1.GetControllerOf(object)
+	return owner != nil && kn.UID != "" && owner.UID == kn.UID &&
+		owner.APIVersion == kubernautv1alpha2.GroupVersion.String() && owner.Kind == "Kubernaut" && owner.Name == kn.Name
 }
 
 func (r *KubernautReconciler) currentTime() time.Time {
@@ -3812,6 +3925,9 @@ func (r *KubernautReconciler) ensureResource(ctx context.Context, kn *kubernautv
 	}
 
 	obj.SetResourceVersion(existing.GetResourceVersion())
+	if service, ok := obj.(*corev1.Service); ok {
+		preserveServiceFields(service, existing.(*corev1.Service))
+	}
 	if err := r.Update(ctx, obj); err != nil {
 		r.resourceLogger(ctx, kn, obj).Error(err, "resource update failed")
 		return fmt.Errorf("updating %s: %w", key, err)
@@ -3843,8 +3959,13 @@ func (r *KubernautReconciler) createOrReadExisting(ctx context.Context, obj, exi
 //
 // Only keys present in the desired object are compared; extra keys in the
 // live object (e.g., OCP-injected service-ca.crt) are ignored to prevent
-// false positives. Returns false for non-ConfigMap types.
+// false positives. Services compare normalized operator-owned fields rather
+// than allocated addressing. See docs/design/PR-515-AUDIT-REMEDIATION.md.
 func contentDrifted(desired, existing client.Object) bool {
+	if desiredService, ok := desired.(*corev1.Service); ok {
+		existingService, sameType := existing.(*corev1.Service)
+		return sameType && !equality.Semantic.DeepEqual(ownedServiceSpec(desiredService), ownedServiceSpec(existingService))
+	}
 	desiredCM, ok := desired.(*corev1.ConfigMap)
 	if !ok {
 		return false
@@ -3868,6 +3989,56 @@ func contentDrifted(desired, existing client.Object) bool {
 	}
 
 	return false
+}
+
+func ownedServiceSpec(service *corev1.Service) corev1.ServiceSpec {
+	spec := corev1.ServiceSpec{
+		Selector: service.Spec.Selector, Ports: append([]corev1.ServicePort(nil), service.Spec.Ports...),
+		Type: service.Spec.Type, SessionAffinity: service.Spec.SessionAffinity,
+		ExternalName: service.Spec.ExternalName, PublishNotReadyAddresses: service.Spec.PublishNotReadyAddresses,
+	}
+	if spec.Type == "" {
+		spec.Type = corev1.ServiceTypeClusterIP
+	}
+	if spec.SessionAffinity == "" {
+		spec.SessionAffinity = corev1.ServiceAffinityNone
+	}
+	for index := range spec.Ports {
+		port := &spec.Ports[index]
+		port.NodePort = 0 // allocated by the API, not managed by these builders
+		if port.Protocol == "" {
+			port.Protocol = corev1.ProtocolTCP
+		}
+	}
+	return spec
+}
+
+func preserveServiceFields(desired, existing *corev1.Service) {
+	owned := ownedServiceSpec(desired)
+	live := existing.Spec.DeepCopy()
+	live.Selector, live.Ports, live.Type = owned.Selector, owned.Ports, owned.Type
+	live.SessionAffinity = owned.SessionAffinity
+	live.ExternalName, live.PublishNotReadyAddresses = owned.ExternalName, owned.PublishNotReadyAddresses
+	if live.Type == corev1.ServiceTypeClusterIP {
+		live.ExternalTrafficPolicy = ""
+		live.HealthCheckNodePort = 0
+		live.LoadBalancerClass = nil
+		live.AllocateLoadBalancerNodePorts = nil
+	}
+	desired.Spec = *live
+	annotations := maps.Clone(existing.Annotations)
+	if annotations == nil {
+		annotations = make(map[string]string, len(desired.Annotations))
+	}
+	delete(annotations, resources.OCPServingCertAnnotation)
+	maps.Copy(annotations, desired.Annotations)
+	desired.Annotations = annotations
+	labels := maps.Clone(existing.Labels)
+	if labels == nil {
+		labels = make(map[string]string, len(desired.Labels))
+	}
+	maps.Copy(labels, desired.Labels)
+	desired.Labels = labels
 }
 
 // setHashAnnotation merges the spec-hash annotation into the object's
@@ -4109,9 +4280,9 @@ func (r *KubernautReconciler) apiServerToKubernaut(ctx context.Context, _ client
 	return reqs
 }
 
-// monitoringObjectToKubernaut maps external monitoring Service and
-// EndpointSlice changes to Kubernaut instances whose configured endpoint
-// addresses that Service. This keeps native policy rules exact when selectors,
+// monitoringObjectToKubernaut maps monitoring and platform DNS Service and
+// EndpointSlice changes to Kubernaut instances using those dependencies.
+// This keeps native policy rules exact when selectors,
 // Service ports, or resolved backends change instead of waiting for the
 // periodic reconciliation timer.
 func (r *KubernautReconciler) monitoringObjectToKubernaut(ctx context.Context, object client.Object) []reconcile.Request {
@@ -4129,7 +4300,7 @@ func (r *KubernautReconciler) monitoringObjectToKubernaut(ctx context.Context, o
 
 	list := &kubernautv1alpha2.KubernautList{}
 	if err := r.List(ctx, list); err != nil {
-		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for monitoring event",
+		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for policy dependency event",
 			"namespace", object.GetNamespace(), "service", serviceName)
 		return nil
 	}
@@ -4137,6 +4308,14 @@ func (r *KubernautReconciler) monitoringObjectToKubernaut(ctx context.Context, o
 	requests := make([]reconcile.Request, 0, len(list.Items))
 	for index := range list.Items {
 		kn := &list.Items[index]
+		if object.GetNamespace() == resources.OCPDNSNamespace && serviceName == resources.OCPDNSServiceName &&
+			kn.Spec.NetworkPolicies.Mode != kubernautv1alpha2.NetworkIsolationInherited {
+			switch kn.Spec.NetworkPolicies.Provider {
+			case "", kubernautv1alpha2.NetworkPolicyProviderAuto, kubernautv1alpha2.NetworkPolicyProviderOVN:
+				requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)})
+				continue
+			}
+		}
 		monitoring := r.monitoringConfigView(ctx, kn)
 		for _, endpoint := range monitoringEndpoints(monitoring) {
 			reference, err := policy.MonitoringServiceReferenceFromURL(endpoint.URL)
