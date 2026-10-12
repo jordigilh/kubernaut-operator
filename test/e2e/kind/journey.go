@@ -719,17 +719,25 @@ func waitForMonitoringTLSDeploymentSource(
 			if err := yaml.Unmarshal([]byte(output), deployment); err != nil {
 				return fmt.Errorf("decoding %s monitoring TLS Deployment: %w", component, err)
 			}
+			desiredReplicas := int32(1)
+			if deployment.Spec.Replicas != nil {
+				desiredReplicas = *deployment.Spec.Replicas
+			}
+			rolloutReady := deployment.Status.ObservedGeneration >= deployment.Generation &&
+				deployment.Status.UpdatedReplicas >= desiredReplicas &&
+				deployment.Status.ReadyReplicas >= desiredReplicas
 			volume := findMonitoringDeploymentVolume(deployment)
 			matches := false
 			if source == kubernautv1alpha2.MonitoringTLSSourceSystem {
-				matches = volume == nil &&
+				matches = rolloutReady && volume == nil &&
 					deployment.Spec.Template.Annotations[resources.AnnotationMonitoringMaterialRevision] == ""
 			} else if volume != nil {
+				matches = rolloutReady
 				switch source {
 				case kubernautv1alpha2.MonitoringTLSSourceSecret:
-					matches = volume.Secret != nil && volume.Secret.SecretName == objectName
+					matches = matches && volume.Secret != nil && volume.Secret.SecretName == objectName
 				case kubernautv1alpha2.MonitoringTLSSourceConfigMap:
-					matches = volume.ConfigMap != nil && volume.ConfigMap.Name == objectName
+					matches = matches && volume.ConfigMap != nil && volume.ConfigMap.Name == objectName
 				}
 			}
 			if !matches {
