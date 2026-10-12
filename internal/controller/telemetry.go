@@ -262,36 +262,19 @@ func telemetryClientAuthUsage(usages []x509.ExtKeyUsage) bool {
 // shared, while referenced Secret resource versions are lane-specific so
 // unrelated producers do not roll when only one external object changes.
 func (r *KubernautReconciler) telemetryMaterialRevisions(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (telemetryMaterialRevisionSet, error) {
-	lanes := telemetryLanes(kn)
 	hasTelemetry := hasNetworkTelemetry(kn)
 	if !hasTelemetry && !monitoringTLSConfigured(kn) {
 		return telemetryMaterialRevisionSet{}, nil
 	}
 	revisions := telemetryMaterialRevisionSet{}
 	if hasTelemetry {
-		if err := r.validateTelemetryAmbientTrust(ctx, kn); err != nil {
-			return telemetryMaterialRevisionSet{}, err
-		}
-		ambientRevision, err := r.telemetryAmbientTrustRevision(ctx, kn)
+		telemetryRevisions, err := r.networkTelemetryMaterialRevisions(ctx, kn)
 		if err != nil {
 			return telemetryMaterialRevisionSet{}, err
 		}
-		for _, lane := range lanes {
-			if !resources.TelemetryNetworkEnabled(lane.spec) {
-				continue
-			}
-			inputs := []string{"ambient=" + ambientRevision}
-			for _, reference := range resources.TelemetrySecretReferences(lane.spec) {
-				secret := &corev1.Secret{}
-				key := client.ObjectKey{Namespace: kn.Namespace, Name: reference.Name}
-				if err := r.Get(ctx, key, secret); err != nil {
-					return telemetryMaterialRevisionSet{}, fmt.Errorf("reading telemetry Secret %q for revision: %w", reference.Name, err)
-				}
-				inputs = append(inputs, fmt.Sprintf("secret=%s/%s@%s", key.Namespace, key.Name, secret.ResourceVersion))
-			}
-			digest := sha256.Sum256([]byte(strings.Join(inputs, "\x00")))
-			revisions.set(lane.component, fmt.Sprintf("%x", digest))
-		}
+		revisions.Gateway = telemetryRevisions.Gateway
+		revisions.DataStorage = telemetryRevisions.DataStorage
+		revisions.KubernautAgent = telemetryRevisions.KubernautAgent
 	}
 	if monitoringTLSConfigured(kn) {
 		monitoringRevision, err := r.monitoringTLSMaterialRevision(ctx, kn)
@@ -299,6 +282,36 @@ func (r *KubernautReconciler) telemetryMaterialRevisions(ctx context.Context, kn
 			return telemetryMaterialRevisionSet{}, fmt.Errorf("resolving monitoring tls material revision: %w", err)
 		}
 		revisions.Monitoring = monitoringRevision
+	}
+	return revisions, nil
+}
+
+func (r *KubernautReconciler) networkTelemetryMaterialRevisions(
+	ctx context.Context, kn *kubernautv1alpha2.Kubernaut,
+) (telemetryMaterialRevisionSet, error) {
+	if err := r.validateTelemetryAmbientTrust(ctx, kn); err != nil {
+		return telemetryMaterialRevisionSet{}, err
+	}
+	ambientRevision, err := r.telemetryAmbientTrustRevision(ctx, kn)
+	if err != nil {
+		return telemetryMaterialRevisionSet{}, err
+	}
+	revisions := telemetryMaterialRevisionSet{}
+	for _, lane := range telemetryLanes(kn) {
+		if !resources.TelemetryNetworkEnabled(lane.spec) {
+			continue
+		}
+		inputs := []string{"ambient=" + ambientRevision}
+		for _, reference := range resources.TelemetrySecretReferences(lane.spec) {
+			secret := &corev1.Secret{}
+			key := client.ObjectKey{Namespace: kn.Namespace, Name: reference.Name}
+			if err := r.Get(ctx, key, secret); err != nil {
+				return telemetryMaterialRevisionSet{}, fmt.Errorf("reading telemetry Secret %q for revision: %w", reference.Name, err)
+			}
+			inputs = append(inputs, fmt.Sprintf("secret=%s/%s@%s", key.Namespace, key.Name, secret.ResourceVersion))
+		}
+		digest := sha256.Sum256([]byte(strings.Join(inputs, "\x00")))
+		revisions.set(lane.component, fmt.Sprintf("%x", digest))
 	}
 	return revisions, nil
 }
