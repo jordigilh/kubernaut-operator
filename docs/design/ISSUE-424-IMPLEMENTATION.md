@@ -47,8 +47,10 @@ belong under `monitoring.tls`.
 ## Evidence
 
 The API type, generated CRD/deepcopy output, resource unit tests,
-controller trust-material validation tests, and deployment rendering prove
-the contract. The tests map to FedRAMP/NIST SC-8, SC-12, CM-3/CM-6,
-SOC 2 CC6.1/CC7.2, and OWASP ASVS V12.1.3/V13.2.1 objectives. Live Kind/E2E
-validation still requires a cluster with the selected monitoring endpoint
-and is reported separately in the implementation handoff.
+controller trust-material validation tests, and deployment rendering provide
+repository evidence for the contract. The control-objective anchors are
+FedRAMP/NIST `SC-8`, `SC-12`, `SC-13`, `CM-3`, `CM-6`, and `SI-10`, SOC 2
+`CC6.1`/`CC7.2`, and OWASP ASVS v5.0.0 `V2.2.1`, `V2.2.2`, `V12.3.1`,
+`V12.3.2`, and `V16.5.2`. These are evidence mappings, not a certification
+claim. Live Kind/OCP E2E validation still requires a cluster with the selected
+monitoring endpoint and is reported separately in the implementation handoff.

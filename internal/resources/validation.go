@@ -42,11 +42,38 @@ func ValidateKubernaut(kn *kubernautv1alpha2.Kubernaut) []error {
 	errs = append(errs, validatePolicyPrerequisites(kn)...)
 	errs = append(errs, validateLLMProfiles(kn)...)
 	errs = append(errs, validateTelemetry(kn)...)
+	errs = append(errs, validateMonitoringEndpoints(kn)...)
 	errs = append(errs, validateMonitoringTLS(kn)...)
 	errs = append(errs, validateAPIFrontend(kn)...)
 	errs = append(errs, validateAlignmentCheck(kn)...)
 	errs = append(errs, validateDryRun(kn)...)
 	errs = append(errs, validateInteractive(kn)...)
+	return errs
+}
+
+// validateMonitoringEndpoints rejects plaintext monitoring connections before
+// any endpoint is rendered into a client configuration. A CA trust source
+// cannot protect an HTTP connection, so every configured monitoring endpoint
+// must use HTTPS; an omitted URL remains valid for capability-based defaults.
+func validateMonitoringEndpoints(kn *kubernautv1alpha2.Kubernaut) []error {
+	endpoints := []struct {
+		path string
+		url  string
+	}{
+		{path: "spec.monitoring.prometheus.url", url: kn.Spec.Monitoring.Prometheus.URL},
+		{path: "spec.monitoring.alertManager.url", url: kn.Spec.Monitoring.AlertManager.URL},
+	}
+	var errs []error
+	for _, endpoint := range endpoints {
+		value := strings.TrimSpace(endpoint.url)
+		if value == "" {
+			continue
+		}
+		parsed, err := url.Parse(value)
+		if err != nil || parsed.Scheme != httpsURLScheme || parsed.Host == "" || parsed.User != nil {
+			errs = append(errs, fmt.Errorf("%s must be an https URL without user information", endpoint.path))
+		}
+	}
 	return errs
 }
 

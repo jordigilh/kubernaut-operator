@@ -155,6 +155,7 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 					InternalCASecretName: material[0].Name, ServiceTLSSecretNames: certManagerServiceTLSSecretNames(),
 				}
 			}
+			kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceInterService}
 			trust := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: resources.InterServiceCAConfigMapName, Namespace: kn.Namespace},
 				Data: map[string]string{"ca.crt": string(material[0].Data["ca.crt"]), "administrator-key": "preserved"}}
 			Expect(k8sClient.Create(ctx, trust)).To(Succeed())
@@ -182,6 +183,56 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 			deployment := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.ComponentGateway}, deployment)).To(Succeed())
 			Expect(deployment.Spec.Template.Spec.Volumes).To(ContainElement(HaveField("Secret", PointTo(HaveField("SecretName", resources.GatewayTLSSecretName)))))
+			monitoringDeployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.DeploymentName(resources.ComponentEffectivenessMonitor)}, monitoringDeployment)).To(Succeed())
+			monitoringVolume := findDeploymentVolume(monitoringDeployment, resources.MonitoringTLSCAVolumeName)
+			Expect(monitoringVolume).NotTo(BeNil())
+			if mode == kubernautv1alpha2.TLSModeManual {
+				Expect(monitoringVolume.ConfigMap).NotTo(BeNil())
+				Expect(monitoringVolume.ConfigMap.Name).To(Equal(resources.InterServiceCAConfigMapName))
+			} else {
+				Expect(monitoringVolume.ConfigMap).NotTo(BeNil())
+				Expect(monitoringVolume.ConfigMap.Name).To(Equal(resources.TrustBundleConfigMapName))
+			}
 		})
 	}
+
+	It("IT-MON-424-001: validates and mounts a Secret-backed monitoring CA through Reconcile", func() {
+		monitoringCA := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "monitoring-ca", Namespace: testNamespace},
+			Data:       map[string][]byte{"ca.crt": telemetryCAPEM()},
+		}
+		Expect(k8sClient.Create(ctx, monitoringCA)).To(Succeed())
+		DeferCleanup(func() {
+			deleteErr := k8sClient.Delete(context.Background(), monitoringCA)
+			Expect(deleteErr == nil || apierrors.IsNotFound(deleteErr)).To(BeTrue())
+		})
+
+		kn := newCRWithRouteDisabled()
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: monitoringCA.Name},
+		}
+		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
+		reconcileToRunning(ctx)
+
+		for _, component := range []string{resources.ComponentEffectivenessMonitor, resources.ComponentKubernautAgent, resources.ComponentAPIFrontend} {
+			deployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.DeploymentName(component)}, deployment)).To(Succeed(), component)
+			volume := findDeploymentVolume(deployment, resources.MonitoringTLSCAVolumeName)
+			Expect(volume).NotTo(BeNil(), component)
+			Expect(volume.Secret).NotTo(BeNil(), component)
+			Expect(volume.Secret.SecretName).To(Equal(monitoringCA.Name), component)
+		}
+	})
 })
+
+func findDeploymentVolume(deployment *appsv1.Deployment, name string) *corev1.Volume {
+	for index := range deployment.Spec.Template.Spec.Volumes {
+		volume := &deployment.Spec.Template.Spec.Volumes[index]
+		if volume.Name == name {
+			return volume
+		}
+	}
+	return nil
+}

@@ -2551,7 +2551,7 @@ type PrometheusSpec struct {
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// Prometheus-compatible URL. On OpenShift, an empty URL may use the
+	// Prometheus-compatible HTTPS URL. On OpenShift, an empty URL may use the
 	// capability-gated platform endpoint; generic Kubernetes requires this
 	// field when Prometheus-backed features are enabled.
 	// +optional
@@ -2579,7 +2579,7 @@ type AlertManagerSpec struct {
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// AlertManager URL. On generic Kubernetes this field is required when
+	// AlertManager HTTPS URL. On generic Kubernetes this field is required when
 	// AlertManager-backed features are enabled.
 	// +optional
 	URL string `json:"url,omitempty"`

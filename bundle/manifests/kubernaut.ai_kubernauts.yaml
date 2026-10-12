@@ -1,9 +1,9 @@
+---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  creationTimestamp: null
   name: kubernauts.kubernaut.ai
 spec:
   group: kubernaut.ai
@@ -2425,7 +2425,7 @@ spec:
                         type: boolean
                       url:
                         description: |-
-                          AlertManager URL. On generic Kubernetes this field is required when
+                          AlertManager HTTPS URL. On generic Kubernetes this field is required when
                           AlertManager-backed features are enabled.
                         type: string
                     type: object
@@ -2442,7 +2442,7 @@ spec:
                         type: boolean
                       url:
                         description: |-
-                          Prometheus-compatible URL. On OpenShift, an empty URL may use the
+                          Prometheus-compatible HTTPS URL. On OpenShift, an empty URL may use the
                           capability-gated platform endpoint; generic Kubernetes requires this
                           field when Prometheus-backed features are enabled.
                         type: string
@@ -4054,9 +4054,3 @@ spec:
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: null
-  storedVersions: null

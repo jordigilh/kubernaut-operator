@@ -774,7 +774,8 @@ spec:
 
 The operator verifies the referenced object and CA PEM before deployment and
 mounts it read-only at `/etc/monitoring-tls/ca.crt`. This is client trust only;
-serving TLS remains under `spec.tls`. The removed pre-publication fields
+serving TLS remains under `spec.tls`. Configured monitoring endpoints must use
+`https://`; the operator rejects plaintext monitoring URLs. The removed pre-publication fields
 `monitoring.prometheus.tlsCaFile` and `monitoring.alertManager.tlsCaFile` must
 not be used.
 

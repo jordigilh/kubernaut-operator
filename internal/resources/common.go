@@ -76,38 +76,65 @@ func EffectiveMonitoringTLSCAFile(kn *kubernautv1alpha2.Kubernaut) string {
 // shared monitoring CA path. Secret and ConfigMap sources are administrator
 // owned and are never copied or mutated by the operator.
 func MonitoringTLSVolume(kn *kubernautv1alpha2.Kubernaut) *corev1.Volume {
-	if kn != nil && kn.Spec.Monitoring.TLS != nil && kn.Spec.Monitoring.TLS.Source == kubernautv1alpha2.MonitoringTLSSourceSystem {
+	if kn == nil || kn.Spec.Monitoring.TLS != nil && kn.Spec.Monitoring.TLS.Source == kubernautv1alpha2.MonitoringTLSSourceSystem {
 		return nil
 	}
-	if kn == nil {
+
+	source := monitoringTLSVolumeSource(kn)
+	if source == nil {
 		return nil
 	}
+	return &corev1.Volume{Name: MonitoringTLSCAVolumeName, VolumeSource: *source}
+}
+
+func monitoringTLSVolumeSource(kn *kubernautv1alpha2.Kubernaut) *corev1.VolumeSource {
 	tls := kn.Spec.Monitoring.TLS
-	key := tlsCACertificateKey
-	volume := &corev1.Volume{Name: MonitoringTLSCAVolumeName}
 	switch {
 	case tls == nil || tls.Source == "" || tls.Source == kubernautv1alpha2.MonitoringTLSSourceInterService:
-		volume.ConfigMap = &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: TrustBundleConfigMapName}, Items: []corev1.KeyToPath{{Key: trustBundleServiceCAKey, Path: tlsCACertificateKey}}}
+		volumeSource := monitoringTLSInterServiceVolumeSource(kn)
+		return &volumeSource
 	case tls.Source == kubernautv1alpha2.MonitoringTLSSourceSecret:
 		if tls.CACertSecretRef == nil {
 			return nil
 		}
+		key := tlsCACertificateKey
 		if tls.CACertSecretRef.Key != "" {
 			key = tls.CACertSecretRef.Key
 		}
-		volume.Secret = &corev1.SecretVolumeSource{SecretName: tls.CACertSecretRef.Name, Items: []corev1.KeyToPath{{Key: key, Path: tlsCACertificateKey}}}
+		return &corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: tls.CACertSecretRef.Name, Items: []corev1.KeyToPath{{Key: key, Path: tlsCACertificateKey}}}}
 	case tls.Source == kubernautv1alpha2.MonitoringTLSSourceConfigMap:
 		if tls.CACertConfigMapRef == nil {
 			return nil
 		}
+		key := tlsCACertificateKey
 		if tls.CACertConfigMapRef.Key != "" {
 			key = tls.CACertConfigMapRef.Key
 		}
-		volume.ConfigMap = &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: tls.CACertConfigMapRef.Name}, Items: []corev1.KeyToPath{{Key: key, Path: tlsCACertificateKey}}}
+		return &corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: tls.CACertConfigMapRef.Name}, Items: []corev1.KeyToPath{{Key: key, Path: tlsCACertificateKey}}}}
 	default:
-		volume.ConfigMap = &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: TrustBundleConfigMapName}, Items: []corev1.KeyToPath{{Key: trustBundleServiceCAKey, Path: tlsCACertificateKey}}}
+		// ValidateKubernaut rejects unknown sources before resource rendering.
+		// Keep this helper fail-closed when called directly with an invalid CR.
+		return nil
 	}
-	return volume
+}
+
+func monitoringTLSInterServiceVolumeSource(kn *kubernautv1alpha2.Kubernaut) corev1.VolumeSource {
+	if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual {
+		if cfg := kn.Spec.TLS.AdministratorManaged; cfg != nil && cfg.InternalCASecretName != "" {
+			return corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+				SecretName: cfg.InternalCASecretName,
+				Items:      []corev1.KeyToPath{{Key: tlsCACertificateKey, Path: tlsCACertificateKey}},
+			}}
+		}
+		return corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: InterServiceCAConfigMapName},
+			Items:                []corev1.KeyToPath{{Key: tlsCACertificateKey, Path: tlsCACertificateKey}},
+		}}
+	}
+	return corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+		LocalObjectReference: corev1.LocalObjectReference{Name: TrustBundleConfigMapName},
+		Items:                []corev1.KeyToPath{{Key: trustBundleServiceCAKey, Path: tlsCACertificateKey}},
+	}}
 }
 
 func MonitoringTLSVolumeMount() corev1.VolumeMount {

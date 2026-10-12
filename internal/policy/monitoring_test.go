@@ -345,6 +345,12 @@ var _ = Describe("monitoring destination resolution", func() {
 				url:     "https://prometheus.monitoring.svc:not-a-port",
 				err:     "invalid monitoring URL",
 			},
+			{
+				name:    "plaintext URL",
+				service: monitoringService(map[string]string{"app": "prometheus"}, corev1.ServicePort{Port: 9090, TargetPort: intstr.FromInt(9090)}),
+				url:     "http://prometheus.monitoring.svc:9090",
+				err:     "must use https",
+			},
 		}
 
 		for _, test := range cases {

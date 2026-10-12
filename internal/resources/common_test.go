@@ -548,11 +548,11 @@ var _ = Describe("InterServiceTLSCAFile", func() {
 
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
 			Source:             kubernautv1alpha2.MonitoringTLSSourceConfigMap,
-			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca"},
+			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca", Key: "bundle.pem"},
 		}
 		volume = MonitoringTLSVolume(kn)
 		Expect(volume.ConfigMap.Name).To(Equal("monitoring-ca"))
-		Expect(volume.ConfigMap.Items).To(ConsistOf(corev1.KeyToPath{Key: "ca.crt", Path: "ca.crt"}))
+		Expect(volume.ConfigMap.Items).To(ConsistOf(corev1.KeyToPath{Key: "bundle.pem", Path: "ca.crt"}))
 	})
 
 	It("defaults to the inter-service trust bundle and omits the volume for system trust", func() {
@@ -567,6 +567,39 @@ var _ = Describe("InterServiceTLSCAFile", func() {
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSystem}
 		Expect(MonitoringTLSVolume(kn)).To(BeNil())
 		Expect(EffectiveMonitoringTLSCAFile(kn)).To(BeEmpty())
+	})
+
+	It("follows the administrator-owned inter-service source in manual TLS mode", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceInterService}
+
+		volume := MonitoringTLSVolume(kn)
+		Expect(volume.ConfigMap).NotTo(BeNil())
+		Expect(volume.ConfigMap.Name).To(Equal(InterServiceCAConfigMapName))
+		Expect(volume.ConfigMap.Items).To(ConsistOf(corev1.KeyToPath{Key: "ca.crt", Path: "ca.crt"}))
+
+		kn.Spec.TLS.AdministratorManaged = &kubernautv1alpha2.AdministratorManagedTLSConfig{InternalCASecretName: "customer-ca"}
+		volume = MonitoringTLSVolume(kn)
+		Expect(volume.Secret).NotTo(BeNil())
+		Expect(volume.Secret.SecretName).To(Equal("customer-ca"))
+		Expect(volume.Secret.Items).To(ConsistOf(corev1.KeyToPath{Key: "ca.crt", Path: "ca.crt"}))
+	})
+
+	It("omits the monitoring volume for invalid source shapes", func() {
+		kn := testKubernaut()
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source: kubernautv1alpha2.MonitoringTLSSourceSecret,
+		}
+		Expect(MonitoringTLSVolume(kn)).To(BeNil())
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source: kubernautv1alpha2.MonitoringTLSSourceConfigMap,
+		}
+		Expect(MonitoringTLSVolume(kn)).To(BeNil())
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: "invalid"}
+		Expect(MonitoringTLSVolume(kn)).To(BeNil())
 	})
 })
 

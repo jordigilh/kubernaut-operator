@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Monitoring client TLS trust** ([#424](https://github.com/jordigilh/kubernaut-operator/issues/424)) now uses one shared `spec.monitoring.tls` source contract (`interService`, `system`, `secret`, or `configMap`) and deterministic `/etc/monitoring-tls/ca.crt` materialization for EM, KA, and API Frontend consumers. The unpublished v1alpha2-only `monitoring.prometheus.tlsCaFile` and `monitoring.alertManager.tlsCaFile` fields were removed; see [the migration decision](docs/design/ISSUE-424-IMPLEMENTATION.md).
+- Monitoring trust now follows administrator-managed runtime TLS in manual mode, rejects plaintext monitoring endpoints, and validates complete, current CA certificate chains before dependent workloads proceed.
 - Pinned the upstream `github.com/jordigilh/kubernaut` dependency and operand
   image set to `v1.6.0-rc20`, which provides fail-closed server-side TLS for
   the Fleet Metadata Cache API.

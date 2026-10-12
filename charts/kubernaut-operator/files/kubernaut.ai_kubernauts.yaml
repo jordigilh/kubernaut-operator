@@ -2425,7 +2425,7 @@ spec:
                         type: boolean
                       url:
                         description: |-
-                          AlertManager URL. On generic Kubernetes this field is required when
+                          AlertManager HTTPS URL. On generic Kubernetes this field is required when
                           AlertManager-backed features are enabled.
                         type: string
                     type: object
@@ -2442,7 +2442,7 @@ spec:
                         type: boolean
                       url:
                         description: |-
-                          Prometheus-compatible URL. On OpenShift, an empty URL may use the
+                          Prometheus-compatible HTTPS URL. On OpenShift, an empty URL may use the
                           capability-gated platform endpoint; generic Kubernetes requires this
                           field when Prometheus-backed features are enabled.
                         type: string

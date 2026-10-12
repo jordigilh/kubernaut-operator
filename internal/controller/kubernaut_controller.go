@@ -3054,10 +3054,7 @@ func (r *KubernautReconciler) validateMonitoringTLSSecret(ctx context.Context, n
 	if !ok || len(data) == 0 {
 		return fmt.Errorf("monitoring tls secret %q is missing key %q", ref.Name, key)
 	}
-	if !x509.NewCertPool().AppendCertsFromPEM(data) {
-		return fmt.Errorf("monitoring tls secret %q key %q does not contain valid ca pem", ref.Name, key)
-	}
-	return nil
+	return validateMonitoringTLSCAData(data, "secret", ref.Name, key)
 }
 
 func (r *KubernautReconciler) validateMonitoringTLSConfigMap(ctx context.Context, namespace string, ref *kubernautv1alpha2.CACertConfigMapRef) error {
@@ -3073,8 +3070,22 @@ func (r *KubernautReconciler) validateMonitoringTLSConfigMap(ctx context.Context
 	if !ok || data == "" {
 		return fmt.Errorf("monitoring tls configmap %q is missing key %q", ref.Name, key)
 	}
-	if !x509.NewCertPool().AppendCertsFromPEM([]byte(data)) {
-		return fmt.Errorf("monitoring tls configmap %q key %q does not contain valid ca pem", ref.Name, key)
+	return validateMonitoringTLSCAData([]byte(data), "configmap", ref.Name, key)
+}
+
+func validateMonitoringTLSCAData(data []byte, kind, name, key string) error {
+	certificates, err := parseTelemetryCertificates(data)
+	if err != nil {
+		return fmt.Errorf("monitoring tls %s %q key %q does not contain valid ca pem: %w", kind, name, key, err)
+	}
+	now := time.Now()
+	for _, certificate := range certificates {
+		if !certificate.IsCA {
+			return fmt.Errorf("monitoring tls %s %q key %q contains a non-ca certificate", kind, name, key)
+		}
+		if now.Before(certificate.NotBefore) || now.After(certificate.NotAfter) {
+			return fmt.Errorf("monitoring tls %s %q key %q contains an expired or not-yet-valid ca certificate", kind, name, key)
+		}
 	}
 	return nil
 }
