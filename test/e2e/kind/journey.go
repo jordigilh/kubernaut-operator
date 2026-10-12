@@ -724,6 +724,7 @@ func waitForMonitoringTLSDeploymentSource(
 				desiredReplicas = *deployment.Spec.Replicas
 			}
 			rolloutReady := deployment.Status.ObservedGeneration >= deployment.Generation &&
+				deployment.Status.Replicas == desiredReplicas &&
 				deployment.Status.UpdatedReplicas >= desiredReplicas &&
 				deployment.Status.ReadyReplicas >= desiredReplicas
 			volume := findMonitoringDeploymentVolume(deployment)
