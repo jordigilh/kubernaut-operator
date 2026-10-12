@@ -1972,6 +1972,7 @@ func (r *KubernautReconciler) ensureDeployments(
 		}
 		stampConfigMapHash(dep, cmHashes)
 		stampTelemetryMaterialRevision(dep, telemetryRevisions)
+		stampMonitoringMaterialRevision(dep, telemetryRevisions)
 		if err := r.ensureNamespaced(ctx, kn, dep); err != nil {
 			return fmt.Errorf("ensuring Deployment %s: %w", dep.Name, err)
 		}

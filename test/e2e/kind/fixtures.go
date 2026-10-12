@@ -27,6 +27,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/yaml"
+
+	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
 const (
@@ -374,7 +376,8 @@ func agentMonitoringGET(ctx context.Context, serviceName string, port int32, pat
 	url := fmt.Sprintf("https://%s.%s.svc:%d%s", serviceName, monitoringNamespace, port, path)
 	output, err := kubectl(
 		ctx, "exec", "-n", kubernautNamespace, podName, "--",
-		"wget", "-q", "--no-check-certificate", "-O", "-", "-T", "4", url,
+		"curl", "--fail", "--silent", "--show-error", "--cacert", resources.MonitoringTLSCAFile,
+		"--connect-timeout", "4", "--max-time", "4", url,
 	)
 	if err != nil {
 		return "", fmt.Errorf("kubernaut-agent GET %s: %w", url, err)

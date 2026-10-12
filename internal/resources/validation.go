@@ -69,6 +69,10 @@ func validateMonitoringEndpoints(kn *kubernautv1alpha2.Kubernaut) []error {
 		if value == "" {
 			continue
 		}
+		if value != endpoint.url {
+			errs = append(errs, fmt.Errorf("%s must not contain leading or trailing whitespace", endpoint.path))
+			continue
+		}
 		parsed, err := url.Parse(value)
 		if err != nil || parsed.Scheme != httpsURLScheme || parsed.Host == "" || parsed.User != nil {
 			errs = append(errs, fmt.Errorf("%s must be an https URL without user information", endpoint.path))

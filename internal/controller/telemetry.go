@@ -52,14 +52,15 @@ type telemetryLane struct {
 	spec      kubernautv1alpha2.TelemetrySpec
 }
 
-// telemetryMaterialRevisionSet keeps rollout revisions typed to the three
-// telemetry-producing workloads. Kubernetes metadata remains map-shaped, but
-// this internal value has a fixed schema and should not accept arbitrary
-// component names.
+// telemetryMaterialRevisionSet keeps rollout revisions typed to the telemetry
+// producers and the shared monitoring CA. Kubernetes metadata remains
+// map-shaped, but this internal value has a fixed schema and should not accept
+// arbitrary component names.
 type telemetryMaterialRevisionSet struct {
 	Gateway        string
 	DataStorage    string
 	KubernautAgent string
+	Monitoring     string
 }
 
 func (s *telemetryMaterialRevisionSet) set(component, revision string) {
@@ -256,38 +257,48 @@ func telemetryClientAuthUsage(usages []x509.ExtKeyUsage) bool {
 	return false
 }
 
-// telemetryMaterialRevisions resolves one non-sensitive revision per active
-// network telemetry producer. Ambient trust is shared, while referenced
-// Secret resource versions are lane-specific so unrelated producers do not
-// roll when only one telemetry Secret changes.
+// telemetryMaterialRevisions resolves non-sensitive revisions for active
+// network telemetry producers and the shared monitoring CA. Ambient trust is
+// shared, while referenced Secret resource versions are lane-specific so
+// unrelated producers do not roll when only one external object changes.
 func (r *KubernautReconciler) telemetryMaterialRevisions(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (telemetryMaterialRevisionSet, error) {
 	lanes := telemetryLanes(kn)
-	if !hasNetworkTelemetry(kn) {
+	hasTelemetry := hasNetworkTelemetry(kn)
+	if !hasTelemetry && !monitoringTLSConfigured(kn) {
 		return telemetryMaterialRevisionSet{}, nil
 	}
-	if err := r.validateTelemetryAmbientTrust(ctx, kn); err != nil {
-		return telemetryMaterialRevisionSet{}, err
-	}
-	ambientRevision, err := r.telemetryAmbientTrustRevision(ctx, kn)
-	if err != nil {
-		return telemetryMaterialRevisionSet{}, err
-	}
 	revisions := telemetryMaterialRevisionSet{}
-	for _, lane := range lanes {
-		if !resources.TelemetryNetworkEnabled(lane.spec) {
-			continue
+	if hasTelemetry {
+		if err := r.validateTelemetryAmbientTrust(ctx, kn); err != nil {
+			return telemetryMaterialRevisionSet{}, err
 		}
-		inputs := []string{"ambient=" + ambientRevision}
-		for _, reference := range resources.TelemetrySecretReferences(lane.spec) {
-			secret := &corev1.Secret{}
-			key := client.ObjectKey{Namespace: kn.Namespace, Name: reference.Name}
-			if err := r.Get(ctx, key, secret); err != nil {
-				return telemetryMaterialRevisionSet{}, fmt.Errorf("reading telemetry Secret %q for revision: %w", reference.Name, err)
+		ambientRevision, err := r.telemetryAmbientTrustRevision(ctx, kn)
+		if err != nil {
+			return telemetryMaterialRevisionSet{}, err
+		}
+		for _, lane := range lanes {
+			if !resources.TelemetryNetworkEnabled(lane.spec) {
+				continue
 			}
-			inputs = append(inputs, fmt.Sprintf("secret=%s/%s@%s", key.Namespace, key.Name, secret.ResourceVersion))
+			inputs := []string{"ambient=" + ambientRevision}
+			for _, reference := range resources.TelemetrySecretReferences(lane.spec) {
+				secret := &corev1.Secret{}
+				key := client.ObjectKey{Namespace: kn.Namespace, Name: reference.Name}
+				if err := r.Get(ctx, key, secret); err != nil {
+					return telemetryMaterialRevisionSet{}, fmt.Errorf("reading telemetry Secret %q for revision: %w", reference.Name, err)
+				}
+				inputs = append(inputs, fmt.Sprintf("secret=%s/%s@%s", key.Namespace, key.Name, secret.ResourceVersion))
+			}
+			digest := sha256.Sum256([]byte(strings.Join(inputs, "\x00")))
+			revisions.set(lane.component, fmt.Sprintf("%x", digest))
 		}
-		digest := sha256.Sum256([]byte(strings.Join(inputs, "\x00")))
-		revisions.set(lane.component, fmt.Sprintf("%x", digest))
+	}
+	if monitoringTLSConfigured(kn) {
+		monitoringRevision, err := r.monitoringTLSMaterialRevision(ctx, kn)
+		if err != nil {
+			return telemetryMaterialRevisionSet{}, fmt.Errorf("resolving monitoring tls material revision: %w", err)
+		}
+		revisions.Monitoring = monitoringRevision
 	}
 	return revisions, nil
 }
@@ -386,6 +397,24 @@ func stampTelemetryMaterialRevision(dep *appsv1.Deployment, revisions telemetryM
 	dep.Spec.Template.Annotations = annotations
 }
 
+func stampMonitoringMaterialRevision(dep *appsv1.Deployment, revisions telemetryMaterialRevisionSet) {
+	if revisions.Monitoring == "" {
+		return
+	}
+	switch dep.Spec.Template.Labels["app"] {
+	case resources.ComponentEffectivenessMonitor, resources.ComponentKubernautAgent, resources.ComponentAPIFrontend:
+		// These are the only workloads that consume the shared monitoring CA.
+	default:
+		return
+	}
+	annotations := dep.Spec.Template.Annotations
+	if annotations == nil {
+		annotations = make(map[string]string, 1)
+	}
+	annotations[resources.AnnotationMonitoringMaterialRevision] = revisions.Monitoring
+	dep.Spec.Template.Annotations = annotations
+}
+
 // telemetrySecretToKubernaut maps changes to administrator-owned telemetry
 // Secrets to the singleton CRs that reference them.
 func (r *KubernautReconciler) telemetrySecretToKubernaut(ctx context.Context, object client.Object) []reconcile.Request {
@@ -401,7 +430,7 @@ func (r *KubernautReconciler) telemetrySecretToKubernaut(ctx context.Context, ob
 	requests := make([]reconcile.Request, 0, len(list.Items))
 	for index := range list.Items {
 		kn := &list.Items[index]
-		if telemetrySecretReferenced(kn, object.GetName()) || ambientTrustSecretReferenced(kn, object.GetName()) {
+		if telemetrySecretReferenced(kn, object.GetName()) || ambientTrustSecretReferenced(kn, object.GetName()) || monitoringTLSSecretReferenced(kn, object.GetName()) {
 			requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: kn.Name, Namespace: kn.Namespace}})
 		}
 	}
@@ -430,6 +459,14 @@ func ambientTrustSecretReferenced(kn *kubernautv1alpha2.Kubernaut, secretName st
 	return material.InternalCASecretName != "" && material.InternalCASecretName == secretName
 }
 
+func monitoringTLSSecretReferenced(kn *kubernautv1alpha2.Kubernaut, secretName string) bool {
+	if !monitoringTLSConfigured(kn) {
+		return false
+	}
+	kind, name, _, ok := monitoringTLSReference(kn)
+	return ok && kind == monitoringTLSSecretKind && name == secretName
+}
+
 func hasNetworkTelemetry(kn *kubernautv1alpha2.Kubernaut) bool {
 	for _, lane := range telemetryLanes(kn) {
 		if resources.TelemetryNetworkEnabled(lane.spec) {
@@ -440,22 +477,29 @@ func hasNetworkTelemetry(kn *kubernautv1alpha2.Kubernaut) bool {
 }
 
 // telemetryAmbientConfigMapToKubernaut maps updates to ConfigMaps that feed
-// the effective inter-service trust source. The explicit watch covers manual
-// administrator-owned ConfigMaps; operator-owned variants are also observed
-// through Owns(ConfigMap).
+// the effective inter-service or monitoring trust source. The explicit watch
+// covers manual administrator-owned ConfigMaps; operator-owned variants are
+// also observed through Owns(ConfigMap).
 func (r *KubernautReconciler) telemetryAmbientConfigMapToKubernaut(ctx context.Context, object client.Object) []reconcile.Request {
 	configMap, ok := object.(*corev1.ConfigMap)
-	if !ok || !telemetryAmbientConfigMap(configMap) {
+	if !ok {
 		return nil
 	}
 	list := &kubernautv1alpha2.KubernautList{}
 	if err := r.List(ctx, list); err != nil {
-		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for ambient trust event", "configMap", configMap.Name)
+		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for trust material event", "configMap", configMap.Name)
 		return nil
 	}
 	requests := make([]reconcile.Request, 0, len(list.Items))
 	for index := range list.Items {
 		kn := &list.Items[index]
+		if configMap.Namespace == kn.Namespace && monitoringTLSConfigMapReferenced(kn, configMap.Name) {
+			requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: kn.Name, Namespace: kn.Namespace}})
+			continue
+		}
+		if !telemetryAmbientConfigMap(configMap) {
+			continue
+		}
 		if configMap.Namespace != kn.Namespace && configMap.Namespace != openshiftConfigManagedNamespace {
 			continue
 		}
@@ -465,6 +509,14 @@ func (r *KubernautReconciler) telemetryAmbientConfigMapToKubernaut(ctx context.C
 		requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: kn.Name, Namespace: kn.Namespace}})
 	}
 	return requests
+}
+
+func monitoringTLSConfigMapReferenced(kn *kubernautv1alpha2.Kubernaut, configMapName string) bool {
+	if !monitoringTLSConfigured(kn) {
+		return false
+	}
+	kind, name, _, ok := monitoringTLSReference(kn)
+	return ok && kind == monitoringTLSConfigMapKind && name == configMapName
 }
 
 func (r *KubernautReconciler) setTelemetryAmbientTrustPending(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, err error) (reconcile.Result, error) {

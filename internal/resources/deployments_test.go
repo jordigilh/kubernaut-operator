@@ -1064,7 +1064,7 @@ var _ = Describe("Deployments", func() {
 			expectNoVolume(dep, "service-ca")
 		})
 
-		It("mounts the shared monitoring CA source in EM, KA, and AF", func() {
+		It("TLS-CONSUMER-001 [AC-6, SC-8, SC-12, SI-4; ASVS V13.3.1, V13.3.2] mounts the shared monitoring CA source in EM, KA, and AF", func() {
 			kn := testKubernautWithAF()
 			kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
 				Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
@@ -1088,10 +1088,15 @@ var _ = Describe("Deployments", func() {
 				Expect(volume.Secret).NotTo(BeNil(), builder.name)
 				Expect(volume.Secret.SecretName).To(Equal("monitoring-ca"), builder.name)
 				expectHasVolumeMount(dep, MonitoringTLSCAVolumeName, MonitoringTLSCADir)
+				for _, mount := range dep.Spec.Template.Spec.Containers[0].VolumeMounts {
+					if mount.Name == MonitoringTLSCAVolumeName {
+						Expect(mount.ReadOnly).To(BeTrue(), builder.name)
+					}
+				}
 			}
 		})
 
-		It("does not mount monitoring CA material when system trust is selected", func() {
+		It("TLS-CONSUMER-002 [SC-8, SC-12; ASVS V12.3.1, V13.3.1] does not mount monitoring CA material when system trust is selected", func() {
 			kn := testKubernautWithAF()
 			kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSystem}
 			knV2 := testKnV2(kn)

@@ -535,7 +535,7 @@ var _ = Describe("InterServiceTLSCAFile", func() {
 		Expect(found).To(BeFalse())
 	})
 
-	It("renders one deterministic monitoring CA volume for Secret and ConfigMap sources", func() {
+	It("TLS-SOURCE-001 [AC-6, SC-8, SC-12; ASVS V13.3.1, V13.3.2] renders one deterministic monitoring CA volume for Secret and ConfigMap sources", func() {
 		kn := testKubernaut()
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
 			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
@@ -544,7 +544,9 @@ var _ = Describe("InterServiceTLSCAFile", func() {
 		volume := MonitoringTLSVolume(kn)
 		Expect(volume.Secret.SecretName).To(Equal("monitoring-ca"))
 		Expect(volume.Secret.Items).To(ConsistOf(corev1.KeyToPath{Key: "bundle.pem", Path: "ca.crt"}))
-		Expect(MonitoringTLSVolumeMount().MountPath + "/ca.crt").To(Equal(MonitoringTLSCAFile))
+		mount := MonitoringTLSVolumeMount()
+		Expect(mount.MountPath + "/ca.crt").To(Equal(MonitoringTLSCAFile))
+		Expect(mount.ReadOnly).To(BeTrue(), "[AC-6, SC-8, SC-12; ASVS V13.3.1] administrator CA material must be mounted read-only")
 
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
 			Source:             kubernautv1alpha2.MonitoringTLSSourceConfigMap,
@@ -555,7 +557,7 @@ var _ = Describe("InterServiceTLSCAFile", func() {
 		Expect(volume.ConfigMap.Items).To(ConsistOf(corev1.KeyToPath{Key: "bundle.pem", Path: "ca.crt"}))
 	})
 
-	It("defaults to the inter-service trust bundle and omits the volume for system trust", func() {
+	It("TLS-SOURCE-002 [SC-8, SC-12; ASVS V12.3.1, V13.3.1] defaults to the inter-service trust bundle and omits the volume for system trust", func() {
 		kn := testKubernaut()
 		volume := MonitoringTLSVolume(kn)
 		Expect(volume.Name).To(Equal(MonitoringTLSCAVolumeName))

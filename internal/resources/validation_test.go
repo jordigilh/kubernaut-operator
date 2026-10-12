@@ -1239,6 +1239,16 @@ var _ = Describe("shared monitoring TLS contract", func() {
 		Expect(joined).NotTo(ContainSubstring("spec.monitoring.alertManager.url must be an https URL"))
 	})
 
+	It("TLS-VALIDATE-002 [SI-10; ASVS V2.2.1, V2.2.2] rejects monitoring URLs with leading or trailing whitespace", func() {
+		kn := testKubernaut()
+		kn.Spec.Monitoring.Prometheus.URL = " https://prometheus.monitoring.svc:9090"
+		kn.Spec.Monitoring.AlertManager.URL = "https://alertmanager.monitoring.svc:9093 "
+
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.monitoring.prometheus.url must not contain leading or trailing whitespace"))
+		Expect(joined).To(ContainSubstring("spec.monitoring.alertManager.url must not contain leading or trailing whitespace"))
+	})
+
 	It("requires the source-specific reference name", func() {
 		kn := testKubernaut()
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{

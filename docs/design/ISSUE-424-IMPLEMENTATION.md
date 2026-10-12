@@ -25,6 +25,17 @@ All file-based monitoring clients use `/etc/monitoring-tls/ca.crt`:
 Serving TLS (`spec.tls`) remains a separate contract and is not changed by
 monitoring trust configuration.
 
+## Rotation and failure behavior
+
+The controller watches the selected namespace-local Secret or ConfigMap, as
+well as the effective inter-service trust object. A valid source update
+changes a non-sensitive resource-version digest on the EM, KA, and AF pod
+templates, forcing all three consumers to restart with the new trust source.
+An invalid or missing update fails validation and leaves the last-known-good
+Deployment template unchanged; there is no plaintext fallback. The source
+volume remains read-only and Kubernetes-projected, so administrators retain
+ownership of the referenced object.
+
 ## Migration
 
 Before v1alpha2 publication, replace either legacy field with:
@@ -47,10 +58,11 @@ belong under `monitoring.tls`.
 ## Evidence
 
 The API type, generated CRD/deepcopy output, resource unit tests,
-controller trust-material validation tests, and deployment rendering provide
-repository evidence for the contract. The control-objective anchors are
-FedRAMP/NIST `SC-8`, `SC-12`, `SC-13`, `CM-3`, `CM-6`, and `SI-10`, SOC 2
+controller trust-material validation and rotation tests, envtest source and
+rotation tests, and Kind source/handshake tests provide repository evidence
+for the contract. The control-objective anchors are FedRAMP/NIST `AC-6`,
+`CM-3`, `CM-6`, `SC-8`, `SC-12`, `SC-13`, `SC-17`, `SI-4`, and `SI-10`, SOC 2
 `CC6.1`/`CC7.2`, and OWASP ASVS v5.0.0 `V2.2.1`, `V2.2.2`, `V12.3.1`,
-`V12.3.2`, and `V16.5.2`. These are evidence mappings, not a certification
-claim. Live Kind/OCP E2E validation still requires a cluster with the selected
-monitoring endpoint and is reported separately in the implementation handoff.
+`V12.3.2`, `V12.3.4`, `V13.3.1`, `V13.3.2`, `V13.3.4`, and `V16.5.2`.
+These are evidence mappings, not a certification claim. Live OpenShift/OVN
+qualification remains a separate platform follow-up.

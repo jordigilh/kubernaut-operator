@@ -102,9 +102,11 @@ phases per [AGENTS.md](../../../AGENTS.md), following the Pyramid Invariant:
   `image.pullSecrets` if its consumer sits in the reconcile path) get
   controller-level coverage proving the field reaches the reconciler's
   actual output, not just the builder function in isolation.
-- **E2E**: no new E2E test required -- this work closes coverage gaps on
-  already-deployed CRD fields; existing `test/e2e/e2e_test.go` generic
-  assertions are unaffected.
+- **E2E**: the shared monitoring TLS contract has a source journey in
+  `test/e2e/kind/scenarios_test.go`. Native-provider lanes exercise Secret,
+  ConfigMap, and system sources, including certificate-verifying handshakes
+  and source restoration; generic Kubernetes continues to qualify the
+  explicit no-monitoring path.
 - **Regression discipline**: per #417/#422 precedent, a newly-added test for
   code presumed already-correct (Phase 3's #423 batch) is expected to pass
   immediately. An unexpected first-run failure is itself a newly-discovered
@@ -138,6 +140,7 @@ phases per [AGENTS.md](../../../AGENTS.md), following the Pyramid Invariant:
 |---|---|---|---|
 | Shared monitoring CA source | `MonitoringTLSVolume` and `/etc/monitoring-tls/ca.crt` | `internal/resources/common.go`, `deployments.go` | TLS-SOURCE |
 | EffectivenessMonitor, KubernautAgent, and APIFrontend config consumers | shared `EffectiveMonitoringTLSCAFile` path | `internal/resources/configmaps.go` | TLS-CONSUMER |
+| Monitoring CA source watches and rollout revision | monitoring Secret/ConfigMap event mapper and pod-template revision | `internal/controller/telemetry.go`, `monitoring_tls.go`, `kubernaut_controller.go` | IT-MON-424 |
 
 ## 4. Test Scenarios
 
@@ -185,6 +188,8 @@ phases per [AGENTS.md](../../../AGENTS.md), following the Pyramid Invariant:
 | TLS-SOURCE-002 | `system` uses the image trust store and does not render a CA file | [SC-8, SC-12] | Yes |
 | TLS-CONSUMER-001 | EM, KA Prometheus/AlertManager, and AF severity-triage use the same path | [SC-8, SC-12, SI-4] | Yes |
 | TLS-VALIDATE-001 | Missing references and malformed/non-PEM material block readiness | [SC-12, SI-10] | Yes |
+| TLS-ROTATION-001 | Valid source rotation changes the non-sensitive consumer revision; invalid rotation preserves the last-known-good Deployment template | [CM-3, SC-8, SC-12, SC-13, SI-4] | Yes (envtest) |
+| TLS-E2E-001 | Native-provider Kind lanes verify Secret, ConfigMap, and system sources; private-CA HTTPS calls use the mounted CA file | [SC-8, SC-13, SI-4] | Yes (Kind) |
 
 ### 4.3 Cross-consumer consistency (#423) regressions
 

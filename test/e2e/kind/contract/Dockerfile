@@ -1,6 +1,6 @@
 FROM docker.io/library/alpine:3.22.1
 
-RUN apk add --no-cache bash darkhttpd openssl \
+RUN apk add --no-cache bash curl darkhttpd openssl \
     && ln -s /usr/local/bin/kind-contract /usr/local/bin/goose \
     && mkdir -p /opt/kind-contract-http \
     && printf 'ok\n' >/opt/kind-contract-http/healthz \
