@@ -364,12 +364,16 @@ func agentMonitoringConfigContains(ctx context.Context, value string) error {
 func agentMonitoringGET(ctx context.Context, serviceName string, port int32, path string) (string, error) {
 	podOutput, err := kubectl(
 		ctx, "get", "pods", "-n", kubernautNamespace, "-l", "app=kubernaut-agent",
-		"-o", "jsonpath={.items[0].metadata.name}",
+		"-o", "json",
 	)
 	if err != nil {
 		return "", fmt.Errorf("finding kubernaut-agent pod: %w", err)
 	}
-	podName := strings.TrimSpace(podOutput)
+	podName, err := readyAgentPodName(podOutput)
+	if err != nil {
+		return "", err
+	}
+	podName = strings.TrimSpace(podName)
 	if podName == "" {
 		return "", fmt.Errorf("kubernaut-agent pod is not ready")
 	}
@@ -383,6 +387,24 @@ func agentMonitoringGET(ctx context.Context, serviceName string, port int32, pat
 		return "", fmt.Errorf("kubernaut-agent GET %s: %w", url, err)
 	}
 	return strings.TrimSpace(output), nil
+}
+
+func readyAgentPodName(output string) (string, error) {
+	pods := &corev1.PodList{}
+	if err := yaml.Unmarshal([]byte(output), pods); err != nil {
+		return "", fmt.Errorf("decoding kubernaut-agent pods: %w", err)
+	}
+	for _, pod := range pods.Items {
+		if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning {
+			continue
+		}
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+				return pod.Name, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("kubernaut-agent pod is not ready")
 }
 
 func monitoringTLSObjects() ([]interface{}, error) {
