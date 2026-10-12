@@ -34,12 +34,22 @@ Tracking issue: #421
 
 ## Calibration
 
+### Issue #424 disposition
+
+The audit's former `monitoring.prometheus.tlsCaFile` and
+`monitoring.alertManager.tlsCaFile` findings are superseded by issue #424.
+Those unpublished v1alpha2 fields were removed rather than retained as
+unused compatibility aliases. Monitoring client trust is now represented by
+the shared `spec.monitoring.tls` contract, with production consumers,
+validation, mounting, and tests documented in
+`docs/design/ISSUE-424-IMPLEMENTATION.md`.
+
 Per the plan, ~15 flagged fields were manually re-verified by reading the actual source (not just trusting the tool):
 
 - `kubernautAgent.alignmentCheck.llmProfileRef` and `kubernautAgent.llmProfileRef` -- reproduced the exact #419/#417 ground truth (the former is read only inside the conversion bridge with zero downstream consumers; the latter is fully covered) confirming the type-checked matching is precise where grep wasn't.
 - `remediationOrchestrator.timeouts.analyzing` (flagged UNTESTED) -- confirmed by direct read of `configmaps.go`/`configmaps_test.go`: the field is consumed (`withDefault(ro.Timeouts.Analyzing, "10m")`) but genuinely has zero test references anywhere.
 - `networkPolicies.apiServerCIDR`/`.apiServerCIDRs` (flagged as having **no production consumer**) -- confirmed by direct read of `networkpolicies.go`: `NetworkPolicies()` reads `kn.Spec.NetworkPolicies` (the **v1alpha1** struct), which does not have these fields at all -- they were added in v1alpha2 only. This pattern was checked across all 24 `networkPolicies.*` leaf fields via the same method (grepping every `knV2.Spec.NetworkPolicies*`/`knV2.Spec.Monitoring.*` call site) and confirmed to hold for the whole subtree -- see priority finding #1 below.
-- `monitoring.prometheus.tlsCaFile` (flagged as having no production consumer) -- confirmed by direct read: `configmaps.go` has several *different*, unrelated `TLSCaFile`-named fields on other structs (correctly not matched, proving the type-checked matcher doesn't false-positive on name collisions), and no code path reads `Monitoring.Prometheus.TLSCaFile`/`Monitoring.AlertManager.TLSCaFile` specifically.
+ - The former `monitoring.prometheus.tlsCaFile` / `monitoring.alertManager.tlsCaFile` fields were removed by #424 after this audit confirmed they had no production consumer.
 - Fields flagged with a `VALIDATION` gap: **zero** -- every field with a rule in `validation.go` does have `validation_test.go` coverage per this pass; spot-checked `kubernautAgent.llmProfileRef` and `apiFrontend.severityTriage.llmProfileRef` directly.
 - Several `COVERED` + security-relevant fields (`valkey.tls.*`, `*.fleet.oauth2CredentialsSecretRef`) were spot-checked and their reported control-tag samples (`[SC-8]`, `[CM-6]`, `[AC-6]`) were confirmed to be real, on-point `It(...)` descriptions, not heuristic false matches.
 
@@ -59,7 +69,7 @@ Per the plan, ~15 flagged fields were manually re-verified by reading the actual
 1. **`spec.networkPolicies.*` -- 24 fields, 100% dead on arrival.** Every tuning field under `NetworkPoliciesSpec` (`apiServerCIDR(s)`, `apiServerPort`, per-destination `cidr`/`port` overrides for monitoring/externalWebhooks/externalRegistry/llm/mcpGateway/prometheus, and per-component `ingressCIDRs`/`ingressNamespaces`/`ingressNamespaceSelectors` overrides for gateway/apifrontend/console/datastorage/kubernautAgent) is new in v1alpha2 and accepted by the CRD schema, but `internal/resources/networkpolicies.go`'s builder functions read `kn.Spec.NetworkPolicies` -- the **v1alpha1** struct, which has none of these fields -- and never read the corresponding `knV2` fields either (confirmed: `knV2` is used in that file only for Fleet/Monitoring-URL egress, never for any `NetworkPolicies.*` field). A cluster-admin setting any of these 24 fields in a v1alpha2 CR gets silent no-op behavior: no validation error, no effect on the rendered NetworkPolicy. This is a strictly worse variant of the #417 bug class (not "wrong inference," but "never wired at all") and is security-relevant (these are meant to tighten network isolation). **Recommend filing immediately as its own issue, independent of this audit's broader test-coverage gaps.**
 2. **`kubernautAgent.alignmentCheck.llmProfileRef` -- already tracked as #419.** Confirmed again here as `CONVERSION-ONLY` with zero downstream consumers.
 3. **Cross-consumer consistency gaps (7 fields, high-confidence, business-package-scoped):** `image.pullSecrets`, `postgresql.sslMode`, `notification.routing.configMapName`, `signalProcessing.proactiveSignalMappings.configMapName`, `gateway.resources`, `apiFrontend.rbacRolesConfigMapRef.configMapName`, `additionalClusterRoles` -- each has a production consumer in one package (mostly `internal/controller/kubernaut_controller.go`) with zero test coverage in that same package, even though the field is tested elsewhere (`internal/resources`). Same shape as #417's gap, lower severity since the field IS correctly wired, just untested at that specific call site.
-4. **`monitoring.prometheus.tlsCaFile` / `monitoring.alertManager.tlsCaFile` -- no production consumer found.** Distinct from finding #1 (different subtree); worth a quick look alongside it since both are TLS/monitoring-egress-relevant.
+4. **Resolved by #424:** the former `monitoring.prometheus.tlsCaFile` / `monitoring.alertManager.tlsCaFile` fields were removed before v1alpha2 publication and replaced with the shared monitoring client TLS trust contract.
 5. **32 security/compliance-relevant fields are entirely UNTESTED** (see the per-component detail below for the full list) -- these are the highest-value targets for new regression tests given FedRAMP control traceability requirements.
 
 ## Component: `apiFrontend` (45 fields)

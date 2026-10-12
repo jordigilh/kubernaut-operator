@@ -2423,13 +2423,9 @@ spec:
                           correlation) are active. Defaults to true; generic Kubernetes requires
                           URL when enabled.
                         type: boolean
-                      tlsCaFile:
-                        description: Path to a CA certificate file for TLS to the
-                          AlertManager endpoint.
-                        type: string
                       url:
                         description: |-
-                          AlertManager URL. On generic Kubernetes this field is required when
+                          AlertManager HTTPS URL. On generic Kubernetes this field is required when
                           AlertManager-backed features are enabled.
                         type: string
                     type: object
@@ -2444,15 +2440,55 @@ spec:
                           are active. Defaults to true; generic Kubernetes requires URL when
                           enabled.
                         type: boolean
-                      tlsCaFile:
-                        description: Path to a CA certificate file for TLS to the
-                          Prometheus endpoint.
-                        type: string
                       url:
                         description: |-
-                          Prometheus-compatible URL. On OpenShift, an empty URL may use the
+                          Prometheus-compatible HTTPS URL. On OpenShift, an empty URL may use the
                           capability-gated platform endpoint; generic Kubernetes requires this
                           field when Prometheus-backed features are enabled.
+                        type: string
+                    type: object
+                  tls:
+                    description: |-
+                      TLS selects the trust source used by operator-managed clients that call
+                      Prometheus and AlertManager. This is client trust only; it does not
+                      configure serving certificates for any Kubernaut component.
+                    properties:
+                      caCertConfigMapRef:
+                        description: ConfigMap containing the PEM-encoded CA bundle
+                          when source=configMap.
+                        properties:
+                          key:
+                            default: ca.crt
+                            description: 'Key within the ConfigMap containing the
+                              CA PEM. Default: "ca.crt".'
+                            type: string
+                          name:
+                            description: Name of the ConfigMap.
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      caCertSecretRef:
+                        description: Secret containing the PEM-encoded CA bundle when
+                          source=secret.
+                        properties:
+                          key:
+                            default: ca.crt
+                            description: Key within the Secret containing the CA PEM.
+                            type: string
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      source:
+                        description: Source of the monitoring CA bundle.
+                        enum:
+                        - interService
+                        - system
+                        - secret
+                        - configMap
                         type: string
                     type: object
                 type: object

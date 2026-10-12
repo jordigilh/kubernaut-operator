@@ -254,8 +254,8 @@ func parseMonitoringURL(raw string) (string, string, int32, error) {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil {
 		return "", "", 0, fmt.Errorf("invalid monitoring URL")
 	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", "", 0, fmt.Errorf("monitoring URL must use http or https")
+	if parsed.Scheme != "https" {
+		return "", "", 0, fmt.Errorf("monitoring URL must use https")
 	}
 	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
 	if host == "" || net.ParseIP(host) != nil {

@@ -1167,6 +1167,116 @@ var _ = Describe("OTLP telemetry TLS contract", func() {
 	})
 })
 
+var _ = Describe("shared monitoring TLS contract", func() {
+	It("accepts the omitted source and each source-specific reference", func() {
+		cases := []*kubernautv1alpha2.MonitoringTLSSpec{
+			nil,
+			{},
+			{Source: kubernautv1alpha2.MonitoringTLSSourceInterService},
+			{Source: kubernautv1alpha2.MonitoringTLSSourceSystem},
+			{Source: kubernautv1alpha2.MonitoringTLSSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"}},
+			{Source: kubernautv1alpha2.MonitoringTLSSourceConfigMap, CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca"}},
+		}
+		for _, tls := range cases {
+			kn := testKubernaut()
+			kn.Spec.Monitoring.TLS = tls
+			Expect(ValidateKubernaut(kn)).To(BeEmpty(), "tls=%#v", tls)
+		}
+	})
+
+	It("rejects unknown sources, mismatched references, and invalid reference keys", func() {
+		kn := testKubernaut()
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source:             "unknown",
+			CACertSecretRef:    &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"},
+			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca"},
+		}
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.monitoring.tls.source"))
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca", Key: "../ca.crt"},
+			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{
+				Name: "monitoring-ca",
+			},
+		}
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("caCertConfigMapRef must be omitted"))
+		Expect(joined).To(ContainSubstring("key must be a valid ConfigMap or Secret key"))
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source: kubernautv1alpha2.MonitoringTLSSourceSystem,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{
+				Name: "monitoring-ca",
+			},
+		}
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("caCertSecretRef must be omitted"))
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source:             kubernautv1alpha2.MonitoringTLSSourceConfigMap,
+			CACertSecretRef:    &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"},
+			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca"},
+		}
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("caCertSecretRef must be omitted"))
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca"},
+		}
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("caCertConfigMapRef must be omitted when source is \"interService\""))
+	})
+
+	It("rejects plaintext monitoring endpoints before rendering client configuration", func() {
+		kn := testKubernaut()
+		kn.Spec.Monitoring.Prometheus.URL = "http://prometheus.monitoring.svc:9090"
+		kn.Spec.Monitoring.AlertManager.URL = "https://alertmanager.monitoring.svc:9093"
+
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.monitoring.prometheus.url must be an https URL"))
+		Expect(joined).NotTo(ContainSubstring("spec.monitoring.alertManager.url must be an https URL"))
+	})
+
+	It("TLS-VALIDATE-002 [SI-10; ASVS V2.2.1, V2.2.2] rejects monitoring URLs with leading or trailing whitespace", func() {
+		kn := testKubernaut()
+		kn.Spec.Monitoring.Prometheus.URL = " https://prometheus.monitoring.svc:9090"
+		kn.Spec.Monitoring.AlertManager.URL = "https://alertmanager.monitoring.svc:9093 "
+
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.monitoring.prometheus.url must not contain leading or trailing whitespace"))
+		Expect(joined).To(ContainSubstring("spec.monitoring.alertManager.url must not contain leading or trailing whitespace"))
+	})
+
+	It("requires the source-specific reference name", func() {
+		kn := testKubernaut()
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{},
+		}
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.monitoring.tls.caCertSecretRef.name must not be empty"))
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceConfigMap}
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.monitoring.tls.caCertConfigMapRef is required"))
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source: kubernautv1alpha2.MonitoringTLSSourceSecret,
+		}
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.monitoring.tls.caCertSecretRef is required"))
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "invalid/name"},
+		}
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("must be a valid Kubernetes object name"))
+	})
+})
+
 func errorStrings(errs []error) []string {
 	result := make([]string, len(errs))
 	for i, err := range errs {

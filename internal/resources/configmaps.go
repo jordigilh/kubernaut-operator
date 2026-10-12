@@ -1675,7 +1675,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubern
 		AlertManagerURL:     effectiveAlertManagerURL(knV2),
 		AlertManagerEnabled: knV2.Spec.Monitoring.AlertManager.AlertManagerEnabled(),
 		ConnectionTimeout:   "10s",
-		TLSCaFile:           effectiveEMTLSCaFile(knV2, effectiveEMDefaultTLSCAFile(kn)),
+		TLSCaFile:           EffectiveMonitoringTLSCAFile(knV2),
 	}
 	return yamlConfigMap(ObjectMeta(kn, "effectivenessmonitor-config", ComponentEffectivenessMonitor), "effectivenessmonitor.yaml", "effectivenessmonitor config", cfg)
 }
@@ -1882,14 +1882,14 @@ func kaToolsConfig(knV2 *kubernautv1alpha2.Kubernaut) *kaIntegrationsToolsYAML {
 	return &kaIntegrationsToolsYAML{
 		Prometheus: kaIntegrationsPrometheusYAML{
 			URL:       effectivePrometheusURL(knV2),
-			TLSCaFile: withDefault(knV2.Spec.Monitoring.Prometheus.TLSCaFile, "/etc/ssl/ka/service-ca.crt"),
+			TLSCaFile: EffectiveMonitoringTLSCAFile(knV2),
 		},
 		// Alertmanager tools (get_alerts, get_silences) added upstream in
 		// kubernaut#1508 (#205). Follows the same SA-bearer-auth-via-service-CA
 		// pattern as Prometheus.
 		Alertmanager: &kaIntegrationsAlertmanagerYAML{
 			URL:       effectiveAlertManagerURL(knV2),
-			TLSCaFile: withDefault(knV2.Spec.Monitoring.AlertManager.TLSCaFile, "/etc/ssl/ka/service-ca.crt"),
+			TLSCaFile: EffectiveMonitoringTLSCAFile(knV2),
 		},
 	}
 }
@@ -2397,7 +2397,7 @@ type afShutdownYAML struct {
 type afSeverityTriageYAML struct {
 	Enabled                   bool    `json:"enabled" yaml:"enabled"`
 	PrometheusURL             string  `json:"prometheusURL" yaml:"prometheusURL"`
-	PrometheusTLSCAFile       string  `json:"prometheusTlsCaFile" yaml:"prometheusTlsCaFile"`
+	PrometheusTLSCAFile       string  `json:"prometheusTlsCaFile,omitempty" yaml:"prometheusTlsCaFile,omitempty"`
 	PrometheusBearerTokenFile string  `json:"prometheusBearerTokenFile" yaml:"prometheusBearerTokenFile"`
 	CacheTTLSeconds           int     `json:"cacheTTLSeconds" yaml:"cacheTTLSeconds"`
 	MaxQueriesPerCall         int     `json:"maxQueriesPerCall" yaml:"maxQueriesPerCall"`
@@ -2543,7 +2543,7 @@ func afSeverityTriageConfig(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1al
 	cfg := afSeverityTriageYAML{
 		Enabled:                   knV2.Spec.Monitoring.Prometheus.PrometheusEnabled(),
 		PrometheusURL:             effectivePrometheusURL(knV2),
-		PrometheusTLSCAFile:       withDefault(knV2.Spec.Monitoring.Prometheus.TLSCaFile, "/etc/ssl/af/service-ca.crt"),
+		PrometheusTLSCAFile:       EffectiveMonitoringTLSCAFile(knV2),
 		PrometheusBearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
 		CacheTTLSeconds:           30,
 		MaxQueriesPerCall:         10,

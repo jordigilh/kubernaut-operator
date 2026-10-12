@@ -102,9 +102,11 @@ phases per [AGENTS.md](../../../AGENTS.md), following the Pyramid Invariant:
   `image.pullSecrets` if its consumer sits in the reconcile path) get
   controller-level coverage proving the field reaches the reconciler's
   actual output, not just the builder function in isolation.
-- **E2E**: no new E2E test required -- this work closes coverage gaps on
-  already-deployed CRD fields; existing `test/e2e/e2e_test.go` generic
-  assertions are unaffected.
+- **E2E**: the shared monitoring TLS contract has a source journey in
+  `test/e2e/kind/scenarios_test.go`. Native-provider lanes exercise Secret,
+  ConfigMap, and system sources, including certificate-verifying handshakes
+  and source restoration; generic Kubernetes continues to qualify the
+  explicit no-monitoring path.
 - **Regression discipline**: per #417/#422 precedent, a newly-added test for
   code presumed already-correct (Phase 3's #423 batch) is expected to pass
   immediately. An unexpected first-run failure is itself a newly-discovered
@@ -132,13 +134,13 @@ phases per [AGENTS.md](../../../AGENTS.md), following the Pyramid Invariant:
 
 **Carved out (follow-up issues, not this PR):** `console.ingressNamespaces`, `externalRegistry.{cidr,port}`.
 
-### 3.2 `monitoring.*.tlsCaFile` (#424, 2 fields)
+### 3.2 Shared monitoring client TLS trust (#424)
 
 | Component | Production Entry Point | Wiring Code Location | Test ID prefix |
 |---|---|---|---|
-| EffectivenessMonitor TLS CA override | `EffectivenessMonitorConfigMap` (`emExternalYAML`, split into Prometheus/AlertManager-specific fields) | `internal/resources/configmaps.go` | TLS-EM |
-| KubernautAgent TLS CA override | `kaToolsConfig` (`kaIntegrationsPrometheusYAML.TLSCaFile`/`kaIntegrationsAlertmanagerYAML.TLSCaFile`, already independent fields) | `internal/resources/configmaps.go` | TLS-KA |
-| APIFrontend severity-triage TLS CA override | `afSeverityTriageConfig` (`PrometheusTLSCAFile`) | `internal/resources/configmaps.go` | TLS-AF |
+| Shared monitoring CA source | `MonitoringTLSVolume` and `/etc/monitoring-tls/ca.crt` | `internal/resources/common.go`, `deployments.go` | TLS-SOURCE |
+| EffectivenessMonitor, KubernautAgent, and APIFrontend config consumers | shared `EffectiveMonitoringTLSCAFile` path | `internal/resources/configmaps.go` | TLS-CONSUMER |
+| Monitoring CA source watches and rollout revision | monitoring Secret/ConfigMap event mapper and pod-template revision | `internal/controller/telemetry.go`, `monitoring_tls.go`, `kubernaut_controller.go` | IT-MON-424 |
 
 ## 4. Test Scenarios
 
@@ -178,18 +180,16 @@ phases per [AGENTS.md](../../../AGENTS.md), following the Pyramid Invariant:
 | NP-WEBHOOK-002 | Unset preserves today's hardcoded default | [AC-4, SC-7] | Yes |
 | NP-BOUNDS-001 | CRD schema rejects `port` values outside 1-65535 for all new int32 port fields | [SI-10] | Yes (envtest/`make manifests generate` diff review) |
 
-### 4.2 `monitoring.*.tlsCaFile` (`internal/resources/configmaps_test.go`)
+### 4.2 Shared monitoring client TLS trust (`internal/resources/configmaps_test.go`, `monitoring_test.go`)
 
 | ID | Description | Control tag | Automated? |
 |---|---|---|---|
-| TLS-EM-001 | `monitoring.prometheus.tlsCaFile` overrides EM's hardcoded Prometheus CA path | [SC-8, SC-12] | Yes |
-| TLS-EM-002 | `monitoring.alertManager.tlsCaFile` overrides EM's hardcoded AlertManager CA path independently of Prometheus's | [SC-8, SC-12] | Yes |
-| TLS-EM-003 | Unset preserves EM's default `/etc/ssl/em/service-ca.crt` for both | [SC-8, SC-12] | Yes |
-| TLS-KA-001 | `monitoring.prometheus.tlsCaFile` overrides KA's hardcoded Prometheus CA path | [SC-8, SC-12] | Yes |
-| TLS-KA-002 | `monitoring.alertManager.tlsCaFile` overrides KA's hardcoded AlertManager CA path | [SC-8, SC-12] | Yes |
-| TLS-KA-003 | Unset preserves KA's default `/etc/ssl/ka/service-ca.crt` for both | [SC-8, SC-12] | Yes |
-| TLS-AF-001 | `monitoring.prometheus.tlsCaFile` overrides AF severity-triage's hardcoded CA path | [SC-8, SC-12] | Yes |
-| TLS-AF-002 | Unset preserves AF's default `/etc/ssl/af/service-ca.crt` | [SC-8, SC-12] | Yes |
+| TLS-SOURCE-001 | Secret and ConfigMap sources render read-only material at `/etc/monitoring-tls/ca.crt` | [SC-8, SC-12, CM-6] | Yes |
+| TLS-SOURCE-002 | `system` uses the image trust store and does not render a CA file | [SC-8, SC-12] | Yes |
+| TLS-CONSUMER-001 | EM, KA Prometheus/AlertManager, and AF severity-triage use the same path | [SC-8, SC-12, SI-4] | Yes |
+| TLS-VALIDATE-001 | Missing references and malformed/non-PEM material block readiness | [SC-12, SI-10] | Yes |
+| TLS-ROTATION-001 | Valid source rotation changes the non-sensitive consumer revision; invalid rotation preserves the last-known-good Deployment template | [CM-3, SC-8, SC-12, SC-13, SI-4] | Yes (envtest) |
+| TLS-E2E-001 | Native-provider Kind lanes verify Secret, ConfigMap, and system sources; private-CA HTTPS calls use the mounted CA file | [SC-8, SC-13, SI-4] | Yes (Kind) |
 
 ### 4.3 Cross-consumer consistency (#423) regressions
 

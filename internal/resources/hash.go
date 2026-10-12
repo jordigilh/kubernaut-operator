@@ -42,6 +42,11 @@ const (
 	// revision for effective OTLP trust/client material. It contains only a
 	// controller-derived digest of Secret/ConfigMap resource-version metadata.
 	AnnotationTelemetryMaterialRevision = "kubernaut.ai/telemetry-material-revision"
+
+	// AnnotationMonitoringMaterialRevision is a non-sensitive pod-template
+	// revision for the shared monitoring CA source. It contains only a
+	// controller-derived digest of the referenced Secret/ConfigMap metadata.
+	AnnotationMonitoringMaterialRevision = "kubernaut.ai/monitoring-material-revision"
 )
 
 // ConfigMapDataHash computes a stable SHA-256 hex digest of a ConfigMap's

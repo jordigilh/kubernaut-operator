@@ -437,6 +437,10 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuber
 
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
+	if monitoringVolume := MonitoringTLSVolume(knV2); monitoringVolume != nil {
+		volumes = append(volumes, *monitoringVolume)
+		mounts = append(mounts, MonitoringTLSVolumeMount())
+	}
 	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, knV2, "/etc/effectivenessmonitor", effectiveFleetOAuth2SecretRef(knV2.Spec.EffectivenessMonitor.Fleet, ""))
 	ports := make([]corev1.ContainerPort, 0, 3)
 	ports = append(ports,
@@ -534,6 +538,10 @@ func KubernautAgentDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1
 
 	volumes, mounts, envVars := kaCoreVolumesMountsEnv(kn, kaProfile)
 	volumes, mounts, envVars = appendInterServiceTLSCA(kn, volumes, mounts, envVars)
+	if monitoringVolume := MonitoringTLSVolume(knV2); monitoringVolume != nil {
+		volumes = append(volumes, *monitoringVolume)
+		mounts = append(mounts, MonitoringTLSVolumeMount())
+	}
 	volumes, mounts = AppendTelemetrySecretMounts(knV2.Spec.KubernautAgent.Telemetry, volumes, mounts)
 	volumes, mounts = kaCredentialVolumesAndMounts(kn, kaProfile, volumes, mounts)
 	// #413: upstream KA now reads fleet OAuth2 credentials from the
@@ -862,6 +870,10 @@ func apifrontendBaseVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut) (
 		{Name: "config", MountPath: "/etc/apifrontend", ReadOnly: true},
 		{Name: "tls-server", MountPath: "/etc/apifrontend/tls", ReadOnly: true},
 		{Name: "tls-ca", MountPath: "/etc/apifrontend/tls-ca", ReadOnly: true},
+	}
+	if monitoringVolume := MonitoringTLSVolume(kn); monitoringVolume != nil {
+		volumes = append(volumes, *monitoringVolume)
+		mounts = append(mounts, MonitoringTLSVolumeMount())
 	}
 	if usesOpenShiftServiceCA(kn) {
 		volumes = append(volumes,

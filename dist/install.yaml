@@ -2431,13 +2431,9 @@ spec:
                           correlation) are active. Defaults to true; generic Kubernetes requires
                           URL when enabled.
                         type: boolean
-                      tlsCaFile:
-                        description: Path to a CA certificate file for TLS to the
-                          AlertManager endpoint.
-                        type: string
                       url:
                         description: |-
-                          AlertManager URL. On generic Kubernetes this field is required when
+                          AlertManager HTTPS URL. On generic Kubernetes this field is required when
                           AlertManager-backed features are enabled.
                         type: string
                     type: object
@@ -2452,15 +2448,55 @@ spec:
                           are active. Defaults to true; generic Kubernetes requires URL when
                           enabled.
                         type: boolean
-                      tlsCaFile:
-                        description: Path to a CA certificate file for TLS to the
-                          Prometheus endpoint.
-                        type: string
                       url:
                         description: |-
-                          Prometheus-compatible URL. On OpenShift, an empty URL may use the
+                          Prometheus-compatible HTTPS URL. On OpenShift, an empty URL may use the
                           capability-gated platform endpoint; generic Kubernetes requires this
                           field when Prometheus-backed features are enabled.
+                        type: string
+                    type: object
+                  tls:
+                    description: |-
+                      TLS selects the trust source used by operator-managed clients that call
+                      Prometheus and AlertManager. This is client trust only; it does not
+                      configure serving certificates for any Kubernaut component.
+                    properties:
+                      caCertConfigMapRef:
+                        description: ConfigMap containing the PEM-encoded CA bundle
+                          when source=configMap.
+                        properties:
+                          key:
+                            default: ca.crt
+                            description: 'Key within the ConfigMap containing the
+                              CA PEM. Default: "ca.crt".'
+                            type: string
+                          name:
+                            description: Name of the ConfigMap.
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      caCertSecretRef:
+                        description: Secret containing the PEM-encoded CA bundle when
+                          source=secret.
+                        properties:
+                          key:
+                            default: ca.crt
+                            description: Key within the Secret containing the CA PEM.
+                            type: string
+                          name:
+                            description: Name of the Secret.
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      source:
+                        description: Source of the monitoring CA bundle.
+                        enum:
+                        - interService
+                        - system
+                        - secret
+                        - configMap
                         type: string
                     type: object
                 type: object
@@ -2885,6 +2921,18 @@ spec:
                         minimum: 1
                         type: integer
                     type: object
+                  mode:
+                    default: Required
+                    description: |-
+                      Mode requires a qualified native provider by default. Inherited is an
+                      explicit administrator acknowledgement that isolation is supplied outside
+                      this operator; it does not attest that such protection has been verified.
+                      Existing native policies are retained in Inherited mode, not silently
+                      pruned on a discovery failure or opt-out. See PR-515-AUDIT-REMEDIATION.md.
+                    enum:
+                    - Required
+                    - Inherited
+                    type: string
                   monitoring:
                     description: |-
                       NetworkPolicyMonitoringOverride overrides where/how the monitoring-stack
@@ -2936,6 +2984,37 @@ spec:
                     - Calico
                     - OVN
                     type: string
+                  scrapeSources:
+                    description: |-
+                      ScrapeSources authorizes explicitly identified scraper pods, only on
+                      generated component metrics ports. An empty list grants no external
+                      scraper access; a Prometheus query URL is not a scraper identity.
+                    items:
+                      description: |-
+                        MetricsScrapeSource is a bounded native-policy ingress identity. Only exact
+                        pod label matches are accepted, never namespace-only or wildcard access.
+                      properties:
+                        namespace:
+                          description: Namespace is the exact, administrator-selected
+                            scraper namespace.
+                          maxLength: 63
+                          minLength: 1
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        podLabels:
+                          additionalProperties:
+                            type: string
+                          description: PodLabels is a nonempty set of exact Kubernetes
+                            pod label matches.
+                          maxProperties: 16
+                          minProperties: 1
+                          type: object
+                      required:
+                      - namespace
+                      - podLabels
+                      type: object
+                    maxItems: 16
+                    type: array
                 type: object
               notification:
                 description: Notification controller settings.
