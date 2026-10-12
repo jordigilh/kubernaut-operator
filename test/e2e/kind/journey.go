@@ -705,9 +705,7 @@ func waitForMonitoringTLSDeploymentSource(
 	ctx context.Context, source kubernautv1alpha2.MonitoringTLSSource, objectName string,
 ) error {
 	return pollUntilSuccess(ctx, 3*time.Minute, 2*time.Second, func() error {
-		for _, component := range []string{
-			resources.ComponentEffectivenessMonitor, resources.ComponentKubernautAgent, resources.ComponentAPIFrontend,
-		} {
+		for _, component := range monitoringTLSDeploymentComponents() {
 			output, err := kubectl(
 				ctx, "get", "deployment", resources.DeploymentName(component), "-n", kubernautNamespace, "-o", "json",
 			)
@@ -737,6 +735,14 @@ func waitForMonitoringTLSDeploymentSource(
 		}
 		return nil
 	})
+}
+
+func monitoringTLSDeploymentComponents() []string {
+	components := []string{resources.ComponentEffectivenessMonitor, resources.ComponentKubernautAgent}
+	if kubernautCR().Spec.APIFrontendEnabled() {
+		components = append(components, resources.ComponentAPIFrontend)
+	}
+	return components
 }
 
 func findMonitoringDeploymentVolume(deployment *appsv1.Deployment) *corev1.Volume {
