@@ -478,6 +478,12 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 	monitoring := kubernautv1alpha2.MonitoringSpec{}
 	if configuredProvider != providerGeneric {
 		monitoring = kubernautv1alpha2.MonitoringSpec{
+			TLS: &kubernautv1alpha2.MonitoringTLSSpec{
+				Source: kubernautv1alpha2.MonitoringTLSSourceSecret,
+				CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{
+					Name: monitoringCASecretName,
+				},
+			},
 			Prometheus:   kubernautv1alpha2.PrometheusSpec{URL: monitoringPrometheusURL()},
 			AlertManager: kubernautv1alpha2.AlertManagerSpec{URL: monitoringAlertManagerURL()},
 		}

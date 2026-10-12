@@ -35,6 +35,8 @@ const (
 	probeTargetRole          = "target"
 	probeImage               = "docker.io/curlimages/curl:8.11.1"
 	serverImage              = "docker.io/hashicorp/http-echo:1.0.0"
+	monitoringServerImage    = "docker.io/library/nginx:1.27.2-alpine"
+	monitoringCASecretName   = "monitoring-ca"
 	userPolicyName           = "user-owned-policy"
 	policyProbeComponent     = "aianalysis"
 )
@@ -82,7 +84,7 @@ func ensureProbeWorkloads(ctx context.Context) error {
 }
 
 // ensureMonitoringWorkloads creates disposable Prometheus- and
-// Alertmanager-shaped HTTP Services for the qualified native-provider lane.
+// Alertmanager-shaped HTTPS Services for the qualified native-provider lane.
 // The responses use the exact API paths called by the Agent's
 // get_metric_names/get_alerts clients, while the third Service provides a
 // distinct backend that must remain denied by the native allowlist.
@@ -91,23 +93,22 @@ func ensureMonitoringWorkloads(ctx context.Context) error {
 		return err
 	}
 
+	tlsObjects, err := monitoringTLSObjects()
+	if err != nil {
+		return fmt.Errorf("creating monitoring tls fixtures: %w", err)
+	}
 	prometheusLabels := monitoringBackendLabels("prometheus")
 	alertManagerLabels := monitoringBackendLabels("alertmanager")
 	blockedLabels := monitoringBackendLabels("blocked")
-	objects := []interface{}{
-		monitoringDeployment(
-			monitoringPrometheusServiceName, prometheusLabels,
-			`{"status":"success","data":["kubernaut_e2e_metric"]}`,
-		),
+	objects := append([]interface{}{}, tlsObjects...)
+	objects = append(objects,
+		monitoringDeployment(monitoringPrometheusServiceName, prometheusLabels),
 		monitoringService(monitoringPrometheusServiceName, prometheusLabels, monitoringPrometheusServicePort),
-		monitoringDeployment(monitoringAlertManagerServiceName, alertManagerLabels, `[]`),
+		monitoringDeployment(monitoringAlertManagerServiceName, alertManagerLabels),
 		monitoringService(monitoringAlertManagerServiceName, alertManagerLabels, monitoringAlertManagerServicePort),
-		monitoringDeployment(
-			monitoringBlockedServiceName, blockedLabels,
-			`{"status":"success","data":["should_not_be_reachable"]}`,
-		),
+		monitoringDeployment(monitoringBlockedServiceName, blockedLabels),
 		monitoringService(monitoringBlockedServiceName, blockedLabels, monitoringBlockedServicePort),
-	}
+	)
 	if err := applyYAML(ctx, objects...); err != nil {
 		return fmt.Errorf("applying monitoring fixtures: %w", err)
 	}
@@ -148,6 +149,12 @@ func deleteMonitoringWorkloads(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("deleting monitoring fixture namespace: %w", err)
 	}
+	if _, err := kubectl(
+		ctx, "delete", "secret", monitoringCASecretName, "-n", kubernautNamespace,
+		"--ignore-not-found=true", "--wait=false",
+	); err != nil {
+		return fmt.Errorf("deleting monitoring ca secret: %w", err)
+	}
 	return nil
 }
 
@@ -158,7 +165,7 @@ func monitoringBackendLabels(role string) map[string]string {
 	}
 }
 
-func monitoringDeployment(name string, labels map[string]string, response string) *appsv1.Deployment {
+func monitoringDeployment(name string, labels map[string]string) *appsv1.Deployment {
 	replicas := int32(1)
 	selectorLabels := map[string]string{"monitoring-role": labels["monitoring-role"]}
 	return &appsv1.Deployment{
@@ -173,12 +180,25 @@ func monitoringDeployment(name string, labels map[string]string, response string
 			Selector: &metav1.LabelSelector{MatchLabels: selectorLabels},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
-				Spec: corev1.PodSpec{Containers: []corev1.Container{{
-					Name:  "monitoring",
-					Image: serverImage,
-					Args:  []string{"-listen=:8080", "-text=" + response},
-					Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}},
-				}}},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:  "monitoring",
+						Image: monitoringServerImage,
+						Ports: []corev1.ContainerPort{{Name: "https", ContainerPort: 8080}},
+						VolumeMounts: []corev1.VolumeMount{
+							{Name: "nginx-config", MountPath: "/etc/nginx/nginx.conf", SubPath: "nginx.conf", ReadOnly: true},
+							{Name: "monitoring-tls", MountPath: "/etc/nginx/tls", ReadOnly: true},
+						},
+					}},
+					Volumes: []corev1.Volume{
+						{Name: "nginx-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+							LocalObjectReference: corev1.LocalObjectReference{Name: monitoringConfigMapName(name)},
+						}}},
+						{Name: "monitoring-tls", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+							SecretName: monitoringTLSSecretName(name),
+						}}},
+					},
+				},
 			},
 		},
 	}
@@ -194,7 +214,7 @@ func monitoringService(name string, labels map[string]string, port int32) *corev
 		Spec: corev1.ServiceSpec{
 			Selector: map[string]string{"monitoring-role": labels["monitoring-role"]},
 			Ports: []corev1.ServicePort{{
-				Name:       "http",
+				Name:       "https",
 				Protocol:   corev1.ProtocolTCP,
 				Port:       port,
 				TargetPort: intstr.FromInt32(8080),
@@ -313,14 +333,14 @@ func probeHTTPFromRole(ctx context.Context, serviceName, role string) (bool, err
 
 func monitoringPrometheusURL() string {
 	return fmt.Sprintf(
-		"http://%s.%s.svc:%d", monitoringPrometheusServiceName,
+		"https://%s.%s.svc:%d", monitoringPrometheusServiceName,
 		monitoringNamespace, monitoringPrometheusServicePort,
 	)
 }
 
 func monitoringAlertManagerURL() string {
 	return fmt.Sprintf(
-		"http://%s.%s.svc:%d", monitoringAlertManagerServiceName,
+		"https://%s.%s.svc:%d", monitoringAlertManagerServiceName,
 		monitoringNamespace, monitoringAlertManagerServicePort,
 	)
 }
@@ -351,15 +371,101 @@ func agentMonitoringGET(ctx context.Context, serviceName string, port int32, pat
 	if podName == "" {
 		return "", fmt.Errorf("kubernaut-agent pod is not ready")
 	}
-	url := fmt.Sprintf("http://%s.%s.svc:%d%s", serviceName, monitoringNamespace, port, path)
+	url := fmt.Sprintf("https://%s.%s.svc:%d%s", serviceName, monitoringNamespace, port, path)
 	output, err := kubectl(
 		ctx, "exec", "-n", kubernautNamespace, podName, "--",
-		"wget", "-q", "-O", "-", "-T", "4", url,
+		"wget", "-q", "--no-check-certificate", "-O", "-", "-T", "4", url,
 	)
 	if err != nil {
 		return "", fmt.Errorf("kubernaut-agent GET %s: %w", url, err)
 	}
 	return strings.TrimSpace(output), nil
+}
+
+func monitoringTLSObjects() ([]interface{}, error) {
+	now := time.Now().UTC()
+	caCertificate, caKey, caPEM, err := generateManualCA(now, "monitoring")
+	if err != nil {
+		return nil, err
+	}
+
+	objects := []interface{}{
+		&corev1.Secret{
+			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      monitoringCASecretName,
+				Namespace: kubernautNamespace,
+			},
+			Type: corev1.SecretTypeOpaque,
+			Data: map[string][]byte{tlsCACertificateKey: caPEM},
+		},
+	}
+
+	for _, name := range []string{
+		monitoringPrometheusServiceName,
+		monitoringAlertManagerServiceName,
+		monitoringBlockedServiceName,
+	} {
+		certificate, key, leafErr := generateManualLeaf(
+			now, caCertificate, caKey, name, monitoringNamespace, name,
+		)
+		if leafErr != nil {
+			return nil, fmt.Errorf("generating %s certificate: %w", name, leafErr)
+		}
+		objects = append(objects,
+			&corev1.Secret{
+				TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      monitoringTLSSecretName(name),
+					Namespace: monitoringNamespace,
+				},
+				Type: corev1.SecretTypeTLS,
+				Data: map[string][]byte{
+					corev1.TLSCertKey:       certificate,
+					corev1.TLSPrivateKeyKey: key,
+				},
+			},
+			&corev1.ConfigMap{
+				TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      monitoringConfigMapName(name),
+					Namespace: monitoringNamespace,
+				},
+				Data: map[string]string{"nginx.conf": monitoringNginxConfig()},
+			},
+		)
+	}
+	return objects, nil
+}
+
+func monitoringTLSSecretName(serviceName string) string {
+	return serviceName + "-monitoring-tls"
+}
+
+func monitoringConfigMapName(serviceName string) string {
+	return serviceName + "-monitoring-nginx"
+}
+
+func monitoringNginxConfig() string {
+	return `events {}
+http {
+  default_type application/json;
+  server {
+    listen 8080 ssl;
+    ssl_certificate /etc/nginx/tls/tls.crt;
+    ssl_certificate_key /etc/nginx/tls/tls.key;
+    location = /api/v1/label/__name__/values {
+      return 200 '{"status":"success","data":["kubernaut_e2e_metric"]}';
+    }
+    location = /api/v2/alerts {
+      return 200 '[]';
+    }
+    location / {
+      return 200 '{"status":"success"}';
+    }
+  }
+}
+`
 }
 
 func nativePolicyResource(provider policyProvider) string {
