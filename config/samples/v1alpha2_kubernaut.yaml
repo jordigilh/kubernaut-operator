@@ -83,6 +83,16 @@ spec:
   #   prometheus:
   #     enabled: true
   #     url: "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091"
+  #   tls:
+  #     # Shared client trust source for Prometheus, AlertManager, and AF
+  #     # severity-triage. Serving TLS is configured separately under spec.tls.
+  #     source: interService # interService, system, secret, or configMap
+  #     # caCertSecretRef:
+  #     #   name: monitoring-ca
+  #     #   key: ca.crt
+  #     # caCertConfigMapRef:
+  #     #   name: monitoring-ca
+  #     #   key: ca.crt
 
   # Named LLM profiles, referenced by name from kubernautAgent.llmProfileRef,
   # apiFrontend.llmProfileRef, apiFrontend.severityTriage.llmProfileRef, and

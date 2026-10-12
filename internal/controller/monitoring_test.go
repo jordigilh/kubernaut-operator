@@ -95,3 +95,37 @@ var _ = Describe("generic monitoring defaults", Label("unit"), func() {
 		Expect(condition.Reason).To(Equal(ReasonMonitoringDisabled))
 	})
 })
+
+var _ = Describe("monitoring TLS trust source validation", Label("unit"), func() {
+	It("rejects a missing Secret and malformed ConfigMap CA", func() {
+		scheme := runtime.NewScheme()
+		Expect(corev1.AddToScheme(scheme)).To(Succeed())
+		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
+		reconciler := &KubernautReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+		kn := &kubernautv1alpha2.Kubernaut{}
+		kn.Namespace = "default"
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "missing"}}
+		Expect(reconciler.validateMonitoringTLS(ctx, kn)).To(MatchError(ContainSubstring("could not be read")))
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceConfigMap, CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "bad"}}
+		bad := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "bad", Namespace: "default"}, Data: map[string]string{"ca.crt": "not pem"}}
+		Expect(reconciler.Client.Create(ctx, bad)).To(Succeed())
+		Expect(reconciler.validateMonitoringTLS(ctx, kn)).To(MatchError(ContainSubstring("valid ca pem")))
+	})
+
+	It("accepts valid Secret CA material without changing serving TLS", func() {
+		scheme := runtime.NewScheme()
+		Expect(corev1.AddToScheme(scheme)).To(Succeed())
+		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
+		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "monitoring-ca", Namespace: "default"}, Data: map[string][]byte{"ca.crt": telemetryCAPEM()}}
+		configMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "monitoring-ca-config", Namespace: "default"}, Data: map[string]string{"ca.crt": string(telemetryCAPEM())}}
+		reconciler := &KubernautReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret, configMap).Build()}
+		kn := &kubernautv1alpha2.Kubernaut{}
+		kn.Namespace = "default"
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"}}
+		Expect(reconciler.validateMonitoringTLS(ctx, kn)).To(Succeed())
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceConfigMap, CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca-config"}}
+		Expect(reconciler.validateMonitoringTLS(ctx, kn)).To(Succeed())
+		Expect(kn.Spec.TLS.Mode).To(BeEmpty())
+	})
+})

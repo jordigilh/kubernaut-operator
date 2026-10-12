@@ -26,6 +26,7 @@ import (
 	"time"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
@@ -41,10 +42,77 @@ func ValidateKubernaut(kn *kubernautv1alpha2.Kubernaut) []error {
 	errs = append(errs, validatePolicyPrerequisites(kn)...)
 	errs = append(errs, validateLLMProfiles(kn)...)
 	errs = append(errs, validateTelemetry(kn)...)
+	errs = append(errs, validateMonitoringTLS(kn)...)
 	errs = append(errs, validateAPIFrontend(kn)...)
 	errs = append(errs, validateAlignmentCheck(kn)...)
 	errs = append(errs, validateDryRun(kn)...)
 	errs = append(errs, validateInteractive(kn)...)
+	return errs
+}
+
+// validateMonitoringTLS validates the source-specific shape of the shared
+// monitoring trust contract. Existence and PEM contents are checked later by
+// the controller because those checks require a Kubernetes client.
+func validateMonitoringTLS(kn *kubernautv1alpha2.Kubernaut) []error {
+	tls := kn.Spec.Monitoring.TLS
+	if tls == nil {
+		return nil
+	}
+
+	const base = "spec.monitoring.tls"
+	var errs []error
+	switch tls.Source {
+	case "", kubernautv1alpha2.MonitoringTLSSourceInterService, kubernautv1alpha2.MonitoringTLSSourceSystem:
+		if tls.CACertSecretRef != nil {
+			errs = append(errs, fmt.Errorf("%s.caCertSecretRef must be omitted when source is %q", base, defaultMonitoringTLSSource(tls.Source)))
+		}
+		if tls.CACertConfigMapRef != nil {
+			errs = append(errs, fmt.Errorf("%s.caCertConfigMapRef must be omitted when source is %q", base, defaultMonitoringTLSSource(tls.Source)))
+		}
+	case kubernautv1alpha2.MonitoringTLSSourceSecret:
+		if tls.CACertConfigMapRef != nil {
+			errs = append(errs, fmt.Errorf("%s.caCertConfigMapRef must be omitted when source is %q", base, tls.Source))
+		}
+		if tls.CACertSecretRef == nil {
+			errs = append(errs, fmt.Errorf("%s.caCertSecretRef is required when source is %q", base, tls.Source))
+		} else {
+			errs = append(errs, validateMonitoringCARef(base+".caCertSecretRef", tls.CACertSecretRef.Name, tls.CACertSecretRef.Key)...)
+		}
+	case kubernautv1alpha2.MonitoringTLSSourceConfigMap:
+		if tls.CACertSecretRef != nil {
+			errs = append(errs, fmt.Errorf("%s.caCertSecretRef must be omitted when source is %q", base, tls.Source))
+		}
+		if tls.CACertConfigMapRef == nil {
+			errs = append(errs, fmt.Errorf("%s.caCertConfigMapRef is required when source is %q", base, tls.Source))
+		} else {
+			errs = append(errs, validateMonitoringCARef(base+".caCertConfigMapRef", tls.CACertConfigMapRef.Name, tls.CACertConfigMapRef.Key)...)
+		}
+	default:
+		errs = append(errs, fmt.Errorf("%s.source %q is invalid", base, tls.Source))
+	}
+	return errs
+}
+
+func defaultMonitoringTLSSource(source kubernautv1alpha2.MonitoringTLSSource) kubernautv1alpha2.MonitoringTLSSource {
+	if source == "" {
+		return kubernautv1alpha2.MonitoringTLSSourceInterService
+	}
+	return source
+}
+
+func validateMonitoringCARef(base, name, key string) []error {
+	var errs []error
+	if name == "" {
+		errs = append(errs, fmt.Errorf("%s.name must not be empty", base))
+	} else if len(k8svalidation.IsDNS1123Subdomain(name)) > 0 {
+		errs = append(errs, fmt.Errorf("%s.name must be a valid Kubernetes object name", base))
+	}
+	if key == "" {
+		key = tlsCACertificateKey
+	}
+	if len(k8svalidation.IsConfigMapKey(key)) > 0 {
+		errs = append(errs, fmt.Errorf("%s.key must be a valid ConfigMap or Secret key", base))
+	}
 	return errs
 }
 

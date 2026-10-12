@@ -1064,6 +1064,49 @@ var _ = Describe("Deployments", func() {
 			expectNoVolume(dep, "service-ca")
 		})
 
+		It("mounts the shared monitoring CA source in EM, KA, and AF", func() {
+			kn := testKubernautWithAF()
+			kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+				Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
+				CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"},
+			}
+			knV2 := testKnV2(kn)
+			builders := []struct {
+				name  string
+				build func(*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error)
+			}{
+				{name: "effectivenessmonitor", build: EffectivenessMonitorDeployment},
+				{name: "kubernaut-agent", build: KubernautAgentDeployment},
+				{name: "apifrontend", build: APIFrontendDeployment},
+			}
+
+			for _, builder := range builders {
+				dep, err := builder.build(kn, knV2)
+				Expect(err).NotTo(HaveOccurred(), builder.name)
+				volume := findVolume(dep, MonitoringTLSCAVolumeName)
+				Expect(volume).NotTo(BeNil(), builder.name)
+				Expect(volume.Secret).NotTo(BeNil(), builder.name)
+				Expect(volume.Secret.SecretName).To(Equal("monitoring-ca"), builder.name)
+				expectHasVolumeMount(dep, MonitoringTLSCAVolumeName, MonitoringTLSCADir)
+			}
+		})
+
+		It("does not mount monitoring CA material when system trust is selected", func() {
+			kn := testKubernautWithAF()
+			kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSystem}
+			knV2 := testKnV2(kn)
+
+			for _, builder := range []func(*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error){
+				EffectivenessMonitorDeployment,
+				KubernautAgentDeployment,
+				APIFrontendDeployment,
+			} {
+				dep, err := builder(kn, knV2)
+				Expect(err).NotTo(HaveOccurred())
+				expectNoVolume(dep, MonitoringTLSCAVolumeName)
+			}
+		})
+
 	})
 
 	Context("AuthWebhook", func() {

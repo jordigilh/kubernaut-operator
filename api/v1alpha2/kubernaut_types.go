@@ -560,6 +560,16 @@ type CACertSecretRef struct {
 	Key string `json:"key,omitempty"`
 }
 
+// CACertConfigMapRef references a ConfigMap containing a PEM-encoded CA bundle.
+type CACertConfigMapRef struct {
+	// Name of the ConfigMap.
+	Name string `json:"name"`
+	// Key within the ConfigMap containing the CA PEM. Default: "ca.crt".
+	// +kubebuilder:default="ca.crt"
+	// +optional
+	Key string `json:"key,omitempty"`
+}
+
 // SecretKeyRef references a key within a Secret.
 type SecretKeyRef struct {
 	// Name of the Secret.
@@ -2491,11 +2501,45 @@ type LoggingSpec struct {
 // endpoints; the platform/provider policy layer remains responsible for any
 // additional egress authorization required by the selected destination.
 type MonitoringSpec struct {
+	// TLS selects the trust source used by operator-managed clients that call
+	// Prometheus and AlertManager. This is client trust only; it does not
+	// configure serving certificates for any Kubernaut component.
+	// +optional
+	TLS *MonitoringTLSSpec `json:"tls,omitempty"`
+
 	// +optional
 	Prometheus PrometheusSpec `json:"prometheus,omitempty"`
 
 	// +optional
 	AlertManager AlertManagerSpec `json:"alertManager,omitempty"`
+}
+
+// MonitoringTLSSource identifies the trust material used by monitoring clients.
+type MonitoringTLSSource string
+
+const (
+	MonitoringTLSSourceInterService MonitoringTLSSource = "interService"
+	MonitoringTLSSourceSystem       MonitoringTLSSource = "system"
+	MonitoringTLSSourceSecret       MonitoringTLSSource = "secret"
+	MonitoringTLSSourceConfigMap    MonitoringTLSSource = "configMap"
+)
+
+// MonitoringTLSSpec selects one shared CA source for every monitoring client.
+// An omitted source defaults to interService. Secret and ConfigMap references
+// are namespaced to the Kubernaut namespace and default to the ca.crt key.
+type MonitoringTLSSpec struct {
+	// Source of the monitoring CA bundle.
+	// +kubebuilder:validation:Enum=interService;system;secret;configMap
+	// +optional
+	Source MonitoringTLSSource `json:"source,omitempty"`
+
+	// Secret containing the PEM-encoded CA bundle when source=secret.
+	// +optional
+	CACertSecretRef *CACertSecretRef `json:"caCertSecretRef,omitempty"`
+
+	// ConfigMap containing the PEM-encoded CA bundle when source=configMap.
+	// +optional
+	CACertConfigMapRef *CACertConfigMapRef `json:"caCertConfigMapRef,omitempty"`
 }
 
 // PrometheusSpec configures a Prometheus-compatible endpoint.
@@ -2512,10 +2556,6 @@ type PrometheusSpec struct {
 	// field when Prometheus-backed features are enabled.
 	// +optional
 	URL string `json:"url,omitempty"`
-
-	// Path to a CA certificate file for TLS to the Prometheus endpoint.
-	// +optional
-	TLSCaFile string `json:"tlsCaFile,omitempty"`
 }
 
 // PrometheusEnabled returns true when Prometheus-backed features should be
@@ -2543,10 +2583,6 @@ type AlertManagerSpec struct {
 	// AlertManager-backed features are enabled.
 	// +optional
 	URL string `json:"url,omitempty"`
-
-	// Path to a CA certificate file for TLS to the AlertManager endpoint.
-	// +optional
-	TLSCaFile string `json:"tlsCaFile,omitempty"`
 }
 
 // AlertManagerEnabled returns true when AlertManager-backed features should

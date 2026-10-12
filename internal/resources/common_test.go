@@ -41,13 +41,6 @@ const (
 	// rendered/scoped instead of falling back to OCPPrometheusURL.
 	testCustomPrometheusURL = "https://custom-prometheus.custom-monitoring.svc:9091"
 
-	// testCustomPrometheusTLSCaFile / testCustomAlertManagerTLSCaFile are
-	// used across spec.monitoring.{prometheus,alertManager}.tlsCaFile
-	// (#424) RED/GREEN tests to verify each override is actually rendered
-	// instead of falling back to the hardcoded per-component default path.
-	testCustomPrometheusTLSCaFile   = "/etc/ssl/custom/prometheus-ca.crt"
-	testCustomAlertManagerTLSCaFile = "/etc/ssl/custom/alertmanager-ca.crt"
-
 	// Per-component fleet OAuth2 credentialsSecretRef overrides (federated
 	// IdP scenario: each fleet-aware component authenticates as a distinct
 	// OAuth2 client against the same shared token endpoint).
@@ -540,6 +533,40 @@ var _ = Describe("InterServiceTLSCAFile", func() {
 		Expect(KubernautAgentLLMRuntimeConfigName(kn)).To(Equal("custom-runtime"))
 		_, found := ResolveLLMProfile(kn, "")
 		Expect(found).To(BeFalse())
+	})
+
+	It("renders one deterministic monitoring CA volume for Secret and ConfigMap sources", func() {
+		kn := testKubernaut()
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca", Key: "bundle.pem"},
+		}
+		volume := MonitoringTLSVolume(kn)
+		Expect(volume.Secret.SecretName).To(Equal("monitoring-ca"))
+		Expect(volume.Secret.Items).To(ConsistOf(corev1.KeyToPath{Key: "bundle.pem", Path: "ca.crt"}))
+		Expect(MonitoringTLSVolumeMount().MountPath + "/ca.crt").To(Equal(MonitoringTLSCAFile))
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source:             kubernautv1alpha2.MonitoringTLSSourceConfigMap,
+			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca"},
+		}
+		volume = MonitoringTLSVolume(kn)
+		Expect(volume.ConfigMap.Name).To(Equal("monitoring-ca"))
+		Expect(volume.ConfigMap.Items).To(ConsistOf(corev1.KeyToPath{Key: "ca.crt", Path: "ca.crt"}))
+	})
+
+	It("defaults to the inter-service trust bundle and omits the volume for system trust", func() {
+		kn := testKubernaut()
+		volume := MonitoringTLSVolume(kn)
+		Expect(volume.Name).To(Equal(MonitoringTLSCAVolumeName))
+		Expect(volume.ConfigMap).NotTo(BeNil())
+		Expect(volume.ConfigMap.Name).To(Equal(TrustBundleConfigMapName))
+		Expect(volume.ConfigMap.Items).To(ConsistOf(corev1.KeyToPath{Key: "service-ca.crt", Path: "ca.crt"}))
+		Expect(EffectiveMonitoringTLSCAFile(kn)).To(Equal(MonitoringTLSCAFile))
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSystem}
+		Expect(MonitoringTLSVolume(kn)).To(BeNil())
+		Expect(EffectiveMonitoringTLSCAFile(kn)).To(BeEmpty())
 	})
 })
 

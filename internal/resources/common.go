@@ -51,6 +51,69 @@ const (
 	ComponentFleetMetadataCache      = "fleetmetadatacache"
 )
 
+// MonitoringTLSCADir is the deterministic mount directory for administrator-
+// supplied monitoring trust material.
+const MonitoringTLSCADir = "/etc/monitoring-tls"
+
+const (
+	// MonitoringTLSCAVolumeName is shared by the EM, KA, and AF pod templates.
+	MonitoringTLSCAVolumeName = "monitoring-tls"
+	// MonitoringTLSCAFile is the single CA path used by every monitoring client.
+	MonitoringTLSCAFile = MonitoringTLSCADir + "/ca.crt"
+)
+
+// EffectiveMonitoringTLSCAFile returns the shared monitoring CA path. The
+// system source deliberately returns an empty path so clients use their OS
+// trust store.
+func EffectiveMonitoringTLSCAFile(kn *kubernautv1alpha2.Kubernaut) string {
+	if kn != nil && kn.Spec.Monitoring.TLS != nil && kn.Spec.Monitoring.TLS.Source == kubernautv1alpha2.MonitoringTLSSourceSystem {
+		return ""
+	}
+	return MonitoringTLSCAFile
+}
+
+// MonitoringTLSVolume returns the source-aware, read-only volume for the
+// shared monitoring CA path. Secret and ConfigMap sources are administrator
+// owned and are never copied or mutated by the operator.
+func MonitoringTLSVolume(kn *kubernautv1alpha2.Kubernaut) *corev1.Volume {
+	if kn != nil && kn.Spec.Monitoring.TLS != nil && kn.Spec.Monitoring.TLS.Source == kubernautv1alpha2.MonitoringTLSSourceSystem {
+		return nil
+	}
+	if kn == nil {
+		return nil
+	}
+	tls := kn.Spec.Monitoring.TLS
+	key := tlsCACertificateKey
+	volume := &corev1.Volume{Name: MonitoringTLSCAVolumeName}
+	switch {
+	case tls == nil || tls.Source == "" || tls.Source == kubernautv1alpha2.MonitoringTLSSourceInterService:
+		volume.ConfigMap = &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: TrustBundleConfigMapName}, Items: []corev1.KeyToPath{{Key: trustBundleServiceCAKey, Path: tlsCACertificateKey}}}
+	case tls.Source == kubernautv1alpha2.MonitoringTLSSourceSecret:
+		if tls.CACertSecretRef == nil {
+			return nil
+		}
+		if tls.CACertSecretRef.Key != "" {
+			key = tls.CACertSecretRef.Key
+		}
+		volume.Secret = &corev1.SecretVolumeSource{SecretName: tls.CACertSecretRef.Name, Items: []corev1.KeyToPath{{Key: key, Path: tlsCACertificateKey}}}
+	case tls.Source == kubernautv1alpha2.MonitoringTLSSourceConfigMap:
+		if tls.CACertConfigMapRef == nil {
+			return nil
+		}
+		if tls.CACertConfigMapRef.Key != "" {
+			key = tls.CACertConfigMapRef.Key
+		}
+		volume.ConfigMap = &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: tls.CACertConfigMapRef.Name}, Items: []corev1.KeyToPath{{Key: key, Path: tlsCACertificateKey}}}
+	default:
+		volume.ConfigMap = &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: TrustBundleConfigMapName}, Items: []corev1.KeyToPath{{Key: trustBundleServiceCAKey, Path: tlsCACertificateKey}}}
+	}
+	return volume
+}
+
+func MonitoringTLSVolumeMount() corev1.VolumeMount {
+	return corev1.VolumeMount{Name: MonitoringTLSCAVolumeName, MountPath: MonitoringTLSCADir, ReadOnly: true}
+}
+
 // controllerSuffix lists components that are actual Kubernetes controllers
 // (reconciliation loops) and use the "-controller" deployment name suffix,
 // matching the Helm chart convention. REST API services and webhook servers
@@ -361,28 +424,6 @@ func effectiveAlertManagerURL(knV2 *kubernautv1alpha2.Kubernaut) string {
 // Agent configuration to the native policy resolver.
 func EffectiveAlertManagerURL(knV2 *kubernautv1alpha2.Kubernaut) string {
 	return effectiveAlertManagerURL(knV2)
-}
-
-// effectiveEMTLSCaFile resolves EM's single external.tlsCaFile config key
-// (#424). EM's upstream Config.External.TLSCaFile
-// (kubernaut/internal/config/effectivenessmonitor/config.go) is, by
-// design, one CA bundle shared by both its Prometheus and AlertManager
-// HTTP clients -- there is no per-destination key to wire the two CR
-// fields into independently, unlike KA's PrometheusToolConfig/
-// AlertmanagerToolConfig, which are genuinely separate structs/keys.
-// Monitoring.Prometheus.TLSCaFile therefore takes precedence over
-// Monitoring.AlertManager.TLSCaFile when both are set (EM's primary
-// assessment-scoring consumer), falling back to the existing
-// service-ca-injected default when neither is set.
-func effectiveEMTLSCaFile(knV2 *kubernautv1alpha2.Kubernaut, defaultPath string) string {
-	return withDefault(withDefault(knV2.Spec.Monitoring.Prometheus.TLSCaFile, knV2.Spec.Monitoring.AlertManager.TLSCaFile), defaultPath)
-}
-
-func effectiveEMDefaultTLSCAFile(kn *kubernautv1alpha2.Kubernaut) string {
-	if usesOpenShiftServiceCA(kn) {
-		return "/etc/ssl/em/service-ca.crt"
-	}
-	return InterServiceTLSCAFile
 }
 
 // OCP well-known namespaces.
