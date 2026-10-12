@@ -687,12 +687,15 @@ func exerciseMonitoringTLSSources(ctx context.Context) error {
 }
 
 func patchMonitoringTLSSource(ctx context.Context, source string) error {
-	tls := fmt.Sprintf(`{"source":%q}`, source)
+	tls := fmt.Sprintf(`{"source":%q,"caCertSecretRef":null,"caCertConfigMapRef":null}`, source)
 	switch source {
 	case "secret":
-		tls = fmt.Sprintf(`{"source":%q,"caCertSecretRef":{"name":%q}}`, source, monitoringCASecretName)
+		tls = fmt.Sprintf(
+			`{"source":%q,"caCertSecretRef":{"name":%q},"caCertConfigMapRef":null}`,
+			source, monitoringCASecretName,
+		)
 	case "configMap":
-		tls = fmt.Sprintf(`{"source":%q,"caCertConfigMapRef":{"name":"monitoring-ca-config"}}`, source)
+		tls = fmt.Sprintf(`{"source":%q,"caCertSecretRef":null,"caCertConfigMapRef":{"name":"monitoring-ca-config"}}`, source)
 	}
 	if _, err := kubectl(ctx, "patch", "kubernaut", kubernautv1alpha2.SingletonName, "-n", kubernautNamespace,
 		"--type=merge", "-p", fmt.Sprintf(`{"spec":{"monitoring":{"tls":%s}}}`, tls)); err != nil {
