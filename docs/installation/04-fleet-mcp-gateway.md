@@ -1,8 +1,14 @@
 # Fleet: Kuadrant MCP Gateway (Optional)
 
-This is a prerequisite for enabling Fleet federation with `spec.fleet.mcpGatewayType: kuadrant` (see the `fleet:` block in [Deploy Kubernaut](03-deploy.md#create-the-kubernaut-cr)). It provisions the cluster-side MCP Gateway stack that Kubernaut's `fleet.mcpGatewayEndpoint` points at; no `kubernaut-operator` code changes are involved.
+This is a prerequisite for enabling Fleet federation with
+`spec.fleet.mcpGateway.type: kuadrant` (see the `fleet:` block in [Deploy
+Kubernaut](03-deploy.md#create-the-kubernaut-cr)). It provisions the
+cluster-side MCP Gateway stack that Kubernaut's
+`spec.fleet.mcpGateway.endpoint` points at; no `kubernaut-operator` code
+changes are involved.
 
-Skip this guide entirely if you don't use Fleet, or if you use `mcpGatewayType: eaigw` instead.
+Skip this guide entirely if you don't use Fleet, or if you use
+`spec.fleet.mcpGateway.type: eaigw` instead.
 
 ## Architecture
 
@@ -464,12 +470,17 @@ Once verified, point Fleet at the gateway (see [Deploy Kubernaut](03-deploy.md) 
 spec:
   fleet:
     enabled: true
-    mcpGatewayEndpoint: "https://<MCP_GATEWAY_HOST>/mcp"
-    mcpGatewayType: kuadrant
-    mcpGatewayNamespace: mcp-system # required -- see note below
+    mcpGateway:
+      endpoint: "https://<MCP_GATEWAY_HOST>/mcp"
+      type: kuadrant
+      namespace: mcp-system # required -- see note below
 ```
 
-`mcpGatewayNamespace` is mandatory (rejected at admission if empty) whenever `fleet.enabled` is `true`. Set it to the namespace holding your `MCPServerRegistration`/`Gateway` objects (`mcp-system` in this guide's examples). Every fleet-aware component's MCP Gateway CRD watch is scoped to exactly this namespace instead of cluster-wide, which matters if the cluster has more than one MCP Gateway installed. Leaving it unset used to fall back to a cluster-wide watch, but that fallback didn't work as documented for every consumer — see [jordigilh/kubernaut#2298](https://github.com/jordigilh/kubernaut/issues/2298) — so `kubernaut-operator` now requires it explicitly (kubernaut-operator#455).
+`spec.fleet.mcpGateway.namespace` is mandatory (rejected at admission if empty)
+whenever `fleet.enabled` is `true`. Set it to the namespace holding your
+`MCPServerRegistration`/`Gateway` objects (`mcp-system` in this guide's
+examples). Every Fleet-aware component's MCP Gateway CRD watch is scoped to
+exactly this namespace instead of cluster-wide.
 
 ## Troubleshooting
 
@@ -597,7 +608,7 @@ This is why `kubernaut`'s own fleet E2E suite never sees it: that lane runs on K
 
 Observed impact on a real cluster: the loop correlates with the `mcp-gateway` broker pod's readiness probe flapping (`GET /readyz` -> 503) and getting replaced by the Deployment controller, which in turn can reset in-flight `tools/call` SSE streams and cause a brief `"standalone SSE stream: Internal Server Error"` window right after replacement (see [Issue #470](https://github.com/jordigilh/kubernaut-operator/issues/470) for the full investigation). The `HTTPRoute` itself still ends up correctly configured — `oc get httproute -A` will show the right backend/hostname — but the constant churn is the underlying instability, not just log noise.
 
-There is no `kubernaut-operator`-side fix: this repo has no code path touching Kuadrant's `HTTPRoute`/controller. If you hit this and don't want to chase it further right now, `mcpGatewayType: eaigw` (Envoy AI Gateway) is a supported alternative for Fleet that doesn't have this issue. Track the upstream fix at [Kuadrant/mcp-gateway#1431](https://github.com/Kuadrant/mcp-gateway/issues/1431).
+There is no `kubernaut-operator`-side fix: this repo has no code path touching Kuadrant's `HTTPRoute`/controller. If you hit this and don't want to chase it further right now, `spec.fleet.mcpGateway.type: eaigw` (Envoy AI Gateway) is a supported alternative for Fleet that doesn't have this issue. Track the upstream fix at [Kuadrant/mcp-gateway#1431](https://github.com/Kuadrant/mcp-gateway/issues/1431).
 
 ### `Invalid session ID` on `tools/list`
 
