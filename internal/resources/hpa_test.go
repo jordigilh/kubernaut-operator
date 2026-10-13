@@ -18,13 +18,16 @@ package resources
 
 import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	"k8s.io/utils/ptr"
+
+	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("HPA Builders", func() {
-	var kn = testKubernaut
+	var kn = testKubernautWithAutoscaling
 
 	Describe("DataStorageHPA", func() {
 		It("targets the datastorage Deployment", func() {
@@ -103,3 +106,14 @@ var _ = Describe("HPA Builders", func() {
 		})
 	})
 })
+
+func testKubernautWithAutoscaling() *kubernautv1alpha2.Kubernaut {
+	kn := testKubernaut()
+	kn.Spec.DataStorage.Workload = &kubernautv1alpha2.WorkloadSpec{
+		Autoscaling: &kubernautv1alpha2.AutoscalingSpec{Enabled: ptr.To(true)},
+	}
+	kn.Spec.APIFrontend.Workload = &kubernautv1alpha2.WorkloadSpec{
+		Autoscaling: &kubernautv1alpha2.AutoscalingSpec{Enabled: ptr.To(true)},
+	}
+	return kn
+}

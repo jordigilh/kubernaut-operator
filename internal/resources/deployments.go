@@ -64,7 +64,7 @@ func GatewayDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.
 
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentGateway, ImageName: "gateway",
-		Resources: kn.Spec.Gateway.Resources, VolumeMounts: mounts, Volumes: volumes,
+		Resources: kn.Spec.Gateway.Resources, Workload: kn.Spec.Gateway.Workload, VolumeMounts: mounts, Volumes: volumes,
 		Env:       env,
 		Args:      []string{"--config=/etc/gateway/config.yaml"},
 		ProbePort: PortHealthProbe,
@@ -101,7 +101,7 @@ func DataStorageDeployment(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment,
 	var gracePeriod int64 = 60
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentDataStorage, ImageName: "datastorage",
-		Resources: kn.Spec.DataStorage.Resources, VolumeMounts: mounts, Volumes: volumes,
+		Resources: kn.Spec.DataStorage.Resources, Workload: kn.Spec.DataStorage.Workload, VolumeMounts: mounts, Volumes: volumes,
 		InitContainers: []corev1.Container{initContainer}, Env: env,
 		ProbePort: PortHealthProbe,
 		Ports: []corev1.ContainerPort{
@@ -250,7 +250,7 @@ func AIAnalysisDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 	ports = append(ports, pprofContainerPort(knV2.Spec.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentAIAnalysis, ImageName: "aianalysis",
-		Resources: kn.Spec.AIAnalysis.Resources, VolumeMounts: mounts, Volumes: volumes,
+		Resources: kn.Spec.AIAnalysis.Resources, Workload: kn.Spec.AIAnalysis.Workload, VolumeMounts: mounts, Volumes: volumes,
 		Env: env, ProbePort: PortHealthProbe,
 		Args:  []string{"-config", "/etc/aianalysis/config.yaml"},
 		Ports: ports,
@@ -291,7 +291,7 @@ func SignalProcessingDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernaut
 	ports = append(ports, pprofContainerPort(knV2.Spec.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentSignalProcessing, ImageName: "signalprocessing",
-		Resources: kn.Spec.SignalProcessing.Resources, VolumeMounts: mounts, Volumes: volumes,
+		Resources: kn.Spec.SignalProcessing.Resources, Workload: kn.Spec.SignalProcessing.Workload, VolumeMounts: mounts, Volumes: volumes,
 		Env: env, ProbePort: PortHealthProbe,
 		Args:  []string{"--config=/etc/signalprocessing/config.yaml"},
 		Ports: ports,
@@ -313,7 +313,7 @@ func RemediationOrchestratorDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *ku
 	ports = append(ports, pprofContainerPort(knV2.Spec.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentRemediationOrchestrator, ImageName: "remediationorchestrator",
-		Resources: kn.Spec.RemediationOrchestrator.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
+		Resources: kn.Spec.RemediationOrchestrator.Resources, Workload: kn.Spec.RemediationOrchestrator.Workload, VolumeMounts: mounts, Volumes: volumes, Env: env,
 		Args:      []string{"--config=/etc/config/remediationorchestrator.yaml"},
 		ProbePort: PortHealthProbe,
 		Ports:     ports,
@@ -381,7 +381,7 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernau
 	ports = append(ports, pprofContainerPort(knV2.Spec.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentWorkflowExecution, ImageName: "workflowexecution",
-		Resources: kn.Spec.WorkflowExecution.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
+		Resources: kn.Spec.WorkflowExecution.Resources, Workload: kn.Spec.WorkflowExecution.Workload, VolumeMounts: mounts, Volumes: volumes, Env: env,
 		InitContainers: initContainers,
 		Args:           []string{"--config=/etc/config/workflowexecution.yaml"},
 		ProbePort:      PortHealthProbe,
@@ -450,7 +450,7 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuber
 	ports = append(ports, pprofContainerPort(knV2.Spec.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentEffectivenessMonitor, ImageName: "effectivenessmonitor",
-		Resources: kn.Spec.EffectivenessMonitor.Resources, VolumeMounts: mounts, Volumes: volumes,
+		Resources: kn.Spec.EffectivenessMonitor.Resources, Workload: kn.Spec.EffectivenessMonitor.Workload, VolumeMounts: mounts, Volumes: volumes,
 		Env: env, InitContainers: initContainers,
 		Args:      []string{"--config=/etc/effectivenessmonitor/effectivenessmonitor.yaml"},
 		ProbePort: PortHealthProbe,
@@ -519,7 +519,7 @@ func NotificationDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1al
 	ports = append(ports, pprofContainerPort(knV2.Spec.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentNotification, ImageName: "notification",
-		Resources: kn.Spec.Notification.Resources, VolumeMounts: mounts, Volumes: volumes,
+		Resources: kn.Spec.Notification.Resources, Workload: kn.Spec.Notification.Workload, VolumeMounts: mounts, Volumes: volumes,
 		Env: env, ProbePort: PortHealthProbe,
 		Args:  []string{"-config", "/etc/notification/config.yaml"},
 		Ports: ports,
@@ -566,7 +566,7 @@ func KubernautAgentDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1
 
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentKubernautAgent, ImageName: "kubernautagent",
-		Resources: kaResources(kn), VolumeMounts: mounts, Volumes: volumes, Env: envVars,
+		Resources: kaResources(kn), Workload: kn.Spec.KubernautAgent.Workload, VolumeMounts: mounts, Volumes: volumes, Env: envVars,
 		InitContainers: initContainers,
 		ProbePort:      PortHealthProbe,
 		Args: []string{
@@ -808,7 +808,7 @@ func AuthWebhookDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alp
 	ports = append(ports, pprofContainerPort(knV2.Spec.Debug.PprofEnabled)...)
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentAuthWebhook, ImageName: "authwebhook",
-		Resources: kn.Spec.AuthWebhook.Resources, VolumeMounts: mounts, Volumes: volumes,
+		Resources: kn.Spec.AuthWebhook.Resources, Workload: kn.Spec.AuthWebhook.Workload, VolumeMounts: mounts, Volumes: volumes,
 		Env:       env,
 		Args:      []string{"-config=/etc/authwebhook/authwebhook.yaml"},
 		Ports:     ports,
@@ -1030,7 +1030,7 @@ func APIFrontendDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alp
 
 	dep, err := buildDeployment(kn, DeploymentParams{
 		Component: ComponentAPIFrontend, ImageName: "apifrontend",
-		Resources: kn.Spec.APIFrontend.Resources, VolumeMounts: mounts, Volumes: volumes,
+		Resources: kn.Spec.APIFrontend.Resources, Workload: kn.Spec.APIFrontend.Workload, VolumeMounts: mounts, Volumes: volumes,
 		InitContainers: initContainers,
 		Env:            env,
 		Args:           []string{"--config=/etc/apifrontend/config.yaml"},
@@ -1062,6 +1062,7 @@ type DeploymentParams struct {
 	Component                     string
 	ImageName                     string
 	Resources                     corev1.ResourceRequirements
+	Workload                      *kubernautv1alpha2.WorkloadSpec
 	VolumeMounts                  []corev1.VolumeMount
 	Volumes                       []corev1.Volume
 	InitContainers                []corev1.Container
@@ -1137,6 +1138,9 @@ func buildDeploymentProbes(p DeploymentParams, ports []corev1.ContainerPort) (li
 }
 
 func buildDeployment(kn *kubernautv1alpha2.Kubernaut, p DeploymentParams) (*appsv1.Deployment, error) {
+	if errs := validateWorkloadSecurityContext("spec."+p.Component+".workload", p.Workload); len(errs) > 0 {
+		return nil, errs[0]
+	}
 	img, err := ResolveImage(kn, p.ImageName)
 	if err != nil {
 		return nil, err
@@ -1147,11 +1151,20 @@ func buildDeployment(kn *kubernautv1alpha2.Kubernaut, p DeploymentParams) (*apps
 		ports = []corev1.ContainerPort{{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP}}
 	}
 	liveness, readiness, startup := buildDeploymentProbes(p, ports)
+	replicas := int32(1)
+	if p.Workload != nil && p.Workload.Replicas != nil {
+		replicas = *p.Workload.Replicas
+	}
+	initContainers := make([]corev1.Container, len(p.InitContainers))
+	for i := range p.InitContainers {
+		initContainers[i] = p.InitContainers[i]
+		initContainers[i].SecurityContext = mergeContainerSecurityContext(initContainers[i].SecurityContext, workloadContainerSecurityContext(p.Workload))
+	}
 
 	dep := &appsv1.Deployment{
 		ObjectMeta: ObjectMeta(kn, DeploymentName(p.Component), p.Component),
 		Spec: appsv1.DeploymentSpec{
-			Replicas: ptr.To[int32](1),
+			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: SelectorLabels(p.Component)},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
@@ -1159,11 +1172,14 @@ func buildDeployment(kn *kubernautv1alpha2.Kubernaut, p DeploymentParams) (*apps
 					Annotations: p.PodAnnotations,
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: ServiceAccountName(p.Component),
-					SecurityContext:    PodSecurityContext(),
-					ImagePullSecrets:   kn.Spec.Image.PullSecrets,
-					Affinity:           preferredPodAntiAffinity(p.Component),
-					InitContainers:     p.InitContainers,
+					ServiceAccountName:        ServiceAccountName(p.Component),
+					SecurityContext:           workloadPodSecurityContext(p.Workload),
+					ImagePullSecrets:          kn.Spec.Image.PullSecrets,
+					NodeSelector:              workloadNodeSelector(p.Workload),
+					Tolerations:               workloadTolerations(p.Workload),
+					Affinity:                  workloadAffinity(p.Component, p.Workload),
+					TopologySpreadConstraints: workloadTopologySpreadConstraints(p.Workload),
+					InitContainers:            initContainers,
 					Containers: []corev1.Container{{
 						Name:            p.Component,
 						Image:           img,
@@ -1172,7 +1188,7 @@ func buildDeployment(kn *kubernautv1alpha2.Kubernaut, p DeploymentParams) (*apps
 						Env:             append(p.Env, corev1.EnvVar{Name: "GODEBUG", Value: "netdns=go"}),
 						Args:            p.Args,
 						Resources:       MergeResources(p.Resources),
-						SecurityContext: ContainerSecurityContext(),
+						SecurityContext: workloadContainerSecurityContext(p.Workload),
 						VolumeMounts:    p.VolumeMounts,
 						LivenessProbe:   liveness,
 						ReadinessProbe:  readiness,

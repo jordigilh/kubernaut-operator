@@ -19,6 +19,7 @@ package v1alpha2
 import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 const (
@@ -509,6 +510,10 @@ type FleetMetadataCacheSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Kubernetes workload placement, hardening, disruption, and autoscaling.
+	// +optional
+	Workload *WorkloadSpec `json:"workload,omitempty"`
 }
 
 // FleetMetadataCacheEnabled returns true when the operator should deploy
@@ -590,6 +595,104 @@ type SecretKeyRef struct {
 	Key string `json:"key,omitempty"`
 }
 
+// WorkloadSpec configures Kubernetes workload placement, hardening, disruption
+// protection, and autoscaling for one operator-managed component. Secure pod
+// and container defaults remain active when an override is omitted.
+type WorkloadSpec struct {
+	// Desired number of replicas. Defaults to one when unset.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	Replicas *int32 `json:"replicas,omitempty"`
+
+	// Node labels required for scheduling this component.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// Taints this component tolerates.
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+
+	// Node, pod, and required/preferred anti-affinity rules.
+	// +optional
+	Affinity *corev1.Affinity `json:"affinity,omitempty"`
+
+	// Constraints controlling distribution across topology domains.
+	// +optional
+	TopologySpreadConstraints []corev1.TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
+
+	// Pod-level security overrides. Restricted defaults are retained for fields
+	// not explicitly supplied.
+	// +optional
+	PodSecurityContext *corev1.PodSecurityContext `json:"podSecurityContext,omitempty"`
+
+	// Container-level security overrides. Restricted defaults are retained for
+	// fields not explicitly supplied.
+	// +optional
+	ContainerSecurityContext *corev1.SecurityContext `json:"containerSecurityContext,omitempty"`
+
+	// PodDisruptionBudget policy. Enabled defaults to true when the block is
+	// present or omitted, matching the Helm chart's workload default.
+	// +optional
+	PDB *PodDisruptionBudgetSpec `json:"pdb,omitempty"`
+
+	// HorizontalPodAutoscaler policy. Autoscaling is disabled unless explicitly
+	// enabled, matching the Helm chart and avoiding an implicit availability
+	// contract change for existing CRs.
+	// +optional
+	Autoscaling *AutoscalingSpec `json:"autoscaling,omitempty"`
+}
+
+// PodDisruptionBudgetSpec configures one component's voluntary-disruption
+// protection. Kubernetes accepts either an integer or a percentage string for
+// availability values, matching policy/v1 and the Helm chart.
+// +kubebuilder:validation:XValidation:rule="!(has(self.minAvailable) && has(self.maxUnavailable))",message="pdb must set only one of minAvailable or maxUnavailable"
+type PodDisruptionBudgetSpec struct {
+	// Whether this component receives a PDB. Defaults to true.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Minimum number or percentage of pods that must remain available.
+	// +optional
+	MinAvailable *intstr.IntOrString `json:"minAvailable,omitempty"`
+
+	// Maximum number or percentage of pods that may be unavailable.
+	// +optional
+	MaxUnavailable *intstr.IntOrString `json:"maxUnavailable,omitempty"`
+}
+
+// AutoscalingSpec configures an autoscaling/v2 HorizontalPodAutoscaler.
+// +kubebuilder:validation:XValidation:rule="!has(self.minReplicas) || !has(self.maxReplicas) || self.minReplicas <= self.maxReplicas",message="autoscaling.minReplicas must not exceed maxReplicas"
+type AutoscalingSpec struct {
+	// Whether the HPA is created. Defaults to false.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Lowest replica count while autoscaling.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	MinReplicas *int32 `json:"minReplicas,omitempty"`
+
+	// Highest replica count while autoscaling.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
+
+	// Target average CPU utilization percentage.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	// +optional
+	CPUTarget *int32 `json:"cpuTarget,omitempty"`
+
+	// Target average memory utilization percentage. Zero disables the memory
+	// metric while CPU remains enabled.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	// +optional
+	MemoryTarget *int32 `json:"memoryTarget,omitempty"`
+}
+
 // NotificationSpec configures the notification controller.
 type NotificationSpec struct {
 	// Slack quickstart shortcut.
@@ -607,6 +710,10 @@ type NotificationSpec struct {
 	// Resource requirements for the notification controller.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Kubernetes workload placement, hardening, disruption, and autoscaling.
+	// +optional
+	Workload *WorkloadSpec `json:"workload,omitempty"`
 }
 
 // SlackSpec configures Slack delivery for notifications.
@@ -657,6 +764,10 @@ type AIAnalysisSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Kubernetes workload placement, hardening, disruption, and autoscaling.
+	// +optional
+	Workload *WorkloadSpec `json:"workload,omitempty"`
 }
 
 // SignalProcessingSpec configures the SignalProcessing controller. Policy
@@ -677,6 +788,10 @@ type SignalProcessingSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Kubernetes workload placement, hardening, disruption, and autoscaling.
+	// +optional
+	Workload *WorkloadSpec `json:"workload,omitempty"`
 
 	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for
 	// SignalProcessing's own MCP Gateway authentication (F1 -- collapses
@@ -736,6 +851,10 @@ type RemediationOrchestratorSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Kubernetes workload placement, hardening, disruption, and autoscaling.
+	// +optional
+	Workload *WorkloadSpec `json:"workload,omitempty"`
 
 	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for
 	// RemediationOrchestrator only (F1). Use when RemediationOrchestrator
@@ -886,6 +1005,10 @@ type WorkflowExecutionSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Kubernetes workload placement, hardening, disruption, and autoscaling.
+	// +optional
+	Workload *WorkloadSpec `json:"workload,omitempty"`
 }
 
 // WorkflowExecutionFleetSpec configures WorkflowExecution's own write-scoped
@@ -928,6 +1051,10 @@ type EffectivenessMonitorSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Kubernetes workload placement, hardening, disruption, and autoscaling.
+	// +optional
+	Workload *WorkloadSpec `json:"workload,omitempty"`
 
 	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for
 	// EffectivenessMonitor only (F1). Falls back to
@@ -1028,6 +1155,10 @@ type KubernautAgentSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Kubernetes workload placement, hardening, disruption, and autoscaling.
+	// +optional
+	Workload *WorkloadSpec `json:"workload,omitempty"`
 
 	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for the
 	// Kubernaut Agent only (F1). Use when KA must authenticate to the MCP
@@ -1486,6 +1617,10 @@ type GatewaySpec struct {
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
+	// Kubernetes workload placement, hardening, disruption, and autoscaling.
+	// +optional
+	Workload *WorkloadSpec `json:"workload,omitempty"`
+
 	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for Gateway
 	// only (F1). Use when Gateway must authenticate to the MCP Gateway as
 	// a different OAuth2 client than other fleet-aware components. Falls
@@ -1537,6 +1672,10 @@ type ConsoleSpec struct {
 	// Resource requirements for the console container.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Kubernetes workload placement, hardening, disruption, and autoscaling.
+	// +optional
+	Workload *WorkloadSpec `json:"workload,omitempty"`
 }
 
 // ConsoleAuthSpec configures authentication for the console oauth2-proxy.
@@ -1970,6 +2109,10 @@ type AuthWebhookSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Kubernetes workload placement, hardening, disruption, and autoscaling.
+	// +optional
+	Workload *WorkloadSpec `json:"workload,omitempty"`
 }
 
 // APIFrontendSpec configures the API Frontend (MCP Streamable HTTP / A2A) service.
@@ -2059,6 +2202,10 @@ type APIFrontendSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Kubernetes workload placement, hardening, disruption, and autoscaling.
+	// +optional
+	Workload *WorkloadSpec `json:"workload,omitempty"`
 
 	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for
 	// APIFrontend only (F1). Falls back to
@@ -2389,6 +2536,10 @@ type DataStorageSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Kubernetes workload placement, hardening, disruption, and autoscaling.
+	// +optional
+	Workload *WorkloadSpec `json:"workload,omitempty"`
 
 	// Retention configures periodic purge of expired audit events (FedRAMP AU-11).
 	// +optional

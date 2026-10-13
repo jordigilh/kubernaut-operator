@@ -33,9 +33,11 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -291,6 +293,18 @@ func cleanupNamespacedResources(ctx context.Context) {
 	_ = k8sClient.List(ctx, depList, client.InNamespace(testNamespace), client.MatchingLabels{"app.kubernetes.io/managed-by": "kubernaut-operator"})
 	for i := range depList.Items {
 		_ = k8sClient.Delete(ctx, &depList.Items[i], &client.DeleteOptions{PropagationPolicy: &propagation})
+	}
+
+	// HPAs and PDBs
+	hpaList := &autoscalingv2.HorizontalPodAutoscalerList{}
+	_ = k8sClient.List(ctx, hpaList, client.InNamespace(testNamespace), client.MatchingLabels{"app.kubernetes.io/managed-by": "kubernaut-operator"})
+	for i := range hpaList.Items {
+		_ = k8sClient.Delete(ctx, &hpaList.Items[i])
+	}
+	pdbList := &policyv1.PodDisruptionBudgetList{}
+	_ = k8sClient.List(ctx, pdbList, client.InNamespace(testNamespace), client.MatchingLabels{"app.kubernetes.io/managed-by": "kubernaut-operator"})
+	for i := range pdbList.Items {
+		_ = k8sClient.Delete(ctx, &pdbList.Items[i])
 	}
 
 	// ConfigMaps
@@ -3198,6 +3212,86 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(r.Get(ctx, types.NamespacedName{Name: wfNsName}, updated)).To(Succeed())
 			Expect(updated.Labels).To(HaveKeyWithValue("custom-team-label", "sre"))
 			Expect(updated.Labels).To(HaveKeyWithValue("pod-security.kubernetes.io/enforce", "restricted"))
+		})
+	})
+
+	// ======================================================================
+	// Deployment tunability parity (#512)
+	// ======================================================================
+	Context("Deployment tunability", func() {
+		It("IT-TUNE-512-RECONCILE-001 [CM-6, SI-4, SA-11; SOC2 CC7.2, A1; ASVS v5.0.0-V16.5.2] wires workload tuning through reconciliation and prunes opt-outs", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			replicas := int32(2)
+			cr.Spec.Gateway.Workload = &kubernautv1alpha2.WorkloadSpec{
+				Replicas: &replicas,
+				NodeSelector: map[string]string{
+					"node-role.kubernetes.io/worker": "true",
+				},
+				Tolerations: []corev1.Toleration{{
+					Key:      "workload",
+					Operator: corev1.TolerationOpExists,
+					Effect:   corev1.TaintEffectNoSchedule,
+				}},
+			}
+			cr.Spec.DataStorage.Workload = &kubernautv1alpha2.WorkloadSpec{
+				Autoscaling: &kubernautv1alpha2.AutoscalingSpec{
+					Enabled:      ptr.To(true),
+					MinReplicas:  ptr.To(int32(2)),
+					MaxReplicas:  ptr.To(int32(6)),
+					CPUTarget:    ptr.To(int32(65)),
+					MemoryTarget: ptr.To(int32(70)),
+				},
+			}
+			cr.Spec.APIFrontend.Workload = &kubernautv1alpha2.WorkloadSpec{
+				Autoscaling: &kubernautv1alpha2.AutoscalingSpec{Enabled: ptr.To(true)},
+			}
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			r := reconcileToDeployPhase(ctx)
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.DeploymentName(resources.ComponentGateway), Namespace: testNamespace}, dep)).To(Succeed())
+			Expect(*dep.Spec.Replicas).To(Equal(replicas))
+			Expect(dep.Spec.Template.Spec.NodeSelector).To(Equal(cr.Spec.Gateway.Workload.NodeSelector))
+			Expect(dep.Spec.Template.Spec.Tolerations).To(Equal(cr.Spec.Gateway.Workload.Tolerations))
+
+			for _, component := range []string{resources.ComponentDataStorage, resources.ComponentAPIFrontend} {
+				hpa := &autoscalingv2.HorizontalPodAutoscaler{}
+				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: component + "-hpa", Namespace: testNamespace}, hpa)).To(Succeed(), "%s HPA should be explicitly enabled", component)
+			}
+			pdb := &policyv1.PodDisruptionBudget{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.ComponentGateway, Namespace: testNamespace}, pdb)).To(Succeed(), "Gateway PDB should use its enabled-by-default policy")
+
+			By("disabling the workload policies and reconciling")
+			updated := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), updated)).To(Succeed())
+			updated.Spec.Gateway.Workload.PDB = &kubernautv1alpha2.PodDisruptionBudgetSpec{Enabled: ptr.To(false)}
+			updated.Spec.DataStorage.Workload.Autoscaling.Enabled = ptr.To(false)
+			updated.Spec.APIFrontend.Workload.Autoscaling.Enabled = ptr.To(false)
+			Expect(k8sClient.Update(ctx, updated)).To(Succeed())
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: resources.ComponentGateway, Namespace: testNamespace}, pdb)
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "disabled Gateway PDB should be pruned")
+			for _, component := range []string{resources.ComponentDataStorage, resources.ComponentAPIFrontend} {
+				hpa := &autoscalingv2.HorizontalPodAutoscaler{}
+				err = k8sClient.Get(ctx, types.NamespacedName{Name: component + "-hpa", Namespace: testNamespace}, hpa)
+				Expect(errors.IsNotFound(err)).To(BeTrue(), "disabled %s HPA should be pruned", component)
+			}
+		})
+
+		It("IT-TUNE-512-RECONCILE-002 [CM-6, SI-4; SOC2 CC7.2, A1; ASVS v5.0.0-V16.5.2] keeps HPAs disabled by default", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			for _, component := range []string{resources.ComponentDataStorage, resources.ComponentAPIFrontend} {
+				hpa := &autoscalingv2.HorizontalPodAutoscaler{}
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: component + "-hpa", Namespace: testNamespace}, hpa)
+				Expect(errors.IsNotFound(err)).To(BeTrue(), "%s HPA must be opt-in", component)
+			}
 		})
 	})
 

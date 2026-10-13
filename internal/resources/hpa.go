@@ -76,22 +76,65 @@ func buildHPA(kn *kubernautv1alpha2.Kubernaut, spec HPASpec) *autoscalingv2.Hori
 
 // DataStorageHPA builds the HPA for the DataStorage component.
 func DataStorageHPA(kn *kubernautv1alpha2.Kubernaut) *autoscalingv2.HorizontalPodAutoscaler {
+	if !workloadAutoscalingEnabled(kn.Spec.DataStorage.Workload) {
+		return nil
+	}
+	autoscaling := effectiveAutoscaling(kn.Spec.DataStorage.Workload)
 	return buildHPA(kn, HPASpec{
 		Component:           ComponentDataStorage,
-		MinReplicas:         1,
-		MaxReplicas:         5,
-		CPUTargetPercent:    75,
-		MemoryTargetPercent: 80,
+		MinReplicas:         autoscaling.MinReplicas,
+		MaxReplicas:         autoscaling.MaxReplicas,
+		CPUTargetPercent:    autoscaling.CPUTargetPercent,
+		MemoryTargetPercent: autoscaling.MemoryTargetPercent,
 	})
 }
 
 // APIFrontendHPA builds the HPA for the APIFrontend component.
 func APIFrontendHPA(kn *kubernautv1alpha2.Kubernaut) *autoscalingv2.HorizontalPodAutoscaler {
+	if !workloadAutoscalingEnabled(kn.Spec.APIFrontend.Workload) {
+		return nil
+	}
+	autoscaling := effectiveAutoscaling(kn.Spec.APIFrontend.Workload)
 	return buildHPA(kn, HPASpec{
 		Component:           ComponentAPIFrontend,
-		MinReplicas:         1,
-		MaxReplicas:         5,
-		CPUTargetPercent:    75,
-		MemoryTargetPercent: 80,
+		MinReplicas:         autoscaling.MinReplicas,
+		MaxReplicas:         autoscaling.MaxReplicas,
+		CPUTargetPercent:    autoscaling.CPUTargetPercent,
+		MemoryTargetPercent: autoscaling.MemoryTargetPercent,
 	})
+}
+
+func workloadAutoscalingEnabled(workload *kubernautv1alpha2.WorkloadSpec) bool {
+	return workload != nil && workload.Autoscaling != nil && workload.Autoscaling.Enabled != nil && *workload.Autoscaling.Enabled
+}
+
+func effectiveAutoscaling(workload *kubernautv1alpha2.WorkloadSpec) HPASpec {
+	const (
+		defaultMinReplicas         = int32(1)
+		defaultMaxReplicas         = int32(5)
+		defaultCPUTargetPercent    = int32(75)
+		defaultMemoryTargetPercent = int32(80)
+	)
+	result := HPASpec{
+		MinReplicas:         defaultMinReplicas,
+		MaxReplicas:         defaultMaxReplicas,
+		CPUTargetPercent:    defaultCPUTargetPercent,
+		MemoryTargetPercent: defaultMemoryTargetPercent,
+	}
+	if workload == nil || workload.Autoscaling == nil {
+		return result
+	}
+	if workload.Autoscaling.MinReplicas != nil {
+		result.MinReplicas = *workload.Autoscaling.MinReplicas
+	}
+	if workload.Autoscaling.MaxReplicas != nil {
+		result.MaxReplicas = *workload.Autoscaling.MaxReplicas
+	}
+	if workload.Autoscaling.CPUTarget != nil {
+		result.CPUTargetPercent = *workload.Autoscaling.CPUTarget
+	}
+	if workload.Autoscaling.MemoryTarget != nil {
+		result.MemoryTargetPercent = *workload.Autoscaling.MemoryTarget
+	}
+	return result
 }

@@ -39,6 +39,9 @@ const (
 // ingressDomain is the cluster's ingress domain (e.g. "apps.dev.example.com")
 // used to derive the oauth2-proxy redirect URL when console.route.host is empty.
 func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*appsv1.Deployment, error) {
+	if errs := validateWorkloadSecurityContext("spec.console.workload", kn.Spec.Console.Workload); len(errs) > 0 {
+		return nil, errs[0]
+	}
 	consoleImage, err := ResolveImage(kn, "console")
 	if err != nil {
 		return nil, err
@@ -85,7 +88,8 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*
 		"--ping-path=/oauth2/ping",
 	}
 
-	replicas := int32(1)
+	workload := kn.Spec.Console.Workload
+	replicas, containers := consoleWorkloadParts(kn, workload, consoleImage, oauth2ProxyImage, oauthArgs, secretName, caDir)
 	dep := &appsv1.Deployment{
 		ObjectMeta: ObjectMeta(kn, ComponentConsole, ComponentConsole),
 		Spec: appsv1.DeploymentSpec{
@@ -98,16 +102,12 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*
 					Labels: ComponentLabels(kn, ComponentConsole),
 				},
 				Spec: corev1.PodSpec{
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: ptr.To(true),
-						SeccompProfile: &corev1.SeccompProfile{
-							Type: corev1.SeccompProfileTypeRuntimeDefault,
-						},
-					},
-					Containers: []corev1.Container{
-						consoleOAuth2ProxyContainer(oauth2ProxyImage, oauthArgs, secretName, caDir),
-						consoleAppContainer(kn, consoleImage),
-					},
+					SecurityContext:           workloadPodSecurityContext(workload),
+					NodeSelector:              workloadNodeSelector(workload),
+					Tolerations:               workloadTolerations(workload),
+					Affinity:                  workloadAffinity(ComponentConsole, workload),
+					TopologySpreadConstraints: workloadTopologySpreadConstraints(workload),
+					Containers:                containers,
 					Volumes: []corev1.Volume{
 						{Name: "nginx-tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 						{Name: "nginx-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
@@ -121,6 +121,26 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*
 	}
 
 	return dep, nil
+}
+
+func consoleWorkloadParts(
+	kn *kubernautv1alpha2.Kubernaut,
+	workload *kubernautv1alpha2.WorkloadSpec,
+	consoleImage, oauth2ProxyImage string,
+	oauthArgs []string,
+	secretName, caDir string,
+) (int32, []corev1.Container) {
+	replicas := int32(1)
+	if workload != nil && workload.Replicas != nil {
+		replicas = *workload.Replicas
+	}
+	oauth2Proxy := consoleOAuth2ProxyContainer(oauth2ProxyImage, oauthArgs, secretName, caDir)
+	consoleApp := consoleAppContainer(kn, consoleImage)
+	if workload != nil && workload.ContainerSecurityContext != nil {
+		oauth2Proxy.SecurityContext = mergeContainerSecurityContext(oauth2Proxy.SecurityContext, workload.ContainerSecurityContext)
+		consoleApp.SecurityContext = mergeContainerSecurityContext(consoleApp.SecurityContext, workload.ContainerSecurityContext)
+	}
+	return replicas, []corev1.Container{oauth2Proxy, consoleApp}
 }
 
 // consoleOAuth2ProxyContainer builds the oauth2-proxy sidecar container that

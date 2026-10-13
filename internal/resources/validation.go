@@ -26,6 +26,7 @@ import (
 	"time"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
+	corev1 "k8s.io/api/core/v1"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -48,6 +49,104 @@ func ValidateKubernaut(kn *kubernautv1alpha2.Kubernaut) []error {
 	errs = append(errs, validateAlignmentCheck(kn)...)
 	errs = append(errs, validateDryRun(kn)...)
 	errs = append(errs, validateInteractive(kn)...)
+	errs = append(errs, validateWorkloadTuning(kn)...)
+	return errs
+}
+
+func validateWorkloadTuning(kn *kubernautv1alpha2.Kubernaut) []error {
+	components := []struct {
+		name     string
+		workload *kubernautv1alpha2.WorkloadSpec
+	}{
+		{"gateway", kn.Spec.Gateway.Workload},
+		{"dataStorage", kn.Spec.DataStorage.Workload},
+		{"aiAnalysis", kn.Spec.AIAnalysis.Workload},
+		{"signalProcessing", kn.Spec.SignalProcessing.Workload},
+		{"remediationOrchestrator", kn.Spec.RemediationOrchestrator.Workload},
+		{"workflowExecution", kn.Spec.WorkflowExecution.Workload},
+		{"effectivenessMonitor", kn.Spec.EffectivenessMonitor.Workload},
+		{"notification", kn.Spec.Notification.Workload},
+		{"kubernautAgent", kn.Spec.KubernautAgent.Workload},
+		{"authWebhook", kn.Spec.AuthWebhook.Workload},
+		{"apiFrontend", kn.Spec.APIFrontend.Workload},
+		{"console", kn.Spec.Console.Workload},
+		{"fleetMetadataCache", kn.Spec.FleetMetadataCache.Workload},
+	}
+
+	var errs []error
+	for _, component := range components {
+		if component.workload == nil {
+			continue
+		}
+		base := "spec." + component.name + ".workload"
+		errs = append(errs, validateWorkloadSecurityContext(base, component.workload)...)
+		if pdb := component.workload.PDB; pdb != nil && pdb.MinAvailable != nil && pdb.MaxUnavailable != nil {
+			errs = append(errs, fmt.Errorf("%s.pdb must set only one of minAvailable or maxUnavailable", base))
+		}
+		if autoscaling := component.workload.Autoscaling; autoscaling != nil && autoscaling.MinReplicas != nil && autoscaling.MaxReplicas != nil && *autoscaling.MinReplicas > *autoscaling.MaxReplicas {
+			errs = append(errs, fmt.Errorf("%s.autoscaling.minReplicas must not exceed maxReplicas", base))
+		}
+	}
+	return errs
+}
+
+func validateWorkloadSecurityContext(base string, workload *kubernautv1alpha2.WorkloadSpec) []error {
+	if workload == nil {
+		return nil
+	}
+	errs := validateWorkloadPodSecurityContext(base, workload.PodSecurityContext)
+	return append(errs, validateWorkloadContainerSecurityContext(base, workload.ContainerSecurityContext)...)
+}
+
+func validateWorkloadPodSecurityContext(base string, pod *corev1.PodSecurityContext) []error {
+	if pod == nil {
+		return nil
+	}
+	var errs []error
+	if pod.RunAsNonRoot != nil && !*pod.RunAsNonRoot {
+		errs = append(errs, fmt.Errorf("%s.podSecurityContext.runAsNonRoot must remain true", base))
+	}
+	if pod.SeccompProfile != nil && pod.SeccompProfile.Type == corev1.SeccompProfileTypeUnconfined {
+		errs = append(errs, fmt.Errorf("%s.podSecurityContext.seccompProfile must not be Unconfined", base))
+	}
+	return errs
+}
+
+func validateWorkloadContainerSecurityContext(base string, container *corev1.SecurityContext) []error {
+	if container == nil {
+		return nil
+	}
+	var errs []error
+	if container.AllowPrivilegeEscalation != nil && *container.AllowPrivilegeEscalation {
+		errs = append(errs, fmt.Errorf("%s.containerSecurityContext.allowPrivilegeEscalation must remain false", base))
+	}
+	if container.ReadOnlyRootFilesystem != nil && !*container.ReadOnlyRootFilesystem {
+		errs = append(errs, fmt.Errorf("%s.containerSecurityContext.readOnlyRootFilesystem must remain true", base))
+	}
+	if container.Privileged != nil && *container.Privileged {
+		errs = append(errs, fmt.Errorf("%s.containerSecurityContext.privileged must remain false", base))
+	}
+	return append(errs, validateWorkloadCapabilities(base, container.Capabilities)...)
+}
+
+func validateWorkloadCapabilities(base string, capabilities *corev1.Capabilities) []error {
+	if capabilities == nil {
+		return nil
+	}
+	dropsAll := false
+	for _, capability := range capabilities.Drop {
+		if capability == corev1.Capability("ALL") {
+			dropsAll = true
+			break
+		}
+	}
+	var errs []error
+	if !dropsAll {
+		errs = append(errs, fmt.Errorf("%s.containerSecurityContext.capabilities.drop must include ALL", base))
+	}
+	if len(capabilities.Add) > 0 {
+		errs = append(errs, fmt.Errorf("%s.containerSecurityContext.capabilities.add must be empty", base))
+	}
 	return errs
 }
 

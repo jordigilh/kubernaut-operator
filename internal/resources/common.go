@@ -480,6 +480,15 @@ func AllComponents() []string {
 	}
 }
 
+// PDBComponents returns every workload that can receive an operator-managed
+// PodDisruptionBudget. Console is a separately assembled Deployment and is
+// therefore not part of AllComponents, which drives service/RBAC/status
+// aggregation, but it still needs the same disruption contract when enabled.
+func PDBComponents() []string {
+	components := AllComponents()
+	return append(components, ComponentConsole)
+}
+
 // isComponentActive returns whether a component should be deployed.
 // Always-on components return true; opt-in components check their spec gate.
 // knV2 is only consulted for FleetMetadataCache -- Fleet's CRD surface lives
@@ -496,6 +505,45 @@ func isComponentActive(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.
 		return knV2.Spec.FleetMetadataCacheEnabled()
 	default:
 		return true
+	}
+}
+
+// workloadForComponent returns the optional workload policy for a managed
+// component. FleetMetadataCache is read from the v1alpha2 view because its
+// complete configuration is carried by the migrated CR.
+func workloadForComponent(kn, knV2 *kubernautv1alpha2.Kubernaut, component string) *kubernautv1alpha2.WorkloadSpec {
+	switch component {
+	case ComponentGateway:
+		return kn.Spec.Gateway.Workload
+	case ComponentDataStorage:
+		return kn.Spec.DataStorage.Workload
+	case ComponentAIAnalysis:
+		return kn.Spec.AIAnalysis.Workload
+	case ComponentSignalProcessing:
+		return kn.Spec.SignalProcessing.Workload
+	case ComponentRemediationOrchestrator:
+		return kn.Spec.RemediationOrchestrator.Workload
+	case ComponentWorkflowExecution:
+		return kn.Spec.WorkflowExecution.Workload
+	case ComponentEffectivenessMonitor:
+		return kn.Spec.EffectivenessMonitor.Workload
+	case ComponentNotification:
+		return kn.Spec.Notification.Workload
+	case ComponentKubernautAgent:
+		return kn.Spec.KubernautAgent.Workload
+	case ComponentAuthWebhook:
+		return kn.Spec.AuthWebhook.Workload
+	case ComponentAPIFrontend:
+		return kn.Spec.APIFrontend.Workload
+	case ComponentConsole:
+		return kn.Spec.Console.Workload
+	case ComponentFleetMetadataCache:
+		if knV2 != nil {
+			return knV2.Spec.FleetMetadataCache.Workload
+		}
+		return kn.Spec.FleetMetadataCache.Workload
+	default:
+		return nil
 	}
 }
 
@@ -617,6 +665,25 @@ func PodSecurityContext() *corev1.PodSecurityContext {
 	}
 }
 
+// workloadPodSecurityContext merges an optional workload override with the
+// restricted defaults used by every operator-managed application container.
+// Explicit fields are honored; omitted security-critical fields retain the
+// secure baseline.
+func workloadPodSecurityContext(workload *kubernautv1alpha2.WorkloadSpec) *corev1.PodSecurityContext {
+	defaults := PodSecurityContext()
+	if workload == nil || workload.PodSecurityContext == nil {
+		return defaults
+	}
+	result := workload.PodSecurityContext.DeepCopy()
+	if result.RunAsNonRoot == nil {
+		result.RunAsNonRoot = ptr.To(true)
+	}
+	if result.SeccompProfile == nil {
+		result.SeccompProfile = defaults.SeccompProfile.DeepCopy()
+	}
+	return result
+}
+
 // ContainerSecurityContext returns the restricted-profile container security context
 // matching the Helm chart's kubernaut.containerSecurityContext helper.
 func ContainerSecurityContext() *corev1.SecurityContext {
@@ -627,6 +694,104 @@ func ContainerSecurityContext() *corev1.SecurityContext {
 			Drop: []corev1.Capability{"ALL"},
 		},
 	}
+}
+
+// workloadContainerSecurityContext merges an optional workload override with
+// the restricted container defaults. This helper is also used for init
+// containers so the workload-level contract applies consistently to every
+// process launched in the Pod.
+func workloadContainerSecurityContext(workload *kubernautv1alpha2.WorkloadSpec) *corev1.SecurityContext {
+	defaults := ContainerSecurityContext()
+	if workload == nil || workload.ContainerSecurityContext == nil {
+		return defaults
+	}
+	return mergeContainerSecurityContext(defaults, workload.ContainerSecurityContext)
+}
+
+func mergeContainerSecurityContext(base, override *corev1.SecurityContext) *corev1.SecurityContext {
+	if base == nil && override == nil {
+		return nil
+	}
+	result := base.DeepCopy()
+	if result == nil {
+		result = &corev1.SecurityContext{}
+	}
+	if override == nil {
+		return result
+	}
+	if override.AllowPrivilegeEscalation != nil {
+		result.AllowPrivilegeEscalation = ptr.To(*override.AllowPrivilegeEscalation)
+	}
+	if override.ReadOnlyRootFilesystem != nil {
+		result.ReadOnlyRootFilesystem = ptr.To(*override.ReadOnlyRootFilesystem)
+	}
+	if override.RunAsNonRoot != nil {
+		result.RunAsNonRoot = ptr.To(*override.RunAsNonRoot)
+	}
+	if override.RunAsUser != nil {
+		result.RunAsUser = ptr.To(*override.RunAsUser)
+	}
+	if override.RunAsGroup != nil {
+		result.RunAsGroup = ptr.To(*override.RunAsGroup)
+	}
+	if override.Privileged != nil {
+		result.Privileged = ptr.To(*override.Privileged)
+	}
+	if override.ProcMount != nil {
+		result.ProcMount = ptr.To(*override.ProcMount)
+	}
+	if override.SELinuxOptions != nil {
+		result.SELinuxOptions = override.SELinuxOptions.DeepCopy()
+	}
+	if override.WindowsOptions != nil {
+		result.WindowsOptions = override.WindowsOptions.DeepCopy()
+	}
+	if override.Capabilities != nil {
+		result.Capabilities = override.Capabilities.DeepCopy()
+	}
+	return result
+}
+
+func workloadAffinity(component string, workload *kubernautv1alpha2.WorkloadSpec) *corev1.Affinity {
+	defaults := preferredPodAntiAffinity(component)
+	if workload == nil || workload.Affinity == nil {
+		return defaults
+	}
+	result := workload.Affinity.DeepCopy()
+	if result.PodAntiAffinity == nil {
+		result.PodAntiAffinity = defaults.PodAntiAffinity.DeepCopy()
+	} else if result.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution == nil {
+		result.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution = append(
+			[]corev1.WeightedPodAffinityTerm(nil),
+			defaults.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution...,
+		)
+	}
+	return result
+}
+
+func workloadNodeSelector(workload *kubernautv1alpha2.WorkloadSpec) map[string]string {
+	if workload == nil || len(workload.NodeSelector) == 0 {
+		return nil
+	}
+	selector := make(map[string]string, len(workload.NodeSelector))
+	for key, value := range workload.NodeSelector {
+		selector[key] = value
+	}
+	return selector
+}
+
+func workloadTolerations(workload *kubernautv1alpha2.WorkloadSpec) []corev1.Toleration {
+	if workload == nil || len(workload.Tolerations) == 0 {
+		return nil
+	}
+	return append([]corev1.Toleration(nil), workload.Tolerations...)
+}
+
+func workloadTopologySpreadConstraints(workload *kubernautv1alpha2.WorkloadSpec) []corev1.TopologySpreadConstraint {
+	if workload == nil || len(workload.TopologySpreadConstraints) == 0 {
+		return nil
+	}
+	return append([]corev1.TopologySpreadConstraint(nil), workload.TopologySpreadConstraints...)
 }
 
 // DefaultResources returns sensible defaults when the user hasn't specified limits/requests.

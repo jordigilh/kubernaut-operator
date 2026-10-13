@@ -233,7 +233,7 @@ func FleetMetadataCacheDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuberna
 
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentFleetMetadataCache, ImageName: "fleetmetadatacache",
-		Resources: knV2.Spec.FleetMetadataCache.Resources, VolumeMounts: mounts, Volumes: volumes, Env: env,
+		Resources: knV2.Spec.FleetMetadataCache.Resources, Workload: knV2.Spec.FleetMetadataCache.Workload, VolumeMounts: mounts, Volumes: volumes, Env: env,
 		Args: []string{"-config=/etc/fleetmetadatacache/config.yaml"},
 		Ports: []corev1.ContainerPort{
 			{Name: "api", ContainerPort: fleetMetadataCacheAPIPort, Protocol: corev1.ProtocolTCP},

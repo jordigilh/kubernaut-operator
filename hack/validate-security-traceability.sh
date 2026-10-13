@@ -12,6 +12,7 @@ otlp_matrix="${repo_root}/docs/security/ISSUE-478-CONTROL-TRACEABILITY.md"
 monitoring_matrix="${repo_root}/docs/security/ISSUE-513-CONTROL-TRACEABILITY.md"
 ownership_matrix="${repo_root}/docs/security/ISSUE-514-CONTROL-TRACEABILITY.md"
 fleet_matrix="${repo_root}/docs/security/ISSUE-431-CONTROL-TRACEABILITY.md"
+tuning_matrix="${repo_root}/docs/security/ISSUE-512-CONTROL-TRACEABILITY.md"
 
 fail() {
 	echo "security traceability validation failed: $*" >&2
@@ -23,10 +24,61 @@ fail() {
 [[ -f "${ci_matrix}" ]] || fail "missing ${ci_matrix}"
 [[ -f "${otlp_matrix}" ]] || fail "missing ${otlp_matrix}"
 [[ -f "${monitoring_matrix}" ]] || fail "missing ${monitoring_matrix}"
+[[ -f "${tuning_matrix}" ]] || fail "missing ${tuning_matrix}"
 
 grep -Fq 'NIST SP 800-53 Rev. 5' "${matrix}" || fail "missing NIST SP 800-53 Rev. 5 declaration"
 grep -Fq 'OWASP ASVS 5.0.0' "${matrix}" || fail "missing OWASP ASVS 5.0.0 declaration"
 grep -Eq 'v5\.0\.0-V[0-9]+\.[0-9]+\.[0-9]+' "${matrix}" || fail "missing versioned ASVS requirement IDs"
+
+# Issue #512 deployment-tunability evidence is kept in a focused matrix so
+# HPA/PDB availability behavior and secure workload defaults cannot disappear
+# behind the broader parity record.
+grep -Fq 'NIST SP 800-53 Rev. 5' "${tuning_matrix}" || fail "Issue #512 matrix is missing NIST SP 800-53 Rev. 5 scope"
+grep -Fq 'SOC 2' "${tuning_matrix}" || fail "Issue #512 matrix is missing SOC 2 scope"
+grep -Fq 'OWASP ASVS 5.0.0' "${tuning_matrix}" || fail "Issue #512 matrix is missing OWASP ASVS scope"
+grep -Eiq 'not a formal FedRAMP authorization' "${tuning_matrix}" || fail "Issue #512 matrix must reject formal compliance claims"
+for control in AC-6 CM-2 CM-3 CM-6 CM-7 CM-8 SI-4 SA-11; do
+	grep -Eq "(^|[^A-Za-z0-9-])${control}([^A-Za-z0-9-]|$)" "${tuning_matrix}" \
+		|| fail "Issue #512 matrix is missing NIST/FedRAMP control ${control}"
+done
+for control in CC6.1 CC6.6 CC7.2 CC8.1 A1; do
+	grep -Fq "${control}" "${tuning_matrix}" || fail "Issue #512 matrix is missing SOC 2 control ${control}"
+done
+for requirement in v5.0.0-V15.1.1 v5.0.0-V15.1.2 v5.0.0-V15.2.1 v5.0.0-V16.1.1 v5.0.0-V16.2.1 v5.0.0-V16.5.2; do
+	grep -Fq "${requirement}" "${tuning_matrix}" || fail "Issue #512 matrix is missing ASVS requirement ${requirement}"
+done
+for artifact in \
+	'api/v1alpha2/kubernaut_types.go' \
+	'internal/resources/deployments.go' \
+	'internal/resources/pdb.go' \
+	'internal/resources/hpa.go' \
+	'internal/resources/validation.go' \
+	'internal/controller/kubernaut_controller.go' \
+	'internal/controller/kubernaut_lifecycle_test.go' \
+	'internal/resources/workload_tuning_test.go' \
+	'config/crd/bases/kubernaut.ai_kubernauts.yaml' \
+	'bundle/manifests/kubernaut.ai_kubernauts.yaml' \
+	'dist/install.yaml' \
+	'Makefile'; do
+	grep -Fq "${artifact}" "${tuning_matrix}" || fail "Issue #512 matrix is missing evidence artifact ${artifact}"
+done
+for test_id in \
+	'UT-TUNE-512-DEPLOY-001' \
+	'UT-TUNE-512-PDB-001' \
+	'UT-TUNE-512-PDB-002' \
+	'UT-TUNE-512-PDB-003' \
+	'UT-TUNE-512-HPA-001' \
+	'UT-TUNE-512-HPA-002' \
+	'UT-TUNE-512-VALIDATE-001' \
+	'UT-TUNE-512-VALIDATE-002' \
+	'UT-TUNE-512-API-001' \
+	'UT-TUNE-512-CONSOLE-001' \
+	'IT-TUNE-512-RECONCILE-001' \
+	'IT-TUNE-512-RECONCILE-002'; do
+	grep -R -n --include='*_test.go' -F "${test_id}" "${repo_root}/internal" >/dev/null \
+		|| fail "Issue #512 evidence ID ${test_id} has no executable test"
+	grep -Fq "${test_id}" "${tuning_matrix}" || fail "Issue #512 matrix omits evidence ID ${test_id}"
+done
 
 for control in AC-3 AC-6 SC-7 SC-8 SC-12 SC-13 SC-17 IA-2 IA-5 SI-4 AU-2 AU-3 AU-12 SI-10 CM-2 CM-3 CM-6 CM-8; do
 	grep -Eq "(^|[^A-Za-z0-9-])${control}([^A-Za-z0-9-]|$)" "${matrix}" || fail "missing NIST/FedRAMP control ${control}"

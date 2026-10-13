@@ -28,17 +28,22 @@ import (
 // Each PDB allows at most 1 unavailable pod, matching the Helm chart.
 // Opt-in components (e.g. APIFrontend) are skipped when not configured.
 func PodDisruptionBudgets(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []*policyv1.PodDisruptionBudget {
-	maxUnavailable := intstr.FromInt32(PDBMaxUnavailable)
-	pdbs := make([]*policyv1.PodDisruptionBudget, 0, len(AllComponents()))
+	pdbs := make([]*policyv1.PodDisruptionBudget, 0, len(PDBComponents()))
 
-	for _, component := range AllComponents() {
+	for _, component := range PDBComponents() {
 		if !isComponentActive(kn, knV2, component) {
 			continue
 		}
+		workload := workloadForComponent(kn, knV2, component)
+		if workload != nil && workload.PDB != nil && workload.PDB.Enabled != nil && !*workload.PDB.Enabled {
+			continue
+		}
+		minAvailable, maxUnavailable := workloadPDBValues(workload)
 		pdb := &policyv1.PodDisruptionBudget{
 			ObjectMeta: ObjectMeta(kn, component, component),
 			Spec: policyv1.PodDisruptionBudgetSpec{
-				MaxUnavailable: &maxUnavailable,
+				MinAvailable:   minAvailable,
+				MaxUnavailable: maxUnavailable,
 				Selector:       &metav1.LabelSelector{MatchLabels: SelectorLabels(component)},
 			},
 		}
@@ -46,4 +51,19 @@ func PodDisruptionBudgets(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 	}
 
 	return pdbs
+}
+
+func workloadPDBValues(workload *kubernautv1alpha2.WorkloadSpec) (*intstr.IntOrString, *intstr.IntOrString) {
+	if workload != nil && workload.PDB != nil {
+		if workload.PDB.MinAvailable != nil {
+			value := *workload.PDB.MinAvailable
+			return &value, nil
+		}
+		if workload.PDB.MaxUnavailable != nil {
+			value := *workload.PDB.MaxUnavailable
+			return nil, &value
+		}
+	}
+	maxUnavailable := intstr.FromInt32(PDBMaxUnavailable)
+	return nil, &maxUnavailable
 }

@@ -2013,15 +2013,18 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		return false, err
 	}
 
-	for _, pdb := range resources.PodDisruptionBudgets(kn, knV2) {
+	desiredPDBs := resources.PodDisruptionBudgets(kn, knV2)
+	for _, pdb := range desiredPDBs {
 		if err := r.ensureNamespaced(ctx, kn, pdb); err != nil {
 			return false, fmt.Errorf("ensuring PDB %s: %w", pdb.Name, err)
 		}
 	}
+	if err := r.pruneStaleWorkloadPDBs(ctx, kn, desiredPDBs); err != nil {
+		return false, err
+	}
 
-	dsHPA := resources.DataStorageHPA(kn)
-	if err := r.ensureNamespaced(ctx, kn, dsHPA); err != nil {
-		return false, fmt.Errorf("ensuring DS HPA: %w", err)
+	if err := r.reconcileOptionalHPA(ctx, kn, resources.DataStorageHPA(kn), resources.ComponentDataStorage); err != nil {
+		return false, fmt.Errorf("reconciling DS HPA: %w", err)
 	}
 
 	if err := r.reconcileMonitoringAndAlerts(ctx, kn, knV2); err != nil {
@@ -2032,6 +2035,8 @@ func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernaut
 		if err := r.deployAPIFrontendExtras(ctx, kn); err != nil {
 			return false, err
 		}
+	} else if err := r.reconcileOptionalHPA(ctx, kn, nil, resources.ComponentAPIFrontend); err != nil {
+		return false, fmt.Errorf("cleaning up disabled AF HPA: %w", err)
 	}
 
 	return r.reconcileRoutes(ctx, kn)
@@ -2574,13 +2579,55 @@ func (r *KubernautReconciler) reconcileOptionalRoute(
 }
 
 func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
-	afHPA := resources.APIFrontendHPA(kn)
-	if err := r.ensureNamespaced(ctx, kn, afHPA); err != nil {
-		return fmt.Errorf("ensuring AF HPA: %w", err)
+	if err := r.reconcileOptionalHPA(ctx, kn, resources.APIFrontendHPA(kn), resources.ComponentAPIFrontend); err != nil {
+		return fmt.Errorf("reconciling AF HPA: %w", err)
 	}
 
 	if err := r.ensureAPIFrontendMonitoring(ctx, kn); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (r *KubernautReconciler) reconcileOptionalHPA(
+	ctx context.Context,
+	kn *kubernautv1alpha2.Kubernaut,
+	desired *autoscalingv2.HorizontalPodAutoscaler,
+	component string,
+) error {
+	if desired != nil {
+		return r.ensureNamespaced(ctx, kn, desired)
+	}
+	stale := &autoscalingv2.HorizontalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{
+		Name:      component + "-hpa",
+		Namespace: kn.Namespace,
+	}}
+	if err := r.deleteIfExists(ctx, kn, stale); err != nil {
+		return fmt.Errorf("deleting disabled %s HPA: %w", component, err)
+	}
+	return nil
+}
+
+func (r *KubernautReconciler) pruneStaleWorkloadPDBs(
+	ctx context.Context,
+	kn *kubernautv1alpha2.Kubernaut,
+	desired []*policyv1.PodDisruptionBudget,
+) error {
+	desiredNames := make(map[string]struct{}, len(desired))
+	for _, pdb := range desired {
+		desiredNames[pdb.Name] = struct{}{}
+	}
+	for _, component := range resources.PDBComponents() {
+		if _, ok := desiredNames[component]; ok {
+			continue
+		}
+		stale := &policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{
+			Name:      component,
+			Namespace: kn.Namespace,
+		}}
+		if err := r.deleteIfExists(ctx, kn, stale); err != nil {
+			return fmt.Errorf("deleting disabled %s PDB: %w", component, err)
+		}
 	}
 	return nil
 }
