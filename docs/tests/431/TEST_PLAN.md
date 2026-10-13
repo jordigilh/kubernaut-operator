@@ -8,10 +8,13 @@
 
 | Tier | Test ID | Artifact | Contract |
 |---|---|---|---|
-| Unit | `UT-FLEET-521-ACM-001` | `internal/resources/configmaps_test.go` | ACM endpoint, provider, trust path, and token path render from `scopeCheck.acm`. |
-| Unit | `UT-FLEET-521-SECRET-001`–`003` | `internal/resources/deployments_test.go` | ACM CA/token Secret keys are mounted read-only only by backend consumers. |
+| Unit | `UT-FLEET-521-ACM-001` | `internal/resources/configmaps_test.go` | The rendered Gateway ConfigMap contains the ACM endpoint, trust path, and token path. |
+| Unit | `UT-FLEET-521-RENDER-SECRET-001` | `internal/resources/configmaps_test.go` | The rendered APIFrontend ConfigMap contains ACM `tlsCAFile` and `tokenPath` resource paths. This is ConfigMap/resource-path evidence, not Secret existence or mount evidence. |
+| Unit | `UT-FLEET-521-RENDER-SECRET-002` | `internal/resources/configmaps_test.go` | The rendered RemediationOrchestrator ConfigMap contains ACM trust and token resource paths. This is ConfigMap/resource-path evidence, not Secret existence or mount evidence. |
+| Unit | `UT-FLEET-521-PREFLIGHT-SECRET-001` | `internal/controller/business_api_boundaries_unit_test.go` | Controller preflight rejects a missing ACM token Secret, rejects a missing selected key, and accepts the selected key before deployment. |
+| Unit | `UT-FLEET-521-MOUNT-SECRET-001`; `UT-FLEET-521-MOUNT-SECRET-002` | `internal/resources/deployments_test.go` | Deployment builders mount ACM CA/token Secrets read-only only for backend consumers. |
 | Unit | `UT-FLEET-521-FMC-001` | `internal/resources/fleetmetadatacache_test.go` | FMC endpoint is derived from the Kubernaut namespace and uses HTTPS/inter-service trust. |
-| Unit | `UT-FLEET-521-MCPCLIENT-001` | `internal/resources/configmaps_test.go` | `mcpClient.retry/timeouts` map consistently to upstream `resilience` runtime fields. |
+| Unit | `UT-FLEET-521-MCPCLIENT-001` | `internal/resources/configmaps_test.go` | `mcpClient.retry/timeouts` map consistently to upstream runtime fields. |
 | Unit | `UT-FLEET-521-VALIDATE-001`–`002` | `internal/resources/validation_test.go` | Unknown/provider-mismatched backends, plaintext Fleet endpoints, missing ACM token, and non-positive durations fail closed. |
 | API contract | `UT-FLEET-521-API-001` | `api/v1alpha2/clean_break_test.go` | CRD contains nested ACM and mcpClient fields and omits direct scope-check/Fleet resilience fields. |
 | Integration | `IT-FLEET-521-RECONCILE-ACM` | `internal/controller/fleetmetadatacache_test.go` | Actual Reconcile wires the ACM rendering and Secret boundaries. |
