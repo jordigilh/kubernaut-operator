@@ -2293,7 +2293,7 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		}
 	})
 
-	It("UT-FLEET-521-SECRET-002 [IA-5, SC-12] mounts fleet-ca on both Gateway and RemediationOrchestrator when scopeCheck.tls.caCertSecretRef is set", func() {
+	It("UT-FLEET-521-MOUNT-SECRET-001 [IA-5, SC-12] mounts ACM CA Secret read-only on Gateway and RemediationOrchestrator", func() {
 		kn := testKubernaut()
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
@@ -2319,7 +2319,7 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		}
 	})
 
-	It("UT-FLEET-521-SECRET-003 [IA-5] mounts fleet-token on both Gateway and RemediationOrchestrator when scopeCheck.tokenSecretRef is set", func() {
+	It("UT-FLEET-521-MOUNT-SECRET-002 [IA-5] mounts ACM token Secret read-only on Gateway and RemediationOrchestrator", func() {
 		kn := testKubernaut()
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{

@@ -530,7 +530,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		Expect(r.validateFleetTrustSecrets(ctx, kn)).To(Succeed())
 	})
 
-	It("UT-FLEET-521-SECRET-001: validates the ACM token Secret and selected key", func() {
+	It("UT-FLEET-521-PREFLIGHT-SECRET-001: validates ACM token Secret existence and selected key before deployment", func() {
 		kn := newMinimalCR()
 		kn.Spec.Fleet = defaultFMCFleetSpec()
 		kn.Spec.Fleet.ScopeCheck.Backend = fleetBackendACM

@@ -628,7 +628,7 @@ RFC 8693 token exchange preserves the original caller's claims. The target
 `kube-apiserver` therefore authorizes the exchanged token using the caller's
 OIDC groups, not the `kube-mcp-server` ServiceAccount. The operator reconciles
 the following objects on the **hub**, where the Kubernaut CR runs, whenever
-`spec.fleet.enabled=true` and `spec.fleet.mcpGatewayEndpoint` is configured:
+`spec.fleet.enabled=true` and `spec.fleet.mcpGateway.endpoint` is configured:
 
 | Object | Hub name (`<HUB_NS>` is the operator namespace) | Permission |
 |---|---|---|
@@ -831,7 +831,7 @@ If `spec.workflowExecution.workflowNamespace` overrides the default `kubernaut-w
 
 ## Wiring into the Kubernaut CR
 
-Once RHBK, the Gateway/broker, every cluster registration, and RBAC (F7/F8) on every cluster are verified, continue to [04's "Wiring into the Kubernaut CR"](04-fleet-mcp-gateway.md#wiring-into-the-kubernaut-cr) on the hub — that's where `spec.fleet.enabled`/`oauth2` get set.
+Once RHBK, the Gateway/broker, every cluster registration, and RBAC (F7/F8) on every cluster are verified, continue to [04's "Wiring into the Kubernaut CR"](04-fleet-mcp-gateway.md#wiring-into-the-kubernaut-cr) on the hub — that's where `spec.fleet.enabled`, `mcpGateway`, `scopeCheck`, and `oauth2` get set.
 
 ## Troubleshooting
 

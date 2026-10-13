@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Fleet v1alpha2 contract** ([#522](https://github.com/jordigilh/kubernaut-operator/pull/522)) uses nested `spec.fleet.mcpGateway`, provider-scoped `spec.fleet.scopeCheck`, Fleet OAuth2 without an `enabled` field, and `spec.fleet.mcpClient` retry/timeouts. FMC endpoint and trust are derived; ACM endpoint, TLS, and token Secret references are nested under `scopeCheck.acm`.
 - **Monitoring client TLS trust** ([#424](https://github.com/jordigilh/kubernaut-operator/issues/424)) now uses one shared `spec.monitoring.tls` source contract (`interService`, `system`, `secret`, or `configMap`) and deterministic `/etc/monitoring-tls/ca.crt` materialization for EM, KA, and API Frontend consumers. The unpublished v1alpha2-only `monitoring.prometheus.tlsCaFile` and `monitoring.alertManager.tlsCaFile` fields were removed; see [the migration decision](docs/design/ISSUE-424-IMPLEMENTATION.md).
 - Monitoring trust now follows administrator-managed runtime TLS in manual mode, rejects plaintext monitoring endpoints, and validates complete, current CA certificate chains before dependent workloads proceed.
 - Pinned the upstream `github.com/jordigilh/kubernaut` dependency and operand
@@ -218,7 +219,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Now renders `healthAddr: :8081` explicitly and `metricsAddr: :9090`
   (`PortHealthProbe`/`PortMetrics`), matching every other service in this
   operator (#396)
-- **NetworkPolicy**: fleet-aware components (FleetMetadataCache,
+- **Historical v1.6.0-rc5 NetworkPolicy behavior**: fleet-aware components (FleetMetadataCache,
   SignalProcessing, RemediationOrchestrator, EffectivenessMonitor,
   KubernautAgent, APIFrontend, Gateway) could not reach a Route-fronted MCP
   Gateway -- `fleetDestinationsEgressRule`'s `namespaceSelector: {}` peer
@@ -237,7 +238,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.6.0-rc4] - 2026-08-23
 
 ### Added
-- **CR**: `spec.fleet.resilience` tunes the MCP client's startup backoff
+- **Historical v1.6.0-rc4 API**: `spec.fleet.resilience` tuned the MCP client's startup backoff
   and per-operation timeouts (`initialInterval`, `maxInterval`,
   `maxElapsedTime`, `tokenRefreshTimeout`, `connectTimeout`,
   `discoverProbeTimeout`) shared by every fleet-aware component (Gateway,

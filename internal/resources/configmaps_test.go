@@ -998,7 +998,7 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).NotTo(ContainSubstring("tokenPath"), "RO config should omit tokenPath when no token secret set, got:\n%s", data)
 		})
 
-		It("renders tlsCAFile and tokenPath when the corresponding secrets are set", func() {
+		It("UT-FLEET-521-RENDER-SECRET-002: renders ACM trust and token resource paths in the RemediationOrchestrator ConfigMap", func() {
 			kn := testKubernaut()
 			enabled := true
 			knV2 := testKnV2(kn)
@@ -3696,7 +3696,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).To(ContainSubstring("tlsCAFile: "+apifrontendTLSCAFile), "apifrontend fleet block should default the top-level tlsCAFile to AF's own CA mount path when no explicit CA secret is set, got:\n%s", data)
 	})
 
-	It("UT-FLEET-521-SECRET-001 [IA-5, SC-12]: renders tlsCAFile and tokenPath mount paths when the corresponding secrets are set (#464)", func() {
+	It("UT-FLEET-521-RENDER-SECRET-001 [IA-5, SC-12]: renders ACM tlsCAFile and tokenPath resource paths in the APIFrontend ConfigMap", func() {
 		kn := testKubernautWithAF()
 		enabled := true
 		knV2 := testKnV2(kn)

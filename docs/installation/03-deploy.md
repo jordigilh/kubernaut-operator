@@ -210,30 +210,30 @@ spec:
   # across a fleet of clusters. All fields are inert until enabled: true
   # is set — safe to pre-stage ahead of enabling.
   #
-  # mcpGatewayEndpoint/mcpGatewayType/mcpGatewayNamespace are REQUIRED
-  # alongside backend/endpoint when enabled: Gateway, RemediationOrchestrator,
-  # and APIFrontend fail closed at startup without
-  # mcpGatewayEndpoint/mcpGatewayType (upstream Fleet.ValidateFullFederation;
-  # APIFrontend's own checkRRScope path gained the same Backend/Endpoint
-  # scope-check adapter call in kubernaut#2025/#2022, #464), and
-  # mcpGatewayNamespace is required at admission for every fleet-aware
-  # component (kubernaut-operator#455 -- see docs/installation/
-  # 04-fleet-mcp-gateway.md#wiring-into-the-kubernaut-cr for why).
-  # SignalProcessing/EffectivenessMonitor/KubernautAgent only need
-  # mcpGatewayEndpoint+mcpGatewayType+mcpGatewayNamespace — they never call
-  # the Backend/Endpoint scope-check adapter, so backend/endpoint don't apply
-  # to them and are omitted from their rendered config.
+  # mcpGateway.endpoint/type/namespace are required when Fleet is enabled.
+  # Scope checking is provider-discriminated: choose ACM for an existing
+  # Search GraphQL API or fleetmetadatacache for the operator-managed FMC.
+  # FMC derives its HTTPS Service endpoint and always uses inter-service trust.
   # fleet:
   #   enabled: false
-  #   backend: fleetmetadatacache          # or: acm (Red Hat ACM Search GraphQL)
-  #   endpoint: "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443"
-  #   caSecretName: fmc-ca-bundle          # optional; Secret key: ca.crt
-  #   tokenSecretName: acm-search-token    # optional; Secret key: token (typically required for backend: acm)
-  #   mcpGatewayEndpoint: "https://mcp-gateway.example.com/sse"
-  #   mcpGatewayType: eaigw                # or: kuadrant
-  #   mcpGatewayNamespace: managed-clusters   # required; scopes the MCP Gateway CRD watch (and its RBAC) to one namespace instead of cluster-wide, shared by every fleet-aware component (DD-362 -- no per-component override)
+  #   mcpGateway:
+  #     endpoint: "https://mcp-gateway.example.com/sse"
+  #     type: eaigw                       # or: kuadrant
+  #     namespace: managed-clusters       # shared MCP Gateway watch/RBAC namespace
+  #   scopeCheck:
+  #     backend: fleetmetadatacache        # or: acm
+  #     # For ACM instead use the nested provider block:
+  #     # acm:
+  #     #   endpoint: "https://acm-search.example.com/graphql"
+  #     #   tls:
+  #     #     source: secret
+  #     #     caCertSecretRef:
+  #     #       name: acm-search-ca
+  #     #       key: ca.crt
+  #     #   tokenSecretRef:
+  #     #     name: acm-search-token
+  #     #     key: token
   #   oauth2:
-  #     enabled: true
   #     tokenURL: "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token"
   #     credentialsSecretRef: fleet-oauth2-creds   # optional; Secret keys: client-id, client-secret
   #     scopes: ["openid", "groups"]
@@ -252,19 +252,18 @@ spec:
 
   # --- Fleet Metadata Cache (FMC) — optional, ADR-068 ---
   # Deploys the operator-managed FMC service, which polls managed clusters
-  # via the MCP Gateway (fleet.mcpGatewayEndpoint/mcpGatewayType above) and
+  # via the MCP Gateway (fleet.mcpGateway.endpoint/type above) and
   # serves federated scope-check results from Valkey over HTTPS inside
   # the cluster; its separate health and metrics endpoints remain plain HTTP.
   # Most
-  # deployments that enable spec.fleet use backend: acm (an existing RHACM
+  # deployments that enable spec.fleet use scopeCheck.backend: acm (an existing RHACM
   # Search installation) instead of standing up FMC — FMC has no separate
   # enable toggle (kubernaut-operator#450): it deploys automatically when
-  # fleet.enabled is true and fleet.backend is fleetmetadatacache above, so
-  # only set backend: fleetmetadatacache when you want the operator, rather
-  # than a separately-managed FMC, to be the thing Gateway/
-  # RemediationOrchestrator query. When active with no fleet.endpoint set,
-  # the operator auto-derives FMC's in-cluster URL — no need to also fill in
-  # fleet.endpoint by hand.
+  # fleet.enabled is true and fleet.scopeCheck.backend is fleetmetadatacache above, so
+  # only select scopeCheck.backend: fleetmetadatacache when you want the
+  # operator, rather than a separately-managed FMC, to be the thing
+  # Gateway/RemediationOrchestrator query. The operator derives FMC's
+  # in-cluster HTTPS URL; there is no user-configured FMC endpoint.
   #
   # fleetMetadataCache:
   #   fleet:
@@ -635,4 +634,4 @@ oc describe pod -n kubernaut-system -l app=<service>
 
 Previous: [Configure Services](02-configure-services.md)
 
-Next (optional): [Fleet: Kuadrant MCP Gateway](04-fleet-mcp-gateway.md) -- required only if you enable `spec.fleet.mcpGatewayType: kuadrant` above.
+Next (optional): [Fleet: Kuadrant MCP Gateway](04-fleet-mcp-gateway.md) -- required only if you enable `spec.fleet.mcpGateway.type: kuadrant` above.
