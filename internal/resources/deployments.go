@@ -1341,11 +1341,17 @@ func appendFleetSecretMountsVariant(volumes []corev1.Volume, mounts []corev1.Vol
 		return volumes, mounts
 	}
 	if includeBackend {
-		if trust := fleet.ScopeCheck.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
+		var trust *kubernautv1alpha2.FleetTrustSpec
+		var tokenRef *kubernautv1alpha2.SecretKeyRef
+		if fleet.ScopeCheck.ACM != nil {
+			trust = fleet.ScopeCheck.ACM.TLS
+			tokenRef = fleet.ScopeCheck.ACM.TokenSecretRef
+		}
+		if trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
 			volumes = append(volumes, secretKeyVolume("fleet-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
 			mounts = append(mounts, corev1.VolumeMount{Name: "fleet-ca", MountPath: "/etc/fleet-tls/scope-check", ReadOnly: true})
 		}
-		if tokenRef := fleet.ScopeCheck.TokenSecretRef; tokenRef != nil && tokenRef.Name != "" {
+		if tokenRef != nil && tokenRef.Name != "" {
 			volumes = append(volumes, secretKeyVolume("fleet-token", tokenRef.Name, withDefault(tokenRef.Key, "token"), "token"))
 			mounts = append(mounts, corev1.VolumeMount{Name: "fleet-token", MountPath: "/etc/fleet-token", ReadOnly: true})
 		}

@@ -137,7 +137,7 @@ type KubernautSpec struct {
 	// +optional
 	Console ConsoleSpec `json:"console,omitempty"`
 
-	// Fleet configures nested MCP Gateway, scope-check, OAuth2, and resilience
+	// Fleet configures nested MCP Gateway, provider-scoped scope-check, OAuth2, and MCP-client
 	// settings for federated reads and scope-checking (ADR-068).
 	// +optional
 	Fleet FleetSpec `json:"fleet,omitempty"`
@@ -322,9 +322,9 @@ type FleetSpec struct {
 	// +optional
 	OAuth2 FleetOAuth2Spec `json:"oauth2,omitempty"`
 
-	// Resilience overrides shared MCP client retry and timeout behavior.
+	// MCPClient overrides shared MCP client retry and timeout behavior.
 	// +optional
-	Resilience *FleetResilienceSpec `json:"resilience,omitempty"`
+	MCPClient *FleetMCPClientSpec `json:"mcpClient,omitempty"`
 }
 
 // FleetMCPGatewaySpec configures the shared MCP Gateway endpoint and provider.
@@ -351,12 +351,19 @@ type FleetScopeCheckSpec struct {
 	// +optional
 	Backend string `json:"backend,omitempty"`
 
-	// Backend endpoint. FMC derives this when omitted; ACM requires it. FMC
-	// endpoints must use HTTPS.
+	// ACM configures the BYO ACM Search GraphQL scope-check provider. It must
+	// be absent when Backend selects the operator-managed FMC provider.
+	// +optional
+	ACM *FleetACMScopeCheckSpec `json:"acm,omitempty"`
+}
+
+// FleetACMScopeCheckSpec configures the ACM Search GraphQL scope-check provider.
+type FleetACMScopeCheckSpec struct {
+	// ACM Search GraphQL endpoint. Must be an absolute HTTPS URL when Fleet is active.
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
 
-	// Backend CA trust source. Omitted defaults to interService.
+	// ACM endpoint trust source. Omitted defaults to interService.
 	// +optional
 	TLS *FleetTrustSpec `json:"tls,omitempty"`
 
@@ -414,18 +421,18 @@ type FleetTrustSpec struct {
 	CACertSecretRef *CACertSecretRef `json:"caCertSecretRef,omitempty"`
 }
 
-// FleetResilienceSpec tunes the MCP client's startup backoff and
-// per-operation timeouts shared by every fleet-aware component (issue
-// #390). Mirrors upstream pkg/fleet.FleetResilienceConfig field-for-field
-// (kubernaut PR jordigilh/kubernaut#2268). Every field is optional and
-// zero-value-safe: omitting a field (or the whole block) keeps
-// mcpclient.DefaultResilienceConfig()'s existing value for that field
-// unchanged, so adding this is safe for every existing deployment. Values
-// are Go duration strings (e.g. "30s", "5m"), matching this CRD's existing
-// precedent (FleetMetadataCacheSpec.SyncInterval/KeyTTL) -- invalid
-// durations fail at the consuming service's own config parse, not at
-// admission.
-type FleetResilienceSpec struct {
+// FleetMCPClientSpec tunes the shared MCP client's retry and timeout behavior.
+type FleetMCPClientSpec struct {
+	// Retry configures startup connection backoff.
+	// +optional
+	Retry *FleetMCPClientRetrySpec `json:"retry,omitempty"`
+	// Timeouts configures MCP operation timeouts.
+	// +optional
+	Timeouts *FleetMCPClientTimeoutsSpec `json:"timeouts,omitempty"`
+}
+
+// FleetMCPClientRetrySpec configures MCP startup retry backoff.
+type FleetMCPClientRetrySpec struct {
 	// InitialInterval is the starting backoff interval for startup
 	// connection retries.
 	// +optional
@@ -440,19 +447,22 @@ type FleetResilienceSpec struct {
 	// connection retries.
 	// +optional
 	MaxElapsedTime string `json:"maxElapsedTime,omitempty"`
+}
 
-	// TokenRefreshTimeout bounds each OAuth2 token refresh HTTP call.
+// FleetMCPClientTimeoutsSpec configures MCP operation timeouts.
+type FleetMCPClientTimeoutsSpec struct {
+	// TokenRefresh bounds each OAuth2 token refresh HTTP call.
 	// +optional
-	TokenRefreshTimeout string `json:"tokenRefreshTimeout,omitempty"`
+	TokenRefresh string `json:"tokenRefresh,omitempty"`
 
-	// ConnectTimeout bounds each individual MCP connect attempt.
+	// Connect bounds each individual MCP connect attempt.
 	// +optional
-	ConnectTimeout string `json:"connectTimeout,omitempty"`
+	Connect string `json:"connect,omitempty"`
 
-	// DiscoverProbeTimeout bounds the SEP-2575 "server/discover" probe
+	// DiscoverProbe bounds the SEP-2575 "server/discover" probe
 	// independently of ConnectTimeout (kubernaut#2262).
 	// +optional
-	DiscoverProbeTimeout string `json:"discoverProbeTimeout,omitempty"`
+	DiscoverProbe string `json:"discoverProbe,omitempty"`
 }
 
 // FleetMetadataCacheSpec configures the operator-managed Fleet Metadata

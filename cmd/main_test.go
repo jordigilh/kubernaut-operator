@@ -82,11 +82,13 @@ var _ = Describe("bootstrap protocol security", Label("unit"), func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(watcher).NotTo(BeNil())
 		Expect(options.FilterProvider).NotTo(BeNil())
+		//nolint:gosec // intentionally unconfigured; this test verifies the production TLS option sets the floor
 		config := &tls.Config{}
 		for _, apply := range options.TLSOpts {
 			apply(config)
 		}
 		Expect(config.GetCertificate).NotTo(BeNil())
+		Expect(config.MinVersion).To(Equal(uint16(tls.VersionTLS12)))
 		pair, err := config.GetCertificate(&tls.ClientHelloInfo{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(pair.Certificate).NotTo(BeEmpty())
@@ -161,6 +163,7 @@ var _ = Describe("bootstrap protocol security", Label("unit"), func() {
 			options, watcher, err := buildMetricsServerOptions(&operatorFlags{enableHTTP2: enabled})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(watcher).To(BeNil())
+			//nolint:gosec // intentionally unconfigured; options under test set the TLS floor
 			config := &tls.Config{NextProtos: []string{"h2", "http/1.1"}}
 			for _, apply := range options.TLSOpts {
 				apply(config)
@@ -170,6 +173,7 @@ var _ = Describe("bootstrap protocol security", Label("unit"), func() {
 			} else {
 				Expect(config.NextProtos).To(Equal([]string{"http/1.1"}))
 			}
+			Expect(config.MinVersion).To(Equal(uint16(tls.VersionTLS12)))
 		}
 	})
 
@@ -226,6 +230,7 @@ var _ = Describe("bootstrap protocol security", Label("unit"), func() {
 			Expect(options.Metrics.BindAddress).To(Equal("0"))
 			server, ok := options.WebhookServer.(*webhookserver.DefaultServer)
 			Expect(ok).To(BeTrue())
+			//nolint:gosec // intentionally unconfigured; the manager options set the TLS floor
 			config := &tls.Config{NextProtos: []string{"h2"}}
 			for _, apply := range server.Options.TLSOpts {
 				apply(config)

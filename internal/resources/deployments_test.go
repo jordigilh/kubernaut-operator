@@ -1350,7 +1350,7 @@ var _ = Describe("Deployments", func() {
 			enabled := true
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 					TokenURL:             "https://keycloak.example.com/token",
@@ -1371,7 +1371,7 @@ var _ = Describe("Deployments", func() {
 			enabled := true
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 					TokenURL:             "https://keycloak.example.com/token",
@@ -2279,7 +2279,7 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled:    &enabled,
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 		}
 		gwDep, err := GatewayDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
@@ -2293,14 +2293,14 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		}
 	})
 
-	It("[IA-5, SC-12] mounts fleet-ca on both Gateway and RemediationOrchestrator when scopeCheck.tls.caCertSecretRef is set", func() {
+	It("UT-FLEET-521-SECRET-002 [IA-5, SC-12] mounts fleet-ca on both Gateway and RemediationOrchestrator when scopeCheck.tls.caCertSecretRef is set", func() {
 		kn := testKubernaut()
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled,
 			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{
-				Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
-				TLS: &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fmc-ca-bundle"}},
+				Backend: "acm",
+				ACM:     &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "https://acm-search.example.com/graphql", TLS: &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fmc-ca-bundle"}}},
 			},
 		}
 		gwDep, err := GatewayDeployment(kn, knV2)
@@ -2319,14 +2319,14 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		}
 	})
 
-	It("[IA-5] mounts fleet-token on both Gateway and RemediationOrchestrator when scopeCheck.tokenSecretRef is set", func() {
+	It("UT-FLEET-521-SECRET-003 [IA-5] mounts fleet-token on both Gateway and RemediationOrchestrator when scopeCheck.tokenSecretRef is set", func() {
 		kn := testKubernaut()
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled,
 			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{
-				Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
-				TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"},
+				Backend: "acm", ACM: &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "https://acm-search.example.com/graphql",
+					TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"}},
 			},
 		}
 		gwDep, err := GatewayDeployment(kn, knV2)
@@ -2372,7 +2372,7 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled:    &enabled,
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 				TokenURL:             "https://keycloak.example.com/token",
@@ -2396,7 +2396,7 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled:    &enabled,
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 				TokenURL:             "https://keycloak.example.com/token",
@@ -2424,7 +2424,7 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled:    &enabled,
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 				TokenURL:             "https://keycloak.example.com/token",
@@ -2449,7 +2449,7 @@ var _ = Describe("Gateway and RemediationOrchestrator Fleet secret mounts", func
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled:    &enabled,
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 				TokenURL:             "https://keycloak.example.com/token",
@@ -2499,8 +2499,10 @@ var _ = Describe("SignalProcessing/APIFrontend/EffectivenessMonitor Fleet secret
 
 	It("never mounts fleet-ca or fleet-token on SignalProcessing/EffectivenessMonitor even when scope-check Secret references are set", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		knV2.Spec.Fleet.ScopeCheck.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fmc-ca-bundle"}}
-		knV2.Spec.Fleet.ScopeCheck.TokenSecretRef = &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"}
+		knV2.Spec.Fleet.ScopeCheck.Backend = fleetBackendACM
+		knV2.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{}
+		knV2.Spec.Fleet.ScopeCheck.ACM.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fmc-ca-bundle"}}
+		knV2.Spec.Fleet.ScopeCheck.ACM.TokenSecretRef = &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"}
 		spDep, err := SignalProcessingDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		emDep, err := EffectivenessMonitorDeployment(kn, knV2)
@@ -2573,7 +2575,9 @@ var _ = Describe("SignalProcessing/APIFrontend/EffectivenessMonitor Fleet secret
 var _ = Describe("APIFrontend Fleet secret mounts (#464)", func() {
 	It("[IA-5, SC-12] mounts fleet-ca on APIFrontend when scopeCheck.tls uses a Secret", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
-		knV2.Spec.Fleet.ScopeCheck.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fmc-ca-bundle"}}
+		knV2.Spec.Fleet.ScopeCheck.Backend = fleetBackendACM
+		knV2.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{}
+		knV2.Spec.Fleet.ScopeCheck.ACM.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fmc-ca-bundle"}}
 		kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
 			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://idp.example.com/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
@@ -2592,8 +2596,9 @@ var _ = Describe("APIFrontend Fleet secret mounts (#464)", func() {
 	It("[IA-5] mounts fleet-token on APIFrontend when scopeCheck.tokenSecretRef is set", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
 		knV2.Spec.Fleet.ScopeCheck.Backend = fleetBackendACM
-		knV2.Spec.Fleet.ScopeCheck.Endpoint = "https://acm-search.example.com/graphql"
-		knV2.Spec.Fleet.ScopeCheck.TokenSecretRef = &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"}
+		knV2.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{}
+		knV2.Spec.Fleet.ScopeCheck.ACM.Endpoint = "https://acm-search.example.com/graphql"
+		knV2.Spec.Fleet.ScopeCheck.ACM.TokenSecretRef = &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"}
 		kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
 			Auth: kubernautv1alpha2.APIFrontendAuthSpec{IssuerURL: "https://idp.example.com/realms/kubernaut", Audience: "kubernaut-apifrontend"},
 		}
