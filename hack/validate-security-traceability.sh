@@ -11,6 +11,7 @@ ci_matrix="${repo_root}/docs/design/ISSUE-501-OPERATOR-UPSTREAM-CI-BOUNDARY.md"
 otlp_matrix="${repo_root}/docs/security/ISSUE-478-CONTROL-TRACEABILITY.md"
 monitoring_matrix="${repo_root}/docs/security/ISSUE-513-CONTROL-TRACEABILITY.md"
 ownership_matrix="${repo_root}/docs/security/ISSUE-514-CONTROL-TRACEABILITY.md"
+fleet_matrix="${repo_root}/docs/security/ISSUE-431-CONTROL-TRACEABILITY.md"
 
 fail() {
 	echo "security traceability validation failed: $*" >&2
@@ -228,6 +229,31 @@ done
 # real-Reconcile wiring, and installed-operator journey artifacts. This static
 # check does not claim that a live lane has executed.
 [[ -f "${ownership_matrix}" ]] || fail "missing ${ownership_matrix}"
+[[ -f "${fleet_matrix}" ]] || fail "missing ${fleet_matrix}"
+
+grep -Fq 'not a formal FedRAMP, SOC 2, or OWASP ASVS certification claim' "${fleet_matrix}" \
+	|| fail "Fleet matrix must preserve the engineering-evidence disclaimer"
+for artifact in \
+	'internal/resources/configmaps_test.go' \
+	'internal/resources/deployments_test.go' \
+	'internal/controller/business_api_boundaries_unit_test.go'; do
+	grep -Fq "${artifact}" "${fleet_matrix}" \
+		|| fail "Fleet evidence is missing artifact ${artifact}"
+done
+grep -Fq 'docs/tests/431/TEST_PLAN.md' "${fleet_matrix}" \
+	|| fail "Fleet matrix is missing its test plan reference"
+for test_id in \
+	'UT-FLEET-521-ACM-001' \
+	'UT-FLEET-521-RENDER-SECRET-001' \
+	'UT-FLEET-521-RENDER-SECRET-002' \
+	'UT-FLEET-521-PREFLIGHT-SECRET-001' \
+	'UT-FLEET-521-MOUNT-SECRET-001' \
+	'UT-FLEET-521-MOUNT-SECRET-002'; do
+	grep -R -n --include='*_test.go' -F "${test_id}" "${repo_root}/internal" >/dev/null \
+		|| fail "Fleet evidence ID ${test_id} has no executable test"
+	grep -Fq "${test_id}" "${fleet_matrix}" || fail "Fleet matrix omits evidence ID ${test_id}"
+	grep -Fq "${test_id}" "${repo_root}/docs/tests/431/TEST_PLAN.md" || fail "Fleet test plan omits evidence ID ${test_id}"
+done
 for scope in 'NIST SP 800-53 Rev. 5' 'SOC 2' 'OWASP ASVS 5.0.0'; do
 	grep -Fq "${scope}" "${ownership_matrix}" || fail "ownership matrix is missing ${scope}"
 done

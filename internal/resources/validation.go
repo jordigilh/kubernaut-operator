@@ -26,6 +26,7 @@ import (
 	"time"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
@@ -41,10 +42,108 @@ func ValidateKubernaut(kn *kubernautv1alpha2.Kubernaut) []error {
 	errs = append(errs, validatePolicyPrerequisites(kn)...)
 	errs = append(errs, validateLLMProfiles(kn)...)
 	errs = append(errs, validateTelemetry(kn)...)
+	errs = append(errs, validateMonitoringEndpoints(kn)...)
+	errs = append(errs, validateMonitoringTLS(kn)...)
 	errs = append(errs, validateAPIFrontend(kn)...)
 	errs = append(errs, validateAlignmentCheck(kn)...)
 	errs = append(errs, validateDryRun(kn)...)
 	errs = append(errs, validateInteractive(kn)...)
+	return errs
+}
+
+// validateMonitoringEndpoints rejects plaintext monitoring connections before
+// any endpoint is rendered into a client configuration. A CA trust source
+// cannot protect an HTTP connection, so every configured monitoring endpoint
+// must use HTTPS; an omitted URL remains valid for capability-based defaults.
+func validateMonitoringEndpoints(kn *kubernautv1alpha2.Kubernaut) []error {
+	endpoints := []struct {
+		path string
+		url  string
+	}{
+		{path: "spec.monitoring.prometheus.url", url: kn.Spec.Monitoring.Prometheus.URL},
+		{path: "spec.monitoring.alertManager.url", url: kn.Spec.Monitoring.AlertManager.URL},
+	}
+	var errs []error
+	for _, endpoint := range endpoints {
+		value := strings.TrimSpace(endpoint.url)
+		if value == "" {
+			continue
+		}
+		if value != endpoint.url {
+			errs = append(errs, fmt.Errorf("%s must not contain leading or trailing whitespace", endpoint.path))
+			continue
+		}
+		parsed, err := url.Parse(value)
+		if err != nil || parsed.Scheme != httpsURLScheme || parsed.Host == "" || parsed.User != nil {
+			errs = append(errs, fmt.Errorf("%s must be an https URL without user information", endpoint.path))
+		}
+	}
+	return errs
+}
+
+// validateMonitoringTLS validates the source-specific shape of the shared
+// monitoring trust contract. Existence and PEM contents are checked later by
+// the controller because those checks require a Kubernetes client.
+func validateMonitoringTLS(kn *kubernautv1alpha2.Kubernaut) []error {
+	tls := kn.Spec.Monitoring.TLS
+	if tls == nil {
+		return nil
+	}
+
+	const base = "spec.monitoring.tls"
+	var errs []error
+	switch tls.Source {
+	case "", kubernautv1alpha2.MonitoringTLSSourceInterService, kubernautv1alpha2.MonitoringTLSSourceSystem:
+		if tls.CACertSecretRef != nil {
+			errs = append(errs, fmt.Errorf("%s.caCertSecretRef must be omitted when source is %q", base, defaultMonitoringTLSSource(tls.Source)))
+		}
+		if tls.CACertConfigMapRef != nil {
+			errs = append(errs, fmt.Errorf("%s.caCertConfigMapRef must be omitted when source is %q", base, defaultMonitoringTLSSource(tls.Source)))
+		}
+	case kubernautv1alpha2.MonitoringTLSSourceSecret:
+		if tls.CACertConfigMapRef != nil {
+			errs = append(errs, fmt.Errorf("%s.caCertConfigMapRef must be omitted when source is %q", base, tls.Source))
+		}
+		if tls.CACertSecretRef == nil {
+			errs = append(errs, fmt.Errorf("%s.caCertSecretRef is required when source is %q", base, tls.Source))
+		} else {
+			errs = append(errs, validateMonitoringCARef(base+".caCertSecretRef", tls.CACertSecretRef.Name, tls.CACertSecretRef.Key)...)
+		}
+	case kubernautv1alpha2.MonitoringTLSSourceConfigMap:
+		if tls.CACertSecretRef != nil {
+			errs = append(errs, fmt.Errorf("%s.caCertSecretRef must be omitted when source is %q", base, tls.Source))
+		}
+		if tls.CACertConfigMapRef == nil {
+			errs = append(errs, fmt.Errorf("%s.caCertConfigMapRef is required when source is %q", base, tls.Source))
+		} else {
+			errs = append(errs, validateMonitoringCARef(base+".caCertConfigMapRef", tls.CACertConfigMapRef.Name, tls.CACertConfigMapRef.Key)...)
+		}
+	default:
+		errs = append(errs, fmt.Errorf("%s.source %q is invalid", base, tls.Source))
+	}
+	return errs
+}
+
+func defaultMonitoringTLSSource(source kubernautv1alpha2.MonitoringTLSSource) kubernautv1alpha2.MonitoringTLSSource {
+	if source == "" {
+		return kubernautv1alpha2.MonitoringTLSSourceInterService
+	}
+	return source
+}
+
+func validateMonitoringCARef(base, name, key string) []error {
+	var errs []error
+	if name == "" {
+		errs = append(errs, fmt.Errorf("%s.name must not be empty", base))
+	} else if len(k8svalidation.IsDNS1123Subdomain(name)) > 0 {
+		errs = append(errs, fmt.Errorf("%s.name must be a valid Kubernetes object name", base))
+	}
+	if key == "" {
+		key = tlsCACertificateKey
+	}
+	if len(k8svalidation.IsConfigMapKey(key)) > 0 {
+		errs = append(errs, fmt.Errorf("%s.key must be a valid ConfigMap or Secret key", base))
+	}
 	return errs
 }
 
@@ -712,37 +811,16 @@ func validateFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) []error {
 		errs = append(errs, fmt.Errorf("%s.scopeCheck.backend: invalid backend %q — must be one of: fleetmetadatacache, acm", base, fleet.ScopeCheck.Backend))
 	}
 
-	// Endpoint is auto-derived (resolveFleetEndpoint) when backend is
-	// fleetmetadatacache -- FMC is operator-managed only (no BYO path), so
-	// the user doesn't need to also wire up its in-cluster URL by hand.
-	// backend=acm still requires an explicit endpoint.
-	if fleet.ScopeCheck.Endpoint == "" && !knV2.Spec.FleetMetadataCacheEnabled() {
-		errs = append(errs, fmt.Errorf("%s.scopeCheck.endpoint: must be set when fleet.enabled is true (unless backend=fleetmetadatacache, which auto-derives the operator-managed FMC's in-cluster URL)", base))
-	}
-	errs = append(errs, validateFleetMetadataCacheEndpoint(fleet, base)...)
+	errs = append(errs, validateFleetScopeCheck(&fleet.ScopeCheck, base)...)
 
 	// FedRAMP IA-5 (authenticator management): upstream pkg/fleet has no
 	// unauthenticated mode for the ACM Search GraphQL API. Without a token,
 	// Gateway/RemediationOrchestrator crash-loop at startup instead of
 	// failing fast here at admission.
-	if fleet.ScopeCheck.Backend == fleetBackendACM && (fleet.ScopeCheck.TokenSecretRef == nil || fleet.ScopeCheck.TokenSecretRef.Name == "") {
-		errs = append(errs, fmt.Errorf("%s.scopeCheck.tokenSecretRef: must be set when fleet.scopeCheck.backend is \"acm\" — the ACM Search GraphQL API requires bearer token authentication", base))
-	}
-
 	// #222: Gateway and RemediationOrchestrator both unconditionally call
 	// upstream Fleet.ValidateFullFederation() at startup, which requires
 	// mcpGateway.endpoint and mcpGateway.type whenever fleet is enabled. Omitting
 	// either crash-loops both components instead of failing fast here.
-	if fleet.MCPGateway.Endpoint == "" {
-		errs = append(errs, fmt.Errorf("%s.mcpGateway.endpoint: must be set when fleet.enabled is true — Gateway and RemediationOrchestrator require it for remote-cluster reads (upstream Fleet.ValidateFullFederation)", base))
-	}
-
-	if fleet.MCPGateway.Type == "" {
-		errs = append(errs, fmt.Errorf("%s.mcpGateway.type: must be set when fleet.enabled is true — must be one of: eaigw, kuadrant", base))
-	} else if !validMCPGatewayTypes[fleet.MCPGateway.Type] {
-		errs = append(errs, fmt.Errorf("%s.mcpGateway.type: invalid value %q — must be one of: eaigw, kuadrant", base, fleet.MCPGateway.Type))
-	}
-
 	// kubernaut-operator#455: leaving this empty let FleetMetadataCache's
 	// cluster registry silently default to watching its own install
 	// namespace instead of the MCP Gateway's namespace, instead of the
@@ -751,26 +829,80 @@ func validateFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	// (CM-6): a cluster can have multiple MCP Gateways installed, so an
 	// explicit namespace scopes every fleet-aware component's CRD watch to
 	// exactly one of them instead of watching cluster-wide.
-	if fleet.MCPGateway.Namespace == "" {
-		errs = append(errs, fmt.Errorf("%s.mcpGateway.namespace: must be set when fleet.enabled is true — scopes every fleet-aware component's MCP Gateway CRD watch to a single namespace (kubernaut-operator#455)", base))
-	}
+	errs = append(errs, validateFleetMCPGateway(&fleet.MCPGateway, base)...)
 
 	errs = append(errs, validateFleetOAuth2(knV2, fleet)...)
-	errs = append(errs, validateFleetTrust("spec.fleet.scopeCheck.tls", fleet.ScopeCheck.TLS)...)
 	errs = append(errs, validateFleetTrust("spec.fleet.oauth2.tls", fleet.OAuth2.TLS)...)
+	errs = append(errs, validateFleetMCPClient(fleet.MCPClient)...)
 
 	return errs
 }
 
-func validateFleetMetadataCacheEndpoint(fleet *kubernautv1alpha2.FleetSpec, base string) []error {
-	if fleet.ScopeCheck.Backend != ComponentFleetMetadataCache || fleet.ScopeCheck.Endpoint == "" {
+func validateFleetScopeCheck(scope *kubernautv1alpha2.FleetScopeCheckSpec, base string) []error {
+	var errs []error
+	if scope.Backend == fleetBackendACM {
+		if scope.ACM == nil {
+			return []error{fmt.Errorf("%s.scopeCheck.acm: must be set when backend is %q", base, fleetBackendACM)}
+		}
+		if scope.ACM.Endpoint == "" {
+			errs = append(errs, fmt.Errorf("%s.scopeCheck.acm.endpoint: must be set when backend is %q", base, fleetBackendACM))
+		} else if err := validateFleetHTTPSURL("spec.fleet.scopeCheck.acm.endpoint", scope.ACM.Endpoint); err != nil {
+			errs = append(errs, err)
+		}
+		if scope.ACM.TokenSecretRef == nil || scope.ACM.TokenSecretRef.Name == "" {
+			errs = append(errs, fmt.Errorf("%s.scopeCheck.acm.tokenSecretRef: must be set when backend is %q", base, fleetBackendACM))
+		}
+		return append(errs, validateFleetTrust("spec.fleet.scopeCheck.acm.tls", scope.ACM.TLS)...)
+	}
+	if scope.ACM != nil {
+		errs = append(errs, fmt.Errorf("%s.scopeCheck.acm: must be omitted when backend is %q", base, ComponentFleetMetadataCache))
+	}
+	return errs
+}
+
+func validateFleetMCPGateway(gateway *kubernautv1alpha2.FleetMCPGatewaySpec, base string) []error {
+	var errs []error
+	if gateway.Endpoint == "" {
+		errs = append(errs, fmt.Errorf("%s.mcpGateway.endpoint: must be set when fleet.enabled is true — Gateway and RemediationOrchestrator require it for remote-cluster reads (upstream Fleet.ValidateFullFederation)", base))
+	} else if err := validateFleetHTTPSURL("spec.fleet.mcpGateway.endpoint", gateway.Endpoint); err != nil {
+		errs = append(errs, err)
+	}
+	if gateway.Type == "" {
+		errs = append(errs, fmt.Errorf("%s.mcpGateway.type: must be set when fleet.enabled is true — must be one of: eaigw, kuadrant", base))
+	} else if !validMCPGatewayTypes[gateway.Type] {
+		errs = append(errs, fmt.Errorf("%s.mcpGateway.type: invalid value %q — must be one of: eaigw, kuadrant", base, gateway.Type))
+	}
+	if gateway.Namespace == "" {
+		errs = append(errs, fmt.Errorf("%s.mcpGateway.namespace: must be set when fleet.enabled is true — scopes every fleet-aware component's MCP Gateway CRD watch to a single namespace (kubernaut-operator#455)", base))
+	}
+	return errs
+}
+
+func validateFleetMCPClient(client *kubernautv1alpha2.FleetMCPClientSpec) []error {
+	if client == nil {
 		return nil
 	}
-	endpoint, err := url.Parse(fleet.ScopeCheck.Endpoint)
-	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" {
-		return []error{fmt.Errorf("%s.scopeCheck.endpoint: must be an absolute https URL when backend is %q", base, ComponentFleetMetadataCache)}
+	var errs []error
+	validate := func(path, value string) {
+		if value == "" {
+			return
+		}
+		d, err := time.ParseDuration(value)
+		if err != nil || d <= 0 {
+			errs = append(errs, fmt.Errorf("%s: must be a positive Go duration", path))
+		}
 	}
-	return nil
+	if client.Retry != nil {
+		validate("spec.fleet.mcpClient.retry.initialInterval", client.Retry.InitialInterval)
+		validate("spec.fleet.mcpClient.retry.maxInterval", client.Retry.MaxInterval)
+		validate("spec.fleet.mcpClient.retry.maxElapsedTime", client.Retry.MaxElapsedTime)
+	}
+	if client.Timeouts != nil {
+		validate("spec.fleet.mcpClient.timeouts.tokenRefresh", client.Timeouts.TokenRefresh)
+		validate("spec.fleet.mcpClient.timeouts.connect", client.Timeouts.Connect)
+		validate("spec.fleet.mcpClient.timeouts.discoverProbe", client.Timeouts.DiscoverProbe)
+	}
+	return errs
 }
 
 // validateFleetOAuth2 validates the OAuth2 configuration required by active
@@ -782,6 +914,8 @@ func validateFleetOAuth2(knV2 *kubernautv1alpha2.Kubernaut, fleet *kubernautv1al
 	var errs []error
 	if fleet.OAuth2.TokenURL == "" {
 		errs = append(errs, fmt.Errorf("%s.oauth2.tokenURL: must be set when fleet.enabled is true", base))
+	} else if err := validateFleetHTTPSURL("spec.fleet.oauth2.tokenURL", fleet.OAuth2.TokenURL); err != nil {
+		errs = append(errs, err)
 	}
 
 	// A federated IdP (e.g. Keycloak) issues distinct per-service OAuth2
@@ -842,6 +976,17 @@ func validateFleetOAuth2(knV2 *kubernautv1alpha2.Kubernaut, fleet *kubernautv1al
 	}
 
 	return errs
+}
+
+func validateFleetHTTPSURL(path, value string) error {
+	if strings.TrimSpace(value) != value {
+		return fmt.Errorf("%s must not contain leading or trailing whitespace", path)
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != httpsURLScheme || parsed.Host == "" || parsed.User != nil {
+		return fmt.Errorf("%s must be an absolute https URL without user information", path)
+	}
+	return nil
 }
 
 func validateFleetTrust(path string, trust *kubernautv1alpha2.FleetTrustSpec) []error {

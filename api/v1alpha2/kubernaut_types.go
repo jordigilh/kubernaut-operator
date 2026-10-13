@@ -137,7 +137,7 @@ type KubernautSpec struct {
 	// +optional
 	Console ConsoleSpec `json:"console,omitempty"`
 
-	// Fleet configures nested MCP Gateway, scope-check, OAuth2, and resilience
+	// Fleet configures nested MCP Gateway, provider-scoped scope-check, OAuth2, and MCP-client
 	// settings for federated reads and scope-checking (ADR-068).
 	// +optional
 	Fleet FleetSpec `json:"fleet,omitempty"`
@@ -322,9 +322,9 @@ type FleetSpec struct {
 	// +optional
 	OAuth2 FleetOAuth2Spec `json:"oauth2,omitempty"`
 
-	// Resilience overrides shared MCP client retry and timeout behavior.
+	// MCPClient overrides shared MCP client retry and timeout behavior.
 	// +optional
-	Resilience *FleetResilienceSpec `json:"resilience,omitempty"`
+	MCPClient *FleetMCPClientSpec `json:"mcpClient,omitempty"`
 }
 
 // FleetMCPGatewaySpec configures the shared MCP Gateway endpoint and provider.
@@ -351,12 +351,19 @@ type FleetScopeCheckSpec struct {
 	// +optional
 	Backend string `json:"backend,omitempty"`
 
-	// Backend endpoint. FMC derives this when omitted; ACM requires it. FMC
-	// endpoints must use HTTPS.
+	// ACM configures the BYO ACM Search GraphQL scope-check provider. It must
+	// be absent when Backend selects the operator-managed FMC provider.
+	// +optional
+	ACM *FleetACMScopeCheckSpec `json:"acm,omitempty"`
+}
+
+// FleetACMScopeCheckSpec configures the ACM Search GraphQL scope-check provider.
+type FleetACMScopeCheckSpec struct {
+	// ACM Search GraphQL endpoint. Must be an absolute HTTPS URL when Fleet is active.
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
 
-	// Backend CA trust source. Omitted defaults to interService.
+	// ACM endpoint trust source. Omitted defaults to interService.
 	// +optional
 	TLS *FleetTrustSpec `json:"tls,omitempty"`
 
@@ -414,18 +421,18 @@ type FleetTrustSpec struct {
 	CACertSecretRef *CACertSecretRef `json:"caCertSecretRef,omitempty"`
 }
 
-// FleetResilienceSpec tunes the MCP client's startup backoff and
-// per-operation timeouts shared by every fleet-aware component (issue
-// #390). Mirrors upstream pkg/fleet.FleetResilienceConfig field-for-field
-// (kubernaut PR jordigilh/kubernaut#2268). Every field is optional and
-// zero-value-safe: omitting a field (or the whole block) keeps
-// mcpclient.DefaultResilienceConfig()'s existing value for that field
-// unchanged, so adding this is safe for every existing deployment. Values
-// are Go duration strings (e.g. "30s", "5m"), matching this CRD's existing
-// precedent (FleetMetadataCacheSpec.SyncInterval/KeyTTL) -- invalid
-// durations fail at the consuming service's own config parse, not at
-// admission.
-type FleetResilienceSpec struct {
+// FleetMCPClientSpec tunes the shared MCP client's retry and timeout behavior.
+type FleetMCPClientSpec struct {
+	// Retry configures startup connection backoff.
+	// +optional
+	Retry *FleetMCPClientRetrySpec `json:"retry,omitempty"`
+	// Timeouts configures MCP operation timeouts.
+	// +optional
+	Timeouts *FleetMCPClientTimeoutsSpec `json:"timeouts,omitempty"`
+}
+
+// FleetMCPClientRetrySpec configures MCP startup retry backoff.
+type FleetMCPClientRetrySpec struct {
 	// InitialInterval is the starting backoff interval for startup
 	// connection retries.
 	// +optional
@@ -440,19 +447,22 @@ type FleetResilienceSpec struct {
 	// connection retries.
 	// +optional
 	MaxElapsedTime string `json:"maxElapsedTime,omitempty"`
+}
 
-	// TokenRefreshTimeout bounds each OAuth2 token refresh HTTP call.
+// FleetMCPClientTimeoutsSpec configures MCP operation timeouts.
+type FleetMCPClientTimeoutsSpec struct {
+	// TokenRefresh bounds each OAuth2 token refresh HTTP call.
 	// +optional
-	TokenRefreshTimeout string `json:"tokenRefreshTimeout,omitempty"`
+	TokenRefresh string `json:"tokenRefresh,omitempty"`
 
-	// ConnectTimeout bounds each individual MCP connect attempt.
+	// Connect bounds each individual MCP connect attempt.
 	// +optional
-	ConnectTimeout string `json:"connectTimeout,omitempty"`
+	Connect string `json:"connect,omitempty"`
 
-	// DiscoverProbeTimeout bounds the SEP-2575 "server/discover" probe
+	// DiscoverProbe bounds the SEP-2575 "server/discover" probe
 	// independently of ConnectTimeout (kubernaut#2262).
 	// +optional
-	DiscoverProbeTimeout string `json:"discoverProbeTimeout,omitempty"`
+	DiscoverProbe string `json:"discoverProbe,omitempty"`
 }
 
 // FleetMetadataCacheSpec configures the operator-managed Fleet Metadata
@@ -555,6 +565,16 @@ type CACertSecretRef struct {
 	// Name of the Secret.
 	Name string `json:"name"`
 	// Key within the Secret containing the CA PEM.
+	// +kubebuilder:default="ca.crt"
+	// +optional
+	Key string `json:"key,omitempty"`
+}
+
+// CACertConfigMapRef references a ConfigMap containing a PEM-encoded CA bundle.
+type CACertConfigMapRef struct {
+	// Name of the ConfigMap.
+	Name string `json:"name"`
+	// Key within the ConfigMap containing the CA PEM. Default: "ca.crt".
 	// +kubebuilder:default="ca.crt"
 	// +optional
 	Key string `json:"key,omitempty"`
@@ -2491,11 +2511,45 @@ type LoggingSpec struct {
 // endpoints; the platform/provider policy layer remains responsible for any
 // additional egress authorization required by the selected destination.
 type MonitoringSpec struct {
+	// TLS selects the trust source used by operator-managed clients that call
+	// Prometheus and AlertManager. This is client trust only; it does not
+	// configure serving certificates for any Kubernaut component.
+	// +optional
+	TLS *MonitoringTLSSpec `json:"tls,omitempty"`
+
 	// +optional
 	Prometheus PrometheusSpec `json:"prometheus,omitempty"`
 
 	// +optional
 	AlertManager AlertManagerSpec `json:"alertManager,omitempty"`
+}
+
+// MonitoringTLSSource identifies the trust material used by monitoring clients.
+type MonitoringTLSSource string
+
+const (
+	MonitoringTLSSourceInterService MonitoringTLSSource = "interService"
+	MonitoringTLSSourceSystem       MonitoringTLSSource = "system"
+	MonitoringTLSSourceSecret       MonitoringTLSSource = "secret"
+	MonitoringTLSSourceConfigMap    MonitoringTLSSource = "configMap"
+)
+
+// MonitoringTLSSpec selects one shared CA source for every monitoring client.
+// An omitted source defaults to interService. Secret and ConfigMap references
+// are namespaced to the Kubernaut namespace and default to the ca.crt key.
+type MonitoringTLSSpec struct {
+	// Source of the monitoring CA bundle.
+	// +kubebuilder:validation:Enum=interService;system;secret;configMap
+	// +optional
+	Source MonitoringTLSSource `json:"source,omitempty"`
+
+	// Secret containing the PEM-encoded CA bundle when source=secret.
+	// +optional
+	CACertSecretRef *CACertSecretRef `json:"caCertSecretRef,omitempty"`
+
+	// ConfigMap containing the PEM-encoded CA bundle when source=configMap.
+	// +optional
+	CACertConfigMapRef *CACertConfigMapRef `json:"caCertConfigMapRef,omitempty"`
 }
 
 // PrometheusSpec configures a Prometheus-compatible endpoint.
@@ -2507,15 +2561,11 @@ type PrometheusSpec struct {
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// Prometheus-compatible URL. On OpenShift, an empty URL may use the
+	// Prometheus-compatible HTTPS URL. On OpenShift, an empty URL may use the
 	// capability-gated platform endpoint; generic Kubernetes requires this
 	// field when Prometheus-backed features are enabled.
 	// +optional
 	URL string `json:"url,omitempty"`
-
-	// Path to a CA certificate file for TLS to the Prometheus endpoint.
-	// +optional
-	TLSCaFile string `json:"tlsCaFile,omitempty"`
 }
 
 // PrometheusEnabled returns true when Prometheus-backed features should be
@@ -2539,14 +2589,10 @@ type AlertManagerSpec struct {
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// AlertManager URL. On generic Kubernetes this field is required when
+	// AlertManager HTTPS URL. On generic Kubernetes this field is required when
 	// AlertManager-backed features are enabled.
 	// +optional
 	URL string `json:"url,omitempty"`
-
-	// Path to a CA certificate file for TLS to the AlertManager endpoint.
-	// +optional
-	TLSCaFile string `json:"tlsCaFile,omitempty"`
 }
 
 // AlertManagerEnabled returns true when AlertManager-backed features should

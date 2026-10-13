@@ -79,7 +79,7 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		Expect(spec.EffectiveIssuerSource()).To(Equal(OIDCIssuerSourceMultiProvider))
 	})
 
-	It("publishes the nested Fleet API without legacy flat fields or Fleet oauth2.enabled", func() {
+	It("UT-FLEET-521-API-001: publishes the provider-scoped Fleet API without removed fields", func() {
 		crd := loadKubernautCRD()
 		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
 		specSchema, hasSpec := schema.Properties["spec"]
@@ -87,10 +87,10 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		fleetSchema, hasFleet := specSchema.Properties["fleet"]
 		Expect(hasFleet).To(BeTrue())
 
-		for _, field := range []string{"enabled", "mcpGateway", "scopeCheck", "oauth2", "resilience"} {
+		for _, field := range []string{"enabled", "mcpGateway", "scopeCheck", "oauth2", "mcpClient"} {
 			Expect(fleetSchema.Properties).To(HaveKey(field))
 		}
-		for _, field := range []string{"backend", "endpoint", "caSecretName", "tokenSecretName", "mcpGatewayEndpoint", "mcpGatewayType", "mcpGatewayNamespace"} {
+		for _, field := range []string{"backend", "endpoint", "caSecretName", "tokenSecretName", "mcpGatewayEndpoint", "mcpGatewayType", "mcpGatewayNamespace", "resilience"} {
 			Expect(fleetSchema.Properties).NotTo(HaveKey(field))
 		}
 
@@ -100,8 +100,16 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		}
 
 		scopeCheck := fleetSchema.Properties["scopeCheck"]
-		for _, field := range []string{"backend", "endpoint", "tls", "tokenSecretRef"} {
+		for _, field := range []string{"backend", "acm"} {
 			Expect(scopeCheck.Properties).To(HaveKey(field))
+		}
+		for _, field := range []string{"endpoint", "tls", "tokenSecretRef"} {
+			Expect(scopeCheck.Properties).NotTo(HaveKey(field))
+		}
+
+		acm := scopeCheck.Properties["acm"]
+		for _, field := range []string{"endpoint", "tls", "tokenSecretRef"} {
+			Expect(acm.Properties).To(HaveKey(field))
 		}
 
 		oauth2 := fleetSchema.Properties["oauth2"]
@@ -110,9 +118,17 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		}
 		Expect(oauth2.Properties).NotTo(HaveKey("enabled"))
 
-		trust := scopeCheck.Properties["tls"]
-		for _, field := range []string{"source", "caFile", "caCertSecretRef"} {
-			Expect(trust.Properties).To(HaveKey(field))
+		Expect(scopeCheck.Properties).NotTo(HaveKey("tls"))
+
+		mcpClient := fleetSchema.Properties["mcpClient"]
+		Expect(mcpClient.Properties).To(HaveKey("retry"))
+		Expect(mcpClient.Properties).To(HaveKey("timeouts"))
+		Expect(mcpClient.Properties).NotTo(HaveKey("resilience"))
+		for _, field := range []string{"initialInterval", "maxInterval", "maxElapsedTime"} {
+			Expect(mcpClient.Properties["retry"].Properties).To(HaveKey(field))
+		}
+		for _, field := range []string{"tokenRefresh", "connect", "discoverProbe"} {
+			Expect(mcpClient.Properties["timeouts"].Properties).To(HaveKey(field))
 		}
 	})
 

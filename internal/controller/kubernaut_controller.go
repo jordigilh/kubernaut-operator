@@ -96,6 +96,8 @@ const (
 	ReasonTLSNotReady               = "TLSNotReady"
 	ReasonTLSWaitingForServiceCA    = "WaitingForServiceCA"
 	ReasonFleetTrustSecretInvalid   = "FleetTrustSecretInvalid"
+	ReasonFleetTokenSecretInvalid   = "FleetTokenSecretInvalid"
+	ReasonMonitoringTLSNotReady     = "MonitoringTLSNotReady"
 	ReasonTelemetrySecretInvalid    = "TelemetrySecretInvalid"
 	ReasonTelemetryAmbientInvalid   = "TelemetryAmbientTrustInvalid"
 	ReasonExposureReady             = "ExposureReady"
@@ -118,6 +120,11 @@ const (
 	ReasonAlertManagerAuthSecretMissing   = "TokenSecretNotFound"
 	ReasonAlertManagerAuthKeyMissing      = "TokenKeyMissing"
 	ReasonAlertManagerAuthGatewayDisabled = "GatewayDisabled"
+)
+
+const (
+	monitoringTLSDefaultCAKey = "ca.crt"
+	fleetBackendACM           = "acm"
 )
 
 // KubernautReconciler reconciles a Kubernaut object.
@@ -332,12 +339,7 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 	validationErrs := resources.ValidateKubernaut(kn)
 	validationErrs = append(validationErrs, resources.ValidateFleet(knV2)...)
 	if len(validationErrs) > 0 {
-		msgs := make([]string, len(validationErrs))
-		for i, e := range validationErrs {
-			msgs[i] = e.Error()
-		}
-		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
-			"SpecValidationFailed", fmt.Sprintf("CR validation failed: %s", strings.Join(msgs, "; ")))
+		return r.handleSpecValidationFailure(ctx, kn, validationErrs)
 	}
 
 	if result, err, handled := r.validateTelemetryMaterial(ctx, kn, knV2); handled {
@@ -349,6 +351,18 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 			"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
 		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
 			ReasonFleetTrustSecretInvalid, fmt.Sprintf("Fleet trust material validation failed: %v", err))
+	}
+	if err := r.validateFleetTokenSecret(ctx, knV2); err != nil {
+		log.Error(err, "Fleet token Secret validation failed",
+			"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
+			ReasonFleetTokenSecretInvalid, fmt.Sprintf("Fleet token Secret validation failed: %v", err))
+	}
+	if err := r.validateMonitoringTLS(ctx, knV2); err != nil {
+		log.Error(err, "Monitoring TLS trust source validation failed",
+			"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
+			ReasonMonitoringTLSNotReady, fmt.Sprintf("monitoring TLS trust validation failed: %v", err))
 	}
 
 	tlsMaterial, err := r.validateTLSConfiguration(ctx, kn)
@@ -389,6 +403,18 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 		})
 		r.setPhase(kn, kubernautv1alpha2.PhaseValidating)
 	})
+}
+
+func (r *KubernautReconciler) handleSpecValidationFailure(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, validationErrs []error) (ctrl.Result, error) {
+	msgs := make([]string, len(validationErrs))
+	for i, validationErr := range validationErrs {
+		msgs[i] = validationErr.Error()
+	}
+	validationErr := fmt.Errorf("CR validation failed: %s", strings.Join(msgs, "; "))
+	logf.FromContext(ctx).Error(validationErr, "Kubernaut specification validation failed",
+		"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+	return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
+		"SpecValidationFailed", validationErr.Error())
 }
 
 func (r *KubernautReconciler) validateTelemetryTrust(
@@ -1963,6 +1989,7 @@ func (r *KubernautReconciler) ensureDeployments(
 		}
 		stampConfigMapHash(dep, cmHashes)
 		stampTelemetryMaterialRevision(dep, telemetryRevisions)
+		stampMonitoringMaterialRevision(dep, telemetryRevisions)
 		if err := r.ensureNamespaced(ctx, kn, dep); err != nil {
 			return fmt.Errorf("ensuring Deployment %s: %w", dep.Name, err)
 		}
@@ -2977,7 +3004,12 @@ func (r *KubernautReconciler) validateFleetTrustSecrets(ctx context.Context, kn 
 		path  string
 		trust *kubernautv1alpha2.FleetTrustSpec
 	}{
-		{path: "spec.fleet.scopeCheck.tls", trust: kn.Spec.Fleet.ScopeCheck.TLS},
+		{path: "spec.fleet.scopeCheck.acm.tls", trust: func() *kubernautv1alpha2.FleetTrustSpec {
+			if kn.Spec.Fleet.ScopeCheck.ACM == nil {
+				return nil
+			}
+			return kn.Spec.Fleet.ScopeCheck.ACM.TLS
+		}()},
 		{path: "spec.fleet.oauth2.tls", trust: kn.Spec.Fleet.OAuth2.TLS},
 	}
 	for _, lane := range lanes {
@@ -3001,6 +3033,96 @@ func (r *KubernautReconciler) validateFleetTrustSecrets(ctx context.Context, kn 
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(caPEM) {
 			return fmt.Errorf("%s.caCertSecretRef: secret %q key %q does not contain valid ca pem", lane.path, secretName, secretKey)
+		}
+	}
+	return nil
+}
+
+func (r *KubernautReconciler) validateFleetTokenSecret(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	if !kn.Spec.FleetEnabled() || kn.Spec.Fleet.ScopeCheck.Backend != fleetBackendACM || kn.Spec.Fleet.ScopeCheck.ACM == nil || kn.Spec.Fleet.ScopeCheck.ACM.TokenSecretRef == nil {
+		return nil
+	}
+	ref := kn.Spec.Fleet.ScopeCheck.ACM.TokenSecretRef
+	key := ref.Key
+	if key == "" {
+		key = "token"
+	}
+	if err := r.validateSecret(ctx, kn.Namespace, ref.Name, []string{key}); err != nil {
+		return fmt.Errorf("spec.fleet.scopeCheck.acm.tokenSecretRef: %w", err)
+	}
+	return nil
+}
+
+// validateMonitoringTLS verifies administrator-provided monitoring trust
+// material before dependent workloads are deployed. interService is supplied
+// by the operator/platform TLS contract and system deliberately uses the
+// process trust store; Secret and ConfigMap material must exist, contain the
+// selected key, and parse as one or more PEM certificates.
+func (r *KubernautReconciler) validateMonitoringTLS(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	tls := kn.Spec.Monitoring.TLS
+	if tls == nil || tls.Source == "" || tls.Source == kubernautv1alpha2.MonitoringTLSSourceInterService || tls.Source == kubernautv1alpha2.MonitoringTLSSourceSystem {
+		return nil
+	}
+	switch tls.Source {
+	case kubernautv1alpha2.MonitoringTLSSourceSecret:
+		if tls.CACertSecretRef == nil || tls.CACertSecretRef.Name == "" {
+			return fmt.Errorf("spec.monitoring.tls.caCertSecretRef is required when source is secret")
+		}
+		return r.validateMonitoringTLSSecret(ctx, kn.Namespace, tls.CACertSecretRef)
+	case kubernautv1alpha2.MonitoringTLSSourceConfigMap:
+		if tls.CACertConfigMapRef == nil || tls.CACertConfigMapRef.Name == "" {
+			return fmt.Errorf("spec.monitoring.tls.caCertConfigMapRef is required when source is configMap")
+		}
+		return r.validateMonitoringTLSConfigMap(ctx, kn.Namespace, tls.CACertConfigMapRef)
+	default:
+		return fmt.Errorf("spec.monitoring.tls.source %q is invalid", tls.Source)
+	}
+}
+
+func (r *KubernautReconciler) validateMonitoringTLSSecret(ctx context.Context, namespace string, ref *kubernautv1alpha2.CACertSecretRef) error {
+	key := ref.Key
+	if key == "" {
+		key = monitoringTLSDefaultCAKey
+	}
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: ref.Name}, secret); err != nil {
+		return fmt.Errorf("monitoring tls secret %q could not be read: %w", ref.Name, err)
+	}
+	data, ok := secret.Data[key]
+	if !ok || len(data) == 0 {
+		return fmt.Errorf("monitoring tls secret %q is missing key %q", ref.Name, key)
+	}
+	return validateMonitoringTLSCAData(data, "secret", ref.Name, key)
+}
+
+func (r *KubernautReconciler) validateMonitoringTLSConfigMap(ctx context.Context, namespace string, ref *kubernautv1alpha2.CACertConfigMapRef) error {
+	key := ref.Key
+	if key == "" {
+		key = monitoringTLSDefaultCAKey
+	}
+	configMap := &corev1.ConfigMap{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: ref.Name}, configMap); err != nil {
+		return fmt.Errorf("monitoring tls configmap %q could not be read: %w", ref.Name, err)
+	}
+	data, ok := configMap.Data[key]
+	if !ok || data == "" {
+		return fmt.Errorf("monitoring tls configmap %q is missing key %q", ref.Name, key)
+	}
+	return validateMonitoringTLSCAData([]byte(data), "configmap", ref.Name, key)
+}
+
+func validateMonitoringTLSCAData(data []byte, kind, name, key string) error {
+	certificates, err := parseTelemetryCertificates(data)
+	if err != nil {
+		return fmt.Errorf("monitoring tls %s %q key %q does not contain valid ca pem: %w", kind, name, key, err)
+	}
+	now := time.Now()
+	for _, certificate := range certificates {
+		if !certificate.IsCA {
+			return fmt.Errorf("monitoring tls %s %q key %q contains a non-ca certificate", kind, name, key)
+		}
+		if now.Before(certificate.NotBefore) || now.After(certificate.NotAfter) {
+			return fmt.Errorf("monitoring tls %s %q key %q contains an expired or not-yet-valid ca certificate", kind, name, key)
 		}
 	}
 	return nil

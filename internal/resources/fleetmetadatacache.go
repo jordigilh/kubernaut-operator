@@ -129,7 +129,7 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernau
 			Endpoint:    fleet.MCPGateway.Endpoint,
 			GatewayType: fleet.MCPGateway.Type,
 			Namespace:   fleet.MCPGateway.Namespace,
-			Resilience:  resolveFleetResilience(knV2),
+			Resilience:  resolveMCPClient(knV2),
 		},
 		Valkey: fleetMetadataCacheValkeyYAML{
 			Addr: ValkeyAddr(&kn.Spec.Valkey),

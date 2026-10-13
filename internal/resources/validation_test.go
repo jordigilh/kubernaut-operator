@@ -1167,6 +1167,116 @@ var _ = Describe("OTLP telemetry TLS contract", func() {
 	})
 })
 
+var _ = Describe("shared monitoring TLS contract", func() {
+	It("accepts the omitted source and each source-specific reference", func() {
+		cases := []*kubernautv1alpha2.MonitoringTLSSpec{
+			nil,
+			{},
+			{Source: kubernautv1alpha2.MonitoringTLSSourceInterService},
+			{Source: kubernautv1alpha2.MonitoringTLSSourceSystem},
+			{Source: kubernautv1alpha2.MonitoringTLSSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"}},
+			{Source: kubernautv1alpha2.MonitoringTLSSourceConfigMap, CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca"}},
+		}
+		for _, tls := range cases {
+			kn := testKubernaut()
+			kn.Spec.Monitoring.TLS = tls
+			Expect(ValidateKubernaut(kn)).To(BeEmpty(), "tls=%#v", tls)
+		}
+	})
+
+	It("rejects unknown sources, mismatched references, and invalid reference keys", func() {
+		kn := testKubernaut()
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source:             "unknown",
+			CACertSecretRef:    &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"},
+			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca"},
+		}
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.monitoring.tls.source"))
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca", Key: "../ca.crt"},
+			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{
+				Name: "monitoring-ca",
+			},
+		}
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("caCertConfigMapRef must be omitted"))
+		Expect(joined).To(ContainSubstring("key must be a valid ConfigMap or Secret key"))
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source: kubernautv1alpha2.MonitoringTLSSourceSystem,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{
+				Name: "monitoring-ca",
+			},
+		}
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("caCertSecretRef must be omitted"))
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source:             kubernautv1alpha2.MonitoringTLSSourceConfigMap,
+			CACertSecretRef:    &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"},
+			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca"},
+		}
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("caCertSecretRef must be omitted"))
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca"},
+		}
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("caCertConfigMapRef must be omitted when source is \"interService\""))
+	})
+
+	It("rejects plaintext monitoring endpoints before rendering client configuration", func() {
+		kn := testKubernaut()
+		kn.Spec.Monitoring.Prometheus.URL = "http://prometheus.monitoring.svc:9090"
+		kn.Spec.Monitoring.AlertManager.URL = "https://alertmanager.monitoring.svc:9093"
+
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.monitoring.prometheus.url must be an https URL"))
+		Expect(joined).NotTo(ContainSubstring("spec.monitoring.alertManager.url must be an https URL"))
+	})
+
+	It("TLS-VALIDATE-002 [SI-10; ASVS V2.2.1, V2.2.2] rejects monitoring URLs with leading or trailing whitespace", func() {
+		kn := testKubernaut()
+		kn.Spec.Monitoring.Prometheus.URL = " https://prometheus.monitoring.svc:9090"
+		kn.Spec.Monitoring.AlertManager.URL = "https://alertmanager.monitoring.svc:9093 "
+
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.monitoring.prometheus.url must not contain leading or trailing whitespace"))
+		Expect(joined).To(ContainSubstring("spec.monitoring.alertManager.url must not contain leading or trailing whitespace"))
+	})
+
+	It("requires the source-specific reference name", func() {
+		kn := testKubernaut()
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{},
+		}
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.monitoring.tls.caCertSecretRef.name must not be empty"))
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceConfigMap}
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.monitoring.tls.caCertConfigMapRef is required"))
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source: kubernautv1alpha2.MonitoringTLSSourceSecret,
+		}
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.monitoring.tls.caCertSecretRef is required"))
+
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "invalid/name"},
+		}
+		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("must be a valid Kubernetes object name"))
+	})
+})
+
 func errorStrings(errs []error) []string {
 	result := make([]string, len(errs))
 	for i, err := range errs {
@@ -1307,7 +1417,7 @@ var _ = Describe("Fleet Config Validation", func() {
 				Type: "eaigw", Endpoint: "https://mcp-gateway.example.com/sse", Namespace: "mcp-system",
 			},
 			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{
-				Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443",
+				Backend: "fleetmetadatacache",
 			},
 			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 				TokenURL: "https://keycloak.example.com/token", CredentialsSecretRef: "fleet-oauth2-creds",
@@ -1343,34 +1453,69 @@ var _ = Describe("Fleet Config Validation", func() {
 		Expect(errs[0].Error()).To(ContainSubstring("valkey"))
 	})
 
-	It("requires an explicit ACM endpoint and token Secret", func() {
+	It("UT-FLEET-521-VALIDATE-001: requires an explicit ACM endpoint and token Secret", func() {
 		kn := validFleet()
-		kn.Spec.Fleet.ScopeCheck.Backend = "acm"
-		kn.Spec.Fleet.ScopeCheck.Endpoint = ""
-		kn.Spec.Fleet.ScopeCheck.TokenSecretRef = nil
+		kn.Spec.Fleet.ScopeCheck.Backend = fleetBackendACM
+		kn.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{}
+		kn.Spec.Fleet.ScopeCheck.ACM.Endpoint = ""
+		kn.Spec.Fleet.ScopeCheck.ACM.TokenSecretRef = nil
 		errs := ValidateFleet(kn)
 		Expect(errs).To(HaveLen(2))
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.scopeCheck.endpoint"))
-		Expect(errs[1].Error()).To(ContainSubstring("spec.fleet.scopeCheck.tokenSecretRef"))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.scopeCheck.acm.endpoint"))
+		Expect(errs[1].Error()).To(ContainSubstring("spec.fleet.scopeCheck.acm.tokenSecretRef"))
 	})
 
 	It("accepts active Fleet with the operator-managed FMC backend", func() {
 		Expect(ValidateFleet(validFleet())).To(BeEmpty())
 	})
 
+	It("rejects ACM without its provider block and rejects ACM data on FMC", func() {
+		kn := validFleet()
+		kn.Spec.Fleet.ScopeCheck.Backend = fleetBackendACM
+		errs := ValidateFleet(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.scopeCheck.acm"))
+
+		kn = validFleet()
+		kn.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{}
+		errs = ValidateFleet(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("must be omitted"))
+	})
+
 	It("rejects an insecure explicit FMC endpoint", func() {
 		kn := validFleet()
-		kn.Spec.Fleet.ScopeCheck.Endpoint = "http://fmc.kubernaut.svc:8080"
+		kn.Spec.Fleet.ScopeCheck.Backend = "acm"
+		kn.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "http://acm.example.com/graphql", TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "token"}}
 		errs := ValidateFleet(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("https"))
 	})
 
+	It("rejects plaintext MCP Gateway and OAuth2 endpoints", func() {
+		kn := validFleet()
+		kn.Spec.Fleet.MCPGateway.Endpoint = "http://mcp-gateway.example.com/sse"
+		kn.Spec.Fleet.OAuth2.TokenURL = "http://keycloak.example.com/token"
+		errs := ValidateFleet(kn)
+		Expect(errs).To(HaveLen(2))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGateway.endpoint"))
+		Expect(errs[1].Error()).To(ContainSubstring("spec.fleet.oauth2.tokenURL"))
+	})
+
+	It("rejects Fleet endpoints with surrounding whitespace", func() {
+		kn := validFleet()
+		kn.Spec.Fleet.MCPGateway.Endpoint = " https://mcp-gateway.example.com/sse"
+		errs := ValidateFleet(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("must not contain leading or trailing whitespace"))
+	})
+
 	It("accepts active Fleet with ACM and a typed token Secret reference", func() {
 		kn := validFleet()
+		kn.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{}
 		kn.Spec.Fleet.ScopeCheck = kubernautv1alpha2.FleetScopeCheckSpec{
-			Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
-			TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token", Key: "bearer"},
+			Backend: "acm", ACM: &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "https://acm-search.example.com/graphql",
+				TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token", Key: "bearer"}},
 		}
 		Expect(ValidateFleet(kn)).To(BeEmpty())
 	})
@@ -1387,9 +1532,10 @@ var _ = Describe("Fleet Config Validation", func() {
 
 	It("requires Fleet OAuth2 token URL, shared credentials, and the independent WE credential", func() {
 		kn := validFleet()
+		kn.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "https://acm.example.com/graphql", TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "token"}}
 		kn.Spec.Fleet.ScopeCheck = kubernautv1alpha2.FleetScopeCheckSpec{
-			Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
-			TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"},
+			Backend: "acm", ACM: &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "https://acm-search.example.com/graphql",
+				TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"}},
 		}
 		kn.Spec.Fleet.OAuth2 = kubernautv1alpha2.FleetOAuth2Spec{}
 		kn.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = ""
@@ -1402,14 +1548,29 @@ var _ = Describe("Fleet Config Validation", func() {
 
 	It("validates each Fleet trust lane by source", func() {
 		kn := validFleet()
-		kn.Spec.Fleet.ScopeCheck.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceFile, CAFile: "relative-ca.pem"}
+		kn.Spec.Fleet.ScopeCheck.Backend = "acm"
+		kn.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "https://acm.example.com/graphql", TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "token"}}
+		kn.Spec.Fleet.ScopeCheck.ACM.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceFile, CAFile: "relative-ca.pem"}
 		kn.Spec.Fleet.OAuth2.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "oauth2-ca"}}
 		errs := ValidateFleet(kn)
 		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.scopeCheck.tls.caFile"))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.scopeCheck.acm.tls.caFile"))
 
-		kn.Spec.Fleet.ScopeCheck.TLS.CAFile = "/etc/fleet/ca.pem"
+		kn.Spec.Fleet.ScopeCheck.ACM.TLS.CAFile = "/etc/fleet/ca.pem"
 		Expect(ValidateFleet(kn)).To(BeEmpty())
+	})
+
+	It("UT-FLEET-521-VALIDATE-002: rejects non-positive MCP-client durations", func() {
+		kn := validFleet()
+		kn.Spec.Fleet.MCPClient = &kubernautv1alpha2.FleetMCPClientSpec{
+			Retry:    &kubernautv1alpha2.FleetMCPClientRetrySpec{InitialInterval: "0s", MaxInterval: "-1s", MaxElapsedTime: "not-a-duration"},
+			Timeouts: &kubernautv1alpha2.FleetMCPClientTimeoutsSpec{TokenRefresh: "2s", Connect: "", DiscoverProbe: "-5ms"},
+		}
+		errs := ValidateFleet(kn)
+		Expect(errs).To(HaveLen(4))
+		for _, err := range errs {
+			Expect(err.Error()).To(ContainSubstring("spec.fleet.mcpClient"))
+		}
 	})
 
 	It("rejects source-incompatible trust payloads", func() {

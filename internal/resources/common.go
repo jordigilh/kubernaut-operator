@@ -51,6 +51,96 @@ const (
 	ComponentFleetMetadataCache      = "fleetmetadatacache"
 )
 
+// MonitoringTLSCADir is the deterministic mount directory for administrator-
+// supplied monitoring trust material.
+const MonitoringTLSCADir = "/etc/monitoring-tls"
+
+const (
+	// MonitoringTLSCAVolumeName is shared by the EM, KA, and AF pod templates.
+	MonitoringTLSCAVolumeName = "monitoring-tls"
+	// MonitoringTLSCAFile is the single CA path used by every monitoring client.
+	MonitoringTLSCAFile = MonitoringTLSCADir + "/ca.crt"
+)
+
+// EffectiveMonitoringTLSCAFile returns the shared monitoring CA path. The
+// system source deliberately returns an empty path so clients use their OS
+// trust store.
+func EffectiveMonitoringTLSCAFile(kn *kubernautv1alpha2.Kubernaut) string {
+	if kn != nil && kn.Spec.Monitoring.TLS != nil && kn.Spec.Monitoring.TLS.Source == kubernautv1alpha2.MonitoringTLSSourceSystem {
+		return ""
+	}
+	return MonitoringTLSCAFile
+}
+
+// MonitoringTLSVolume returns the source-aware, read-only volume for the
+// shared monitoring CA path. Secret and ConfigMap sources are administrator
+// owned and are never copied or mutated by the operator.
+func MonitoringTLSVolume(kn *kubernautv1alpha2.Kubernaut) *corev1.Volume {
+	if kn == nil || kn.Spec.Monitoring.TLS != nil && kn.Spec.Monitoring.TLS.Source == kubernautv1alpha2.MonitoringTLSSourceSystem {
+		return nil
+	}
+
+	source := monitoringTLSVolumeSource(kn)
+	if source == nil {
+		return nil
+	}
+	return &corev1.Volume{Name: MonitoringTLSCAVolumeName, VolumeSource: *source}
+}
+
+func monitoringTLSVolumeSource(kn *kubernautv1alpha2.Kubernaut) *corev1.VolumeSource {
+	tls := kn.Spec.Monitoring.TLS
+	switch {
+	case tls == nil || tls.Source == "" || tls.Source == kubernautv1alpha2.MonitoringTLSSourceInterService:
+		volumeSource := monitoringTLSInterServiceVolumeSource(kn)
+		return &volumeSource
+	case tls.Source == kubernautv1alpha2.MonitoringTLSSourceSecret:
+		if tls.CACertSecretRef == nil {
+			return nil
+		}
+		key := tlsCACertificateKey
+		if tls.CACertSecretRef.Key != "" {
+			key = tls.CACertSecretRef.Key
+		}
+		return &corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: tls.CACertSecretRef.Name, Items: []corev1.KeyToPath{{Key: key, Path: tlsCACertificateKey}}}}
+	case tls.Source == kubernautv1alpha2.MonitoringTLSSourceConfigMap:
+		if tls.CACertConfigMapRef == nil {
+			return nil
+		}
+		key := tlsCACertificateKey
+		if tls.CACertConfigMapRef.Key != "" {
+			key = tls.CACertConfigMapRef.Key
+		}
+		return &corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: tls.CACertConfigMapRef.Name}, Items: []corev1.KeyToPath{{Key: key, Path: tlsCACertificateKey}}}}
+	default:
+		// ValidateKubernaut rejects unknown sources before resource rendering.
+		// Keep this helper fail-closed when called directly with an invalid CR.
+		return nil
+	}
+}
+
+func monitoringTLSInterServiceVolumeSource(kn *kubernautv1alpha2.Kubernaut) corev1.VolumeSource {
+	if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual {
+		if cfg := kn.Spec.TLS.AdministratorManaged; cfg != nil && cfg.InternalCASecretName != "" {
+			return corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+				SecretName: cfg.InternalCASecretName,
+				Items:      []corev1.KeyToPath{{Key: tlsCACertificateKey, Path: tlsCACertificateKey}},
+			}}
+		}
+		return corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: InterServiceCAConfigMapName},
+			Items:                []corev1.KeyToPath{{Key: tlsCACertificateKey, Path: tlsCACertificateKey}},
+		}}
+	}
+	return corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+		LocalObjectReference: corev1.LocalObjectReference{Name: TrustBundleConfigMapName},
+		Items:                []corev1.KeyToPath{{Key: trustBundleServiceCAKey, Path: tlsCACertificateKey}},
+	}}
+}
+
+func MonitoringTLSVolumeMount() corev1.VolumeMount {
+	return corev1.VolumeMount{Name: MonitoringTLSCAVolumeName, MountPath: MonitoringTLSCADir, ReadOnly: true}
+}
+
 // controllerSuffix lists components that are actual Kubernetes controllers
 // (reconciliation loops) and use the "-controller" deployment name suffix,
 // matching the Helm chart convention. REST API services and webhook servers
@@ -363,28 +453,6 @@ func EffectiveAlertManagerURL(knV2 *kubernautv1alpha2.Kubernaut) string {
 	return effectiveAlertManagerURL(knV2)
 }
 
-// effectiveEMTLSCaFile resolves EM's single external.tlsCaFile config key
-// (#424). EM's upstream Config.External.TLSCaFile
-// (kubernaut/internal/config/effectivenessmonitor/config.go) is, by
-// design, one CA bundle shared by both its Prometheus and AlertManager
-// HTTP clients -- there is no per-destination key to wire the two CR
-// fields into independently, unlike KA's PrometheusToolConfig/
-// AlertmanagerToolConfig, which are genuinely separate structs/keys.
-// Monitoring.Prometheus.TLSCaFile therefore takes precedence over
-// Monitoring.AlertManager.TLSCaFile when both are set (EM's primary
-// assessment-scoring consumer), falling back to the existing
-// service-ca-injected default when neither is set.
-func effectiveEMTLSCaFile(knV2 *kubernautv1alpha2.Kubernaut, defaultPath string) string {
-	return withDefault(withDefault(knV2.Spec.Monitoring.Prometheus.TLSCaFile, knV2.Spec.Monitoring.AlertManager.TLSCaFile), defaultPath)
-}
-
-func effectiveEMDefaultTLSCAFile(kn *kubernautv1alpha2.Kubernaut) string {
-	if usesOpenShiftServiceCA(kn) {
-		return "/etc/ssl/em/service-ca.crt"
-	}
-	return InterServiceTLSCAFile
-}
-
 // OCP well-known namespaces.
 const (
 	OCPDNSNamespace        = "openshift-dns"
@@ -623,20 +691,21 @@ func FleetMetadataCacheURL(namespace string) string {
 	return fmt.Sprintf("https://fleetmetadatacache-service.%s.svc.cluster.local:8080", namespace)
 }
 
-// resolveFleetEndpoint returns the effective spec.fleet.scopeCheck.endpoint value.
-// When the user leaves it empty and FMC is active (fleet.enabled=true,
-// scopeCheck.backend=fleetmetadatacache -- KubernautSpec.FleetMetadataCacheEnabled()),
-// the in-cluster FMC service URL is auto-derived -- the whole point of the
-// operator deploying FMC is that Gateway/RemediationOrchestrator don't need
-// the user to separately wire up its address. backend=acm still requires an
-// explicit endpoint (enforced in validation.go). Fleet's entire CRD surface
-// lives in v1alpha2 (Fleet v1alpha2 migration), so this takes knV2 only.
+// resolveFleetEndpoint returns the effective scope-check endpoint. FMC is
+// always operator-managed and derives its HTTPS Service URL; ACM uses the
+// provider block's endpoint.
 func resolveFleetEndpoint(knV2 *kubernautv1alpha2.Kubernaut) string {
 	fleet := &knV2.Spec.Fleet
-	if fleet.ScopeCheck.Endpoint == "" && knV2.Spec.FleetMetadataCacheEnabled() {
+	if fleet.Enabled == nil || !*fleet.Enabled {
+		return ""
+	}
+	if knV2.Spec.FleetMetadataCacheEnabled() {
 		return FleetMetadataCacheURL(knV2.Namespace)
 	}
-	return fleet.ScopeCheck.Endpoint
+	if fleet.ScopeCheck.ACM == nil {
+		return ""
+	}
+	return fleet.ScopeCheck.ACM.Endpoint
 }
 
 // effectiveFleetOAuth2SecretRef resolves a component's nilable Fleet

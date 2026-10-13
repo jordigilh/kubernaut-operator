@@ -173,7 +173,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 			}
 			cm, err := GatewayConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
@@ -182,7 +182,7 @@ var _ = Describe("ConfigMaps", func() {
 				"fleet:",
 				"enabled: true",
 				"backend: fleetmetadatacache",
-				"endpoint: https://fmc.kubernaut.svc:8443",
+				"endpoint: https://fleetmetadatacache-service.kubernaut-system.svc.cluster.local:8080",
 			} {
 				Expect(data).To(ContainSubstring(want), "gateway config should contain %q when fleet enabled, got:\n%s", want, data)
 			}
@@ -190,19 +190,19 @@ var _ = Describe("ConfigMaps", func() {
 				"gateway config should default tlsCAFile to the inter-service trust-bundle path when no explicit scopeCheck.tls source is set (scopeCheck.endpoint is typically an in-cluster, service-ca-signed Service), got:\n%s", data)
 		})
 
-		It("renders tlsCAFile and tokenPath when the corresponding secrets are set", func() {
+		It("UT-FLEET-521-ACM-001: renders tlsCAFile and tokenPath when the corresponding secrets are set", func() {
 			kn := testKubernaut()
 			enabled := true
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled,
 				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{
-					Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
-					TLS: &kubernautv1alpha2.FleetTrustSpec{
-						Source:          kubernautv1alpha2.FleetTrustSourceSecret,
-						CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fmc-ca-bundle"},
-					},
-					TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"},
+					Backend: "acm", ACM: &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "https://acm-search.example.com/graphql",
+						TLS: &kubernautv1alpha2.FleetTrustSpec{
+							Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+							CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fmc-ca-bundle"},
+						},
+						TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"}},
 				},
 			}
 			cm, err := GatewayConfigMap(kn, knV2)
@@ -220,7 +220,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 			}
 			cm, err := GatewayConfigMap(kn, knV2)
@@ -246,7 +246,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 					TokenURL:             "https://keycloak.example.com/token",
@@ -277,7 +277,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 					TokenURL:             "https://keycloak.example.com/token",
@@ -296,7 +296,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 					TokenURL:             "https://keycloak.example.com/token",
@@ -673,7 +673,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 			}
 			cm, err := SignalProcessingConfigMap(kn, knV2)
@@ -694,7 +694,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw", Namespace: testSharedMCPGatewayNamespace},
 			}
 			cm, err := SignalProcessingConfigMap(kn, knV2)
@@ -709,7 +709,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 					TokenURL:             "https://keycloak.example.com/token",
@@ -729,7 +729,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 					TokenURL:             "https://keycloak.example.com/token",
@@ -980,7 +980,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 			}
 			cm, err := RemediationOrchestratorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
@@ -989,7 +989,7 @@ var _ = Describe("ConfigMaps", func() {
 				"fleet:",
 				"enabled: true",
 				"backend: fleetmetadatacache",
-				"endpoint: https://fmc.kubernaut.svc:8443",
+				"endpoint: https://fleetmetadatacache-service.kubernaut-system.svc.cluster.local:8080",
 			} {
 				Expect(data).To(ContainSubstring(want), "RO config should contain %q when fleet enabled, got:\n%s", want, data)
 			}
@@ -998,16 +998,16 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).NotTo(ContainSubstring("tokenPath"), "RO config should omit tokenPath when no token secret set, got:\n%s", data)
 		})
 
-		It("renders tlsCAFile and tokenPath when the corresponding secrets are set", func() {
+		It("UT-FLEET-521-RENDER-SECRET-002: renders ACM trust and token resource paths in the RemediationOrchestrator ConfigMap", func() {
 			kn := testKubernaut()
 			enabled := true
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled: &enabled,
 				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{
-					Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
-					TLS:            &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fmc-ca-bundle"}},
-					TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"},
+					Backend: "acm", ACM: &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "https://acm-search.example.com/graphql",
+						TLS:            &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fmc-ca-bundle"}},
+						TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"}},
 				},
 			}
 			cm, err := RemediationOrchestratorConfigMap(kn, knV2)
@@ -1025,7 +1025,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 			}
 			cm, err := RemediationOrchestratorConfigMap(kn, knV2)
@@ -1041,7 +1041,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 					TokenURL:             "https://keycloak.example.com/token",
@@ -1067,7 +1067,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 					TokenURL:             "https://keycloak.example.com/token",
@@ -1086,7 +1086,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 					TokenURL:             "https://keycloak.example.com/token",
@@ -1243,7 +1243,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 					TokenURL:             "https://keycloak.example.com/token",
@@ -1272,7 +1272,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 					TokenURL:             "https://keycloak.example.com/token",
@@ -1331,7 +1331,7 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring(OCPPrometheusURL), "EM config should contain Prometheus URL when monitoring enabled, got:\n%s", data)
 			Expect(data).To(ContainSubstring(OCPAlertManagerURL), "EM config should contain AlertManager URL when monitoring enabled, got:\n%s", data)
 			Expect(data).To(ContainSubstring("external:"), "EM config should contain external section when monitoring enabled, got:\n%s", data)
-			Expect(data).To(ContainSubstring("tlsCaFile: /etc/ssl/em/service-ca.crt"), "EM config should contain external.tlsCaFile when monitoring enabled, got:\n%s", data)
+			Expect(data).To(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"), "EM config should contain external.tlsCaFile when monitoring enabled, got:\n%s", data)
 		})
 
 		It("uses the shared trust-bundle path for explicit generic TLS", func() {
@@ -1340,8 +1340,7 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			data := cm.Data["effectivenessmonitor.yaml"]
-			Expect(data).To(ContainSubstring("tlsCaFile: " + InterServiceTLSCAFile))
-			Expect(data).NotTo(ContainSubstring("/etc/ssl/em/service-ca.crt"))
+			Expect(data).To(ContainSubstring("tlsCaFile: " + MonitoringTLSCAFile))
 		})
 
 		// #298: spec.monitoring.prometheus.url/spec.monitoring.alertManager.url
@@ -1364,56 +1363,48 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).NotTo(ContainSubstring(OCPAlertManagerURL), "EM config should not fall back to the OCP default once overridden, got:\n%s", data)
 		})
 
-		// #424: spec.monitoring.prometheus.tlsCaFile/alertManager.tlsCaFile
-		// were CRD fields with zero non-test references anywhere in the
-		// codebase -- external.tlsCaFile was always the hardcoded
-		// "/etc/ssl/em/service-ca.crt" literal regardless of either field.
-		// EM's upstream Config.External.TLSCaFile
-		// (kubernaut/internal/config/effectivenessmonitor/config.go) is a
-		// single CA bundle shared by both its Prometheus and AlertManager
-		// HTTP clients -- there is no per-destination key to wire into --
-		// so Prometheus.TLSCaFile takes precedence over
-		// AlertManager.TLSCaFile when both are set (EM's primary
-		// assessment-scoring consumer).
-		It("overrides external.tlsCaFile from spec.monitoring.prometheus.tlsCaFile (#424)", func() {
+		It("uses the shared monitoring TLS contract for every monitoring client (#424)", func() {
 			kn := testKubernaut()
 			knV2 := testKnV2(kn)
-			knV2.Spec.Monitoring.Prometheus.TLSCaFile = testCustomPrometheusTLSCaFile
+			knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceConfigMap, CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca", Key: "bundle.pem"}}
 			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
-			data := cm.Data["effectivenessmonitor.yaml"]
-			Expect(data).To(ContainSubstring("tlsCaFile: "+testCustomPrometheusTLSCaFile), "EM config should use spec.monitoring.prometheus.tlsCaFile override, got:\n%s", data)
-			Expect(data).NotTo(ContainSubstring("/etc/ssl/em/service-ca.crt"), "EM config should not fall back to the hardcoded default once overridden, got:\n%s", data)
+			Expect(cm.Data["effectivenessmonitor.yaml"]).To(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"))
+			ka, err := KubernautAgentConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ka.Data["config.yaml"]).To(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"))
+			af, err := APIFrontendConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(af.Data["config.yaml"]).To(ContainSubstring("prometheusTlsCaFile: /etc/monitoring-tls/ca.crt"))
 		})
 
-		It("falls back to spec.monitoring.alertManager.tlsCaFile when prometheus.tlsCaFile is unset (#424)", func() {
-			kn := testKubernaut()
+		It("omits the shared CA file when system trust is selected", func() {
+			kn := testKubernautWithAF()
 			knV2 := testKnV2(kn)
-			knV2.Spec.Monitoring.AlertManager.TLSCaFile = testCustomAlertManagerTLSCaFile
-			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
-			Expect(err).NotTo(HaveOccurred())
-			data := cm.Data["effectivenessmonitor.yaml"]
-			Expect(data).To(ContainSubstring("tlsCaFile: "+testCustomAlertManagerTLSCaFile), "EM config should fall back to spec.monitoring.alertManager.tlsCaFile when prometheus.tlsCaFile is unset, got:\n%s", data)
-		})
+			knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSystem}
 
-		It("prometheus.tlsCaFile takes precedence over alertManager.tlsCaFile when both are set (#424)", func() {
-			kn := testKubernaut()
-			knV2 := testKnV2(kn)
-			knV2.Spec.Monitoring.Prometheus.TLSCaFile = testCustomPrometheusTLSCaFile
-			knV2.Spec.Monitoring.AlertManager.TLSCaFile = testCustomAlertManagerTLSCaFile
-			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
+			em, err := EffectivenessMonitorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
-			data := cm.Data["effectivenessmonitor.yaml"]
-			Expect(data).To(ContainSubstring("tlsCaFile: "+testCustomPrometheusTLSCaFile), "EM's single external.tlsCaFile key should prefer prometheus.tlsCaFile when both overrides are set, got:\n%s", data)
-			Expect(data).NotTo(ContainSubstring(testCustomAlertManagerTLSCaFile), "EM's single external.tlsCaFile key cannot hold both values -- alertManager.tlsCaFile must not appear, got:\n%s", data)
-		})
+			var emRoot effectivenessMonitorConfigYAML
+			Expect(yaml.Unmarshal([]byte(em.Data["effectivenessmonitor.yaml"]), &emRoot)).To(Succeed())
+			Expect(emRoot.External.TLSCaFile).To(BeEmpty())
 
-		It("unset preserves today's hardcoded external.tlsCaFile default (regression guard, #424)", func() {
-			kn := testKubernaut()
-			cm, err := EffectivenessMonitorConfigMap(kn, testKnV2(kn))
+			ka, err := KubernautAgentConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
-			data := cm.Data["effectivenessmonitor.yaml"]
-			Expect(data).To(ContainSubstring("tlsCaFile: /etc/ssl/em/service-ca.crt"), "EM config should preserve the hardcoded default when neither override is set, got:\n%s", data)
+			var kaRoot kubernautAgentConfigYAML
+			Expect(yaml.Unmarshal([]byte(ka.Data["config.yaml"]), &kaRoot)).To(Succeed())
+			Expect(kaRoot.Integrations.Tools.Prometheus.TLSCaFile).To(BeEmpty())
+			Expect(kaRoot.Integrations.Tools.Alertmanager.TLSCaFile).To(BeEmpty())
+
+			af, err := APIFrontendConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			var afRoot struct {
+				SeverityTriage struct {
+					PrometheusTLSCAFile string `yaml:"prometheusTlsCaFile"`
+				} `yaml:"severityTriage"`
+			}
+			Expect(yaml.Unmarshal([]byte(af.Data["config.yaml"]), &afRoot)).To(Succeed())
+			Expect(afRoot.SeverityTriage.PrometheusTLSCAFile).To(BeEmpty())
 		})
 
 		// #298: emExternalYAML.PrometheusEnabled/AlertManagerEnabled were
@@ -1473,7 +1464,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443", TLS: &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fmc-ca-bundle"}}, TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"}},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 			}
 			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
@@ -1493,7 +1484,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 					TokenURL:             "https://keycloak.example.com/token",
@@ -1512,7 +1503,7 @@ var _ = Describe("ConfigMaps", func() {
 			knV2 := testKnV2(kn)
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 					TokenURL:             "https://keycloak.example.com/token",
@@ -1611,7 +1602,7 @@ var _ = Describe("ConfigMaps", func() {
 			data := cm.Data["config.yaml"]
 
 			Expect(data).To(ContainSubstring(OCPPrometheusURL), "KA config should contain Prometheus URL when monitoring enabled, got:\n%s", data)
-			Expect(data).To(ContainSubstring("tlsCaFile: /etc/ssl/ka/service-ca.crt"), "KA config should contain Prometheus tlsCaFile for SA bearer auth, got:\n%s", data)
+			Expect(data).To(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"), "KA config should contain Prometheus tlsCaFile for SA bearer auth, got:\n%s", data)
 			Expect(data).To(ContainSubstring("dataStorage:"), "KA config should contain dataStorage section, got:\n%s", data)
 			Expect(data).To(ContainSubstring("url: https://data-storage-service.kubernaut-system.svc.cluster.local:8443"), "KA config should contain HTTPS dataStorage.url, got:\n%s", data)
 			Expect(strings.Contains(data, "tools:") && strings.Contains(data, "prometheus:")).To(BeTrue(), "KA config should contain upstream tools.prometheus section when monitoring enabled, got:\n%s", data)
@@ -1656,42 +1647,22 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(root.Integrations.DataStorage.URL).To(Equal(wantDS), "integrations.dataStorage.url = %q, want %q", root.Integrations.DataStorage.URL, wantDS)
 			Expect(root.Integrations.Tools).NotTo(BeNil(), "integrations.tools should be present when monitoring is enabled by default")
 			Expect(root.Integrations.Tools.Prometheus.URL).To(Equal(OCPPrometheusURL), "integrations.tools.prometheus.url = %q, want %q", root.Integrations.Tools.Prometheus.URL, OCPPrometheusURL)
-			Expect(root.Integrations.Tools.Prometheus.TLSCaFile).To(Equal("/etc/ssl/ka/service-ca.crt"), "integrations.tools.prometheus.tlsCaFile = %q, want /etc/ssl/ka/service-ca.crt", root.Integrations.Tools.Prometheus.TLSCaFile)
+			Expect(root.Integrations.Tools.Prometheus.TLSCaFile).To(Equal("/etc/monitoring-tls/ca.crt"), "integrations.tools.prometheus.tlsCaFile = %q, want /etc/monitoring-tls/ca.crt", root.Integrations.Tools.Prometheus.TLSCaFile)
 			Expect(root.Integrations.Tools.Alertmanager).NotTo(BeNil(), "integrations.tools.alertmanager should be present when monitoring is enabled by default (#205)")
 			Expect(root.Integrations.Tools.Alertmanager.URL).To(Equal(OCPAlertManagerURL), "integrations.tools.alertmanager.url = %q, want %q", root.Integrations.Tools.Alertmanager.URL, OCPAlertManagerURL)
-			Expect(root.Integrations.Tools.Alertmanager.TLSCaFile).To(Equal("/etc/ssl/ka/service-ca.crt"), "integrations.tools.alertmanager.tlsCaFile = %q, want /etc/ssl/ka/service-ca.crt", root.Integrations.Tools.Alertmanager.TLSCaFile)
+			Expect(root.Integrations.Tools.Alertmanager.TLSCaFile).To(Equal("/etc/monitoring-tls/ca.crt"), "integrations.tools.alertmanager.tlsCaFile = %q, want /etc/monitoring-tls/ca.crt", root.Integrations.Tools.Alertmanager.TLSCaFile)
 		})
 
-		// #424: spec.monitoring.prometheus.tlsCaFile/alertManager.tlsCaFile
-		// were CRD fields with zero non-test references anywhere in the
-		// codebase -- integrations.tools.{prometheus,alertmanager}.tlsCaFile
-		// were always the hardcoded "/etc/ssl/ka/service-ca.crt" literal
-		// regardless of either field. Unlike EM, KA's upstream
-		// PrometheusToolConfig/AlertmanagerToolConfig
-		// (kubernaut/internal/kubernautagent/config/config_types.go) are
-		// genuinely separate structs/keys, so each override wires
-		// independently with no precedence collision.
-		It("overrides tools.prometheus.tlsCaFile from spec.monitoring.prometheus.tlsCaFile (#424)", func() {
+		It("uses one shared monitoring CA path for Prometheus and AlertManager tools (#424)", func() {
 			kn := testKubernaut()
 			knV2 := testKnV2(kn)
-			knV2.Spec.Monitoring.Prometheus.TLSCaFile = testCustomPrometheusTLSCaFile
+			knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"}}
 			cm, err := KubernautAgentConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			var root kubernautAgentConfigYAML
 			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
-			Expect(root.Integrations.Tools.Prometheus.TLSCaFile).To(Equal(testCustomPrometheusTLSCaFile), "tools.prometheus.tlsCaFile should honor spec.monitoring.prometheus.tlsCaFile override, got %q", root.Integrations.Tools.Prometheus.TLSCaFile)
-		})
-
-		It("overrides tools.alertmanager.tlsCaFile from spec.monitoring.alertManager.tlsCaFile (#424)", func() {
-			kn := testKubernaut()
-			knV2 := testKnV2(kn)
-			knV2.Spec.Monitoring.AlertManager.TLSCaFile = testCustomAlertManagerTLSCaFile
-			cm, err := KubernautAgentConfigMap(kn, knV2)
-			Expect(err).NotTo(HaveOccurred())
-			var root kubernautAgentConfigYAML
-			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
-			Expect(root.Integrations.Tools.Alertmanager.TLSCaFile).To(Equal(testCustomAlertManagerTLSCaFile), "tools.alertmanager.tlsCaFile should honor spec.monitoring.alertManager.tlsCaFile override, got %q", root.Integrations.Tools.Alertmanager.TLSCaFile)
-			Expect(root.Integrations.Tools.Prometheus.TLSCaFile).To(Equal("/etc/ssl/ka/service-ca.crt"), "prometheus.tlsCaFile should keep its own default, unaffected by the alertmanager override -- KA's two keys are independent, got %q", root.Integrations.Tools.Prometheus.TLSCaFile)
+			Expect(root.Integrations.Tools.Prometheus.TLSCaFile).To(Equal(MonitoringTLSCAFile))
+			Expect(root.Integrations.Tools.Alertmanager.TLSCaFile).To(Equal(MonitoringTLSCAFile))
 		})
 
 		It("F10 regression (#417): resolves ai.llm.provider via single-profile inference when kubernautAgent.llmProfileRef is omitted", func() {
@@ -3074,7 +3045,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn))
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
-		Expect(data).To(ContainSubstring("prometheusTlsCaFile: /etc/ssl/af/service-ca.crt"))
+		Expect(data).To(ContainSubstring("prometheusTlsCaFile: /etc/monitoring-tls/ca.crt"))
 	})
 
 	It("renders auth issuerURL and audience from spec", func() {
@@ -3494,17 +3465,10 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			"AF severityTriage.prometheusURL should use spec.monitoring.prometheus.url override, got %q", root.SeverityTriage.PrometheusURL)
 	})
 
-	// #424: spec.monitoring.prometheus.tlsCaFile was a CRD field with zero
-	// non-test references anywhere in the codebase --
-	// severityTriage.prometheusTlsCaFile was always the hardcoded
-	// "/etc/ssl/af/service-ca.crt" literal regardless of this field. AF has
-	// no AlertManager client (afSeverityTriageConfig only ever sets
-	// PrometheusURL), so spec.monitoring.alertManager.tlsCaFile has no AF
-	// counterpart to wire.
-	It("overrides severityTriage.prometheusTlsCaFile from spec.monitoring.prometheus.tlsCaFile (#424)", func() {
+	It("uses the shared monitoring CA path for severity triage (#424)", func() {
 		kn := testKubernautWithAF()
 		knV2 := testKnV2(kn)
-		knV2.Spec.Monitoring.Prometheus.TLSCaFile = testCustomPrometheusTLSCaFile
+		knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"}}
 		cm, err := APIFrontendConfigMap(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -3513,22 +3477,8 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			} `yaml:"severityTriage"`
 		}
 		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
-		Expect(root.SeverityTriage.PrometheusTLSCAFile).To(Equal(testCustomPrometheusTLSCaFile),
-			"AF severityTriage.prometheusTlsCaFile should use spec.monitoring.prometheus.tlsCaFile override, got %q", root.SeverityTriage.PrometheusTLSCAFile)
-	})
-
-	It("unset preserves today's hardcoded severityTriage.prometheusTlsCaFile default (regression guard, #424)", func() {
-		kn := testKubernautWithAF()
-		cm, err := APIFrontendConfigMap(kn, testKnV2(kn))
-		Expect(err).NotTo(HaveOccurred())
-		var root struct {
-			SeverityTriage struct {
-				PrometheusTLSCAFile string `yaml:"prometheusTlsCaFile"`
-			} `yaml:"severityTriage"`
-		}
-		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
-		Expect(root.SeverityTriage.PrometheusTLSCAFile).To(Equal("/etc/ssl/af/service-ca.crt"),
-			"AF severityTriage.prometheusTlsCaFile should preserve the hardcoded default when unset, got %q", root.SeverityTriage.PrometheusTLSCAFile)
+		Expect(root.SeverityTriage.PrometheusTLSCAFile).To(Equal(MonitoringTLSCAFile),
+			"AF severityTriage must use the shared monitoring CA path, got %q", root.SeverityTriage.PrometheusTLSCAFile)
 	})
 
 	It("severityTriage.llm is omitted by default, inheriting AF's agent.llm connection", func() {
@@ -3732,7 +3682,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled:    &enabled,
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 		}
 		cm, err := APIFrontendConfigMap(kn, knV2)
@@ -3742,20 +3692,20 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).To(ContainSubstring("mcpGatewayEndpoint: https://mcp-gateway.example.com/sse"), "apifrontend config should render mcpGatewayEndpoint, got:\n%s", data)
 		Expect(data).To(ContainSubstring("mcpGatewayType: eaigw"), "apifrontend config should render mcpGatewayType, got:\n%s", data)
 		Expect(data).To(ContainSubstring("backend: fleetmetadatacache"), "apifrontend's own checkRRScope path now calls the Backend/Endpoint scope-check adapter (kubernaut#2025/#2022) -- backend must be rendered, not stripped, got:\n%s", data)
-		Expect(data).To(ContainSubstring("endpoint: https://fmc.kubernaut.svc:8443"), "apifrontend fleet block must render endpoint so the scope-check adapter can reach the backend, got:\n%s", data)
+		Expect(data).To(ContainSubstring("endpoint: https://fleetmetadatacache-service.kubernaut-system.svc.cluster.local:8080"), "apifrontend fleet block must render endpoint so the scope-check adapter can reach the backend, got:\n%s", data)
 		Expect(data).To(ContainSubstring("tlsCAFile: "+apifrontendTLSCAFile), "apifrontend fleet block should default the top-level tlsCAFile to AF's own CA mount path when no explicit CA secret is set, got:\n%s", data)
 	})
 
-	It("[IA-5, SC-12] renders tlsCAFile and tokenPath mount paths when the corresponding secrets are set (#464)", func() {
+	It("UT-FLEET-521-RENDER-SECRET-001 [IA-5, SC-12]: renders ACM tlsCAFile and tokenPath resource paths in the APIFrontend ConfigMap", func() {
 		kn := testKubernautWithAF()
 		enabled := true
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &enabled,
 			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{
-				Backend: "acm", Endpoint: "https://acm-search.example.com/graphql",
-				TLS:            &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fmc-ca-bundle"}},
-				TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"},
+				Backend: "acm", ACM: &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "https://acm-search.example.com/graphql",
+					TLS:            &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fmc-ca-bundle"}},
+					TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"}},
 			},
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 		}
@@ -3772,7 +3722,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled:    &enabled,
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 				TokenURL:             "https://keycloak.example.com/token",
@@ -3792,7 +3742,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled:    &enabled,
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 				TokenURL:             "https://keycloak.example.com/token",
@@ -4431,14 +4381,25 @@ var _ = Describe("kaRateLimitFromSpec", func() {
 // component's own Describe block, since this is one CRD field threaded
 // through 6 render sites, not 6 independent features.
 var _ = Describe("Fleet Resilience Config (#390)", func() {
-	newResilienceSpec := func() *kubernautv1alpha2.FleetResilienceSpec {
-		return &kubernautv1alpha2.FleetResilienceSpec{
-			InitialInterval:      "2s",
-			MaxInterval:          "45s",
-			MaxElapsedTime:       "10m",
-			TokenRefreshTimeout:  "15s",
-			ConnectTimeout:       "20s",
-			DiscoverProbeTimeout: "8s",
+	It("omits the shared runtime block when mcpClient is unset", func() {
+		knV2 := &kubernautv1alpha2.Kubernaut{}
+		Expect(resolveMCPClient(knV2)).To(BeNil())
+	})
+
+	It("omits the shared runtime block when mcpClient has no retry or timeout sections", func() {
+		knV2 := &kubernautv1alpha2.Kubernaut{}
+		knV2.Spec.Fleet.MCPClient = &kubernautv1alpha2.FleetMCPClientSpec{}
+		Expect(resolveMCPClient(knV2)).To(BeNil())
+	})
+
+	newMCPClientSpec := func() *kubernautv1alpha2.FleetMCPClientSpec {
+		return &kubernautv1alpha2.FleetMCPClientSpec{
+			Retry: &kubernautv1alpha2.FleetMCPClientRetrySpec{
+				InitialInterval: "2s", MaxInterval: "45s", MaxElapsedTime: "10m",
+			},
+			Timeouts: &kubernautv1alpha2.FleetMCPClientTimeoutsSpec{
+				TokenRefresh: "15s", Connect: "20s", DiscoverProbe: "8s",
+			},
 		}
 	}
 
@@ -4466,7 +4427,7 @@ var _ = Describe("Fleet Resilience Config (#390)", func() {
 
 		It("UT-FLEET-RES-002 [CM-6, SC-5]: renders fleet.resilience.* verbatim in GatewayConfigMap", func() {
 			kn, knV2 := testKubernautWithFleetMCP()
-			knV2.Spec.Fleet.Resilience = newResilienceSpec()
+			knV2.Spec.Fleet.MCPClient = newMCPClientSpec()
 			cm, err := GatewayConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			assertResilienceRendered(cm.Data["config.yaml"])
@@ -4481,7 +4442,7 @@ var _ = Describe("Fleet Resilience Config (#390)", func() {
 
 		It("UT-FLEET-RES-004 [CM-6, SC-5]: renders fleet.resilience.* verbatim in RemediationOrchestratorConfigMap", func() {
 			kn, knV2 := testKubernautWithFleetMCP()
-			knV2.Spec.Fleet.Resilience = newResilienceSpec()
+			knV2.Spec.Fleet.MCPClient = newMCPClientSpec()
 			cm, err := RemediationOrchestratorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			assertResilienceRendered(cm.Data["remediationorchestrator.yaml"])
@@ -4517,7 +4478,7 @@ var _ = Describe("Fleet Resilience Config (#390)", func() {
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &testFleetEnabled,
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
-				Resilience: newResilienceSpec(),
+				MCPClient:  newMCPClientSpec(),
 			}
 			cm, err := APIFrontendConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
@@ -4533,7 +4494,7 @@ var _ = Describe("Fleet Resilience Config (#390)", func() {
 
 		It("UT-FLEET-RES-008 [CM-6, SC-5]: renders fleet.resilience.* verbatim in EffectivenessMonitorConfigMap", func() {
 			kn, knV2 := testKubernautWithFleetMCP()
-			knV2.Spec.Fleet.Resilience = newResilienceSpec()
+			knV2.Spec.Fleet.MCPClient = newMCPClientSpec()
 			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			assertResilienceRendered(cm.Data["effectivenessmonitor.yaml"])
@@ -4550,7 +4511,7 @@ var _ = Describe("Fleet Resilience Config (#390)", func() {
 
 		It("UT-FLEET-RES-010 [CM-6, SC-5]: renders fleet.resilience.* verbatim in SignalProcessingConfigMap", func() {
 			kn, knV2 := testKubernautWithFleetMCP()
-			knV2.Spec.Fleet.Resilience = newResilienceSpec()
+			knV2.Spec.Fleet.MCPClient = newMCPClientSpec()
 			cm, err := SignalProcessingConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			assertResilienceRendered(cm.Data["config.yaml"])
@@ -4568,7 +4529,7 @@ var _ = Describe("Fleet Resilience Config (#390)", func() {
 
 		It("UT-FLEET-RES-012 [CM-6, SC-5]: renders fleet.resilience.* verbatim in WorkflowExecutionConfigMap", func() {
 			kn, knV2 := testKubernautWithFleetMCP()
-			knV2.Spec.Fleet.Resilience = newResilienceSpec()
+			knV2.Spec.Fleet.MCPClient = newMCPClientSpec()
 			knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
 			cm, err := WorkflowExecutionConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
@@ -4586,7 +4547,7 @@ var _ = Describe("Fleet Resilience Config (#390)", func() {
 
 		It("UT-FLEET-RES-014 [CM-6, SC-5]: renders integrations.fleet.resilience.* verbatim in KubernautAgentConfigMap", func() {
 			kn, knV2 := testKubernautWithFleetMCP()
-			knV2.Spec.Fleet.Resilience = newResilienceSpec()
+			knV2.Spec.Fleet.MCPClient = newMCPClientSpec()
 			cm, err := KubernautAgentConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			assertResilienceRendered(cm.Data["config.yaml"])

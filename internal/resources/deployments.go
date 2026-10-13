@@ -437,6 +437,10 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuber
 
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
+	if monitoringVolume := MonitoringTLSVolume(knV2); monitoringVolume != nil {
+		volumes = append(volumes, *monitoringVolume)
+		mounts = append(mounts, MonitoringTLSVolumeMount())
+	}
 	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, knV2, "/etc/effectivenessmonitor", effectiveFleetOAuth2SecretRef(knV2.Spec.EffectivenessMonitor.Fleet, ""))
 	ports := make([]corev1.ContainerPort, 0, 3)
 	ports = append(ports,
@@ -534,6 +538,10 @@ func KubernautAgentDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1
 
 	volumes, mounts, envVars := kaCoreVolumesMountsEnv(kn, kaProfile)
 	volumes, mounts, envVars = appendInterServiceTLSCA(kn, volumes, mounts, envVars)
+	if monitoringVolume := MonitoringTLSVolume(knV2); monitoringVolume != nil {
+		volumes = append(volumes, *monitoringVolume)
+		mounts = append(mounts, MonitoringTLSVolumeMount())
+	}
 	volumes, mounts = AppendTelemetrySecretMounts(knV2.Spec.KubernautAgent.Telemetry, volumes, mounts)
 	volumes, mounts = kaCredentialVolumesAndMounts(kn, kaProfile, volumes, mounts)
 	// #413: upstream KA now reads fleet OAuth2 credentials from the
@@ -862,6 +870,10 @@ func apifrontendBaseVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut) (
 		{Name: "config", MountPath: "/etc/apifrontend", ReadOnly: true},
 		{Name: "tls-server", MountPath: "/etc/apifrontend/tls", ReadOnly: true},
 		{Name: "tls-ca", MountPath: "/etc/apifrontend/tls-ca", ReadOnly: true},
+	}
+	if monitoringVolume := MonitoringTLSVolume(kn); monitoringVolume != nil {
+		volumes = append(volumes, *monitoringVolume)
+		mounts = append(mounts, MonitoringTLSVolumeMount())
 	}
 	if usesOpenShiftServiceCA(kn) {
 		volumes = append(volumes,
@@ -1329,11 +1341,17 @@ func appendFleetSecretMountsVariant(volumes []corev1.Volume, mounts []corev1.Vol
 		return volumes, mounts
 	}
 	if includeBackend {
-		if trust := fleet.ScopeCheck.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
+		var trust *kubernautv1alpha2.FleetTrustSpec
+		var tokenRef *kubernautv1alpha2.SecretKeyRef
+		if fleet.ScopeCheck.ACM != nil {
+			trust = fleet.ScopeCheck.ACM.TLS
+			tokenRef = fleet.ScopeCheck.ACM.TokenSecretRef
+		}
+		if trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
 			volumes = append(volumes, secretKeyVolume("fleet-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
 			mounts = append(mounts, corev1.VolumeMount{Name: "fleet-ca", MountPath: "/etc/fleet-tls/scope-check", ReadOnly: true})
 		}
-		if tokenRef := fleet.ScopeCheck.TokenSecretRef; tokenRef != nil && tokenRef.Name != "" {
+		if tokenRef != nil && tokenRef.Name != "" {
 			volumes = append(volumes, secretKeyVolume("fleet-token", tokenRef.Name, withDefault(tokenRef.Key, "token"), "token"))
 			mounts = append(mounts, corev1.VolumeMount{Name: "fleet-token", MountPath: "/etc/fleet-token", ReadOnly: true})
 		}

@@ -756,4 +756,29 @@ Kubernetes RBAC.
 
 ---
 
+### Monitoring client TLS trust
+
+Prometheus, AlertManager, EffectivenessMonitor, Kubernaut Agent, and API
+Frontend severity-triage share `spec.monitoring.tls`. Select `interService`
+(the default), `system`, or an administrator-owned `secret`/`configMap`:
+
+```yaml
+spec:
+  monitoring:
+    tls:
+      source: secret
+      caCertSecretRef:
+        name: monitoring-ca
+        key: ca.crt
+```
+
+The operator verifies the referenced object and CA PEM before deployment and
+mounts it read-only at `/etc/monitoring-tls/ca.crt`. This is client trust only;
+serving TLS remains under `spec.tls`. Configured monitoring endpoints must use
+`https://`; the operator rejects plaintext monitoring URLs. The removed pre-publication fields
+`monitoring.prometheus.tlsCaFile` and `monitoring.alertManager.tlsCaFile` must
+not be used.
+
+---
+
 Previous: [Infrastructure Prerequisites](01-infrastructure.md) | Next: [Deploy Kubernaut](03-deploy.md)

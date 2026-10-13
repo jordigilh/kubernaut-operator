@@ -523,10 +523,45 @@ var _ = Describe("independent activation and exposure failure decisions", Label(
 })
 
 var _ = Describe("independent activation trust boundaries", Label("unit"), func() {
+	It("UT-FLEET-521-TRUST-001: ignores the absent ACM trust lane for FMC", func() {
+		kn := newMinimalCR()
+		kn.Spec.Fleet = defaultFMCFleetSpec()
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
+		Expect(r.validateFleetTrustSecrets(ctx, kn)).To(Succeed())
+	})
+
+	It("UT-FLEET-521-PREFLIGHT-SECRET-001: validates ACM token Secret existence and selected key before deployment", func() {
+		kn := newMinimalCR()
+		kn.Spec.Fleet = defaultFMCFleetSpec()
+		kn.Spec.Fleet.ScopeCheck.Backend = fleetBackendACM
+		kn.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{
+			Endpoint:       "https://acm-search.example.com/graphql",
+			TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"},
+		}
+		kn.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
+		Expect(r.validateFleetTokenSecret(ctx, kn)).To(MatchError(ContainSubstring("not found")))
+		result, err := r.phaseValidate(ctx, kn, kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(requeueError))
+		Expect(meta.FindStatusCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated).Reason).To(Equal(ReasonFleetTokenSecretInvalid))
+		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "acm-search-token", Namespace: kn.Namespace}, Data: map[string][]byte{"wrong": []byte("token")}}
+		Expect(r.Create(ctx, secret)).To(Succeed())
+		Expect(r.validateFleetTokenSecret(ctx, kn)).To(MatchError(ContainSubstring("missing required key")))
+		secret.Data["token"] = []byte("bearer")
+		Expect(r.Update(ctx, secret)).To(Succeed())
+		Expect(r.validateFleetTokenSecret(ctx, kn)).To(Succeed())
+	})
+
 	It("UT-AUDIT-515-API-015: refuses invalid Fleet trust in either connection lane and accepts only readable CA material", func() {
 		kn := newMinimalCR()
 		kn.Spec.Fleet = defaultFMCFleetSpec()
-		kn.Spec.Fleet.ScopeCheck.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret,
+		kn.Spec.Fleet.ScopeCheck.Backend = fleetBackendACM
+		kn.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{
+			Endpoint:       "https://acm-search.example.com/graphql",
+			TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"},
+		}
+		kn.Spec.Fleet.ScopeCheck.ACM.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret,
 			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "scope-ca"}}
 		kn.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
 		r := businessUnitReconciler(kn, interceptor.Funcs{})

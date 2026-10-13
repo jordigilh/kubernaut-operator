@@ -24,8 +24,8 @@ spec:
   # Federated scope-checking and multi-cluster reads (ADR-068). Disabled by
   # default; nested values may be pre-staged and remain inert until enabled.
   # When enabled, mcpGateway.endpoint/type/namespace and oauth2.tokenURL plus
-  # effective credentials are required. ACM additionally requires
-  # scopeCheck.endpoint and scopeCheck.tokenSecretRef.
+  # effective credentials are required. ACM additionally requires its nested
+  # endpoint and token Secret; FMC derives its endpoint and trust internally.
   fleet:
     enabled: false
     mcpGateway:
@@ -34,15 +34,17 @@ spec:
       namespace: managed-clusters
     scopeCheck:
       backend: fleetmetadatacache
-      endpoint: "https://fleet-metadata-cache.fleet-system.svc.cluster.local:8443" # FMC endpoints must use HTTPS; omit for the operator-managed in-cluster URL
-      # tls:
-      #   source: secret
-      #   caCertSecretRef:
-      #     name: fmc-ca-bundle
-      #     key: ca.crt
-      # tokenSecretRef:
-      #   name: acm-search-token
-      #   key: token
+      # For ACM instead use:
+      # acm:
+      #   endpoint: "https://acm-search.example.com/graphql"
+      #   tls:
+      #     source: secret
+      #     caCertSecretRef:
+      #       name: acm-search-ca
+      #       key: ca.crt
+      #   tokenSecretRef:
+      #     name: acm-search-token
+      #     key: token
     oauth2:
       tokenURL: "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token"
       credentialsSecretRef: fleet-oauth2-creds   # Secret keys: client-id, client-secret
@@ -59,6 +61,17 @@ spec:
     # effectivenessMonitor.fleet.oauth2CredentialsSecretRef /
     # kubernautAgent.fleet.oauth2CredentialsSecretRef (see below) --
     # each falls back to the shared fleet.oauth2.credentialsSecretRef when unset.
+
+    # Shared MCP-client tuning. Every non-empty value is a positive Go duration.
+    # mcpClient:
+    #   retry:
+    #     initialInterval: 1s
+    #     maxInterval: 30s
+    #     maxElapsedTime: 5m
+    #   timeouts:
+    #     tokenRefresh: 10s
+    #     connect: 30s
+    #     discoverProbe: 5s
     # (v1alpha2/F1: these are all nested `fleet:` override blocks now, replacing
     # v1alpha1's flat per-component fleetOAuth2CredentialsSecretRef fields.)
 
@@ -67,8 +80,8 @@ spec:
   # scopeCheck.backend: acm (an
   # existing RHACM Search installation) instead of standing up FMC -- only
   # enable this when scopeCheck.backend: fleetmetadatacache above and you want
-  # the operator to run FMC itself. When enabled with scopeCheck.endpoint left unset,
-  # the operator auto-derives FMC's in-cluster URL.
+  # the operator to run FMC itself. The operator always derives FMC's in-cluster
+  # HTTPS Service URL when it is selected as the scope-check backend.
   # fleetMetadataCache:
   #   fleet:
   #     oauth2CredentialsSecretRef: fmc-oauth2-creds   # optional; overrides fleet.oauth2.credentialsSecretRef for FMC only (namespace scoping is shared via spec.fleet.mcpGateway.namespace, DD-362)
@@ -83,6 +96,16 @@ spec:
   #   prometheus:
   #     enabled: true
   #     url: "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091"
+  #   tls:
+  #     # Shared client trust source for Prometheus, AlertManager, and AF
+  #     # severity-triage. Serving TLS is configured separately under spec.tls.
+  #     source: interService # interService, system, secret, or configMap
+  #     # caCertSecretRef:
+  #     #   name: monitoring-ca
+  #     #   key: ca.crt
+  #     # caCertConfigMapRef:
+  #     #   name: monitoring-ca
+  #     #   key: ca.crt
 
   # Named LLM profiles, referenced by name from kubernautAgent.llmProfileRef,
   # apiFrontend.llmProfileRef, apiFrontend.severityTriage.llmProfileRef, and
