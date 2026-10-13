@@ -184,6 +184,7 @@ test-hack-scripts: yq ## Run fixture-based tests for standalone hack/ shell tool
 	PATH="$(LOCALBIN):$$PATH" bash hack/migrate-llm-profile.test.sh
 	bash hack/verify-ci-boundary.test.sh
 	bash hack/verify-release-qualification.test.sh
+	bash hack/validate-fleet-docs-contract.test.sh
 
 # E2E tests run against a live OCP cluster. Ensure you are logged in (oc login)
 # and IMG points to a registry reachable from the cluster.
