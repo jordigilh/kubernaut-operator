@@ -181,8 +181,7 @@ func testKubernautWithFMC() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Ku
 			Type:     "eaigw",
 		},
 		ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{
-			Backend:  "fleetmetadatacache",
-			Endpoint: "https://fmc.kubernaut.svc:8443",
+			Backend: "fleetmetadatacache",
 		},
 		OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 			TokenURL:             "https://keycloak.example.com/token",

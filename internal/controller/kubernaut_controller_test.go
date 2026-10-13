@@ -625,7 +625,7 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "kuadrant", Namespace: testNamespace},
 				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 					TokenURL:             "https://keycloak.example.com/token",
@@ -761,7 +761,7 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())
 			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 				Enabled:    &enabled,
-				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache", Endpoint: "https://fmc.kubernaut.svc:8443"},
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw", Namespace: testNamespace},
 				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 					TokenURL:             "https://keycloak.example.com/token",

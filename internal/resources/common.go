@@ -691,20 +691,21 @@ func FleetMetadataCacheURL(namespace string) string {
 	return fmt.Sprintf("https://fleetmetadatacache-service.%s.svc.cluster.local:8080", namespace)
 }
 
-// resolveFleetEndpoint returns the effective spec.fleet.scopeCheck.endpoint value.
-// When the user leaves it empty and FMC is active (fleet.enabled=true,
-// scopeCheck.backend=fleetmetadatacache -- KubernautSpec.FleetMetadataCacheEnabled()),
-// the in-cluster FMC service URL is auto-derived -- the whole point of the
-// operator deploying FMC is that Gateway/RemediationOrchestrator don't need
-// the user to separately wire up its address. backend=acm still requires an
-// explicit endpoint (enforced in validation.go). Fleet's entire CRD surface
-// lives in v1alpha2 (Fleet v1alpha2 migration), so this takes knV2 only.
+// resolveFleetEndpoint returns the effective scope-check endpoint. FMC is
+// always operator-managed and derives its HTTPS Service URL; ACM uses the
+// provider block's endpoint.
 func resolveFleetEndpoint(knV2 *kubernautv1alpha2.Kubernaut) string {
 	fleet := &knV2.Spec.Fleet
-	if fleet.ScopeCheck.Endpoint == "" && knV2.Spec.FleetMetadataCacheEnabled() {
+	if fleet.Enabled == nil || !*fleet.Enabled {
+		return ""
+	}
+	if knV2.Spec.FleetMetadataCacheEnabled() {
 		return FleetMetadataCacheURL(knV2.Namespace)
 	}
-	return fleet.ScopeCheck.Endpoint
+	if fleet.ScopeCheck.ACM == nil {
+		return ""
+	}
+	return fleet.ScopeCheck.ACM.Endpoint
 }
 
 // effectiveFleetOAuth2SecretRef resolves a component's nilable Fleet

@@ -145,15 +145,11 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 		Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("resilience:"), "FMC config should omit mcpGateway.resilience when spec.fleet.resilience is unset, got:\n%s", cm.Data["config.yaml"])
 	})
 
-	It("UT-FLEET-RES-016 [CM-6, SC-5]: renders mcpGateway.resilience.* verbatim from spec.fleet.resilience", func() {
+	It("UT-FLEET-521-MCPCLIENT-001 [CM-6, SC-5]: renders mcpGateway.resilience.* from spec.fleet.mcpClient", func() {
 		kn, knV2 := testKubernautWithFMC()
-		knV2.Spec.Fleet.Resilience = &kubernautv1alpha2.FleetResilienceSpec{
-			InitialInterval:      "2s",
-			MaxInterval:          "45s",
-			MaxElapsedTime:       "10m",
-			TokenRefreshTimeout:  "15s",
-			ConnectTimeout:       "20s",
-			DiscoverProbeTimeout: "8s",
+		knV2.Spec.Fleet.MCPClient = &kubernautv1alpha2.FleetMCPClientSpec{
+			Retry:    &kubernautv1alpha2.FleetMCPClientRetrySpec{InitialInterval: "2s", MaxInterval: "45s", MaxElapsedTime: "10m"},
+			Timeouts: &kubernautv1alpha2.FleetMCPClientTimeoutsSpec{TokenRefresh: "15s", Connect: "20s", DiscoverProbe: "8s"},
 		}
 		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
@@ -494,30 +490,26 @@ var _ = Describe("isComponentActive for FleetMetadataCache", func() {
 // fleet.endpoint) is exercised here too since it is the mechanism tying
 // FMC's own service URL to spec.fleet.scopeCheck.endpoint auto-derivation.
 var _ = Describe("resolveFleetEndpoint", func() {
-	It("auto-derives the in-cluster FMC URL when backend=fleetmetadatacache and FMC is operator-managed", func() {
+	It("UT-FLEET-521-FMC-001: auto-derives the in-cluster FMC URL when backend=fleetmetadatacache and FMC is operator-managed", func() {
 		kn, knV2 := testKubernautWithFMC()
-		knV2.Spec.Fleet.ScopeCheck.Endpoint = ""
 		Expect(resolveFleetEndpoint(knV2)).To(Equal(FleetMetadataCacheURL(kn.Namespace)))
 	})
 
-	It("leaves an explicit endpoint untouched", func() {
+	It("does not expose a user-configurable FMC endpoint", func() {
 		_, knV2 := testKubernautWithFMC()
-		knV2.Spec.Fleet.ScopeCheck.Endpoint = "https://byo-fmc.example.com"
-		Expect(resolveFleetEndpoint(knV2)).To(Equal("https://byo-fmc.example.com"))
+		Expect(resolveFleetEndpoint(knV2)).To(Equal(FleetMetadataCacheURL(knV2.Namespace)))
 	})
 
 	It("does not auto-derive when fleet.enabled is false", func() {
 		_, knV2 := testKubernautWithFMC()
 		f := false
-		knV2.Spec.Fleet.ScopeCheck.Endpoint = ""
 		knV2.Spec.Fleet.Enabled = &f
 		Expect(resolveFleetEndpoint(knV2)).To(Equal(""))
 	})
 
 	It("does not auto-derive when backend=acm even if FMC is enabled", func() {
 		_, knV2 := testKubernautWithFMC()
-		knV2.Spec.Fleet.ScopeCheck.Backend = "acm"
-		knV2.Spec.Fleet.ScopeCheck.Endpoint = ""
+		knV2.Spec.Fleet.ScopeCheck.Backend = fleetBackendACM
 		Expect(resolveFleetEndpoint(knV2)).To(Equal(""))
 	})
 })

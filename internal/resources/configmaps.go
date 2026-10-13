@@ -253,7 +253,7 @@ type fleetConfigYAML struct {
 // field is a Go duration string and omitempty: unset fields let the
 // consuming service's own mcpclient.DefaultResilienceConfig() supply its
 // existing hardcoded default unchanged. Shared by all 6 render sites
-// (resolveFleetResilience below); named distinctly from the pre-existing
+// (resolveMCPClient below); named distinctly from the pre-existing
 // afResilienceYAML (API Frontend's per-dependency Prometheus
 // circuit-breaker config, issue #1839) -- two unrelated "resilience"
 // concepts in this same file.
@@ -266,25 +266,34 @@ type fleetResilienceYAML struct {
 	DiscoverProbeTimeout string `json:"discoverProbeTimeout,omitempty" yaml:"discoverProbeTimeout,omitempty"`
 }
 
-// resolveFleetResilience builds the shared resilience: block rendered by
-// every fleet-aware component from spec.fleet.resilience (#390). Returns
+// resolveMCPClient builds the shared resilience: block rendered by
+// every fleet-aware component from spec.fleet.mcpClient (#390). Returns
 // nil when unset (or the CRD field is nil) so the key is omitted entirely,
 // matching every sibling fleet sub-block's zero-value-safe precedent
 // (fleet.oauth2, fleet.tokenPath, etc.) -- the consuming service's own
 // mcpclient.DefaultResilienceConfig() then supplies unchanged defaults.
-func resolveFleetResilience(knV2 *kubernautv1alpha2.Kubernaut) *fleetResilienceYAML {
-	r := knV2.Spec.Fleet.Resilience
-	if r == nil {
+func resolveMCPClient(knV2 *kubernautv1alpha2.Kubernaut) *fleetResilienceYAML {
+	client := knV2.Spec.Fleet.MCPClient
+	if client == nil {
 		return nil
 	}
-	return &fleetResilienceYAML{
-		InitialInterval:      r.InitialInterval,
-		MaxInterval:          r.MaxInterval,
-		MaxElapsedTime:       r.MaxElapsedTime,
-		TokenRefreshTimeout:  r.TokenRefreshTimeout,
-		ConnectTimeout:       r.ConnectTimeout,
-		DiscoverProbeTimeout: r.DiscoverProbeTimeout,
+	r := client.Retry
+	t := client.Timeouts
+	if r == nil && t == nil {
+		return nil
 	}
+	result := &fleetResilienceYAML{}
+	if r != nil {
+		result.InitialInterval = r.InitialInterval
+		result.MaxInterval = r.MaxInterval
+		result.MaxElapsedTime = r.MaxElapsedTime
+	}
+	if t != nil {
+		result.TokenRefreshTimeout = t.TokenRefresh
+		result.ConnectTimeout = t.Connect
+		result.DiscoverProbeTimeout = t.DiscoverProbe
+	}
+	return result
 }
 
 // fleetOAuth2YAML mirrors upstream pkg/fleet.FleetOAuth2Config. CredentialsSecretRef
@@ -374,10 +383,16 @@ func resolveFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefO
 		Endpoint:           resolveFleetEndpoint(knV2),
 		MCPGatewayEndpoint: fleet.MCPGateway.Endpoint,
 		MCPGatewayType:     fleet.MCPGateway.Type,
-		Resilience:         resolveFleetResilience(knV2),
+		Resilience:         resolveMCPClient(knV2),
 	}
-	cfg.TLSCAFile = resolveFleetTrustCAFile(fleet.ScopeCheck.TLS, defaultOAuth2CAFile, fleetCAMountPath)
-	if fleet.ScopeCheck.TokenSecretRef != nil && fleet.ScopeCheck.TokenSecretRef.Name != "" {
+	var scopeTLS *kubernautv1alpha2.FleetTrustSpec
+	var tokenRef *kubernautv1alpha2.SecretKeyRef
+	if fleet.ScopeCheck.ACM != nil {
+		scopeTLS = fleet.ScopeCheck.ACM.TLS
+		tokenRef = fleet.ScopeCheck.ACM.TokenSecretRef
+	}
+	cfg.TLSCAFile = resolveFleetTrustCAFile(scopeTLS, defaultOAuth2CAFile, fleetCAMountPath)
+	if tokenRef != nil && tokenRef.Name != "" {
 		cfg.TokenPath = fleetTokenMountPath
 	}
 	cfg.OAuth2 = &fleetOAuth2YAML{
@@ -615,7 +630,7 @@ func resolveSignalProcessingFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) *sign
 		Endpoint:       fleet.MCPGateway.Endpoint,
 		MCPGatewayType: fleet.MCPGateway.Type,
 		Namespace:      fleet.MCPGateway.Namespace,
-		Resilience:     resolveFleetResilience(knV2),
+		Resilience:     resolveMCPClient(knV2),
 	}
 	cfg.OAuth2 = &fleetOAuth2YAML{
 		Enabled:              true,
@@ -771,7 +786,7 @@ func resolveWEFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, defaultOAuth2CAFile
 	}
 	cfg := &weFleetYAML{
 		Endpoint:   fleet.MCPGateway.Endpoint,
-		Resilience: resolveFleetResilience(knV2),
+		Resilience: resolveMCPClient(knV2),
 		OAuth2: &fleetOAuth2YAML{
 			Enabled:              true,
 			TokenURL:             fleet.OAuth2.TokenURL,
@@ -1089,7 +1104,7 @@ func resolveKAFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) *kaFleetYAML {
 	cfg := &kaFleetYAML{
 		Endpoint:    fleet.MCPGateway.Endpoint,
 		GatewayType: fleet.MCPGateway.Type,
-		Resilience:  resolveFleetResilience(knV2),
+		Resilience:  resolveMCPClient(knV2),
 		OAuth2: &kaFleetOAuth2YAML{
 			Enabled:              true,
 			TokenURL:             fleet.OAuth2.TokenURL,

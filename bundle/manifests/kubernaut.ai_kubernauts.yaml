@@ -1,9 +1,9 @@
----
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
+  creationTimestamp: null
   name: kubernauts.kubernaut.ai
 spec:
   group: kubernaut.ai
@@ -1234,13 +1234,54 @@ spec:
                 type: object
               fleet:
                 description: |-
-                  Fleet configures nested MCP Gateway, scope-check, OAuth2, and resilience
+                  Fleet configures nested MCP Gateway, provider-scoped scope-check, OAuth2, and MCP-client
                   settings for federated reads and scope-checking (ADR-068).
                 properties:
                   enabled:
                     default: false
                     description: Whether Fleet federation is enabled.
                     type: boolean
+                  mcpClient:
+                    description: MCPClient overrides shared MCP client retry and timeout
+                      behavior.
+                    properties:
+                      retry:
+                        description: Retry configures startup connection backoff.
+                        properties:
+                          initialInterval:
+                            description: |-
+                              InitialInterval is the starting backoff interval for startup
+                              connection retries.
+                            type: string
+                          maxElapsedTime:
+                            description: |-
+                              MaxElapsedTime is the total time budget before giving up on startup
+                              connection retries.
+                            type: string
+                          maxInterval:
+                            description: |-
+                              MaxInterval is the maximum backoff interval between startup
+                              connection retries.
+                            type: string
+                        type: object
+                      timeouts:
+                        description: Timeouts configures MCP operation timeouts.
+                        properties:
+                          connect:
+                            description: Connect bounds each individual MCP connect
+                              attempt.
+                            type: string
+                          discoverProbe:
+                            description: |-
+                              DiscoverProbe bounds the SEP-2575 "server/discover" probe
+                              independently of ConnectTimeout (kubernaut#2262).
+                            type: string
+                          tokenRefresh:
+                            description: TokenRefresh bounds each OAuth2 token refresh
+                              HTTP call.
+                            type: string
+                        type: object
+                    type: object
                   mcpGateway:
                     description: MCP Gateway connection shared by all Fleet-aware
                       components.
@@ -1310,42 +1351,65 @@ spec:
                         description: OAuth2 token endpoint URL.
                         type: string
                     type: object
-                  resilience:
-                    description: Resilience overrides shared MCP client retry and
-                      timeout behavior.
-                    properties:
-                      connectTimeout:
-                        description: ConnectTimeout bounds each individual MCP connect
-                          attempt.
-                        type: string
-                      discoverProbeTimeout:
-                        description: |-
-                          DiscoverProbeTimeout bounds the SEP-2575 "server/discover" probe
-                          independently of ConnectTimeout (kubernaut#2262).
-                        type: string
-                      initialInterval:
-                        description: |-
-                          InitialInterval is the starting backoff interval for startup
-                          connection retries.
-                        type: string
-                      maxElapsedTime:
-                        description: |-
-                          MaxElapsedTime is the total time budget before giving up on startup
-                          connection retries.
-                        type: string
-                      maxInterval:
-                        description: |-
-                          MaxInterval is the maximum backoff interval between startup
-                          connection retries.
-                        type: string
-                      tokenRefreshTimeout:
-                        description: TokenRefreshTimeout bounds each OAuth2 token
-                          refresh HTTP call.
-                        type: string
-                    type: object
                   scopeCheck:
                     description: Scope-check backend and its trust/token references.
                     properties:
+                      acm:
+                        description: |-
+                          ACM configures the BYO ACM Search GraphQL scope-check provider. It must
+                          be absent when Backend selects the operator-managed FMC provider.
+                        properties:
+                          endpoint:
+                            description: ACM Search GraphQL endpoint. Must be an absolute
+                              HTTPS URL when Fleet is active.
+                            type: string
+                          tls:
+                            description: ACM endpoint trust source. Omitted defaults
+                              to interService.
+                            properties:
+                              caCertSecretRef:
+                                description: Secret/key containing CA PEM when source=secret.
+                                properties:
+                                  key:
+                                    default: ca.crt
+                                    description: Key within the Secret containing
+                                      the CA PEM.
+                                    type: string
+                                  name:
+                                    description: Name of the Secret.
+                                    type: string
+                                required:
+                                - name
+                                type: object
+                              caFile:
+                                description: Absolute path to administrator-provided
+                                  CA material when source=file.
+                                type: string
+                              source:
+                                description: Source of the CA bundle. Omitted defaults
+                                  to interService.
+                                enum:
+                                - interService
+                                - system
+                                - file
+                                - secret
+                                type: string
+                            type: object
+                          tokenSecretRef:
+                            description: ACM Search bearer-token Secret. The default
+                              key is token.
+                            properties:
+                              key:
+                                default: token
+                                description: 'Key within the Secret. Default: "token".'
+                                type: string
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        type: object
                       backend:
                         description: |-
                           Scope-check backend. fleetmetadatacache selects the operator-managed FMC
@@ -1354,57 +1418,6 @@ spec:
                         - fleetmetadatacache
                         - acm
                         type: string
-                      endpoint:
-                        description: |-
-                          Backend endpoint. FMC derives this when omitted; ACM requires it. FMC
-                          endpoints must use HTTPS.
-                        type: string
-                      tls:
-                        description: Backend CA trust source. Omitted defaults to
-                          interService.
-                        properties:
-                          caCertSecretRef:
-                            description: Secret/key containing CA PEM when source=secret.
-                            properties:
-                              key:
-                                default: ca.crt
-                                description: Key within the Secret containing the
-                                  CA PEM.
-                                type: string
-                              name:
-                                description: Name of the Secret.
-                                type: string
-                            required:
-                            - name
-                            type: object
-                          caFile:
-                            description: Absolute path to administrator-provided CA
-                              material when source=file.
-                            type: string
-                          source:
-                            description: Source of the CA bundle. Omitted defaults
-                              to interService.
-                            enum:
-                            - interService
-                            - system
-                            - file
-                            - secret
-                            type: string
-                        type: object
-                      tokenSecretRef:
-                        description: ACM Search bearer-token Secret. The default key
-                          is token.
-                        properties:
-                          key:
-                            default: token
-                            description: 'Key within the Secret. Default: "token".'
-                            type: string
-                          name:
-                            description: Name of the Secret.
-                            type: string
-                        required:
-                        - name
-                        type: object
                     type: object
                 type: object
               fleetMetadataCache:
@@ -4054,3 +4067,9 @@ spec:
     storage: true
     subresources:
       status: {}
+status:
+  acceptedNames:
+    kind: ""
+    plural: ""
+  conditions: null
+  storedVersions: null
