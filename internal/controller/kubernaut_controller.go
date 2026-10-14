@@ -19,10 +19,13 @@ package controller
 import (
 	"bytes"
 	"context"
+	cryptotls "crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"strings"
 	"time"
 
@@ -59,6 +62,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	sigsyaml "sigs.k8s.io/yaml"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/policy"
@@ -385,7 +389,7 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 	return ctrl.Result{}, r.patchStatus(ctx, kn, func() {
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 			Type: kubernautv1alpha2.ConditionBYOValidated, Status: metav1.ConditionTrue,
-			Reason: ReasonSecretsValid, Message: "BYO PostgreSQL and Valkey secrets are valid",
+			Reason: ReasonSecretsValid, Message: "pre-created startup configuration and database/cache inputs are valid",
 			ObservedGeneration: kn.Generation,
 		})
 		platformMessage := "generic Kubernetes capabilities detected; optional OpenShift and monitoring APIs are not required"
@@ -3079,24 +3083,51 @@ func (r *KubernautReconciler) validatePrecreatedReference(
 
 func validatePrecreatedConfigMapKeys(configMap *corev1.ConfigMap, reference precreatedReference) error {
 	for _, key := range reference.requiredKeys {
-		if value, ok := configMap.Data[key]; ok {
-			if value == "" {
+		var value []byte
+		if stringValue, ok := configMap.Data[key]; ok {
+			if stringValue == "" {
 				return fmt.Errorf("%s: ConfigMap %q key %q is empty", reference.path, reference.name, key)
 			}
-			continue
-		}
-		if value, ok := configMap.BinaryData[key]; ok {
-			if len(value) == 0 {
+			value = []byte(stringValue)
+		} else if binaryValue, ok := configMap.BinaryData[key]; ok {
+			if len(binaryValue) == 0 {
 				return fmt.Errorf("%s: ConfigMap %q key %q is empty", reference.path, reference.name, key)
 			}
-			continue
+			value = binaryValue
+		} else {
+			return fmt.Errorf("%s: ConfigMap %q is missing required key %q", reference.path, reference.name, key)
 		}
-		return fmt.Errorf("%s: ConfigMap %q is missing required key %q", reference.path, reference.name, key)
+		if err := validatePrecreatedConfigMapValue(reference, key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validatePrecreatedConfigMapValue(reference precreatedReference, key string, value []byte) error {
+	trimmed := bytes.TrimSpace(value)
+	switch key {
+	case "approval.rego", "policy.rego":
+		for _, line := range strings.Split(string(trimmed), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "package ") {
+				return nil
+			}
+		}
+		return fmt.Errorf("%s: ConfigMap %q key %q must contain a Rego package declaration", reference.path, reference.name, key)
+	case "llm-runtime.yaml", "proactive-signal-mappings.yaml", "routing.yaml":
+		var document map[string]json.RawMessage
+		if err := sigsyaml.Unmarshal(trimmed, &document); err != nil {
+			return fmt.Errorf("%s: ConfigMap %q key %q contains invalid YAML: %w", reference.path, reference.name, key, err)
+		}
+		if len(document) == 0 {
+			return fmt.Errorf("%s: ConfigMap %q key %q must contain a YAML object", reference.path, reference.name, key)
+		}
 	}
 	return nil
 }
 
 func validatePrecreatedSecretKeys(secret *corev1.Secret, reference precreatedReference) error {
+	values := make(map[string][]byte, len(reference.requiredKeys))
 	for _, key := range reference.requiredKeys {
 		value, ok := secret.Data[key]
 		if !ok {
@@ -3104,6 +3135,30 @@ func validatePrecreatedSecretKeys(secret *corev1.Secret, reference precreatedRef
 		}
 		if len(value) == 0 {
 			return fmt.Errorf("%s: Secret %q key %q is empty", reference.path, reference.name, key)
+		}
+		values[key] = value
+	}
+	if value, ok := values["credentials.json"]; ok && !json.Valid(value) {
+		return fmt.Errorf("%s: Secret %q key %q contains invalid JSON", reference.path, reference.name, "credentials.json")
+	}
+	if value, ok := values["ca.crt"]; ok {
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(value) {
+			return fmt.Errorf("%s: Secret %q key %q does not contain valid CA PEM", reference.path, reference.name, "ca.crt")
+		}
+	}
+	if cert, certOK := values[corev1.TLSCertKey]; certOK {
+		key, keyOK := values[corev1.TLSPrivateKeyKey]
+		if keyOK {
+			if _, err := cryptotls.X509KeyPair(cert, key); err != nil {
+				return fmt.Errorf("%s: Secret %q contains an invalid TLS certificate/key pair: %w", reference.path, reference.name, err)
+			}
+		}
+	}
+	if value, ok := values["webhook-url"]; ok {
+		parsed, err := url.ParseRequestURI(string(value))
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("%s: Secret %q key %q must contain a valid URL", reference.path, reference.name, "webhook-url")
 		}
 	}
 	return nil
@@ -4641,9 +4696,11 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&discoveryv1.EndpointSlice{}, handler.EnqueueRequestsFromMapFunc(r.monitoringObjectToKubernaut)).
 		Owns(&corev1.ConfigMap{}).
 		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.telemetryAmbientConfigMapToKubernaut)).
+		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.precreatedConfigurationToKubernaut)).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&corev1.Secret{}).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.telemetrySecretToKubernaut)).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.precreatedConfigurationToKubernaut)).
 		Owns(&batchv1.Job{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Owns(&networkingv1.Ingress{}).
@@ -4668,6 +4725,49 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return b.Named("kubernaut").
 		Complete(r)
+}
+
+// precreatedConfigurationToKubernaut maps changes to administrator-owned
+// ConfigMaps and Secrets referenced by the singleton. Owns() cannot observe
+// these objects because the operator deliberately does not adopt them.
+func (r *KubernautReconciler) precreatedConfigurationToKubernaut(ctx context.Context, object client.Object) []reconcile.Request {
+	if object == nil {
+		return nil
+	}
+	var referenceKind precreatedReferenceKind
+	switch object.(type) {
+	case *corev1.ConfigMap:
+		referenceKind = precreatedConfigMapReference
+	case *corev1.Secret:
+		referenceKind = precreatedSecretReference
+	default:
+		return nil
+	}
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	instances := &kubernautv1alpha2.KubernautList{}
+	if err := reader.List(ctx, instances); err != nil {
+		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for pre-created configuration event",
+			"kind", string(referenceKind), "name", object.GetName(), "namespace", object.GetNamespace())
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(instances.Items))
+	for index := range instances.Items {
+		kn := &instances.Items[index]
+		if kn.Namespace != object.GetNamespace() {
+			continue
+		}
+		references, _ := precreatedConfigurationReferences(kn)
+		for _, reference := range references {
+			if reference.kind == referenceKind && reference.name == object.GetName() {
+				requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)})
+				break
+			}
+		}
+	}
+	return requests
 }
 
 func monitoringResourceSupported(mapper meta.RESTMapper, kind string) bool {
