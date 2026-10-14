@@ -513,6 +513,7 @@ type dataStorageConfigYAML struct {
 	Logging                  dataStorageLoggingYAML    `json:"logging" yaml:"logging"`
 	EndpointPropagationDelay string                    `json:"endpointPropagationDelay,omitempty" yaml:"endpointPropagationDelay,omitempty"`
 	Retention                *dataStorageRetentionYAML `json:"retention,omitempty" yaml:"retention,omitempty"`
+	Audit                    *dataStorageAuditYAML     `json:"audit" yaml:"audit"`
 	Telemetry                *telemetryYAML            `json:"telemetry,omitempty" yaml:"telemetry,omitempty"`
 	Debug                    debugYAML                 `json:"debug" yaml:"debug"`
 }
@@ -522,6 +523,11 @@ type dataStorageRetentionYAML struct {
 	Interval    string `json:"interval" yaml:"interval"`
 	BatchSize   int    `json:"batchSize" yaml:"batchSize"`
 	DefaultDays int    `json:"defaultDays" yaml:"defaultDays"`
+}
+
+type dataStorageAuditYAML struct {
+	HashKeySecretsFile string `json:"hashKeySecretsFile" yaml:"hashKeySecretsFile"`
+	HashKeyKey         string `json:"hashKeyKey" yaml:"hashKeyKey"`
 }
 
 type dataStorageBufferYAML struct {
@@ -1329,6 +1335,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 	o := resolveOpts(opts)
 	pgPort := PostgreSQLPort(kn)
 	pgHost := kn.Spec.PostgreSQL.Host
+	auditHashKey := DataStorageAuditHashKeyReferenceFor(knV2)
 	cfg := dataStorageConfigYAML{
 		TLSProfile: o.tlsProfile,
 		Server:     dataStorageServerConfig(kn, knV2),
@@ -1368,8 +1375,12 @@ func DataStorageConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 		},
 		EndpointPropagationDelay: withDefault(kn.Spec.DataStorage.EndpointPropagationDelay, "10s"),
 		Retention:                dataStorageRetentionConfig(kn),
-		Telemetry:                resolveTelemetryConfig(knV2.Spec.DataStorage.Telemetry),
-		Debug:                    debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
+		Audit: &dataStorageAuditYAML{
+			HashKeySecretsFile: DataStorageAuditHashKeySecretsFile,
+			HashKeyKey:         auditHashKey.SecretKey,
+		},
+		Telemetry: resolveTelemetryConfig(knV2.Spec.DataStorage.Telemetry),
+		Debug:     debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
 	return yamlConfigMap(ObjectMeta(kn, "datastorage-config", ComponentDataStorage), "config.yaml", "datastorage config", cfg)
 }

@@ -874,6 +874,25 @@ spec:
               dataStorage:
                 description: DataStorage service settings.
                 properties:
+                  auditHashKey:
+                    description: |-
+                      AuditHashKey configures the mandatory keyed HMAC-SHA256 audit hash chain
+                      (FedRAMP AU-9, SOC 2 CC8.1). When ExistingSecret is empty, the operator
+                      creates and preserves a stable Secret automatically. When set, the named
+                      administrator-managed Secret is validated and mounted read-only.
+                    properties:
+                      existingSecret:
+                        description: |-
+                          ExistingSecret names an administrator-managed Secret. When empty, the
+                          operator provisions the stable default Secret.
+                        type: string
+                      secretKey:
+                        default: hmacKey
+                        description: SecretKey is the key inside the mounted audit
+                          YAML file.
+                        pattern: ^[A-Za-z0-9._-]+$
+                        type: string
+                    type: object
                   database:
                     description: |-
                       Database connection-pool tuning for the DataStorage PostgreSQL

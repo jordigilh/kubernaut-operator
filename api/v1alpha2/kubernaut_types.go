@@ -2399,6 +2399,13 @@ type DataStorageSpec struct {
 	// +optional
 	SigningCert *SigningCertSpec `json:"signingCert,omitempty"`
 
+	// AuditHashKey configures the mandatory keyed HMAC-SHA256 audit hash chain
+	// (FedRAMP AU-9, SOC 2 CC8.1). When ExistingSecret is empty, the operator
+	// creates and preserves a stable Secret automatically. When set, the named
+	// administrator-managed Secret is validated and mounted read-only.
+	// +optional
+	AuditHashKey *DataStorageAuditHashKeySpec `json:"auditHashKey,omitempty"`
+
 	// OpenTelemetry distributed-trace export configuration. Off by default.
 	// +optional
 	Telemetry TelemetrySpec `json:"telemetry,omitempty"`
@@ -2413,6 +2420,23 @@ type DataStorageSpec struct {
 	// When unset, defaults match the operator's prior hardcoded behavior (#260).
 	// +optional
 	Server *DataStorageServerSpec `json:"server,omitempty"`
+}
+
+// DataStorageAuditHashKeySpec configures the DataStorage audit HMAC key source.
+// The operator always enables the keyed audit chain; this type provides only
+// the optional administrator-managed Secret override and the key name inside
+// the mounted YAML file.
+type DataStorageAuditHashKeySpec struct {
+	// ExistingSecret names an administrator-managed Secret. When empty, the
+	// operator provisions the stable default Secret.
+	// +optional
+	ExistingSecret string `json:"existingSecret,omitempty"`
+
+	// SecretKey is the key inside the mounted audit YAML file.
+	// +kubebuilder:default="hmacKey"
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9._-]+$`
+	// +optional
+	SecretKey string `json:"secretKey,omitempty"`
 }
 
 // DataStorageDatabaseSpec configures DataStorage's PostgreSQL connection pool.
