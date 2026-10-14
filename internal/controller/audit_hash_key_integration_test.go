@@ -223,4 +223,55 @@ var _ = Describe("DataStorage audit HMAC reconciliation wiring", func() {
 		}
 		Expect(foundReadOnlyMount).To(BeTrue())
 	})
+
+	It("IT-AUDIT-209-INT-008 [AC-6, AU-9, ASVS v5.0.0-V13.3.2/V16.5.2] rejects a foreign Secret during provisioning recovery", func() {
+		createBYOSecrets(ctx)
+		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		r := newReconciler()
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+		Expect(err).NotTo(HaveOccurred())
+		current := fetchKnV2(ctx)
+		ref := resources.DataStorageAuditHashKeyReferenceFor(current)
+		state := resources.DataStorageAuditHashKeyStateConfigMap(current, ref)
+		state.Data[resources.DataStorageAuditHashKeyStatePhaseKey] = resources.DataStorageAuditHashKeyStateProvisioning
+		resources.StampOwnership(current, state)
+		Expect(k8sClient.Create(ctx, state)).To(Succeed())
+		Expect(k8sClient.Create(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: ref.SecretName, Namespace: testNamespace},
+			Data:       map[string][]byte{resources.DataStorageAuditHashKeySecretDataKey: []byte("hmacKey: " + strings.Repeat("f", 32))},
+		})).To(Succeed())
+		_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+		Expect(err).NotTo(HaveOccurred())
+		current = fetchKnV2(ctx)
+		condition := meta.FindStatusCondition(current.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
+		Expect(condition).NotTo(BeNil())
+		Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+		Expect(condition.Reason).To(Equal(ReasonAuditHashKeyInvalid))
+	})
+
+	It("IT-AUDIT-209-INT-009 [AU-9, CC8.1, ASVS v5.0.0-V11.1.1] blocks a changed BYO key after commitment", func() {
+		createBYOSecrets(ctx)
+		kn := newCRWithRouteDisabled()
+		kn.Spec.DataStorage.AuditHashKey = &kubernautv1alpha2.DataStorageAuditHashKeySpec{ExistingSecret: "customer-audit-key"}
+		customerSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "customer-audit-key", Namespace: testNamespace},
+			Data:       map[string][]byte{resources.DataStorageAuditHashKeySecretDataKey: []byte("hmacKey: " + strings.Repeat("x", 32))},
+		}
+		Expect(k8sClient.Create(ctx, customerSecret)).To(Succeed())
+		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
+		r := newReconciler()
+		for range 2 {
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+		}
+		customerSecret.Data[resources.DataStorageAuditHashKeySecretDataKey] = []byte("hmacKey: " + strings.Repeat("y", 32))
+		Expect(k8sClient.Update(ctx, customerSecret)).To(Succeed())
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+		Expect(err).NotTo(HaveOccurred())
+		current := fetchKnV2(ctx)
+		condition := meta.FindStatusCondition(current.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
+		Expect(condition).NotTo(BeNil())
+		Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+		Expect(condition.Reason).To(Equal(ReasonAuditHashKeyInvalid))
+	})
 })
