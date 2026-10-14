@@ -3065,28 +3065,49 @@ func (r *KubernautReconciler) validatePrecreatedReference(
 		if err := r.Get(ctx, objectKey, configMap); err != nil {
 			return fmt.Errorf("%s: ConfigMap %q could not be read: %w", reference.path, reference.name, err)
 		}
-		for _, key := range reference.requiredKeys {
-			if _, ok := configMap.Data[key]; !ok {
-				return fmt.Errorf("%s: ConfigMap %q is missing required key %q", reference.path, reference.name, key)
-			}
-		}
+		return validatePrecreatedConfigMapKeys(configMap, reference)
 	case precreatedSecretReference:
 		secret := &corev1.Secret{}
 		if err := r.Get(ctx, objectKey, secret); err != nil {
 			return fmt.Errorf("%s: Secret %q could not be read: %w", reference.path, reference.name, err)
 		}
-		for _, key := range reference.requiredKeys {
-			if _, ok := secret.Data[key]; !ok {
-				return fmt.Errorf("%s: Secret %q is missing required key %q", reference.path, reference.name, key)
-			}
-		}
+		return validatePrecreatedSecretKeys(secret, reference)
 	default:
 		return fmt.Errorf("%s: unsupported pre-created reference kind %q", reference.path, reference.kind)
+	}
+}
+
+func validatePrecreatedConfigMapKeys(configMap *corev1.ConfigMap, reference precreatedReference) error {
+	for _, key := range reference.requiredKeys {
+		if value, ok := configMap.Data[key]; ok {
+			if value == "" {
+				return fmt.Errorf("%s: ConfigMap %q key %q is empty", reference.path, reference.name, key)
+			}
+			continue
+		}
+		if value, ok := configMap.BinaryData[key]; ok {
+			if len(value) == 0 {
+				return fmt.Errorf("%s: ConfigMap %q key %q is empty", reference.path, reference.name, key)
+			}
+			continue
+		}
+		return fmt.Errorf("%s: ConfigMap %q is missing required key %q", reference.path, reference.name, key)
 	}
 	return nil
 }
 
-const precreatedDefaultTokenKey = "token"
+func validatePrecreatedSecretKeys(secret *corev1.Secret, reference precreatedReference) error {
+	for _, key := range reference.requiredKeys {
+		value, ok := secret.Data[key]
+		if !ok {
+			return fmt.Errorf("%s: Secret %q is missing required key %q", reference.path, reference.name, key)
+		}
+		if len(value) == 0 {
+			return fmt.Errorf("%s: Secret %q key %q is empty", reference.path, reference.name, key)
+		}
+	}
+	return nil
+}
 
 type precreatedReferenceCollector struct {
 	references []precreatedReference
@@ -3150,13 +3171,7 @@ func appendPrecreatedFeatureSecretReferences(c *precreatedReferenceCollector, kn
 	if name := kn.Spec.Notification.Slack.SecretName; name != "" {
 		c.add(precreatedSecretReference, "spec.notification.slack.secretName", name, "webhook-url")
 	}
-	if kn.Spec.GatewayEnabled() {
-		if name := kn.Spec.Gateway.AlertManagerTokenSecretName; name != "" {
-			c.add(precreatedSecretReference, "spec.gateway.alertManagerTokenSecretName", name, precreatedDefaultTokenKey)
-		}
-	}
 	appendPrecreatedConsoleSecret(c, kn)
-	appendPrecreatedAnsibleSecrets(c, kn)
 	appendPrecreatedValkeyTLSSecrets(c, kn)
 }
 
@@ -3166,29 +3181,6 @@ func appendPrecreatedConsoleSecret(c *precreatedReferenceCollector, kn *kubernau
 	}
 	c.add(precreatedSecretReference, "spec.console.auth.secretName", kn.Spec.Console.Auth.SecretName,
 		"client-id", "client-secret", "cookie-secret")
-}
-
-func appendPrecreatedAnsibleSecrets(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
-	ansible := kn.Spec.WorkflowExecution.Ansible
-	if !ansible.Enabled {
-		return
-	}
-	if ansible.TokenSecretRef == nil {
-		c.addError(fmt.Errorf("spec.workflowExecution.ansible.tokenSecretRef: must be set when Ansible is enabled"))
-	} else {
-		key := ansible.TokenSecretRef.Key
-		if key == "" {
-			key = precreatedDefaultTokenKey
-		}
-		c.add(precreatedSecretReference, "spec.workflowExecution.ansible.tokenSecretRef", ansible.TokenSecretRef.Name, key)
-	}
-	if caRef := ansible.CACertSecretRef; caRef != nil {
-		key := caRef.Key
-		if key == "" {
-			key = "ca.crt"
-		}
-		c.add(precreatedSecretReference, "spec.workflowExecution.ansible.caCertSecretRef", caRef.Name, key)
-	}
 }
 
 func appendPrecreatedValkeyTLSSecrets(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
@@ -3299,9 +3291,9 @@ func appendPrecreatedIngressReferences(c *precreatedReferenceCollector, kn *kube
 func precreatedConfigurationReferences(kn *kubernautv1alpha2.Kubernaut) ([]precreatedReference, []error) {
 	collector := newPrecreatedReferenceCollector()
 	collector.add(precreatedConfigMapReference, "spec.aiAnalysis.policy.configMapName",
-		kn.Spec.AIAnalysis.Policy.ConfigMapName, "approval.rego")
+		resources.AIAnalysisPolicyName(kn), "approval.rego")
 	collector.add(precreatedConfigMapReference, "spec.signalProcessing.policy.configMapName",
-		kn.Spec.SignalProcessing.Policy.ConfigMapName, "policy.rego")
+		resources.SignalProcessingPolicyName(kn), "policy.rego")
 	appendPrecreatedOptionalReferences(collector, kn)
 	return collector.references, collector.errs
 }
