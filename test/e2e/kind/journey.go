@@ -326,7 +326,7 @@ func llmSecret() *corev1.Secret {
 	return &corev1.Secret{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
 		ObjectMeta: metav1.ObjectMeta{Name: "llm-credentials", Namespace: kubernautNamespace},
-		StringData: map[string]string{"api-key": "kind-e2e-not-a-real-credential"},
+		StringData: map[string]string{"api_key": "kind-e2e-not-a-real-credential"},
 	}
 }
 

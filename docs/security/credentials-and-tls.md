@@ -20,8 +20,8 @@ The operator and managed workloads expect Kubernetes Secret objects (bring-your-
 | Valkey or Redis (`spec.valkey.secretName`) | `password` | Cache and stream access for DataStorage. **Not sufficient authentication on its own** -- see [TLS configuration](#tls-configuration) below |
 | Valkey mTLS (optional but recommended, `spec.valkey.tls.caSecretName` / `clientCertSecretName`) | `ca.crt` / `tls.crt`, `tls.key` | Client authentication to Valkey via mutual TLS |
 | LLM credentials (`spec.llmProfiles.<name>.credentialsSecretName`) | Provider-dependent: `credentials.json` (Vertex AI), `api_key` (OpenAI or Anthropic), and similar | Authenticate to the LLM provider API |
-| OAuth2 (optional, `spec.llmProfiles.<name>.oauth2.credentialsSecretRef`) | `client_id`, `client_secret` | OAuth2 client-credentials flow for LLM access |
-| Notification Slack (optional, `spec.notification.slack.secretName`) | `webhook_url` or `bot_token` | Deliver notifications to Slack |
+| OAuth2 (optional, `spec.llmProfiles.<name>.oauth2.credentialsSecretRef`) | `client-id`, `client-secret` | OAuth2 client-credentials flow for LLM access |
+| Notification Slack (optional, `spec.notification.slack.secretName`) | `webhook-url` | Deliver notifications to Slack |
 | Ansible or AAP (optional, `spec.ansible.tokenSecretRef`) | `token` | Authenticate to AWX or Ansible Automation Platform API |
 | OTLP private CA (Issue #478, `spec.<component>.telemetry.tls.caCertSecretRef`) | `ca.crt` by default, or the referenced key | Verify a private OTLP collector certificate |
 | OTLP mTLS client (Issue #478, `spec.<component>.telemetry.tls.tlsClientSecretRef`) | `tls.crt`, `tls.key` | Authenticate the telemetry exporter to an OTLP collector |

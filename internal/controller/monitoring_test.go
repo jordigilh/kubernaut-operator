@@ -221,6 +221,7 @@ var _ = Describe("monitoring TLS trust source validation", Label("unit"), func()
 			Client: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&kubernautv1alpha2.Kubernaut{}).WithObjects(kn, postgresSecret, valkeySecret).Build(),
 			Scheme: scheme,
 		}
+		seedValidPrecreatedInputs(r, kn)
 
 		result, err := r.phaseValidate(ctx, kn, kn.DeepCopy())
 		Expect(err).NotTo(HaveOccurred())

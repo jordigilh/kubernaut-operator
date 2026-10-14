@@ -1400,7 +1400,74 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	// ======================================================================
 
 	Context("Policy Prerequisite Validation", func() {
-		It("should create service-CA and proactive-signal-mappings CMs with valid policy names", func() {
+		It("IT-CONFIG-512-001 [CM-6, SI-10]: blocks migration and workload creation when a required runtime ConfigMap is absent", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			cr.Spec.KubernautAgent.RuntimeConfigMapName = "missing-llm-runtime"
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			r := newReconciler()
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(requeueError))
+			Expect(r.Recorder.(*events.FakeRecorder).Events).To(Receive(ContainSubstring(ReasonPrecreatedConfigurationInvalid)))
+
+			live := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), live)).To(Succeed())
+			condition := findCondition(live.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal(ReasonPrecreatedConfigurationInvalid))
+			Expect(condition.Message).To(ContainSubstring("missing-llm-runtime"))
+
+			jobs := &batchv1.JobList{}
+			Expect(k8sClient.List(ctx, jobs, client.InNamespace(testNamespace))).To(Succeed())
+			Expect(jobs.Items).To(BeEmpty())
+			deployments := &appsv1.DeploymentList{}
+			Expect(k8sClient.List(ctx, deployments, client.InNamespace(testNamespace))).To(Succeed())
+			Expect(deployments.Items).To(BeEmpty())
+
+			By("recovering after the administrator creates the required ConfigMap")
+			Expect(k8sClient.Create(ctx, &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: "missing-llm-runtime", Namespace: testNamespace},
+				Data:       map[string]string{"llm-runtime.yaml": "models: {}\n"},
+			})).To(Succeed())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, singletonKey(), live)).To(Succeed())
+			condition = findCondition(live.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+		})
+
+		It("IT-CONFIG-512-002 [CM-6, SI-10]: blocks migration when a required policy key is empty or absent", func() {
+			createBYOSecrets(ctx)
+			policy := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "aianalysis-policy", Namespace: testNamespace}, policy)).To(Succeed())
+			delete(policy.Data, "approval.rego")
+			Expect(k8sClient.Update(ctx, policy)).To(Succeed())
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+
+			r := newReconciler()
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			live := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), live)).To(Succeed())
+			condition := findCondition(live.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Reason).To(Equal(ReasonPrecreatedConfigurationInvalid))
+			Expect(condition.Message).To(ContainSubstring("approval.rego"))
+			jobs := &batchv1.JobList{}
+			Expect(k8sClient.List(ctx, jobs, client.InNamespace(testNamespace))).To(Succeed())
+			Expect(jobs.Items).To(BeEmpty())
+		})
+
+		It("should preserve pre-created policy CMs and create generated runtime ConfigMaps", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
 			reconcileToRunning(ctx)
@@ -1421,19 +1488,23 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(kaCA.Annotations).To(HaveKeyWithValue(
 				"service.beta.openshift.io/inject-cabundle", "true"))
 
-			By("verifying operator does NOT create aianalysis-policy (user-provided prerequisite)")
+			By("verifying the pre-created aianalysis-policy remains external and has its required key")
 			aiPolicyCM := &corev1.ConfigMap{}
 			err := k8sClient.Get(ctx, types.NamespacedName{
 				Name: "aianalysis-policy", Namespace: testNamespace,
 			}, aiPolicyCM)
-			Expect(errors.IsNotFound(err)).To(BeTrue(), "operator must not create default aianalysis-policy CM")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(aiPolicyCM.Data).To(HaveKey("approval.rego"))
+			Expect(aiPolicyCM.OwnerReferences).To(BeEmpty(), "administrator-owned policy ConfigMaps must not be adopted")
 
-			By("verifying operator does NOT create signalprocessing-policy (user-provided prerequisite)")
+			By("verifying the pre-created signalprocessing-policy remains external and has its required key")
 			spPolicyCM := &corev1.ConfigMap{}
 			err = k8sClient.Get(ctx, types.NamespacedName{
 				Name: "signalprocessing-policy", Namespace: testNamespace,
 			}, spPolicyCM)
-			Expect(errors.IsNotFound(err)).To(BeTrue(), "operator must not create default signalprocessing-policy CM")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(spPolicyCM.Data).To(HaveKey("policy.rego"))
+			Expect(spPolicyCM.OwnerReferences).To(BeEmpty(), "administrator-owned policy ConfigMaps must not be adopted")
 
 			By("verifying signalprocessing-proactive-signal-mappings CM exists with proactive-signal-mappings.yaml key")
 			proactiveCM := &corev1.ConfigMap{}
@@ -1454,6 +1525,12 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		// existing test above never exercises with a non-nil pointer.
 		It("CONS-006 [CM-6]: does not create the auto-generated proactive-signal-mappings CM when the user supplies their own", func() {
 			createBYOSecrets(ctx)
+			customMappings := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: "my-proactive-signal-mappings", Namespace: testNamespace},
+				Data:       map[string]string{"proactive-signal-mappings.yaml": "proactive_signal_mappings: {}"},
+			}
+			Expect(k8sClient.Create(ctx, customMappings)).To(Succeed())
+			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, customMappings))).To(Succeed()) })
 			kn := newCRWithRouteDisabled()
 			kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "my-proactive-signal-mappings"}
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
@@ -1475,6 +1552,12 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	Context("Notification Routing ConfigMap BYO override (#423 CONS-003)", func() {
 		It("CONS-003 [CM-6]: does not create the auto-generated notification-routing-config CM when the user supplies their own", func() {
 			createBYOSecrets(ctx)
+			customRouting := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: "my-notification-routing", Namespace: testNamespace},
+				Data:       map[string]string{"routing.yaml": "route: {}"},
+			}
+			Expect(k8sClient.Create(ctx, customRouting)).To(Succeed())
+			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, customRouting))).To(Succeed()) })
 			kn := newCRWithRouteDisabled()
 			kn.Spec.Notification.Routing = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "my-notification-routing"}
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())

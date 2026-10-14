@@ -166,8 +166,8 @@ metadata:
   name: oauth2-credentials
   namespace: kubernaut-system
 stringData:
-  client_id: "<YOUR_CLIENT_ID>"
-  client_secret: "<YOUR_CLIENT_SECRET>"
+	client-id: "<YOUR_CLIENT_ID>"
+	client-secret: "<YOUR_CLIENT_SECRET>"
 EOF
 ```
 
