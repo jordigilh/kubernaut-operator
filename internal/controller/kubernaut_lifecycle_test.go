@@ -1412,6 +1412,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(requeueError))
+			Expect(r.Recorder.(*events.FakeRecorder).Events).To(Receive(ContainSubstring(ReasonPrecreatedConfigurationInvalid)))
 
 			live := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), live)).To(Succeed())
@@ -1427,6 +1428,31 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			deployments := &appsv1.DeploymentList{}
 			Expect(k8sClient.List(ctx, deployments, client.InNamespace(testNamespace))).To(Succeed())
 			Expect(deployments.Items).To(BeEmpty())
+		})
+
+		It("IT-CONFIG-512-002 [CM-6, SI-10]: blocks migration when a required policy key is empty or absent", func() {
+			createBYOSecrets(ctx)
+			policy := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "aianalysis-policy", Namespace: testNamespace}, policy)).To(Succeed())
+			delete(policy.Data, "approval.rego")
+			Expect(k8sClient.Update(ctx, policy)).To(Succeed())
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+
+			r := newReconciler()
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			live := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), live)).To(Succeed())
+			condition := findCondition(live.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Reason).To(Equal(ReasonPrecreatedConfigurationInvalid))
+			Expect(condition.Message).To(ContainSubstring("approval.rego"))
+			jobs := &batchv1.JobList{}
+			Expect(k8sClient.List(ctx, jobs, client.InNamespace(testNamespace))).To(Succeed())
+			Expect(jobs.Items).To(BeEmpty())
 		})
 
 		It("should preserve pre-created policy CMs and create generated runtime ConfigMaps", func() {

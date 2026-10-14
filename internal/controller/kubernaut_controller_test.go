@@ -184,6 +184,22 @@ func createBYOSecrets(ctx context.Context) {
 			ObjectMeta: metav1.ObjectMeta{Name: llmSecretName, Namespace: testNamespace},
 			Data:       map[string][]byte{"api_key": []byte("llm-api-key")},
 		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "fleet-oauth2-creds", Namespace: testNamespace},
+			Data:       map[string][]byte{"client-id": []byte("fleet-client"), "client-secret": []byte("fleet-secret")},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "shared-fleet-oauth2-creds", Namespace: testNamespace},
+			Data:       map[string][]byte{"client-id": []byte("shared-client"), "client-secret": []byte("shared-secret")},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: testWEFleetOAuth2SecretRef, Namespace: testNamespace},
+			Data:       map[string][]byte{"client-id": []byte("we-client"), "client-secret": []byte("we-secret")},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "ka-oauth2-creds", Namespace: testNamespace},
+			Data:       map[string][]byte{"client-id": []byte("ka-client"), "client-secret": []byte("ka-secret")},
+		},
 	}
 	for _, s := range secrets {
 		existing := &corev1.Secret{}
@@ -219,7 +235,8 @@ func deleteBYOSecrets(ctx context.Context) {
 	// created directly by name in several console-auth specs
 	// (kubernaut_lifecycle_test.go). Must be cleaned up here so those specs
 	// don't collide under any run order.
-	for _, name := range []string{pgSecretName, vkSecretName, llmSecretName, consoleOIDCSecretName} {
+	for _, name := range []string{pgSecretName, vkSecretName, llmSecretName, consoleOIDCSecretName,
+		"fleet-oauth2-creds", "shared-fleet-oauth2-creds", testWEFleetOAuth2SecretRef, "ka-oauth2-creds"} {
 		s := &corev1.Secret{}
 		err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: testNamespace}, s)
 		if err == nil {

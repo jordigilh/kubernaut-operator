@@ -145,17 +145,44 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		kn := newMinimalCR()
 		r := businessUnitReconciler(kn, clientInterceptorNone())
 		seedPrecreatedObject(r, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "missing-key", Namespace: kn.Namespace}})
+		seedPrecreatedObject(r, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "empty-key", Namespace: kn.Namespace}, Data: map[string]string{"required": ""}})
+		seedPrecreatedObject(r, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "binary-key", Namespace: kn.Namespace}, BinaryData: map[string][]byte{"required": []byte("binary")}})
+		seedPrecreatedObject(r, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "binary-empty", Namespace: kn.Namespace}, BinaryData: map[string][]byte{"required": nil}})
+		emptySecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "empty-secret", Namespace: kn.Namespace},
+			Data:       map[string][]byte{"required": nil},
+		}
+		seedPrecreatedObject(r, emptySecret)
 		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
 			kind: precreatedConfigMapReference, path: "spec.test.configMap", name: "missing-key", requiredKeys: []string{"required"},
+		})).To(HaveOccurred())
+		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
+			kind: precreatedConfigMapReference, path: "spec.test.configMap", name: "empty-key", requiredKeys: []string{"required"},
+		})).To(HaveOccurred())
+		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
+			kind: precreatedConfigMapReference, path: "spec.test.configMap", name: "binary-key", requiredKeys: []string{"required"},
+		})).NotTo(HaveOccurred())
+		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
+			kind: precreatedConfigMapReference, path: "spec.test.configMap", name: "binary-empty", requiredKeys: []string{"required"},
 		})).To(HaveOccurred())
 		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
 			kind: precreatedSecretReference, path: "spec.test.secret", name: "missing-secret", requiredKeys: []string{"required"},
 		})).To(HaveOccurred())
 		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
+			kind: precreatedSecretReference, path: "spec.test.secret", name: "empty-secret", requiredKeys: []string{"required"},
+		})).To(HaveOccurred())
+		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
 			kind: precreatedReferenceKind("unsupported"), path: "spec.test.unsupported", name: "object",
 		})).To(HaveOccurred())
 
+		defaultNames := newMinimalCR()
+		defaultNames.Spec.AIAnalysis.Policy.ConfigMapName = ""
+		defaultNames.Spec.SignalProcessing.Policy.ConfigMapName = ""
+		_, defaultErrs := precreatedConfigurationReferences(defaultNames)
+		Expect(defaultErrs).To(BeEmpty())
+
 		kn.Spec.AIAnalysis.Policy.ConfigMapName = ""
+		kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha2.ConfigMapRef{}
 		kn.Spec.WorkflowExecution.Ansible.Enabled = true
 		kn.Spec.WorkflowExecution.Ansible.TokenSecretRef = nil
 		profile := kn.Spec.LLMProfiles["primary"]

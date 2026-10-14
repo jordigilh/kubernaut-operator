@@ -60,6 +60,10 @@ func businessUnitReconciler(kn *kubernautv1alpha2.Kubernaut, faults interceptor.
 			Data: map[string][]byte{"client-id": []byte("unit-client"), "client-secret": []byte("unit-secret")}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: testWEFleetOAuth2SecretRef, Namespace: kn.Namespace},
 			Data: map[string][]byte{"client-id": []byte("unit-we-client"), "client-secret": []byte("unit-we-secret")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "shared-fleet-oauth2-creds", Namespace: kn.Namespace},
+			Data: map[string][]byte{"client-id": []byte("unit-shared-client"), "client-secret": []byte("unit-shared-secret")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ka-oauth2-creds", Namespace: kn.Namespace},
+			Data: map[string][]byte{"client-id": []byte("unit-ka-client"), "client-secret": []byte("unit-ka-secret")}},
 	}
 	if kn.Spec.TLS.Mode == "" {
 		objects = append(objects, &configv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}})
