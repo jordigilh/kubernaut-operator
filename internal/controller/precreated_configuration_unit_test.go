@@ -302,8 +302,8 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		kn.Spec.KubernautAgent.RuntimeConfigMapName = validRuntime.Name
 		Expect(r.Update(ctx, kn)).To(Succeed())
 		other := newMinimalCR()
-		other.Name = "other"
-		other.Namespace = "other"
+		other.Name = "precreated-other"
+		other.Namespace = "precreated-other"
 		Expect(r.Create(ctx, other)).To(Succeed())
 		requests := r.precreatedConfigurationToKubernaut(ctx, validRuntime)
 		Expect(requests).To(ConsistOf(reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)}))
