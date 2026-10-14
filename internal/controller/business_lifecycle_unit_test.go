@@ -50,6 +50,16 @@ func businessUnitReconciler(kn *kubernautv1alpha2.Kubernaut, faults interceptor.
 		}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: vkSecretName, Namespace: kn.Namespace},
 			Data: map[string][]byte{"valkey-secrets.yaml": []byte("password: unit-secret")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: llmSecretName, Namespace: kn.Namespace},
+			Data: map[string][]byte{"api_key": []byte("unit-api-key")}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "aianalysis-policy", Namespace: kn.Namespace},
+			Data: map[string]string{"approval.rego": "package kubernaut.aianalysis"}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "signalprocessing-policy", Namespace: kn.Namespace},
+			Data: map[string]string{"policy.rego": "package kubernaut.signalprocessing"}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "fleet-oauth2-creds", Namespace: kn.Namespace},
+			Data: map[string][]byte{"client-id": []byte("unit-client"), "client-secret": []byte("unit-secret")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: testWEFleetOAuth2SecretRef, Namespace: kn.Namespace},
+			Data: map[string][]byte{"client-id": []byte("unit-we-client"), "client-secret": []byte("unit-we-secret")}},
 	}
 	if kn.Spec.TLS.Mode == "" {
 		objects = append(objects, &configv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}})

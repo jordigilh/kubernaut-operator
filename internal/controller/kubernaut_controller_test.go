@@ -180,12 +180,34 @@ func createBYOSecrets(ctx context.Context) {
 				"valkey-secrets.yaml": []byte("password: secret"),
 			},
 		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: llmSecretName, Namespace: testNamespace},
+			Data:       map[string][]byte{"api_key": []byte("llm-api-key")},
+		},
 	}
 	for _, s := range secrets {
 		existing := &corev1.Secret{}
 		err := k8sClient.Get(ctx, types.NamespacedName{Name: s.Name, Namespace: s.Namespace}, existing)
 		if errors.IsNotFound(err) {
 			Expect(k8sClient.Create(ctx, s)).To(Succeed())
+		}
+	}
+
+	configMaps := []*corev1.ConfigMap{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "aianalysis-policy", Namespace: testNamespace},
+			Data:       map[string]string{"approval.rego": "package kubernaut.aianalysis"},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "signalprocessing-policy", Namespace: testNamespace},
+			Data:       map[string]string{"policy.rego": "package kubernaut.signalprocessing"},
+		},
+	}
+	for _, configMap := range configMaps {
+		existing := &corev1.ConfigMap{}
+		err := k8sClient.Get(ctx, client.ObjectKeyFromObject(configMap), existing)
+		if errors.IsNotFound(err) {
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
 		}
 	}
 }
@@ -197,11 +219,18 @@ func deleteBYOSecrets(ctx context.Context) {
 	// created directly by name in several console-auth specs
 	// (kubernaut_lifecycle_test.go). Must be cleaned up here so those specs
 	// don't collide under any run order.
-	for _, name := range []string{pgSecretName, vkSecretName, consoleOIDCSecretName} {
+	for _, name := range []string{pgSecretName, vkSecretName, llmSecretName, consoleOIDCSecretName} {
 		s := &corev1.Secret{}
 		err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: testNamespace}, s)
 		if err == nil {
 			_ = k8sClient.Delete(ctx, s)
+		}
+	}
+	for _, name := range []string{"aianalysis-policy", "signalprocessing-policy"} {
+		configMap := &corev1.ConfigMap{}
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: testNamespace}, configMap)
+		if err == nil {
+			_ = k8sClient.Delete(ctx, configMap)
 		}
 	}
 }
