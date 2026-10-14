@@ -12,6 +12,7 @@ otlp_matrix="${repo_root}/docs/security/ISSUE-478-CONTROL-TRACEABILITY.md"
 monitoring_matrix="${repo_root}/docs/security/ISSUE-513-CONTROL-TRACEABILITY.md"
 ownership_matrix="${repo_root}/docs/security/ISSUE-514-CONTROL-TRACEABILITY.md"
 fleet_matrix="${repo_root}/docs/security/ISSUE-431-CONTROL-TRACEABILITY.md"
+audit_hmac_matrix="${repo_root}/docs/security/ISSUE-209-CONTROL-TRACEABILITY.md"
 
 fail() {
 	echo "security traceability validation failed: $*" >&2
@@ -23,10 +24,22 @@ fail() {
 [[ -f "${ci_matrix}" ]] || fail "missing ${ci_matrix}"
 [[ -f "${otlp_matrix}" ]] || fail "missing ${otlp_matrix}"
 [[ -f "${monitoring_matrix}" ]] || fail "missing ${monitoring_matrix}"
+[[ -f "${audit_hmac_matrix}" ]] || fail "missing ${audit_hmac_matrix}"
 
 grep -Fq 'NIST SP 800-53 Rev. 5' "${matrix}" || fail "missing NIST SP 800-53 Rev. 5 declaration"
 grep -Fq 'OWASP ASVS 5.0.0' "${matrix}" || fail "missing OWASP ASVS 5.0.0 declaration"
 grep -Eq 'v5\.0\.0-V[0-9]+\.[0-9]+\.[0-9]+' "${matrix}" || fail "missing versioned ASVS requirement IDs"
+
+grep -Fq 'NIST SP 800-53' "${audit_hmac_matrix}" || fail "audit HMAC matrix is missing NIST scope"
+grep -Fq 'SOC 2' "${audit_hmac_matrix}" || fail "audit HMAC matrix is missing SOC 2 scope"
+grep -Fq 'OWASP ASVS v5.0.0' "${audit_hmac_matrix}" || fail "audit HMAC matrix is missing ASVS scope"
+for requirement in v5.0.0-V11.1.1 v5.0.0-V13.3.1 v5.0.0-V13.3.2 v5.0.0-V16.1.1 v5.0.0-V16.2.1 v5.0.0-V16.5.2; do
+	grep -Fq "${requirement}" "${audit_hmac_matrix}" || fail "audit HMAC matrix is missing ASVS requirement ${requirement}"
+done
+for evidence_id in UT-AUDIT-209-CM-001 UT-AUDIT-209-RES-001 UT-AUDIT-209-CTRL-001 IT-AUDIT-209-INT-001 IT-AUDIT-209-INT-007 CONTRACT-AUDIT-209-001 E2E-AUDIT-209-001; do
+	grep -R -n --include='*.go' -F "${evidence_id}" "${repo_root}/internal" "${repo_root}/test" >/dev/null \
+		|| fail "audit HMAC evidence ${evidence_id} has no executable artifact"
+done
 
 for control in AC-3 AC-6 SC-7 SC-8 SC-12 SC-13 SC-17 IA-2 IA-5 SI-4 AU-2 AU-3 AU-12 SI-10 CM-2 CM-3 CM-6 CM-8; do
 	grep -Eq "(^|[^A-Za-z0-9-])${control}([^A-Za-z0-9-]|$)" "${matrix}" || fail "missing NIST/FedRAMP control ${control}"

@@ -25,6 +25,7 @@ The operator and managed workloads expect Kubernetes Secret objects (bring-your-
 | Ansible or AAP (optional, `spec.ansible.tokenSecretRef`) | `token` | Authenticate to AWX or Ansible Automation Platform API |
 | OTLP private CA (Issue #478, `spec.<component>.telemetry.tls.caCertSecretRef`) | `ca.crt` by default, or the referenced key | Verify a private OTLP collector certificate |
 | OTLP mTLS client (Issue #478, `spec.<component>.telemetry.tls.tlsClientSecretRef`) | `tls.crt`, `tls.key` | Authenticate the telemetry exporter to an OTLP collector |
+| DataStorage audit HMAC (`spec.dataStorage.auditHashKey.existingSecret`, or the operator default) | `audit-hmac-key.yaml` containing `hmacKey` (or configured `secretKey`) | Keyed audit hash-chain tamper evidence (FedRAMP AU-9 / SOC 2 CC8.1) |
 
 Additional keys may be required for specific provider integrations; consult provider documentation and the Kubernaut CRD for optional fields.
 
@@ -44,6 +45,15 @@ deletes them. See [OTLP telemetry TLS and operational rotation](#otlp-telemetry-
 for the runtime rollout contract.
 
 LLM API keys and OAuth client secrets should be rotated on a regular schedule; rotating LLM API credentials at least every ninety days is recommended.
+
+The DataStorage audit HMAC key is a lifecycle exception: the operator-generated
+key is created once, preserved across reconciliation and reinstall, and never
+rotated or regenerated automatically. Replacing it would prevent verification of
+historical HMAC records. An administrator-managed audit Secret is validated and
+mounted read-only; rotation requires a separate dual-key application migration
+design and is not supported by the operator's current contract. The generated
+Secret and its non-secret identity marker also carry deletion-protection
+finalizers; deliberate retirement requires an explicit administrative procedure.
 
 ## Inter-service authentication
 

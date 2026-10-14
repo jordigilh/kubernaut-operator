@@ -83,7 +83,7 @@ jobs:
           echo "mode: atomic" | cat - cover-unit-internal.out > cover-unit-internal-final.out
           UNIT_COVERAGE=$(go tool cover -func=cover-unit-internal-final.out | grep '^total:' | awk '{print $3}' | tr -d '%')
           echo "Internal unit coverage: ${UNIT_COVERAGE}%"
-          UNIT_THRESHOLD=80
+          UNIT_THRESHOLD=90
           if awk -v coverage="${UNIT_COVERAGE}" -v threshold="${UNIT_THRESHOLD}" 'BEGIN { exit !(coverage < threshold) }'; then
             echo "::error::Internal unit coverage ${UNIT_COVERAGE}% is below the ${UNIT_THRESHOLD}% threshold"
             exit 1
@@ -94,7 +94,7 @@ jobs:
           echo "mode: atomic" | cat - cover-internal.out > cover-internal-final.out
           COVERAGE=$(go tool cover -func=cover-internal-final.out | grep '^total:' | awk '{print $3}' | tr -d '%')
           echo "Internal package coverage: ${COVERAGE}%"
-          THRESHOLD=80
+          THRESHOLD=90
           if awk -v coverage="${COVERAGE}" -v threshold="${THRESHOLD}" 'BEGIN { exit !(coverage < threshold) }'; then
             echo "::error::Internal coverage ${COVERAGE}% is below the ${THRESHOLD}% threshold"
             exit 1
