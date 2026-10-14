@@ -2,6 +2,13 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -127,9 +134,9 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ansible-ca", Namespace: kn.Namespace}, Data: map[string][]byte{"ca.crt": []byte("unit-ca")}},
 			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "console-oidc", Namespace: kn.Namespace}, Data: map[string][]byte{"client-id": []byte("cid"), "client-secret": []byte("csec"), "cookie-secret": []byte("cookie")}},
 			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "llm-oauth", Namespace: kn.Namespace}, Data: map[string][]byte{"client-id": []byte("cid"), "client-secret": []byte("csec")}},
-			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "llm-tls", Namespace: kn.Namespace}, Data: map[string][]byte{"tls.crt": []byte("cert"), "tls.key": []byte("key")}},
-			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "valkey-ca", Namespace: kn.Namespace}, Data: map[string][]byte{"ca.crt": []byte("ca")}},
-			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "valkey-client", Namespace: kn.Namespace}, Data: map[string][]byte{"tls.crt": []byte("cert"), "tls.key": []byte("key")}},
+			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "llm-tls", Namespace: kn.Namespace}, Data: validPrecreatedTLSData()},
+			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "valkey-ca", Namespace: kn.Namespace}, Data: validPrecreatedCAData()},
+			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "valkey-client", Namespace: kn.Namespace}, Data: validPrecreatedTLSData()},
 		} {
 			seedPrecreatedObject(r, object)
 		}
@@ -263,7 +270,68 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		Expect(r.List(ctx, deployments)).To(Succeed())
 		Expect(deployments.Items).To(BeEmpty())
 	})
+
+	It("UT-CONFIG-512-007 validates content semantics and maps external input changes", func() {
+		kn := newMinimalCR()
+		r := businessUnitReconciler(kn, clientInterceptorNone())
+
+		invalidYAML := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "invalid-runtime", Namespace: kn.Namespace},
+			Data:       map[string]string{"llm-runtime.yaml": "not: [valid"},
+		}
+		seedPrecreatedObject(r, invalidYAML)
+		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
+			kind: precreatedConfigMapReference, path: "spec.runtime", name: invalidYAML.Name, requiredKeys: []string{"llm-runtime.yaml"},
+		})).To(MatchError(ContainSubstring("invalid YAML")))
+
+		invalidJSON := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "invalid-credentials", Namespace: kn.Namespace},
+			Data:       map[string][]byte{"credentials.json": []byte("{invalid")},
+		}
+		seedPrecreatedObject(r, invalidJSON)
+		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
+			kind: precreatedSecretReference, path: "spec.credentials", name: invalidJSON.Name, requiredKeys: []string{"credentials.json"},
+		})).To(MatchError(ContainSubstring("invalid JSON")))
+
+		validRuntime := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "valid-runtime", Namespace: kn.Namespace},
+			Data:       map[string]string{"llm-runtime.yaml": "models:\n  primary: {}\n"},
+		}
+		seedPrecreatedObject(r, validRuntime)
+		kn.Spec.KubernautAgent.RuntimeConfigMapName = validRuntime.Name
+		Expect(r.Update(ctx, kn)).To(Succeed())
+		requests := r.precreatedConfigurationToKubernaut(ctx, validRuntime)
+		Expect(requests).To(ConsistOf(reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)}))
+
+		unrelated := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: kn.Namespace}}
+		Expect(r.precreatedConfigurationToKubernaut(ctx, unrelated)).To(BeEmpty())
+	})
 })
+
+func validPrecreatedTLSData() map[string][]byte {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	Expect(err).NotTo(HaveOccurred())
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 120))
+	Expect(err).NotTo(HaveOccurred())
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "precreated.example"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	Expect(err).NotTo(HaveOccurred())
+	return map[string][]byte{
+		corev1.TLSCertKey:       pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		corev1.TLSPrivateKeyKey: pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}),
+	}
+}
+
+func validPrecreatedCAData() map[string][]byte {
+	return map[string][]byte{"ca.crt": validPrecreatedTLSData()[corev1.TLSCertKey]}
+}
 
 func clientInterceptorNone() interceptor.Funcs {
 	return interceptor.Funcs{}

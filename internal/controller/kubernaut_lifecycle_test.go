@@ -1428,6 +1428,18 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			deployments := &appsv1.DeploymentList{}
 			Expect(k8sClient.List(ctx, deployments, client.InNamespace(testNamespace))).To(Succeed())
 			Expect(deployments.Items).To(BeEmpty())
+
+			By("recovering after the administrator creates the required ConfigMap")
+			Expect(k8sClient.Create(ctx, &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: "missing-llm-runtime", Namespace: testNamespace},
+				Data:       map[string]string{"llm-runtime.yaml": "models: {}\n"},
+			})).To(Succeed())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, singletonKey(), live)).To(Succeed())
+			condition = findCondition(live.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
 		})
 
 		It("IT-CONFIG-512-002 [CM-6, SI-10]: blocks migration when a required policy key is empty or absent", func() {
