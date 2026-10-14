@@ -105,6 +105,7 @@ const (
 	ReasonMonitoringTLSNotReady          = "MonitoringTLSNotReady"
 	ReasonTelemetrySecretInvalid         = "TelemetrySecretInvalid"
 	ReasonTelemetryAmbientInvalid        = "TelemetryAmbientTrustInvalid"
+	ReasonAuditHashKeyInvalid            = "AuditHashKeyInvalid"
 	ReasonExposureReady                  = "ExposureReady"
 	ReasonExposureInternal               = "InternalOnly"
 	ReasonMonitoringAvailable            = "MonitoringAvailable"
@@ -141,6 +142,9 @@ type KubernautReconciler struct {
 	APIReader client.Reader
 	now       func() time.Time
 }
+
+var newGeneratedAuditHashKeySecret = resources.NewDataStorageAuditHashKeySecret
+var dataStorageAuditHashKeyFingerprint = resources.DataStorageAuditHashKeyFingerprint
 
 // +kubebuilder:rbac:groups=kubernaut.ai,resources=kubernauts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=kubernaut.ai,resources=kubernauts/status,verbs=get;update;patch
@@ -300,6 +304,11 @@ func (r *KubernautReconciler) validateDatabaseInputs(ctx context.Context, kn *ku
 		message    string
 	}{
 		{
+			validation: func() error { return r.ensureDataStorageAuditHashKey(ctx, kn) },
+			reason:     ReasonAuditHashKeyInvalid,
+			message:    "DataStorage audit HMAC key validation failed",
+		},
+		{
 			validation: func() error { return resources.ValidateHostname(kn.Spec.PostgreSQL.Host) },
 			reason:     "PostgreSQLHostInvalid",
 			message:    "PostgreSQL host validation failed",
@@ -326,6 +335,12 @@ func (r *KubernautReconciler) validateDatabaseInputs(ctx context.Context, kn *ku
 	}
 	for _, check := range checks {
 		if err := check.validation(); err != nil {
+			logf.FromContext(ctx).Error(err, check.message,
+				"namespace", kn.Namespace, "name", kn.Name,
+				"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+			if r.Recorder != nil {
+				r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, check.reason, "Validate", "%s: %v", check.message, err)
+			}
 			result, statusErr := r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
 				check.reason, fmt.Sprintf("%s: %v", check.message, err))
 			return result, statusErr, true
@@ -3018,6 +3033,223 @@ func (r *KubernautReconciler) validateSecret(ctx context.Context, namespace, nam
 	return nil
 }
 
+// ensureDataStorageAuditHashKey provisions or validates the mandatory audit
+// HMAC key before migration or workload creation. The generated key is
+// intentionally create-only: replacing it would make existing HMAC records
+// unverifiable. The state ConfigMap records only non-secret identity so a lost
+// initialized Secret fails closed instead of being regenerated.
+func (r *KubernautReconciler) ensureDataStorageAuditHashKey(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	ref := resources.DataStorageAuditHashKeyReferenceFor(kn)
+	if err := resources.ValidateDataStorageAuditHashKeyReference(ref); err != nil {
+		return err
+	}
+	state, exists, err := r.auditHashKeyState(ctx, kn.Namespace)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return r.reconcileExistingAuditHashKeyState(ctx, kn, state, ref)
+	}
+	return r.initializeNewAuditHashKey(ctx, kn, ref)
+}
+
+func (r *KubernautReconciler) reconcileExistingAuditHashKeyState(
+	ctx context.Context,
+	kn *kubernautv1alpha2.Kubernaut,
+	state *corev1.ConfigMap,
+	ref resources.DataStorageAuditHashKeyReference,
+) error {
+	if err := resources.ResourceOwnershipError(kn, state, false); err != nil {
+		return fmt.Errorf("audit HMAC state configmap ownership conflict: %w", err)
+	}
+	if err := validateAuditHashKeyIdentity(state, ref); err != nil {
+		if !canCorrectPendingBYOIdentity(state, ref) {
+			return err
+		}
+		state = resources.DataStorageAuditHashKeyStateConfigMap(kn, ref)
+		state.Data[resources.DataStorageAuditHashKeyStatePhaseKey] = resources.DataStorageAuditHashKeyStateProvisioning
+		if err := r.ensureUnowned(ctx, kn, state); err != nil {
+			return err
+		}
+	}
+	if state.Data[resources.DataStorageAuditHashKeyStatePhaseKey] == resources.DataStorageAuditHashKeyStateProvisioning &&
+		state.Data["keyFingerprint"] == "" {
+		return r.initializeAuditHashKey(ctx, kn, ref)
+	}
+	if err := validateAuditHashKeyState(state, ref); err != nil {
+		return err
+	}
+	return r.validateEffectiveAuditHashKeySecret(ctx, kn, ref, state.Data["keyFingerprint"])
+}
+
+func canCorrectPendingBYOIdentity(state *corev1.ConfigMap, ref resources.DataStorageAuditHashKeyReference) bool {
+	return state.Data[resources.DataStorageAuditHashKeyStatePhaseKey] == resources.DataStorageAuditHashKeyStateProvisioning &&
+		state.Data["keyFingerprint"] == "" &&
+		!ref.Generated && state.Data["source"] == resources.DataStorageAuditHashKeySourceExisting
+}
+
+func (r *KubernautReconciler) initializeNewAuditHashKey(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, ref resources.DataStorageAuditHashKeyReference) error {
+	if ref.Generated {
+		existing := &corev1.Secret{}
+		if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: ref.SecretName}, existing); err == nil {
+			return fmt.Errorf("generated audit HMAC secret %q already exists before its state marker; refusing adoption", ref.SecretName)
+		} else if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("reading audit HMAC secret %q: %w", ref.SecretName, err)
+		}
+	}
+	state := resources.DataStorageAuditHashKeyStateConfigMap(kn, ref)
+	state.Data[resources.DataStorageAuditHashKeyStatePhaseKey] = resources.DataStorageAuditHashKeyStateProvisioning
+	if err := r.ensureUnowned(ctx, kn, state); err != nil {
+		return err
+	}
+	return r.initializeAuditHashKey(ctx, kn, ref)
+}
+
+func (r *KubernautReconciler) auditHashKeyState(ctx context.Context, namespace string) (*corev1.ConfigMap, bool, error) {
+	state := &corev1.ConfigMap{}
+	err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: resources.DataStorageAuditHashKeyStateConfigMapName}, state)
+	if apierrors.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("reading audit HMAC state ConfigMap: %w", err)
+	}
+	return state, true, nil
+}
+
+func (r *KubernautReconciler) initializeAuditHashKey(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, ref resources.DataStorageAuditHashKeyReference) error {
+	secret, err := r.createOrGetAuditHashKeySecret(ctx, kn, ref)
+	if err != nil {
+		return err
+	}
+	if err := resources.ValidateDataStorageAuditHashKeySecret(secret, ref.SecretKey); err != nil {
+		return err
+	}
+	fingerprint, err := dataStorageAuditHashKeyFingerprint(secret, ref.SecretKey)
+	if err != nil {
+		return err
+	}
+	state := resources.DataStorageAuditHashKeyStateConfigMap(kn, ref)
+	state.Data[resources.DataStorageAuditHashKeyStatePhaseKey] = resources.DataStorageAuditHashKeyStateReady
+	state.Data["keyFingerprint"] = fingerprint
+	return r.ensureUnowned(ctx, kn, state)
+}
+
+func (r *KubernautReconciler) createOrGetAuditHashKeySecret(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, ref resources.DataStorageAuditHashKeyReference) (*corev1.Secret, error) {
+	secret := &corev1.Secret{}
+	secretKey := client.ObjectKey{Namespace: kn.Namespace, Name: ref.SecretName}
+	if err := r.Get(ctx, secretKey, secret); err == nil {
+		if ref.Generated && !operatorGeneratedAuditHashKeySecret(secret) {
+			return nil, fmt.Errorf("generated audit HMAC secret %q is not an operator-generated secret", ref.SecretName)
+		}
+		return secret, nil
+	} else if !apierrors.IsNotFound(err) {
+		return nil, fmt.Errorf("reading audit HMAC secret %q: %w", ref.SecretName, err)
+	}
+	if !ref.Generated {
+		return nil, fmt.Errorf("administrator-managed audit HMAC secret %q not found", ref.SecretName)
+	}
+	generated, err := newGeneratedAuditHashKeySecret(kn, ref)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.Create(ctx, generated); err == nil {
+		logf.FromContext(ctx).Info("audit HMAC secret created",
+			"kind", "Secret", "namespace", generated.Namespace, "name", generated.Name,
+			"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+		return generated, nil
+	} else {
+		return nil, fmt.Errorf("creating generated audit HMAC secret: %w", err)
+	}
+}
+
+func (r *KubernautReconciler) validateEffectiveAuditHashKeySecret(
+	ctx context.Context,
+	kn *kubernautv1alpha2.Kubernaut,
+	ref resources.DataStorageAuditHashKeyReference,
+	expectedFingerprint string,
+) error {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: ref.SecretName}, secret); err != nil {
+		if apierrors.IsNotFound(err) && expectedFingerprint != "" {
+			return fmt.Errorf("initialized audit HMAC secret %q is missing; restore it instead of generating a replacement", ref.SecretName)
+		}
+		return fmt.Errorf("reading audit HMAC secret %q: %w", ref.SecretName, err)
+	}
+	if !secret.DeletionTimestamp.IsZero() {
+		return fmt.Errorf("audit HMAC secret %q is terminating", ref.SecretName)
+	}
+	if ref.Generated && !operatorGeneratedAuditHashKeySecret(secret) {
+		return fmt.Errorf("audit HMAC secret %q is not an operator-generated secret", ref.SecretName)
+	}
+	if err := resources.ValidateDataStorageAuditHashKeySecret(secret, ref.SecretKey); err != nil {
+		return err
+	}
+	fingerprint, err := dataStorageAuditHashKeyFingerprint(secret, ref.SecretKey)
+	if err != nil {
+		return err
+	}
+	if expectedFingerprint != "" && fingerprint != expectedFingerprint {
+		return fmt.Errorf("audit HMAC secret %q fingerprint changed after initialization", ref.SecretName)
+	}
+	return nil
+}
+
+func validateAuditHashKeyState(state *corev1.ConfigMap, ref resources.DataStorageAuditHashKeyReference) error {
+	if state == nil || !state.DeletionTimestamp.IsZero() || !containsAuditHashKeyFinalizer(state.Finalizers) {
+		return fmt.Errorf("audit HMAC state configmap is not protected from deletion")
+	}
+	if err := validateAuditHashKeyIdentity(state, ref); err != nil {
+		return err
+	}
+	data := state.Data
+	if data[resources.DataStorageAuditHashKeyStatePhaseKey] != resources.DataStorageAuditHashKeyStateReady {
+		return fmt.Errorf("audit HMAC state configmap is not committed")
+	}
+	if data["keyFingerprint"] == "" {
+		return fmt.Errorf("audit HMAC secret fingerprint is missing from state")
+	}
+	return nil
+}
+
+func validateAuditHashKeyIdentity(state *corev1.ConfigMap, ref resources.DataStorageAuditHashKeyReference) error {
+	if state == nil {
+		return fmt.Errorf("audit HMAC state configmap is nil")
+	}
+	data := state.Data
+	if data["secretName"] != ref.SecretName || data["secretKey"] != ref.SecretKey {
+		return fmt.Errorf("audit HMAC secret identity cannot change after initialization")
+	}
+	wantSource := resources.DataStorageAuditHashKeySourceExisting
+	if ref.Generated {
+		wantSource = resources.DataStorageAuditHashKeySourceGenerated
+	}
+	if data["source"] != wantSource {
+		return fmt.Errorf("audit HMAC secret source cannot change after initialization")
+	}
+	return nil
+}
+
+func containsAuditHashKeyFinalizer(finalizers []string) bool {
+	for _, finalizer := range finalizers {
+		if finalizer == resources.DataStorageAuditHashKeyFinalizer {
+			return true
+		}
+	}
+	return false
+}
+
+func operatorGeneratedAuditHashKeySecret(secret *corev1.Secret) bool {
+	if secret == nil || !secret.DeletionTimestamp.IsZero() || secret.Immutable == nil || !*secret.Immutable {
+		return false
+	}
+	if secret.Annotations[resources.DataStorageAuditHashKeyManagedAnnotation] != "true" ||
+		secret.Annotations[resources.DataStorageAuditHashKeySourceAnnotation] != resources.DataStorageAuditHashKeySourceGenerated {
+		return false
+	}
+	return containsAuditHashKeyFinalizer(secret.Finalizers)
+}
+
 type precreatedReferenceKind string
 
 const (
@@ -4697,10 +4929,12 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ConfigMap{}).
 		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.telemetryAmbientConfigMapToKubernaut)).
 		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.precreatedConfigurationToKubernaut)).
+		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.auditHashKeyStateToKubernaut)).
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&corev1.Secret{}).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.telemetrySecretToKubernaut)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.precreatedConfigurationToKubernaut)).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.auditHashKeySecretToKubernaut)).
 		Owns(&batchv1.Job{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Owns(&networkingv1.Ingress{}).
@@ -4725,6 +4959,48 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return b.Named("kubernaut").
 		Complete(r)
+}
+
+// auditHashKeyStateToKubernaut maps changes to the persistent non-secret audit
+// HMAC identity marker back to the singleton in the same namespace.
+func (r *KubernautReconciler) auditHashKeyStateToKubernaut(ctx context.Context, object client.Object) []reconcile.Request {
+	configMap, ok := object.(*corev1.ConfigMap)
+	if !ok || configMap.Name != resources.DataStorageAuditHashKeyStateConfigMapName {
+		return nil
+	}
+	return r.auditHashKeyRequests(ctx, configMap.Namespace, resources.DataStorageAuditHashKeyStateConfigMapName)
+}
+
+// auditHashKeySecretToKubernaut maps changes to either the generated or
+// administrator-managed audit HMAC Secret. Secret contents are never logged.
+func (r *KubernautReconciler) auditHashKeySecretToKubernaut(ctx context.Context, object client.Object) []reconcile.Request {
+	secret, ok := object.(*corev1.Secret)
+	if !ok {
+		return nil
+	}
+	return r.auditHashKeyRequests(ctx, secret.Namespace, secret.Name)
+}
+
+func (r *KubernautReconciler) auditHashKeyRequests(ctx context.Context, namespace, name string) []reconcile.Request {
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	instances := &kubernautv1alpha2.KubernautList{}
+	if err := reader.List(ctx, instances, client.InNamespace(namespace)); err != nil {
+		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for audit HMAC event", "namespace", namespace, "name", name)
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(instances.Items))
+	for index := range instances.Items {
+		kn := &instances.Items[index]
+		ref := resources.DataStorageAuditHashKeyReferenceFor(kn)
+		if ref.SecretName != name && name != resources.DataStorageAuditHashKeyStateConfigMapName {
+			continue
+		}
+		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)})
+	}
+	return requests
 }
 
 // precreatedConfigurationToKubernaut maps changes to administrator-owned

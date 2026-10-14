@@ -125,7 +125,7 @@ vet: ## Run go vet against code.
 UT_PKGS := ./internal/resources/... ./internal/webhook/... ./internal/policy/... ./api/... ./cmd ./internal/controller ./test/e2e/kind/contract/... ./hack/businesscoverage
 BUSINESS_COVER_PKGS := ./internal/...,./api/...,./cmd/...
 HELM_PKGS := ./test/helm/...
-UNIT_COVERAGE_THRESHOLD ?= 80
+UNIT_COVERAGE_THRESHOLD ?= 90
 
 .PHONY: test-unit
 test-unit: fmt vet ## Run independent unit tests and require zero missed handwritten business statements (no envtest).

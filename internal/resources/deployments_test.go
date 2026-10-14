@@ -471,10 +471,61 @@ var _ = Describe("Deployments", func() {
 			for _, v := range dep.Spec.Template.Spec.Volumes {
 				if v.Name == testVolumeSecrets && v.Projected != nil {
 					found = true
-					Expect(v.Projected.Sources).To(HaveLen(2))
+					Expect(v.Projected.Sources).To(HaveLen(3))
 				}
 			}
 			Expect(found).To(BeTrue(), "DataStorage should have a 'secrets' projected volume")
+		})
+
+		It("UT-AUDIT-209-DEP-001 [AC-6, IA-5, ASVS V13.3.1/V13.3.2] projects the audit HMAC Secret read-only", func() {
+			kn := testKubernaut()
+			dep, err := DataStorageDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			var auditProjection *corev1.SecretProjection
+			for _, volume := range dep.Spec.Template.Spec.Volumes {
+				if volume.Name != testVolumeSecrets || volume.Projected == nil {
+					continue
+				}
+				for _, source := range volume.Projected.Sources {
+					if source.Secret != nil && source.Secret.Name == "datastorage-audit-hmac-key" {
+						auditProjection = source.Secret
+					}
+				}
+			}
+			Expect(auditProjection).NotTo(BeNil())
+			Expect(auditProjection.Items).To(ConsistOf([]corev1.KeyToPath{
+				{Key: "audit-hmac-key.yaml", Path: "audit-hmac-key.yaml"},
+			}))
+			expectHasVolumeMount(dep, testVolumeSecrets, "/etc/datastorage/secrets")
+			for _, mount := range dep.Spec.Template.Spec.Containers[0].VolumeMounts {
+				if mount.Name == testVolumeSecrets {
+					Expect(mount.ReadOnly).To(BeTrue())
+				}
+			}
+		})
+
+		It("UT-AUDIT-209-DEP-002 [AC-6, IA-5, ASVS V13.3.1/V13.3.2] projects an administrator-managed audit Secret", func() {
+			kn := testKubernaut()
+			kn.Spec.DataStorage.AuditHashKey = &kubernautv1alpha2.DataStorageAuditHashKeySpec{
+				ExistingSecret: "customer-audit-key",
+				SecretKey:      "customHMACKey",
+			}
+			dep, err := DataStorageDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			var names []string
+			for _, volume := range dep.Spec.Template.Spec.Volumes {
+				if volume.Name != testVolumeSecrets || volume.Projected == nil {
+					continue
+				}
+				for _, source := range volume.Projected.Sources {
+					if source.Secret != nil {
+						names = append(names, source.Secret.Name)
+					}
+				}
+			}
+			Expect(names).To(ContainElement("customer-audit-key"))
 		})
 
 		// #423 coverage backfill: valkey.secretName had no test asserting

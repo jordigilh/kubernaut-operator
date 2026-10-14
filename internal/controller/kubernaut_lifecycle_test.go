@@ -279,6 +279,23 @@ func reconcileToRunning(ctx context.Context) *KubernautReconciler {
 // that envtest's lack of GC won't handle via owner references.
 func cleanupNamespacedResources(ctx context.Context) {
 	propagation := metav1.DeletePropagationBackground
+	// Production audit HMAC objects intentionally carry deletion-protection
+	// finalizers. Test teardown explicitly removes those guards; production
+	// reconciliation never does so automatically.
+	for _, object := range []client.Object{
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: resources.DataStorageAuditHashKeySecretName, Namespace: testNamespace}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: resources.DataStorageAuditHashKeyStateConfigMapName, Namespace: testNamespace}},
+	} {
+		live := object.DeepCopyObject().(client.Object)
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(object), live); err != nil {
+			continue
+		}
+		if len(live.GetFinalizers()) == 0 {
+			continue
+		}
+		live.SetFinalizers(nil)
+		_ = k8sClient.Update(ctx, live)
+	}
 
 	// Migration Job
 	job := &batchv1.Job{}

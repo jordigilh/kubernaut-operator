@@ -155,6 +155,7 @@ func dataStorageInitContainer(kn *kubernautv1alpha2.Kubernaut) (corev1.Container
 // for the data-storage Deployment, plus the optional Valkey-TLS and
 // signing-cert volumes gated on spec fields.
 func dataStorageVolumesAndMounts(kn *kubernautv1alpha2.Kubernaut) ([]corev1.Volume, []corev1.VolumeMount) {
+	auditHashKey := DataStorageAuditHashKeyReferenceFor(kn)
 	volumes := make([]corev1.Volume, 0, 6)
 	volumes = append(volumes,
 		configMapVolume("config", "datastorage-config"),
@@ -170,6 +171,10 @@ func dataStorageVolumesAndMounts(kn *kubernautv1alpha2.Kubernaut) ([]corev1.Volu
 						{Secret: &corev1.SecretProjection{
 							LocalObjectReference: corev1.LocalObjectReference{Name: kn.Spec.Valkey.SecretName},
 							Items:                []corev1.KeyToPath{{Key: "valkey-secrets.yaml", Path: "valkey-secrets.yaml"}},
+						}},
+						{Secret: &corev1.SecretProjection{
+							LocalObjectReference: corev1.LocalObjectReference{Name: auditHashKey.SecretName},
+							Items:                []corev1.KeyToPath{{Key: DataStorageAuditHashKeySecretDataKey, Path: DataStorageAuditHashKeySecretDataKey}},
 						}},
 					},
 				},

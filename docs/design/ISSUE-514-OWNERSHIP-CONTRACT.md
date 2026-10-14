@@ -71,6 +71,7 @@ replacement or ownership change cannot be deleted using a prior authorization.
 | Shared operand CRDs embedded in the operator | Explicit `app.kubernetes.io/managed-by=kubernaut-operator`; no foreign owner; never deleted with an instance. Old/unmarked or Helm-owned CRDs require an administrator-reviewed ownership transfer or clean-install boundary before schema updates |
 | Native provider policies | Existing managed-policy, managed-by, policy-namespace, instance and provider predicates remain mandatory; never relaxed to the generic marker. Foreign/invalid-scope owners and termination veto updates/deletes; only the same namespaced Kubernaut controller identity may be repaired on marked reinstall |
 | Administrator credentials, runtime/policy input ConfigMaps, external TLS/issuers, cert-manager output Secrets, platform CRDs/controllers | Read-only inputs; never generic adoption/cleanup targets. Hook/development generated TLS is ownership-checked before even reusing its key material |
+| DataStorage audit HMAC Secret and state marker | The default HMAC Secret and non-secret identity marker have no CR owner reference and survive reinstall; the Secret is immutable/create-only and both objects carry deletion-protection finalizers, so they are never regenerated or deleted after initialization. An explicitly referenced administrator Secret remains read-only and unowned by the operator. |
 
 ## Lifecycle and migration boundary
 
