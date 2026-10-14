@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -300,11 +301,70 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		seedPrecreatedObject(r, validRuntime)
 		kn.Spec.KubernautAgent.RuntimeConfigMapName = validRuntime.Name
 		Expect(r.Update(ctx, kn)).To(Succeed())
+		other := newMinimalCR()
+		other.Name = "other"
+		other.Namespace = "other"
+		Expect(r.Create(ctx, other)).To(Succeed())
 		requests := r.precreatedConfigurationToKubernaut(ctx, validRuntime)
 		Expect(requests).To(ConsistOf(reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)}))
+		Expect(r.precreatedConfigurationToKubernaut(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "unrelated-secret", Namespace: kn.Namespace}})).To(BeEmpty())
+		noAPIReader := &KubernautReconciler{Client: r.Client, Scheme: r.Scheme}
+		Expect(noAPIReader.precreatedConfigurationToKubernaut(ctx, validRuntime)).To(ConsistOf(reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)}))
 
 		unrelated := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: kn.Namespace}}
 		Expect(r.precreatedConfigurationToKubernaut(ctx, unrelated)).To(BeEmpty())
+
+		invalidRego := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "invalid-rego", Namespace: kn.Namespace},
+			Data:       map[string]string{"approval.rego": "default allow = true"},
+		}
+		seedPrecreatedObject(r, invalidRego)
+		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
+			kind: precreatedConfigMapReference, path: "spec.policy", name: invalidRego.Name, requiredKeys: []string{"approval.rego"},
+		})).To(MatchError(ContainSubstring("Rego package declaration")))
+
+		emptyYAML := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "empty-runtime", Namespace: kn.Namespace},
+			Data:       map[string]string{"llm-runtime.yaml": "{}"},
+		}
+		seedPrecreatedObject(r, emptyYAML)
+		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
+			kind: precreatedConfigMapReference, path: "spec.runtime", name: emptyYAML.Name, requiredKeys: []string{"llm-runtime.yaml"},
+		})).To(MatchError(ContainSubstring("must contain a YAML object")))
+
+		invalidCA := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "invalid-ca", Namespace: kn.Namespace},
+			Data:       map[string][]byte{"ca.crt": []byte("not-pem")},
+		}
+		seedPrecreatedObject(r, invalidCA)
+		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
+			kind: precreatedSecretReference, path: "spec.ca", name: invalidCA.Name, requiredKeys: []string{"ca.crt"},
+		})).To(MatchError(ContainSubstring("valid CA PEM")))
+
+		invalidTLS := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "invalid-tls", Namespace: kn.Namespace},
+			Data:       map[string][]byte{corev1.TLSCertKey: []byte("cert"), corev1.TLSPrivateKeyKey: []byte("key")},
+		}
+		seedPrecreatedObject(r, invalidTLS)
+		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
+			kind: precreatedSecretReference, path: "spec.tls", name: invalidTLS.Name, requiredKeys: []string{corev1.TLSCertKey, corev1.TLSPrivateKeyKey},
+		})).To(MatchError(ContainSubstring("invalid TLS certificate/key pair")))
+
+		invalidURL := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "invalid-url", Namespace: kn.Namespace},
+			Data:       map[string][]byte{"webhook-url": []byte("not-a-url")},
+		}
+		seedPrecreatedObject(r, invalidURL)
+		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
+			kind: precreatedSecretReference, path: "spec.slack", name: invalidURL.Name, requiredKeys: []string{"webhook-url"},
+		})).To(MatchError(ContainSubstring("valid URL")))
+
+		Expect(r.precreatedConfigurationToKubernaut(ctx, nil)).To(BeEmpty())
+		Expect(r.precreatedConfigurationToKubernaut(ctx, &appsv1.Deployment{})).To(BeEmpty())
+		listErrorReconciler := businessUnitReconciler(kn, interceptor.Funcs{List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+			return fmt.Errorf("list failed")
+		}})
+		Expect(listErrorReconciler.precreatedConfigurationToKubernaut(ctx, validRuntime)).To(BeEmpty())
 	})
 })
 
