@@ -25,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
+	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
 var _ = Describe("Kind operator journey and native provider contract", Ordered, func() {
@@ -144,6 +145,7 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 
 	It(
 		"E2E-MON-424-001 / E2E-TLS-GAP-001 / E2E-TLS-DEV-001 / E2E-TLS-CERTMANAGER-001 / E2E-TLS-HOOK-001 / "+
+			"E2E-AUDIT-209-001 / "+
 			"E2E-TLS-MANUAL-001 / E2E-TLS-ADMIN-001 / E2E-TLS-CLEANUP-001 [SC-8, SC-13, SC-17, SI-4; "+
 			"SOC2 CC6, CC7, A1; ASVS v5.0.0-V12.1.3, v5.0.0-V13.2.1, v5.0.0-V16.5.2] drives the CR through "+
 			"validation, migration, deployment, "+
@@ -166,6 +168,25 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			Eventually(func(g Gomega) {
 				g.Expect(kubernautCondition(ctx, "ServicesDeployed")).To(Equal(conditionTrue))
 			}).Should(Succeed())
+
+			By("verifying the live audit HMAC Secret, ConfigMap, and Deployment projection")
+			finalizer, err := kubectl(ctx, "get", "secret", resources.DataStorageAuditHashKeySecretName,
+				"-n", kubernautNamespace, "-o", "jsonpath={.metadata.finalizers[0]}")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(strings.TrimSpace(finalizer)).To(Equal(resources.DataStorageAuditHashKeyFinalizer))
+			stateFinalizer, err := kubectl(ctx, "get", "configmap", resources.DataStorageAuditHashKeyStateConfigMapName,
+				"-n", kubernautNamespace, "-o", "jsonpath={.metadata.finalizers[0]}")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(strings.TrimSpace(stateFinalizer)).To(Equal(resources.DataStorageAuditHashKeyFinalizer))
+			auditConfig, err := kubectl(ctx, "get", "configmap", "datastorage-config", "-n", kubernautNamespace,
+				"-o", "jsonpath={.data.config\\.yaml}")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(auditConfig).To(ContainSubstring("hashKeySecretsFile: /etc/datastorage/secrets/audit-hmac-key.yaml"))
+			deployment, err := kubectl(ctx, "get", "deployment",
+				resources.DeploymentName(resources.ComponentDataStorage), "-n", kubernautNamespace, "-o", "yaml")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(deployment).To(ContainSubstring("audit-hmac-key.yaml"))
+			Expect(deployment).To(ContainSubstring("readOnly: true"))
 
 			By("waiting for the operator to report all managed workloads running")
 			Eventually(func(g Gomega) {

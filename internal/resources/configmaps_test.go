@@ -459,6 +459,31 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("secretsFile: /etc/datastorage/secrets/db-secrets.yaml"), "datastorage config should reference db secrets file, got:\n%s", data)
 		})
 
+		It("UT-AUDIT-209-CM-001 [AU-9, CC8.1, ASVS V11.1.1] always renders the mandatory audit HMAC configuration", func() {
+			kn := testKubernaut()
+			cm, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("audit:"), "DataStorage must not silently omit audit integrity configuration")
+			Expect(data).To(ContainSubstring("hashKeySecretsFile: /etc/datastorage/secrets/audit-hmac-key.yaml"))
+			Expect(data).To(ContainSubstring("hashKeyKey: hmacKey"))
+		})
+
+		It("UT-AUDIT-209-CM-002 [AC-6, IA-5, ASVS V13.3.1/V13.3.2] renders a configured audit key name", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			knV2.Spec.DataStorage.AuditHashKey = &kubernautv1alpha2.DataStorageAuditHashKeySpec{
+				ExistingSecret: "customer-audit-key",
+				SecretKey:      "customHMACKey",
+			}
+			cm, err := DataStorageConfigMap(kn, knV2, "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("hashKeySecretsFile: /etc/datastorage/secrets/audit-hmac-key.yaml"))
+			Expect(data).To(ContainSubstring("hashKeyKey: customHMACKey"))
+		})
+
 		It("defaults PostgreSQL port to 5432 when unset", func() {
 			kn := testKubernaut()
 			kn.Spec.PostgreSQL.Port = 0
