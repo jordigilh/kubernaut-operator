@@ -81,30 +81,31 @@ const maxMigrationRetries = 10
 
 // Condition reasons used in status patches.
 const (
-	ReasonSecretsValid              = "SecretsValid"
-	ReasonCRDsReady                 = "CRDsReady"
-	ReasonMigrationComplete         = "MigrationComplete"
-	ReasonMigrationFailed           = "MigrationFailed"
-	ReasonMigrationInProgress       = "MigrationInProgress"
-	ReasonRBACReady                 = "RBACReady"
-	ReasonWebhooksReady             = "WebhooksReady"
-	ReasonRouteCreated              = "RouteCreated"
-	ReasonRouteDisabled             = "RouteDisabled"
-	ReasonManifestsApplied          = "ManifestsApplied"
-	ReasonPlatformCapabilitiesReady = "CapabilitiesDiscovered"
-	ReasonTLSReady                  = "TLSReady"
-	ReasonTLSNotReady               = "TLSNotReady"
-	ReasonTLSWaitingForServiceCA    = "WaitingForServiceCA"
-	ReasonFleetTrustSecretInvalid   = "FleetTrustSecretInvalid"
-	ReasonFleetTokenSecretInvalid   = "FleetTokenSecretInvalid"
-	ReasonMonitoringTLSNotReady     = "MonitoringTLSNotReady"
-	ReasonTelemetrySecretInvalid    = "TelemetrySecretInvalid"
-	ReasonTelemetryAmbientInvalid   = "TelemetryAmbientTrustInvalid"
-	ReasonExposureReady             = "ExposureReady"
-	ReasonExposureInternal          = "InternalOnly"
-	ReasonMonitoringAvailable       = "MonitoringAvailable"
-	ReasonMonitoringDisabled        = "MonitoringDisabled"
-	ReasonMonitoringUnavailable     = "MonitoringUnavailable"
+	ReasonSecretsValid                   = "SecretsValid"
+	ReasonPrecreatedConfigurationInvalid = "PrecreatedConfigurationInvalid"
+	ReasonCRDsReady                      = "CRDsReady"
+	ReasonMigrationComplete              = "MigrationComplete"
+	ReasonMigrationFailed                = "MigrationFailed"
+	ReasonMigrationInProgress            = "MigrationInProgress"
+	ReasonRBACReady                      = "RBACReady"
+	ReasonWebhooksReady                  = "WebhooksReady"
+	ReasonRouteCreated                   = "RouteCreated"
+	ReasonRouteDisabled                  = "RouteDisabled"
+	ReasonManifestsApplied               = "ManifestsApplied"
+	ReasonPlatformCapabilitiesReady      = "CapabilitiesDiscovered"
+	ReasonTLSReady                       = "TLSReady"
+	ReasonTLSNotReady                    = "TLSNotReady"
+	ReasonTLSWaitingForServiceCA         = "WaitingForServiceCA"
+	ReasonFleetTrustSecretInvalid        = "FleetTrustSecretInvalid"
+	ReasonFleetTokenSecretInvalid        = "FleetTokenSecretInvalid"
+	ReasonMonitoringTLSNotReady          = "MonitoringTLSNotReady"
+	ReasonTelemetrySecretInvalid         = "TelemetrySecretInvalid"
+	ReasonTelemetryAmbientInvalid        = "TelemetryAmbientTrustInvalid"
+	ReasonExposureReady                  = "ExposureReady"
+	ReasonExposureInternal               = "InternalOnly"
+	ReasonMonitoringAvailable            = "MonitoringAvailable"
+	ReasonMonitoringDisabled             = "MonitoringDisabled"
+	ReasonMonitoringUnavailable          = "MonitoringUnavailable"
 
 	ReasonAnsibleDisabled        = "Disabled"
 	ReasonAnsibleReady           = "Ready"
@@ -342,6 +343,10 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 		return r.handleSpecValidationFailure(ctx, kn, validationErrs)
 	}
 
+	if result, err, handled := r.validatePrecreatedConfigurationPhase(ctx, kn, knV2); handled {
+		return result, err
+	}
+
 	if result, err, handled := r.validateTelemetryMaterial(ctx, kn, knV2); handled {
 		return result, err
 	}
@@ -403,6 +408,25 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 		})
 		r.setPhase(kn, kubernautv1alpha2.PhaseValidating)
 	})
+}
+
+func (r *KubernautReconciler) validatePrecreatedConfigurationPhase(
+	ctx context.Context,
+	kn *kubernautv1alpha2.Kubernaut,
+	knV2 *kubernautv1alpha2.Kubernaut,
+) (ctrl.Result, error, bool) {
+	if err := r.validatePrecreatedConfiguration(ctx, kn, knV2); err != nil {
+		logf.FromContext(ctx).Error(err, "pre-created configuration validation failed",
+			"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+		if r.Recorder != nil {
+			r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, ReasonPrecreatedConfigurationInvalid,
+				"Reconcile", "%v", err)
+		}
+		result, statusErr := r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
+			ReasonPrecreatedConfigurationInvalid, err.Error())
+		return result, statusErr, true
+	}
+	return ctrl.Result{}, nil, false
 }
 
 func (r *KubernautReconciler) handleSpecValidationFailure(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, validationErrs []error) (ctrl.Result, error) {
@@ -2988,6 +3012,298 @@ func (r *KubernautReconciler) validateSecret(ctx context.Context, namespace, nam
 		}
 	}
 	return nil
+}
+
+type precreatedReferenceKind string
+
+const (
+	precreatedConfigMapReference precreatedReferenceKind = "ConfigMap"
+	precreatedSecretReference    precreatedReferenceKind = "Secret"
+)
+
+type precreatedReference struct {
+	kind         precreatedReferenceKind
+	path         string
+	name         string
+	requiredKeys []string
+}
+
+// validatePrecreatedConfiguration verifies administrator/GitOps-owned inputs
+// before migration or workload creation. It only reads referenced objects; the
+// operator never adds ownership metadata to, updates, or deletes them.
+func (r *KubernautReconciler) validatePrecreatedConfiguration(
+	ctx context.Context,
+	kn *kubernautv1alpha2.Kubernaut,
+	knV2 *kubernautv1alpha2.Kubernaut,
+) error {
+	references, referenceErrs := precreatedConfigurationReferences(knV2)
+	validationErrs := make([]error, 0, len(referenceErrs)+len(references))
+	validationErrs = append(validationErrs, referenceErrs...)
+	for _, reference := range references {
+		if err := r.validatePrecreatedReference(ctx, kn.Namespace, reference); err != nil {
+			validationErrs = append(validationErrs, err)
+		}
+	}
+	if len(validationErrs) == 0 {
+		return nil
+	}
+
+	messages := make([]string, 0, len(validationErrs))
+	for _, validationErr := range validationErrs {
+		messages = append(messages, validationErr.Error())
+	}
+	return fmt.Errorf("pre-created configuration validation failed: %s", strings.Join(messages, "; "))
+}
+
+func (r *KubernautReconciler) validatePrecreatedReference(
+	ctx context.Context, namespace string, reference precreatedReference,
+) error {
+	objectKey := client.ObjectKey{Namespace: namespace, Name: reference.name}
+	switch reference.kind {
+	case precreatedConfigMapReference:
+		configMap := &corev1.ConfigMap{}
+		if err := r.Get(ctx, objectKey, configMap); err != nil {
+			return fmt.Errorf("%s: ConfigMap %q could not be read: %w", reference.path, reference.name, err)
+		}
+		for _, key := range reference.requiredKeys {
+			if _, ok := configMap.Data[key]; !ok {
+				return fmt.Errorf("%s: ConfigMap %q is missing required key %q", reference.path, reference.name, key)
+			}
+		}
+	case precreatedSecretReference:
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, objectKey, secret); err != nil {
+			return fmt.Errorf("%s: Secret %q could not be read: %w", reference.path, reference.name, err)
+		}
+		for _, key := range reference.requiredKeys {
+			if _, ok := secret.Data[key]; !ok {
+				return fmt.Errorf("%s: Secret %q is missing required key %q", reference.path, reference.name, key)
+			}
+		}
+	default:
+		return fmt.Errorf("%s: unsupported pre-created reference kind %q", reference.path, reference.kind)
+	}
+	return nil
+}
+
+const precreatedDefaultTokenKey = "token"
+
+type precreatedReferenceCollector struct {
+	references []precreatedReference
+	errs       []error
+	seen       map[string]struct{}
+}
+
+func newPrecreatedReferenceCollector() *precreatedReferenceCollector {
+	return &precreatedReferenceCollector{
+		references: make([]precreatedReference, 0, 24),
+		errs:       make([]error, 0, 4),
+		seen:       make(map[string]struct{}, 24),
+	}
+}
+
+func (c *precreatedReferenceCollector) add(kind precreatedReferenceKind, path, name string, requiredKeys ...string) {
+	if name == "" {
+		c.errs = append(c.errs, fmt.Errorf("%s: name must be set", path))
+		return
+	}
+	identity := fmt.Sprintf("%s/%s/%s", kind, name, strings.Join(requiredKeys, "\x00"))
+	if _, ok := c.seen[identity]; ok {
+		return
+	}
+	c.seen[identity] = struct{}{}
+	c.references = append(c.references, precreatedReference{
+		kind:         kind,
+		path:         path,
+		name:         name,
+		requiredKeys: append([]string(nil), requiredKeys...),
+	})
+}
+
+func (c *precreatedReferenceCollector) addError(err error) {
+	c.errs = append(c.errs, err)
+}
+
+func appendPrecreatedOptionalReferences(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
+	appendPrecreatedConfigMapReferences(c, kn)
+	appendPrecreatedFeatureSecretReferences(c, kn)
+	appendPrecreatedLLMReferences(c, kn)
+	appendPrecreatedFleetReferences(c, kn)
+	appendPrecreatedIngressReferences(c, kn)
+}
+
+func appendPrecreatedConfigMapReferences(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
+	if name := kn.Spec.KubernautAgent.RuntimeConfigMapName; name != "" {
+		c.add(precreatedConfigMapReference, "spec.kubernautAgent.runtimeConfigMapName", name, "llm-runtime.yaml")
+	}
+	if ref := kn.Spec.SignalProcessing.ProactiveSignalMappings; ref != nil {
+		c.add(precreatedConfigMapReference, "spec.signalProcessing.proactiveSignalMappings.configMapName",
+			ref.ConfigMapName, "proactive-signal-mappings.yaml")
+	}
+	if ref := kn.Spec.Notification.Routing; ref != nil {
+		c.add(precreatedConfigMapReference, "spec.notification.routing.configMapName",
+			ref.ConfigMapName, "routing.yaml")
+	}
+}
+
+func appendPrecreatedFeatureSecretReferences(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
+	if name := kn.Spec.Notification.Slack.SecretName; name != "" {
+		c.add(precreatedSecretReference, "spec.notification.slack.secretName", name, "webhook-url")
+	}
+	if kn.Spec.GatewayEnabled() {
+		if name := kn.Spec.Gateway.AlertManagerTokenSecretName; name != "" {
+			c.add(precreatedSecretReference, "spec.gateway.alertManagerTokenSecretName", name, precreatedDefaultTokenKey)
+		}
+	}
+	appendPrecreatedConsoleSecret(c, kn)
+	appendPrecreatedAnsibleSecrets(c, kn)
+	appendPrecreatedValkeyTLSSecrets(c, kn)
+}
+
+func appendPrecreatedConsoleSecret(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
+	if !kn.Spec.ConsoleEnabled() {
+		return
+	}
+	c.add(precreatedSecretReference, "spec.console.auth.secretName", kn.Spec.Console.Auth.SecretName,
+		"client-id", "client-secret", "cookie-secret")
+}
+
+func appendPrecreatedAnsibleSecrets(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
+	ansible := kn.Spec.WorkflowExecution.Ansible
+	if !ansible.Enabled {
+		return
+	}
+	if ansible.TokenSecretRef == nil {
+		c.addError(fmt.Errorf("spec.workflowExecution.ansible.tokenSecretRef: must be set when Ansible is enabled"))
+	} else {
+		key := ansible.TokenSecretRef.Key
+		if key == "" {
+			key = precreatedDefaultTokenKey
+		}
+		c.add(precreatedSecretReference, "spec.workflowExecution.ansible.tokenSecretRef", ansible.TokenSecretRef.Name, key)
+	}
+	if caRef := ansible.CACertSecretRef; caRef != nil {
+		key := caRef.Key
+		if key == "" {
+			key = "ca.crt"
+		}
+		c.add(precreatedSecretReference, "spec.workflowExecution.ansible.caCertSecretRef", caRef.Name, key)
+	}
+}
+
+func appendPrecreatedValkeyTLSSecrets(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
+	if !kn.Spec.Valkey.ValkeyTLSEnabled() {
+		return
+	}
+	if name := kn.Spec.Valkey.TLS.CASecretName; name != "" {
+		c.add(precreatedSecretReference, "spec.valkey.tls.caSecretName", name, "ca.crt")
+	}
+	if name := kn.Spec.Valkey.TLS.ClientCertSecretName; name != "" {
+		c.add(precreatedSecretReference, "spec.valkey.tls.clientCertSecretName", name,
+			corev1.TLSCertKey, corev1.TLSPrivateKeyKey)
+	}
+}
+
+func appendPrecreatedLLMReferences(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
+	appendPrecreatedLLMProfileReference(c, kn, resources.EffectiveKALLMProfileRef(kn))
+	for _, phase := range []string{"rca", "workflow_discovery", "validation"} {
+		appendPrecreatedLLMProfileReference(c, kn, kn.Spec.KubernautAgent.PhaseModels[phase])
+	}
+	if !kn.Spec.APIFrontendEnabled() {
+		return
+	}
+	appendPrecreatedLLMProfileReference(c, kn, resources.AFLLMProfileRef(kn))
+	severityTriage := kn.Spec.APIFrontend.SeverityTriage
+	if severityTriage != nil && severityTriage.LLMTriageEnabled() && severityTriage.LLMProfileRef != "" {
+		appendPrecreatedLLMProfileReference(c, kn, severityTriage.LLMProfileRef)
+	}
+}
+
+func appendPrecreatedLLMProfileReference(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut, profileRef string) {
+	if profileRef == "" {
+		return
+	}
+	profile, ok := resources.ResolveLLMProfile(kn, profileRef)
+	if !ok {
+		return
+	}
+	profilePath := fmt.Sprintf("spec.llmProfiles[%q]", profileRef)
+	credentialKey := "api_key"
+	if profile.Provider == resources.LLMProviderVertexAI {
+		credentialKey = "credentials.json"
+	}
+	c.add(precreatedSecretReference, profilePath+".credentialsSecretName", profile.CredentialsSecretName, credentialKey)
+	if profile.OAuth2.Enabled {
+		if profile.OAuth2.CredentialsSecretRef == "" {
+			c.addError(fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set when OAuth2 is enabled", profilePath))
+		} else {
+			c.add(precreatedSecretReference, profilePath+".oauth2.credentialsSecretRef",
+				profile.OAuth2.CredentialsSecretRef, "client-id", "client-secret")
+		}
+	}
+	if profile.TLSClientSecretRef != "" {
+		c.add(precreatedSecretReference, profilePath+".tlsClientSecretRef", profile.TLSClientSecretRef,
+			corev1.TLSCertKey, corev1.TLSPrivateKeyKey)
+	}
+}
+
+func appendPrecreatedFleetReferences(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
+	if !kn.Spec.FleetEnabled() {
+		return
+	}
+	addCredential := func(path string, override *kubernautv1alpha2.FleetOverrideSpec) {
+		name := kn.Spec.Fleet.OAuth2.CredentialsSecretRef
+		if override != nil && override.OAuth2CredentialsSecretRef != "" {
+			name = override.OAuth2CredentialsSecretRef
+		}
+		c.add(precreatedSecretReference, path, name, "client-id", "client-secret")
+	}
+	if kn.Spec.GatewayEnabled() {
+		addCredential("spec.gateway.fleet.oauth2CredentialsSecretRef", kn.Spec.Gateway.Fleet)
+	}
+	addCredential("spec.remediationOrchestrator.fleet.oauth2CredentialsSecretRef", kn.Spec.RemediationOrchestrator.Fleet)
+	addCredential("spec.signalProcessing.fleet.oauth2CredentialsSecretRef", kn.Spec.SignalProcessing.Fleet)
+	if kn.Spec.APIFrontendEnabled() {
+		addCredential("spec.apiFrontend.fleet.oauth2CredentialsSecretRef", kn.Spec.APIFrontend.Fleet)
+	}
+	addCredential("spec.effectivenessMonitor.fleet.oauth2CredentialsSecretRef", kn.Spec.EffectivenessMonitor.Fleet)
+	addCredential("spec.kubernautAgent.fleet.oauth2CredentialsSecretRef", kn.Spec.KubernautAgent.Fleet)
+	if kn.Spec.FleetMetadataCacheEnabled() {
+		addCredential("spec.fleetMetadataCache.fleet.oauth2CredentialsSecretRef", kn.Spec.FleetMetadataCache.Fleet)
+	}
+	c.add(precreatedSecretReference, "spec.workflowExecution.fleet.oauth2CredentialsSecretRef",
+		kn.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef, "client-id", "client-secret")
+}
+
+func appendPrecreatedIngressReferences(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
+	for _, ingress := range []struct {
+		path    string
+		enabled bool
+		spec    kubernautv1alpha2.IngressSpec
+	}{
+		{path: "spec.gateway.ingress", enabled: kn.Spec.GatewayEnabled(), spec: kn.Spec.Gateway.Ingress},
+		{path: "spec.apiFrontend.ingress", enabled: kn.Spec.APIFrontendEnabled(), spec: kn.Spec.APIFrontend.Ingress},
+		{path: "spec.console.ingress", enabled: kn.Spec.ConsoleEnabled(), spec: kn.Spec.Console.Ingress},
+	} {
+		if !ingress.enabled || !ingress.spec.IngressEnabled() {
+			continue
+		}
+		c.add(precreatedSecretReference, ingress.path+".tlsSecretName", ingress.spec.TLSSecretName,
+			corev1.TLSCertKey, corev1.TLSPrivateKeyKey)
+	}
+	if _, err := resources.Ingresses(kn); err != nil {
+		c.addError(fmt.Errorf("generic ingress configuration: %w", err))
+	}
+}
+
+func precreatedConfigurationReferences(kn *kubernautv1alpha2.Kubernaut) ([]precreatedReference, []error) {
+	collector := newPrecreatedReferenceCollector()
+	collector.add(precreatedConfigMapReference, "spec.aiAnalysis.policy.configMapName",
+		kn.Spec.AIAnalysis.Policy.ConfigMapName, "approval.rego")
+	collector.add(precreatedConfigMapReference, "spec.signalProcessing.policy.configMapName",
+		kn.Spec.SignalProcessing.Policy.ConfigMapName, "policy.rego")
+	appendPrecreatedOptionalReferences(collector, kn)
+	return collector.references, collector.errs
 }
 
 // validateFleetTrustSecrets verifies Secret-backed Fleet CA references before
