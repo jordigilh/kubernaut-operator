@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"sort"
 	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -536,9 +535,9 @@ func NotificationDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1al
 // kubernautagent-tls (provisioned by OCP service-ca). Health and metrics
 // are on dedicated plain HTTP ports 8081 and 9090.
 func KubernautAgentDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-	kaProfile, _ := ResolveLLMProfile(kn, EffectiveKALLMProfileRef(kn))
+	kaProfile, _ := ResolveLLMProfile(kn, EffectiveInvestigationLLMProfileRef(kn))
 	if kaProfile.CredentialsSecretName == "" {
-		return nil, fmt.Errorf("spec.kubernautAgent.llmProfileRef's profile must have a non-empty credentialsSecretName")
+		return nil, fmt.Errorf("spec.kubernautAgent.investigation.llmProfileRef's profile must have a non-empty credentialsSecretName")
 	}
 
 	volumes, mounts, envVars := kaCoreVolumesMountsEnv(kn, kaProfile)
@@ -659,29 +658,20 @@ func kaCredentialVolumesAndMounts(kn *kubernautv1alpha2.Kubernaut, kaProfile kub
 		})
 	}
 
-	// #233: mount a dedicated Secret volume per phase override whose own
-	// profile names a credentialsSecretName different from KA's base
-	// profile -- KA resolves each phase's own apiKeyFile independently
-	// (kubernaut#1728), so cross-credential phases need their own mount
-	// rather than reusing KA's "llm-credentials" volume. Iterate phases in
-	// sorted order so the Volumes/VolumeMounts slices -- and therefore the
-	// rendered Deployment -- are deterministic regardless of Go's
-	// randomized map iteration order.
-	phases := make([]string, 0, len(kn.Spec.KubernautAgent.PhaseModels))
-	for phase := range kn.Spec.KubernautAgent.PhaseModels {
-		phases = append(phases, phase)
-	}
-	sort.Strings(phases)
-	for _, phase := range phases {
-		phaseProfile, _ := ResolveLLMProfile(kn, kn.Spec.KubernautAgent.PhaseModels[phase])
-		if phaseProfile.CredentialsSecretName == "" || phaseProfile.CredentialsSecretName == kaProfile.CredentialsSecretName {
-			continue
+	// #233: workflow discovery resolves its own profile independently from
+	// the investigation profile. A cross-credential profile needs a dedicated
+	// read-only Secret mount rather than the base "llm-credentials" volume.
+	const phase = "workflow_discovery"
+	workflowRef := EffectiveWorkflowDiscoveryLLMProfileRef(kn)
+	if workflowRef != "" && workflowRef != EffectiveInvestigationLLMProfileRef(kn) {
+		phaseProfile, _ := ResolveLLMProfile(kn, workflowRef)
+		if phaseProfile.CredentialsSecretName != "" && phaseProfile.CredentialsSecretName != kaProfile.CredentialsSecretName {
+			volumeName := phaseCredentialsVolumeName(phase)
+			volumes = append(volumes, secretVolume(volumeName, phaseProfile.CredentialsSecretName))
+			mounts = append(mounts, corev1.VolumeMount{
+				Name: volumeName, MountPath: phaseCredentialsMountPath(phase), ReadOnly: true,
+			})
 		}
-		volumeName := phaseCredentialsVolumeName(phase)
-		volumes = append(volumes, secretVolume(volumeName, phaseProfile.CredentialsSecretName))
-		mounts = append(mounts, corev1.VolumeMount{
-			Name: volumeName, MountPath: phaseCredentialsMountPath(phase), ReadOnly: true,
-		})
 	}
 	return volumes, mounts
 }
@@ -934,11 +924,10 @@ func afInitContainers(kn *kubernautv1alpha2.Kubernaut) ([]corev1.Container, erro
 func apifrontendCredentialVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut,
 	volumes []corev1.Volume, mounts []corev1.VolumeMount, env []corev1.EnvVar) (
 	[]corev1.Volume, []corev1.VolumeMount, []corev1.EnvVar) {
-	// AF resolves its own LLM profile (AFLLMProfileRef defaults to KA's ref
-	// when AF doesn't set its own), rather than reaching into KA's profile
-	// unconditionally -- fixes the pre-refactor bug where AF always mounted
-	// KA's llm-credentials/llm-tls-client Secrets regardless of which
-	// profile AF's ConfigMap was actually configured to use.
+	// AF resolves its own LLM profile (AFLLMProfileRef infers only the sole
+	// shared profile when AF doesn't set its own), rather than reaching into
+	// either KA Agent profile unconditionally. This keeps AF's credentials and
+	// ConfigMap identity aligned.
 	afProfile, _ := ResolveLLMProfile(kn, AFLLMProfileRef(kn))
 
 	if secretName := afProfile.CredentialsSecretName; secretName != "" {

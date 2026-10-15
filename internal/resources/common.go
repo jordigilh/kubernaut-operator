@@ -780,15 +780,10 @@ func ResolveLLMProfile(kn *kubernautv1alpha2.Kubernaut, ref string) (kubernautv1
 	return p, ok
 }
 
-// EffectiveKALLMProfileRef returns the profile name KA's investigator LLM
-// calls resolve to: spec.kubernautAgent.llmProfileRef when explicitly set,
-// otherwise the sole entry in spec.llmProfiles when it defines exactly one
-// profile. This is the root of the whole llmProfileRef fallback chain
-// (AFLLMProfileRef falls back to this; severity-triage/alignmentCheck fall
-// back to AF's), so inferring it here alone lowers the barrier for the
-// common single-provider case everywhere a component would otherwise share
-// KA's identity, without requiring every downstream field to repeat the
-// same cardinality check.
+// effectiveLLMProfileRef returns an explicit profile reference or infers the
+// sole profile when spec.llmProfiles contains exactly one entry. An empty
+// result is intentional when the reference is omitted and the profile choice
+// is ambiguous.
 //
 // Deliberately a count of map entries, not a fixed conventional key name
 // (e.g. a profile literally named "primary"): a naming convention is an
@@ -797,9 +792,9 @@ func ResolveLLMProfile(kn *kubernautv1alpha2.Kubernaut, ref string) (kubernautv1
 // llmProfiles has zero or 2+ entries and no explicit ref was given —
 // validateLLMProfileRefs turns that into a descriptive error rather than
 // silently guessing.
-func EffectiveKALLMProfileRef(kn *kubernautv1alpha2.Kubernaut) string {
-	if kn.Spec.KubernautAgent.LLMProfileRef != "" {
-		return kn.Spec.KubernautAgent.LLMProfileRef
+func effectiveLLMProfileRef(kn *kubernautv1alpha2.Kubernaut, explicit string) string {
+	if explicit != "" {
+		return explicit
 	}
 	if len(kn.Spec.LLMProfiles) == 1 {
 		for name := range kn.Spec.LLMProfiles {
@@ -809,11 +804,21 @@ func EffectiveKALLMProfileRef(kn *kubernautv1alpha2.Kubernaut) string {
 	return ""
 }
 
+// EffectiveInvestigationLLMProfileRef returns the profile used by KA's
+// root-cause investigation invocation.
+func EffectiveInvestigationLLMProfileRef(kn *kubernautv1alpha2.Kubernaut) string {
+	return effectiveLLMProfileRef(kn, kn.Spec.KubernautAgent.Investigation.LLMProfileRef)
+}
+
+// EffectiveWorkflowDiscoveryLLMProfileRef returns the profile used by KA's
+// independent workflow-discovery invocation.
+func EffectiveWorkflowDiscoveryLLMProfileRef(kn *kubernautv1alpha2.Kubernaut) string {
+	return effectiveLLMProfileRef(kn, kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef)
+}
+
 // phaseCredentialsVolumeName returns the Volume/VolumeMount name for the
-// dedicated Secret mount of a spec.kubernautAgent.phaseModels override
-// whose profile has a different credentialsSecretName than KA's own
-// profile (#233). Keyed by phase so concurrently-configured phase
-// overrides never collide.
+// dedicated Secret mount of the workflowDiscovery profile when it has a
+// different credentialsSecretName than the investigation profile (#233).
 func phaseCredentialsVolumeName(phase string) string {
 	return "phase-credentials-" + phase
 }
@@ -827,16 +832,11 @@ func phaseCredentialsMountPath(phase string) string {
 }
 
 // AFLLMProfileRef returns the name of the profile API Frontend's own LLM
-// connection resolves to: its own spec.apiFrontend.llmProfileRef when set,
-// defaulting to KA's effective ref (EffectiveKALLMProfileRef) otherwise.
-// This gives AF an independent LLM identity while preserving today's
-// default behavior of implicitly sharing KA's profile -- including KA's own
-// single-profile inference -- when AF doesn't specify its own.
+// connection resolves to. API Frontend is an independent LLM consumer and
+// therefore infers only from the shared profile registry; it never inherits
+// the investigation or workflow-discovery agent's identity.
 func AFLLMProfileRef(kn *kubernautv1alpha2.Kubernaut) string {
-	if kn.Spec.APIFrontend.LLMProfileRef != "" {
-		return kn.Spec.APIFrontend.LLMProfileRef
-	}
-	return EffectiveKALLMProfileRef(kn)
+	return effectiveLLMProfileRef(kn, kn.Spec.APIFrontend.LLMProfileRef)
 }
 
 // severityTriageCredentialsVolumeName is the Volume/VolumeMount name for

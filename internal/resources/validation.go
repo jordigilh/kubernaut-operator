@@ -410,22 +410,12 @@ func validateLLMReasoning(base string, r *kubernautv1alpha2.LLMReasoningSpec, pr
 	return nil
 }
 
-// validPhaseModelKeys enumerates the agent phases that support per-phase LLM overrides.
-var validPhaseModelKeys = map[string]bool{
-	"rca":                true,
-	"workflow_discovery": true,
-	"validation":         true,
-}
-
 // lookupProfileRef checks that ref matches a key in profiles for the field
 // at fieldPath, and produces the standard "undefined profile" error shared
-// by every llmProfileRef/phaseModels field when it doesn't -- so the
-// message stays consistent without re-deriving it at each call site.
+// by every llmProfileRef field when it doesn't.
 //
-// allowEmpty controls how an empty ref is treated: fields like
-// apiFrontend.llmProfileRef fall back to another profile when empty (not an
-// error), while phaseModels values name no profile at all when empty and
-// are rejected the same as any other non-matching name.
+// allowEmpty controls whether the caller handles empty references through
+// sole-profile inference or an optional feature gate.
 func lookupProfileRef(profiles map[string]kubernautv1alpha2.LLMProfileSpec, ref, fieldPath string, allowEmpty bool) error {
 	if ref == "" && allowEmpty {
 		return nil
@@ -437,54 +427,39 @@ func lookupProfileRef(profiles map[string]kubernautv1alpha2.LLMProfileSpec, ref,
 	return nil
 }
 
-// validateLLMProfileRefs validates that every llmProfileRef (KA, AF,
-// AF severity-triage) and every phaseModels value points at a profile
-// defined in spec.llmProfiles, and enforces the same-credentialsSecretName
-// constraint on severity-triage relative to the profile it would otherwise
-// inherit from.
-//
-// #233: phaseModels is deliberately exempt from that constraint. It
-// originally existed because KA's LLMOverrideConfig silently reused the
-// base profile's already-resolved API key for every phase override,
-// regardless of what credentialsSecretName the phase's own profile named
-// (kubernaut#1726) — so representing independent phase credentials in the
-// CRD would have produced a config the operator could validate but KA
-// would silently misauthenticate. kubernaut#1728 fixed that by resolving
-// each phase's own APIKeyFile independently, so cross-credential (and
-// cross-provider) phase overrides are now safe to accept.
+func validateRequiredEffectiveProfile(profiles map[string]kubernautv1alpha2.LLMProfileSpec, ref, fieldPath string) []error {
+	if ref != "" {
+		if err := lookupProfileRef(profiles, ref, fieldPath, false); err != nil {
+			return []error{err}
+		}
+		return nil
+	}
+	if len(profiles) == 0 {
+		return []error{fmt.Errorf("%s: required — spec.llmProfiles defines no profiles to infer from", fieldPath)}
+	}
+	return []error{fmt.Errorf(
+		"%s: required — spec.llmProfiles defines %d profiles, so the profile is ambiguous without an explicit reference (auto-inferred only when exactly one profile is defined)",
+		fieldPath, len(profiles))}
+}
+
+// validateLLMProfileRefs validates that every logical LLM consumer (KA
+// investigation, KA workflow discovery, and API Frontend) resolves to a
+// profile defined in spec.llmProfiles. Sole-profile inference is accepted;
+// multiple profiles require an explicit reference for each enabled consumer.
 func validateLLMProfileRefs(kn *kubernautv1alpha2.Kubernaut) []error {
 	var errs []error
 	profiles := kn.Spec.LLMProfiles
 
-	kaRef := EffectiveKALLMProfileRef(kn)
-	const kaBase = "spec.kubernautAgent.llmProfileRef"
-	if kaRef == "" {
-		// EffectiveKALLMProfileRef only returns "" when the raw field is
-		// empty AND spec.llmProfiles doesn't have exactly one entry to
-		// infer from -- an explicit ref is unambiguous with any other
-		// count, so the two counts get distinct messages.
-		if len(profiles) == 0 {
-			errs = append(errs, fmt.Errorf("%s: required — spec.llmProfiles defines no profiles to infer from", kaBase))
-		} else {
-			errs = append(errs, fmt.Errorf(
-				"%s: required — spec.llmProfiles defines %d profiles, so the profile is ambiguous without an explicit reference (auto-inferred only when exactly one profile is defined)",
-				kaBase, len(profiles)))
-		}
-	}
-	if err := lookupProfileRef(profiles, kaRef, kaBase, true); err != nil {
-		errs = append(errs, err)
-	}
-
-	for phase, ref := range kn.Spec.KubernautAgent.PhaseModels {
-		phaseBase := fmt.Sprintf("spec.kubernautAgent.phaseModels[%q]", phase)
-		if !validPhaseModelKeys[phase] {
-			errs = append(errs, fmt.Errorf("%s: invalid phase key %q — must be one of: rca, workflow_discovery, validation", phaseBase, phase))
-			continue
-		}
-		if err := lookupProfileRef(profiles, ref, phaseBase, false); err != nil {
-			errs = append(errs, err)
-		}
-	}
+	errs = append(errs, validateRequiredEffectiveProfile(
+		profiles,
+		EffectiveInvestigationLLMProfileRef(kn),
+		"spec.kubernautAgent.investigation.llmProfileRef",
+	)...)
+	errs = append(errs, validateRequiredEffectiveProfile(
+		profiles,
+		EffectiveWorkflowDiscoveryLLMProfileRef(kn),
+		"spec.kubernautAgent.workflowDiscovery.llmProfileRef",
+	)...)
 
 	if kn.Spec.APIFrontendEnabled() {
 		errs = append(errs, validateAFLLMProfileRefs(kn, profiles)...)
@@ -510,9 +485,11 @@ func validateLLMProfileRefs(kn *kubernautv1alpha2.Kubernaut) []error {
 func validateAFLLMProfileRefs(kn *kubernautv1alpha2.Kubernaut, profiles map[string]kubernautv1alpha2.LLMProfileSpec) []error {
 	var errs []error
 
-	if err := lookupProfileRef(profiles, kn.Spec.APIFrontend.LLMProfileRef, "spec.apiFrontend.llmProfileRef", true); err != nil {
-		errs = append(errs, err)
-	}
+	errs = append(errs, validateRequiredEffectiveProfile(
+		profiles,
+		AFLLMProfileRef(kn),
+		"spec.apiFrontend.llmProfileRef",
+	)...)
 
 	if st := kn.Spec.APIFrontend.SeverityTriage; st != nil {
 		if err := lookupProfileRef(profiles, st.LLMProfileRef, "spec.apiFrontend.severityTriage.llmProfileRef", true); err != nil {
@@ -525,8 +502,7 @@ func validateAFLLMProfileRefs(kn *kubernautv1alpha2.Kubernaut, profiles map[stri
 
 // validateJWTProviderList validates a slice of JWT providers, checking issuerURL,
 // audiences, name uniqueness, and JWKS URL validity. The insecureFlagPath
-// parameter is used in error messages to reference the correct parent flag
-// (e.g. "spec.apiFrontend.auth.allowInsecureIssuers").
+// parameter is used in error messages to reference the correct parent flag.
 func validateJWTProviderList(providers []kubernautv1alpha2.JWTProviderSpec, basePath string, allowInsecure bool, insecureFlagPath string) []error {
 	var errs []error
 	seen := make(map[string]bool, len(providers))
