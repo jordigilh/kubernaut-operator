@@ -19,10 +19,9 @@
 
 `spec.kubernautAgent.llm` has been **removed**. LLM provider configuration
 (provider, model, credentials, endpoint, mTLS, OAuth2, etc.) now lives in
-`spec.llmProfiles`, a map of named profiles, with `spec.kubernautAgent.llmProfileRef`
-selecting which profile Kubernaut Agent (KA) uses for its investigator LLM
-calls. Other components with their own LLM triage (API Frontend's severity
-triage) reference profiles the same way via their own `llmProfileRef` field.
+`spec.llmProfiles`, a map of named profiles. KA's investigation and workflow
+discovery invocations, and other components such as API Frontend, each select
+their own profile through `llmProfileRef`.
 
 This is a breaking change with **no automated in-operator conversion** —
 accepted for the 1.6 milestone. Existing 1.5 CRs using
@@ -237,11 +236,15 @@ only the fields that reference them.
 1. For each distinct provider/credential combination in your old
    `spec.kubernautAgent.llm` (base + any `phaseModels` overrides), create one
    entry under `spec.llmProfiles`, giving it a descriptive name.
-2. Set `spec.kubernautAgent.llmProfileRef` to the profile that should be the
-   default (previously the base `llm` block).
-3. For each old `phaseModels` override, add an entry to
-   `spec.kubernautAgent.phaseModels` mapping the phase name to the new
-   profile name from step 1.
+2. Set `spec.kubernautAgent.investigation.llmProfileRef` to the profile that
+   replaces the base `llm` block and preserve `maxTurns` under
+   `kubernautAgent.investigation`.
+3. Map the old `phaseModels.workflow_discovery` profile to
+   `spec.kubernautAgent.workflowDiscovery.llmProfileRef` and set
+   `workflowDiscovery.maxEvidenceHandoffBytes` to `262144` unless you have an
+   approved override. Old `rca` routing becomes the investigation profile;
+   `validation` phase overrides require manual review because validation is not
+   an independent LLM Agent in the current runtime.
 4. Remove `spec.kubernautAgent.llm` entirely.
 5. If you use API Frontend severity triage, set
    `spec.apiFrontend.severityTriage.llmProfileRef` explicitly (it no longer
