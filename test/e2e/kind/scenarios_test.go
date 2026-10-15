@@ -283,6 +283,7 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 					"-o", "yaml")
 				g.Expect(deploymentErr).NotTo(HaveOccurred())
 				g.Expect(deployment).To(ContainSubstring("name: kubernaut-agent-config"))
+				g.Expect(deployment).To(ContainSubstring("readOnly: true"))
 			}).Should(Succeed())
 
 			By("patching the live CR with an explicit workflow-discovery budget")
