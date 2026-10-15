@@ -393,6 +393,25 @@ If your AAP uses a publicly trusted CA (e.g., Let's Encrypt), omit `caCertSecret
 
 If you do not use Ansible, omit the `ansible` block entirely (it defaults to disabled). The clean-break v1alpha2 API models this under `spec.workflowExecution.ansible`; manifests using the retired top-level `spec.ansible` field must be transformed before recreation. See `docs/upgrade-v1alpha1-to-v1alpha2.md`.
 
+## Failed WorkflowExecution diagnostics retention (optional)
+
+WorkflowExecution removes failed Job, Tekton PipelineRun, and AWX execution
+resources by default. To retain them for bounded post-failure diagnosis and
+must-gather collection, opt in explicitly:
+
+```yaml
+spec:
+  workflowExecution:
+    retainFailedExecutions: true
+    failedExecutionRetentionSeconds: 600
+```
+
+The retention period defaults to 600 seconds and is limited to seven days.
+Retention remains disabled when the boolean is omitted or false. This is an
+operator-rendered WorkflowExecution setting; it does not change the separate
+operator log or audit-storage responsibilities described in
+[`docs/security/auditing.md`](../security/auditing.md).
+
 ## Gateway Configuration (optional)
 
 The Gateway accepts signals from AlertManager and routes them to Signal Processing. Tune its behavior in the CR:
