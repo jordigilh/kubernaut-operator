@@ -3838,6 +3838,18 @@ spec:
                     default: 1m
                     description: Cooldown period between workflow executions.
                     type: string
+                  failedExecutionRetentionSeconds:
+                    default: 600
+                    description: |-
+                      Maximum time in seconds to retain failed execution resources when
+                      RetainFailedExecutions is enabled. The upstream WorkflowExecution
+                      default is 600 seconds and the service bounds this value to seven days.
+                      A pointer preserves the distinction between the omitted default and an
+                      explicitly supplied zero while the CRD remains optional.
+                    format: int64
+                    maximum: 604800
+                    minimum: 0
+                    type: integer
                   fleet:
                     description: |-
                       Fleet configures WorkflowExecution's own write-scoped MCP Gateway
@@ -3934,6 +3946,13 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
+                  retainFailedExecutions:
+                    default: false
+                    description: |-
+                      Whether failed Job, PipelineRun, and AWX execution resources remain
+                      available for bounded post-failure diagnosis.
+                      Disabled by default to preserve the upstream cleanup behavior.
+                    type: boolean
                   tekton:
                     description: Tekton integration configuration.
                     properties:
@@ -3947,6 +3966,11 @@ spec:
                     description: Namespace for workflow Job/PipelineRun execution.
                     type: string
                 type: object
+                x-kubernetes-validations:
+                - message: failedExecutionRetentionSeconds must be greater than zero
+                    when retainFailedExecutions is true
+                  rule: '!self.retainFailedExecutions || (has(self.failedExecutionRetentionSeconds)
+                    && self.failedExecutionRetentionSeconds > 0)'
             required:
             - aiAnalysis
             - kubernautAgent

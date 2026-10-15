@@ -59,6 +59,29 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		Expect(apiFrontend.Properties).NotTo(HaveKey("spire"))
 	})
 
+	It("UT-WE-480-API-001 publishes bounded failed WorkflowExecution retention with safe defaults", func() {
+		crd := loadKubernautCRD()
+		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+		workflowExecution := schema.Properties["spec"].Properties["workflowExecution"]
+
+		retain := workflowExecution.Properties["retainFailedExecutions"]
+		Expect(retain.Type).To(Equal("boolean"))
+		Expect(retain.Default).NotTo(BeNil())
+		Expect(string(retain.Default.Raw)).To(Equal("false"))
+
+		seconds := workflowExecution.Properties["failedExecutionRetentionSeconds"]
+		Expect(seconds.Type).To(Equal("integer"))
+		Expect(seconds.Default).NotTo(BeNil())
+		Expect(string(seconds.Default.Raw)).To(Equal("600"))
+		Expect(seconds.Minimum).NotTo(BeNil())
+		Expect(*seconds.Minimum).To(BeZero())
+		Expect(seconds.Maximum).NotTo(BeNil())
+		Expect(*seconds.Maximum).To(BeEquivalentTo(604800))
+		Expect(workflowExecution.XValidations).To(HaveLen(1))
+		Expect(workflowExecution.XValidations[0].Rule).To(ContainSubstring("retainFailedExecutions"))
+		Expect(workflowExecution.XValidations[0].Rule).To(ContainSubstring("failedExecutionRetentionSeconds > 0"))
+	})
+
 	It("resolves only configured issuer sources", func() {
 		spec := KubernautSpec{}
 		Expect(spec.EffectiveIssuerURL()).To(BeEmpty())

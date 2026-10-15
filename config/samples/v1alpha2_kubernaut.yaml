@@ -302,6 +302,10 @@ spec:
   # (v1alpha2/F4 -- relocated since WorkflowExecution is Ansible's only consumer).
   workflowExecution:
     cooldownPeriod: 1m
+    # Failed execution resources are removed by default. Set this to true only
+    # when bounded Job/PipelineRun/AWX diagnostics are required after failure.
+    retainFailedExecutions: false
+    failedExecutionRetentionSeconds: 600
     logging:
       level: INFO
     workflowNamespace: kubernaut-workflows

@@ -14,6 +14,7 @@ ownership_matrix="${repo_root}/docs/security/ISSUE-514-CONTROL-TRACEABILITY.md"
 fleet_matrix="${repo_root}/docs/security/ISSUE-431-CONTROL-TRACEABILITY.md"
 audit_hmac_matrix="${repo_root}/docs/security/ISSUE-209-CONTROL-TRACEABILITY.md"
 handoff_matrix="${repo_root}/docs/security/ISSUE-527-CONTROL-TRACEABILITY.md"
+workflowexecution_retention_matrix="${repo_root}/docs/security/ISSUE-480-CONTROL-TRACEABILITY.md"
 
 fail() {
 	echo "security traceability validation failed: $*" >&2
@@ -27,6 +28,7 @@ fail() {
 [[ -f "${monitoring_matrix}" ]] || fail "missing ${monitoring_matrix}"
 [[ -f "${audit_hmac_matrix}" ]] || fail "missing ${audit_hmac_matrix}"
 [[ -f "${handoff_matrix}" ]] || fail "missing ${handoff_matrix}"
+[[ -f "${workflowexecution_retention_matrix}" ]] || fail "missing ${workflowexecution_retention_matrix}"
 
 grep -Fq 'NIST SP 800-53 Rev. 5' "${matrix}" || fail "missing NIST SP 800-53 Rev. 5 declaration"
 grep -Fq 'OWASP ASVS 5.0.0' "${matrix}" || fail "missing OWASP ASVS 5.0.0 declaration"
@@ -52,6 +54,27 @@ done
 for evidence_id in UT-KA-527-API-001 UT-KA-527-VAL-001 UT-KA-527-VAL-002 UT-KA-527-CM-001 UT-KA-527-CM-002 UT-KA-527-CTRL-001 IT-KA-527-RECONCILE-001 E2E-KA-527-001; do
 	grep -R -n --include='*.go' -F "${evidence_id}" "${repo_root}/internal" "${repo_root}/api" "${repo_root}/test" >/dev/null \
 		|| fail "Issue #527 evidence ${evidence_id} has no executable artifact"
+done
+
+grep -Fq 'NIST SP 800-53 Rev. 5' "${workflowexecution_retention_matrix}" \
+	|| fail "Issue #480 matrix is missing NIST SP 800-53 Rev. 5 scope"
+grep -Fq 'SOC 2' "${workflowexecution_retention_matrix}" \
+	|| fail "Issue #480 matrix is missing SOC 2 scope"
+grep -Fq 'OWASP ASVS 5.0.0' "${workflowexecution_retention_matrix}" \
+	|| fail "Issue #480 matrix is missing OWASP ASVS 5.0.0 scope"
+grep -Fq 'AU-11' "${workflowexecution_retention_matrix}" \
+	|| fail "Issue #480 matrix is missing the upstream AU-11 boundary"
+grep -Eiq 'does not claim (formal )?(FedRAMP|SOC 2|OWASP ASVS)' "${workflowexecution_retention_matrix}" \
+	|| fail "Issue #480 matrix must reject formal control claims"
+for requirement in v5.0.0-V2.1.1 v5.0.0-V2.1.3 v5.0.0-V2.2.1 v5.0.0-V2.2.2 v5.0.0-V2.2.3; do
+	grep -Fq "${requirement}" "${workflowexecution_retention_matrix}" \
+		|| fail "Issue #480 matrix is missing ASVS requirement ${requirement}"
+done
+for evidence_id in UT-WE-480-API-001 UT-WE-480-CM-001 UT-WE-480-CM-002 IT-WE-480-001 IT-WE-480-ADMISSION-001 IT-WE-480-ADMISSION-002 IT-WE-480-ADMISSION-003 IT-WE-480-ADMISSION-004; do
+	grep -R -n --include='*_test.go' -F "${evidence_id}" "${repo_root}/internal" "${repo_root}/api" >/dev/null \
+		|| fail "Issue #480 evidence ${evidence_id} has no executable test"
+	grep -Fq "${evidence_id}" "${workflowexecution_retention_matrix}" \
+		|| fail "Issue #480 matrix omits evidence ID ${evidence_id}"
 done
 
 for control in AC-3 AC-6 SC-7 SC-8 SC-12 SC-13 SC-17 IA-2 IA-5 SI-4 AU-2 AU-3 AU-12 SI-10 CM-2 CM-3 CM-6 CM-8; do
