@@ -845,6 +845,7 @@ type RORetentionSpec struct {
 }
 
 // WorkflowExecutionSpec configures the WorkflowExecution controller.
+// +kubebuilder:validation:XValidation:rule="!self.retainFailedExecutions || (has(self.failedExecutionRetentionSeconds) && self.failedExecutionRetentionSeconds > 0)",message="failedExecutionRetentionSeconds must be greater than zero when retainFailedExecutions is true"
 type WorkflowExecutionSpec struct {
 	// Namespace for workflow Job/PipelineRun execution.
 	// +kubebuilder:default="kubernaut-workflows"
@@ -855,6 +856,24 @@ type WorkflowExecutionSpec struct {
 	// +kubebuilder:default="1m"
 	// +optional
 	CooldownPeriod string `json:"cooldownPeriod,omitempty"`
+
+	// Whether failed Job, PipelineRun, and AWX execution resources remain
+	// available for bounded post-failure diagnosis.
+	// Disabled by default to preserve the upstream cleanup behavior.
+	// +kubebuilder:default=false
+	// +optional
+	RetainFailedExecutions bool `json:"retainFailedExecutions,omitempty"`
+
+	// Maximum time in seconds to retain failed execution resources when
+	// RetainFailedExecutions is enabled. The upstream WorkflowExecution
+	// default is 600 seconds and the service bounds this value to seven days.
+	// A pointer preserves the distinction between the omitted default and an
+	// explicitly supplied zero while the CRD remains optional.
+	// +kubebuilder:default=600
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=604800
+	// +optional
+	FailedExecutionRetentionSeconds *int64 `json:"failedExecutionRetentionSeconds,omitempty"`
 
 	// Tekton integration configuration.
 	// +optional

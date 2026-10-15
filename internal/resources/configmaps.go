@@ -715,8 +715,10 @@ type remediationOrchestratorConfigYAML struct {
 }
 
 type weExecutionYAML struct {
-	Namespace      string `json:"namespace" yaml:"namespace"`
-	CooldownPeriod string `json:"cooldownPeriod" yaml:"cooldownPeriod"`
+	Namespace                       string `json:"namespace" yaml:"namespace"`
+	CooldownPeriod                  string `json:"cooldownPeriod" yaml:"cooldownPeriod"`
+	RetainFailedExecutions          bool   `json:"retainFailedExecutions" yaml:"retainFailedExecutions"`
+	FailedExecutionRetentionSeconds int64  `json:"failedExecutionRetentionSeconds" yaml:"failedExecutionRetentionSeconds"`
 }
 
 type weControllerYAML struct {
@@ -1623,12 +1625,18 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernaut
 	if cooldown == "" {
 		cooldown = "1m"
 	}
+	retentionSeconds := int64(600)
+	if we.FailedExecutionRetentionSeconds != nil {
+		retentionSeconds = *we.FailedExecutionRetentionSeconds
+	}
 	cfg := workflowExecutionConfigYAML{
 		TLSProfile: o.tlsProfile,
 		Logging:    loggingYAML{Level: withDefault(we.Logging.Level, "info")},
 		Execution: weExecutionYAML{
-			Namespace:      wfNs,
-			CooldownPeriod: cooldown,
+			Namespace:                       wfNs,
+			CooldownPeriod:                  cooldown,
+			RetainFailedExecutions:          we.RetainFailedExecutions,
+			FailedExecutionRetentionSeconds: retentionSeconds,
 		},
 		Datastorage: weDatastorageYAML{
 			URL:       DataStorageURL(kn.Namespace),

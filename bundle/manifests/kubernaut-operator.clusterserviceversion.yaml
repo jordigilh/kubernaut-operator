@@ -45,8 +45,8 @@ metadata:
       \ \"timeouts\": {\n          \"analyzing\": \"10m\",\n          \"awaitingApproval\": \"15m\",\n          \"executing\": \"30m\",\n          \"global\": \"1h\",\n          \"processing\": \"5m\",\n\
       \          \"verifying\": \"30m\"\n        }\n      },\n      \"signalProcessing\": {\n        \"logging\": {\n          \"level\": \"INFO\"\n        },\n        \"policy\": {\n          \"configMapName\"\
       : \"signalprocessing-policy\"\n        }\n      },\n      \"valkey\": {\n        \"host\": \"valkey.kubernaut-system.svc.cluster.local\",\n        \"port\": 6379,\n        \"secretName\": \"valkey-secret\"\
-      \n      },\n      \"workflowExecution\": {\n        \"ansible\": {\n          \"enabled\": false\n        },\n        \"cooldownPeriod\": \"1m\",\n        \"logging\": {\n          \"level\": \"INFO\"\
-      \n        },\n        \"workflowNamespace\": \"kubernaut-workflows\"\n      }\n    }\n  }\n]"
+      \n      },\n      \"workflowExecution\": {\n        \"ansible\": {\n          \"enabled\": false\n        },\n        \"cooldownPeriod\": \"1m\",\n        \"failedExecutionRetentionSeconds\": 600,\n\
+      \        \"logging\": {\n          \"level\": \"INFO\"\n        },\n        \"retainFailedExecutions\": false,\n        \"workflowNamespace\": \"kubernaut-workflows\"\n      }\n    }\n  }\n]"
     capabilities: Full Lifecycle
     categories: AI/Machine Learning,Monitoring
     com.redhat.openshift.versions: v4.18
