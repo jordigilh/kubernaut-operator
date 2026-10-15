@@ -46,8 +46,11 @@ done
 grep -Fq 'NIST SP 800-53 Rev. 5' "${handoff_matrix}" || fail "Issue #527 matrix is missing NIST SP 800-53 Rev. 5 scope"
 grep -Fq 'SOC 2' "${handoff_matrix}" || fail "Issue #527 matrix is missing SOC 2 scope"
 grep -Fq 'OWASP ASVS 5.0.0' "${handoff_matrix}" || fail "Issue #527 matrix is missing OWASP ASVS 5.0.0 scope"
-for evidence_id in UT-KA-527-API-001 UT-KA-527-VAL-001 UT-KA-527-VAL-002 UT-KA-527-CM-001 UT-KA-527-CM-002 IT-KA-527-RECONCILE-001; do
-	grep -R -n --include='*.go' -F "${evidence_id}" "${repo_root}/internal" "${repo_root}/api" >/dev/null \
+for requirement in v5.0.0-V2.2.1 v5.0.0-V2.2.2 v5.0.0-V13.3.1 v5.0.0-V14.2.4 v5.0.0-V16.5.2; do
+	grep -Fq "${requirement}" "${handoff_matrix}" || fail "Issue #527 matrix is missing ASVS requirement ${requirement}"
+done
+for evidence_id in UT-KA-527-API-001 UT-KA-527-VAL-001 UT-KA-527-VAL-002 UT-KA-527-CM-001 UT-KA-527-CM-002 UT-KA-527-CTRL-001 IT-KA-527-RECONCILE-001 E2E-KA-527-001; do
+	grep -R -n --include='*.go' -F "${evidence_id}" "${repo_root}/internal" "${repo_root}/api" "${repo_root}/test" >/dev/null \
 		|| fail "Issue #527 evidence ${evidence_id} has no executable artifact"
 done
 

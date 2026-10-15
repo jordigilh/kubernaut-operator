@@ -129,19 +129,22 @@ spec:
       credentialsSecretName: llm-credentials
       reasoning:
         enabled: true
-       effort: minimal            # cheaper/faster workflow-discovery tier
+        effort: minimal            # cheaper/faster workflow-discovery tier
 
   kubernautAgent:
-    llmProfileRef: primary
-    phaseModels:
-      workflow_discovery: lightweight   # gets its own reasoning policy, independent of primary's
+    investigation:
+      llmProfileRef: primary
+      maxTurns: 40
+    workflowDiscovery:
+      llmProfileRef: lightweight   # gets its own reasoning policy, independent of primary's
+      maxEvidenceHandoffBytes: 262144
 ```
 
 `effort` is a unified, provider-agnostic depth knob: the same value means the same thing regardless of which provider a profile points at, but each provider's client maps it into its own wire dialect (e.g. Anthropic's thinking-level tiers, OpenAI/Azure o-series and gpt-5's `reasoning_effort`, DeepSeek's own two-tier dialect). Providers with no effort-dial concept simply ignore it.
 
 > **Constraint**: for Anthropic-family providers (`anthropic`, and Claude models served via `vertex_ai`), `effort: "none"` combined with `enabled: true` is rejected -- Anthropic has no "thinking enabled, zero effort" wire state. Use `enabled: false` to fully disable reasoning, or `effort: "minimal"` for Anthropic's lowest real tier.
 
-Because `reasoning` is a per-profile field, `severityTriage.llmProfileRef` and every `phaseModels` entry each get their own independent reasoning policy -- pointing a phase or triage at a different profile changes its reasoning budget/effort along with everything else on that profile, without touching the base agent's.
+Because `reasoning` is a per-profile field, `severityTriage.llmProfileRef` and `workflowDiscovery.llmProfileRef` each get their own independent reasoning policy -- pointing a logical Agent or triage service at a different profile changes its reasoning budget/effort along with everything else on that profile, without touching the other consumer.
 
 ### OAuth2 authentication for LLM endpoints
 
