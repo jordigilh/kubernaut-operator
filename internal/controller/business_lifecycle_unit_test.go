@@ -153,7 +153,9 @@ var _ = Describe("independent business lifecycle decisions", Label("unit"), func
 			func(kn *kubernautv1alpha2.Kubernaut) { kn.Spec.Valkey.Host = "bad;host" },
 			func(kn *kubernautv1alpha2.Kubernaut) { kn.Spec.PostgreSQL.SecretName = unitMissingReference },
 			func(kn *kubernautv1alpha2.Kubernaut) { kn.Spec.Valkey.SecretName = unitMissingReference },
-			func(kn *kubernautv1alpha2.Kubernaut) { kn.Spec.KubernautAgent.LLMProfileRef = unitMissingReference },
+			func(kn *kubernautv1alpha2.Kubernaut) {
+				kn.Spec.KubernautAgent.Investigation.LLMProfileRef = unitMissingReference
+			},
 		} {
 			kn := newMinimalCR()
 			mutate(kn)

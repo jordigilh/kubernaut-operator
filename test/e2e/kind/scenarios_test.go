@@ -269,6 +269,37 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 		})
 
 	It(
+		"E2E-KA-527-001 [CM-2, CM-3, CM-6, SA-11, SI-4; SOC2 CC7.2, CC8.1; "+
+			"ASVS v5.0.0-V2.2.1, v5.0.0-V14.2.4, v5.0.0-V16.5.2] reconciles the live KA evidence handoff "+
+			"default and explicit override",
+		func() {
+			By("verifying the operator-generated live KA ConfigMap and read-only ConfigMap mount")
+			Eventually(func(g Gomega) {
+				config, err := kubectl(ctx, "get", "configmap", "kubernaut-agent-config", "-n", kubernautNamespace,
+					"-o", "jsonpath={.data.config\\.yaml}")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(config).To(ContainSubstring("maxEvidenceHandoffBytes: 262144"))
+				deployment, deploymentErr := kubectl(ctx, "get", "deployment", "kubernaut-agent", "-n", kubernautNamespace,
+					"-o", "yaml")
+				g.Expect(deploymentErr).NotTo(HaveOccurred())
+				g.Expect(deployment).To(ContainSubstring("name: kubernaut-agent-config"))
+				g.Expect(deployment).To(ContainSubstring("readOnly: true"))
+			}).Should(Succeed())
+
+			By("patching the live CR with an explicit workflow-discovery budget")
+			patchOutput, patchErr := kubectl(ctx, "patch", "kubernaut", "kubernaut", "-n", kubernautNamespace,
+				"--type=merge", "-p", `{"spec":{"kubernautAgent":{"workflowDiscovery":{"maxEvidenceHandoffBytes":131072}}}}`)
+			Expect(patchErr).NotTo(HaveOccurred(), patchOutput)
+			Eventually(func(g Gomega) {
+				config, err := kubectl(ctx, "get", "configmap", "kubernaut-agent-config", "-n", kubernautNamespace,
+					"-o", "jsonpath={.data.config\\.yaml}")
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(config).To(ContainSubstring("maxEvidenceHandoffBytes: 131072"))
+			}).Should(Succeed())
+		},
+	)
+
+	It(
 		"E2E-TLS-FAIL-CLOSED-001 [SC-8, SC-13, SI-4, SI-10; SOC2 CC6, CC7; "+
 			"ASVS v5.0.0-V12.2.1, v5.0.0-V16.5.2] refuses invalid administrator "+
 			"material without a plaintext fallback",

@@ -1692,13 +1692,13 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("F10 regression (#417): resolves ai.llm.provider via single-profile inference when kubernautAgent.llmProfileRef is omitted", func() {
 			kn := testKubernaut() // testKubernaut() defines exactly one profile ("primary")
-			kn.Spec.KubernautAgent.LLMProfileRef = ""
+			kn.Spec.KubernautAgent.Investigation.LLMProfileRef = ""
 			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			var root kubernautAgentConfigYAML
 			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
 			Expect(root.AI.LLM.Provider).To(Equal(LLMProviderOpenAI),
-				"config.yaml must resolve the sole spec.llmProfiles entry via EffectiveKALLMProfileRef (ADR-CRD-001 F10) when llmProfileRef is omitted, not render an empty provider, got %q", root.AI.LLM.Provider)
+				"config.yaml must resolve the sole spec.llmProfiles entry via EffectiveInvestigationLLMProfileRef (ADR-CRD-001 F10) when llmProfileRef is omitted, not render an empty provider, got %q", root.AI.LLM.Provider)
 		})
 
 		It("renders logging format as JSON", func() {
@@ -1993,13 +1993,13 @@ var _ = Describe("ConfigMaps", func() {
 
 		// #423 coverage backfill: kubernautAgent.maxTurns had zero test
 		// references for an explicit (non-default) override.
-		It("[CM-6] propagates a non-default spec.kubernautAgent.maxTurns onto ai.investigation.maxTurns", func() {
+		It("[CM-6] propagates a non-default spec.kubernautAgent.investigation.maxTurns onto ai.investigation.maxTurns", func() {
 			kn := testKubernaut()
-			kn.Spec.KubernautAgent.MaxTurns = 15
+			kn.Spec.KubernautAgent.Investigation.MaxTurns = ptr.To(15)
 			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
-			Expect(data).To(ContainSubstring("maxTurns: 15"), "spec.kubernautAgent.maxTurns should propagate verbatim, got:\n%s", data)
+			Expect(data).To(ContainSubstring("maxTurns: 15"), "spec.kubernautAgent.investigation.maxTurns should propagate verbatim, got:\n%s", data)
 		})
 
 		// #423 coverage backfill: interactive.maxConcurrentSessions/
@@ -2129,12 +2129,12 @@ var _ = Describe("ConfigMaps", func() {
 
 			It("F10 regression (#417): resolves model/provider via single-profile inference when kubernautAgent.llmProfileRef is omitted", func() {
 				kn := testKubernaut() // testKubernaut() defines exactly one profile ("primary")
-				kn.Spec.KubernautAgent.LLMProfileRef = ""
+				kn.Spec.KubernautAgent.Investigation.LLMProfileRef = ""
 				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["llm-runtime.yaml"]
 				Expect(data).To(ContainSubstring("model: gpt-4o"),
-					"llm-runtime.yaml must resolve the sole spec.llmProfiles entry via EffectiveKALLMProfileRef (ADR-CRD-001 F10) when llmProfileRef is omitted, not render an empty model, got:\n%s", data)
+					"llm-runtime.yaml must resolve the sole spec.llmProfiles entry via EffectiveInvestigationLLMProfileRef (ADR-CRD-001 F10) when llmProfileRef is omitted, not render an empty model, got:\n%s", data)
 				Expect(data).NotTo(ContainSubstring(`model: ""`),
 					"llm-runtime.yaml rendered an empty model -- single-profile inference was not applied, got:\n%s", data)
 			})
@@ -2175,13 +2175,13 @@ var _ = Describe("ConfigMaps", func() {
 
 			It("includes phaseModels when configured", func() {
 				kn := testKubernaut()
-				kn.Spec.LLMProfiles["workflow-lite"] = kubernautv1alpha2.LLMProfileSpec{
+				kn.Spec.LLMProfiles[testWorkflowLiteProfile] = kubernautv1alpha2.LLMProfileSpec{
 					Provider:              "openai",
 					Model:                 "claude-haiku-4-6",
 					Endpoint:              "http://llm-gateway:8080",
 					CredentialsSecretName: "llm-creds",
 				}
-				kn.Spec.KubernautAgent.PhaseModels = map[string]string{"workflow_discovery": "workflow-lite"}
+				kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = testWorkflowLiteProfile
 				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["llm-runtime.yaml"]
@@ -2206,7 +2206,7 @@ var _ = Describe("ConfigMaps", func() {
 					Endpoint:              "https://api.anthropic.com",
 					CredentialsSecretName: "llm-creds",
 				}
-				kn.Spec.KubernautAgent.PhaseModels = map[string]string{"rca": "rca-anthropic"}
+				kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "rca-anthropic"
 				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["llm-runtime.yaml"]
@@ -2226,7 +2226,7 @@ var _ = Describe("ConfigMaps", func() {
 					Model:                 "claude-haiku-4-6",
 					CredentialsSecretName: "different-secret",
 				}
-				kn.Spec.KubernautAgent.PhaseModels = map[string]string{"workflow_discovery": "workflow-cross-cred"}
+				kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "workflow-cross-cred"
 				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 				Expect(err).NotTo(HaveOccurred())
 				var root struct {
@@ -2250,7 +2250,7 @@ var _ = Describe("ConfigMaps", func() {
 					VertexProject:         "example-gcp-project",
 					VertexLocation:        "us-central1",
 				}
-				kn.Spec.KubernautAgent.PhaseModels = map[string]string{"rca": "rca-vertex"}
+				kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "rca-vertex"
 				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 				Expect(err).NotTo(HaveOccurred())
 				var root struct {
@@ -2261,9 +2261,9 @@ var _ = Describe("ConfigMaps", func() {
 					} `yaml:"phaseModels"`
 				}
 				Expect(yaml.Unmarshal([]byte(cm.Data["llm-runtime.yaml"]), &root)).To(Succeed())
-				phase, ok := root.PhaseModels["rca"]
-				Expect(ok).To(BeTrue(), "expected phaseModels.rca entry")
-				Expect(phase.APIKeyFile).To(Equal("/etc/kubernaut-agent/phase-credentials/rca/credentials.json"), // pre-commit:allow-sensitive -- mount-path convention constant, not a real credential/secret value
+				phase, ok := root.PhaseModels["workflow_discovery"]
+				Expect(ok).To(BeTrue(), "expected phaseModels.workflow_discovery entry")
+				Expect(phase.APIKeyFile).To(Equal("/etc/kubernaut-agent/phase-credentials/workflow_discovery/credentials.json"), // pre-commit:allow-sensitive -- mount-path convention constant, not a real credential/secret value
 					"#233: a vertex_ai phase override's own credentials must resolve via its own credentials.json file, matching the base profile's ADC-file convention")
 				Expect(phase.VertexProject).To(Equal("example-gcp-project"))
 				Expect(phase.VertexLocation).To(Equal("us-central1"))
@@ -2271,13 +2271,13 @@ var _ = Describe("ConfigMaps", func() {
 
 			It("LR-025 [IA-5]: does not emit apiKeyFile when a phase shares KA's credentialsSecretName (regression guard, #233)", func() {
 				kn := testKubernaut()
-				kn.Spec.LLMProfiles["workflow-lite"] = kubernautv1alpha2.LLMProfileSpec{
+				kn.Spec.LLMProfiles[testWorkflowLiteProfile] = kubernautv1alpha2.LLMProfileSpec{
 					Provider:              "openai",
 					Model:                 "gpt-4o-mini",
 					Endpoint:              testOpenAIEndpoint,
 					CredentialsSecretName: "llm-creds", // same as testKubernaut()'s "primary" profile
 				}
-				kn.Spec.KubernautAgent.PhaseModels = map[string]string{"validation": "workflow-lite"}
+				kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = testWorkflowLiteProfile
 				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["llm-runtime.yaml"]
@@ -2307,7 +2307,7 @@ var _ = Describe("ConfigMaps", func() {
 					CredentialsSecretName: "llm-creds",
 					Reasoning:             &kubernautv1alpha2.LLMReasoningSpec{Enabled: true, Effort: "low"},
 				}
-				kn.Spec.KubernautAgent.PhaseModels = map[string]string{"workflow_discovery": "workflow_discovery_profile"}
+				kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "workflow_discovery_profile"
 				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 				Expect(err).NotTo(HaveOccurred())
 				var root struct {
@@ -2335,7 +2335,7 @@ var _ = Describe("ConfigMaps", func() {
 					Model:                 "claude-sonnet-4-6",
 					CredentialsSecretName: "llm-creds",
 				}
-				kn.Spec.KubernautAgent.PhaseModels = map[string]string{"validation": "validation_profile"}
+				kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "validation_profile"
 				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 				Expect(err).NotTo(HaveOccurred())
 				var root struct {
@@ -2344,9 +2344,9 @@ var _ = Describe("ConfigMaps", func() {
 					} `yaml:"phaseModels"`
 				}
 				Expect(yaml.Unmarshal([]byte(cm.Data["llm-runtime.yaml"]), &root)).To(Succeed())
-				phase, ok := root.PhaseModels["validation"]
-				Expect(ok).To(BeTrue(), "expected phaseModels.validation entry")
-				Expect(phase.Reasoning).To(BeNil(), "CM-6: phaseModels.validation.reasoning must stay absent when its own profile has none, even though the base agent's does — a phase-specific profile swap must not inherit reasoning spend it never opted into")
+				phase, ok := root.PhaseModels["workflow_discovery"]
+				Expect(ok).To(BeTrue(), "expected phaseModels.workflow_discovery entry")
+				Expect(phase.Reasoning).To(BeNil(), "CM-6: phaseModels.workflow_discovery.reasoning must stay absent when its own profile has none, even though the base agent's does — a phase-specific profile swap must not inherit reasoning spend it never opted into")
 			})
 
 			It("LR-031 [#241]: a phase's own temperature is independently configurable from the base agent's, so per-phase model-compatibility tuning actually takes effect", func() {
@@ -2360,7 +2360,7 @@ var _ = Describe("ConfigMaps", func() {
 					CredentialsSecretName: "llm-creds",
 					Temperature:           "0.3",
 				}
-				kn.Spec.KubernautAgent.PhaseModels = map[string]string{"workflow_discovery": "workflow_discovery_profile"}
+				kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "workflow_discovery_profile"
 				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 				Expect(err).NotTo(HaveOccurred())
 				var root struct {
@@ -2385,7 +2385,7 @@ var _ = Describe("ConfigMaps", func() {
 					Model:                 "claude-sonnet-4-6",
 					CredentialsSecretName: "llm-creds",
 				}
-				kn.Spec.KubernautAgent.PhaseModels = map[string]string{"validation": "validation_profile"}
+				kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "validation_profile"
 				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 				Expect(err).NotTo(HaveOccurred())
 				data := cm.Data["llm-runtime.yaml"]
@@ -2395,9 +2395,9 @@ var _ = Describe("ConfigMaps", func() {
 					} `yaml:"phaseModels"`
 				}
 				Expect(yaml.Unmarshal([]byte(data), &root)).To(Succeed())
-				phase, ok := root.PhaseModels["validation"]
-				Expect(ok).To(BeTrue(), "expected phaseModels.validation entry")
-				Expect(phase.Temperature).To(BeNil(), "#241: phaseModels.validation.temperature must stay absent when its own profile has none, even though the base agent's does -- a phase-specific profile swap must not inherit a temperature it never opted into, and some models (e.g. claude-opus-4) reject an explicit temperature entirely")
+				phase, ok := root.PhaseModels["workflow_discovery"]
+				Expect(ok).To(BeTrue(), "expected phaseModels.workflow_discovery entry")
+				Expect(phase.Temperature).To(BeNil(), "#241: phaseModels.workflow_discovery.temperature must stay absent when its own profile has none, even though the base agent's does -- a phase-specific profile swap must not inherit a temperature it never opted into, and some models (e.g. claude-opus-4) reject an explicit temperature entirely")
 			})
 		})
 

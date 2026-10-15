@@ -561,7 +561,9 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 					CredentialsSecretName: "llm-credentials",
 				},
 			},
-			KubernautAgent:  kubernautv1alpha2.KubernautAgentSpec{LLMProfileRef: "primary"},
+			KubernautAgent: kubernautv1alpha2.KubernautAgentSpec{
+				Investigation: kubernautv1alpha2.InvestigationSpec{LLMProfileRef: "primary"},
+			},
 			Gateway:         kubernautv1alpha2.GatewaySpec{Enabled: ptr.To(false)},
 			APIFrontend:     apiFrontend,
 			TLS:             tls,

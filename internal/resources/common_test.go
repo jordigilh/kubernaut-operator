@@ -33,8 +33,10 @@ import (
 )
 
 const (
-	testSystemNamespace = "kubernaut-system"
-	testIngressDomain   = "apps.test.example.com"
+	testSystemNamespace     = "kubernaut-system"
+	testIngressDomain       = "apps.test.example.com"
+	testWorkflowLiteProfile = "workflow-lite"
+	testMissingProfile      = "does-not-exist"
 
 	// testCustomPrometheusURL is an in-cluster *.svc override used across
 	// spec.monitoring (#298) RED/GREEN tests to verify the URL is actually
@@ -109,7 +111,8 @@ func testKubernaut() *kubernautv1alpha2.Kubernaut {
 				},
 			},
 			KubernautAgent: kubernautv1alpha2.KubernautAgentSpec{
-				LLMProfileRef: "primary",
+				Investigation:     kubernautv1alpha2.InvestigationSpec{LLMProfileRef: "primary"},
+				WorkflowDiscovery: kubernautv1alpha2.WorkflowDiscoverySpec{LLMProfileRef: "primary"},
 			},
 			AIAnalysis: kubernautv1alpha2.AIAnalysisSpec{
 				Policy: kubernautv1alpha2.PolicyConfigMapRef{ConfigMapName: "aianalysis-policy"},
@@ -133,6 +136,7 @@ func testKubernautWithDevelopmentTLS() *kubernautv1alpha2.Kubernaut {
 func testKubernautWithAF() *kubernautv1alpha2.Kubernaut {
 	kn := testKubernaut()
 	kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
+		LLMProfileRef: "primary",
 		Auth: kubernautv1alpha2.APIFrontendAuthSpec{
 			IssuerURL: "https://idp.example.com/realms/kubernaut",
 			Audience:  "kubernaut-apifrontend",

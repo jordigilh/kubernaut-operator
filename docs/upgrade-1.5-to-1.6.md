@@ -19,10 +19,9 @@
 
 `spec.kubernautAgent.llm` has been **removed**. LLM provider configuration
 (provider, model, credentials, endpoint, mTLS, OAuth2, etc.) now lives in
-`spec.llmProfiles`, a map of named profiles, with `spec.kubernautAgent.llmProfileRef`
-selecting which profile Kubernaut Agent (KA) uses for its investigator LLM
-calls. Other components with their own LLM triage (API Frontend's severity
-triage) reference profiles the same way via their own `llmProfileRef` field.
+`spec.llmProfiles`, a map of named profiles. KA's investigation and workflow
+discovery invocations, and other components such as API Frontend, each select
+their own profile through `llmProfileRef`.
 
 This is a breaking change with **no automated in-operator conversion** —
 accepted for the 1.6 milestone. Existing 1.5 CRs using
@@ -71,10 +70,12 @@ spec:
       maxRetries: 3
       timeoutSeconds: 120
   kubernautAgent:
-    llmProfileRef: primary
-    phaseModels:
-      workflow_discovery: workflow_discovery
-    maxTurns: 40
+    investigation:
+      llmProfileRef: primary
+      maxTurns: 40
+    workflowDiscovery:
+      llmProfileRef: workflow_discovery
+      maxEvidenceHandoffBytes: 262144
 ```
 
 One constraint on the new shape carried over from #187, with no automated
@@ -84,18 +85,17 @@ workaround:
   any old inline `apiKey` must be moved into a Secret referenced by
   `credentialsSecretName` by hand.
 
-Earlier 1.6 milestones additionally required every `phaseModels` entry to
-reference a profile sharing the base profile's exact `credentialsSecretName`.
-That constraint has been lifted (#233): each `phaseModels` entry may now
-reference a profile with its own `provider` and `credentialsSecretName`,
-independent of `llmProfileRef`'s profile, once
+Earlier 1.6 milestones additionally required every phase override to reference
+a profile sharing the base profile's exact `credentialsSecretName`. The final
+logical-agent shape supports independent `investigation` and
+`workflowDiscovery` profiles, each with its own `provider` and
+`credentialsSecretName`, once
 [jordigilh/kubernaut#1728](https://github.com/jordigilh/kubernaut/pull/1728)
-fixed Kubernaut Agent to resolve each phase's own credentials independently
-rather than silently reusing the base profile's. The migration script below
-still can't *auto-migrate* a 1.5 phase override that changes `provider`,
-though — the 1.5 schema never recorded a per-phase `credentialsSecretName`,
-so there is no Secret reference for it to carry forward; that case still
-needs manual migration.
+fixed Kubernaut Agent to resolve each invocation's own credentials
+independently. The migration script below still can't *auto-migrate* a 1.5
+phase override that changes `provider`, though — the 1.5 schema never recorded
+a per-phase `credentialsSecretName`, so there is no Secret reference for it to
+carry forward; that case still needs manual migration.
 
 ### API Frontend severity triage LLM is now independently configurable (#187)
 
@@ -236,11 +236,15 @@ only the fields that reference them.
 1. For each distinct provider/credential combination in your old
    `spec.kubernautAgent.llm` (base + any `phaseModels` overrides), create one
    entry under `spec.llmProfiles`, giving it a descriptive name.
-2. Set `spec.kubernautAgent.llmProfileRef` to the profile that should be the
-   default (previously the base `llm` block).
-3. For each old `phaseModels` override, add an entry to
-   `spec.kubernautAgent.phaseModels` mapping the phase name to the new
-   profile name from step 1.
+2. Set `spec.kubernautAgent.investigation.llmProfileRef` to the profile that
+   replaces the base `llm` block and preserve `maxTurns` under
+   `kubernautAgent.investigation`.
+3. Map the old `phaseModels.workflow_discovery` profile to
+   `spec.kubernautAgent.workflowDiscovery.llmProfileRef` and set
+   `workflowDiscovery.maxEvidenceHandoffBytes` to `262144` unless you have an
+   approved override. Old `rca` routing becomes the investigation profile;
+   `validation` phase overrides require manual review because validation is not
+   an independent LLM Agent in the current runtime.
 4. Remove `spec.kubernautAgent.llm` entirely.
 5. If you use API Frontend severity triage, set
    `spec.apiFrontend.severityTriage.llmProfileRef` explicitly (it no longer

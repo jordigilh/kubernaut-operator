@@ -142,7 +142,8 @@ func newMinimalCR() *kubernautv1alpha2.Kubernaut {
 				},
 			},
 			KubernautAgent: kubernautv1alpha2.KubernautAgentSpec{
-				LLMProfileRef: "primary",
+				Investigation:     kubernautv1alpha2.InvestigationSpec{LLMProfileRef: "primary"},
+				WorkflowDiscovery: kubernautv1alpha2.WorkflowDiscoverySpec{LLMProfileRef: "primary"},
 			},
 			AIAnalysis: kubernautv1alpha2.AIAnalysisSpec{
 				Policy: kubernautv1alpha2.PolicyConfigMapRef{ConfigMapName: "aianalysis-policy"},

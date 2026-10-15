@@ -54,6 +54,15 @@ func seedPrecreatedObject(r *KubernautReconciler, object client.Object) {
 }
 
 var _ = Describe("pre-created configuration validation", Label("unit"), func() {
+	It("UT-KA-527-CTRL-001 [CM-6, SI-10; SOC2 CC8.1; ASVS v5.0.0-V16.5.2] ignores an unresolved logical-agent profile while validation owns the user-facing error", func() {
+		kn := newMinimalCR()
+		collector := newPrecreatedReferenceCollector()
+		appendPrecreatedLLMProfileReference(collector, kn, "does-not-exist")
+
+		Expect(collector.references).To(BeEmpty(), "an unresolved profile must not create a Secret reference")
+		Expect(collector.errs).To(BeEmpty(), "profile referential integrity reports this error before pre-created Secret collection")
+	})
+
 	It("UT-CONFIG-512-001 rejects a missing required ConfigMap before migration", func() {
 		kn := newMinimalCR()
 		r := businessUnitReconciler(kn, clientInterceptorNone())
@@ -202,7 +211,8 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 			Model:                 "gemini",
 			CredentialsSecretName: "vertex-credentials",
 		}
-		kn.Spec.KubernautAgent.PhaseModels = map[string]string{"rca": "vertex", "validation": "undefined"}
+		kn.Spec.KubernautAgent.Investigation.LLMProfileRef = "vertex"
+		kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "primary"
 		_, errs := precreatedConfigurationReferences(kn)
 		Expect(errs).NotTo(BeEmpty())
 

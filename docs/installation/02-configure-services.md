@@ -42,14 +42,14 @@ use `logSink: true` with an empty endpoint for log-only spans. Existing
 
 ## LLM Profiles
 
-LLM configuration lives in a top-level, named-profile map at `spec.llmProfiles`, not nested under any one component. Each component then *references* a profile by name:
+LLM configuration lives in a top-level, named-profile map at `spec.llmProfiles`, not nested under any one component. Each logical Agent or service then references a profile by name:
 
-- `spec.kubernautAgent.llmProfileRef` (required) -- KA's investigation LLM.
-- `spec.apiFrontend.llmProfileRef` (optional) -- AF's own LLM connection. When empty, AF defaults to KA's profile (`kubernautAgent.llmProfileRef`).
+- `spec.kubernautAgent.investigation.llmProfileRef` -- KA's root-cause investigation LLM.
+- `spec.kubernautAgent.workflowDiscovery.llmProfileRef` -- KA's independent workflow-discovery LLM.
+- `spec.apiFrontend.llmProfileRef` -- AF's own LLM connection. When empty, AF infers the sole profile; with multiple profiles it must be explicit.
 - `spec.apiFrontend.severityTriage.llmProfileRef` (optional) -- an independent LLM for severity-triage's fallback tiers, distinct from AF's main connection. When empty, triage inherits AF's resolved profile.
-- `spec.kubernautAgent.phaseModels` (optional) -- per-phase overrides (`rca`, `workflow_discovery`, `validation`), each naming a profile.
 
-This lets you, for example, use a stronger model for the primary agent and a cheaper/faster one for a specific investigation phase, all from one place:
+This lets you use a stronger model for RCA and a cheaper/faster model for workflow discovery, all from one place:
 
 ```yaml
 spec:
@@ -77,12 +77,15 @@ spec:
       credentialsSecretName: llm-credentials   # see constraint below
 
   kubernautAgent:
-    llmProfileRef: primary
-    phaseModels:
-      workflow_discovery: lightweight
+    investigation:
+      llmProfileRef: primary
+      maxTurns: 40
+    workflowDiscovery:
+      llmProfileRef: lightweight
+      maxEvidenceHandoffBytes: 262144
 ```
 
-> **Constraint**: a profile referenced from `phaseModels` or `severityTriage.llmProfileRef` must share the *same* `credentialsSecretName` as the profile it overrides (KA's for `phaseModels`, AF's resolved profile for `severityTriage`). Cross-credential overrides aren't supported yet -- the operator rejects the CR with a validation error naming the offending field if they don't match. You can still point them at a different provider/model/endpoint, as long as the credentials Secret is the same one.
+Cross-credential Agent profile references are supported. The operator mounts each distinct credentials Secret read-only for its owning Agent invocation. Severity-triage retains its independent profile and fallback behavior.
 
 The operator auto-generates each component's LLM runtime config from its resolved profile. If your environment includes custom CRDs or advanced routing needs beyond `provider`/`model`, see the BYO runtime ConfigMap section below.
 
@@ -96,7 +99,7 @@ spec:
     triage:
       provider: openai
       model: gpt-4o-mini
-      credentialsSecretName: llm-credentials   # must match AF's resolved profile
+      credentialsSecretName: triage-llm-credentials   # may be distinct; the operator mounts it read-only
 
   apiFrontend:
     severityTriage:
@@ -126,19 +129,22 @@ spec:
       credentialsSecretName: llm-credentials
       reasoning:
         enabled: true
-        effort: minimal            # cheaper/faster tier for the phase it's swapped into below
+        effort: minimal            # cheaper/faster workflow-discovery tier
 
   kubernautAgent:
-    llmProfileRef: primary
-    phaseModels:
-      workflow_discovery: lightweight   # gets its own reasoning policy, independent of primary's
+    investigation:
+      llmProfileRef: primary
+      maxTurns: 40
+    workflowDiscovery:
+      llmProfileRef: lightweight   # gets its own reasoning policy, independent of primary's
+      maxEvidenceHandoffBytes: 262144
 ```
 
 `effort` is a unified, provider-agnostic depth knob: the same value means the same thing regardless of which provider a profile points at, but each provider's client maps it into its own wire dialect (e.g. Anthropic's thinking-level tiers, OpenAI/Azure o-series and gpt-5's `reasoning_effort`, DeepSeek's own two-tier dialect). Providers with no effort-dial concept simply ignore it.
 
 > **Constraint**: for Anthropic-family providers (`anthropic`, and Claude models served via `vertex_ai`), `effort: "none"` combined with `enabled: true` is rejected -- Anthropic has no "thinking enabled, zero effort" wire state. Use `enabled: false` to fully disable reasoning, or `effort: "minimal"` for Anthropic's lowest real tier.
 
-Because `reasoning` is a per-profile field, `severityTriage.llmProfileRef` and every `phaseModels` entry each get their own independent reasoning policy -- pointing a phase or triage at a different profile changes its reasoning budget/effort along with everything else on that profile, without touching the base agent's.
+Because `reasoning` is a per-profile field, `severityTriage.llmProfileRef` and `workflowDiscovery.llmProfileRef` each get their own independent reasoning policy -- pointing a logical Agent or triage service at a different profile changes its reasoning budget/effort along with everything else on that profile, without touching the other consumer.
 
 ### OAuth2 authentication for LLM endpoints
 

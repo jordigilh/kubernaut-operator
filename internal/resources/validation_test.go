@@ -850,74 +850,74 @@ var _ = Describe("LLM Profile Content Validation", func() {
 })
 
 var _ = Describe("LLM Profile Referential Integrity", func() {
-	It("accepts a missing kubernautAgent.llmProfileRef when spec.llmProfiles defines exactly one profile (auto-inferred)", func() {
+	It("accepts a missing kubernautAgent.investigation.llmProfileRef when spec.llmProfiles defines exactly one profile (auto-inferred)", func() {
 		kn := testKubernaut() // testKubernaut() defines exactly one profile ("primary")
-		kn.Spec.KubernautAgent.LLMProfileRef = ""
+		kn.Spec.KubernautAgent.Investigation.LLMProfileRef = ""
 		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
-		Expect(EffectiveKALLMProfileRef(kn)).To(Equal("primary"),
+		Expect(EffectiveInvestigationLLMProfileRef(kn)).To(Equal("primary"),
 			"the sole entry in spec.llmProfiles must be inferred, not a fixed conventional name")
 	})
 
-	It("rejects a missing kubernautAgent.llmProfileRef when spec.llmProfiles defines more than one profile (ambiguous)", func() {
+	It("rejects a missing kubernautAgent.investigation.llmProfileRef when spec.llmProfiles defines more than one profile (ambiguous)", func() {
 		kn := testKubernaut()
 		kn.Spec.LLMProfiles["secondary"] = kubernautv1alpha2.LLMProfileSpec{
 			Provider: LLMProviderOpenAI, Model: "gpt-4o-mini", CredentialsSecretName: "llm-creds-2",
 		}
-		kn.Spec.KubernautAgent.LLMProfileRef = ""
+		kn.Spec.KubernautAgent.Investigation.LLMProfileRef = ""
 		errs := ValidateKubernaut(kn)
 		found := false
 		for _, e := range errs {
-			if strings.Contains(e.Error(), "kubernautAgent.llmProfileRef") &&
+			if strings.Contains(e.Error(), "kubernautAgent.investigation.llmProfileRef") &&
 				strings.Contains(e.Error(), "required") && strings.Contains(e.Error(), "ambiguous") {
 				found = true
 			}
 		}
 		Expect(found).To(BeTrue())
-		Expect(EffectiveKALLMProfileRef(kn)).To(BeEmpty())
+		Expect(EffectiveInvestigationLLMProfileRef(kn)).To(BeEmpty())
 	})
 
-	It("rejects a missing kubernautAgent.llmProfileRef when spec.llmProfiles is empty", func() {
+	It("rejects a missing kubernautAgent.investigation.llmProfileRef when spec.llmProfiles is empty", func() {
 		kn := testKubernaut()
 		kn.Spec.LLMProfiles = map[string]kubernautv1alpha2.LLMProfileSpec{}
-		kn.Spec.KubernautAgent.LLMProfileRef = ""
+		kn.Spec.KubernautAgent.Investigation.LLMProfileRef = ""
 		errs := ValidateKubernaut(kn)
 		found := false
 		for _, e := range errs {
-			if strings.Contains(e.Error(), "kubernautAgent.llmProfileRef") && strings.Contains(e.Error(), "required") {
+			if strings.Contains(e.Error(), "kubernautAgent.investigation.llmProfileRef") && strings.Contains(e.Error(), "required") {
 				found = true
 			}
 		}
 		Expect(found).To(BeTrue())
 	})
 
-	It("rejects kubernautAgent.llmProfileRef referencing an undefined profile", func() {
+	It("rejects kubernautAgent.investigation.llmProfileRef referencing an undefined profile", func() {
 		kn := testKubernaut()
-		kn.Spec.KubernautAgent.LLMProfileRef = "does-not-exist"
+		kn.Spec.KubernautAgent.Investigation.LLMProfileRef = testMissingProfile
 		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("kubernautAgent.llmProfileRef"))
+		Expect(errs[0].Error()).To(ContainSubstring("kubernautAgent.investigation.llmProfileRef"))
 		Expect(errs[0].Error()).To(ContainSubstring(`"does-not-exist"`))
 	})
 
-	It("accepts kubernautAgent.llmProfileRef referencing a defined profile", func() {
+	It("accepts kubernautAgent.investigation.llmProfileRef referencing a defined profile", func() {
 		kn := testKubernaut()
 		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
-	It("rejects kubernautAgent.llmProfileRef when spec.llmProfiles is empty", func() {
+	It("rejects kubernautAgent.investigation.llmProfileRef when spec.llmProfiles is empty", func() {
 		kn := testKubernaut()
 		kn.Spec.LLMProfiles = nil
 		errs := ValidateKubernaut(kn)
-		Expect(errs).To(HaveLen(1), "an empty spec.llmProfiles map must not panic and should surface exactly the undefined-profile error")
-		Expect(errs[0].Error()).To(ContainSubstring("kubernautAgent.llmProfileRef"))
-		Expect(errs[0].Error()).To(ContainSubstring(`"primary"`))
+		Expect(errs).NotTo(BeEmpty(), "an empty spec.llmProfiles map must not panic and should surface profile-reference errors")
+		Expect(strings.Join(errorStrings(errs), "; ")).To(ContainSubstring("kubernautAgent.investigation.llmProfileRef"))
+		Expect(strings.Join(errorStrings(errs), "; ")).To(ContainSubstring(`"primary"`))
 	})
 
 	It("rejects apiFrontend.llmProfileRef referencing an undefined profile", func() {
 		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.LLMProfileRef = "does-not-exist"
+		kn.Spec.APIFrontend.LLMProfileRef = testMissingProfile
 		errs := ValidateKubernaut(kn)
 		found := false
 		for _, e := range errs {
@@ -945,86 +945,39 @@ var _ = Describe("LLM Profile Referential Integrity", func() {
 		Expect(errs).To(BeEmpty())
 	})
 
-	It("rejects invalid phaseModels key", func() {
-		kn := testKubernaut()
-		kn.Spec.KubernautAgent.PhaseModels = map[string]string{"banana": "primary"}
-		errs := ValidateKubernaut(kn)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring(`invalid phase key "banana"`))
-	})
-
-	It("reports multiple invalid phaseModels keys", func() {
-		kn := testKubernaut()
-		kn.Spec.KubernautAgent.PhaseModels = map[string]string{
-			"rca": "primary", "banana": "primary", "unknown": "primary",
-		}
-		errs := ValidateKubernaut(kn)
-		Expect(errs).To(HaveLen(2))
-	})
-
-	It("accepts empty phaseModels", func() {
-		kn := testKubernaut()
-		kn.Spec.KubernautAgent.PhaseModels = nil
-		errs := ValidateKubernaut(kn)
-		Expect(errs).To(BeEmpty())
-	})
-
-	It("rejects a phaseModels entry with an empty profile ref (no fallback, unlike llmProfileRef fields)", func() {
-		kn := testKubernaut()
-		kn.Spec.KubernautAgent.PhaseModels = map[string]string{"rca": ""}
-		errs := ValidateKubernaut(kn)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring(`phaseModels["rca"]`))
-		Expect(errs[0].Error()).To(ContainSubstring("undefined profile"))
-	})
-
-	It("rejects phaseModels value referencing an undefined profile", func() {
-		kn := testKubernaut()
-		kn.Spec.KubernautAgent.PhaseModels = map[string]string{"rca": "does-not-exist"}
-		errs := ValidateKubernaut(kn)
-		found := false
-		for _, e := range errs {
-			if strings.Contains(e.Error(), "phaseModels") && strings.Contains(e.Error(), `"does-not-exist"`) {
-				found = true
-			}
-		}
-		Expect(found).To(BeTrue())
-	})
-
-	It("accepts phaseModels referencing a profile that shares KA's credentialsSecretName", func() {
-		kn := testKubernaut()
+	It("accepts workflow-discovery profile references with shared credentials", func() {
+		kn := testKubernautWithAF()
 		primary := kn.Spec.LLMProfiles["primary"]
 		kn.Spec.LLMProfiles["lightweight"] = kubernautv1alpha2.LLMProfileSpec{
 			Provider: "openai", Model: "gpt-4o-mini", Endpoint: "http://llm-gateway:8080",
 			CredentialsSecretName: primary.CredentialsSecretName,
 		}
-		kn.Spec.KubernautAgent.PhaseModels = map[string]string{"workflow_discovery": "lightweight"}
+		kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "lightweight"
 		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
-	It("#233: accepts phaseModels referencing a profile with a different credentialsSecretName than KA's (KA #1726/#1728 fixed independent per-phase apiKeyFile resolution)", func() {
-		kn := testKubernaut()
+	It("#233: accepts a workflow-discovery profile with different credentials", func() {
+		kn := testKubernautWithAF()
 		kn.Spec.LLMProfiles["other-creds"] = kubernautv1alpha2.LLMProfileSpec{
 			Provider: "openai", Model: "gpt-4o-mini", Endpoint: "http://llm-gateway:8080",
 			CredentialsSecretName: "different-secret",
 		}
-		kn.Spec.KubernautAgent.PhaseModels = map[string]string{"workflow_discovery": "other-creds"}
+		kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "other-creds"
 		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
 	})
 
-	It("#233: accepts a phaseModels entry with a different provider AND a different credentialsSecretName than KA's", func() {
-		kn := testKubernaut()
+	It("#233: accepts a workflow-discovery profile with a different provider and credentials", func() {
+		kn := testKubernautWithAF()
 		kn.Spec.LLMProfiles["vertex-phase"] = kubernautv1alpha2.LLMProfileSpec{
 			Provider: LLMProviderVertexAI, Model: "gemini-2.5-flash",
 			CredentialsSecretName: "vertex-phase-creds",
 			VertexProject:         "example-gcp-project", VertexLocation: "us-central1",
 		}
-		kn.Spec.KubernautAgent.PhaseModels = map[string]string{"rca": "vertex-phase"}
+		kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "vertex-phase"
 		errs := ValidateKubernaut(kn)
-		Expect(errs).To(BeEmpty(),
-			"#233: cross-provider phase overrides are representable now that KA resolves each phase's own apiKeyFile independently")
+		Expect(errs).To(BeEmpty())
 	})
 })
 
@@ -1302,7 +1255,7 @@ var _ = Describe("API Frontend Severity Triage LLM Validation", func() {
 	It("rejects severityTriage.llmProfileRef referencing an undefined profile", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{
-			LLMProfileRef: "does-not-exist",
+			LLMProfileRef: testMissingProfile,
 		}
 		errs := ValidateKubernaut(kn)
 		found := false

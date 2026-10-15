@@ -1028,7 +1028,8 @@ func kaReasoningFromSpec(r *kubernautv1alpha2.LLMReasoningSpec) *kaReasoningYAML
 }
 
 type kaInvestigationYAML struct {
-	MaxTurns int `json:"maxTurns" yaml:"maxTurns"`
+	MaxTurns                int `json:"maxTurns" yaml:"maxTurns"`
+	MaxEvidenceHandoffBytes int `json:"maxEvidenceHandoffBytes" yaml:"maxEvidenceHandoffBytes"`
 }
 
 type kaAlignmentYAML struct {
@@ -1924,11 +1925,9 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1a
 	o := resolveOpts(opts)
 	ns := kn.Namespace
 	ka := &kn.Spec.KubernautAgent
-	kaProfile, _ := ResolveLLMProfile(kn, EffectiveKALLMProfileRef(kn))
-	maxTurns := ka.MaxTurns
-	if maxTurns <= 0 {
-		maxTurns = 40
-	}
+	kaProfile, _ := ResolveLLMProfile(kn, EffectiveInvestigationLLMProfileRef(kn))
+	maxTurns := intPtrDefault(ka.Investigation.MaxTurns, 40)
+	maxEvidenceHandoffBytes := intPtrDefault(ka.WorkflowDiscovery.MaxEvidenceHandoffBytes, 262144)
 
 	cfg := kubernautAgentConfigYAML{
 		Runtime: kaRuntimeYAML{
@@ -1952,7 +1951,10 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1a
 			LLM: kaLLMYAML{
 				Provider: kaProfile.Provider,
 			},
-			Investigation: kaInvestigationYAML{MaxTurns: maxTurns},
+			Investigation: kaInvestigationYAML{
+				MaxTurns:                maxTurns,
+				MaxEvidenceHandoffBytes: maxEvidenceHandoffBytes,
+			},
 		},
 		Integrations: kaIntegrationsYAML{
 			DataStorage: kaIntegrationsDataStorageYAML{URL: DataStorageURL(ns), HealthURL: DataStorageHealthURL(ns)},
@@ -2054,7 +2056,7 @@ func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1
 		// All callers guard on a nil result before use.
 		return nil, nil //nolint:nilnil
 	}
-	kaProfile, _ := ResolveLLMProfile(kn, EffectiveKALLMProfileRef(kn))
+	kaProfile, _ := ResolveLLMProfile(kn, EffectiveInvestigationLLMProfileRef(kn))
 	// Temperature is only sent to the LLM API when the administrator
 	// explicitly configures it. Some models (e.g. claude-opus-4) reject an
 	// explicit temperature alongside top_p with an HTTP 400 -- silently
@@ -2071,10 +2073,10 @@ func KubernautAgentLLMRuntimeConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1
 		VertexProject:  kaProfile.VertexProject,
 		VertexLocation: kaProfile.VertexLocation,
 	}
-	if len(ka.PhaseModels) > 0 {
-		cfg.PhaseModels = make(map[string]llmPhaseOverrideYAML, len(ka.PhaseModels))
-		for phase, ref := range ka.PhaseModels {
-			cfg.PhaseModels[phase] = resolveKAPhaseModelOverride(kn, phase, ref, kaProfile)
+	workflowProfileRef := EffectiveWorkflowDiscoveryLLMProfileRef(kn)
+	if workflowProfileRef != "" && workflowProfileRef != EffectiveInvestigationLLMProfileRef(kn) {
+		cfg.PhaseModels = map[string]llmPhaseOverrideYAML{
+			"workflow_discovery": resolveKAPhaseModelOverride(kn, "workflow_discovery", workflowProfileRef, kaProfile),
 		}
 	}
 	return yamlConfigMap(ObjectMeta(kn, KubernautAgentLLMRuntimeConfigName(kn), ComponentKubernautAgent), "llm-runtime.yaml", "kubernaut-agent-llm-runtime config", cfg)

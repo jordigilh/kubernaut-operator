@@ -59,7 +59,7 @@ func newMinimalV1alpha2CR(name string) *kubernautv1alpha2.Kubernaut {
 					CredentialsSecretName: llmSecretName,
 				},
 			},
-			// KubernautAgent.LLMProfileRef intentionally omitted: F10
+			// Logical-agent llmProfileRef fields intentionally omitted: sole-profile inference.
 			// infers "primary" since it's the sole entry above.
 			AIAnalysis: kubernautv1alpha2.AIAnalysisSpec{
 				Policy: kubernautv1alpha2.PolicyConfigMapRef{ConfigMapName: "aianalysis-policy"},

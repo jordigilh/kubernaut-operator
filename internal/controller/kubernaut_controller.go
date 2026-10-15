@@ -3484,10 +3484,8 @@ func appendPrecreatedValkeyTLSSecrets(c *precreatedReferenceCollector, kn *kuber
 }
 
 func appendPrecreatedLLMReferences(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
-	appendPrecreatedLLMProfileReference(c, kn, resources.EffectiveKALLMProfileRef(kn))
-	for _, phase := range []string{"rca", "workflow_discovery", "validation"} {
-		appendPrecreatedLLMProfileReference(c, kn, kn.Spec.KubernautAgent.PhaseModels[phase])
-	}
+	appendPrecreatedLLMProfileReference(c, kn, resources.EffectiveInvestigationLLMProfileRef(kn))
+	appendPrecreatedLLMProfileReference(c, kn, resources.EffectiveWorkflowDiscoveryLLMProfileRef(kn))
 	if !kn.Spec.APIFrontendEnabled() {
 		return
 	}

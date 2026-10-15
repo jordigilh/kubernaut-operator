@@ -93,11 +93,10 @@ type KubernautSpec struct {
 	// (e.g. "primary", "lightweight"). Components reference a profile by
 	// name via their own llmProfileRef field instead of embedding LLM
 	// configuration directly, decoupling KA and API Frontend's LLM identity.
-	// When this map defines exactly one profile, spec.kubernautAgent.llmProfileRef
-	// (and every other llmProfileRef field that falls back to it) may be
-	// omitted -- the operator infers the sole profile rather than relying
-	// on a conventional key name. Any other count requires an explicit
-	// llmProfileRef wherever one is needed.
+	// When this map defines exactly one profile, logical-agent and service
+	// llmProfileRef fields may be omitted -- the operator infers the sole
+	// profile rather than relying on a conventional key name. Any other count
+	// requires an explicit llmProfileRef wherever one is needed.
 	// +kubebuilder:validation:MinProperties=1
 	LLMProfiles map[string]LLMProfileSpec `json:"llmProfiles"`
 
@@ -948,43 +947,59 @@ type EMAssessmentSpec struct {
 	ValidityWindow string `json:"validityWindow,omitempty"`
 }
 
-// KubernautAgentSpec configures the Kubernaut Agent (KA) LLM integration service.
-type KubernautAgentSpec struct {
-	// Reference to a named profile in spec.llmProfiles used for KA's
-	// investigator LLM calls. Optional when spec.llmProfiles defines
-	// exactly one profile -- the operator infers that sole profile
-	// automatically (see EffectiveKALLMProfileRef in
-	// internal/resources/common.go), so a single-provider CR never needs
-	// to name it explicitly here. Required (and must match a key in
-	// spec.llmProfiles) whenever spec.llmProfiles defines more than one
-	// profile, since the choice is then ambiguous.
+// InvestigationSpec configures KA's root-cause investigation invocation.
+// Its profile is independent from workflow discovery's profile, while the
+// upstream runtime currently applies maxTurns to both invocations.
+type InvestigationSpec struct {
+	// Reference to a named profile in spec.llmProfiles used for the
+	// investigation LLM. When spec.llmProfiles defines exactly one profile,
+	// the operator infers that sole profile when this is empty.
 	// +kubebuilder:validation:MinLength=1
 	// +optional
 	LLMProfileRef string `json:"llmProfileRef,omitempty"`
+
+	// MaxTurns is the maximum number of LLM conversation turns per
+	// investigation invocation.
+	// +kubebuilder:default=40
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	MaxTurns *int `json:"maxTurns,omitempty"`
+}
+
+// WorkflowDiscoverySpec configures KA's independent workflow-discovery
+// invocation and its immutable evidence handoff boundary.
+type WorkflowDiscoverySpec struct {
+	// Reference to a named profile in spec.llmProfiles used for workflow
+	// discovery. When spec.llmProfiles defines exactly one profile, the
+	// operator infers that sole profile when this is empty.
+	// +kubebuilder:validation:MinLength=1
+	// +optional
+	LLMProfileRef string `json:"llmProfileRef,omitempty"`
+
+	// MaxEvidenceHandoffBytes is the maximum serialized size of the complete
+	// sanitized evidence packet handed from investigation to workflow
+	// discovery, including its digest and freeze timestamp.
+	// +kubebuilder:default=262144
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	MaxEvidenceHandoffBytes *int `json:"maxEvidenceHandoffBytes,omitempty"`
+}
+
+// KubernautAgentSpec configures the Kubernaut Agent (KA) LLM integration service.
+type KubernautAgentSpec struct {
+	// Root-cause investigation configuration.
+	// +optional
+	Investigation InvestigationSpec `json:"investigation,omitempty"`
+
+	// Independent workflow-discovery invocation configuration.
+	// +optional
+	WorkflowDiscovery WorkflowDiscoverySpec `json:"workflowDiscovery,omitempty"`
 
 	// Name of a pre-existing ConfigMap for the LLM runtime configuration.
 	// When set, the operator skips generating kubernaut-agent-llm-runtime
 	// and mounts this ConfigMap instead. Must contain key "llm-runtime.yaml".
 	// +optional
 	RuntimeConfigMapName string `json:"runtimeConfigMapName,omitempty"`
-
-	// Per-phase LLM profile overrides. Keys are agent phase names
-	// (rca, workflow_discovery, validation); values are profile names in
-	// spec.llmProfiles. Each referenced profile may use its own provider
-	// and credentialsSecretName, independent of llmProfileRef's profile —
-	// the operator mounts a dedicated Secret volume for any phase profile
-	// whose credentialsSecretName differs from llmProfileRef's. When
-	// absent, all phases use llmProfileRef's profile.
-	// +optional
-	// +kubebuilder:validation:XValidation:rule="self.all(k, k in ['rca','workflow_discovery','validation'])",message="phaseModels keys must be one of: rca, workflow_discovery, validation"
-	PhaseModels map[string]string `json:"phaseModels,omitempty"`
-
-	// MaxTurns is the maximum number of LLM conversation turns the
-	// investigator may execute per analysis session.
-	// +kubebuilder:default=40
-	// +kubebuilder:validation:Minimum=1
-	// +optional
-	MaxTurns int `json:"maxTurns,omitempty"`
 
 	// Session configuration.
 	// +optional
@@ -2006,9 +2021,9 @@ type APIFrontendSpec struct {
 	Shutdown APIFrontendShutdownSpec `json:"shutdown,omitempty"`
 
 	// Reference to a named profile in spec.llmProfiles used for API
-	// Frontend's own LLM calls. When empty, defaults to
-	// spec.kubernautAgent.llmProfileRef's *effective* profile -- including
-	// that field's own single-profile inference, so AF need not repeat it.
+	// Frontend's own LLM calls. When empty and spec.llmProfiles defines
+	// exactly one profile, the operator infers that sole profile. When
+	// multiple profiles exist, API Frontend must select its own profile.
 	// +optional
 	LLMProfileRef string `json:"llmProfileRef,omitempty"`
 

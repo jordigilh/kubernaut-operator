@@ -107,21 +107,14 @@ spec:
   #     #   name: monitoring-ca
   #     #   key: ca.crt
 
-  # Named LLM profiles, referenced by name from kubernautAgent.llmProfileRef,
-  # apiFrontend.llmProfileRef, apiFrontend.severityTriage.llmProfileRef, and
-  # kubernautAgent.phaseModels. Profiles referenced from phaseModels (#233)
-  # or apiFrontend.severityTriage.llmProfileRef (#234) may use their own
-  # provider and credentialsSecretName, independent of the profile they'd
-  # otherwise inherit from -- except when severityTriage's and API
-  # Frontend's own resolved profile are both vertex_ai, in which case they
-  # must still share a credentialsSecretName (API Frontend's Vertex AI
-  # client relies on ambient Application Default Credentials rather than
-  # per-profile credentials, kubernaut#1731).
+  # Named LLM profiles, referenced by each logical Agent or service through
+  # its own llmProfileRef. Profiles may use different providers and
+  # credentialsSecretName values; cross-credential mounts are rendered by the
+  # operator for the owning consumer.
   #
-  # v1alpha2/F10: when this map defines exactly one profile,
-  # kubernautAgent.llmProfileRef below may be omitted entirely -- the
-  # operator infers the sole profile. Two profiles are defined here
-  # (primary, lightweight), so llmProfileRef stays required in this sample.
+  # v1alpha2/F10: when this map defines exactly one profile, each consumer's
+  # llmProfileRef may be omitted -- the operator infers the sole profile. Two
+  # profiles are defined here, so each consumer selects its profile below.
   llmProfiles:
     primary:
       provider: vertex_ai
@@ -147,19 +140,20 @@ spec:
       credentialsSecretName: llm-credentials
       vertexProject: "example-gcp-project"
       vertexLocation: "us-central1"
-      # Cheaper/faster reasoning tier for the high-volume phase this
-      # profile is swapped into below (kubernautAgent.phaseModels).
+      # Cheaper/faster reasoning tier for workflow discovery below.
       # reasoning:
       #   enabled: true
       #   effort: minimal
 
   kubernautAgent:
-    llmProfileRef: primary
-    phaseModels:
-      workflow_discovery: lightweight
+    investigation:
+      llmProfileRef: primary
+      maxTurns: 40
+    workflowDiscovery:
+      llmProfileRef: lightweight
+      maxEvidenceHandoffBytes: 262144
     logging:
       level: DEBUG
-    maxTurns: 40
     audit:
       enabled: true
     interactive:
@@ -196,6 +190,7 @@ spec:
 
   apiFrontend:
     enabled: true
+    llmProfileRef: primary
     auth:
       # Replace this reserved example with the complete issuer URL for your
       # IdP; do not use a short realm name because the operator never guesses
