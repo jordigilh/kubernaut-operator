@@ -113,7 +113,12 @@ spec:
       #   credentialsSecretRef: oauth2-credentials
 
   kubernautAgent:
-    llmProfileRef: primary
+    investigation:
+      llmProfileRef: primary
+      maxTurns: 40
+    workflowDiscovery:
+      llmProfileRef: primary
+      maxEvidenceHandoffBytes: 262144
     # runtimeConfigMapName: custom-llm-runtime  # uncomment for BYO LLM config
     # logging:
     #   level: info                        # debug, info, warn, error
@@ -121,7 +126,7 @@ spec:
     #   enabled: false
     #   timeout: "10s"
     #   maxStepTokens: 500
-    #   llmProfileRef: primary             # optional: use a different profile for alignment (defaults to the same profile as llmProfileRef above)
+    #   llmProfileRef: primary             # optional: use a different profile for alignment (defaults to the investigation profile)
     # safety:                              # agent safety controls
     #   sanitization:
     #     injectionPatternsEnabled: true    # detect prompt injection patterns

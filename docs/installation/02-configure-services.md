@@ -99,7 +99,7 @@ spec:
     triage:
       provider: openai
       model: gpt-4o-mini
-      credentialsSecretName: llm-credentials   # must match AF's resolved profile
+       credentialsSecretName: triage-llm-credentials   # may be distinct; the operator mounts it read-only
 
   apiFrontend:
     severityTriage:
