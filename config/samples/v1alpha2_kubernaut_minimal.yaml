@@ -35,9 +35,9 @@ spec:
       model: claude-sonnet-4-6
       credentialsSecretName: llm-credentials
 
-  # kubernautAgent is a schema-required parent key, but llmProfileRef itself
-  # can stay unset here: exactly one profile is defined above, so the
-  # operator infers it automatically (v1alpha2/F10).
+  # kubernautAgent is a schema-required parent key. Its logical-agent profile
+  # references can stay unset here: exactly one profile is defined above, so
+  # the operator infers it automatically (v1alpha2/F10).
   kubernautAgent: {}
 
   # Both Rego policy ConfigMaps are schema-required (no operator-bundled

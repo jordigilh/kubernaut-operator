@@ -71,10 +71,12 @@ spec:
       maxRetries: 3
       timeoutSeconds: 120
   kubernautAgent:
-    llmProfileRef: primary
-    phaseModels:
-      workflow_discovery: workflow_discovery
-    maxTurns: 40
+    investigation:
+      llmProfileRef: primary
+      maxTurns: 40
+    workflowDiscovery:
+      llmProfileRef: workflow_discovery
+      maxEvidenceHandoffBytes: 262144
 ```
 
 One constraint on the new shape carried over from #187, with no automated
@@ -84,18 +86,17 @@ workaround:
   any old inline `apiKey` must be moved into a Secret referenced by
   `credentialsSecretName` by hand.
 
-Earlier 1.6 milestones additionally required every `phaseModels` entry to
-reference a profile sharing the base profile's exact `credentialsSecretName`.
-That constraint has been lifted (#233): each `phaseModels` entry may now
-reference a profile with its own `provider` and `credentialsSecretName`,
-independent of `llmProfileRef`'s profile, once
+Earlier 1.6 milestones additionally required every phase override to reference
+a profile sharing the base profile's exact `credentialsSecretName`. The final
+logical-agent shape supports independent `investigation` and
+`workflowDiscovery` profiles, each with its own `provider` and
+`credentialsSecretName`, once
 [jordigilh/kubernaut#1728](https://github.com/jordigilh/kubernaut/pull/1728)
-fixed Kubernaut Agent to resolve each phase's own credentials independently
-rather than silently reusing the base profile's. The migration script below
-still can't *auto-migrate* a 1.5 phase override that changes `provider`,
-though — the 1.5 schema never recorded a per-phase `credentialsSecretName`,
-so there is no Secret reference for it to carry forward; that case still
-needs manual migration.
+fixed Kubernaut Agent to resolve each invocation's own credentials
+independently. The migration script below still can't *auto-migrate* a 1.5
+phase override that changes `provider`, though — the 1.5 schema never recorded
+a per-phase `credentialsSecretName`, so there is no Secret reference for it to
+carry forward; that case still needs manual migration.
 
 ### API Frontend severity triage LLM is now independently configurable (#187)
 
