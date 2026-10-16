@@ -89,6 +89,9 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 		cmd = exec.Command("kubectl", "patch", "secret", "datastorage-audit-hmac-key",
 			"-n", crNS, "--type=merge", "-p", `{"metadata":{"finalizers":[]}}`)
 		_, _ = utils.Run(cmd)
+		cmd = exec.Command("kubectl", "patch", "configmap", "datastorage-audit-hmac-key-state",
+			"-n", crNS, "--type=merge", "-p", `{"metadata":{"finalizers":[]}}`)
+		_, _ = utils.Run(cmd)
 
 		By("undeploying the controller-manager")
 		cmd = exec.Command("make", "undeploy")
