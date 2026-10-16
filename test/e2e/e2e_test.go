@@ -45,6 +45,7 @@ const (
 	serviceAccountName     = "kubernaut-operator-controller-manager"
 	metricsServiceName     = "kubernaut-operator-controller-manager-metrics-service"
 	metricsRoleBindingName = "kubernaut-operator-metrics-binding"
+	e2eSyntheticAPIKey     = "e2e-synthetic-credential"
 )
 
 var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
@@ -467,7 +468,7 @@ func createBYOSecrets() {
 		{
 			name: "llm-credentials",
 			data: map[string]string{
-				"api-key":          "sk-test-not-real-key-for-e2e", // pre-commit:allow-sensitive -- synthetic E2E fixture credential
+				"api-key":          e2eSyntheticAPIKey,
 				"credentials.json": "{}",
 			},
 		},
