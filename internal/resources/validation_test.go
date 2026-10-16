@@ -106,6 +106,78 @@ var _ = Describe("SC-23: per-provider audience binding", func() {
 	})
 })
 
+var _ = Describe("Console provider logout URL validation", func() {
+	It("UT-483-VALIDATE-001 [AC-6; CC6.1; ASVS V5/V8]: accepts the HTTPS provider endpoint with the literal ID token placeholder", func() {
+		kn := testKubernautWithConsole()
+		kn.Spec.Console.Auth.ProviderLogoutURL = "https://idp.example.com/realms/kubernaut/protocol/openid-connect/logout?id_token_hint={id_token}"
+
+		Expect(ValidateKubernaut(kn)).To(BeEmpty())
+	})
+
+	It("UT-483-VALIDATE-002 [AC-6; CC6.1; ASVS V5/V8]: rejects malformed or unsafe logout endpoints", func() {
+		for _, value := range []string{
+			" https://idp.example.com/logout?id_token_hint={id_token}",
+			"not-a-url",
+			"http://idp.example.com/logout?id_token_hint={id_token}",
+			"https://:443/logout?id_token_hint={id_token}",
+			"https://other.example.com/logout?id_token_hint={id_token}",
+			"https://user:pass@idp.example.com/logout?id_token_hint={id_token}",
+			"https://idp.example.com/logout#fragment",
+			"https://idp.example.com/logout?a={id_token}&b={id_token}",
+			"https://idp.example.com/logout?placeholder={other}",
+			"https://idp.example.com/logout?bad=%zz",
+			"https://idp.example.com/logout?rd=https://console.example.com",
+			"https://idp.example.com/logout?id_token_hint=%7Bid_token%7D",
+		} {
+			kn := testKubernautWithConsole()
+			kn.Spec.Console.Auth.ProviderLogoutURL = value
+
+			errs := ValidateKubernaut(kn)
+			Expect(errs).NotTo(BeEmpty(), value)
+			Expect(strings.Join(errorStrings(errs), "; ")).To(ContainSubstring("providerLogoutURL"), value)
+		}
+	})
+
+	It("UT-483-VALIDATE-003 [AC-6; CC6.1; ASVS V5/V8]: applies the effective first-provider authority", func() {
+		kn := testKubernautWithConsole()
+		kn.Spec.APIFrontend.Auth.IssuerURL = ""
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{
+			{Name: "first", IssuerURL: "https://first.example.com", Audiences: []string{"console"}},
+			{Name: "second", IssuerURL: "https://second.example.com", Audiences: []string{"console"}},
+		}
+		kn.Spec.Console.Auth.ProviderLogoutURL = "https://first.example.com/logout?id_token_hint={id_token}"
+
+		Expect(ValidateKubernaut(kn)).To(BeEmpty())
+	})
+
+	It("UT-483-VALIDATE-004 [AC-6; ASVS V5/V8]: validates syntax even when Console is disabled without requiring issuer authority matching", func() {
+		kn := testKubernautWithConsole()
+		kn.Spec.Console.Enabled = nil
+		kn.Spec.Console.Auth.ProviderLogoutURL = "https://other.example.com/logout?id_token_hint={id_token}"
+
+		Expect(ValidateKubernaut(kn)).To(BeEmpty())
+	})
+
+	It("UT-483-VALIDATE-005 [AC-6; ASVS V5/V8]: fails closed when an enabled Console has no valid effective issuer", func() {
+		kn := testKubernautWithConsole()
+		kn.Spec.APIFrontend.Auth.IssuerURL = "relative"
+		kn.Spec.Console.Auth.ProviderLogoutURL = "https://idp.example.com/logout?id_token_hint={id_token}"
+
+		errs := ValidateKubernaut(kn)
+		Expect(strings.Join(errorStrings(errs), "; ")).To(ContainSubstring("cannot be validated without a valid effective OIDC issuer"))
+	})
+
+	It("UT-483-VALIDATE-006 [SC-8; ASVS V5/V8]: rejects an HTTP effective issuer for logout configuration", func() {
+		kn := testKubernautWithConsole()
+		kn.Spec.APIFrontend.Auth.IssuerURL = "http://idp.example.com/realms/kubernaut"
+		kn.Spec.APIFrontend.Auth.AllowInsecureIssuers = true
+		kn.Spec.Console.Auth.ProviderLogoutURL = "https://idp.example.com/logout?id_token_hint={id_token}"
+
+		errs := ValidateKubernaut(kn)
+		Expect(strings.Join(errorStrings(errs), "; ")).To(ContainSubstring("requires an HTTPS effective OIDC issuer"))
+	})
+})
+
 var _ = Describe("SC-8: JWKS endpoint transmission confidentiality", func() {
 	It("SC-8: rejects non-TLS JWKS endpoint for AF provider", func() {
 		kn := testKubernautWithAF()
