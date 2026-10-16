@@ -7,7 +7,6 @@ metadata:
     control-plane: controller-manager
   name: kubernaut-operator-system
 ---
----
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -774,6 +773,14 @@ spec:
                         minLength: 1
                         type: string
                     type: object
+                  enableRawThinking:
+                    default: false
+                    description: |-
+                      Whether the console's raw LLM extended-thinking panel and its
+                      "Hide/Show raw thinking" header button are enabled. Defaults to false
+                      for new users; set to true only when an administrator explicitly wants
+                      the diagnostic view exposed.
+                    type: boolean
                   enabled:
                     default: false
                     description: Whether the Console component is deployed. Defaults
@@ -4692,7 +4699,7 @@ spec:
         - name: RELATED_IMAGE_DB_MIGRATE
           value: quay.io/kubernaut-ai/db-migrate@sha256:6b7611cd2e93d250707ab530b0a7512d3bb1b9f0a5521d445089df0f66b5d2a6
         - name: RELATED_IMAGE_CONSOLE
-          value: quay.io/kubernaut-ai/kubernaut-console@sha256:98f75c56b8f2a4e2ee0276e31f353175b91dec9e95478775843590c37f876062
+          value: quay.io/kubernaut-ai/kubernaut-console@sha256:68cf5aebbca09c079fccda92b4c86f4a019a8f6878cf30e5b6724f4e2e48657b
         - name: RELATED_IMAGE_OAUTH2_PROXY
           value: quay.io/oauth2-proxy/oauth2-proxy@sha256:37c1570c0427e02fc7c947ef2c04e8995b8347b7abc9fcf1dbb4e376a4b221a7
         - name: RELATED_IMAGE_INIT_POSTGRES
