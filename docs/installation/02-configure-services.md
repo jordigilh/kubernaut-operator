@@ -70,7 +70,13 @@ spec:
       # Azure OpenAI:
       # azureApiVersion: "2024-02-01"
       # Custom CA for LLM TLS:
-      # tlsCaFile: /path/to/ca.pem
+      # tlsCaFile: /etc/kubernaut-agent/llm-tls-client/ca.crt
+      # tlsCaSecretRef:
+      #   name: primary-llm-ca       # key defaults to ca.crt
+      # Optional LLM mTLS client material:
+      # tlsCertFile: /etc/kubernaut-agent/llm-tls-client/tls.crt
+      # tlsKeyFile: /etc/kubernaut-agent/llm-tls-client/tls.key
+      # tlsClientSecretRef: primary-llm-client  # tls.crt + tls.key
     lightweight:
       provider: openai
       model: gpt-4o-mini
@@ -86,6 +92,14 @@ spec:
 ```
 
 Cross-credential Agent profile references are supported. The operator mounts each distinct credentials Secret read-only for its owning Agent invocation. Severity-triage retains its independent profile and fallback behavior.
+
+When `tlsCaSecretRef` is set, the selected CA key is validated as PEM before
+workloads are created and mounted read-only. `tlsClientSecretRef` is similarly
+validated for `tls.crt` and `tls.key`. Workflow-discovery and alignment profiles
+use their own deterministic TLS directories; material is reused only when the
+effective Secret/path identity is intentionally shared. Path-only `tlsCaFile`
+values without a Secret reference remain administrator-managed external files
+and are not inspected by the operator.
 
 The operator auto-generates each component's LLM runtime config from its resolved profile. If your environment includes custom CRDs or advanced routing needs beyond `provider`/`model`, see the BYO runtime ConfigMap section below.
 
