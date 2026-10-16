@@ -399,26 +399,100 @@ func validateLLMProfileTuning(base string, llm *kubernautv1alpha2.LLMProfileSpec
 }
 
 func validateLLMProfileTLS(base string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
+	errs := validateLLMProfileCA(base, llm)
+
 	certSet := llm.TLSCertFile != "" || llm.TLSKeyFile != ""
 	if certSet && (llm.TLSCertFile == "" || llm.TLSKeyFile == "") {
-		return []error{fmt.Errorf("%s.tlsCertFile and %s.tlsKeyFile must both be set or both empty for mTLS", base, base)}
+		errs = append(errs, fmt.Errorf("%s.tlsCertFile and %s.tlsKeyFile must both be set or both empty for mTLS", base, base))
 	}
 	if !certSet && llm.TLSClientSecretRef != "" {
-		return []error{fmt.Errorf("%s.tlsClientSecretRef: set but tlsCertFile/tlsKeyFile are empty — both pairs are required for mTLS", base)}
+		errs = append(errs, fmt.Errorf("%s.tlsClientSecretRef: set but tlsCertFile/tlsKeyFile are empty — both pairs are required for mTLS", base))
 	}
+	errs = append(errs, validateLLMProfileTLSMaterialNames(base, llm)...)
 	if !certSet {
-		return nil
+		return errs
 	}
 	if llm.TLSClientSecretRef == "" {
-		return []error{fmt.Errorf("%s.tlsClientSecretRef: required when mTLS cert/key paths are configured", base)}
+		errs = append(errs, fmt.Errorf("%s.tlsClientSecretRef: required when mTLS cert/key paths are configured", base))
 	}
 	if !filepath.IsAbs(llm.TLSCertFile) || !filepath.IsAbs(llm.TLSKeyFile) {
-		return []error{fmt.Errorf("%s.tlsCertFile and %s.tlsKeyFile must be absolute paths for mTLS", base, base)}
+		errs = append(errs, fmt.Errorf("%s.tlsCertFile and %s.tlsKeyFile must be absolute paths for mTLS", base, base))
 	}
 	if filepath.Dir(llm.TLSCertFile) != filepath.Dir(llm.TLSKeyFile) {
-		return []error{fmt.Errorf("%s.tlsCertFile and %s.tlsKeyFile must share one parent directory for mTLS", base, base)}
+		errs = append(errs, fmt.Errorf("%s.tlsCertFile and %s.tlsKeyFile must share one parent directory for mTLS", base, base))
 	}
-	return nil
+	errs = append(errs, validateLLMProfileTLSPathCollisions(base, llm)...)
+	return errs
+}
+
+func validateLLMProfileCA(base string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
+	var errs []error
+	if llm.TLSCaFile != "" && !filepath.IsAbs(llm.TLSCaFile) {
+		errs = append(errs, fmt.Errorf("%s.tlsCaFile must be an absolute path", base))
+	}
+	if llm.TLSCaSecretRef == nil {
+		return errs
+	}
+	if llm.TLSCaFile == "" {
+		errs = append(errs, fmt.Errorf("%s.tlsCaFile is required when tlsCaSecretRef is configured", base))
+	}
+	if llm.TLSCaSecretRef.Name == "" {
+		errs = append(errs, fmt.Errorf("%s.tlsCaSecretRef.name must not be empty", base))
+	} else if len(k8svalidation.IsDNS1123Subdomain(llm.TLSCaSecretRef.Name)) > 0 {
+		errs = append(errs, fmt.Errorf("%s.tlsCaSecretRef.name must be a valid Kubernetes object name", base))
+	}
+	if key := llmTLSCAKey(*llm); filepath.Base(key) != key || strings.ContainsAny(key, `\/`) {
+		errs = append(errs, fmt.Errorf("%s.tlsCaSecretRef.key must be a Secret key name without path separators", base))
+	}
+	return errs
+}
+
+func validateLLMProfileTLSPathCollisions(base string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
+	if llm.TLSCaSecretRef == nil {
+		return nil
+	}
+	var errs []error
+	if filepath.Clean(llm.TLSCaFile) == filepath.Clean(llm.TLSCertFile) {
+		errs = append(errs, fmt.Errorf("%s.tlsCaFile and %s.tlsCertFile must be different paths", base, base))
+	}
+	if filepath.Clean(llm.TLSCaFile) == filepath.Clean(llm.TLSKeyFile) {
+		errs = append(errs, fmt.Errorf("%s.tlsCaFile and %s.tlsKeyFile must be different paths", base, base))
+	}
+	return errs
+}
+
+func validateLLMProfileTLSMaterialNames(base string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
+	paths := make(map[string]string, 3)
+	addPath := func(field, value string) error {
+		if value == "" {
+			return nil
+		}
+		name := filepath.Base(value)
+		if name == "." || name == ".." || name == string(filepath.Separator) {
+			return fmt.Errorf("%s.%s must name a file below the deterministic TLS mount", base, field)
+		}
+		if previous, exists := paths[name]; exists {
+			return fmt.Errorf("%s.%s and %s.%s must use different filenames for projected TLS material", base, previous, base, field)
+		}
+		paths[name] = field
+		return nil
+	}
+
+	var errs []error
+	if llm.TLSCaSecretRef != nil {
+		if err := addPath("tlsCaFile", llm.TLSCaFile); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if llm.TLSClientSecretRef != "" {
+		if err := addPath("tlsCertFile", llm.TLSCertFile); err != nil {
+			errs = append(errs, err)
+		}
+		if err := addPath("tlsKeyFile", llm.TLSKeyFile); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
 }
 
 func validateLLMProfileOAuth2(base string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
