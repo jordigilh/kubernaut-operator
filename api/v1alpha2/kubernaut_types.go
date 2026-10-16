@@ -1571,6 +1571,20 @@ type ConsoleSpec struct {
 	// Resource requirements for the console container.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Whether the console's raw LLM extended-thinking panel and its
+	// "Hide/Show raw thinking" header button are enabled. Defaults to false
+	// for new users; set to true only when an administrator explicitly wants
+	// the diagnostic view exposed.
+	// +kubebuilder:default=false
+	// +optional
+	EnableRawThinking *bool `json:"enableRawThinking,omitempty"`
+}
+
+// EnableRawThinkingValue returns whether the console's raw-thinking panel
+// should be enabled. It defaults to false when unset.
+func (s *ConsoleSpec) EnableRawThinkingValue() bool {
+	return s.EnableRawThinking != nil && *s.EnableRawThinking
 }
 
 // ConsoleAuthSpec configures authentication for the console oauth2-proxy.

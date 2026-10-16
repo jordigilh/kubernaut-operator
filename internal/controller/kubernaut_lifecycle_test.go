@@ -816,7 +816,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(cm).To(BeNil(), "should not generate LLM runtime ConfigMap when user provides one")
 		})
 
-		It("IT-CL-01 [SC-7, CC6.6]: console enabled creates Deployment, Service, and nginx ConfigMap", func() {
+		It("IT-CN-476-001 [CM-3, CM-6, SI-10, CC8.1]: console enabled creates a default-off runtime configuration", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
 			t := true
@@ -851,6 +851,57 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				Name: string(resources.ComponentConsole) + "-nginx", Namespace: testNamespace,
 			}, cm)).To(Succeed())
 			Expect(cm.Data).To(HaveKey("server.conf"))
+			Expect(cm.Data["server.conf"]).To(ContainSubstring(
+				"window.__KUBERNAUT_CONFIG__ = { enableRawThinking: false };"),
+				"the reconciled Console runtime configuration must hide raw thinking by default")
+		})
+
+		It("IT-CN-476-002 [CM-3, CM-6, SI-10, CC8.1]: raw-thinking changes roll the Console pod", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			cr.Spec.Console.Enabled = ptr.To(true)
+			cr.Spec.Console.Route.Enabled = ptr.To(false)
+			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+			Expect(k8sClient.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
+				Data: map[string][]byte{
+					"client-id": []byte("cid"), "client-secret": []byte("csec"), "cookie-secret": []byte("cook"),
+				},
+			})).To(Succeed())
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			deployment := &appsv1.Deployment{}
+			deploymentKey := types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}
+			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+			initialHash := deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
+			Expect(initialHash).NotTo(BeEmpty(), "Console Deployment must carry the nginx ConfigMap hash")
+
+			By("enabling raw thinking explicitly")
+			Expect(k8sClient.Get(ctx, singletonKey(), cr)).To(Succeed())
+			cr.Spec.Console.EnableRawThinking = ptr.To(true)
+			Expect(k8sClient.Update(ctx, cr)).To(Succeed())
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			updatedHash := ""
+			Eventually(func() string {
+				Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+				updatedHash = deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
+				return updatedHash
+			}, timeout, interval).ShouldNot(Equal(initialHash), "enabling raw thinking must roll the Console pod")
+
+			By("disabling raw thinking again")
+			Expect(k8sClient.Get(ctx, singletonKey(), cr)).To(Succeed())
+			cr.Spec.Console.EnableRawThinking = ptr.To(false)
+			Expect(k8sClient.Update(ctx, cr)).To(Succeed())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() string {
+				Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+				return deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
+			}, timeout, interval).ShouldNot(Equal(updatedHash), "disabling raw thinking must roll the Console pod again")
 		})
 
 		It("IT-CL-03 [SC-7, CC6.1]: console redirect URL uses cluster ingress domain", func() {
