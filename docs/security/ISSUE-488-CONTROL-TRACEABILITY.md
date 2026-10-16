@@ -1,10 +1,10 @@
 # Issue #488 security control traceability
 
 **Matrix ID:** KO-SEC-TR-488-001
-**Version:** 0.1
-**Date:** 2026-10-08
+**Version:** 0.2
+**Date:** 2026-10-15
 **Scope:** Kubernaut Operator Issue #488 gap closure
-**Status:** evidence matrix in progress
+**Status:** evidence matrix in progress; #486 focused qualification update included
 
 ## Reading this matrix
 
@@ -17,6 +17,10 @@ of scope. These mappings do not establish FedRAMP authorization. The OWASP
 entries are the exact requirement identifiers from **OWASP ASVS 5.0.0**, not a
 claim of ASVS conformance. Formal FedRAMP or ASVS compliance is not claimed
 without the required external assessment and organizational evidence.
+
+Focused mappings added during the #486 review are project-selected engineering
+analogs. They do not establish that the cited ASVS requirement is directly
+conformed to by the policy or monitoring behavior.
 
 Status means:
 
@@ -45,7 +49,7 @@ The versioned ASVS source is the official `v5.0.0` CSV:
 | Control | Objective / requirement boundary | Design and production evidence | Test and CI evidence | Status | Residual risk / follow-up |
 |---|---|---|---|---|---|
 | AC-3, AC-6 | Enforce authorization and least privilege at the operator/API boundary. | `config/rbac/role.yaml`; `internal/resources/rbac.go`; native-policy ownership and cleanup in `internal/controller/`. | `UT-POLICY-*`; focused provider-policy IT; controller RBAC tests; Cilium/Calico Kind ownership and negative-enforcement scenarios. | partially verified | External RBAC review and supported OpenShift/OVN qualification remain required. |
-| SC-7 | Boundary protection uses provider-native policy APIs and no raw Kubernetes fallback. | `internal/policy/`; `internal/controller/kubernaut_controller.go`; provider capability detection. | Focused Cilium/Calico provider-policy IT; OVN DNS IT; Generic/Cilium/Calico Kind evidence where available; `ProviderPolicyReady`, deny/allow probes, unmanaged-policy preservation. | partially verified | Focused IT verifies submission/wiring; OVN/OpenShift live enforcement remains deferred and explicitly unverified. |
+| SC-7 | Boundary protection uses provider-native policy APIs and no raw Kubernetes fallback. | `internal/policy/`; `internal/controller/kubernaut_controller.go`; provider capability detection. | `test/e2e/kind/`; focused Cilium/Calico provider-policy IT; OVN DNS IT; Generic/Cilium/Calico Kind evidence where available; `ProviderPolicyReady`, deny/allow probes, unmanaged-policy preservation. | partially verified | Focused IT verifies submission/wiring; OVN/OpenShift live enforcement remains deferred and explicitly unverified. |
 | SC-8, SC-12, SC-13, SC-17 | Protect communications, manage trust roots, use qualified cryptographic material, and publish usable certificate trust. | `internal/resources/tls.go`; `internal/resources/tls_test.go`; `internal/resources/tls_certmanager.go`; `internal/resources/webhooks.go`; `internal/controller/kubernaut_controller.go`; `internal/controller/tls_source_unit_test.go`; `internal/controller/runtime_tls_wiring_integration_test.go`; `internal/controller/certmanager_lifecycle_test.go`; `internal/controller/kubernaut_lifecycle_test.go`; `docs/security/credentials-and-tls.md`; `docs/security/ISSUE-491-TLS-CONTROL-ATTESTATION.md`. | `UT-TLS-GAP-001`; `UT-TLS-ROTATION-GAP-001`; `IT-TLS-GAP-003`; `UT-TLS-MANUAL-001`; `UT-TLS-PARITY-001`; `IT-TLS-AUDIT-515-001`–`004`; `E2E-TLS-CERTMANAGER-001`; `E2E-TLS-CERTMANAGER-002`; `.github/workflows/test.yml`. | partially verified | Administrator process, external PKI review, immutable-image/FIPS assessment, and exact-revision hosted cert-manager execution evidence remain required. |
 | IA-2, IA-5 | Validate authentication references and protect/rotate referenced authenticators. | `internal/controller/kubernaut_controller.go`; secret validation and webhook TokenReview/SAR wiring; `docs/security/credentials-and-tls.md`. | BYO secret negative tests; webhook/controller integration tests; `E2E-TLS-GAP-001`. | partially verified | Identity-provider and enterprise secret-vault qualification are outside this repository-only change. |
 | SI-4 | Make capability, readiness, failure, generation, and resource-version signals observable. | Structured controller logging, status conditions, events, and phase transitions in `internal/controller/`. | Controller condition/event tests; Kind status assertions; `CI-CONTROLS-GAP-001` validation. | partially verified | Cluster log aggregation, alerting, retention, and operational monitoring still require deployment evidence. |

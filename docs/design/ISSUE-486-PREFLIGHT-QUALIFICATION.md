@@ -51,7 +51,10 @@ assets. No full-suite result is inferred from these targeted runs.
 ### Unit and static evidence
 
 - `make test-unit`: passed with 6,502 independent business statements and
-  100% project-measured unit coverage, above the 90% requirement.
+  100% project-measured independent business-statement coverage, above the
+  current Makefile 90% gate. This is not a claim of 100% Go/package coverage;
+  the full integration suite was stopped and its broader coverage was not used
+  as a passing result.
 - Security traceability validation: passed.
 - CI-boundary validation: passed.
 - The working tree was clean before the separate removal of the external OCP
@@ -85,6 +88,16 @@ release claim is made for OpenShift/OVN policy enforcement. The manual cluster
 procedure is external qualification evidence and is intentionally not retained
 as a repository-owned harness.
 
+#### External-run provenance
+
+The focused manual run was executed on 2026-10-15 against `kubernaut492-sno-b`
+on `helios08` (OpenShift 4.22.16, Kubernetes 1.35.8), from source checkout
+`6479812`. The temporary image, namespaces, CRD, RBAC, policies, and logs were
+removed after the observation. An immutable image digest and retained artifact
+bundle were not produced; consequently this is a preflight spike receipt, not
+durable release-qualification evidence. The cluster owner/release operator must
+own any future retained qualification artifact and cleanup receipt.
+
 ## 3. Spike decisions
 
 | Risk | Decision | Rationale |
@@ -113,10 +126,11 @@ Reviewed plans:
 | RED → GREEN → REFACTOR | Complete for historical implementation phases | Do not invent a new production implementation phase without a failing business test; remaining work is qualification unless a gap is found |
 | Wiring manifest / Checkpoint W | Present, but some rows are stale | Focused IT now proves generic capability, provider-policy, monitoring, and OVN DNS callers; full OVN live qualification remains deferred |
 | Test pyramid invariant | Present, but broad completion language is easy to misread | Keep focused IT, generic E2E, provider E2E, and OCP E2E as separate evidence classes; never substitute one for another |
+| Overall Checkpoint W | Not complete for the full initiative | Focused IT proves selected callers, but unverified OpenShift/TLS/Helm rows and live dataplane evidence keep the overall wiring/completion gate open |
 | Unit coverage ≥90% | Makefile enforces it | Current focused run measured 100%; retain business-case-only testing rule |
 | FedRAMP/SOC 2/ASVS traceability | Matrix exists | Add current focused IT evidence and preserve partial status for live platform and organizational controls |
 | Generated artifacts and completion gates | Present | Do not claim `make test` or full integration passed from this spike; record only executed gates |
-| Risk mitigation and rollback | Under-specified for external qualification | Treat manual cluster qualification as non-mutating/disposable, record cluster/version/image provenance, and do not make it a production dependency |
+| Risk mitigation and rollback | Under-specified for external qualification | Treat manual qualification as pre-authorized, isolated, and disposable; record cluster/version/source/image provenance and cleanup ownership, and do not make it a production dependency |
 
 ### Plan gap assessment
 
@@ -133,7 +147,7 @@ gaps:
 
 ## 5. Control-objective mapping for this review
 
-| Business assertion | FedRAMP/NIST | SOC 2 | OWASP ASVS 5.0.0 | Evidence |
+| Business assertion | FedRAMP/NIST | SOC 2 | OWASP ASVS 5.0.0 (project-selected analog) | Evidence |
 |---|---|---|---|---|
 | Missing optional APIs do not block generic startup | CM-8, SI-4 | CC7, A1 | V16.5.2 | Platform-neutrality IT |
 | Required isolation fails closed without a qualified provider | AC-3, SC-7, SI-10 | CC6.1, CC7.2 | V8.2.1, V13.2.1, V16.5.2 | Required-isolation IT |
@@ -141,8 +155,9 @@ gaps:
 | OVN DNS policy intent and native policy submission are wired through reconciliation | SC-7, SI-10 | CC6.1, CC7.2 | V13.2.1, V16.5.2 | `IT-AUDIT-518-DNS-001`; manual OCP 4.22 submission spike |
 | Optional monitoring destinations fail visibly without unsafe fallback | SI-4, SI-10 | CC7.2 | V16.1.1, V16.5.2 | Monitoring IT |
 
-These are repository engineering objectives only; they do not establish formal
-compliance.
+The ASVS entries in this focused table are project-selected analog mappings for
+engineering evidence; they are not direct conformance determinations. These are
+repository engineering objectives only and do not establish formal compliance.
 
 ## 6. Revised next gate
 

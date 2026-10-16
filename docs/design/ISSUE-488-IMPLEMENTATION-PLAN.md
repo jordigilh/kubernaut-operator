@@ -47,6 +47,11 @@ operator must:
 
 ## 2. Confirmed preflight baseline
 
+The baseline checks in this section are historical evidence recorded for the
+#488 implementation branch on 2026-10-01/02. They are not a claim that the full
+suite was rerun during the #486 preflight; the current focused results and their
+limits are recorded in `ISSUE-486-PREFLIGHT-QUALIFICATION.md`.
+
 - `SetupWithManager` unconditionally watches `config.openshift.io/APIServer`.
 - The controller now reconciles `v1alpha2` directly; no v1alpha1 scheme or
   conversion path is registered.

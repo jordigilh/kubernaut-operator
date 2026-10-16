@@ -1,6 +1,6 @@
 # Issue #492: Kubernaut Agent monitoring egress policy
 
-**Status:** Cilium/Calico and OVN monitoring implementations are complete, and the 2026-10-07 production-readiness follow-up remediates named target-port resolution, independent endpoint gating, and external monitoring resource watches. The change is still not GA-ready: requested coverage targets are not met and OVN/OpenShift qualification remains manual rather than CI-backed. The OVN API/dataplane primitive is qualified on both disposable OpenShift 4.22.16 SNO clusters, and the working-tree operator-generated OVN policy plus Agent monitoring journey is manually qualified on SNO-A. Build, lint, manifest, security, integration, and Cilium/Calico provider E2E gates pass.
+**Status:** Cilium/Calico and OVN monitoring implementations are complete, and the 2026-10-07 production-readiness follow-up remediates named target-port resolution, independent endpoint gating, and external monitoring resource watches. The change is still not GA-ready: requested coverage targets are not met and OVN/OpenShift qualification remains manual rather than CI-backed. The OVN API/dataplane statements below are historical #492 evidence tied to their recorded SNO runs; they are not an automated regression guarantee or a current #486 release claim. Current #486 preflight separately re-observed OCP 4.22 native policy submission but did not requalify dataplane enforcement or full application lifecycle. Build, lint, manifest, security, integration, and Cilium/Calico provider E2E claims below remain historical evidence for the #492 implementation line and must not be read as current #486 gate results.
 **Issue:** [kubernaut-operator#492](https://github.com/jordigilh/kubernaut-operator/issues/492)
 **Milestone:** v1.6
 **Related:** #488 (native provider policy), #489 (operator-only Helm/bootstrap), #468 (AlertManager RBAC), upstream `kubernaut#2484`
@@ -18,7 +18,7 @@ Issue #492 is an open security-labelled bug titled **“fix(policy): preserve Ku
 
 The business failure is loss of RCA evidence: the Agent’s `get_alerts` and `get_metric_names` calls time out when default-deny policy omits monitoring egress.
 
-**Approval boundary:** the selector-derived OVN pod-peer design was approved for implementation on 2026-10-06. Production OVN monitoring rendering is now wired and manually qualified on OpenShift 4.22.16 SNO-A. There is no automated OCP/OVN CI lane, so the manual evidence is not represented as an automated regression guarantee.
+**Approval boundary:** the selector-derived OVN pod-peer design was approved for implementation on 2026-10-06. Production OVN monitoring rendering is now wired and was manually qualified on OpenShift 4.22.16 SNO-A under the historical #492 evidence boundary. There is no automated OCP/OVN CI lane, so the manual evidence is not represented as an automated regression guarantee or a current #486 release claim.
 
 ## 2. Worktree and preservation boundary
 
@@ -93,6 +93,12 @@ The implemented Cilium/Calico slice now includes the qualified journey described
 Local macOS execution of that journey was attempted on 2026-10-06 but could not reach the tests: the Cilium lane hit a Podman Kind-node disk-quota failure during provider initialization, and the Calico lane timed out waiting for `calico-node` readiness. The rootful `helios08` fallback then ran the complete suite successfully with Podman: Cilium 1.20.2 passed 7/7 specs and Calico v3.31.4 passed 7/7 specs. Each run exercised the exact Agent `get_metric_names` and `get_alerts` paths against healthy fixtures and timed out against the unrelated monitoring Service; both Kind clusters were removed by the suite cleanup.
 
 ### OVN validation — live API, operator rendering, and dataplane validation
+
+> **Evidence boundary:** The SNO/API, operator-rendering, and dataplane claims
+> in this section are historical #492 evidence. They are not re-executed or
+> automatically inherited as current #486 release evidence; current #486
+> preflight records only the later OCP 4.22 submission spike and keeps
+> enforcement/full-lifecycle qualification open.
 
 The two independent SNO environments are suitable for the follow-up slice:
 
