@@ -4,7 +4,7 @@
 **ADR**: [ADR-PLATFORM-001-platform-neutral-provider-policy.md](ADR-PLATFORM-001-platform-neutral-provider-policy.md)
 **Documentation issue**: [kubernaut-operator#487](https://github.com/jordigilh/kubernaut-operator/issues/487)
 **Methodology**: RED → GREEN → REFACTOR → CHECK, with wiring verification in GREEN
-**Status**: Implementation tracked on `fix/488-platform-neutrality`; approval gates are recorded below and generated artifacts remain part of the completion gate
+**Status**: Core implementation is complete on the platform-neutrality line; focused qualification evidence and remaining live-platform gaps are recorded in `ISSUE-486-PREFLIGHT-QUALIFICATION.md`. Approval gates and generated artifacts remain part of the completion gate.
 **Estimated effort**: Multi-PR initiative; each phase is independently reviewable
 
 ---
@@ -309,7 +309,7 @@ The following production callers are mandatory before a component is considered 
 | Component | Production entry point | Wiring location | Required IT |
 |---|---|---|---|
 | Platform capability detector | `KubernautReconciler.Reconcile` | `internal/controller/kubernaut_controller.go` phase/deploy orchestration | `IT-PLATFORM-KIND-001` |
-| Optional OpenShift adapter | deploy/exposure/monitoring sub-functions | controller capability registry; no unconditional `SetupWithManager` watch | Deferred; `IT-PLATFORM-OCP-001` remains unverified |
+| Optional OpenShift adapter | deploy/exposure/monitoring sub-functions | controller capability registry; no unconditional `SetupWithManager` watch | Focused capability/bootstrap observation complete; full `IT-PLATFORM-OCP-001` remains unverified |
 | Certificate-source resolver/provisioner | platform/TLS reconciliation | manager bootstrap plus per-instance TLS/trust orchestration; source-specific ownership and no plaintext fallback | `IT-PLATFORM-KIND-001` and `IT-PLATFORM-OCP-001` |
 | Webhook CA-bundle publisher | admission webhook reconciliation | administrator/self-signed patch, cert-manager injection, or OpenShift service-CA adapter | `IT-TLS-WEBHOOK-001` |
 | Inter-service trust/leaf builder | workload deployment/configuration | TLS/trust orchestration before `deployWorkloads()` and on rotation | `IT-TLS-TRUST-001` |
@@ -317,7 +317,7 @@ The following production callers are mandatory before a component is considered 
 | Provider detector | policy reconciliation | immediately before adapter selection | `IT-POLICY-DETECTION-001` |
 | Cilium adapter | policy reconciliation | provider registry → Cilium renderer/lifecycle | `IT-POLICY-CILIUM-001` |
 | Calico adapter | policy reconciliation | provider registry → Calico renderer/lifecycle | `IT-POLICY-CALICO-001` |
-| OVN adapter | policy reconciliation | provider registry → OVN renderer/lifecycle | Deferred; `IT-POLICY-OVN-001` remains unverified |
+| OVN adapter | policy reconciliation | provider registry → OVN renderer/lifecycle | Focused `IT-AUDIT-518-DNS-001` passed; full `IT-POLICY-OVN-001` remains unverified |
 | Generic exposure builder | workload/exposure deployment | `deployWorkloads()` exposure branch | `IT-PLATFORM-KIND-001` |
 | Monitoring adapter | monitoring reconciliation | `reconcileMonitoringAndAlerts()` capability branch | `IT-PLATFORM-KIND-001` and `IT-PLATFORM-OCP-001` |
 | Helm bootstrap | installation pipeline | Deferred chart templates and CI, not controller ownership | `IT-HELM-BOOTSTRAP-001` remains unverified |

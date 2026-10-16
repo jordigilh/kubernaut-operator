@@ -268,8 +268,11 @@ var _ = Describe("independent provider policy lifecycle", Label("unit"), func() 
 			MapperProvider: func(*rest.Config, *http.Client) (meta.RESTMapper, error) { return mapper, nil },
 		})
 		Expect(err).NotTo(HaveOccurred())
-		r := &KubernautReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+		r := &KubernautReconciler{}
 		Expect(r.SetupWithManager(manager)).To(Succeed())
+		Expect(r.Client).NotTo(BeNil())
+		Expect(r.Scheme).NotTo(BeNil())
+		Expect(r.RestCfg).NotTo(BeNil())
 		Expect(r.APIReader).To(BeIdenticalTo(manager.GetAPIReader()))
 		Expect(r.now()).To(BeTemporally("~", time.Now(), time.Second))
 		Expect(monitoringResourceSupported(mapper, "ServiceMonitor")).To(BeTrue())
