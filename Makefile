@@ -225,10 +225,6 @@ test-e2e-kind-helm: fmt vet ## Run the isolated operator-only Helm bootstrap Kin
 	fi; \
 	HELM_BIN=$(HELM_BIN) KUBERNAUT_OPERATOR_IMAGE="$$operator_image" KUBERNAUT_HELM_E2E_CLUSTER="$${KUBERNAUT_HELM_E2E_CLUSTER:-kubernaut-operator-helm-e2e}" go test ./test/e2e/helm/ -v -ginkgo.v -timeout 30m
 
-.PHONY: test-e2e-helm-openshift
-test-e2e-helm-openshift: ## Run the opt-in operator-only Helm bootstrap OpenShift qualification lane.
-	@./hack/test-helm-openshift.sh
-
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
 	$(GOLANGCI_LINT) run

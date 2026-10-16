@@ -4908,6 +4908,15 @@ func (r *KubernautReconciler) deleteIfExists(ctx context.Context, kn *kubernautv
 // Cluster-scoped resources (ClusterRoles, CRBs, webhook configs) cannot be
 // owned, so they rely on the periodic requeue timer for drift detection.
 func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if r.Client == nil {
+		r.Client = mgr.GetClient()
+	}
+	if r.Scheme == nil {
+		r.Scheme = mgr.GetScheme()
+	}
+	if r.RestCfg == nil {
+		r.RestCfg = mgr.GetConfig()
+	}
 	r.Recorder = mgr.GetEventRecorder("kubernaut-controller")
 	r.APIReader = mgr.GetAPIReader()
 	if r.now == nil {
