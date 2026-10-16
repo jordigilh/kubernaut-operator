@@ -174,36 +174,6 @@ generic-Kubernetes supplemental-group default. Set
 `hostUsers=false` explicitly only when the target cluster requires pod-level
 user namespaces.
 
-The opt-in hosted qualification lane requires an image reachable by the target
-cluster. The lane intentionally does not build or push that image. From a
-checkout on the SSH host, prepare a temporary internal-registry image first:
-
-```bash
-oc project issue-489-ocp-a || oc new-project issue-489-ocp-a
-image_registry=image-registry.openshift-image-registry.svc:5000
-image=${image_registry}/issue-489-ocp-a/kubernaut-operator:issue-489-ocp
-podman login --tls-verify=false \
-  --username="$(oc whoami)" --password="$(oc whoami -t)" "${image_registry}"
-podman build -t "${image}" .
-podman push --tls-verify=false "${image}"
-```
-
-Then run the qualification from the workstation. The script transfers only the
-chart; the remote host pulls the image through the temporary registry policy:
-
-```bash
-KUBERNAUT_HELM_OCP_SSH_HOST=helios08 \
-KUBERNAUT_HELM_OCP_IMAGE_REPOSITORY=image-registry.openshift-image-registry.svc:5000/issue-489-ocp-a/kubernaut-operator \
-KUBERNAUT_HELM_OCP_IMAGE_TAG=issue-489-ocp \
-KUBERNAUT_HELM_OCP_IMAGE_PULLER_NAMESPACE=issue-489-ocp-a \
-make test-e2e-helm-openshift
-```
-
-The lane verifies service-CA Secret and webhook injection, restricted-SCC
-startup, singleton admission, upgrade certificate reuse, uninstall retention,
-and reinstall. It deletes only its disposable test namespaces and retained CRD
-after those assertions complete.
-
 ## Configuration boundary
 
 Values are limited to operator bootstrap: image references, RBAC identity,
