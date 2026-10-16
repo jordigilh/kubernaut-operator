@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -816,6 +817,15 @@ func EffectiveWorkflowDiscoveryLLMProfileRef(kn *kubernautv1alpha2.Kubernaut) st
 	return effectiveLLMProfileRef(kn, kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef)
 }
 
+// EffectiveAlignmentCheckLLMProfileRef returns the profile used by KA's
+// independent alignment-check sibling agent. Alignment is intentionally
+// resolved from its own reference rather than inheriting the investigation
+// profile; an empty reference is inferred only when the shared profile map
+// contains exactly one unambiguous profile.
+func EffectiveAlignmentCheckLLMProfileRef(kn *kubernautv1alpha2.Kubernaut) string {
+	return effectiveLLMProfileRef(kn, kn.Spec.KubernautAgent.AlignmentCheck.LLMProfileRef)
+}
+
 // phaseCredentialsVolumeName returns the Volume/VolumeMount name for the
 // dedicated Secret mount of the workflowDiscovery profile when it has a
 // different credentialsSecretName than the investigation profile (#233).
@@ -829,6 +839,37 @@ func phaseCredentialsVolumeName(phase string) string {
 // longer needs to alias KA's base "llm-credentials" mount.
 func phaseCredentialsMountPath(phase string) string {
 	return "/etc/kubernaut-agent/phase-credentials/" + phase
+}
+
+const (
+	alignmentCredentialsVolumeName = "alignment-credentials"
+	alignmentCredentialsMountPath  = "/etc/kubernaut-agent/alignment-credentials" //nolint:gosec // mount-path convention, not credential material
+	alignmentOAuth2VolumeName      = "alignment-oauth2-credentials"
+	alignmentOAuth2MountPath       = "/etc/kubernaut-agent/alignment-oauth2"
+	alignmentTLSClientVolumeName   = "alignment-llm-tls-client"
+	alignmentTLSClientMountPath    = "/etc/kubernaut-agent/alignment-tls"
+	workflowOAuth2VolumeName       = "workflow-discovery-oauth2"
+	workflowOAuth2MountPath        = "/etc/kubernaut-agent/oauth2/workflow-discovery"
+	workflowTLSClientVolumeName    = "workflow-discovery-llm-tls-client"
+	workflowTLSClientMountPath     = "/etc/kubernaut-agent/workflow-tls"
+)
+
+func llmTLSClientNeedsDedicatedMount(profile, base kubernautv1alpha2.LLMProfileSpec) bool {
+	if profile.TLSClientSecretRef == "" {
+		return false
+	}
+	return profile.TLSClientSecretRef != base.TLSClientSecretRef ||
+		profile.TLSCertFile != base.TLSCertFile || profile.TLSKeyFile != base.TLSKeyFile
+}
+
+func llmTLSClientPaths(profile, base kubernautv1alpha2.LLMProfileSpec, mountPath string) (string, string) {
+	certPath := profile.TLSCertFile
+	keyPath := profile.TLSKeyFile
+	if llmTLSClientNeedsDedicatedMount(profile, base) && certPath != "" && keyPath != "" {
+		certPath = filepath.Join(mountPath, filepath.Base(certPath))
+		keyPath = filepath.Join(mountPath, filepath.Base(keyPath))
+	}
+	return certPath, keyPath
 }
 
 // AFLLMProfileRef returns the name of the profile API Frontend's own LLM

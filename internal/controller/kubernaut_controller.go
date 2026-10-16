@@ -3492,6 +3492,9 @@ func appendPrecreatedValkeyTLSSecrets(c *precreatedReferenceCollector, kn *kuber
 func appendPrecreatedLLMReferences(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
 	appendPrecreatedLLMProfileReference(c, kn, resources.EffectiveInvestigationLLMProfileRef(kn))
 	appendPrecreatedLLMProfileReference(c, kn, resources.EffectiveWorkflowDiscoveryLLMProfileRef(kn))
+	if kn.Spec.KubernautAgent.AlignmentCheck.Enabled {
+		appendPrecreatedLLMProfileReference(c, kn, resources.EffectiveAlignmentCheckLLMProfileRef(kn))
+	}
 	if !kn.Spec.APIFrontendEnabled() {
 		return
 	}

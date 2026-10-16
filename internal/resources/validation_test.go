@@ -596,6 +596,17 @@ var _ = Describe("AlignmentCheck Validation", func() {
 		Expect(errs).To(BeEmpty())
 	})
 
+	It("UT-419-VAL-001 [CM-6, SI-10; SOC2 CC6.6, CC8.1; ASVS v5.0.0-V2.2.1, v5.0.0-V2.2.2] rejects an undefined alignment LLM profile reference", func() {
+		kn := withAlignmentCheck(kubernautv1alpha2.AlignmentCheckSpec{
+			Enabled:       true,
+			LLMProfileRef: testMissingProfile,
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0]).To(MatchError(ContainSubstring("spec.kubernautAgent.alignmentCheck.llmProfileRef")))
+		Expect(errs[0]).To(MatchError(ContainSubstring("undefined profile")))
+	})
+
 	It("accumulates multiple errors", func() {
 		kn := withAlignmentCheck(kubernautv1alpha2.AlignmentCheckSpec{
 			Enabled:       true,
@@ -852,6 +863,86 @@ var _ = Describe("LLM Profile Content Validation", func() {
 		kn.Spec.LLMProfiles["primary"] = profile
 		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
+	})
+
+	It("UT-419-VAL-002 [SC-8, IA-5, SI-10] rejects incomplete or plaintext OAuth2 profile configuration", func() {
+		kn := testKubernaut()
+		profile := kn.Spec.LLMProfiles["primary"]
+		profile.OAuth2.Enabled = true
+		profile.OAuth2.TokenURL = "http://idp.example/token"
+		profile.OAuth2.CredentialsSecretRef = ""
+		kn.Spec.LLMProfiles["primary"] = profile
+		errs := ValidateKubernaut(kn)
+		joined := make([]string, 0, len(errs))
+		for _, err := range errs {
+			joined = append(joined, err.Error())
+		}
+		Expect(strings.Join(joined, "\n")).To(And(
+			ContainSubstring("oauth2.tokenURL"),
+			ContainSubstring("https URL"),
+			ContainSubstring("oauth2.credentialsSecretRef"),
+		))
+
+		profile.OAuth2.TokenURL = ""
+		kn.Spec.LLMProfiles["primary"] = profile
+		errs = ValidateKubernaut(kn)
+		foundRequiredURL := false
+		for _, err := range errs {
+			if strings.Contains(err.Error(), "oauth2.tokenURL: required") {
+				foundRequiredURL = true
+			}
+		}
+		Expect(foundRequiredURL).To(BeTrue())
+	})
+
+	It("UT-419-VAL-003 [CM-6, SI-10] rejects invalid profile tuning values instead of silently omitting them", func() {
+		kn := testKubernaut()
+		negativeRetries := -1
+		zeroTimeout := 0
+		profile := kn.Spec.LLMProfiles["primary"]
+		profile.MaxRetries = &negativeRetries
+		profile.TimeoutSeconds = &zeroTimeout
+		profile.Temperature = "not-a-number"
+		kn.Spec.LLMProfiles["primary"] = profile
+		errs := ValidateKubernaut(kn)
+		joined := make([]string, 0, len(errs))
+		for _, err := range errs {
+			joined = append(joined, err.Error())
+		}
+		Expect(strings.Join(joined, "\n")).To(And(
+			ContainSubstring("maxRetries"),
+			ContainSubstring("timeoutSeconds"),
+			ContainSubstring("temperature"),
+		))
+	})
+
+	It("UT-419-VAL-004 [SC-8, SI-10] rejects mTLS paths that cannot be projected from one Secret directory", func() {
+		kn := testKubernaut()
+		profile := kn.Spec.LLMProfiles["primary"]
+		profile.TLSCertFile = "/etc/tls/client.crt"
+		profile.TLSKeyFile = "/etc/other/client.key"
+		profile.TLSClientSecretRef = testVolumeLLMTLSClient
+		kn.Spec.LLMProfiles["primary"] = profile
+		errs := ValidateKubernaut(kn)
+		found := false
+		for _, err := range errs {
+			if strings.Contains(err.Error(), "share one parent directory") {
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue())
+
+		profile.TLSCertFile = "client.crt"
+		profile.TLSKeyFile = "client.key"
+		kn.Spec.LLMProfiles["primary"] = profile
+		errs = ValidateKubernaut(kn)
+		found = false
+		for _, err := range errs {
+			if strings.Contains(err.Error(), "must be absolute paths") {
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue())
 	})
 
 	It("LR-040 [SI-10]: an administrator may explicitly disable reasoning while still declaring an effort tier for later re-enablement", func() {

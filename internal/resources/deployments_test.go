@@ -861,6 +861,158 @@ var _ = Describe("Deployments", func() {
 			}
 		})
 
+		It("UT-419-DEP-005 [IA-5, SC-8, SC-12] mounts workflow-discovery OAuth2 and custom-named mTLS credentials for an independent profile", func() {
+			kn := testKubernaut()
+			kn.Spec.LLMProfiles["workflow-full"] = kubernautv1alpha2.LLMProfileSpec{
+				Provider:              LLMProviderAnthropic,
+				Model:                 "claude-sonnet-4-6",
+				CredentialsSecretName: "workflow-credentials",
+				TLSCertFile:           "/etc/kubernaut-agent/workflow-tls/client.crt",
+				TLSKeyFile:            "/etc/kubernaut-agent/workflow-tls/client.key",
+				TLSClientSecretRef:    "workflow-tls",
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
+					Enabled:              true,
+					CredentialsSecretRef: "workflow-oauth",
+				},
+			}
+			kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "workflow-full"
+
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, workflowOAuth2VolumeName)
+			expectHasVolumeMount(dep, workflowOAuth2VolumeName, workflowOAuth2MountPath)
+			expectHasVolume(dep, workflowTLSClientVolumeName)
+			expectHasVolumeMount(dep, workflowTLSClientVolumeName, "/etc/kubernaut-agent/workflow-tls")
+			for _, volume := range dep.Spec.Template.Spec.Volumes {
+				if volume.Name != workflowTLSClientVolumeName {
+					continue
+				}
+				Expect(volume.Secret).NotTo(BeNil())
+				Expect(volume.Secret.SecretName).To(Equal("workflow-tls"))
+				Expect(volume.Secret.Items).To(ConsistOf(
+					corev1.KeyToPath{Key: corev1.TLSCertKey, Path: "client.crt"},
+					corev1.KeyToPath{Key: corev1.TLSPrivateKeyKey, Path: "client.key"},
+				))
+			}
+		})
+
+		It("UT-419-DEP-006 [SC-8, SI-10] projects canonical mTLS Secret keys when an invalid profile omits paths", func() {
+			kn := testKubernaut()
+			kn.Spec.LLMProfiles["workflow-invalid-mtls"] = kubernautv1alpha2.LLMProfileSpec{
+				Provider:              LLMProviderAnthropic,
+				Model:                 "claude-sonnet-4-6",
+				CredentialsSecretName: "workflow-credentials",
+				TLSClientSecretRef:    "workflow-tls",
+			}
+			kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "workflow-invalid-mtls"
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			for _, volume := range dep.Spec.Template.Spec.Volumes {
+				if volume.Name != workflowTLSClientVolumeName {
+					continue
+				}
+				Expect(volume.Secret).NotTo(BeNil())
+				Expect(volume.Secret.Items).To(ConsistOf(
+					corev1.KeyToPath{Key: corev1.TLSCertKey, Path: corev1.TLSCertKey},
+					corev1.KeyToPath{Key: corev1.TLSPrivateKeyKey, Path: corev1.TLSPrivateKeyKey},
+				))
+				return
+			}
+			Fail("workflow TLS volume was not rendered")
+		})
+
+		It("UT-419-DEP-001 [IA-5, SC-8, SC-12; SOC2 CC6.1, CC6.6; ASVS v5.0.0-V8.2.1, v5.0.0-V13.3.1] mounts independent alignment credentials, OAuth2, and mTLS Secrets read-only", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.AlignmentCheck = kubernautv1alpha2.AlignmentCheckSpec{
+				Enabled:       true,
+				LLMProfileRef: "alignment-profile",
+			}
+			kn.Spec.LLMProfiles["alignment-profile"] = kubernautv1alpha2.LLMProfileSpec{
+				Provider:              LLMProviderAnthropic,
+				Model:                 "claude-3-5-sonnet",
+				CredentialsSecretName: "alignment-llm-credentials",
+				TLSCertFile:           "/etc/kubernaut-agent/alignment-tls/tls.crt",
+				TLSKeyFile:            "/etc/kubernaut-agent/alignment-tls/tls.key",
+				TLSClientSecretRef:    "alignment-tls",
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
+					Enabled:              true,
+					TokenURL:             "https://idp.example/token",
+					CredentialsSecretRef: "alignment-oauth",
+				},
+			}
+
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, alignmentCredentialsVolumeName)
+			expectHasVolumeMount(dep, alignmentCredentialsVolumeName, alignmentCredentialsMountPath)
+			expectHasVolume(dep, alignmentOAuth2VolumeName)
+			expectHasVolumeMount(dep, alignmentOAuth2VolumeName, alignmentOAuth2MountPath)
+			expectHasVolume(dep, alignmentTLSClientVolumeName)
+			expectHasVolumeMount(dep, alignmentTLSClientVolumeName, alignmentTLSClientMountPath)
+			for _, volume := range dep.Spec.Template.Spec.Volumes {
+				switch volume.Name {
+				case alignmentCredentialsVolumeName:
+					Expect(volume.Secret).NotTo(BeNil())
+					Expect(volume.Secret.SecretName).To(Equal("alignment-llm-credentials"))
+				case alignmentOAuth2VolumeName:
+					Expect(volume.Secret).NotTo(BeNil())
+					Expect(volume.Secret.SecretName).To(Equal("alignment-oauth"))
+				case alignmentTLSClientVolumeName:
+					Expect(volume.Secret).NotTo(BeNil())
+					Expect(volume.Secret.SecretName).To(Equal("alignment-tls"))
+				}
+			}
+			for _, mount := range dep.Spec.Template.Spec.Containers[0].VolumeMounts {
+				if mount.Name == alignmentCredentialsVolumeName || mount.Name == alignmentOAuth2VolumeName || mount.Name == alignmentTLSClientVolumeName {
+					Expect(mount.ReadOnly).To(BeTrue(), "alignment Secret mount %q must be read-only", mount.Name)
+				}
+			}
+		})
+
+		It("UT-419-DEP-002 [IA-5; SOC2 CC6.6; ASVS v5.0.0-V8.2.1] reuses the base credentials mount when alignment selects the same Secret", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.AlignmentCheck = kubernautv1alpha2.AlignmentCheckSpec{
+				Enabled:       true,
+				LLMProfileRef: "alignment-profile",
+			}
+			kn.Spec.LLMProfiles["alignment-profile"] = kubernautv1alpha2.LLMProfileSpec{
+				Provider:              LLMProviderAnthropic,
+				Model:                 "claude-3-5-sonnet",
+				CredentialsSecretName: "llm-creds",
+			}
+
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, "llm-credentials")
+			expectNoVolume(dep, alignmentCredentialsVolumeName)
+		})
+
+		It("UT-419-DEP-003 [CM-6, IA-5; SOC2 CC6.6; ASVS v5.0.0-V2.2.1] does not guess an alignment Secret when profile inference is ambiguous", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.AlignmentCheck.Enabled = true
+			kn.Spec.LLMProfiles["second-profile"] = kubernautv1alpha2.LLMProfileSpec{
+				Provider:              LLMProviderAnthropic,
+				Model:                 "claude-3-5-sonnet",
+				CredentialsSecretName: "second-credentials",
+			}
+
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			expectNoVolume(dep, alignmentCredentialsVolumeName)
+		})
+
+		It("UT-419-DEP-004 [CM-6, IA-5; SOC2 CC6.6; ASVS v5.0.0-V2.2.1] does not mount a Secret for an unresolved alignment profile", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.AlignmentCheck = kubernautv1alpha2.AlignmentCheckSpec{
+				Enabled:       true,
+				LLMProfileRef: testMissingProfile,
+			}
+
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			expectNoVolume(dep, alignmentCredentialsVolumeName)
+		})
+
 		It("passes config args", func() {
 			kn := testKubernaut()
 			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))

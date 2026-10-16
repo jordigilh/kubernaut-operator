@@ -1357,8 +1357,9 @@ type AnomalySpec struct {
 
 // LLMProfileSpec defines a single, named LLM provider configuration.
 // Profiles live in spec.llmProfiles and are referenced by name (llmProfileRef)
-// from KA, API Frontend, and API Frontend's severity-triage configuration,
-// decoupling each component's LLM identity from a single shared config.
+// from KA's sibling investigation, workflow-discovery, and alignment agents,
+// API Frontend, and API Frontend's severity-triage configuration, decoupling
+// each component's LLM identity from a single shared config.
 type LLMProfileSpec struct {
 	// LLM provider name (e.g. "openai", "vertexai", "bedrock", "azure").
 	// +kubebuilder:validation:MinLength=1
