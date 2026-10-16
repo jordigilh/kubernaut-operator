@@ -30,7 +30,7 @@ import (
 )
 
 var _ = Describe("generic manager startup", func() {
-	It("starts without OpenShift or monitoring APIs", func() {
+	It("starts without OpenShift or monitoring APIs [CM-8, SI-4; SOC2 CC7, A1; ASVS v5.0.0-V16.5.2]", func() {
 		mgr, err := ctrl.NewManager(testConfig, ctrl.Options{
 			Scheme: testScheme,
 			Metrics: metricsserver.Options{
@@ -41,6 +41,9 @@ var _ = Describe("generic manager startup", func() {
 
 		reconciler := &controller.KubernautReconciler{}
 		Expect(reconciler.SetupWithManager(mgr)).To(Succeed())
+		Expect(reconciler.Client).NotTo(BeNil(), "watch handlers must have the manager client before informer events arrive")
+		Expect(reconciler.Scheme).NotTo(BeNil(), "the reconciler must use the manager scheme when constructed without dependencies")
+		Expect(reconciler.RestCfg).NotTo(BeNil(), "the reconciler must retain the manager REST config when constructed without dependencies")
 
 		managerContext, managerCancel := context.WithCancel(testContext)
 		defer managerCancel()
