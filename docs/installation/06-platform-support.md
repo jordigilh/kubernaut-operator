@@ -2,7 +2,7 @@
 
 This document is the compatibility contract for the platform-neutral operator work tracked by [#486](https://github.com/jordigilh/kubernaut-operator/issues/486) and documented by [#487](https://github.com/jordigilh/kubernaut-operator/issues/487).
 
-> **Implementation status:** the core platform-neutral path and the Cilium/Calico capability-gated adapters are implemented and covered by their pinned Kind lanes on this branch. OpenShift/OVN live qualification is deferred and explicitly unverified; this document makes no OpenShift/OVN release claim.
+> **Implementation status:** the core platform-neutral path and the Cilium/Calico capability-gated adapters are implemented. Focused controller IT covers generic startup, native policy wiring, monitoring degradation, and OVN DNS intent. OpenShift 4.22 capability/bootstrap behavior and live ANP/BANP submission were manually observed on an external qualification cluster; full OpenShift application lifecycle and OVN enforcement remain unverified, and this document makes no OpenShift/OVN release claim.
 
 ## Platform outcomes
 
@@ -11,7 +11,7 @@ The operator's core lifecycle is intended to work on both generic Kubernetes and
 | Platform profile | Core lifecycle | Optional integrations |
 |---|---|---|
 | Generic Kubernetes / Kind | Singleton CR, workloads, Services, ConfigMaps, Secrets, RBAC, PDBs, status, cleanup | Kubernetes Ingress, administrator/cert-manager TLS, explicitly configured Prometheus/AlertManager, supported Cilium or Calico policy adapter |
-| OpenShift 4.19–4.22 with OVN-Kubernetes | Design target; not live-qualified by this work | OpenShift Routes, service-CA/router CA, TLS security profile, OpenShift monitoring, and OVN admin policies remain unverified |
+| OpenShift 4.19–4.22 with OVN-Kubernetes | Core APIs, bootstrap behavior, and native ANP/BANP submission manually observed on an external OCP 4.22 cluster; full lifecycle not qualified | OpenShift Routes, service-CA/router CA, TLS security profile, monitoring readiness, and live OVN policy enforcement remain unverified |
 
 OpenShift is not required for the generic profile. A plain Kind cluster with no policy provider may run the core lifecycle without creating provider-policy resources. It must report that provider policy enforcement is not active; it must not silently claim equivalent network enforcement.
 
@@ -26,7 +26,7 @@ are outside the initial OVN policy contract as well.
 |---|---|---|---|
 | Cilium | 1.19.x–1.20.x | `cilium.io/v2` `CiliumNetworkPolicy`; `CiliumClusterwideNetworkPolicy` where cluster scope is required | Cilium 1.19 with Kubernetes 1.32–1.35; Cilium 1.20 with Kubernetes 1.33–1.36 |
 | Calico | 3.31.x–3.32.x | `projectcalico.org/v3` `NetworkPolicy`; `GlobalNetworkPolicy` where cluster scope is required | Calico 3.31 with Kubernetes 1.32–1.35; Calico 3.32 with Kubernetes 1.34–1.36 |
-| OpenShift OVN-Kubernetes | OpenShift 4.19–4.22 (deferred qualification) | `policy.networking.k8s.io/v1alpha1` `AdminNetworkPolicy` and `BaselineAdminNetworkPolicy` | OpenShift `Network` configuration must positively identify `OVNKubernetes`; no live qualification or release claim in this work |
+| OpenShift OVN-Kubernetes | OpenShift 4.19–4.22 (submission observed; enforcement deferred) | `policy.networking.k8s.io/v1alpha1` `AdminNetworkPolicy` and `BaselineAdminNetworkPolicy` | OpenShift `Network` configuration must positively identify `OVNKubernetes`; live enforcement and release claim remain deferred |
 
 The three version numbers are different contracts and must not be conflated:
 

@@ -10,6 +10,12 @@ complete on the working branch. Live OpenShift qualification is explicitly
 deferred; operator Helm bootstrap is owned and evidenced separately under Issue
 #489 without duplicating its lifecycle coverage here.
 
+The current parent-issue preflight and methodology review is recorded in
+[`ISSUE-486-PREFLIGHT-QUALIFICATION.md`](ISSUE-486-PREFLIGHT-QUALIFICATION.md).
+That review records focused controller IT evidence separately from live
+provider/OpenShift qualification and does not change the implementation status
+claimed by this historical child plan.
+
 **Methodology:** RED → GREEN → REFACTOR, with controller wiring verified in
 GREEN and the full unit/integration/E2E pyramid required before completion.
 

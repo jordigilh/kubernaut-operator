@@ -44,8 +44,8 @@ The versioned ASVS source is the official `v5.0.0` CSV:
 
 | Control | Objective / requirement boundary | Design and production evidence | Test and CI evidence | Status | Residual risk / follow-up |
 |---|---|---|---|---|---|
-| AC-3, AC-6 | Enforce authorization and least privilege at the operator/API boundary. | `config/rbac/role.yaml`; `internal/resources/rbac.go`; native-policy ownership and cleanup in `internal/controller/`. | `UT-POLICY-*`; controller RBAC tests; Cilium/Calico Kind ownership and negative-enforcement scenarios. | partially verified | External RBAC review and supported OpenShift/OVN qualification remain required. |
-| SC-7 | Boundary protection uses provider-native policy APIs and no raw Kubernetes fallback. | `internal/policy/`; `internal/controller/kubernaut_controller.go`; provider capability detection. | `test/e2e/kind/`; Generic/Cilium/Calico Kind lanes; `ProviderPolicyReady`, deny/allow probes, unmanaged-policy preservation. | partially verified | OVN/OpenShift live qualification is deferred and explicitly unverified. |
+| AC-3, AC-6 | Enforce authorization and least privilege at the operator/API boundary. | `config/rbac/role.yaml`; `internal/resources/rbac.go`; native-policy ownership and cleanup in `internal/controller/`. | `UT-POLICY-*`; focused provider-policy IT; controller RBAC tests; Cilium/Calico Kind ownership and negative-enforcement scenarios. | partially verified | External RBAC review and supported OpenShift/OVN qualification remain required. |
+| SC-7 | Boundary protection uses provider-native policy APIs and no raw Kubernetes fallback. | `internal/policy/`; `internal/controller/kubernaut_controller.go`; provider capability detection. | Focused Cilium/Calico provider-policy IT; OVN DNS IT; Generic/Cilium/Calico Kind evidence where available; `ProviderPolicyReady`, deny/allow probes, unmanaged-policy preservation. | partially verified | Focused IT verifies submission/wiring; OVN/OpenShift live enforcement remains deferred and explicitly unverified. |
 | SC-8, SC-12, SC-13, SC-17 | Protect communications, manage trust roots, use qualified cryptographic material, and publish usable certificate trust. | `internal/resources/tls.go`; `internal/resources/tls_test.go`; `internal/resources/tls_certmanager.go`; `internal/resources/webhooks.go`; `internal/controller/kubernaut_controller.go`; `internal/controller/tls_source_unit_test.go`; `internal/controller/runtime_tls_wiring_integration_test.go`; `internal/controller/certmanager_lifecycle_test.go`; `internal/controller/kubernaut_lifecycle_test.go`; `docs/security/credentials-and-tls.md`; `docs/security/ISSUE-491-TLS-CONTROL-ATTESTATION.md`. | `UT-TLS-GAP-001`; `UT-TLS-ROTATION-GAP-001`; `IT-TLS-GAP-003`; `UT-TLS-MANUAL-001`; `UT-TLS-PARITY-001`; `IT-TLS-AUDIT-515-001`–`004`; `E2E-TLS-CERTMANAGER-001`; `E2E-TLS-CERTMANAGER-002`; `.github/workflows/test.yml`. | partially verified | Administrator process, external PKI review, immutable-image/FIPS assessment, and exact-revision hosted cert-manager execution evidence remain required. |
 | IA-2, IA-5 | Validate authentication references and protect/rotate referenced authenticators. | `internal/controller/kubernaut_controller.go`; secret validation and webhook TokenReview/SAR wiring; `docs/security/credentials-and-tls.md`. | BYO secret negative tests; webhook/controller integration tests; `E2E-TLS-GAP-001`. | partially verified | Identity-provider and enterprise secret-vault qualification are outside this repository-only change. |
 | SI-4 | Make capability, readiness, failure, generation, and resource-version signals observable. | Structured controller logging, status conditions, events, and phase transitions in `internal/controller/`. | Controller condition/event tests; Kind status assertions; `CI-CONTROLS-GAP-001` validation. | partially verified | Cluster log aggregation, alerting, retention, and operational monitoring still require deployment evidence. |
@@ -73,9 +73,11 @@ Requirement text is summarized from the official ASVS source linked above.
 
 ## Explicit non-goals and deferred evidence
 
-- **OVN/OpenShift provider policy:** live policy qualification is deferred; no
-  provider-policy release claim is made for that path by this matrix. This does
-  not supersede the separate Issue #489 OpenShift service-CA bootstrap evidence.
+- **OVN/OpenShift provider policy:** focused IT verifies policy intent and DNS
+  wiring, and an external OCP 4.22 environment has been observed to expose the
+  required APIs, support the bootstrap contract, and accept rendered ANP/BANP
+  objects. Dataplane enforcement, complete workload readiness, and a provider-
+  policy release claim remain unqualified by this matrix.
 - **Issue #488 scope boundary:** the dedicated operator Helm chart is owned by
   Issue #489 and is evidenced separately by `docs/design/ISSUE-489-IMPLEMENTATION-PLAN.md`,
   `HELM-RENDER-001`, and `HELM-E2E-LIFECYCLE-001`; this Issue #488 matrix does
