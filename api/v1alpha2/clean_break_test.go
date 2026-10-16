@@ -82,6 +82,18 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		Expect(workflowExecution.XValidations[0].Rule).To(ContainSubstring("failedExecutionRetentionSeconds > 0"))
 	})
 
+	It("UT-483-API-001 publishes optional HTTPS Console provider logout configuration", func() {
+		crd := loadKubernautCRD()
+		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+		console := schema.Properties["spec"].Properties["console"]
+		auth := console.Properties["auth"]
+		logout := auth.Properties["providerLogoutURL"]
+
+		Expect(logout.Type).To(Equal("string"))
+		Expect(logout.Pattern).To(Equal(`^https://.+`))
+		Expect(auth.Required).NotTo(ContainElement("providerLogoutURL"))
+	})
+
 	It("resolves only configured issuer sources", func() {
 		spec := KubernautSpec{}
 		Expect(spec.EffectiveIssuerURL()).To(BeEmpty())

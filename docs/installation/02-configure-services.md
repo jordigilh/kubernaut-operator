@@ -581,6 +581,9 @@ spec:
     enabled: true
     auth:
       secretName: kubernaut-console-oidc
+      # Optional provider-discovered OIDC end_session_endpoint. Keep the
+      # literal {id_token} placeholder; oauth2-proxy substitutes it server-side.
+      providerLogoutURL: "https://idp.example.com/realms/kubernaut/protocol/openid-connect/logout?id_token_hint={id_token}"
 ```
 
 Raw thinking is hidden by default for new Console users. The operator serves
@@ -594,6 +597,13 @@ This is a deployment-wide setting: when enabled, raw thinking is available to
 every authenticated Console user. The operator does not provide per-user
 authorization for this diagnostic view, so enable it only when that audience
 is appropriate for the deployment.
+`providerLogoutURL` is optional. When configured, it must be an absolute HTTPS
+endpoint whose authority exactly matches the effective Console OIDC issuer. The
+operator rejects HTTP (including localhost), malformed placeholders, fragments,
+and client-controlled return-target parameters. It does not send the ID token
+to the Console SPA. The Console oauth2-proxy pod builds a combined system and
+configured-provider CA bundle so public and self-signed provider certificates
+are verified; certificate verification is never disabled.
 
 If you don't need the standalone Console UI, omit the `console` block entirely (it defaults to disabled).
 

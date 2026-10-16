@@ -107,6 +107,75 @@ var _ = Describe("Console Resources", func() {
 			Expect(data).To(ContainSubstring("name: secondary"))
 		})
 
+		It("UT-CD-483-001 [AC-12, CC6.1/CC6.3; ASVS V3.3/V7.2.1]: renders the provider logout URL only in oauth2-proxy", func() {
+			const logoutURL = "https://idp.example.com/realms/kubernaut/protocol/openid-connect/logout?id_token_hint={id_token}"
+			kn := testKubernautWithConsole()
+			kn.Spec.Console.Auth.ProviderLogoutURL = logoutURL
+
+			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			Expect(err).NotTo(HaveOccurred())
+
+			oauth2 := dep.Spec.Template.Spec.Containers[0]
+			Expect(oauth2.Args).To(ContainElement("--backend-logout-url=" + logoutURL))
+			Expect(oauth2.Env).To(ContainElement(corev1.EnvVar{Name: "SSL_CERT_FILE", Value: "/etc/ssl/combined/ca-bundle.crt"}))
+			Expect(oauth2.VolumeMounts).To(ContainElement(corev1.VolumeMount{
+				Name: "combined-ca", MountPath: "/etc/ssl/combined", ReadOnly: true,
+			}))
+
+			Expect(dep.Spec.Template.Spec.InitContainers).To(HaveLen(1))
+			init := dep.Spec.Template.Spec.InitContainers[0]
+			Expect(init.Name).To(Equal("build-ca-bundle"))
+			Expect(init.Image).To(Equal("registry.access.redhat.com/ubi10/ubi-minimal:latest"))
+			Expect(init.Command).To(ContainElement(ContainSubstring("/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem")))
+			Expect(init.Command).To(ContainElement(ContainSubstring("\"$1\"")))
+			Expect(init.Command).To(ContainElement(InterServiceTLSCAFileFor(kn)))
+			Expect(init.Command).To(ContainElement(ContainSubstring("/combined/ca-bundle.crt")))
+			Expect(init.VolumeMounts).To(ContainElements(
+				corev1.VolumeMount{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
+				corev1.VolumeMount{Name: "combined-ca", MountPath: "/combined"},
+			))
+			Expect(dep.Spec.Template.Spec.Volumes).To(ContainElements(
+				corev1.Volume{Name: "combined-ca", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+			))
+		})
+
+		It("UT-CD-483-002 [AC-6; ASVS V5/V8]: rejects unsafe logout URLs when the builder is called directly", func() {
+			for _, value := range []string{
+				"http://idp.example.com/logout?id_token_hint={id_token}",
+				"https://other.example.com/logout?id_token_hint={id_token}",
+				"https://idp.example.com/logout#fragment",
+				"https://idp.example.com/logout?rd=https://console.example.com",
+			} {
+				kn := testKubernautWithConsole()
+				kn.Spec.Console.Auth.ProviderLogoutURL = value
+
+				dep, err := ConsoleDeployment(kn, testIngressDomain)
+				Expect(err).To(HaveOccurred(), value)
+				Expect(err.Error()).To(ContainSubstring("providerLogoutURL"), value)
+				Expect(dep).To(BeNil(), value)
+			}
+		})
+
+		It("UT-CD-483-003 [SC-8; ASVS V8]: fails closed when the CA-bundle init image is unavailable", func() {
+			const logoutURL = "https://idp.example.com/logout?id_token_hint={id_token}"
+			kn := testKubernautWithConsole()
+			kn.Spec.Console.Auth.ProviderLogoutURL = logoutURL
+			saved, hadImage := os.LookupEnv("RELATED_IMAGE_INIT_UBI_MINIMAL")
+			Expect(os.Unsetenv("RELATED_IMAGE_INIT_UBI_MINIMAL")).To(Succeed())
+			defer func() {
+				if hadImage {
+					Expect(os.Setenv("RELATED_IMAGE_INIT_UBI_MINIMAL", saved)).To(Succeed())
+					return
+				}
+				Expect(os.Unsetenv("RELATED_IMAGE_INIT_UBI_MINIMAL")).To(Succeed())
+			}()
+
+			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("init-ubi-minimal"))
+			Expect(dep).To(BeNil())
+		})
+
 		It("UT-CD-03 [IA-5, CC6.1]: rejects deployment when auth secret name is missing", func() {
 			kn := testKubernautWithConsole()
 			kn.Spec.Console.Auth.SecretName = ""

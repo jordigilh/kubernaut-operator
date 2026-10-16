@@ -95,6 +95,62 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		Expect(fields).To(HaveKey("resourceVersion"))
 	})
 
+	It("IT-483-OWNERSHIP-001 [AC-6, AU-3; SOC2 CC6.1; ASVS V8.3.1] preserves a foreign Helm-owned Console Deployment", func() {
+		createBYOSecrets(ctx)
+		foreign := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      string(resources.ComponentConsole),
+				Namespace: testNamespace,
+				Labels: map[string]string{
+					"app":                          "console",
+					"app.kubernetes.io/managed-by": "Helm",
+					"app.kubernetes.io/instance":   "legacy-kubernaut",
+				},
+			},
+			Spec: appsv1.DeploymentSpec{
+				Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "console"}},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "console"}},
+					Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "oauth2-proxy", Image: "legacy.example/console"}}},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
+		before := foreign.DeepCopy()
+		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, foreign))).To(Succeed()) })
+
+		cr := newCRWithRouteDisabled()
+		t := true
+		f := false
+		cr.Spec.Console.Enabled = &t
+		cr.Spec.Console.Route.Enabled = &f
+		cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+		Expect(k8sClient.Create(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
+			Data: map[string][]byte{
+				"client-id":     []byte("cid"),
+				"client-secret": []byte("csec"),
+				"cookie-secret": []byte("cook"),
+			},
+		})).To(Succeed())
+		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+		r := newReconciler()
+		for range 2 {
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+		}
+		markMigrationJobComplete(ctx)
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+		Expect(err).To(MatchError(ContainSubstring("ownership conflict")))
+
+		live := &appsv1.Deployment{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(foreign), live)).To(Succeed())
+		Expect(live.Spec).To(Equal(before.Spec))
+		Expect(live.Labels).To(Equal(before.Labels))
+		Eventually(r.Recorder.(*events.FakeRecorder).Events, timeout, interval).Should(Receive(ContainSubstring("OwnershipConflict")))
+	})
+
 	It("IT-OWN-514-002 [AC-6, SI-10; SOC2 CC6.6; ASVS v5.0.0-V8.2.1] rejects a same-named administrator ClusterRole before deployment and preserves it on failed-install uninstall", func() {
 		createBYOSecrets(ctx)
 		kn := newCRWithRouteDisabled()

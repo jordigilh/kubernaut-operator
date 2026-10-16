@@ -1593,6 +1593,15 @@ type ConsoleAuthSpec struct {
 	// Required keys: client-id, client-secret, cookie-secret.
 	// +kubebuilder:validation:MinLength=1
 	SecretName string `json:"secretName,omitempty"`
+
+	// ProviderLogoutURL is the provider-discovered OIDC end_session_endpoint
+	// used by oauth2-proxy for server-side logout. Keep the literal {id_token}
+	// placeholder where the provider requires an ID token hint; oauth2-proxy
+	// replaces it server-side. The endpoint must use HTTPS and match the
+	// effective Console OIDC provider authority.
+	// +kubebuilder:validation:Pattern=`^https://.+`
+	// +optional
+	ProviderLogoutURL string `json:"providerLogoutURL,omitempty"`
 }
 
 // ConsoleRouteSpec configures the OCP Route for the console.
