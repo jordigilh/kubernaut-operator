@@ -1810,6 +1810,10 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.Conf
 // credential fields from a resolved LLM profile onto llmCfg, leaving zero
 // values (and thus YAML omission) for anything the profile doesn't set.
 func applyKALLMProfileFields(llmCfg *kaLLMYAML, profile kubernautv1alpha2.LLMProfileSpec) {
+	applyKALLMProfileFieldsForRole(llmCfg, profile, llmTLSRoleInvestigation)
+}
+
+func applyKALLMProfileFieldsForRole(llmCfg *kaLLMYAML, profile kubernautv1alpha2.LLMProfileSpec, role string) {
 	if profile.VertexProject != "" {
 		llmCfg.VertexProject = profile.VertexProject
 	}
@@ -1822,14 +1826,15 @@ func applyKALLMProfileFields(llmCfg *kaLLMYAML, profile kubernautv1alpha2.LLMPro
 	if profile.AzureAPIVersion != "" {
 		llmCfg.AzureApiVersion = profile.AzureAPIVersion
 	}
-	if profile.TLSCaFile != "" {
-		llmCfg.TLSCaFile = profile.TLSCaFile
+	caFile, certFile, keyFile := llmTLSMaterialPathsForRole(profile, profile, role)
+	if caFile != "" {
+		llmCfg.TLSCaFile = caFile
 	}
-	if profile.TLSCertFile != "" {
-		llmCfg.TLSCertFile = profile.TLSCertFile
+	if certFile != "" {
+		llmCfg.TLSCertFile = certFile
 	}
-	if profile.TLSKeyFile != "" {
-		llmCfg.TLSKeyFile = profile.TLSKeyFile
+	if keyFile != "" {
+		llmCfg.TLSKeyFile = keyFile
 	}
 	if profile.OAuth2.Enabled {
 		llmCfg.OAuth2 = &kaOAuth2YAML{
@@ -1888,7 +1893,7 @@ func kaAlignmentLLMConfig(profile, kaProfile kubernautv1alpha2.LLMProfileSpec) *
 		TLSCaFile:       profile.TLSCaFile,
 		Reasoning:       kaReasoningFromSpec(profile.Reasoning),
 	}
-	llm.TLSCertFile, llm.TLSKeyFile = llmTLSClientPaths(profile, kaProfile, alignmentTLSClientMountPath)
+	llm.TLSCaFile, llm.TLSCertFile, llm.TLSKeyFile = llmTLSMaterialPathsForRole(profile, kaProfile, llmTLSRoleAlignment)
 	if profile.CredentialsSecretName != "" {
 		llm.APIKeyFile = credentialsMountPath + "/" + credFile
 	}
@@ -2109,7 +2114,7 @@ func resolveKAPhaseModelOverride(kn *kubernautv1alpha2.Kubernaut, phase, ref str
 		TLSCaFile:       phaseProfile.TLSCaFile,
 		Reasoning:       kaReasoningFromSpec(phaseProfile.Reasoning),
 	}
-	override.TLSCertFile, override.TLSKeyFile = llmTLSClientPaths(phaseProfile, kaProfile, workflowTLSClientMountPath)
+	override.TLSCaFile, override.TLSCertFile, override.TLSKeyFile = llmTLSMaterialPathsForRole(phaseProfile, kaProfile, llmTLSRoleWorkflowDiscovery)
 	if phaseProfile.CredentialsSecretName != "" {
 		override.APIKeyFile = credentialsMountPath + "/" + credFile
 	}
@@ -2607,7 +2612,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 			KABearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
 			KATLSCAFile:       apifrontendTLSCAFile,
 			DSTLSCAFile:       apifrontendTLSCAFile,
-			LLM:               afAgentLLMConfig(afProfile),
+			LLM:               afAgentLLMConfigForRole(afProfile, afProfile, llmTLSRoleAPIFrontend),
 		},
 		MCP: afMCPConfig(knV2),
 		AgentCard: afAgentCardYAML{
@@ -2674,8 +2679,8 @@ func afSeverityTriageConfig(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1al
 	case st != nil && st.LLMProfileRef != "":
 		triageProfile, ok := ResolveLLMProfile(kn, st.LLMProfileRef)
 		if ok {
-			llm := afAgentLLMConfig(triageProfile)
 			afProfile, _ := ResolveLLMProfile(kn, AFLLMProfileRef(kn))
+			llm := afAgentLLMConfigForRole(triageProfile, afProfile, llmTLSRoleSeverityTriage)
 			if triageProfile.CredentialsSecretName != "" &&
 				triageProfile.CredentialsSecretName != afProfile.CredentialsSecretName {
 				credFile := llmCredentialsFileAPIKey
@@ -2704,6 +2709,10 @@ func afSeverityTriageConfig(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1al
 //
 // This translation will be removed when upstream normalizes (kubernaut#1488).
 func afAgentLLMConfig(llm kubernautv1alpha2.LLMProfileSpec) afAgentLLMYAML {
+	return afAgentLLMConfigForRole(llm, llm, llmTLSRoleAPIFrontend)
+}
+
+func afAgentLLMConfigForRole(llm, base kubernautv1alpha2.LLMProfileSpec, role string) afAgentLLMYAML {
 	provider := llm.Provider
 	if provider == "" {
 		provider = LLMProviderVertexAI
@@ -2720,15 +2729,16 @@ func afAgentLLMConfig(llm kubernautv1alpha2.LLMProfileSpec) afAgentLLMYAML {
 		endpoint = strings.TrimRight(endpoint, "/") + "/v1"
 	}
 
+	caFile, certFile, keyFile := llmTLSMaterialPathsForRole(llm, base, role)
 	cfg := afAgentLLMYAML{
 		Provider:       afProvider,
 		Model:          llm.Model,
 		Endpoint:       endpoint,
 		VertexProject:  llm.VertexProject,
 		VertexLocation: llm.VertexLocation,
-		TLSCaFile:      llm.TLSCaFile,
-		TLSCertFile:    llm.TLSCertFile,
-		TLSKeyFile:     llm.TLSKeyFile,
+		TLSCaFile:      caFile,
+		TLSCertFile:    certFile,
+		TLSKeyFile:     keyFile,
 	}
 
 	// #279: every provider, including vertex_ai, renders an explicit

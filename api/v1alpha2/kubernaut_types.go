@@ -1417,6 +1417,12 @@ type LLMProfileSpec struct {
 	// +optional
 	TLSCaFile string `json:"tlsCaFile,omitempty"`
 
+	// Optional Secret containing the PEM CA certificate used by the LLM
+	// endpoint. The default key is "ca.crt". When set, tlsCaFile must name
+	// the deterministic path where the operator mounts the selected key.
+	// +optional
+	TLSCaSecretRef *CACertSecretRef `json:"tlsCaSecretRef,omitempty"`
+
 	// Path to a client certificate file for mTLS to the LLM endpoint.
 	// Must be set together with TLSKeyFile.
 	// +optional
