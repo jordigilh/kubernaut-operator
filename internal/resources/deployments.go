@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"path/filepath"
 	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -641,7 +642,7 @@ func kaCoreVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut, kaProfile kubernaut
 }
 
 // kaCredentialVolumesAndMounts appends the optional OAuth2, LLM-mTLS-client,
-// and per-phase cross-credential Secret volumes to volumes/mounts.
+// and per-sibling-agent cross-credential Secret volumes to volumes/mounts.
 func kaCredentialVolumesAndMounts(kn *kubernautv1alpha2.Kubernaut, kaProfile kubernautv1alpha2.LLMProfileSpec,
 	volumes []corev1.Volume, mounts []corev1.VolumeMount) ([]corev1.Volume, []corev1.VolumeMount) {
 	if kaProfile.OAuth2.Enabled {
@@ -672,8 +673,80 @@ func kaCredentialVolumesAndMounts(kn *kubernautv1alpha2.Kubernaut, kaProfile kub
 				Name: volumeName, MountPath: phaseCredentialsMountPath(phase), ReadOnly: true,
 			})
 		}
+		if phaseProfile.OAuth2.Enabled && phaseProfile.OAuth2.CredentialsSecretRef != "" &&
+			(!kaProfile.OAuth2.Enabled || phaseProfile.OAuth2.CredentialsSecretRef != kaProfile.OAuth2.CredentialsSecretRef) {
+			volumes = append(volumes, secretVolume(workflowOAuth2VolumeName, phaseProfile.OAuth2.CredentialsSecretRef))
+			mounts = append(mounts, corev1.VolumeMount{
+				Name: workflowOAuth2VolumeName, MountPath: workflowOAuth2MountPath, ReadOnly: true,
+			})
+		}
+		if llmTLSClientNeedsDedicatedMount(phaseProfile, kaProfile) {
+			volumes = append(volumes, llmTLSClientSecretVolume(workflowTLSClientVolumeName, phaseProfile))
+			mounts = append(mounts, llmTLSClientVolumeMount(workflowTLSClientVolumeName, phaseProfile, workflowTLSClientMountPath))
+		}
+	}
+
+	volumes, mounts = appendKAAlignmentCredentialMounts(kn, kaProfile, volumes, mounts)
+	return volumes, mounts
+}
+
+// appendKAAlignmentCredentialMounts wires the alignment sibling agent's
+// independently selected profile. The alignment profile may reuse each base
+// Secret independently; only credentials that are not already mounted for the
+// investigation profile receive a dedicated read-only volume.
+func appendKAAlignmentCredentialMounts(kn *kubernautv1alpha2.Kubernaut, kaProfile kubernautv1alpha2.LLMProfileSpec,
+	volumes []corev1.Volume, mounts []corev1.VolumeMount) ([]corev1.Volume, []corev1.VolumeMount) {
+	if !kn.Spec.KubernautAgent.AlignmentCheck.Enabled {
+		return volumes, mounts
+	}
+	alignmentRef := EffectiveAlignmentCheckLLMProfileRef(kn)
+	if alignmentRef == "" {
+		return volumes, mounts
+	}
+	alignmentProfile, ok := ResolveLLMProfile(kn, alignmentRef)
+	if !ok {
+		return volumes, mounts
+	}
+
+	if alignmentProfile.CredentialsSecretName != "" && alignmentProfile.CredentialsSecretName != kaProfile.CredentialsSecretName {
+		volumes = append(volumes, secretVolume(alignmentCredentialsVolumeName, alignmentProfile.CredentialsSecretName))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: alignmentCredentialsVolumeName, MountPath: alignmentCredentialsMountPath, ReadOnly: true,
+		})
+	}
+
+	if alignmentProfile.OAuth2.Enabled && alignmentProfile.OAuth2.CredentialsSecretRef != "" &&
+		(!kaProfile.OAuth2.Enabled || alignmentProfile.OAuth2.CredentialsSecretRef != kaProfile.OAuth2.CredentialsSecretRef) {
+		volumes = append(volumes, secretVolume(alignmentOAuth2VolumeName, alignmentProfile.OAuth2.CredentialsSecretRef))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: alignmentOAuth2VolumeName, MountPath: alignmentOAuth2MountPath, ReadOnly: true,
+		})
+	}
+
+	if llmTLSClientNeedsDedicatedMount(alignmentProfile, kaProfile) {
+		volumes = append(volumes, llmTLSClientSecretVolume(alignmentTLSClientVolumeName, alignmentProfile))
+		mounts = append(mounts, llmTLSClientVolumeMount(alignmentTLSClientVolumeName, alignmentProfile, alignmentTLSClientMountPath))
 	}
 	return volumes, mounts
+}
+
+func llmTLSClientSecretVolume(name string, profile kubernautv1alpha2.LLMProfileSpec) corev1.Volume {
+	certPath := filepath.Base(profile.TLSCertFile)
+	keyPath := filepath.Base(profile.TLSKeyFile)
+	if certPath == "." || certPath == "" {
+		certPath = corev1.TLSCertKey
+	}
+	if keyPath == "." || keyPath == "" {
+		keyPath = corev1.TLSPrivateKeyKey
+	}
+	return secretVolumeWithItems(name, profile.TLSClientSecretRef, []corev1.KeyToPath{
+		{Key: corev1.TLSCertKey, Path: certPath},
+		{Key: corev1.TLSPrivateKeyKey, Path: keyPath},
+	})
+}
+
+func llmTLSClientVolumeMount(name string, _ kubernautv1alpha2.LLMProfileSpec, mountPath string) corev1.VolumeMount {
+	return corev1.VolumeMount{Name: name, MountPath: mountPath, ReadOnly: true}
 }
 
 // kaResources returns the administrator-configured resource requirements
@@ -1220,6 +1293,15 @@ func secretVolume(name, secretName string) corev1.Volume {
 		Name: name,
 		VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{SecretName: secretName},
+		},
+	}
+}
+
+func secretVolumeWithItems(name, secretName string, items []corev1.KeyToPath) corev1.Volume {
+	return corev1.Volume{
+		Name: name,
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{SecretName: secretName, Items: items},
 		},
 	}
 }
