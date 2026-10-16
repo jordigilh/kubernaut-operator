@@ -326,7 +326,7 @@ func ConsoleNginxConfigMap(kn *kubernautv1alpha2.Kubernaut) *corev1.ConfigMap {
 		ObjectMeta: ObjectMeta(kn, ComponentConsole+"-nginx", ComponentConsole),
 		Data: map[string]string{
 			"http.conf":   consoleNginxHTTPConf(),
-			"server.conf": consoleNginxServerConf(afURL, true, InterServiceTLSCAFileFor(kn)),
+			"server.conf": consoleNginxServerConf(afURL, kn.Spec.Console.EnableRawThinkingValue(), InterServiceTLSCAFileFor(kn)),
 		},
 	}
 }
@@ -410,9 +410,8 @@ location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?|ttf|eot)$ {
 # #314: the console loads this same-origin script unconditionally on every
 # page load to source window.__KUBERNAUT_CONFIG__.enableRawThinking, which
 # hides the "Hide/Show raw thinking" header button when disabled. Default
-# true matches the console's own fallback; deployments targeting a backend
-# that never emits reasoning_content events (e.g. release/v1.5) should set
-# spec.console.enableRawThinking=false.
+# false keeps raw thinking hidden for new users; set
+# spec.console.enableRawThinking=true only for explicit diagnostic access.
 location = /runtime-config.js {
   default_type application/javascript;
   add_header Cache-Control "no-cache, must-revalidate" always;

@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -44,6 +45,7 @@ const (
 	serviceAccountName     = "kubernaut-operator-controller-manager"
 	metricsServiceName     = "kubernaut-operator-controller-manager-metrics-service"
 	metricsRoleBindingName = "kubernaut-operator-metrics-binding"
+	e2eSyntheticAPIKey     = "e2e-synthetic-credential"
 )
 
 var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
@@ -82,6 +84,14 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 				"-n", crNS, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
 		}
+
+		By("removing the test-owned audit key protection finalizer")
+		cmd = exec.Command("kubectl", "patch", "secret", "datastorage-audit-hmac-key",
+			"-n", crNS, "--type=merge", "-p", `{"metadata":{"finalizers":[]}}`)
+		_, _ = utils.Run(cmd)
+		cmd = exec.Command("kubectl", "patch", "configmap", "datastorage-audit-hmac-key-state",
+			"-n", crNS, "--type=merge", "-p", `{"metadata":{"finalizers":[]}}`)
+		_, _ = utils.Run(cmd)
 
 		By("undeploying the controller-manager")
 		cmd = exec.Command("make", "undeploy")
@@ -203,6 +213,8 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 		BeforeAll(func() {
 			By("creating BYO prerequisite secrets")
 			createBYOSecrets()
+			By("creating sample policy and notification prerequisites")
+			createSamplePrerequisites()
 
 			By("applying the Kubernaut CR from config/samples")
 			cmd := exec.Command("kubectl", "apply", "-f", "config/samples/v1alpha2_kubernaut.yaml")
@@ -459,7 +471,21 @@ func createBYOSecrets() {
 		{
 			name: "llm-credentials",
 			data: map[string]string{
-				"api-key": "sk-test-not-real-key-for-e2e",
+				"api-key":          e2eSyntheticAPIKey,
+				"credentials.json": "{}",
+			},
+		},
+		{
+			name: "slack-webhook",
+			data: map[string]string{
+				"webhook-url": "https://hooks.slack.example/e2e",
+			},
+		},
+		{
+			name: "kubernaut-console-oidc",
+			data: map[string]string{
+				"client-id": "e2e-client", "client-secret": "e2e-secret",
+				"cookie-secret": "01234567890123456789012345678901",
 			},
 		},
 	}
@@ -469,10 +495,38 @@ func createBYOSecrets() {
 		for k, v := range s.data {
 			args = append(args, fmt.Sprintf("--from-literal=%s=%s", k, v))
 		}
-		cmd := exec.CommandContext(context.Background(), "kubectl", args...)
-		_, err := utils.Run(cmd)
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create secret %q", s.name)
+		applyKubectlManifest(args, fmt.Sprintf("secret %s", s.name))
 	}
+}
+
+// createSamplePrerequisites creates the ConfigMaps referenced by the sample
+// CR. Keeping these fixtures next to the sample E2E prevents new required BYO
+// references from turning the lifecycle test into a pre-validation timeout.
+func createSamplePrerequisites() {
+	configMaps := []struct {
+		name string
+		key  string
+		data string
+	}{
+		{name: "aianalysis-policy", key: "approval.rego", data: "package approval\ndefault allow = true\n"},
+		{name: "signalprocessing-policy", key: "policy.rego", data: "package signalprocessing\ndefault allow = true\n"},
+	}
+	for _, configMap := range configMaps {
+		applyKubectlManifest([]string{"create", "configmap", configMap.name, "-n", crNS,
+			"--from-literal=" + configMap.key + "=" + configMap.data}, fmt.Sprintf("ConfigMap %s", configMap.name))
+	}
+}
+
+func applyKubectlManifest(createArgs []string, description string) {
+	createArgs = append(createArgs, "--dry-run=client", "-o", "yaml")
+	createCmd := exec.CommandContext(context.Background(), "kubectl", createArgs...)
+	manifest, err := utils.Run(createCmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to render %s", description)
+
+	applyCmd := exec.CommandContext(context.Background(), "kubectl", "apply", "-f", "-")
+	applyCmd.Stdin = strings.NewReader(manifest)
+	_, err = utils.Run(applyCmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to apply %s", description)
 }
 
 // serviceAccountToken returns a token for the operator service account.

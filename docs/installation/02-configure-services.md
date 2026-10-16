@@ -600,6 +600,17 @@ spec:
       providerLogoutURL: "https://idp.example.com/realms/kubernaut/protocol/openid-connect/logout?id_token_hint={id_token}"
 ```
 
+Raw thinking is hidden by default for new Console users. The operator serves
+this policy through the Console's same-origin runtime configuration, so the
+released Console image cannot silently restore the old header toggle. Set
+`spec.console.enableRawThinking: true` only when an administrator explicitly
+wants the raw LLM reasoning view for diagnostic purposes; leaving it unset or
+setting it to `false` keeps the view disabled.
+
+This is a deployment-wide setting: when enabled, raw thinking is available to
+every authenticated Console user. The operator does not provide per-user
+authorization for this diagnostic view, so enable it only when that audience
+is appropriate for the deployment.
 `providerLogoutURL` is optional. When configured, it must be an absolute HTTPS
 endpoint whose authority exactly matches the effective Console OIDC issuer. The
 operator rejects HTTP (including localhost), malformed placeholders, fragments,

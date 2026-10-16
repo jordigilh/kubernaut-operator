@@ -692,16 +692,26 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		Expect(err).NotTo(HaveOccurred())
 		Expect(r.ensureDeployments(ctx, kn, kn, builders, hashes, telemetryMaterialRevisionSet{})).To(Succeed())
 		Expect(r.ensureServices(ctx, kn, kn)).To(Succeed())
-		for _, name := range []string{resources.ComponentConsole, resources.ComponentConsole + "-nginx"} {
-			failing := businessUnitReconciler(kn, interceptor.Funcs{Create: func(ctx context.Context, api client.WithWatch,
-				object client.Object, options ...client.CreateOption) error {
-				if object.GetName() == name {
-					return fmt.Errorf("%s", unitAPIDenial)
-				}
-				return api.Create(ctx, object, options...)
-			}})
-			Expect(failing.ensureServices(ctx, kn, kn)).To(MatchError(ContainSubstring(unitAPIDenial)), name)
-		}
+		failingConsoleService := businessUnitReconciler(kn, interceptor.Funcs{Create: func(ctx context.Context, api client.WithWatch,
+			object client.Object, options ...client.CreateOption) error {
+			if object.GetName() == string(resources.ComponentConsole) {
+				return fmt.Errorf("%s", unitAPIDenial)
+			}
+			return api.Create(ctx, object, options...)
+		}})
+		Expect(failingConsoleService.ensureServices(ctx, kn, kn)).To(MatchError(ContainSubstring(unitAPIDenial)), resources.ComponentConsole)
+
+		failingConsoleConfigMap := businessUnitReconciler(kn, interceptor.Funcs{Create: func(ctx context.Context, api client.WithWatch,
+			object client.Object, options ...client.CreateOption) error {
+			if object.GetName() == string(resources.ComponentConsole)+"-nginx" {
+				return fmt.Errorf("%s", unitAPIDenial)
+			}
+			return api.Create(ctx, object, options...)
+		}})
+		_, err = failingConsoleConfigMap.deployConfigMaps(ctx, kn, kn, "kubernaut", "kubernaut", "")
+		Expect(err).To(HaveOccurred(), "Console nginx ConfigMap")
+		Expect(err.Error()).To(ContainSubstring(unitAPIDenial), "Console nginx ConfigMap")
+
 		kn.Spec.Gateway.Enabled = ptr.To(false)
 		kn.Spec.Fleet.Enabled = ptr.To(false)
 		Expect(r.cleanupDisabledGateway(ctx, kn)).To(Succeed())

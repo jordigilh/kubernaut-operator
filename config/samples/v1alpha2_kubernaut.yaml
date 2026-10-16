@@ -347,6 +347,7 @@ spec:
 
   console:
     enabled: true
+    # Raw thinking is hidden by default; enable only for explicit diagnostics.
     auth:
       secretName: kubernaut-console-oidc
       # Provider-discovered OIDC end_session_endpoint. Keep the literal

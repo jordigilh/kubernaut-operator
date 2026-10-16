@@ -1771,12 +1771,12 @@ func buildCoreConfigMaps(
 
 // appendOptionalComponentConfigMaps builds and appends ConfigMaps for
 // components that are toggled on/off via the CR spec (gateway, apifrontend,
-// fleetmetadatacache), recording each one's content hash in cmHashes.
+// console, fleetmetadatacache), recording each one's content hash in cmHashes.
 func (r *KubernautReconciler) appendOptionalComponentConfigMaps(
 	kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut,
 	tlsOpt resources.ConfigMapOption, configMaps []*corev1.ConfigMap, cmHashes map[string]string,
 ) ([]*corev1.ConfigMap, error) {
-	builders := make([]cmBuilder, 0, 3)
+	builders := make([]cmBuilder, 0, 4)
 	if kn.Spec.GatewayEnabled() {
 		builders = append(builders, cmBuilder{"gateway", func() (*corev1.ConfigMap, error) {
 			return resources.GatewayConfigMap(kn, knV2, tlsOpt)
@@ -1785,6 +1785,11 @@ func (r *KubernautReconciler) appendOptionalComponentConfigMaps(
 	if kn.Spec.APIFrontendEnabled() {
 		builders = append(builders, cmBuilder{"apifrontend", func() (*corev1.ConfigMap, error) {
 			return resources.APIFrontendConfigMap(kn, knV2)
+		}})
+	}
+	if kn.Spec.ConsoleEnabled() {
+		builders = append(builders, cmBuilder{"console", func() (*corev1.ConfigMap, error) {
+			return resources.ConsoleNginxConfigMap(kn), nil
 		}})
 	}
 	if knV2.Spec.FleetMetadataCacheEnabled() {
@@ -1966,6 +1971,7 @@ var componentCMHashKey = map[string]string{
 	resources.ComponentKubernautAgent:          "kubernaut-agent",
 	resources.ComponentAuthWebhook:             "authwebhook",
 	resources.ComponentAPIFrontend:             "apifrontend",
+	resources.ComponentConsole:                 "console",
 	resources.ComponentFleetMetadataCache:      "fleetmetadatacache",
 }
 
@@ -2101,9 +2107,6 @@ func (r *KubernautReconciler) ensureServices(ctx context.Context, kn *kubernautv
 	if kn.Spec.ConsoleEnabled() {
 		if err := r.ensureNamespaced(ctx, kn, resources.ConsoleService(kn)); err != nil {
 			return fmt.Errorf("ensuring Console Service: %w", err)
-		}
-		if err := r.ensureNamespaced(ctx, kn, resources.ConsoleNginxConfigMap(kn)); err != nil {
-			return fmt.Errorf("ensuring Console nginx ConfigMap: %w", err)
 		}
 	}
 	return nil
