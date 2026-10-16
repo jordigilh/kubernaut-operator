@@ -853,6 +853,56 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(cm.Data).To(HaveKey("server.conf"))
 		})
 
+		It("IT-CL-483-001 [AC-2/AC-12, CC6.1/CC6.3; ASVS V3.3/V7.2.1]: renders and regenerates provider logout configuration", func() {
+			const (
+				logoutURL1 = "https://idp.example.com/realms/kubernaut/logout?id_token_hint={id_token}"
+				logoutURL2 = "https://idp.example.com/realms/kubernaut/protocol/openid-connect/logout?id_token_hint={id_token}"
+			)
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			t := true
+			cr.Spec.Console.Enabled = &t
+			f := false
+			cr.Spec.Console.Route.Enabled = &f
+			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+			cr.Spec.Console.Auth.ProviderLogoutURL = logoutURL1
+			Expect(k8sClient.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
+				Data: map[string][]byte{
+					"client-id":     []byte("cid"),
+					"client-secret": []byte("csec"),
+					"cookie-secret": []byte("cook"),
+				},
+			})).To(Succeed())
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			deployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}, deployment)).To(Succeed())
+			Expect(deployment.Spec.Template.Spec.Containers[0].Args).To(ContainElement("--backend-logout-url=" + logoutURL1))
+			Expect(deployment.Spec.Template.Spec.Containers[0].Env).To(ContainElement(corev1.EnvVar{Name: "SSL_CERT_FILE", Value: "/etc/ssl/combined/ca-bundle.crt"}))
+			Expect(deployment.Spec.Template.Spec.InitContainers).To(HaveLen(1))
+			Expect(deployment.Spec.Template.Spec.InitContainers[0].Name).To(Equal("build-ca-bundle"))
+
+			liveCR := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), liveCR)).To(Succeed())
+			liveCR.Spec.Console.Auth.ProviderLogoutURL = logoutURL2
+			Expect(k8sClient.Update(ctx, liveCR)).To(Succeed())
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}, deployment)).To(Succeed())
+			Expect(deployment.Spec.Template.Spec.Containers[0].Args).To(ContainElement("--backend-logout-url=" + logoutURL2))
+
+			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}, deployment)
+			}, timeout, interval).Should(Succeed())
+			Expect(deployment.Spec.Template.Spec.Containers[0].Args).To(ContainElement("--backend-logout-url=" + logoutURL2))
+		})
+
 		It("IT-CL-03 [SC-7, CC6.1]: console redirect URL uses cluster ingress domain", func() {
 			ingress := &configv1.Ingress{
 				ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
@@ -1614,6 +1664,44 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal("SpecValidationFailed"))
 			Expect(cond.Message).To(ContainSubstring("spec.apiFrontend.auth.issuerURL"))
+		})
+
+		It("IT-483-FAIL-CLOSED-001 [AC-6; CC6.1; ASVS V5/V8]: rejects an unsafe Console logout URL before workload creation", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			t := true
+			cr.Spec.Console.Enabled = &t
+			f := false
+			cr.Spec.Console.Route.Enabled = &f
+			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+			cr.Spec.Console.Auth.ProviderLogoutURL = "https://other.example.com/logout?id_token_hint={id_token}"
+			Expect(k8sClient.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
+				Data: map[string][]byte{
+					"client-id":     []byte("cid"),
+					"client-secret": []byte("csec"),
+					"cookie-secret": []byte("cook"),
+				},
+			})).To(Succeed())
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			r := newReconciler()
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			updated := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), updated)).To(Succeed())
+			cond := findCondition(updated.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal("SpecValidationFailed"))
+			Expect(cond.Message).To(ContainSubstring("providerLogoutURL"))
+
+			deployment := &appsv1.Deployment{}
+			Expect(errors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}, deployment))).To(BeTrue())
+			Eventually(r.Recorder.(*events.FakeRecorder).Events, timeout, interval).Should(Receive(ContainSubstring("SpecValidationFailed")))
 		})
 
 		It("preserves an explicit demo issuer URL", func() {
