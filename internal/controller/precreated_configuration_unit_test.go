@@ -63,6 +63,64 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		Expect(collector.errs).To(BeEmpty(), "profile referential integrity reports this error before pre-created Secret collection")
 	})
 
+	It("UT-419-CTRL-001 [IA-5, AC-6; SOC2 CC6.6, CC8.1; ASVS v5.0.0-V8.2.1, v5.0.0-V13.3.1] collects pre-created Secrets for the enabled alignment sibling agent", func() {
+		kn := newMinimalCR()
+		kn.Spec.KubernautAgent.AlignmentCheck = kubernautv1alpha2.AlignmentCheckSpec{
+			Enabled:       true,
+			LLMProfileRef: "alignment-profile",
+		}
+		kn.Spec.LLMProfiles["alignment-profile"] = kubernautv1alpha2.LLMProfileSpec{
+			Provider:              "anthropic",
+			Model:                 "claude-3-5-sonnet",
+			CredentialsSecretName: "alignment-llm-credentials",
+			OAuth2: kubernautv1alpha2.OAuth2Spec{
+				Enabled:              true,
+				CredentialsSecretRef: "alignment-oauth",
+			},
+			TLSCertFile:        "/etc/llm/tls.crt",
+			TLSKeyFile:         "/etc/llm/tls.key",
+			TLSClientSecretRef: "alignment-tls",
+		}
+		collector := newPrecreatedReferenceCollector()
+		appendPrecreatedLLMReferences(collector, kn)
+		hasReference := func(path, name string, requiredKeys ...string) bool {
+			for _, reference := range collector.references {
+				if reference.path != path || reference.name != name || len(reference.requiredKeys) != len(requiredKeys) {
+					continue
+				}
+				keys := make(map[string]struct{}, len(reference.requiredKeys))
+				for _, key := range reference.requiredKeys {
+					keys[key] = struct{}{}
+				}
+				matched := true
+				for _, key := range requiredKeys {
+					if _, ok := keys[key]; !ok {
+						matched = false
+						break
+					}
+				}
+				if matched {
+					return true
+				}
+			}
+			return false
+		}
+
+		Expect(collector.errs).To(BeEmpty())
+		Expect(hasReference(
+			"spec.llmProfiles[\"alignment-profile\"].credentialsSecretName",
+			"alignment-llm-credentials", "api_key",
+		)).To(BeTrue())
+		Expect(hasReference(
+			"spec.llmProfiles[\"alignment-profile\"].oauth2.credentialsSecretRef",
+			"alignment-oauth", "client-id", "client-secret",
+		)).To(BeTrue())
+		Expect(hasReference(
+			"spec.llmProfiles[\"alignment-profile\"].tlsClientSecretRef",
+			"alignment-tls", "tls.crt", "tls.key",
+		)).To(BeTrue())
+	})
+
 	It("UT-CONFIG-512-001 rejects a missing required ConfigMap before migration", func() {
 		kn := newMinimalCR()
 		r := businessUnitReconciler(kn, clientInterceptorNone())
@@ -127,6 +185,7 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		}
 		profile := kn.Spec.LLMProfiles["primary"]
 		profile.OAuth2.Enabled = true
+		profile.OAuth2.TokenURL = "https://idp.example/token"
 		profile.OAuth2.CredentialsSecretRef = "llm-oauth"
 		profile.TLSCertFile = "/etc/llm/tls.crt"
 		profile.TLSKeyFile = "/etc/llm/tls.key"
@@ -202,17 +261,19 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha2.ConfigMapRef{}
 		kn.Spec.WorkflowExecution.Ansible.Enabled = true
 		kn.Spec.WorkflowExecution.Ansible.TokenSecretRef = nil
-		profile := kn.Spec.LLMProfiles["primary"]
+		const primaryProfile = "primary"
+		profile := kn.Spec.LLMProfiles[primaryProfile]
 		profile.OAuth2.Enabled = true
+		profile.OAuth2.TokenURL = "https://idp.example/token"
 		profile.OAuth2.CredentialsSecretRef = ""
-		kn.Spec.LLMProfiles["primary"] = profile
+		kn.Spec.LLMProfiles[primaryProfile] = profile
 		kn.Spec.LLMProfiles["vertex"] = kubernautv1alpha2.LLMProfileSpec{
 			Provider:              "vertex_ai",
 			Model:                 "gemini",
 			CredentialsSecretName: "vertex-credentials",
 		}
 		kn.Spec.KubernautAgent.Investigation.LLMProfileRef = "vertex"
-		kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "primary"
+		kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = primaryProfile
 		_, errs := precreatedConfigurationReferences(kn)
 		Expect(errs).NotTo(BeEmpty())
 
