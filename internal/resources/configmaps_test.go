@@ -1847,6 +1847,116 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("endpoint: https://align-profile.example/v1"), "llmProfileRef-resolved endpoint should be propagated, got:\n%s", data)
 		})
 
+		It("UT-419-CM-001 [IA-5, SC-8, CM-6; SOC2 CC6.6, CC8.1; ASVS v5.0.0-V8.2.1, v5.0.0-V13.3.1] renders the complete independent alignment profile", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.AlignmentCheck = kubernautv1alpha2.AlignmentCheckSpec{
+				Enabled:       true,
+				LLMProfileRef: "alignment-profile",
+			}
+			kn.Spec.LLMProfiles["alignment-profile"] = kubernautv1alpha2.LLMProfileSpec{
+				Provider:              LLMProviderAnthropic,
+				Model:                 "claude-3-5-sonnet",
+				Endpoint:              "https://alignment.example/v1",
+				CredentialsSecretName: "alignment-llm-credentials",
+				Temperature:           "0.4",
+				MaxRetries:            ptr.To(5),
+				TimeoutSeconds:        ptr.To(45),
+				TLSCaFile:             "/etc/kubernaut-agent/alignment-tls/ca.crt",
+				TLSCertFile:           "/etc/kubernaut-agent/alignment-tls/tls.crt",
+				TLSKeyFile:            "/etc/kubernaut-agent/alignment-tls/tls.key",
+				TLSClientSecretRef:    "alignment-tls",
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
+					Enabled:              true,
+					TokenURL:             "https://idp.example/token",
+					Scopes:               []string{"llm.invoke"},
+					CredentialsSecretRef: "alignment-oauth",
+				},
+				Reasoning: &kubernautv1alpha2.LLMReasoningSpec{Enabled: true, Effort: "medium"},
+			}
+
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			var root kubernautAgentConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.AI.AlignmentCheck).NotTo(BeNil())
+			Expect(root.AI.AlignmentCheck.LLM).NotTo(BeNil())
+			llm := root.AI.AlignmentCheck.LLM
+			Expect(llm.Provider).To(Equal(LLMProviderAnthropic))
+			Expect(llm.Model).To(Equal("claude-3-5-sonnet"))
+			Expect(llm.Endpoint).To(Equal("https://alignment.example/v1"))
+			Expect(llm.APIKeyFile).To(Equal("/etc/kubernaut-agent/alignment-credentials/api_key"))
+			Expect(llm.Temperature).NotTo(BeNil())
+			Expect(*llm.Temperature).To(Equal(float64(0.4)))
+			Expect(llm.MaxRetries).To(Equal(5))
+			Expect(llm.TimeoutSeconds).To(Equal(45))
+			Expect(llm.TLSCaFile).To(Equal("/etc/kubernaut-agent/alignment-tls/ca.crt"))
+			Expect(llm.TLSCertFile).To(Equal("/etc/kubernaut-agent/alignment-tls/tls.crt"))
+			Expect(llm.TLSKeyFile).To(Equal("/etc/kubernaut-agent/alignment-tls/tls.key"))
+			Expect(llm.OAuth2).NotTo(BeNil())
+			Expect(llm.OAuth2.Enabled).To(BeTrue())
+			Expect(llm.OAuth2.TokenURL).To(Equal("https://idp.example/token"))
+			Expect(llm.OAuth2.CredentialsDir).To(Equal("/etc/kubernaut-agent/alignment-oauth2"))
+			Expect(llm.OAuth2.Scopes).To(Equal([]string{"llm.invoke"}))
+			Expect(llm.Reasoning).NotTo(BeNil())
+			Expect(llm.Reasoning.Effort).To(Equal("medium"))
+		})
+
+		It("UT-419-CM-002 [IA-5; SOC2 CC6.6; ASVS v5.0.0-V8.2.1] selects the Vertex credentials.json path for an independent alignment profile", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.AlignmentCheck = kubernautv1alpha2.AlignmentCheckSpec{
+				Enabled:       true,
+				LLMProfileRef: "alignment-vertex",
+			}
+			kn.Spec.LLMProfiles["alignment-vertex"] = kubernautv1alpha2.LLMProfileSpec{
+				Provider:              LLMProviderVertexAI,
+				Model:                 "gemini-2.5-flash",
+				CredentialsSecretName: "alignment-vertex-credentials",
+				VertexProject:         "alignment-project",
+				VertexLocation:        testVertexLocation,
+			}
+
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			var root kubernautAgentConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.AI.AlignmentCheck).NotTo(BeNil())
+			Expect(root.AI.AlignmentCheck.LLM).NotTo(BeNil())
+			Expect(root.AI.AlignmentCheck.LLM.APIKeyFile).To(Equal("/etc/kubernaut-agent/alignment-credentials/credentials.json")) // pre-commit:allow-sensitive -- mount-path convention, not credential material
+			Expect(root.AI.AlignmentCheck.LLM.VertexProject).To(Equal("alignment-project"))
+			Expect(root.AI.AlignmentCheck.LLM.VertexLocation).To(Equal(testVertexLocation))
+		})
+
+		It("UT-419-CM-003 [IA-5; SOC2 CC6.6; ASVS v5.0.0-V8.2.1] reuses the base OAuth2 credentials directory only when the Secret is shared", func() {
+			kn := testKubernaut()
+			primary := kn.Spec.LLMProfiles[testPrimaryProfile]
+			primary.OAuth2 = kubernautv1alpha2.OAuth2Spec{
+				Enabled:              true,
+				TokenURL:             "https://idp.example/token",
+				CredentialsSecretRef: "shared-oauth",
+			}
+			kn.Spec.LLMProfiles[testPrimaryProfile] = primary
+			kn.Spec.KubernautAgent.AlignmentCheck = kubernautv1alpha2.AlignmentCheckSpec{
+				Enabled:       true,
+				LLMProfileRef: "alignment-profile",
+			}
+			kn.Spec.LLMProfiles["alignment-profile"] = kubernautv1alpha2.LLMProfileSpec{
+				Provider:              LLMProviderAnthropic,
+				Model:                 "claude-3-5-sonnet",
+				CredentialsSecretName: "alignment-llm-credentials",
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
+					Enabled:              true,
+					TokenURL:             "https://idp.example/token",
+					CredentialsSecretRef: "shared-oauth",
+				},
+			}
+
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			var root kubernautAgentConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.AI.AlignmentCheck.LLM.OAuth2.CredentialsDir).To(Equal("/etc/kubernaut-agent/oauth2"))
+		})
+
 		It("[CM-6] omits the alignment LLM when llmProfileRef is unset", func() {
 			kn := testKubernaut()
 			kn.Spec.KubernautAgent.AlignmentCheck.Enabled = true
@@ -2269,7 +2379,73 @@ var _ = Describe("ConfigMaps", func() {
 				Expect(phase.VertexLocation).To(Equal("us-central1"))
 			})
 
-			It("LR-025 [IA-5]: does not emit apiKeyFile when a phase shares KA's credentialsSecretName (regression guard, #233)", func() {
+			It("UT-419-CM-004 [IA-5, SC-8]: renders a workflow-discovery profile's complete independent credentials and transport fields", func() {
+				kn := testKubernaut()
+				kn.Spec.LLMProfiles["workflow-full"] = kubernautv1alpha2.LLMProfileSpec{
+					Provider:              LLMProviderAnthropic,
+					Model:                 "claude-sonnet-4-6",
+					CredentialsSecretName: "workflow-credentials",
+					Temperature:           "0.2",
+					MaxRetries:            ptr.To(4),
+					TimeoutSeconds:        ptr.To(60),
+					TLSCaFile:             "/etc/kubernaut-agent/workflow-tls/ca.crt",
+					TLSCertFile:           "/etc/kubernaut-agent/workflow-tls/client.crt",
+					TLSKeyFile:            "/etc/kubernaut-agent/workflow-tls/client.key",
+					TLSClientSecretRef:    "workflow-tls",
+					OAuth2: kubernautv1alpha2.OAuth2Spec{
+						Enabled:              true,
+						TokenURL:             "https://idp.example/token",
+						CredentialsSecretRef: "workflow-oauth",
+					},
+				}
+				kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "workflow-full"
+				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				var root struct {
+					PhaseModels map[string]llmPhaseOverrideYAML `yaml:"phaseModels"`
+				}
+				Expect(yaml.Unmarshal([]byte(cm.Data["llm-runtime.yaml"]), &root)).To(Succeed())
+				phase := root.PhaseModels["workflow_discovery"]
+				Expect(phase.APIKeyFile).To(Equal("/etc/kubernaut-agent/phase-credentials/workflow_discovery/api_key"))
+				Expect(phase.TLSCaFile).To(Equal("/etc/kubernaut-agent/workflow-tls/ca.crt"))
+				Expect(phase.TLSCertFile).To(Equal("/etc/kubernaut-agent/workflow-tls/client.crt"))
+				Expect(phase.TLSKeyFile).To(Equal("/etc/kubernaut-agent/workflow-tls/client.key"))
+				Expect(phase.OAuth2).NotTo(BeNil())
+				Expect(phase.OAuth2.CredentialsDir).To(Equal(workflowOAuth2MountPath))
+				Expect(phase.MaxRetries).To(Equal(4))
+				Expect(phase.TimeoutSeconds).To(Equal(60))
+			})
+
+			It("UT-419-CM-005 [IA-5]: reuses the base OAuth2 credentials directory for workflow discovery when its Secret is shared", func() {
+				kn := testKubernaut()
+				primary := kn.Spec.LLMProfiles[testPrimaryProfile]
+				primary.OAuth2 = kubernautv1alpha2.OAuth2Spec{
+					Enabled:              true,
+					TokenURL:             "https://idp.example/token",
+					CredentialsSecretRef: "shared-oauth",
+				}
+				kn.Spec.LLMProfiles[testPrimaryProfile] = primary
+				kn.Spec.LLMProfiles["workflow-shared-oauth"] = kubernautv1alpha2.LLMProfileSpec{
+					Provider:              LLMProviderAnthropic,
+					Model:                 "claude-sonnet-4-6",
+					CredentialsSecretName: "workflow-credentials",
+					OAuth2: kubernautv1alpha2.OAuth2Spec{
+						Enabled:              true,
+						TokenURL:             "https://idp.example/token",
+						CredentialsSecretRef: "shared-oauth",
+					},
+				}
+				kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "workflow-shared-oauth"
+				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				var root struct {
+					PhaseModels map[string]llmPhaseOverrideYAML `yaml:"phaseModels"`
+				}
+				Expect(yaml.Unmarshal([]byte(cm.Data["llm-runtime.yaml"]), &root)).To(Succeed())
+				Expect(root.PhaseModels["workflow_discovery"].OAuth2.CredentialsDir).To(Equal("/etc/kubernaut-agent/oauth2"))
+			})
+
+			It("LR-025 [IA-5]: renders an explicit base apiKeyFile when a phase shares KA's credentialsSecretName", func() {
 				kn := testKubernaut()
 				kn.Spec.LLMProfiles[testWorkflowLiteProfile] = kubernautv1alpha2.LLMProfileSpec{
 					Provider:              "openai",
@@ -2280,9 +2456,12 @@ var _ = Describe("ConfigMaps", func() {
 				kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = testWorkflowLiteProfile
 				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 				Expect(err).NotTo(HaveOccurred())
-				data := cm.Data["llm-runtime.yaml"]
-				Expect(data).NotTo(ContainSubstring("apiKeyFile"),
-					"#233: a phase sharing KA's credentialsSecretName must keep inheriting the base's already-mounted credentials, not get a redundant apiKeyFile")
+				var root struct {
+					PhaseModels map[string]llmPhaseOverrideYAML `yaml:"phaseModels"`
+				}
+				Expect(yaml.Unmarshal([]byte(cm.Data["llm-runtime.yaml"]), &root)).To(Succeed())
+				Expect(root.PhaseModels["workflow_discovery"].APIKeyFile).To(Equal("/etc/kubernaut-agent/credentials/api_key"),
+					"a sibling agent must render its selected profile's complete credential path even when the Secret is shared")
 			})
 
 			It("LR-020 [CM-6]: the base profile's reasoning policy is static-only and does not leak into the hot-reloadable runtime config", func() {
