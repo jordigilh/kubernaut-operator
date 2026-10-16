@@ -583,6 +583,18 @@ spec:
       secretName: kubernaut-console-oidc
 ```
 
+Raw thinking is hidden by default for new Console users. The operator serves
+this policy through the Console's same-origin runtime configuration, so the
+released Console image cannot silently restore the old header toggle. Set
+`spec.console.enableRawThinking: true` only when an administrator explicitly
+wants the raw LLM reasoning view for diagnostic purposes; leaving it unset or
+setting it to `false` keeps the view disabled.
+
+This is a deployment-wide setting: when enabled, raw thinking is available to
+every authenticated Console user. The operator does not provide per-user
+authorization for this diagnostic view, so enable it only when that audience
+is appropriate for the deployment.
+
 If you don't need the standalone Console UI, omit the `console` block entirely (it defaults to disabled).
 
 ## Verification

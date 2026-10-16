@@ -15,6 +15,7 @@ fleet_matrix="${repo_root}/docs/security/ISSUE-431-CONTROL-TRACEABILITY.md"
 audit_hmac_matrix="${repo_root}/docs/security/ISSUE-209-CONTROL-TRACEABILITY.md"
 handoff_matrix="${repo_root}/docs/security/ISSUE-527-CONTROL-TRACEABILITY.md"
 workflowexecution_retention_matrix="${repo_root}/docs/security/ISSUE-480-CONTROL-TRACEABILITY.md"
+console_matrix="${repo_root}/docs/security/ISSUE-476-CONTROL-TRACEABILITY.md"
 
 fail() {
 	echo "security traceability validation failed: $*" >&2
@@ -29,6 +30,7 @@ fail() {
 [[ -f "${audit_hmac_matrix}" ]] || fail "missing ${audit_hmac_matrix}"
 [[ -f "${handoff_matrix}" ]] || fail "missing ${handoff_matrix}"
 [[ -f "${workflowexecution_retention_matrix}" ]] || fail "missing ${workflowexecution_retention_matrix}"
+[[ -f "${console_matrix}" ]] || fail "missing ${console_matrix}"
 
 grep -Fq 'NIST SP 800-53 Rev. 5' "${matrix}" || fail "missing NIST SP 800-53 Rev. 5 declaration"
 grep -Fq 'OWASP ASVS 5.0.0' "${matrix}" || fail "missing OWASP ASVS 5.0.0 declaration"
@@ -75,6 +77,35 @@ for evidence_id in UT-WE-480-API-001 UT-WE-480-CM-001 UT-WE-480-CM-002 IT-WE-480
 		|| fail "Issue #480 evidence ${evidence_id} has no executable test"
 	grep -Fq "${evidence_id}" "${workflowexecution_retention_matrix}" \
 		|| fail "Issue #480 matrix omits evidence ID ${evidence_id}"
+done
+
+grep -Fq 'FedRAMP/NIST' "${console_matrix}" || fail "Issue #476 matrix is missing FedRAMP/NIST scope"
+grep -Fq 'SOC 2' "${console_matrix}" || fail "Issue #476 matrix is missing SOC 2 scope"
+grep -Fq 'OWASP ASVS 5.0.0' "${console_matrix}" || fail "Issue #476 matrix is missing OWASP ASVS 5.0.0 scope"
+grep -Eiq 'does not claim formal (FedRAMP|SOC 2|OWASP ASVS)' "${console_matrix}" \
+	|| fail "Issue #476 matrix must reject formal compliance claims"
+for control in CM-3 CM-6 SI-10; do
+	grep -Eq "(^|[^A-Za-z0-9-])${control}([^A-Za-z0-9-]|$)" "${console_matrix}" \
+		|| fail "Issue #476 matrix is missing control ${control}"
+done
+for requirement in v5.0.0-V1.2.3 v5.0.0-V2.1.1 v5.0.0-V2.2.1 v5.0.0-V2.2.2 v5.0.0-V15.2.4; do
+	grep -Fq "${requirement}" "${console_matrix}" \
+		|| fail "Issue #476 matrix is missing ASVS requirement ${requirement}"
+done
+for artifact in \
+	'api/v1alpha2/kubernaut_types.go' \
+	'internal/resources/console.go' \
+	'internal/resources/console_test.go' \
+	'internal/controller/kubernaut_lifecycle_test.go' \
+	'docs/tests/476/TEST_PLAN.md' \
+	'hack/verify-console-release.sh'; do
+	grep -Fq "${artifact}" "${console_matrix}" || fail "Issue #476 matrix is missing evidence artifact ${artifact}"
+done
+for test_id in UT-CN-476-001 UT-CN-476-002 UT-CN-476-003 IT-CN-476-001 IT-CN-476-002 CI-CN-476-001; do
+	grep -R -n --include='*_test.go' -F "${test_id}" "${repo_root}/internal" >/dev/null 2>&1 \
+		|| grep -R -n --include='*.sh' -F "${test_id}" "${repo_root}/hack" >/dev/null 2>&1 \
+		|| fail "Issue #476 evidence ID ${test_id} has no executable artifact"
+	grep -Fq "${test_id}" "${console_matrix}" || fail "Issue #476 matrix omits evidence ID ${test_id}"
 done
 
 for control in AC-3 AC-6 SC-7 SC-8 SC-12 SC-13 SC-17 IA-2 IA-5 SI-4 AU-2 AU-3 AU-12 SI-10 CM-2 CM-3 CM-6 CM-8; do

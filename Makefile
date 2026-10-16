@@ -157,6 +157,7 @@ test-integration: manifests generate fmt vet setup-envtest ## Run integration te
 .PHONY: test-security-traceability
 test-security-traceability: ## Validate the versioned NIST/FedRAMP and OWASP ASVS evidence matrix.
 	@./hack/validate-security-traceability.sh
+	@./hack/verify-console-release.sh
 
 .PHONY: test-ci-boundary
 test-ci-boundary: ## Verify that operator CI remains independent of the upstream application.
