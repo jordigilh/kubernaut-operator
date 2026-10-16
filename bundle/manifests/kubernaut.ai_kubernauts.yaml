@@ -2404,6 +2404,22 @@ spec:
                       description: Path to a CA certificate file for TLS to the LLM
                         endpoint.
                       type: string
+                    tlsCaSecretRef:
+                      description: |-
+                        Optional Secret containing the PEM CA certificate used by the LLM
+                        endpoint. The default key is "ca.crt". When set, tlsCaFile must name
+                        the deterministic path where the operator mounts the selected key.
+                      properties:
+                        key:
+                          default: ca.crt
+                          description: Key within the Secret containing the CA PEM.
+                          type: string
+                        name:
+                          description: Name of the Secret.
+                          type: string
+                      required:
+                      - name
+                      type: object
                     tlsCertFile:
                       description: |-
                         Path to a client certificate file for mTLS to the LLM endpoint.

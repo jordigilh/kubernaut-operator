@@ -1513,6 +1513,11 @@ func (in *LLMProfileSpec) DeepCopyInto(out *LLMProfileSpec) {
 		*out = new(int)
 		**out = **in
 	}
+	if in.TLSCaSecretRef != nil {
+		in, out := &in.TLSCaSecretRef, &out.TLSCaSecretRef
+		*out = new(CACertSecretRef)
+		**out = **in
+	}
 	in.OAuth2.DeepCopyInto(&out.OAuth2)
 	if in.Reasoning != nil {
 		in, out := &in.Reasoning, &out.Reasoning
