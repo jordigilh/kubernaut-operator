@@ -30,9 +30,10 @@ import (
 )
 
 const (
-	maxJWKSURLLength = 2048
-	httpURLScheme    = "http"
-	httpsURLScheme   = "https"
+	maxJWKSURLLength   = 2048
+	httpURLScheme      = "http"
+	httpsURLScheme     = "https"
+	idTokenPlaceholder = "{id_token}"
 )
 
 // ValidateKubernaut runs all CR-level validations and returns accumulated errors.
@@ -45,6 +46,9 @@ func ValidateKubernaut(kn *kubernautv1alpha2.Kubernaut) []error {
 	errs = append(errs, validateMonitoringEndpoints(kn)...)
 	errs = append(errs, validateMonitoringTLS(kn)...)
 	errs = append(errs, validateAPIFrontend(kn)...)
+	if err := validateConsoleProviderLogoutURL(kn); err != nil {
+		errs = append(errs, err)
+	}
 	errs = append(errs, validateAlignmentCheck(kn)...)
 	errs = append(errs, validateDryRun(kn)...)
 	errs = append(errs, validateInteractive(kn)...)
@@ -600,6 +604,126 @@ func validateAPIFrontend(kn *kubernautv1alpha2.Kubernaut) []error {
 	}
 
 	return errs
+}
+
+func validateConsoleProviderLogoutURL(kn *kubernautv1alpha2.Kubernaut) error {
+	const path = "spec.console.auth.providerLogoutURL"
+	raw := kn.Spec.Console.Auth.ProviderLogoutURL
+	if raw == "" {
+		return nil
+	}
+	logoutURL, err := parseConsoleProviderLogoutURL(raw, path)
+	if err != nil {
+		return err
+	}
+	if !kn.Spec.ConsoleEnabled() {
+		return nil
+	}
+	return validateConsoleLogoutAuthority(kn, logoutURL, path)
+}
+
+func parseConsoleProviderLogoutURL(raw, path string) (*url.URL, error) {
+	if strings.TrimSpace(raw) != raw {
+		return nil, fmt.Errorf("%s must not contain leading or trailing whitespace", path)
+	}
+
+	logoutURL, err := url.Parse(raw)
+	if err != nil || logoutURL.Scheme == "" || logoutURL.Host == "" || logoutURL.Opaque != "" {
+		return nil, fmt.Errorf("%s must be an absolute HTTPS URL", path)
+	}
+	if err := validateConsoleLogoutURLShape(logoutURL, path); err != nil {
+		return nil, err
+	}
+	if err := validateConsoleLogoutPlaceholders(raw, path); err != nil {
+		return nil, err
+	}
+
+	query, err := url.ParseQuery(logoutURL.RawQuery)
+	if err != nil {
+		return nil, fmt.Errorf("%s contains an invalid query", path)
+	}
+	if !strings.Contains(raw, idTokenPlaceholder) && queryContainsPlaceholder(query) {
+		return nil, fmt.Errorf("%s must use the literal %s placeholder", path, idTokenPlaceholder)
+	}
+	if key := unsupportedConsoleLogoutQueryParameter(query); key != "" {
+		return nil, fmt.Errorf("%s contains unsupported query parameter %q", path, key)
+	}
+	return logoutURL, nil
+}
+
+func validateConsoleLogoutURLShape(logoutURL *url.URL, path string) error {
+	if !strings.EqualFold(logoutURL.Scheme, httpsURLScheme) {
+		return fmt.Errorf("%s must use https", path)
+	}
+	if logoutURL.Hostname() == "" {
+		return fmt.Errorf("%s must include a host", path)
+	}
+	if logoutURL.User != nil {
+		return fmt.Errorf("%s must not include user information", path)
+	}
+	if logoutURL.Fragment != "" {
+		return fmt.Errorf("%s must not include a fragment", path)
+	}
+	return nil
+}
+
+func validateConsoleLogoutPlaceholders(raw, path string) error {
+	if strings.Count(raw, idTokenPlaceholder) > 1 {
+		return fmt.Errorf("%s may contain at most one literal %s placeholder", path, idTokenPlaceholder)
+	}
+	if strings.ContainsAny(strings.ReplaceAll(raw, idTokenPlaceholder, ""), "{}") {
+		return fmt.Errorf("%s contains an unsupported placeholder", path)
+	}
+	return nil
+}
+
+func queryContainsPlaceholder(query url.Values) bool {
+	for _, values := range query {
+		for _, value := range values {
+			if strings.Contains(value, idTokenPlaceholder) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func unsupportedConsoleLogoutQueryParameter(query url.Values) string {
+	allowed := map[string]struct{}{
+		"id_token_hint": {},
+		"logout_hint":   {},
+		"client_id":     {},
+		"ui_locales":    {},
+	}
+	for key := range query {
+		if _, ok := allowed[strings.ToLower(key)]; !ok {
+			return key
+		}
+	}
+	return ""
+}
+
+func validateConsoleLogoutAuthority(kn *kubernautv1alpha2.Kubernaut, logoutURL *url.URL, path string) error {
+	issuer := kn.Spec.ConsoleIssuerURL()
+	issuerURL, err := url.Parse(issuer)
+	if err != nil || issuerURL.Scheme == "" || issuerURL.Host == "" || issuerURL.User != nil {
+		return fmt.Errorf("%s cannot be validated without a valid effective OIDC issuer", path)
+	}
+	if !strings.EqualFold(issuerURL.Scheme, httpsURLScheme) {
+		return fmt.Errorf("%s requires an HTTPS effective OIDC issuer", path)
+	}
+	if canonicalHTTPSAuthority(logoutURL) != canonicalHTTPSAuthority(issuerURL) {
+		return fmt.Errorf("%s authority must match the effective OIDC issuer", path)
+	}
+	return nil
+}
+
+func canonicalHTTPSAuthority(value *url.URL) string {
+	port := value.Port()
+	if port == "" {
+		port = "443"
+	}
+	return net.JoinHostPort(strings.ToLower(value.Hostname()), port)
 }
 
 // validateOIDCURL validates the operator-facing OIDC URL contract. OIDC

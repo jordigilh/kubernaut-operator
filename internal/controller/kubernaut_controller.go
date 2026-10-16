@@ -456,6 +456,9 @@ func (r *KubernautReconciler) handleSpecValidationFailure(ctx context.Context, k
 	validationErr := fmt.Errorf("CR validation failed: %s", strings.Join(msgs, "; "))
 	logf.FromContext(ctx).Error(validationErr, "Kubernaut specification validation failed",
 		"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+	if r.Recorder != nil {
+		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "SpecValidationFailed", "Validate", "%v", validationErr)
+	}
 	return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
 		"SpecValidationFailed", validationErr.Error())
 }

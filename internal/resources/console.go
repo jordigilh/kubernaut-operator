@@ -57,12 +57,58 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*
 	if secretName == "" {
 		return nil, fmt.Errorf("console.auth.secretName is required")
 	}
+	if err := validateConsoleProviderLogoutURL(kn); err != nil {
+		return nil, err
+	}
 
 	redirectURL := consoleRedirectURL(kn, ingressDomain)
 	caFile := InterServiceTLSCAFileFor(kn)
 	caDir := InterServiceTLSCADirFor(kn)
+	logoutURL := kn.Spec.Console.Auth.ProviderLogoutURL
+	combinedCAFile, initContainers, err := consoleLogoutTLSSettings(kn, logoutURL, caFile, caDir)
+	if err != nil {
+		return nil, err
+	}
 
-	oauthArgs := []string{
+	oauthArgs := consoleOAuthArgs(issuerURL, redirectURL, caFile, logoutURL)
+
+	volumes := consoleDeploymentVolumes(kn, logoutURL != "")
+
+	replicas := int32(1)
+	dep := &appsv1.Deployment{
+		ObjectMeta: ObjectMeta(kn, ComponentConsole, ComponentConsole),
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: SelectorLabels(ComponentConsole),
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: ComponentLabels(kn, ComponentConsole),
+				},
+				Spec: corev1.PodSpec{
+					InitContainers: initContainers,
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot: ptr.To(true),
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Containers: []corev1.Container{
+						consoleOAuth2ProxyContainer(oauth2ProxyImage, oauthArgs, secretName, caDir, combinedCAFile),
+						consoleAppContainer(kn, consoleImage),
+					},
+					Volumes: volumes,
+				},
+			},
+		},
+	}
+
+	return dep, nil
+}
+
+func consoleOAuthArgs(issuerURL, redirectURL, caFile, logoutURL string) []string {
+	args := []string{
 		"--provider=oidc",
 		fmt.Sprintf("--oidc-issuer-url=%s", issuerURL),
 		fmt.Sprintf("--redirect-url=%s", redirectURL),
@@ -84,75 +130,112 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*
 		"--use-system-trust-store=true",
 		"--ping-path=/oauth2/ping",
 	}
+	if logoutURL != "" {
+		args = append(args, "--backend-logout-url="+logoutURL)
+	}
+	return args
+}
 
-	replicas := int32(1)
-	dep := &appsv1.Deployment{
-		ObjectMeta: ObjectMeta(kn, ComponentConsole, ComponentConsole),
-		Spec: appsv1.DeploymentSpec{
-			Replicas: &replicas,
-			Selector: &metav1.LabelSelector{
-				MatchLabels: SelectorLabels(ComponentConsole),
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: ComponentLabels(kn, ComponentConsole),
-				},
-				Spec: corev1.PodSpec{
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: ptr.To(true),
-						SeccompProfile: &corev1.SeccompProfile{
-							Type: corev1.SeccompProfileTypeRuntimeDefault,
-						},
-					},
-					Containers: []corev1.Container{
-						consoleOAuth2ProxyContainer(oauth2ProxyImage, oauthArgs, secretName, caDir),
-						consoleAppContainer(kn, consoleImage),
-					},
-					Volumes: []corev1.Volume{
-						{Name: "nginx-tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-						{Name: "nginx-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-							LocalObjectReference: corev1.LocalObjectReference{Name: ComponentConsole + "-nginx"},
-						}}},
-						InterServiceTLSCAVolume(kn),
-					},
-				},
-			},
+const (
+	consoleCombinedCADir  = "/etc/ssl/combined"
+	consoleCombinedCAFile = consoleCombinedCADir + "/ca-bundle.crt"
+)
+
+func consoleLogoutTLSSettings(kn *kubernautv1alpha2.Kubernaut, logoutURL, caFile, caDir string) (string, []corev1.Container, error) {
+	if logoutURL == "" {
+		return "", nil, nil
+	}
+	// #483: oauth2-proxy's backendLogout uses http.Get rather than the provider
+	// client configured by --provider-ca-file. Reuse the operator's existing
+	// merged system/provider trust pattern so self-signed endpoints remain
+	// certificate-verified without changing the pinned oauth2-proxy image.
+	initImage, err := ResolveImage(kn, "init-ubi-minimal")
+	if err != nil {
+		return "", nil, err
+	}
+	return consoleCombinedCAFile, []corev1.Container{consoleLogoutCAInitContainer(kn, initImage, caFile, caDir)}, nil
+}
+
+func consoleDeploymentVolumes(kn *kubernautv1alpha2.Kubernaut, includeCombinedCA bool) []corev1.Volume {
+	volumes := []corev1.Volume{
+		{Name: "nginx-tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: "nginx-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: ComponentConsole + "-nginx"},
+		}}},
+		InterServiceTLSCAVolume(kn),
+	}
+	if includeCombinedCA {
+		volumes = append(volumes, corev1.Volume{
+			Name:         "combined-ca",
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		})
+	}
+	return volumes
+}
+
+func consoleLogoutCAInitContainer(kn *kubernautv1alpha2.Kubernaut, image, caFile, caDir string) corev1.Container {
+	return corev1.Container{
+		Name:            "build-ca-bundle",
+		Image:           image,
+		ImagePullPolicy: kn.Spec.Image.PullPolicy,
+		Command: []string{
+			"sh", "-c", "cat /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem \"$1\" > /combined/ca-bundle.crt",
+			"build-ca-bundle", caFile,
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "tls-ca", MountPath: caDir, ReadOnly: true},
+			{Name: "combined-ca", MountPath: "/combined"},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsNonRoot:             ptr.To(true),
+			AllowPrivilegeEscalation: ptr.To(false),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
 	}
-
-	return dep, nil
 }
 
 // consoleOAuth2ProxyContainer builds the oauth2-proxy sidecar container that
 // terminates OIDC auth in front of the static console container.
-func consoleOAuth2ProxyContainer(image string, args []string, secretName, caDir string) corev1.Container {
+func consoleOAuth2ProxyContainer(image string, args []string, secretName, caDir, combinedCAFile string) corev1.Container {
+	env := []corev1.EnvVar{
+		{Name: "OAUTH2_PROXY_CLIENT_ID", ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+				Key:                  "client-id",
+			},
+		}},
+		{Name: "OAUTH2_PROXY_CLIENT_SECRET", ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+				Key:                  "client-secret",
+			},
+		}},
+		{Name: "OAUTH2_PROXY_COOKIE_SECRET", ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+				Key:                  "cookie-secret",
+			},
+		}},
+	}
+	if combinedCAFile != "" {
+		env = append(env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: combinedCAFile})
+	}
+	volumeMounts := []corev1.VolumeMount{
+		{Name: "tls-ca", MountPath: caDir, ReadOnly: true},
+	}
+	if combinedCAFile != "" {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name: "combined-ca", MountPath: consoleCombinedCADir, ReadOnly: true,
+		})
+	}
+
 	return corev1.Container{
-		Name:  "oauth2-proxy",
-		Image: image,
-		Args:  args,
-		VolumeMounts: []corev1.VolumeMount{
-			{Name: "tls-ca", MountPath: caDir, ReadOnly: true},
-		},
-		Env: []corev1.EnvVar{
-			{Name: "OAUTH2_PROXY_CLIENT_ID", ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
-					Key:                  "client-id",
-				},
-			}},
-			{Name: "OAUTH2_PROXY_CLIENT_SECRET", ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
-					Key:                  "client-secret",
-				},
-			}},
-			{Name: "OAUTH2_PROXY_COOKIE_SECRET", ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
-					Key:                  "cookie-secret",
-				},
-			}},
-		},
+		Name:         "oauth2-proxy",
+		Image:        image,
+		Args:         args,
+		VolumeMounts: volumeMounts,
+		Env:          env,
 		Ports: []corev1.ContainerPort{
 			{Name: "http", ContainerPort: consoleProxyPort, Protocol: corev1.ProtocolTCP},
 		},
