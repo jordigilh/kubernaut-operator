@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -325,7 +324,7 @@ func InterServiceTLSCAKeyFor(kn *kubernautv1alpha2.Kubernaut) string {
 	if kn == nil || kn.Spec.TLS.Mode == "" {
 		return "service-ca.crt"
 	}
-	return "ca.crt"
+	return tlsCACertificateKey
 }
 
 // InterServiceTLSCAVolume returns the selected trust-material volume and maps
@@ -853,24 +852,6 @@ const (
 	workflowTLSClientVolumeName    = "workflow-discovery-llm-tls-client"
 	workflowTLSClientMountPath     = "/etc/kubernaut-agent/workflow-tls"
 )
-
-func llmTLSClientNeedsDedicatedMount(profile, base kubernautv1alpha2.LLMProfileSpec) bool {
-	if profile.TLSClientSecretRef == "" {
-		return false
-	}
-	return profile.TLSClientSecretRef != base.TLSClientSecretRef ||
-		profile.TLSCertFile != base.TLSCertFile || profile.TLSKeyFile != base.TLSKeyFile
-}
-
-func llmTLSClientPaths(profile, base kubernautv1alpha2.LLMProfileSpec, mountPath string) (string, string) {
-	certPath := profile.TLSCertFile
-	keyPath := profile.TLSKeyFile
-	if llmTLSClientNeedsDedicatedMount(profile, base) && certPath != "" && keyPath != "" {
-		certPath = filepath.Join(mountPath, filepath.Base(certPath))
-		keyPath = filepath.Join(mountPath, filepath.Base(keyPath))
-	}
-	return certPath, keyPath
-}
 
 // AFLLMProfileRef returns the name of the profile API Frontend's own LLM
 // connection resolves to. API Frontend is an independent LLM consumer and

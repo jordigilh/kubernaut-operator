@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"path/filepath"
 	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -645,6 +644,11 @@ func kaCoreVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut, kaProfile kubernaut
 // and per-sibling-agent cross-credential Secret volumes to volumes/mounts.
 func kaCredentialVolumesAndMounts(kn *kubernautv1alpha2.Kubernaut, kaProfile kubernautv1alpha2.LLMProfileSpec,
 	volumes []corev1.Volume, mounts []corev1.VolumeMount) ([]corev1.Volume, []corev1.VolumeMount) {
+	if volume, mount, ok := llmTLSMaterialVolumeFor(kaProfile, kaProfile, llmTLSRoleInvestigation); ok {
+		volumes = append(volumes, volume)
+		mounts = append(mounts, mount)
+	}
+
 	if kaProfile.OAuth2.Enabled {
 		volumes = append(volumes, secretVolume("oauth2-credentials", kaProfile.OAuth2.CredentialsSecretRef))
 		mounts = append(mounts, corev1.VolumeMount{
@@ -652,41 +656,40 @@ func kaCredentialVolumesAndMounts(kn *kubernautv1alpha2.Kubernaut, kaProfile kub
 		})
 	}
 
-	if kaProfile.TLSClientSecretRef != "" {
-		volumes = append(volumes, secretVolume("llm-tls-client", kaProfile.TLSClientSecretRef))
-		mounts = append(mounts, corev1.VolumeMount{
-			Name: "llm-tls-client", MountPath: "/etc/kubernaut-agent/llm-tls-client", ReadOnly: true,
-		})
-	}
-
-	// #233: workflow discovery resolves its own profile independently from
-	// the investigation profile. A cross-credential profile needs a dedicated
-	// read-only Secret mount rather than the base "llm-credentials" volume.
-	const phase = "workflow_discovery"
-	workflowRef := EffectiveWorkflowDiscoveryLLMProfileRef(kn)
-	if workflowRef != "" && workflowRef != EffectiveInvestigationLLMProfileRef(kn) {
-		phaseProfile, _ := ResolveLLMProfile(kn, workflowRef)
-		if phaseProfile.CredentialsSecretName != "" && phaseProfile.CredentialsSecretName != kaProfile.CredentialsSecretName {
-			volumeName := phaseCredentialsVolumeName(phase)
-			volumes = append(volumes, secretVolume(volumeName, phaseProfile.CredentialsSecretName))
-			mounts = append(mounts, corev1.VolumeMount{
-				Name: volumeName, MountPath: phaseCredentialsMountPath(phase), ReadOnly: true,
-			})
-		}
-		if phaseProfile.OAuth2.Enabled && phaseProfile.OAuth2.CredentialsSecretRef != "" &&
-			(!kaProfile.OAuth2.Enabled || phaseProfile.OAuth2.CredentialsSecretRef != kaProfile.OAuth2.CredentialsSecretRef) {
-			volumes = append(volumes, secretVolume(workflowOAuth2VolumeName, phaseProfile.OAuth2.CredentialsSecretRef))
-			mounts = append(mounts, corev1.VolumeMount{
-				Name: workflowOAuth2VolumeName, MountPath: workflowOAuth2MountPath, ReadOnly: true,
-			})
-		}
-		if llmTLSClientNeedsDedicatedMount(phaseProfile, kaProfile) {
-			volumes = append(volumes, llmTLSClientSecretVolume(workflowTLSClientVolumeName, phaseProfile))
-			mounts = append(mounts, llmTLSClientVolumeMount(workflowTLSClientVolumeName, phaseProfile, workflowTLSClientMountPath))
-		}
-	}
+	volumes, mounts = appendKAWorkflowDiscoveryCredentialMounts(kn, kaProfile, volumes, mounts)
 
 	volumes, mounts = appendKAAlignmentCredentialMounts(kn, kaProfile, volumes, mounts)
+	return volumes, mounts
+}
+
+func appendKAWorkflowDiscoveryCredentialMounts(kn *kubernautv1alpha2.Kubernaut, kaProfile kubernautv1alpha2.LLMProfileSpec,
+	volumes []corev1.Volume, mounts []corev1.VolumeMount) ([]corev1.Volume, []corev1.VolumeMount) {
+	const phase = "workflow_discovery"
+	workflowRef := EffectiveWorkflowDiscoveryLLMProfileRef(kn)
+	if workflowRef == "" || workflowRef == EffectiveInvestigationLLMProfileRef(kn) {
+		return volumes, mounts
+	}
+	phaseProfile, _ := ResolveLLMProfile(kn, workflowRef)
+	if phaseProfile.CredentialsSecretName != "" && phaseProfile.CredentialsSecretName != kaProfile.CredentialsSecretName {
+		volumeName := phaseCredentialsVolumeName(phase)
+		volumes = append(volumes, secretVolume(volumeName, phaseProfile.CredentialsSecretName))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: volumeName, MountPath: phaseCredentialsMountPath(phase), ReadOnly: true,
+		})
+	}
+	if phaseProfile.OAuth2.Enabled && phaseProfile.OAuth2.CredentialsSecretRef != "" &&
+		(!kaProfile.OAuth2.Enabled || phaseProfile.OAuth2.CredentialsSecretRef != kaProfile.OAuth2.CredentialsSecretRef) {
+		volumes = append(volumes, secretVolume(workflowOAuth2VolumeName, phaseProfile.OAuth2.CredentialsSecretRef))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: workflowOAuth2VolumeName, MountPath: workflowOAuth2MountPath, ReadOnly: true,
+		})
+	}
+	if llmTLSMaterialNeedsDedicatedMount(phaseProfile, kaProfile) {
+		if volume, mount, ok := llmTLSMaterialVolumeFor(phaseProfile, kaProfile, llmTLSRoleWorkflowDiscovery); ok {
+			volumes = append(volumes, volume)
+			mounts = append(mounts, mount)
+		}
+	}
 	return volumes, mounts
 }
 
@@ -723,30 +726,13 @@ func appendKAAlignmentCredentialMounts(kn *kubernautv1alpha2.Kubernaut, kaProfil
 		})
 	}
 
-	if llmTLSClientNeedsDedicatedMount(alignmentProfile, kaProfile) {
-		volumes = append(volumes, llmTLSClientSecretVolume(alignmentTLSClientVolumeName, alignmentProfile))
-		mounts = append(mounts, llmTLSClientVolumeMount(alignmentTLSClientVolumeName, alignmentProfile, alignmentTLSClientMountPath))
+	if llmTLSMaterialNeedsDedicatedMount(alignmentProfile, kaProfile) {
+		if volume, mount, ok := llmTLSMaterialVolumeFor(alignmentProfile, kaProfile, llmTLSRoleAlignment); ok {
+			volumes = append(volumes, volume)
+			mounts = append(mounts, mount)
+		}
 	}
 	return volumes, mounts
-}
-
-func llmTLSClientSecretVolume(name string, profile kubernautv1alpha2.LLMProfileSpec) corev1.Volume {
-	certPath := filepath.Base(profile.TLSCertFile)
-	keyPath := filepath.Base(profile.TLSKeyFile)
-	if certPath == "." || certPath == "" {
-		certPath = corev1.TLSCertKey
-	}
-	if keyPath == "." || keyPath == "" {
-		keyPath = corev1.TLSPrivateKeyKey
-	}
-	return secretVolumeWithItems(name, profile.TLSClientSecretRef, []corev1.KeyToPath{
-		{Key: corev1.TLSCertKey, Path: certPath},
-		{Key: corev1.TLSPrivateKeyKey, Path: keyPath},
-	})
-}
-
-func llmTLSClientVolumeMount(name string, _ kubernautv1alpha2.LLMProfileSpec, mountPath string) corev1.VolumeMount {
-	return corev1.VolumeMount{Name: name, MountPath: mountPath, ReadOnly: true}
 }
 
 // kaResources returns the administrator-configured resource requirements
@@ -1023,6 +1009,11 @@ func apifrontendCredentialVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut,
 	// AF's Vertex AI client honors a profile's own APIKey/APIKeyFile, the
 	// ConfigMap's apiKeyFile (afSeverityTriageConfig, configmaps.go) reads
 	// straight from this mount and the redirect is no longer needed.
+	if volume, mount, ok := llmTLSMaterialVolumeFor(afProfile, afProfile, llmTLSRoleAPIFrontend); ok {
+		volumes = append(volumes, volume)
+		mounts = append(mounts, mount)
+	}
+
 	if st := kn.Spec.APIFrontend.SeverityTriage; st != nil && st.LLMProfileRef != "" {
 		if stProfile, ok := ResolveLLMProfile(kn, st.LLMProfileRef); ok &&
 			stProfile.CredentialsSecretName != "" && stProfile.CredentialsSecretName != afProfile.CredentialsSecretName {
@@ -1031,19 +1022,18 @@ func apifrontendCredentialVolumesMountsEnv(kn *kubernautv1alpha2.Kubernaut,
 				Name: severityTriageCredentialsVolumeName(), MountPath: severityTriageCredentialsMountPath(), ReadOnly: true,
 			})
 		}
+		if stProfile, ok := ResolveLLMProfile(kn, st.LLMProfileRef); ok && llmTLSMaterialNeedsDedicatedMount(stProfile, afProfile) {
+			if volume, mount, materialOK := llmTLSMaterialVolumeFor(stProfile, afProfile, llmTLSRoleSeverityTriage); materialOK {
+				volumes = append(volumes, volume)
+				mounts = append(mounts, mount)
+			}
+		}
 	}
 
 	if kn.Spec.Valkey.SecretName != "" {
 		volumes = append(volumes, secretVolume("valkey-secrets", kn.Spec.Valkey.SecretName))
 		mounts = append(mounts, corev1.VolumeMount{
 			Name: "valkey-secrets", MountPath: "/etc/apifrontend/valkey", ReadOnly: true,
-		})
-	}
-
-	if afProfile.TLSClientSecretRef != "" {
-		volumes = append(volumes, secretVolume("llm-tls-client", afProfile.TLSClientSecretRef))
-		mounts = append(mounts, corev1.VolumeMount{
-			Name: "llm-tls-client", MountPath: "/etc/apifrontend/llm-tls-client", ReadOnly: true,
 		})
 	}
 
@@ -1293,15 +1283,6 @@ func secretVolume(name, secretName string) corev1.Volume {
 		Name: name,
 		VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{SecretName: secretName},
-		},
-	}
-}
-
-func secretVolumeWithItems(name, secretName string, items []corev1.KeyToPath) corev1.Volume {
-	return corev1.Volume{
-		Name: name,
-		VolumeSource: corev1.VolumeSource{
-			Secret: &corev1.SecretVolumeSource{SecretName: secretName, Items: items},
 		},
 	}
 }
