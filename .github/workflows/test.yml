@@ -176,26 +176,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - lane: generic
-            provider: generic
-            tls_source: development
-            cluster_name: kubernaut-kind-generic
-          - lane: hook TLS
-            provider: generic
-            tls_source: hook
-            cluster_name: kubernaut-kind-hook
-          - lane: manual/administrator-managed TLS
-            provider: generic
-            tls_source: manual-admin
-            cluster_name: kubernaut-kind-manual-admin
-          - lane: cert-manager TLS
-            provider: generic
-            tls_source: certmanager
-            cluster_name: kubernaut-kind-certmanager
-          - lane: Cilium
+          - lane: Cilium (development TLS)
             provider: cilium
             tls_source: development
-            cluster_name: kubernaut-kind-cilium
+            cluster_name: kubernaut-kind-cilium-development
+          - lane: Cilium (hook TLS)
+            provider: cilium
+            tls_source: hook
+            cluster_name: kubernaut-kind-cilium-hook
+          - lane: Cilium (manual/administrator-managed TLS)
+            provider: cilium
+            tls_source: manual-admin
+            cluster_name: kubernaut-kind-cilium-manual-admin
+          - lane: Cilium (cert-manager TLS)
+            provider: cilium
+            tls_source: certmanager
+            cluster_name: kubernaut-kind-cilium-certmanager
           - lane: Calico
             provider: calico
             tls_source: development

@@ -1,0 +1,18 @@
+{{- if .Values.valkey.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.valkey.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.valkey.persistence.size }}
+  {{- with .Values.valkey.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}

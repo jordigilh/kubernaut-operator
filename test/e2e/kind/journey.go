@@ -20,13 +20,13 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
 
@@ -35,12 +35,8 @@ import (
 )
 
 const (
-	postgresImage    = "docker.io/library/postgres:16.4"
-	valkeyImage      = "docker.io/valkey/valkey:8.0.2"
-	postgresUser     = "kubernaut"
-	postgresPassword = "kind-postgres-password" //nolint:gosec // disposable Kind fixture credential
-	postgresDB       = "kubernaut"
-	valkeyPassword   = "kind-valkey-password"
+	postgresImage = "docker.io/library/postgres:16.4"
+	valkeyImage   = "docker.io/valkey/valkey:8.0.2"
 	// This is a disposable Secret name, not credential material.
 	defaultInternalCASecretName = "kubernaut-internal-ca" //nolint:gosec
 )
@@ -52,29 +48,26 @@ func ensureKubernautInfrastructure(ctx context.Context) error {
 	if err := ensureNamespace(ctx, kubernautNamespace); err != nil {
 		return err
 	}
-	objects := []interface{}{
-		postgresSecret(),
-		valkeySecret(),
-		llmSecret(),
-		aiAnalysisPolicyConfigMap(),
-		signalProcessingPolicyConfigMap(),
-		postgresDeployment(),
-		postgresService(),
-		valkeyDeployment(),
-		valkeyService(),
+	args := []string{
+		"upgrade", "--install", "kubernaut-dev-bootstrap", devBootstrapChartPath(),
+		"--namespace", kubernautNamespace,
+		"--create-namespace",
+		"--set", "postgresql.commandMode=official",
+		"--set", "postgresql.securityContext.enabled=false",
+		"--set", "valkey.securityContext.enabled=false",
+		"--set-string", "postgresql.image.repository=docker.io/library/postgres",
+		"--set-string", "postgresql.image.tag=16.4",
+		"--set-string", "postgresql.image.digest=sha256:e62fbf9d3e2b49816a32c400ed2dba83e3b361e6833e624024309c35d334b412",
+		"--wait", "--timeout", "10m",
 	}
-	if err := applyYAML(ctx, objects...); err != nil {
-		return fmt.Errorf("applying Kubernaut infrastructure: %w", err)
-	}
-	for _, deployment := range []string{"postgresql", "valkey"} {
-		if _, err := kubectl(
-			ctx, "wait", "--for=condition=Available", "deployment/"+deployment,
-			"-n", kubernautNamespace, "--timeout=10m",
-		); err != nil {
-			return fmt.Errorf("waiting for %s prerequisite: %w", deployment, err)
-		}
+	if _, err := helmInCluster(ctx, args...); err != nil {
+		return fmt.Errorf("installing Kubernaut development bootstrap chart: %w", err)
 	}
 	return nil
+}
+
+func devBootstrapChartPath() string {
+	return filepath.Join(repositoryRoot(), "charts", "kubernaut-dev-bootstrap")
 }
 
 // ensureCertManagerRuntimeTLS creates the cert-manager objects consumed by
@@ -300,158 +293,6 @@ func ensureNamespace(ctx context.Context, namespace string) error {
 	return nil
 }
 
-func postgresSecret() *corev1.Secret {
-	return &corev1.Secret{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
-		ObjectMeta: metav1.ObjectMeta{Name: "postgresql-secret", Namespace: kubernautNamespace},
-		StringData: map[string]string{
-			"POSTGRES_USER":     postgresUser,
-			"POSTGRES_PASSWORD": postgresPassword,
-			"POSTGRES_DB":       postgresDB,
-		},
-	}
-}
-
-func valkeySecret() *corev1.Secret {
-	return &corev1.Secret{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
-		ObjectMeta: metav1.ObjectMeta{Name: "valkey-secret", Namespace: kubernautNamespace},
-		StringData: map[string]string{
-			"valkey-secrets.yaml": fmt.Sprintf("password: %q\n", valkeyPassword),
-		},
-	}
-}
-
-func llmSecret() *corev1.Secret {
-	return &corev1.Secret{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
-		ObjectMeta: metav1.ObjectMeta{Name: "llm-credentials", Namespace: kubernautNamespace},
-		StringData: map[string]string{"api_key": "kind-e2e-not-a-real-credential"},
-	}
-}
-
-func aiAnalysisPolicyConfigMap() *corev1.ConfigMap {
-	return &corev1.ConfigMap{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
-		ObjectMeta: metav1.ObjectMeta{Name: "aianalysis-policy", Namespace: kubernautNamespace},
-		Data:       map[string]string{"approval.rego": "package approval\ndefault allow = true\n"},
-	}
-}
-
-func signalProcessingPolicyConfigMap() *corev1.ConfigMap {
-	return &corev1.ConfigMap{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
-		ObjectMeta: metav1.ObjectMeta{Name: "signalprocessing-policy", Namespace: kubernautNamespace},
-		Data:       map[string]string{"policy.rego": "package signalprocessing\ndefault allow = true\n"},
-	}
-}
-
-func postgresDeployment() *appsv1.Deployment {
-	labels := prerequisiteLabels("postgresql")
-	return &appsv1.Deployment{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
-		ObjectMeta: metav1.ObjectMeta{Name: "postgresql", Namespace: kubernautNamespace, Labels: labels},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: ptr.To(int32(1)),
-			Selector: &metav1.LabelSelector{MatchLabels: labels},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
-				Spec: corev1.PodSpec{Containers: []corev1.Container{{
-					Name: "postgresql", Image: postgresImage,
-					Command: []string{"bash", "-ceu"},
-					Args: []string{`mkdir -p /tmp/postgres-tls
-          openssl req -x509 -nodes -newkey rsa:2048 \
-            -keyout /tmp/postgres-tls/server.key \
-            -out /tmp/postgres-tls/server.crt \
-            -days 2 -subj /CN=postgresql
-          chown postgres:postgres /tmp/postgres-tls/server.key /tmp/postgres-tls/server.crt
-          chmod 600 /tmp/postgres-tls/server.key
-exec docker-entrypoint.sh postgres \
-  -c ssl=on \
-  -c ssl_cert_file=/tmp/postgres-tls/server.crt \
-  -c ssl_key_file=/tmp/postgres-tls/server.key`},
-					Env: []corev1.EnvVar{
-						{Name: "POSTGRES_USER", Value: postgresUser},
-						{Name: "POSTGRES_PASSWORD", Value: postgresPassword},
-						{Name: "POSTGRES_DB", Value: postgresDB},
-					},
-					Ports: []corev1.ContainerPort{{Name: "postgres", ContainerPort: 5432}},
-					ReadinessProbe: &corev1.Probe{
-						ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{
-							Command: []string{"pg_isready", "-U", postgresUser, "-d", postgresDB},
-						}},
-						InitialDelaySeconds: 5,
-						PeriodSeconds:       2,
-					},
-				}}},
-			},
-		},
-	}
-}
-
-func postgresService() *corev1.Service {
-	return &corev1.Service{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
-		ObjectMeta: metav1.ObjectMeta{Name: "postgresql", Namespace: kubernautNamespace},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{"app": "postgresql"},
-			Ports:    []corev1.ServicePort{{Port: 5432, TargetPort: intstr.FromInt(5432)}},
-		},
-	}
-}
-
-func valkeyDeployment() *appsv1.Deployment {
-	labels := prerequisiteLabels("valkey")
-	return &appsv1.Deployment{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
-		ObjectMeta: metav1.ObjectMeta{Name: "valkey", Namespace: kubernautNamespace, Labels: labels},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: ptr.To(int32(1)),
-			Selector: &metav1.LabelSelector{MatchLabels: labels},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
-				Spec: corev1.PodSpec{Containers: []corev1.Container{{
-					Name: "valkey", Image: valkeyImage,
-					Args:  []string{"--requirepass", valkeyPassword, "--save", ""},
-					Ports: []corev1.ContainerPort{{Name: "valkey", ContainerPort: 6379}},
-					ReadinessProbe: &corev1.Probe{
-						ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{
-							Command: []string{"valkey-cli", "-a", valkeyPassword, "ping"},
-						}},
-						InitialDelaySeconds: 3,
-						PeriodSeconds:       2,
-					},
-				}}},
-			},
-		},
-	}
-}
-
-func valkeyService() *corev1.Service {
-	return &corev1.Service{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
-		ObjectMeta: metav1.ObjectMeta{Name: "valkey", Namespace: kubernautNamespace},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{"app": "valkey"},
-			Ports:    []corev1.ServicePort{{Port: 6379, TargetPort: intstr.FromInt(6379)}},
-		},
-	}
-}
-
-// prerequisiteLabels places the disposable BYO dependencies in the same
-// provider-policy trust domain as the Kubernaut workloads. Native Cilium and
-// Calico policies identify allowed in-namespace endpoints by the instance and
-// managed-by labels; no owner reference is set, so these remain user-owned
-// prerequisites and are never removed by the operator's cleanup path.
-func prerequisiteLabels(app string) map[string]string {
-	labels := map[string]string{"app": app}
-	if configuredProvider == providerCilium || configuredProvider == providerCalico {
-		labels["app.kubernetes.io/managed-by"] = "kubernaut-operator"
-		labels["app.kubernetes.io/instance"] = kubernautv1alpha2.SingletonName
-	}
-	return labels
-}
-
 func applyKubernautCR(ctx context.Context) error {
 	if err := applyYAML(ctx, kubernautCR()); err != nil {
 		return fmt.Errorf("creating Kubernaut CR: %w", err)
@@ -461,16 +302,11 @@ func applyKubernautCR(ctx context.Context) error {
 
 func kubernautCR() *kubernautv1alpha2.Kubernaut {
 	provider := kubernautv1alpha2.NetworkPolicyProviderAuto
-	isolationMode := kubernautv1alpha2.NetworkIsolationRequired
 	switch configuredProvider {
 	case providerCilium:
 		provider = kubernautv1alpha2.NetworkPolicyProviderCilium
 	case providerCalico:
 		provider = kubernautv1alpha2.NetworkPolicyProviderCalico
-	case providerGeneric:
-		// The generic lane qualifies an explicit administrator-owned isolation
-		// acknowledgement, not a supported native CNI or an implicit opt-out.
-		isolationMode = kubernautv1alpha2.NetworkIsolationInherited
 	}
 	tlsMode, err := TLSModeForSource(string(configuredTLS), string(activeManualTLSSelection))
 	if err != nil {
@@ -567,7 +403,7 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 			Gateway:         kubernautv1alpha2.GatewaySpec{Enabled: ptr.To(false)},
 			APIFrontend:     apiFrontend,
 			TLS:             tls,
-			NetworkPolicies: kubernautv1alpha2.NetworkPoliciesSpec{Provider: provider, Mode: isolationMode},
+			NetworkPolicies: kubernautv1alpha2.NetworkPoliciesSpec{Provider: provider},
 		},
 	}
 }

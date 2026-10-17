@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.postgresql.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ .Values.postgresql.name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "kubernaut-dev-bootstrap.postgresqlLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kubernaut-dev-bootstrap.postgresqlLabels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Values.postgresql.name }}
+          image: {{ include "kubernaut-dev-bootstrap.image" (dict "image" .Values.postgresql.image) | quote }}
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          {{- if eq .Values.postgresql.commandMode "official" }}
+          command: ["bash", "-ceu"]
+          args:
+            - |
+              cp /tmp/bootstrap-tls/tls.crt /tmp/postgresql-tls.crt
+              cp /tmp/bootstrap-tls/tls.key /tmp/postgresql-tls.key
+              cp /tmp/bootstrap-config/pg_hba.conf /tmp/pg_hba.conf
+              chown 999:999 /tmp/postgresql-tls.crt /tmp/postgresql-tls.key /tmp/pg_hba.conf
+              chmod 600 /tmp/postgresql-tls.key
+              exec docker-entrypoint.sh postgres \
+                -c ssl=on \
+                -c ssl_cert_file=/tmp/postgresql-tls.crt \
+                -c ssl_key_file=/tmp/postgresql-tls.key \
+                -c hba_file=/tmp/pg_hba.conf
+          {{- end }}
+          env:
+            - name: POSTGRESQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgresql.secretName }}
+                  key: POSTGRES_USER
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgresql.secretName }}
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRESQL_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgresql.secretName }}
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgresql.secretName }}
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgresql.secretName }}
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgresql.secretName }}
+                  key: POSTGRES_DB
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -ceu
+                - pg_isready -h 127.0.0.1 -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -ceu
+                - pg_isready -h 127.0.0.1 -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+          {{- if .Values.postgresql.securityContext.enabled }}
+          securityContext:
+            {{- include "kubernaut-dev-bootstrap.containerSecurityContext" .Values.postgresql.securityContext | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ if eq .Values.postgresql.commandMode "official" }}/var/lib/postgresql/data{{ else }}/var/lib/pgsql/data{{ end }}
+            - name: bootstrap-tls
+              mountPath: /tmp/bootstrap-tls
+              readOnly: true
+            - name: bootstrap-config
+              mountPath: /tmp/bootstrap-config
+              readOnly: true
+            {{- if eq .Values.postgresql.commandMode "rhel" }}
+            - name: bootstrap-config
+              mountPath: /opt/app-root/src/postgresql-cfg
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: bootstrap-tls
+          secret:
+            secretName: {{ .Values.postgresql.tls.secretName }}
+            defaultMode: 0440
+        - name: bootstrap-config
+          configMap:
+            name: {{ .Values.postgresql.name }}-config
+        - name: data
+          {{- if .Values.postgresql.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.postgresql.name }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

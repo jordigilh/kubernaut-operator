@@ -65,7 +65,7 @@ The ASVS source is the versioned official CSV:
 ## Issue #498 dedicated Kind-lane evidence
 
 Issue #498 extends the #491 repository contract with Helm-backed Kind
-journeys for every generic TLS source. The status below is intentionally
+journeys for every supported TLS source on a qualified native provider. The status below is intentionally
 `partially verified` until the hosted #498 jobs execute; local unit and
 integration evidence does not substitute for that runtime evidence.
 
@@ -136,11 +136,11 @@ verification of the remediation revision:
 
 The hosted PR checks are the authoritative live execution record for the
 production image and Kind lanes. On corrected revision `dc3b812`, GitHub Actions
-run `37126833855` passed Unit/Integration, generic Kind, cert-manager Kind,
+run `37126833855` passed Unit/Integration, native-provider Kind TLS lanes,
 Cilium, Calico, and SBOM/vulnerability scanning; the separate build/push run
 `37126833854` and Go Lint run `37126833852` also passed. The hosted Kind lanes
-therefore provide runtime evidence for the supported generic and provider
-scenarios, including the cert-manager source path.
+therefore provide runtime evidence for the supported platform-neutral TLS and
+provider scenarios, including the cert-manager source path.
 
 ## Residual evidence required for a formal claim
 

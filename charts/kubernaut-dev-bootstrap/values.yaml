@@ -1,0 +1,92 @@
+# This chart is intentionally disposable. It owns the generated TLS Secret,
+# credentials, Services, workloads, and fixture ConfigMaps it creates.
+
+imagePullSecrets: []
+
+postgresql:
+  name: postgresql
+  serviceName: postgresql
+  secretName: postgresql-secret
+  database: kubernaut
+  user: kubernaut
+  # Development-only material. Override with --set-string for a local value;
+  # never use these defaults for a production deployment.
+  password: dev-only-postgres-password
+  sslMode: require
+  image:
+    repository: registry.redhat.io/rhel10/postgresql-16
+    tag: "16"
+    digest: sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
+    pullPolicy: IfNotPresent
+  # rhel uses the OpenShift-compatible image entrypoint and its
+  # /opt/app-root/src/postgresql-cfg include directory. The official mode is
+  # used by the Kind harness with a locally loaded Docker Hub image.
+  commandMode: rhel
+  tls:
+    secretName: postgresql-tls
+    validityDays: 365
+  persistence:
+    enabled: false
+    size: 1Gi
+    storageClass: ""
+  securityContext:
+    enabled: true
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+valkey:
+  name: valkey
+  serviceName: valkey
+  secretName: valkey-secret
+  password: dev-only-valkey-password
+  image:
+    repository: docker.io/valkey/valkey
+    tag: 8.0.2
+    digest: sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: false
+    size: 1Gi
+    storageClass: ""
+  securityContext:
+    enabled: true
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+fixtures:
+  enabled: true
+  llm:
+    # Deliberately synthetic; the operator never calls this endpoint in the
+    # bootstrap qualification path.
+    apiKey: dev-only-not-a-real-credential
+  policies:
+    aiAnalysis: |
+      package approval
+      default allow = true
+    signalProcessing: |
+      package signalprocessing
+      default allow = true
