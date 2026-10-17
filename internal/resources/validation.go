@@ -18,6 +18,7 @@ package resources
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -368,21 +369,144 @@ func validateLLMProfileContent(name string, llm *kubernautv1alpha2.LLMProfileSpe
 	if llm.CredentialsSecretName == "" {
 		errs = append(errs, fmt.Errorf("%s.credentialsSecretName: required — provide a Secret with LLM API credentials", base))
 	}
+	errs = append(errs, validateLLMProfileTuning(base, llm)...)
 	if llm.Provider == LLMProviderOpenAI && llm.Endpoint == "" {
 		errs = append(errs, fmt.Errorf("%s.endpoint: required when provider is %q — both KA and AF need an explicit endpoint for OpenAI", base, LLMProviderOpenAI))
 	}
+	errs = append(errs, validateLLMProfileTLS(base, llm)...)
+	errs = append(errs, validateLLMProfileOAuth2(base, llm)...)
+	if err := validateLLMReasoning(base, llm.Reasoning, llm.Provider); err != nil {
+		errs = append(errs, err)
+	}
+	return errs
+}
+
+func validateLLMProfileTuning(base string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
+	var errs []error
+	if llm.MaxRetries != nil && *llm.MaxRetries < 0 {
+		errs = append(errs, fmt.Errorf("%s.maxRetries: must be non-negative", base))
+	}
+	if llm.TimeoutSeconds != nil && *llm.TimeoutSeconds <= 0 {
+		errs = append(errs, fmt.Errorf("%s.timeoutSeconds: must be positive", base))
+	}
+	if llm.Temperature != "" {
+		value, err := strconv.ParseFloat(llm.Temperature, 64)
+		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+			errs = append(errs, fmt.Errorf("%s.temperature: must be a finite number", base))
+		}
+	}
+	return errs
+}
+
+func validateLLMProfileTLS(base string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
+	errs := validateLLMProfileCA(base, llm)
+
 	certSet := llm.TLSCertFile != "" || llm.TLSKeyFile != ""
 	if certSet && (llm.TLSCertFile == "" || llm.TLSKeyFile == "") {
 		errs = append(errs, fmt.Errorf("%s.tlsCertFile and %s.tlsKeyFile must both be set or both empty for mTLS", base, base))
 	}
-	if certSet && llm.TLSClientSecretRef == "" {
-		errs = append(errs, fmt.Errorf("%s.tlsClientSecretRef: required when mTLS cert/key paths are configured", base))
-	}
 	if !certSet && llm.TLSClientSecretRef != "" {
 		errs = append(errs, fmt.Errorf("%s.tlsClientSecretRef: set but tlsCertFile/tlsKeyFile are empty — both pairs are required for mTLS", base))
 	}
-	if err := validateLLMReasoning(base, llm.Reasoning, llm.Provider); err != nil {
+	errs = append(errs, validateLLMProfileTLSMaterialNames(base, llm)...)
+	if !certSet {
+		return errs
+	}
+	if llm.TLSClientSecretRef == "" {
+		errs = append(errs, fmt.Errorf("%s.tlsClientSecretRef: required when mTLS cert/key paths are configured", base))
+	}
+	if !filepath.IsAbs(llm.TLSCertFile) || !filepath.IsAbs(llm.TLSKeyFile) {
+		errs = append(errs, fmt.Errorf("%s.tlsCertFile and %s.tlsKeyFile must be absolute paths for mTLS", base, base))
+	}
+	if filepath.Dir(llm.TLSCertFile) != filepath.Dir(llm.TLSKeyFile) {
+		errs = append(errs, fmt.Errorf("%s.tlsCertFile and %s.tlsKeyFile must share one parent directory for mTLS", base, base))
+	}
+	errs = append(errs, validateLLMProfileTLSPathCollisions(base, llm)...)
+	return errs
+}
+
+func validateLLMProfileCA(base string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
+	var errs []error
+	if llm.TLSCaFile != "" && !filepath.IsAbs(llm.TLSCaFile) {
+		errs = append(errs, fmt.Errorf("%s.tlsCaFile must be an absolute path", base))
+	}
+	if llm.TLSCaSecretRef == nil {
+		return errs
+	}
+	if llm.TLSCaFile == "" {
+		errs = append(errs, fmt.Errorf("%s.tlsCaFile is required when tlsCaSecretRef is configured", base))
+	}
+	if llm.TLSCaSecretRef.Name == "" {
+		errs = append(errs, fmt.Errorf("%s.tlsCaSecretRef.name must not be empty", base))
+	} else if len(k8svalidation.IsDNS1123Subdomain(llm.TLSCaSecretRef.Name)) > 0 {
+		errs = append(errs, fmt.Errorf("%s.tlsCaSecretRef.name must be a valid Kubernetes object name", base))
+	}
+	if key := llmTLSCAKey(*llm); filepath.Base(key) != key || strings.ContainsAny(key, `\/`) {
+		errs = append(errs, fmt.Errorf("%s.tlsCaSecretRef.key must be a Secret key name without path separators", base))
+	}
+	return errs
+}
+
+func validateLLMProfileTLSPathCollisions(base string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
+	if llm.TLSCaSecretRef == nil {
+		return nil
+	}
+	var errs []error
+	if filepath.Clean(llm.TLSCaFile) == filepath.Clean(llm.TLSCertFile) {
+		errs = append(errs, fmt.Errorf("%s.tlsCaFile and %s.tlsCertFile must be different paths", base, base))
+	}
+	if filepath.Clean(llm.TLSCaFile) == filepath.Clean(llm.TLSKeyFile) {
+		errs = append(errs, fmt.Errorf("%s.tlsCaFile and %s.tlsKeyFile must be different paths", base, base))
+	}
+	return errs
+}
+
+func validateLLMProfileTLSMaterialNames(base string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
+	paths := make(map[string]string, 3)
+	addPath := func(field, value string) error {
+		if value == "" {
+			return nil
+		}
+		name := filepath.Base(value)
+		if name == "." || name == ".." || name == string(filepath.Separator) {
+			return fmt.Errorf("%s.%s must name a file below the deterministic TLS mount", base, field)
+		}
+		if previous, exists := paths[name]; exists {
+			return fmt.Errorf("%s.%s and %s.%s must use different filenames for projected TLS material", base, previous, base, field)
+		}
+		paths[name] = field
+		return nil
+	}
+
+	var errs []error
+	if llm.TLSCaSecretRef != nil {
+		if err := addPath("tlsCaFile", llm.TLSCaFile); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if llm.TLSClientSecretRef != "" {
+		if err := addPath("tlsCertFile", llm.TLSCertFile); err != nil {
+			errs = append(errs, err)
+		}
+		if err := addPath("tlsKeyFile", llm.TLSKeyFile); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
+}
+
+func validateLLMProfileOAuth2(base string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
+	if !llm.OAuth2.Enabled {
+		return nil
+	}
+	var errs []error
+	if llm.OAuth2.TokenURL == "" {
+		errs = append(errs, fmt.Errorf("%s.oauth2.tokenURL: required when OAuth2 is enabled", base))
+	} else if err := validateFleetHTTPSURL(base+".oauth2.tokenURL", llm.OAuth2.TokenURL); err != nil {
 		errs = append(errs, err)
+	}
+	if llm.OAuth2.CredentialsSecretRef == "" {
+		errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: required when OAuth2 is enabled", base))
 	}
 	return errs
 }
@@ -446,9 +570,9 @@ func validateRequiredEffectiveProfile(profiles map[string]kubernautv1alpha2.LLMP
 		fieldPath, len(profiles))}
 }
 
-// validateLLMProfileRefs validates that every logical LLM consumer (KA
-// investigation, KA workflow discovery, and API Frontend) resolves to a
-// profile defined in spec.llmProfiles. Sole-profile inference is accepted;
+// validateLLMProfileRefs validates that every enabled logical LLM consumer
+// (KA investigation, workflow discovery, alignment, and API Frontend) resolves
+// to a profile defined in spec.llmProfiles. Sole-profile inference is accepted;
 // multiple profiles require an explicit reference for each enabled consumer.
 func validateLLMProfileRefs(kn *kubernautv1alpha2.Kubernaut) []error {
 	var errs []error
@@ -464,6 +588,14 @@ func validateLLMProfileRefs(kn *kubernautv1alpha2.Kubernaut) []error {
 		EffectiveWorkflowDiscoveryLLMProfileRef(kn),
 		"spec.kubernautAgent.workflowDiscovery.llmProfileRef",
 	)...)
+
+	if kn.Spec.KubernautAgent.AlignmentCheck.Enabled {
+		errs = append(errs, validateRequiredEffectiveProfile(
+			profiles,
+			EffectiveAlignmentCheckLLMProfileRef(kn),
+			"spec.kubernautAgent.alignmentCheck.llmProfileRef",
+		)...)
+	}
 
 	if kn.Spec.APIFrontendEnabled() {
 		errs = append(errs, validateAFLLMProfileRefs(kn, profiles)...)

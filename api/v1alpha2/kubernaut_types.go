@@ -1357,8 +1357,9 @@ type AnomalySpec struct {
 
 // LLMProfileSpec defines a single, named LLM provider configuration.
 // Profiles live in spec.llmProfiles and are referenced by name (llmProfileRef)
-// from KA, API Frontend, and API Frontend's severity-triage configuration,
-// decoupling each component's LLM identity from a single shared config.
+// from KA's sibling investigation, workflow-discovery, and alignment agents,
+// API Frontend, and API Frontend's severity-triage configuration, decoupling
+// each component's LLM identity from a single shared config.
 type LLMProfileSpec struct {
 	// LLM provider name (e.g. "openai", "vertexai", "bedrock", "azure").
 	// +kubebuilder:validation:MinLength=1
@@ -1415,6 +1416,12 @@ type LLMProfileSpec struct {
 	// Path to a CA certificate file for TLS to the LLM endpoint.
 	// +optional
 	TLSCaFile string `json:"tlsCaFile,omitempty"`
+
+	// Optional Secret containing the PEM CA certificate used by the LLM
+	// endpoint. The default key is "ca.crt". When set, tlsCaFile must name
+	// the deterministic path where the operator mounts the selected key.
+	// +optional
+	TLSCaSecretRef *CACertSecretRef `json:"tlsCaSecretRef,omitempty"`
 
 	// Path to a client certificate file for mTLS to the LLM endpoint.
 	// Must be set together with TLSKeyFile.

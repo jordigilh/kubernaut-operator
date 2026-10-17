@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -3279,6 +3280,7 @@ type precreatedReference struct {
 	path         string
 	name         string
 	requiredKeys []string
+	pemKeys      []string
 }
 
 // validatePrecreatedConfiguration verifies administrator/GitOps-owned inputs
@@ -3390,11 +3392,8 @@ func validatePrecreatedSecretKeys(secret *corev1.Secret, reference precreatedRef
 	if value, ok := values["credentials.json"]; ok && !json.Valid(value) {
 		return fmt.Errorf("%s: Secret %q key %q contains invalid JSON", reference.path, reference.name, "credentials.json")
 	}
-	if value, ok := values["ca.crt"]; ok {
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(value) {
-			return fmt.Errorf("%s: Secret %q key %q does not contain valid CA PEM", reference.path, reference.name, "ca.crt")
-		}
+	if err := validatePrecreatedSecretPEMKeys(values, reference); err != nil {
+		return err
 	}
 	if cert, certOK := values[corev1.TLSCertKey]; certOK {
 		key, keyOK := values[corev1.TLSPrivateKeyKey]
@@ -3408,6 +3407,21 @@ func validatePrecreatedSecretKeys(secret *corev1.Secret, reference precreatedRef
 		parsed, err := url.ParseRequestURI(string(value))
 		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 			return fmt.Errorf("%s: Secret %q key %q must contain a valid URL", reference.path, reference.name, "webhook-url")
+		}
+	}
+	return nil
+}
+
+func validatePrecreatedSecretPEMKeys(values map[string][]byte, reference precreatedReference) error {
+	keys := append([]string{monitoringTLSDefaultCAKey}, reference.pemKeys...)
+	for _, key := range keys {
+		value, ok := values[key]
+		if !ok || key != monitoringTLSDefaultCAKey && !slices.Contains(reference.pemKeys, key) {
+			continue
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(value) {
+			return fmt.Errorf("%s: Secret %q key %q does not contain valid CA PEM", reference.path, reference.name, key)
 		}
 	}
 	return nil
@@ -3447,6 +3461,20 @@ func (c *precreatedReferenceCollector) add(kind precreatedReferenceKind, path, n
 
 func (c *precreatedReferenceCollector) addError(err error) {
 	c.errs = append(c.errs, err)
+}
+
+func (c *precreatedReferenceCollector) addPEMSecretReference(path, name, key string) {
+	c.add(precreatedSecretReference, path, name, key)
+	for i := range c.references {
+		reference := &c.references[i]
+		if reference.kind != precreatedSecretReference || reference.name != name || len(reference.requiredKeys) != 1 || reference.requiredKeys[0] != key {
+			continue
+		}
+		if !slices.Contains(reference.pemKeys, key) {
+			reference.pemKeys = append(reference.pemKeys, key)
+		}
+		return
+	}
 }
 
 func appendPrecreatedOptionalReferences(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
@@ -3503,6 +3531,9 @@ func appendPrecreatedValkeyTLSSecrets(c *precreatedReferenceCollector, kn *kuber
 func appendPrecreatedLLMReferences(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
 	appendPrecreatedLLMProfileReference(c, kn, resources.EffectiveInvestigationLLMProfileRef(kn))
 	appendPrecreatedLLMProfileReference(c, kn, resources.EffectiveWorkflowDiscoveryLLMProfileRef(kn))
+	if kn.Spec.KubernautAgent.AlignmentCheck.Enabled {
+		appendPrecreatedLLMProfileReference(c, kn, resources.EffectiveAlignmentCheckLLMProfileRef(kn))
+	}
 	if !kn.Spec.APIFrontendEnabled() {
 		return
 	}
@@ -3538,6 +3569,13 @@ func appendPrecreatedLLMProfileReference(c *precreatedReferenceCollector, kn *ku
 	if profile.TLSClientSecretRef != "" {
 		c.add(precreatedSecretReference, profilePath+".tlsClientSecretRef", profile.TLSClientSecretRef,
 			corev1.TLSCertKey, corev1.TLSPrivateKeyKey)
+	}
+	if profile.TLSCaSecretRef != nil {
+		caKey := profile.TLSCaSecretRef.Key
+		if caKey == "" {
+			caKey = monitoringTLSDefaultCAKey
+		}
+		c.addPEMSecretReference(profilePath+".tlsCaSecretRef", profile.TLSCaSecretRef.Name, caKey)
 	}
 }
 

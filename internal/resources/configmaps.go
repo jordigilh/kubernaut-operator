@@ -1042,9 +1042,22 @@ type kaAlignmentYAML struct {
 }
 
 type kaAlignLLMYAML struct {
-	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
-	Model    string `json:"model,omitempty" yaml:"model,omitempty"`
-	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	Provider        string           `json:"provider,omitempty" yaml:"provider,omitempty"`
+	Model           string           `json:"model,omitempty" yaml:"model,omitempty"`
+	Endpoint        string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	APIKeyFile      string           `json:"apiKeyFile,omitempty" yaml:"apiKeyFile,omitempty"`
+	Temperature     *float64         `json:"temperature,omitempty" yaml:"temperature,omitempty"` //nolint:musttag
+	MaxRetries      int              `json:"maxRetries,omitempty" yaml:"maxRetries,omitempty"`
+	TimeoutSeconds  int              `json:"timeoutSeconds,omitempty" yaml:"timeoutSeconds,omitempty"`
+	VertexProject   string           `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
+	VertexLocation  string           `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
+	BedrockRegion   string           `json:"bedrockRegion,omitempty" yaml:"bedrockRegion,omitempty"`
+	AzureApiVersion string           `json:"azureApiVersion,omitempty" yaml:"azureApiVersion,omitempty"`
+	TLSCaFile       string           `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
+	TLSCertFile     string           `json:"tlsCertFile,omitempty" yaml:"tlsCertFile,omitempty"`
+	TLSKeyFile      string           `json:"tlsKeyFile,omitempty" yaml:"tlsKeyFile,omitempty"`
+	OAuth2          *kaOAuth2YAML    `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	Reasoning       *kaReasoningYAML `json:"reasoning,omitempty" yaml:"reasoning,omitempty"`
 }
 
 type kaSummarizerYAML struct {
@@ -1173,27 +1186,29 @@ type llmRuntimeYAML struct {
 	PhaseModels    map[string]llmPhaseOverrideYAML `json:"phaseModels,omitempty" yaml:"phaseModels,omitempty"`
 }
 
-// llmPhaseOverrideYAML carries a phase override's fully-resolved fields,
-// including its own credentials when the phase's profile names a
-// credentialsSecretName different from the primary profile's (#233).
-// APIKeyFile is only populated in that cross-credential case -- when the
-// phase's profile shares the primary profile's credentialsSecretName, the
-// phase keeps authenticating via KA's already-mounted base credentials and
-// no dedicated Secret volume is created. This split relies on
-// kubernaut#1728, which fixed KA's LLMOverrideConfig to resolve each
-// phase's own APIKeyFile independently rather than silently reusing the
-// base profile's already-resolved API key (kubernaut#1726). Reasoning is
-// exempted from the restart-required LLM-identity lock upstream
-// (DD-LLM-008), so it is forwarded like any other per-phase override.
+// llmPhaseOverrideYAML carries a workflow-discovery profile's complete
+// effective fields. It intentionally includes an APIKeyFile even when the
+// profile shares the base Secret: workflow discovery is a sibling agent, so
+// its selected profile must remain explicit rather than relying on accidental
+// base inheritance. Upstream kubernaut#2515 makes the same full-profile
+// contract available to phase and alignment configuration.
 type llmPhaseOverrideYAML struct {
-	Provider       string           `json:"provider,omitempty" yaml:"provider,omitempty"`
-	Model          string           `json:"model,omitempty" yaml:"model,omitempty"`
-	Endpoint       string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
-	APIKeyFile     string           `json:"apiKeyFile,omitempty" yaml:"apiKeyFile,omitempty"`
-	Temperature    *float64         `json:"temperature,omitempty" yaml:"temperature,omitempty"` //nolint:musttag
-	VertexProject  string           `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
-	VertexLocation string           `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
-	Reasoning      *kaReasoningYAML `json:"reasoning,omitempty" yaml:"reasoning,omitempty"`
+	Provider        string           `json:"provider,omitempty" yaml:"provider,omitempty"`
+	Model           string           `json:"model,omitempty" yaml:"model,omitempty"`
+	Endpoint        string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	APIKeyFile      string           `json:"apiKeyFile,omitempty" yaml:"apiKeyFile,omitempty"`
+	Temperature     *float64         `json:"temperature,omitempty" yaml:"temperature,omitempty"` //nolint:musttag
+	MaxRetries      int              `json:"maxRetries,omitempty" yaml:"maxRetries,omitempty"`
+	TimeoutSeconds  int              `json:"timeoutSeconds,omitempty" yaml:"timeoutSeconds,omitempty"`
+	VertexProject   string           `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
+	VertexLocation  string           `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
+	BedrockRegion   string           `json:"bedrockRegion,omitempty" yaml:"bedrockRegion,omitempty"`
+	AzureApiVersion string           `json:"azureApiVersion,omitempty" yaml:"azureApiVersion,omitempty"`
+	TLSCaFile       string           `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
+	TLSCertFile     string           `json:"tlsCertFile,omitempty" yaml:"tlsCertFile,omitempty"`
+	TLSKeyFile      string           `json:"tlsKeyFile,omitempty" yaml:"tlsKeyFile,omitempty"`
+	OAuth2          *kaOAuth2YAML    `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	Reasoning       *kaReasoningYAML `json:"reasoning,omitempty" yaml:"reasoning,omitempty"`
 }
 
 type authWebhookWebhookYAML struct {
@@ -1795,6 +1810,10 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.Conf
 // credential fields from a resolved LLM profile onto llmCfg, leaving zero
 // values (and thus YAML omission) for anything the profile doesn't set.
 func applyKALLMProfileFields(llmCfg *kaLLMYAML, profile kubernautv1alpha2.LLMProfileSpec) {
+	applyKALLMProfileFieldsForRole(llmCfg, profile, llmTLSRoleInvestigation)
+}
+
+func applyKALLMProfileFieldsForRole(llmCfg *kaLLMYAML, profile kubernautv1alpha2.LLMProfileSpec, role string) {
 	if profile.VertexProject != "" {
 		llmCfg.VertexProject = profile.VertexProject
 	}
@@ -1807,14 +1826,15 @@ func applyKALLMProfileFields(llmCfg *kaLLMYAML, profile kubernautv1alpha2.LLMPro
 	if profile.AzureAPIVersion != "" {
 		llmCfg.AzureApiVersion = profile.AzureAPIVersion
 	}
-	if profile.TLSCaFile != "" {
-		llmCfg.TLSCaFile = profile.TLSCaFile
+	caFile, certFile, keyFile := llmTLSMaterialPathsForRole(profile, profile, role)
+	if caFile != "" {
+		llmCfg.TLSCaFile = caFile
 	}
-	if profile.TLSCertFile != "" {
-		llmCfg.TLSCertFile = profile.TLSCertFile
+	if certFile != "" {
+		llmCfg.TLSCertFile = certFile
 	}
-	if profile.TLSKeyFile != "" {
-		llmCfg.TLSKeyFile = profile.TLSKeyFile
+	if keyFile != "" {
+		llmCfg.TLSKeyFile = keyFile
 	}
 	if profile.OAuth2.Enabled {
 		llmCfg.OAuth2 = &kaOAuth2YAML{
@@ -1830,11 +1850,11 @@ func applyKALLMProfileFields(llmCfg *kaLLMYAML, profile kubernautv1alpha2.LLMPro
 // kaAlignmentConfig builds the AI alignment-check config block, or nil when
 // alignment checking is disabled.
 //
-// #423: llmProfileRef (v1alpha2 AlignmentCheckSpec, F5) replaces the
-// v1alpha1 AlignmentCheckLLMSpec literal-field pattern. The profile reference
-// is the only supported v1alpha2 source because it follows the same credential
-// resolution path as every other LLM consumer.
-func kaAlignmentConfig(kn *kubernautv1alpha2.Kubernaut, ac kubernautv1alpha2.AlignmentCheckSpec, llmProfileRef string) *kaAlignmentYAML {
+// #419: alignment check is a sibling agent, not a partial override of the
+// investigation agent. Its profile is resolved independently and rendered as
+// a complete LLM configuration so provider, credential, OAuth2, TLS, and
+// tuning fields cannot be inherited accidentally from investigation.
+func kaAlignmentConfig(kn *kubernautv1alpha2.Kubernaut, ac kubernautv1alpha2.AlignmentCheckSpec, kaProfile kubernautv1alpha2.LLMProfileSpec) *kaAlignmentYAML {
 	if !ac.Enabled {
 		return nil
 	}
@@ -1843,16 +1863,54 @@ func kaAlignmentConfig(kn *kubernautv1alpha2.Kubernaut, ac kubernautv1alpha2.Ali
 		Timeout:       withDefault(ac.Timeout, "10s"),
 		MaxStepTokens: intDefault(ac.MaxStepTokens, 500),
 	}
-	if llmProfileRef != "" {
-		if profile, ok := ResolveLLMProfile(kn, llmProfileRef); ok {
-			cfg.LLM = &kaAlignLLMYAML{
-				Provider: profile.Provider,
-				Model:    profile.Model,
-				Endpoint: profile.Endpoint,
-			}
-		}
+	if profile, ok := ResolveLLMProfile(kn, EffectiveAlignmentCheckLLMProfileRef(kn)); ok {
+		cfg.LLM = kaAlignmentLLMConfig(profile, kaProfile)
 	}
 	return cfg
+}
+
+func kaAlignmentLLMConfig(profile, kaProfile kubernautv1alpha2.LLMProfileSpec) *kaAlignLLMYAML {
+	credentialsMountPath := "/etc/kubernaut-agent/credentials"
+	if profile.CredentialsSecretName != "" && profile.CredentialsSecretName != kaProfile.CredentialsSecretName {
+		credentialsMountPath = alignmentCredentialsMountPath
+	}
+	credFile := llmCredentialsFileAPIKey
+	if profile.Provider == LLMProviderVertexAI {
+		credFile = llmCredentialsFileVertexJSON
+	}
+
+	llm := &kaAlignLLMYAML{
+		Provider:        profile.Provider,
+		Model:           profile.Model,
+		Endpoint:        profile.Endpoint,
+		Temperature:     parseLLMTemperature(profile.Temperature),
+		MaxRetries:      intPtrDefault(profile.MaxRetries, 3),
+		TimeoutSeconds:  intPtrDefault(profile.TimeoutSeconds, 120),
+		VertexProject:   profile.VertexProject,
+		VertexLocation:  profile.VertexLocation,
+		BedrockRegion:   profile.BedrockRegion,
+		AzureApiVersion: profile.AzureAPIVersion,
+		TLSCaFile:       profile.TLSCaFile,
+		Reasoning:       kaReasoningFromSpec(profile.Reasoning),
+	}
+	llm.TLSCaFile, llm.TLSCertFile, llm.TLSKeyFile = llmTLSMaterialPathsForRole(profile, kaProfile, llmTLSRoleAlignment)
+	if profile.CredentialsSecretName != "" {
+		llm.APIKeyFile = credentialsMountPath + "/" + credFile
+	}
+	if profile.OAuth2.Enabled {
+		credentialsDir := alignmentOAuth2MountPath
+		if kaProfile.OAuth2.Enabled && profile.OAuth2.CredentialsSecretRef != "" &&
+			profile.OAuth2.CredentialsSecretRef == kaProfile.OAuth2.CredentialsSecretRef {
+			credentialsDir = "/etc/kubernaut-agent/oauth2"
+		}
+		llm.OAuth2 = &kaOAuth2YAML{
+			Enabled:        true,
+			TokenURL:       profile.OAuth2.TokenURL,
+			CredentialsDir: credentialsDir,
+			Scopes:         profile.OAuth2.Scopes,
+		}
+	}
+	return llm
 }
 
 // kaSafetyConfig builds the AI safety-guardrail config block (prompt
@@ -1985,7 +2043,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1a
 
 	applyKALLMProfileFields(&cfg.AI.LLM, kaProfile)
 
-	cfg.AI.AlignmentCheck = kaAlignmentConfig(kn, ka.AlignmentCheck, knV2.Spec.KubernautAgent.AlignmentCheck.LLMProfileRef)
+	cfg.AI.AlignmentCheck = kaAlignmentConfig(kn, ka.AlignmentCheck, kaProfile)
 
 	threshold := intDefault(ka.Summarizer.Threshold, 8000)
 	maxOutput := intDefault(ka.Summarizer.MaxToolOutputSize, 100000)
@@ -2030,29 +2088,48 @@ func parseLLMTemperature(s string) *float64 {
 // credential handling on top of the base agent profile.
 func resolveKAPhaseModelOverride(kn *kubernautv1alpha2.Kubernaut, phase, ref string, kaProfile kubernautv1alpha2.LLMProfileSpec) llmPhaseOverrideYAML {
 	phaseProfile, _ := ResolveLLMProfile(kn, ref)
+	credentialsMountPath := "/etc/kubernaut-agent/credentials"
+	if phaseProfile.CredentialsSecretName != "" && phaseProfile.CredentialsSecretName != kaProfile.CredentialsSecretName {
+		credentialsMountPath = phaseCredentialsMountPath(phase)
+	}
+	credFile := llmCredentialsFileAPIKey
+	if phaseProfile.Provider == LLMProviderVertexAI {
+		credFile = llmCredentialsFileVertexJSON
+	}
 	override := llmPhaseOverrideYAML{
-		Provider:       phaseProfile.Provider,
-		Model:          phaseProfile.Model,
-		Endpoint:       phaseProfile.Endpoint,
-		VertexProject:  phaseProfile.VertexProject,
-		VertexLocation: phaseProfile.VertexLocation,
-		Reasoning:      kaReasoningFromSpec(phaseProfile.Reasoning),
+		Provider: phaseProfile.Provider,
+		Model:    phaseProfile.Model,
+		Endpoint: phaseProfile.Endpoint,
 		// #241: a phase's own temperature is independently configurable
 		// from the base agent's -- mirrors the base-profile fix (#239) so a
 		// phase pinned to a model that rejects an explicit temperature can
 		// omit it even when the base agent sets one, and vice versa.
-		Temperature: parseLLMTemperature(phaseProfile.Temperature),
+		Temperature:     parseLLMTemperature(phaseProfile.Temperature),
+		MaxRetries:      intPtrDefault(phaseProfile.MaxRetries, 3),
+		TimeoutSeconds:  intPtrDefault(phaseProfile.TimeoutSeconds, 120),
+		VertexProject:   phaseProfile.VertexProject,
+		VertexLocation:  phaseProfile.VertexLocation,
+		BedrockRegion:   phaseProfile.BedrockRegion,
+		AzureApiVersion: phaseProfile.AzureAPIVersion,
+		TLSCaFile:       phaseProfile.TLSCaFile,
+		Reasoning:       kaReasoningFromSpec(phaseProfile.Reasoning),
 	}
-	// #233: only render a dedicated apiKeyFile when the phase's profile
-	// names a different credentialsSecretName than KA's own -- otherwise
-	// the phase keeps using KA's already-mounted base credentials (see
-	// phaseCredentialsMountPath/deployments.go).
-	if phaseProfile.CredentialsSecretName != "" && phaseProfile.CredentialsSecretName != kaProfile.CredentialsSecretName {
-		credFile := llmCredentialsFileAPIKey
-		if phaseProfile.Provider == LLMProviderVertexAI {
-			credFile = llmCredentialsFileVertexJSON
+	override.TLSCaFile, override.TLSCertFile, override.TLSKeyFile = llmTLSMaterialPathsForRole(phaseProfile, kaProfile, llmTLSRoleWorkflowDiscovery)
+	if phaseProfile.CredentialsSecretName != "" {
+		override.APIKeyFile = credentialsMountPath + "/" + credFile
+	}
+	if phaseProfile.OAuth2.Enabled {
+		credentialsDir := workflowOAuth2MountPath
+		if kaProfile.OAuth2.Enabled && phaseProfile.OAuth2.CredentialsSecretRef != "" &&
+			phaseProfile.OAuth2.CredentialsSecretRef == kaProfile.OAuth2.CredentialsSecretRef {
+			credentialsDir = "/etc/kubernaut-agent/oauth2"
 		}
-		override.APIKeyFile = phaseCredentialsMountPath(phase) + "/" + credFile
+		override.OAuth2 = &kaOAuth2YAML{
+			Enabled:        true,
+			TokenURL:       phaseProfile.OAuth2.TokenURL,
+			CredentialsDir: credentialsDir,
+			Scopes:         phaseProfile.OAuth2.Scopes,
+		}
 	}
 	return override
 }
@@ -2535,7 +2612,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 			KABearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
 			KATLSCAFile:       apifrontendTLSCAFile,
 			DSTLSCAFile:       apifrontendTLSCAFile,
-			LLM:               afAgentLLMConfig(afProfile),
+			LLM:               afAgentLLMConfigForRole(afProfile, afProfile, llmTLSRoleAPIFrontend),
 		},
 		MCP: afMCPConfig(knV2),
 		AgentCard: afAgentCardYAML{
@@ -2602,8 +2679,8 @@ func afSeverityTriageConfig(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1al
 	case st != nil && st.LLMProfileRef != "":
 		triageProfile, ok := ResolveLLMProfile(kn, st.LLMProfileRef)
 		if ok {
-			llm := afAgentLLMConfig(triageProfile)
 			afProfile, _ := ResolveLLMProfile(kn, AFLLMProfileRef(kn))
+			llm := afAgentLLMConfigForRole(triageProfile, afProfile, llmTLSRoleSeverityTriage)
 			if triageProfile.CredentialsSecretName != "" &&
 				triageProfile.CredentialsSecretName != afProfile.CredentialsSecretName {
 				credFile := llmCredentialsFileAPIKey
@@ -2632,6 +2709,10 @@ func afSeverityTriageConfig(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1al
 //
 // This translation will be removed when upstream normalizes (kubernaut#1488).
 func afAgentLLMConfig(llm kubernautv1alpha2.LLMProfileSpec) afAgentLLMYAML {
+	return afAgentLLMConfigForRole(llm, llm, llmTLSRoleAPIFrontend)
+}
+
+func afAgentLLMConfigForRole(llm, base kubernautv1alpha2.LLMProfileSpec, role string) afAgentLLMYAML {
 	provider := llm.Provider
 	if provider == "" {
 		provider = LLMProviderVertexAI
@@ -2648,15 +2729,16 @@ func afAgentLLMConfig(llm kubernautv1alpha2.LLMProfileSpec) afAgentLLMYAML {
 		endpoint = strings.TrimRight(endpoint, "/") + "/v1"
 	}
 
+	caFile, certFile, keyFile := llmTLSMaterialPathsForRole(llm, base, role)
 	cfg := afAgentLLMYAML{
 		Provider:       afProvider,
 		Model:          llm.Model,
 		Endpoint:       endpoint,
 		VertexProject:  llm.VertexProject,
 		VertexLocation: llm.VertexLocation,
-		TLSCaFile:      llm.TLSCaFile,
-		TLSCertFile:    llm.TLSCertFile,
-		TLSKeyFile:     llm.TLSKeyFile,
+		TLSCaFile:      caFile,
+		TLSCertFile:    certFile,
+		TLSKeyFile:     keyFile,
 	}
 
 	// #279: every provider, including vertex_ai, renders an explicit

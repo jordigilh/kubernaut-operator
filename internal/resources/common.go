@@ -324,7 +324,7 @@ func InterServiceTLSCAKeyFor(kn *kubernautv1alpha2.Kubernaut) string {
 	if kn == nil || kn.Spec.TLS.Mode == "" {
 		return "service-ca.crt"
 	}
-	return "ca.crt"
+	return tlsCACertificateKey
 }
 
 // InterServiceTLSCAVolume returns the selected trust-material volume and maps
@@ -816,6 +816,15 @@ func EffectiveWorkflowDiscoveryLLMProfileRef(kn *kubernautv1alpha2.Kubernaut) st
 	return effectiveLLMProfileRef(kn, kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef)
 }
 
+// EffectiveAlignmentCheckLLMProfileRef returns the profile used by KA's
+// independent alignment-check sibling agent. Alignment is intentionally
+// resolved from its own reference rather than inheriting the investigation
+// profile; an empty reference is inferred only when the shared profile map
+// contains exactly one unambiguous profile.
+func EffectiveAlignmentCheckLLMProfileRef(kn *kubernautv1alpha2.Kubernaut) string {
+	return effectiveLLMProfileRef(kn, kn.Spec.KubernautAgent.AlignmentCheck.LLMProfileRef)
+}
+
 // phaseCredentialsVolumeName returns the Volume/VolumeMount name for the
 // dedicated Secret mount of the workflowDiscovery profile when it has a
 // different credentialsSecretName than the investigation profile (#233).
@@ -830,6 +839,19 @@ func phaseCredentialsVolumeName(phase string) string {
 func phaseCredentialsMountPath(phase string) string {
 	return "/etc/kubernaut-agent/phase-credentials/" + phase
 }
+
+const (
+	alignmentCredentialsVolumeName = "alignment-credentials"
+	alignmentCredentialsMountPath  = "/etc/kubernaut-agent/alignment-credentials" //nolint:gosec // mount-path convention, not credential material
+	alignmentOAuth2VolumeName      = "alignment-oauth2-credentials"
+	alignmentOAuth2MountPath       = "/etc/kubernaut-agent/alignment-oauth2"
+	alignmentTLSClientVolumeName   = "alignment-llm-tls-client"
+	alignmentTLSClientMountPath    = "/etc/kubernaut-agent/alignment-tls"
+	workflowOAuth2VolumeName       = "workflow-discovery-oauth2"
+	workflowOAuth2MountPath        = "/etc/kubernaut-agent/oauth2/workflow-discovery"
+	workflowTLSClientVolumeName    = "workflow-discovery-llm-tls-client"
+	workflowTLSClientMountPath     = "/etc/kubernaut-agent/workflow-tls"
+)
 
 // AFLLMProfileRef returns the name of the profile API Frontend's own LLM
 // connection resolves to. API Frontend is an independent LLM consumer and

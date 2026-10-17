@@ -2300,8 +2300,9 @@ spec:
                   description: |-
                     LLMProfileSpec defines a single, named LLM provider configuration.
                     Profiles live in spec.llmProfiles and are referenced by name (llmProfileRef)
-                    from KA, API Frontend, and API Frontend's severity-triage configuration,
-                    decoupling each component's LLM identity from a single shared config.
+                    from KA's sibling investigation, workflow-discovery, and alignment agents,
+                    API Frontend, and API Frontend's severity-triage configuration, decoupling
+                    each component's LLM identity from a single shared config.
                   properties:
                     azureApiVersion:
                       description: Azure OpenAI API version.
@@ -2411,6 +2412,22 @@ spec:
                       description: Path to a CA certificate file for TLS to the LLM
                         endpoint.
                       type: string
+                    tlsCaSecretRef:
+                      description: |-
+                        Optional Secret containing the PEM CA certificate used by the LLM
+                        endpoint. The default key is "ca.crt". When set, tlsCaFile must name
+                        the deterministic path where the operator mounts the selected key.
+                      properties:
+                        key:
+                          default: ca.crt
+                          description: Key within the Secret containing the CA PEM.
+                          type: string
+                        name:
+                          description: Name of the Secret.
+                          type: string
+                      required:
+                      - name
+                      type: object
                     tlsCertFile:
                       description: |-
                         Path to a client certificate file for mTLS to the LLM endpoint.
