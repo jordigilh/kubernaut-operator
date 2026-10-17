@@ -3,6 +3,7 @@ package policy
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -12,6 +13,11 @@ import (
 )
 
 var _ = Describe("bounded external metrics scraper authorization", func() {
+	It("UT-AUDIT-537-CRD-001: keeps native isolation implicit instead of exposing a mode knob", func() {
+		_, found := reflect.TypeOf(kubernautv1alpha2.NetworkPoliciesSpec{}).FieldByName("Mode")
+		Expect(found).To(BeFalse(), "NetworkPoliciesSpec must not expose a redundant mode field")
+	})
+
 	It("UT-AUDIT-515-SCRAPE-001: adds only source-qualified TCP metrics ingress for Cilium and Calico", func() {
 		intent, err := BuildIntent("kubernaut-system", []string{"datastorage", "authwebhook"}, nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -101,15 +107,7 @@ var _ = Describe("bounded external metrics scraper authorization", func() {
 		}
 	})
 
-	It("UT-AUDIT-515-SCRAPE-005: validates bounded limits and rejects inherited/provider contradictions", func() {
-		source := kubernautv1alpha2.MetricsScrapeSource{Namespace: "monitoring", PodLabels: map[string]string{"app": "prometheus"}}
-		for _, mode := range []string{"invalid", kubernautv1alpha2.NetworkIsolationInherited} {
-			Expect(ValidateNativeOverrides(kubernautv1alpha2.NetworkPoliciesSpec{Mode: mode,
-				ScrapeSources: []kubernautv1alpha2.MetricsScrapeSource{source}})).To(HaveOccurred())
-		}
-		Expect(ValidateNativeOverrides(kubernautv1alpha2.NetworkPoliciesSpec{
-			Mode: kubernautv1alpha2.NetworkIsolationInherited, Provider: kubernautv1alpha2.NetworkPolicyProviderCilium,
-		})).To(MatchError(ContainSubstring("inherited isolation")))
+	It("UT-AUDIT-515-SCRAPE-005: validates bounded scraper limits without an isolation mode override", func() {
 		Expect(ValidateNativeOverrides(kubernautv1alpha2.NetworkPoliciesSpec{
 			ScrapeSources: make([]kubernautv1alpha2.MetricsScrapeSource, 17),
 		})).To(MatchError(ContainSubstring("at most 16")))

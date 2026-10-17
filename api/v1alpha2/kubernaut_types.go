@@ -2726,22 +2726,7 @@ const (
 	NetworkPolicyProviderOVN    NetworkPolicyProvider = "OVN"
 )
 
-const (
-	NetworkIsolationRequired  = "Required"
-	NetworkIsolationInherited = "Inherited"
-)
-
 type NetworkPoliciesSpec struct {
-	// Mode requires a qualified native provider by default. Inherited is an
-	// explicit administrator acknowledgement that isolation is supplied outside
-	// this operator; it does not attest that such protection has been verified.
-	// Existing native policies are retained in Inherited mode, not silently
-	// pruned on a discovery failure or opt-out. See PR-515-AUDIT-REMEDIATION.md.
-	// +kubebuilder:validation:Enum=Required;Inherited
-	// +kubebuilder:default=Required
-	// +optional
-	Mode string `json:"mode,omitempty"`
-
 	// ScrapeSources authorizes explicitly identified scraper pods, only on
 	// generated component metrics ports. An empty list grants no external
 	// scraper access; a Prometheus query URL is not a scraper identity.

@@ -86,12 +86,12 @@ Contingency: a DNS resolution failure reports the existing policy-readiness
 condition as false, prevents activation and retains the previously authorized
 policies. It does not delete policies or reopen unmatched traffic. Deployment
 rollback requires the administrator's normal reviewed operator-image rollback;
-neither this repair nor its probes automatically relax `Required` to `Inherited`.
+neither this repair nor its probes add an administrator-owned isolation bypass.
 Before production rollout, complete the separately approved dependency inventory
 and validate real application traffic. The scoped fixtures are not a substitute.
 
 These repairs do not close all F1-F9 findings or qualify upstream applications,
-actual scrapes/alerts, final release artifacts, inherited/perimeter controls or
+actual scrapes/alerts, final release artifacts, administrator-owned perimeter controls or
 IPv6 packets. Route positive/negative evidence is distinct from NodePort
 diagnostics. Preserve immutable historical audits and publish new source-bound
 evidence separately.

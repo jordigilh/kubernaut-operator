@@ -1,0 +1,18 @@
+{{- $existing := lookup "v1" "Secret" .Release.Namespace .Values.postgresql.tls.secretName -}}
+{{- $serviceName := .Values.postgresql.serviceName -}}
+{{- $namespace := .Release.Namespace -}}
+{{- $dnsNames := list $serviceName (printf "%s.%s" $serviceName $namespace) (printf "%s.%s.svc" $serviceName $namespace) (printf "%s.%s.svc.cluster.local" $serviceName $namespace) -}}
+{{- $ca := genCA (printf "%s-bootstrap-ca" $serviceName) (int .Values.postgresql.tls.validityDays) -}}
+{{- $cert := genSignedCert $serviceName nil $dnsNames (int .Values.postgresql.tls.validityDays) $ca -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.postgresql.tls.secretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ if $existing }}{{ index $existing.data "tls.crt" | quote }}{{ else }}{{ $cert.Cert | b64enc | quote }}{{ end }}
+  tls.key: {{ if $existing }}{{ index $existing.data "tls.key" | quote }}{{ else }}{{ $cert.Key | b64enc | quote }}{{ end }}
+  ca.crt: {{ if $existing }}{{ index $existing.data "ca.crt" | quote }}{{ else }}{{ $ca.Cert | b64enc | quote }}{{ end }}

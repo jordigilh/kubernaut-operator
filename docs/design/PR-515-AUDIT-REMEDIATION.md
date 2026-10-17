@@ -63,11 +63,13 @@ new reservation Lease (new lifecycle/RBAC without necessity for this invariant).
   commits. Preserve owner authorization before hash fast paths, authoritative
   race reads, UID/resource-version delete preconditions, provisioning namespace
   retention and the two independently tested TLS-fixture CI corrections.
-- Required (default) native isolation blocks migration and new workloads on
-  failed provider discovery; Inherited explicitly acknowledges administrator
-  isolation without attesting it. Existing policies are retained on failure or
-  inherited selection. B1 was selected over silent best-effort (B2) or dropping
-  inherited-isolation deployments entirely (B3).
+- Native provider isolation is mandatory before migration and new workloads.
+  The operator owns policies for Kubernaut workloads and port-scoped egress to
+  validated in-cluster BYO PostgreSQL/Valkey Services. Administrators own the
+  BYO workloads and their ingress policies; the operator never adopts, labels,
+  mutates or prunes those policies. Unsupported providers or dependency
+  topologies fail closed with actionable status; there is no administrator-owned
+  isolation bypass.
 - Typed scraper sources use an exact namespace and 1–16 exact pod labels; empty
   means no external ingress. C1 was selected over external policy-only (C2) or
   guessing scraper identities from query endpoints (C3). Authorization derives
@@ -91,10 +93,10 @@ These are production paths, not test-only builder substitutes.
 | Service convergence | `ensureServices` → `ensureResource` → `contentDrifted` | UT-AUDIT-515-DRIFT-001–003; IT-AUDIT-515-DRIFT-001 |
 | Webhook protocol | `cmd/main.go` manager construction and actual webhook server | UT-AUDIT-515-TLS-001/002 and protocol-negotiation tests |
 | Positive monitoring wiring | `Reconcile` → `reconcilePrometheusMonitoring` → `deployMonitoring` | strengthened IT-MON-513-008 and wiring-disconnection mutation |
-| Required isolation and retained policies | `reconcilePhases`/`deployWorkloads` → `reconcileProviderPolicies` | UT-AUDIT-515-POLICY-001–003; IT-AUDIT-515-POLICY-001 |
+| Native isolation and retained policies | `reconcilePhases`/`deployWorkloads` → `reconcileProviderPolicies` | UT-AUDIT-515-POLICY-001–003; IT-AUDIT-515-POLICY-001 |
 | Typed scraper ingress | `reconcileProviderPolicies` → generated Service port intent → `policy.Render` | UT-AUDIT-515-SCRAPE-001–007; provider policy reconciliation including custom AF port 19180 |
 | Truthful audit | `Reconcile`, `patchStatus` and `runFinalizerCleanup` | UT-AUDIT-515-AUDIT-001–003 and real-API phase/cleanup assertions; distinct CR/child identity fields |
-| Integrated ownership and conditional cleanup | `Reconcile` → write/cleanup subfunctions → `checkResourceOwnership`/`deleteObservedResource` | UT-AUDIT-515-OWNERSHIP-001–006; IT-OWN-514-001–022; IT-OWN-514-019 explicitly selects Required isolation |
+| Integrated ownership and conditional cleanup | `Reconcile` → write/cleanup subfunctions → `checkResourceOwnership`/`deleteObservedResource` | UT-AUDIT-515-OWNERSHIP-001–006; IT-OWN-514-001–022; IT-OWN-514-019 relies on implicit native isolation |
 | Complete telemetry client-chain validation | `phaseValidate` → `validateTelemetrySecrets` → strict PEM parser | UT-AUDIT-515-TELEMETRY-006; IT-TELEMETRY-AUDIT-515-001 |
 | Stable automatic issuer selection | `ensureRuntimeTLS` → `resolveCertManagerIssuer` → `selectSingleCertManagerIssuer` | UT-AUDIT-515-CERTMANAGER-008; IT-TLS-AUDIT-515-004 |
 | Internal issuer identities | `selectSingleCertManagerIssuer` → `resources.CertManagerBootstrapIssuerNames` | UT-AUDIT-515-SERIALIZATION-001; UT-AUDIT-515-CERTMANAGER-008; IT-TLS-AUDIT-515-004 |

@@ -35,7 +35,7 @@ with failures addressed. The verified implementation is organized as follows:
 | `2743b22` | Explicit webhook/metrics TLS protocols, patched Go floor, strict telemetry-chain validation and uncached admission reads |
 | `75f0ae4` | Stable current-owner-qualified issuer discovery and shared checked TLS material validation |
 | `e4013e6` | Persisted singleton activation, live Service convergence and truthful reconciliation/cleanup traces |
-| `6c1bf08` | Required/Inherited isolation, bounded scraper identities, generated-port wiring, CRD/chart/bundle and migration contract |
+| `6c1bf08` | Fail-closed native isolation, bounded scraper identities, generated-port wiring, CRD/chart/bundle and migration contract |
 | `58a0e15` | Independent exhaustive business coverage, real-API wiring, checked generation boundaries and honest evidence tiers |
 | `189399e` | Original bounded control/migration/verification evidence, explicitly not post-integration qualification |
 | `2aea4a6` | Merge reviewed #517 from main; preserve indefinite finalizer retention, ownership authorization, conditional deletion, namespace retention, exhaustive unit coverage and both TLS-fixture CI corrections; adapt fixtures/tier IDs and add independent ownership-boundary tests |
@@ -235,8 +235,8 @@ finalizer, observable cleanup error/retry, `CleanupFailed`, and no false
 `UT-AUDIT-515-OWNERSHIP-001`–`006` independently cover new authorization/error
 boundaries; `IT-OWN-514-001`–`022` exercise actual reconciliation and deletion
 races. The fake-API finalizer-preservation case is honestly reclassified from
-`IT-OWN-514-023` to `UT-OWN-514-023`. Native-provider ownership cases explicitly
-select Required isolation instead of inheriting the generic fixture mode.
+`IT-OWN-514-023` to `UT-OWN-514-023`. Native-provider ownership cases rely on
+implicit fail-closed isolation and a qualified provider fixture.
 
 Fake-client TLS/monitoring helpers are now honestly unit evidence. Separate
 real-API journeys cover Hook, DevelopmentSelfSigned, Manual,
@@ -277,16 +277,16 @@ from the user/project, not a universal percentage requirement in SA-11 or ASVS.
 | F4 singleton activation | AC-3, CM-5, SI-10 | `v5.0.0-V2.3.2`, `v5.0.0-V15.4.2` | Uncached post-persistence current-UID authorization precedes finalizer/phases; duplicate persisted CRs fail closed. **Not atomic pre-CREATE admission**; administrator bypass, forced cleanup/orphan recovery and broader ownership remain bounded risks |
 | F6 live Service convergence | CM-2, CM-6, SI-4, SI-7 | `v5.0.0-V2.2.1` | Live owned selector/port/type drift is repaired despite unchanged hash; allocated addressing and unrelated platform metadata are preserved |
 | F7 testing, wiring and qualification | SA-11, CA-2, CA-7, CM-3 | `v5.0.0-V2.2.1`, `v5.0.0-V15.4.2`, `v5.0.0-V16.5.2` | Independent zero-miss unit gate and positive envtest/mutation evidence pass. **Full application E2E qualification remains unverified** |
-| F8 Required/Inherited isolation | AC-4, SC-7, CM-6 | `v5.0.0-V13.1.1`, `v5.0.0-V13.2.4`, `v5.0.0-V16.5.2` | Default Required blocks activation on provider discovery failure and retains policies; lost readiness cannot report Running. Explicit Inherited acknowledges administrator protection, never attests enforcement |
-| F9 action/phase/outcome audit traces | AU-2, AU-3, AU-12, SI-11 | `v5.0.0-V16.1.1`, `v5.0.0-V16.2.1`, `v5.0.0-V16.3.3`, `v5.0.0-V16.5.2` | Committed old/new phase transitions and resource actions carry distinct CR/child identity, versions and outcome; failed cleanup retains the finalizer and reports failure, never false completion. Inherited collection/retention/access/time evidence remains |
+| F8 native isolation and BYO dependency egress | AC-4, SC-7, CM-6 | `v5.0.0-V13.1.1`, `v5.0.0-V13.2.4`, `v5.0.0-V16.5.2` | Native provider discovery and validated, port-scoped BYO Service egress block activation on unsupported or unresolved topology; lost readiness cannot report Running. BYO workload and ingress-policy ownership remains administrator-side and is never adopted by the operator |
+| F9 action/phase/outcome audit traces | AU-2, AU-3, AU-12, SI-11 | `v5.0.0-V16.1.1`, `v5.0.0-V16.2.1`, `v5.0.0-V16.3.3`, `v5.0.0-V16.5.2` | Committed old/new phase transitions and resource actions carry distinct CR/child identity, versions and outcome; failed cleanup retains the finalizer and reports failure, never false completion. Operator-owned policy collection/retention/access/time evidence remains |
 | TLS/PKI, full-chain input validation and key rotation | IA-5, SC-8, SC-12, SC-13, SC-17, SI-10 | `v5.0.0-V11.1.1`, `v5.0.0-V11.2.1`, `v5.0.0-V12.1.1`, `v5.0.0-V12.3.2`, `v5.0.0-V12.3.3` | Real library/boundary tests and API journeys pass; real cert-manager, private-CA/client negotiation and approved FIPS module/operating-mode evidence remain |
 | Secret, RBAC and storage responsibilities | AC-3, AC-6, IA-5, SC-28, CM-7 | `v5.0.0-V8.1.1`, `v5.0.0-V8.2.1`, `v5.0.0-V13.2.2`, `v5.0.0-V13.3.1`, `v5.0.0-V14.1.1` | Builder/decision evidence does not qualify etcd encryption, Secret/RBAC access, HSM/vault or organizational key lifecycle; singleton introduces no new permission |
 | Migration/recovery and application compatibility | CM-3, CP-9, CP-10, SI-11 | `v5.0.0-V2.3.3`, `v5.0.0-V16.5.2` | Real Job/ConfigMap/Secret API wiring and recovery decisions pass; simulated Job completion does not qualify goose/database migration, backup or rollback |
 | Hardening, inventory and supply chain | CM-6, CM-7, CM-8, RA-5, SR-4, SC-5 | `v5.0.0-V15.1.1`, `v5.0.0-V15.1.2`, `v5.0.0-V15.2.1`, `v5.0.0-V15.2.5` | Local builder/render/security-context evidence remains distinct from immutable image/SBOM/signature/provenance and live availability |
 
 HTTP scrape endpoints remain HTTP. Authorization rules do not establish
-`v5.0.0-V12.3.1` encrypted monitoring communication; inherited transport
-protection/data-classification decisions still need deployment evidence.
+`v5.0.0-V12.3.1` encrypted monitoring communication; administrator-owned
+transport protection/data-classification decisions still need deployment evidence.
 Likewise, the 100% unit result does not close #420/#424/#512 application/parity
 and private-trust qualification boundaries by implication.
 
@@ -301,15 +301,17 @@ and private-trust qualification boundaries by implication.
    integrated source. Publish the new remediation PR and verify its own
    exact-head hosted pipeline; dependency CI is not candidate CI.
 4. Retain exact-SHA upstream application, CNI traffic, scrape/alert, release
-   image/SBOM/FIPS and inherited-control qualification as separate unfulfilled
-   release/deployment gates under `ISSUE-501-OPERATOR-UPSTREAM-CI-BOUNDARY.md`.
+   image/SBOM/FIPS and administrator-owned BYO ingress/CNI qualification as
+   separate unfulfilled release/deployment gates under
+   `ISSUE-501-OPERATOR-UPSTREAM-CI-BOUNDARY.md`.
 
 **Confidence: 96% in the bounded repository findings/evidence.** Justification:
 independent instrumentation and negative verifier fixtures, real-API positive
 wiring and mutation detection, actual serving-protocol probes, source scan,
 build/lint and compatibility gates. This is not confidence in production
-qualification: live/application, immutable release and inherited-control
-evidence remain explicit blockers. The original snapshot-bound NO-GO stands.
+qualification: live/application, immutable release and administrator-owned
+BYO/CNI evidence remain explicit blockers. The original snapshot-bound NO-GO
+stands.
 
 [nist]: https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final
 [catalog]: https://raw.githubusercontent.com/usnistgov/oscal-content/main/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_catalog.json

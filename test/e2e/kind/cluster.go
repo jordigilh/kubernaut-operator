@@ -113,7 +113,7 @@ spec: {}
 func providerFromEnvironment() (policyProvider, error) {
 	value := strings.ToLower(strings.TrimSpace(os.Getenv("KUBERNAUT_E2E_PROVIDER")))
 	if value == "" {
-		value = string(providerGeneric)
+		value = string(providerCilium)
 	}
 	switch policyProvider(value) {
 	case providerGeneric, providerCilium, providerCalico:

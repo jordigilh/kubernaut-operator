@@ -23,7 +23,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -45,7 +44,6 @@ const (
 	serviceAccountName     = "kubernaut-operator-controller-manager"
 	metricsServiceName     = "kubernaut-operator-controller-manager-metrics-service"
 	metricsRoleBindingName = "kubernaut-operator-metrics-binding"
-	e2eSyntheticAPIKey     = "e2e-synthetic-credential"
 )
 
 var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
@@ -55,6 +53,9 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 		By("creating the CR namespace")
 		cmd := exec.Command("kubectl", "create", "ns", crNS)
 		_, _ = utils.Run(cmd) // ignore if already exists
+
+		By("installing the disposable PostgreSQL and Valkey bootstrap")
+		installDevelopmentBootstrap()
 
 		By("installing CRDs")
 		cmd = exec.Command("make", "install")
@@ -78,12 +79,10 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			"-n", crNS, "--ignore-not-found=true", "--timeout=60s")
 		_, _ = utils.Run(cmd)
 
-		By("cleaning up BYO secrets")
-		for _, s := range []string{"postgresql-secret", "valkey-secret", "llm-credentials"} {
-			cmd = exec.Command("kubectl", "delete", "secret", s,
-				"-n", crNS, "--ignore-not-found=true")
-			_, _ = utils.Run(cmd)
-		}
+		By("uninstalling the disposable PostgreSQL and Valkey bootstrap")
+		cmd = exec.Command("helm", "uninstall", "kubernaut-dev-bootstrap",
+			"-n", crNS, "--wait")
+		_, _ = utils.Run(cmd)
 
 		By("removing the test-owned audit key protection finalizer")
 		cmd = exec.Command("kubectl", "patch", "secret", "datastorage-audit-hmac-key",
@@ -211,11 +210,6 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 	// ── 2. CR lifecycle: create → Running ───────────────────────────────
 	Context("Kubernaut CR Lifecycle", func() {
 		BeforeAll(func() {
-			By("creating BYO prerequisite secrets")
-			createBYOSecrets()
-			By("creating sample policy and notification prerequisites")
-			createSamplePrerequisites()
-
 			By("applying the Kubernaut CR from config/samples")
 			cmd := exec.Command("kubectl", "apply", "-f", "config/samples/v1alpha2_kubernaut.yaml")
 			_, err := utils.Run(cmd)
@@ -260,14 +254,17 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred(), "Deployment %q should exist", dep)
 				Expect(output).To(Equal(dep))
 
-				readyCmd := exec.Command("kubectl", "get", "deployment", dep,
-					"-n", crNS, "-o", "jsonpath={.status.readyReplicas}")
-				readyOutput, err := utils.Run(readyCmd)
-				Expect(err).NotTo(HaveOccurred(), "Deployment %q readyReplicas should be readable", dep)
-				Expect(readyOutput).NotTo(Equal("0"),
-					"Deployment %q should have at least one ready replica", dep)
-				Expect(readyOutput).NotTo(BeEmpty(),
-					"Deployment %q should have at least one ready replica", dep)
+				Eventually(func(g Gomega) {
+					readyCmd := exec.Command("kubectl", "get", "deployment", dep,
+						"-n", crNS, "-o", "jsonpath={.status.readyReplicas}")
+					readyOutput, getErr := utils.Run(readyCmd)
+					g.Expect(getErr).NotTo(HaveOccurred(),
+						"Deployment %q readyReplicas should be readable", dep)
+					g.Expect(readyOutput).NotTo(BeEmpty(),
+						"Deployment %q should have at least one ready replica", dep)
+					g.Expect(readyOutput).NotTo(Equal("0"),
+						"Deployment %q should have at least one ready replica", dep)
+				}, 10*time.Minute, 5*time.Second).Should(Succeed())
 			}
 		})
 
@@ -281,20 +278,21 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			}
 			for _, svc := range []string{
 				"gateway-service", "data-storage-service", "aianalysis-service",
-				"signalprocessing-service", "remediationorchestrator-service",
-				"workflowexecution-service", "effectivenessmonitor-service",
-				"notification-service", "kubernaut-agent-service", "authwebhook-service",
+				"signalprocessing-controller-metrics", "remediationorchestrator-controller",
+				"workflowexecution-controller-metrics", "effectivenessmonitor-metrics",
+				"notification-metrics", "kubernaut-agent", "authwebhook-service",
+				"apifrontend", "kubernaut-console",
 			} {
 				verifyService(svc)
 			}
 		})
 
-		It("should create the OCP Route for Gateway", func() {
+		It("should honor the disabled Gateway OCP Route", func() {
 			cmd := exec.Command("kubectl", "get", "route", "gateway-route",
-				"-n", crNS, "-o", "jsonpath={.spec.to.name}")
+				"-n", crNS, "--ignore-not-found=true", "-o", "jsonpath={.metadata.name}")
 			output, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Gateway Route should exist")
-			Expect(output).To(Equal("gateway-service"))
+			Expect(err).NotTo(HaveOccurred(), "Gateway Route lookup should succeed")
+			Expect(output).To(BeEmpty(), "Gateway Route should remain disabled by the sample CR")
 		})
 
 		It("should create ClusterRoles with kubernaut labels", func() {
@@ -368,15 +366,22 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			}
 		})
 
-		It("should NOT create default policy ConfigMaps (user-provided prerequisite)", func() {
+		It("should preserve bootstrap-provided policy ConfigMaps without operator ownership", func() {
 			for _, name := range []string{
 				"aianalysis-policy",
 				"signalprocessing-policy",
 			} {
 				cmd := exec.Command("kubectl", "get", "configmap", name,
-					"-n", crNS)
-				_, err := utils.Run(cmd)
-				Expect(err).To(HaveOccurred(), "ConfigMap %q should not be created by the operator", name)
+					"-n", crNS, "-o", "jsonpath={.metadata.labels.app\\.kubernetes\\.io/managed-by}")
+				output, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "ConfigMap %q should be provided by the bootstrap chart", name)
+				Expect(output).To(Equal("Helm"), "ConfigMap %q should remain Helm-owned", name)
+
+				cmd = exec.Command("kubectl", "get", "configmap", name,
+					"-n", crNS, "-o", "jsonpath={.metadata.ownerReferences}")
+				output, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "ConfigMap %q ownership should be readable", name)
+				Expect(output).To(BeEmpty(), "ConfigMap %q should not be adopted by the operator", name)
 			}
 		})
 
@@ -408,16 +413,33 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			verifyCleanedUp("clusterrolebindings")
 		})
 
-		It("should clean up the workflow namespace", func() {
-			verifyCleaned := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "namespace", workflowNS,
-					"--ignore-not-found=true", "-o", "jsonpath={.metadata.name}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(BeEmpty(),
-					"workflow namespace should be deleted")
+		It("should retain the workflow namespace and clean operator-owned contents", func() {
+			cmd := exec.Command("kubectl", "get", "namespace", workflowNS,
+				"-o", "jsonpath={.metadata.name}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "workflow namespace should be retained")
+			Expect(output).To(Equal(workflowNS))
+
+			cmd = exec.Command("kubectl", "get", "namespace", workflowNS,
+				"-o", "jsonpath={.metadata.labels.app\\.kubernetes\\.io/managed-by}")
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "workflow namespace ownership should be readable")
+			Expect(output).To(Equal("kubernaut-operator"),
+				"retained workflow namespace should keep operator provenance")
+
+			for _, kind := range []string{"role", "rolebinding", "serviceaccount"} {
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", kind,
+						"-n", workflowNS,
+						"-l", "app.kubernetes.io/managed-by=kubernaut-operator",
+						"-o", `go-template={{range .items}}{{.metadata.name}}{{"\n"}}{{end}}`)
+					output, getErr := utils.Run(cmd)
+					g.Expect(getErr).NotTo(HaveOccurred(),
+						"operator-owned workflow %s should be readable", kind)
+					g.Expect(utils.GetNonEmptyLines(output)).To(BeEmpty(),
+						"operator-owned workflow %s should be deleted", kind)
+				}, 2*time.Minute).Should(Succeed())
 			}
-			Eventually(verifyCleaned, 2*time.Minute).Should(Succeed())
 		})
 
 		It("should clean up webhook configurations", func() {
@@ -447,86 +469,16 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 	})
 })
 
-// createBYOSecrets creates the prerequisite Secrets the operator expects:
-// postgresql, valkey, and LLM credentials.
-func createBYOSecrets() {
-	secrets := []struct {
-		name string
-		data map[string]string
-	}{
-		{
-			name: "postgresql-secret",
-			data: map[string]string{
-				"POSTGRES_USER":     "kubernaut",
-				"POSTGRES_PASSWORD": "test-pg-password",
-				"POSTGRES_DB":       "kubernaut",
-			},
-		},
-		{
-			name: "valkey-secret",
-			data: map[string]string{
-				"valkey-secrets.yaml": "requirepass test-valkey-password",
-			},
-		},
-		{
-			name: "llm-credentials",
-			data: map[string]string{
-				"api-key":          e2eSyntheticAPIKey,
-				"credentials.json": "{}",
-			},
-		},
-		{
-			name: "slack-webhook",
-			data: map[string]string{
-				"webhook-url": "https://hooks.slack.example/e2e",
-			},
-		},
-		{
-			name: "kubernaut-console-oidc",
-			data: map[string]string{
-				"client-id": "e2e-client", "client-secret": "e2e-secret",
-				"cookie-secret": "01234567890123456789012345678901",
-			},
-		},
-	}
-
-	for _, s := range secrets {
-		args := []string{"create", "secret", "generic", s.name, "-n", crNS}
-		for k, v := range s.data {
-			args = append(args, fmt.Sprintf("--from-literal=%s=%s", k, v))
-		}
-		applyKubectlManifest(args, fmt.Sprintf("secret %s", s.name))
-	}
-}
-
-// createSamplePrerequisites creates the ConfigMaps referenced by the sample
-// CR. Keeping these fixtures next to the sample E2E prevents new required BYO
-// references from turning the lifecycle test into a pre-validation timeout.
-func createSamplePrerequisites() {
-	configMaps := []struct {
-		name string
-		key  string
-		data string
-	}{
-		{name: "aianalysis-policy", key: "approval.rego", data: "package approval\ndefault allow = true\n"},
-		{name: "signalprocessing-policy", key: "policy.rego", data: "package signalprocessing\ndefault allow = true\n"},
-	}
-	for _, configMap := range configMaps {
-		applyKubectlManifest([]string{"create", "configmap", configMap.name, "-n", crNS,
-			"--from-literal=" + configMap.key + "=" + configMap.data}, fmt.Sprintf("ConfigMap %s", configMap.name))
-	}
-}
-
-func applyKubectlManifest(createArgs []string, description string) {
-	createArgs = append(createArgs, "--dry-run=client", "-o", "yaml")
-	createCmd := exec.CommandContext(context.Background(), "kubectl", createArgs...)
-	manifest, err := utils.Run(createCmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to render %s", description)
-
-	applyCmd := exec.CommandContext(context.Background(), "kubectl", "apply", "-f", "-")
-	applyCmd.Stdin = strings.NewReader(manifest)
-	_, err = utils.Run(applyCmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to apply %s", description)
+func installDevelopmentBootstrap() {
+	ctx, cancel := context.WithTimeout(context.Background(), 11*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "helm", "upgrade", "--install", "kubernaut-dev-bootstrap",
+		"charts/kubernaut-dev-bootstrap",
+		"--namespace", crNS,
+		"--create-namespace",
+		"--wait", "--timeout", "10m")
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to install the development bootstrap chart")
 }
 
 // serviceAccountToken returns a token for the operator service account.

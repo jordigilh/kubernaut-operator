@@ -53,6 +53,21 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 	It("E2E-OWN-514-001 [AC-3, AC-6, CM-3, SI-4; SOC2 CC6.1, CC6.6, CC7.2, CC8.1; "+
 		"ASVS v5.0.0-V8.3.1, v5.0.0-V16.2.1] preserves administrator resources across failed install, "+
 		"recovery, upgrade, uninstall and marked reinstall", func() {
+		if configuredProvider == providerGeneric {
+			By("proving an unsupported generic topology fails closed")
+			Expect(applyKubernautCR(ctx)).To(Succeed())
+			Eventually(func(g Gomega) {
+				g.Expect(kubernautCondition(ctx, "BYOValidated")).To(Equal(conditionTrue))
+				g.Expect(kubernautCondition(ctx, "ProviderDetected")).To(Equal("False"))
+				g.Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal("False"))
+				phase, err := kubernautPhase(ctx)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(phase).NotTo(Equal(string(kubernautv1alpha2.PhaseRunning)))
+			}).Should(Succeed())
+			Expect(noManagedPolicies(ctx)).To(Succeed())
+			return
+		}
+
 		By("creating administrator resources before the real CR")
 		witnesses, err := createOwnershipConflicts(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -151,6 +166,10 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			"validation, migration, deployment, "+
 			"TLS source, and provider status",
 		func() {
+			if configuredProvider == providerGeneric {
+				return
+			}
+
 			By("waiting for the real operator to validate the CR")
 			Eventually(func(g Gomega) {
 				g.Expect(kubernautCondition(ctx, "BYOValidated")).To(Equal(conditionTrue))
@@ -273,6 +292,10 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			"ASVS v5.0.0-V2.2.1, v5.0.0-V14.2.4, v5.0.0-V16.5.2] reconciles the live KA evidence handoff "+
 			"default and explicit override",
 		func() {
+			if configuredProvider == providerGeneric {
+				return
+			}
+
 			By("verifying the operator-generated live KA ConfigMap and read-only ConfigMap mount")
 			Eventually(func(g Gomega) {
 				config, err := kubectl(ctx, "get", "configmap", "kubernaut-agent-config", "-n", kubernautNamespace,
@@ -304,6 +327,10 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			"ASVS v5.0.0-V12.2.1, v5.0.0-V16.5.2] refuses invalid administrator "+
 			"material without a plaintext fallback",
 		func() {
+			if configuredProvider == providerGeneric {
+				return
+			}
+
 			if configuredTLS != tlsManualAdmin {
 				return
 			}
@@ -337,6 +364,10 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			"ASVS v5.0.0-V11.1.1, v5.0.0-V11.1.2, v5.0.0-V12.1.1, "+
 			"v5.0.0-V16.5.2] rotates a hook leaf without losing trust",
 		func() {
+			if configuredProvider == providerGeneric {
+				return
+			}
+
 			if configuredTLS != tlsHook {
 				return
 			}
@@ -435,6 +466,10 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 	It("E2E-TLS-CERTMANAGER-002 [SC-8, SC-12, SC-13, SI-4; SOC2 CC7, A1; "+
 		"ASVS v5.0.0-V11.1.1, v5.0.0-V11.1.2, v5.0.0-V12.1.1, v5.0.0-V16.5.2] rotates a cert-manager leaf "+
 		"without losing operator trust", func() {
+		if configuredProvider == providerGeneric {
+			return
+		}
+
 		if configuredTLS != tlsCertManager {
 			return
 		}
@@ -460,10 +495,16 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 	})
 
 	It("preserves a user-owned provider policy while cleaning up the CR journey", func() {
-		if configuredProvider != providerGeneric {
-			Expect(applyUnmanagedNativePolicy(ctx)).To(Succeed())
-			Expect(unmanagedNativePolicyExists(ctx)).To(Succeed())
+		if configuredProvider == providerGeneric {
+			Expect(deleteKubernautCR(ctx)).To(Succeed())
+			Eventually(func(g Gomega) {
+				g.Expect(noManagedPolicies(ctx)).To(Succeed())
+			}).Should(Succeed())
+			return
 		}
+
+		Expect(applyUnmanagedNativePolicy(ctx)).To(Succeed())
+		Expect(unmanagedNativePolicyExists(ctx)).To(Succeed())
 
 		By("deleting the Kubernaut CR through its finalizer path")
 		Expect(deleteKubernautCR(ctx)).To(Succeed())

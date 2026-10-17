@@ -18,6 +18,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/events"
 	"k8s.io/utils/ptr"
@@ -27,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
+	"github.com/jordigilh/kubernaut-operator/internal/policy"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
@@ -45,6 +48,18 @@ func (crdUnitTransport) RoundTrip(request *http.Request) (*http.Response, error)
 
 func businessUnitReconciler(kn *kubernautv1alpha2.Kubernaut, faults interceptor.Funcs) *KubernautReconciler {
 	objects := []client.Object{kn,
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "postgresql", Namespace: kn.Namespace}, Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "postgresql"}, Ports: []corev1.ServicePort{{Name: "postgresql", Protocol: corev1.ProtocolTCP, Port: 5432, TargetPort: intstr.FromInt(5432)}},
+		}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "valkey", Namespace: kn.Namespace}, Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "valkey"}, Ports: []corev1.ServicePort{{Name: "valkey", Protocol: corev1.ProtocolTCP, Port: 6379, TargetPort: intstr.FromInt(6379)}},
+		}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "thanos-querier", Namespace: resources.OCPMonitoringNamespace}, Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "thanos-querier"}, Ports: []corev1.ServicePort{{Name: "web", Protocol: corev1.ProtocolTCP, Port: 9091, TargetPort: intstr.FromInt(9091)}},
+		}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "alertmanager-main", Namespace: resources.OCPMonitoringNamespace}, Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "alertmanager"}, Ports: []corev1.ServicePort{{Name: "web", Protocol: corev1.ProtocolTCP, Port: 9094, TargetPort: intstr.FromInt(9094)}},
+		}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: pgSecretName, Namespace: kn.Namespace}, Data: map[string][]byte{
 			"POSTGRES_USER": []byte("kubernaut"), "POSTGRES_PASSWORD": []byte("unit-secret"), "POSTGRES_DB": []byte("kubernaut"),
 		}},
@@ -72,16 +87,31 @@ func businessUnitReconciler(kn *kubernautv1alpha2.Kubernaut, faults interceptor.
 		"alertmanagerconfigs.monitoring.coreos.com"} {
 		objects = append(objects, &apiextensionsv1.CustomResourceDefinition{ObjectMeta: metav1.ObjectMeta{Name: name}})
 	}
+	providerCRD := ciliumPolicyCRD()
+	providerDaemonSet := ciliumProviderDaemonSet()
+	providerDaemonSet.Status.DesiredNumberScheduled = 1
+	providerDaemonSet.Status.NumberReady = 1
+	objects = append(objects, providerCRD, providerDaemonSet)
 	certificate := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "cert-manager.io/v1", "kind": "Certificate",
 	}}
 	api := fake.NewClientBuilder().WithScheme(k8sClient.Scheme()).WithObjects(objects...).
 		WithStatusSubresource(&kubernautv1alpha2.Kubernaut{}, &batchv1.Job{}, &appsv1.Deployment{}, certificate).
 		WithInterceptorFuncs(faults).Build()
-	return &KubernautReconciler{Client: api, APIReader: api, Scheme: api.Scheme(),
+	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{{Group: "cilium.io", Version: "v2"}})
+	mapper.Add(policy.RequiredGVKs(policy.ProviderCilium)[0], meta.RESTScopeNamespace)
+	mapped := businessMappedClient{Client: api, mapper: mapper}
+	return &KubernautReconciler{Client: mapped, APIReader: mapped, Scheme: api.Scheme(),
 		Recorder: events.NewFakeRecorder(10000), now: time.Now,
 		RestCfg: &rest.Config{Host: "https://unit.invalid", Transport: crdUnitTransport{}},
 	}
+}
+
+func businessUnitReconcilerWithoutProvider(kn *kubernautv1alpha2.Kubernaut, faults interceptor.Funcs) *KubernautReconciler {
+	r := businessUnitReconciler(kn, faults)
+	ExpectWithOffset(1, r.Delete(ctx, ciliumPolicyCRD())).To(Succeed())
+	ExpectWithOffset(1, r.Delete(ctx, ciliumProviderDaemonSet())).To(Succeed())
+	return r
 }
 
 func refreshBusinessUnitCR(r *KubernautReconciler, kn *kubernautv1alpha2.Kubernaut) {

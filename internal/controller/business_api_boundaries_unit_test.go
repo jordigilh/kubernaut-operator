@@ -398,7 +398,6 @@ var _ = Describe("independent activation and exposure failure decisions", Label(
 
 	It("UT-AUDIT-515-API-012: propagates native policy render, ownership, prune and status failures", func() {
 		kn := newMinimalCR()
-		kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 		kn.Spec.Monitoring.Prometheus.Enabled, kn.Spec.Monitoring.AlertManager.Enabled = ptr.To(false), ptr.To(false)
 		for _, faults := range []interceptor.Funcs{
 			{Create: func(ctx context.Context, api client.WithWatch, object client.Object, options ...client.CreateOption) error {
@@ -658,11 +657,9 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 			Expect(err).To(MatchError(ContainSubstring(unitAPIDenial)))
 		}
 		kn := newMinimalCR()
-		kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
-		r := businessUnitReconciler(kn, interceptor.Funcs{})
+		r := businessUnitReconcilerWithoutProvider(kn, interceptor.Funcs{})
 		_, err := r.reconcilePhases(ctx, kn, kn)
 		Expect(err).To(HaveOccurred())
-		kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationInherited
 		job, err := resources.MigrationJob(kn)
 		Expect(err).NotTo(HaveOccurred())
 		kn.Status.LastMigrationHash = resources.SpecHash(job)
@@ -751,7 +748,6 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		_, err = r.detectMissingClusterRoles(ctx, []string{"customer-role"})
 		Expect(err).To(HaveOccurred())
 		Expect(r.deleteWorkflowResources(ctx, kn)).NotTo(BeEmpty())
-		kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 		r = businessUnitReconciler(kn, interceptor.Funcs{})
 		_, err = r.phaseRunning(ctx, kn, kn)
 		Expect(err).NotTo(HaveOccurred())
@@ -868,10 +864,9 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		_, _, err := r.ensureRuntimeTLS(ctx, kn)
 		Expect(err).To(MatchError(ContainSubstring("reading development TLS secret")))
 		kn.Spec.TLS.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{RotationBefore: "not-a-duration"}
-		r = businessUnitReconciler(kn, interceptor.Funcs{})
+		r = businessUnitReconcilerWithoutProvider(kn, interceptor.Funcs{})
 		_, _, err = r.ensureRuntimeTLS(ctx, kn)
 		Expect(err).To(HaveOccurred())
-		kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 		_, err = r.deployWorkloads(ctx, kn, kn, nil, telemetryMaterialRevisionSet{})
 		Expect(err).To(HaveOccurred())
 		kn.Spec.Monitoring.Prometheus.Enabled = ptr.To(false)

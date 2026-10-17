@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.valkey.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ .Values.valkey.name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "kubernaut-dev-bootstrap.valkeyLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kubernaut-dev-bootstrap.valkeyLabels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Values.valkey.name }}
+          image: {{ include "kubernaut-dev-bootstrap.image" (dict "image" .Values.valkey.image) | quote }}
+          imagePullPolicy: {{ .Values.valkey.image.pullPolicy }}
+          command: ["sh", "-ceu"]
+          args:
+            - exec valkey-server --requirepass "$VALKEY_PASSWORD" --save "" --appendonly no
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.valkey.secretName }}
+                  key: VALKEY_PASSWORD
+          ports:
+            - name: valkey
+              containerPort: 6379
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -ceu
+                - valkey-cli --no-auth-warning -a "$VALKEY_PASSWORD" ping
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -ceu
+                - valkey-cli --no-auth-warning -a "$VALKEY_PASSWORD" ping
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.valkey.resources | nindent 12 }}
+          {{- if .Values.valkey.securityContext.enabled }}
+          securityContext:
+            {{- include "kubernaut-dev-bootstrap.containerSecurityContext" .Values.valkey.securityContext | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          {{- if .Values.valkey.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.valkey.name }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

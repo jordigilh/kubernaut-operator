@@ -1014,10 +1014,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				"Console Deployment should not exist when console is disabled")
 		})
 
-		It("[SC-7] reports unavailable native policy without creating a raw fallback", func() {
+		It("[SC-7] reports unavailable native policy without creating a raw fallback", Label("requires-no-provider"), func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			cr.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			r := newReconciler()
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})

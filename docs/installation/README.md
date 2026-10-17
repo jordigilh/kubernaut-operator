@@ -6,7 +6,7 @@ For the fuller, every-knob-annotated walkthrough:
 
 | Step | Document | What it covers |
 |---|---|---|
-| 1 | [Infrastructure Prerequisites](01-infrastructure.md) | Namespace, PostgreSQL, Valkey, LLM credentials |
+| 1 | [Infrastructure Prerequisites](01-infrastructure.md) | BYO services or the disposable PostgreSQL/Valkey bootstrap chart |
 | 2 | [Configure Services](02-configure-services.md) | KA (LLM/SDK), SP (Rego policy), AA (approval policy), AAP (Ansible), ArgoCD, Slack, API Frontend RBAC |
 | 3 | [Deploy Kubernaut](03-deploy.md) | Install operator, create CR, verify, seed catalog, AlertManager |
 | 4 | [Fleet: Kuadrant MCP Gateway](04-fleet-mcp-gateway.md) | Optional -- only if you enable `spec.fleet.mcpGateway.type: kuadrant` |

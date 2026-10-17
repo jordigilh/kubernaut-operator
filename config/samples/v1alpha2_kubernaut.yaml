@@ -337,12 +337,12 @@ spec:
     logging:
       level: INFO
 
-  # Native isolation is required by default before migration/workload activation.
+  # Native isolation is always required before migration/workload activation.
   # Auto requires a supported, active provider. Generic Kubernetes deployments
-  # must explicitly select mode: Inherited and supply their own isolation.
-  # No raw NetworkPolicy fallback or external scraper identity is inferred.
+  # without a supported provider fail closed; select a supported provider before
+  # activating the operator. There is no mode switch or raw NetworkPolicy
+  # fallback, and no external scraper identity is inferred.
   # networkPolicies:
-  #   mode: Required
   #   provider: Auto
   #   scrapeSources:
   #     - namespace: monitoring

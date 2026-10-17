@@ -1,0 +1,11 @@
+Kubernaut disposable development dependencies are ready.
+
+PostgreSQL: {{ .Values.postgresql.serviceName }}.{{ .Release.Namespace }}.svc.cluster.local:5432
+Valkey:     {{ .Values.valkey.serviceName }}.{{ .Release.Namespace }}.svc.cluster.local:6379
+PostgreSQL sslMode for the Kubernaut CR: {{ .Values.postgresql.sslMode }}
+
+The chart owns every resource it creates. Remove the disposable environment with:
+  helm uninstall {{ .Release.Name }} --namespace {{ .Release.Namespace }}
+
+This chart is not a production database lifecycle manager and must not be installed
+over administrator-owned BYO Services or Secrets.

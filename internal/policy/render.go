@@ -50,6 +50,9 @@ func Render(result DetectionResult, intent Intent) ([]RenderedPolicy, error) {
 	if err := ValidateMonitoringDestinations(result.Provider, intent.Monitoring); err != nil {
 		return nil, err
 	}
+	if err := ValidateMonitoringDestinations(result.Provider, intent.Dependencies); err != nil {
+		return nil, err
+	}
 	if err := validateScrapeSources(intent.ScrapeSources); err != nil {
 		return nil, err
 	}
@@ -112,6 +115,9 @@ func renderCilium(intent Intent) []RenderedPolicy {
 					},
 				},
 			},
+		}
+		for _, destination := range intent.Dependencies {
+			egress = append(egress, ciliumMonitoringRule(destination))
 		}
 		if component == MonitoringAgentComponent {
 			for _, destination := range intent.Monitoring {
@@ -177,6 +183,9 @@ func renderCalico(intent Intent) []RenderedPolicy {
 				},
 			},
 		}
+		for _, destination := range intent.Dependencies {
+			egress = append(egress, calicoDependencyRule(destination))
+		}
 		if component == MonitoringAgentComponent {
 			for _, destination := range intent.Monitoring {
 				egress = append(egress, calicoMonitoringRule(destination))
@@ -227,15 +236,40 @@ func ciliumMonitoringRule(destination MonitoringDestination) map[string]interfac
 }
 
 func calicoMonitoringRule(destination MonitoringDestination) map[string]interface{} {
+	return calicoServicePortRule(destination)
+}
+
+func calicoDependencyRule(destination MonitoringDestination) map[string]interface{} {
+	return calicoServicePortRule(destination)
+}
+
+func calicoServicePortRule(destination MonitoringDestination) map[string]interface{} {
 	return map[string]interface{}{
-		"action": "Allow",
+		"action":   "Allow",
+		"protocol": "TCP",
 		"destination": map[string]interface{}{
-			"services": map[string]interface{}{
-				"name":      destination.ServiceName,
-				"namespace": destination.Namespace,
-			},
+			// Calico forbids combining destination.services with any other
+			// selection criterion on egress rules. Match the validated Service
+			// selector's endpoints instead, then scope to the translated
+			// backend port explicitly.
+			"namespaceSelector": fmt.Sprintf("projectcalico.org/name == '%s'", destination.Namespace),
+			"selector":          calicoLabelSelector(destination.ServiceSelector),
+			"ports":             []interface{}{int64(destination.BackendPort)},
 		},
 	}
+}
+
+func calicoLabelSelector(labels map[string]string) string {
+	keys := make([]string, 0, len(labels))
+	for key := range labels {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	terms := make([]string, 0, len(keys))
+	for _, key := range keys {
+		terms = append(terms, fmt.Sprintf("%s == '%s'", quoteSelectorKey(key), labels[key]))
+	}
+	return strings.Join(terms, " && ")
 }
 
 func ciliumScrapeRule(source kubernautv1alpha2.MetricsScrapeSource, port int32) map[string]interface{} {
@@ -290,7 +324,8 @@ func renderOVN(intent Intent) []RenderedPolicy {
 		"name": "deny-other-pods", "action": "Deny",
 		"from": []interface{}{map[string]interface{}{"namespaces": map[string]interface{}{}}},
 	}}
-	allowEgress := append(ovnEgressRules(intent.Namespace, instance, intent.DNS), map[string]interface{}{
+	allowEgress := append(ovnEgressRules(intent.Namespace, instance, intent.DNS), ovnDependencyRules(intent.Dependencies)...)
+	allowEgress = append(allowEgress, map[string]interface{}{
 		"name": "deny-other-egress", "action": "Deny",
 		"to": []interface{}{map[string]interface{}{"networks": []interface{}{"0.0.0.0/0", "::/0"}}},
 	})
@@ -327,7 +362,8 @@ func renderOVN(intent Intent) []RenderedPolicy {
 		},
 	}
 	if hasPolicyComponent(intent.Components, MonitoringAgentComponent) && len(intent.Monitoring) > 0 {
-		monitoringEgress := append(ovnEgressRules(intent.Namespace, instance, intent.DNS), ovnMonitoringEgressRules(intent.Monitoring)...)
+		monitoringEgress := append(ovnEgressRules(intent.Namespace, instance, intent.DNS), ovnDependencyRules(intent.Dependencies)...)
+		monitoringEgress = append(monitoringEgress, ovnMonitoringEgressRules(intent.Monitoring)...)
 		monitoringSpec := map[string]interface{}{
 			// Priority 89 is higher precedence than the common namespace policy
 			// at 90, while remaining below platform-owned priorities.
@@ -457,6 +493,21 @@ func ovnMonitoringRule(destination MonitoringDestination) map[string]interface{}
 		"to":     []interface{}{ovnServicePodsPeer(destination)},
 		"ports":  ovnTCPPortRules(int(destination.BackendPort)),
 	}
+}
+
+func ovnDependencyRules(destinations []MonitoringDestination) []interface{} {
+	ordered := append([]MonitoringDestination(nil), destinations...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Name < ordered[j].Name })
+	rules := make([]interface{}, 0, len(ordered))
+	for _, destination := range ordered {
+		rules = append(rules, map[string]interface{}{
+			"name":   fmt.Sprintf("allow-byo-%s", destination.Name),
+			"action": "Allow",
+			"to":     []interface{}{ovnServicePodsPeer(destination)},
+			"ports":  ovnTCPPortRules(int(destination.BackendPort)),
+		})
+	}
+	return rules
 }
 
 func hasPolicyComponent(components []string, wanted string) bool {
