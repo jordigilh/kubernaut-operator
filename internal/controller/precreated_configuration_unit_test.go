@@ -255,6 +255,12 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		_, defaultErrs := precreatedConfigurationReferences(defaultNames)
 		Expect(defaultErrs).To(BeEmpty())
 
+		invalidRouting := newMinimalCR()
+		invalidRouting.Spec.Notification.Routing = &kubernautv1alpha2.ConfigMapRef{}
+		_, invalidRoutingErrs := precreatedConfigurationReferences(invalidRouting)
+		Expect(invalidRoutingErrs).To(HaveLen(1))
+		Expect(invalidRoutingErrs[0]).To(MatchError("spec.notification.routing.configMapName: name must be set"))
+
 		kn.Spec.AIAnalysis.Policy.ConfigMapName = ""
 		kn.Spec.WorkflowExecution.Ansible.Enabled = true
 		kn.Spec.WorkflowExecution.Ansible.TokenSecretRef = nil
