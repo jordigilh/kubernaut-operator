@@ -49,6 +49,10 @@ const (
 	ComponentAPIFrontend             = "apifrontend"
 	ComponentConsole                 = "kubernaut-console"
 	ComponentFleetMetadataCache      = "fleetmetadatacache"
+	// SignalProcessingProactiveSignalMappingsConfigMapName is the operator-owned
+	// built-in mappings ConfigMap. The distinct name avoids colliding with
+	// legacy user-created ConfigMaps from the removed CRD override.
+	SignalProcessingProactiveSignalMappingsConfigMapName = "signalprocessing-default-proactive-signal-mappings"
 )
 
 // MonitoringTLSCADir is the deterministic mount directory for administrator-

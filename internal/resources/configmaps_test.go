@@ -2767,7 +2767,7 @@ var _ = Describe("ConfigMaps", func() {
 
 			cm := ProactiveSignalMappingsConfigMap(kn)
 			Expect(cm).NotTo(BeNil(), "ProactiveSignalMappingsConfigMap should return the built-in default")
-			Expect(cm.Name).To(Equal("signalprocessing-proactive-signal-mappings"), "Name = %q, want %q", cm.Name, "signalprocessing-proactive-signal-mappings")
+			Expect(cm.Name).To(Equal(SignalProcessingProactiveSignalMappingsConfigMapName), "Name = %q, want %q", cm.Name, SignalProcessingProactiveSignalMappingsConfigMapName)
 			data, ok := cm.Data["proactive-signal-mappings.yaml"]
 			Expect(ok).To(BeTrue(), "ConfigMap should contain proactive-signal-mappings.yaml key")
 			for _, mapping := range []string{

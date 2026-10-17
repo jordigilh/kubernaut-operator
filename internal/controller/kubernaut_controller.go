@@ -3484,6 +3484,8 @@ func appendPrecreatedOptionalReferences(c *precreatedReferenceCollector, kn *kub
 	appendPrecreatedIngressReferences(c, kn)
 }
 
+// appendPrecreatedConfigMapReferences collects ConfigMap references that
+// users explicitly provide for optional operator-managed integrations.
 func appendPrecreatedConfigMapReferences(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
 	if name := kn.Spec.KubernautAgent.RuntimeConfigMapName; name != "" {
 		c.add(precreatedConfigMapReference, "spec.kubernautAgent.runtimeConfigMapName", name, "llm-runtime.yaml")

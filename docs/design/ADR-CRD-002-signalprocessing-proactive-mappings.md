@@ -18,6 +18,10 @@ the `Kubernaut` CRD. The operator continues to render its built-in mappings
 ConfigMap for compatibility with the current Signal Processing runtime until
 the runtime/KA handling is retired.
 
+The built-in ConfigMap uses the distinct operator-owned name
+`signalprocessing-default-proactive-signal-mappings`, avoiding collisions with
+legacy user-created ConfigMaps that used the former override name.
+
 The Helm chart may retain its legacy field temporarily, but it is not part of
 the operator contract and must not be added back to the CRD.
 

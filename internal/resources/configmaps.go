@@ -1549,12 +1549,12 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv
 	return yamlConfigMap(ObjectMeta(kn, "signalprocessing-config", ComponentSignalProcessing), "config.yaml", "signalprocessing config", cfg)
 }
 
-// ProactiveSignalMappingsConfigMap builds the built-in signalprocessing-proactive-signal-mappings
+// ProactiveSignalMappingsConfigMap builds the built-in Signal Processing mappings
 // ConfigMap with BR-SP-106 proactive signal mode mappings. The operator
 // intentionally exposes no CRD override; see docs/design/ADR-CRD-002-signalprocessing-proactive-mappings.md.
 func ProactiveSignalMappingsConfigMap(kn *kubernautv1alpha2.Kubernaut) *corev1.ConfigMap {
 	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "signalprocessing-proactive-signal-mappings", ComponentSignalProcessing),
+		ObjectMeta: ObjectMeta(kn, SignalProcessingProactiveSignalMappingsConfigMapName, ComponentSignalProcessing),
 		Data: map[string]string{
 			"proactive-signal-mappings.yaml": `proactive_signal_mappings:
   PredictedOOMKill: OOMKilled

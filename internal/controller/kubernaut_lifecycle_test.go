@@ -1623,10 +1623,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(spPolicyCM.Data).To(HaveKey("policy.rego"))
 			Expect(spPolicyCM.OwnerReferences).To(BeEmpty(), "administrator-owned policy ConfigMaps must not be adopted")
 
-			By("verifying signalprocessing-proactive-signal-mappings CM exists with proactive-signal-mappings.yaml key")
+			By("verifying the built-in Signal Processing mappings CM exists with proactive-signal-mappings.yaml key")
 			proactiveCM := &corev1.ConfigMap{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: "signalprocessing-proactive-signal-mappings", Namespace: testNamespace,
+				Name: resources.SignalProcessingProactiveSignalMappingsConfigMapName, Namespace: testNamespace,
 			}, proactiveCM)).To(Succeed())
 			Expect(proactiveCM.Data).To(HaveKey("proactive-signal-mappings.yaml"))
 		})

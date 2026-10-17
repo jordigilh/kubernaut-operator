@@ -598,7 +598,7 @@ var _ = Describe("Deployments", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			expectHasVolume(dep, "proactive-mappings")
-			expectVolumeSourceConfigMap(dep, "proactive-mappings", "signalprocessing-proactive-signal-mappings")
+			expectVolumeSourceConfigMap(dep, "proactive-mappings", SignalProcessingProactiveSignalMappingsConfigMapName)
 			expectHasVolumeMount(dep, "proactive-mappings", "/etc/signalprocessing/proactive-signal-mappings.yaml")
 		})
 	})
