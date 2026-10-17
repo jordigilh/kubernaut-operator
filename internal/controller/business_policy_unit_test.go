@@ -55,7 +55,6 @@ var _ = Describe("independent provider policy lifecycle", Label("unit"), func() 
 	It("UT-AUDIT-515-NATIVE-001: discovers, creates, retains, repairs and prunes exact native policies independently of envtest", func() {
 		kn := newMinimalCR()
 		kn.UID = "unit-native"
-		kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 		kn.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderCilium
 		kn.Spec.NetworkPolicies.ScrapeSources = []kubernautv1alpha2.MetricsScrapeSource{{Namespace: "metrics", PodLabels: map[string]string{"app": "prometheus"}}}
 		kn.Spec.APIFrontend.MetricsPort = ptr.To[int32](9180)
@@ -87,8 +86,6 @@ var _ = Describe("independent provider policy lifecycle", Label("unit"), func() 
 		kn.Spec.Monitoring.Prometheus.URL = "https://missing.metrics.svc:9090"
 		Expect(r.reconcileProviderPolicies(ctx, kn, kn)).To(Succeed(), "partial endpoint resolution is represented in status")
 		Expect(meta.IsStatusConditionFalse(kn.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady)).To(BeTrue())
-		kn.Spec.NetworkPolicies.Mode = "Inherited"
-		Expect(r.reconcileProviderPolicies(ctx, kn, kn)).To(MatchError(ContainSubstring("unsupported")))
 	})
 
 	It("UT-AUDIT-515-NATIVE-002: rejects native read, create, raced-read, update and pruning failures", func() {
@@ -151,7 +148,6 @@ var _ = Describe("independent provider policy lifecycle", Label("unit"), func() 
 
 	It("UT-AUDIT-515-NATIVE-004: fails closed on invalid generated scraper ports and tolerates absent optional APIs during pruning", func() {
 		kn := newMinimalCR()
-		kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 		kn.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderCilium
 		kn.Spec.NetworkPolicies.ScrapeSources = []kubernautv1alpha2.MetricsScrapeSource{{Namespace: "metrics", PodLabels: map[string]string{"app": "prometheus"}}}
 		kn.Spec.APIFrontend.MetricsPort = ptr.To[int32](-1)
@@ -169,7 +165,6 @@ var _ = Describe("independent provider policy lifecycle", Label("unit"), func() 
 
 	It("UT-AUDIT-515-NATIVE-005: resolves OpenShift OVN DNS isolation to openshift-dns rather than generic kube-system", func() {
 		kn := newMinimalCR()
-		kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 		kn.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderOVN
 		kn.Spec.Monitoring.Prometheus.Enabled = ptr.To(false)
 		kn.Spec.Monitoring.AlertManager.Enabled = ptr.To(false)
@@ -230,10 +225,9 @@ var _ = Describe("independent provider policy lifecycle", Label("unit"), func() 
 	})
 
 	DescribeTable("UT-AUDIT-518-DNS-WATCH-001: requeues only eligible instances on exact DNS dependency changes",
-		func(provider kubernautv1alpha2.NetworkPolicyProvider, mode string, expected bool) {
+		func(provider kubernautv1alpha2.NetworkPolicyProvider, expected bool) {
 			kn := newMinimalCR()
 			kn.Spec.NetworkPolicies.Provider = provider
-			kn.Spec.NetworkPolicies.Mode = mode
 			kn.Spec.Monitoring.Prometheus.Enabled = ptr.To(false)
 			kn.Spec.Monitoring.AlertManager.Enabled = ptr.To(false)
 			r := businessUnitReconciler(kn, interceptor.Funcs{})
@@ -256,12 +250,11 @@ var _ = Describe("independent provider policy lifecycle", Label("unit"), func() 
 				Expect(r.monitoringObjectToKubernaut(ctx, object)).To(BeEmpty())
 			}
 		},
-		Entry("default provider", kubernautv1alpha2.NetworkPolicyProvider(""), "", true),
-		Entry("Auto", kubernautv1alpha2.NetworkPolicyProviderAuto, kubernautv1alpha2.NetworkIsolationRequired, true),
-		Entry("OVN", kubernautv1alpha2.NetworkPolicyProviderOVN, kubernautv1alpha2.NetworkIsolationRequired, true),
-		Entry("unsupported legacy isolation mode", kubernautv1alpha2.NetworkPolicyProviderOVN, "Inherited", false),
-		Entry("Cilium", kubernautv1alpha2.NetworkPolicyProviderCilium, kubernautv1alpha2.NetworkIsolationRequired, false),
-		Entry("Calico", kubernautv1alpha2.NetworkPolicyProviderCalico, kubernautv1alpha2.NetworkIsolationRequired, false),
+		Entry("default provider", kubernautv1alpha2.NetworkPolicyProvider(""), true),
+		Entry("Auto", kubernautv1alpha2.NetworkPolicyProviderAuto, true),
+		Entry("OVN", kubernautv1alpha2.NetworkPolicyProviderOVN, true),
+		Entry("Cilium", kubernautv1alpha2.NetworkPolicyProviderCilium, false),
+		Entry("Calico", kubernautv1alpha2.NetworkPolicyProviderCalico, false),
 	)
 
 	It("UT-AUDIT-537-WATCH-001: requeues a Kubernaut when a configured BYO Service changes", func() {

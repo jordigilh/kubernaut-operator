@@ -2980,14 +2980,6 @@ spec:
                         minimum: 1
                         type: integer
                     type: object
-                  mode:
-                    default: Required
-                    description: |-
-                      Mode is retained only for compatibility with older manifests. Native
-                      policy enforcement is always required; omit this field.
-                    enum:
-                    - Required
-                    type: string
                   monitoring:
                     description: |-
                       NetworkPolicyMonitoringOverride overrides where/how the monitoring-stack

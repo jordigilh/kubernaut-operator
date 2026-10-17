@@ -97,7 +97,6 @@ var _ = Describe("native provider policy reconciliation wiring", Label("manages-
 
 		cr := newCRWithRouteDisabled()
 		cr.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderCilium
-		cr.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 		cr.Spec.NetworkPolicies.ScrapeSources = []kubernautv1alpha2.MetricsScrapeSource{{
 			Namespace: monitoringNamespace.Name, PodLabels: map[string]string{"app": "prometheus"},
 		}}
@@ -215,7 +214,6 @@ var _ = Describe("native provider policy reconciliation wiring", Label("manages-
 
 		cr := newCRWithRouteDisabled()
 		cr.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderCilium
-		cr.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 		cr.Spec.Monitoring.Prometheus.URL = "https://missing.monitoring-policy.svc:9090"
 		cr.Spec.Monitoring.AlertManager.URL = "https://missing-alertmanager.monitoring-policy.svc:9093"
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
@@ -307,7 +305,6 @@ var _ = Describe("native provider policy reconciliation wiring", Label("manages-
 
 		cr := newCRWithRouteDisabled()
 		cr.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderCilium
-		cr.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 		cr.Spec.Monitoring.Prometheus.URL = "https://prometheus.monitoring-policy-partial.svc:9090"
 		cr.Spec.Monitoring.AlertManager.URL = "https://missing.monitoring-policy-partial.svc:9093"
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
@@ -420,7 +417,6 @@ var _ = Describe("native provider policy reconciliation wiring", Label("manages-
 
 		cr := newCRWithRouteDisabled()
 		cr.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderCalico
-		cr.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 		cr.Spec.NetworkPolicies.ScrapeSources = []kubernautv1alpha2.MetricsScrapeSource{{
 			Namespace: monitoringNamespace.Name, PodLabels: map[string]string{"app": "prometheus"},
 		}}
@@ -586,7 +582,6 @@ var _ = Describe("native provider policy reconciliation wiring", Label("manages-
 
 		cr := newCRWithRouteDisabled()
 		cr.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderOVN
-		cr.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 		cr.Spec.NetworkPolicies.ScrapeSources = []kubernautv1alpha2.MetricsScrapeSource{{
 			Namespace: monitoringNamespace.Name, PodLabels: map[string]string{"app": "prometheus"},
 		}}

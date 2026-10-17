@@ -2700,18 +2700,7 @@ const (
 	NetworkPolicyProviderOVN    NetworkPolicyProvider = "OVN"
 )
 
-const (
-	NetworkIsolationRequired = "Required"
-)
-
 type NetworkPoliciesSpec struct {
-	// Mode is retained only for compatibility with older manifests. Native
-	// policy enforcement is always required; omit this field.
-	// +kubebuilder:validation:Enum=Required
-	// +kubebuilder:default=Required
-	// +optional
-	Mode string `json:"mode,omitempty"`
-
 	// ScrapeSources authorizes explicitly identified scraper pods, only on
 	// generated component metrics ports. An empty list grants no external
 	// scraper access; a Prometheus query URL is not a scraper identity.

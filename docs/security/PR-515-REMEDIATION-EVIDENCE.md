@@ -35,7 +35,7 @@ with failures addressed. The verified implementation is organized as follows:
 | `2743b22` | Explicit webhook/metrics TLS protocols, patched Go floor, strict telemetry-chain validation and uncached admission reads |
 | `75f0ae4` | Stable current-owner-qualified issuer discovery and shared checked TLS material validation |
 | `e4013e6` | Persisted singleton activation, live Service convergence and truthful reconciliation/cleanup traces |
-| `6c1bf08` | Required native isolation, bounded scraper identities, generated-port wiring, CRD/chart/bundle and migration contract |
+| `6c1bf08` | Fail-closed native isolation, bounded scraper identities, generated-port wiring, CRD/chart/bundle and migration contract |
 | `58a0e15` | Independent exhaustive business coverage, real-API wiring, checked generation boundaries and honest evidence tiers |
 | `189399e` | Original bounded control/migration/verification evidence, explicitly not post-integration qualification |
 | `2aea4a6` | Merge reviewed #517 from main; preserve indefinite finalizer retention, ownership authorization, conditional deletion, namespace retention, exhaustive unit coverage and both TLS-fixture CI corrections; adapt fixtures/tier IDs and add independent ownership-boundary tests |
@@ -235,8 +235,8 @@ finalizer, observable cleanup error/retry, `CleanupFailed`, and no false
 `UT-AUDIT-515-OWNERSHIP-001`–`006` independently cover new authorization/error
 boundaries; `IT-OWN-514-001`–`022` exercise actual reconciliation and deletion
 races. The fake-API finalizer-preservation case is honestly reclassified from
-`IT-OWN-514-023` to `UT-OWN-514-023`. Native-provider ownership cases explicitly
-select Required isolation and a qualified provider fixture.
+`IT-OWN-514-023` to `UT-OWN-514-023`. Native-provider ownership cases rely on
+implicit fail-closed isolation and a qualified provider fixture.
 
 Fake-client TLS/monitoring helpers are now honestly unit evidence. Separate
 real-API journeys cover Hook, DevelopmentSelfSigned, Manual,

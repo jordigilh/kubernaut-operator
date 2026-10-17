@@ -93,9 +93,6 @@ func BuildIntent(namespace string, components, staticAPIServerCIDRs []string) (I
 // refusing reconciliation because the user could believe the policy was
 // narrowed when the provider object did not change.
 func ValidateNativeOverrides(spec kubernautv1alpha2.NetworkPoliciesSpec) error {
-	if err := validateIsolationMode(spec); err != nil {
-		return err
-	}
 	if err := validateScrapeSources(spec.ScrapeSources); err != nil {
 		return err
 	}
@@ -152,13 +149,6 @@ func unsupportedLegacyFields(spec kubernautv1alpha2.NetworkPoliciesSpec) []strin
 		}
 	}
 	return unsupported
-}
-
-func validateIsolationMode(spec kubernautv1alpha2.NetworkPoliciesSpec) error {
-	if spec.Mode != "" && spec.Mode != kubernautv1alpha2.NetworkIsolationRequired {
-		return fmt.Errorf("network policy mode %q is unsupported; omit mode or use Required", spec.Mode)
-	}
-	return nil
 }
 
 // validateScrapeSources also protects programmatic callers that bypass CRD

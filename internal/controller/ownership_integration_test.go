@@ -713,7 +713,6 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 			})
 			kn := newCRWithRouteDisabled()
 			kn.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderCilium
-			kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 			r := reconcileToRunning(ctx)
 			foreign := &unstructured.Unstructured{}

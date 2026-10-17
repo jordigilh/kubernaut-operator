@@ -2,7 +2,8 @@
 
 These are operator engineering changes, not a FedRAMP authorization or proof of
 outside cluster controls. Do not upgrade blindly: the default isolation behavior
-changes intentionally from best-effort provider submission to **Required**.
+changes intentionally from best-effort provider submission to fail-closed native
+enforcement.
 
 ## Before upgrading
 
@@ -26,7 +27,6 @@ changes intentionally from best-effort provider submission to **Required**.
    ```yaml
    spec:
      networkPolicies:
-       mode: Required
        provider: Auto
        scrapeSources:
          - namespace: monitoring

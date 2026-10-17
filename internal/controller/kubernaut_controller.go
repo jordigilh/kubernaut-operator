@@ -5188,9 +5188,6 @@ func monitoredServiceName(object client.Object) string {
 }
 
 func policyDependencyEventMatches(kn *kubernautv1alpha2.Kubernaut, namespace, serviceName string) bool {
-	if kn.Spec.NetworkPolicies.Mode != "" && kn.Spec.NetworkPolicies.Mode != kubernautv1alpha2.NetworkIsolationRequired {
-		return false
-	}
 	if namespace == resources.OCPDNSNamespace && serviceName == resources.OCPDNSServiceName {
 		switch kn.Spec.NetworkPolicies.Provider {
 		case "", kubernautv1alpha2.NetworkPolicyProviderAuto, kubernautv1alpha2.NetworkPolicyProviderOVN:

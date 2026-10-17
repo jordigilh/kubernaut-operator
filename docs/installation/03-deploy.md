@@ -141,7 +141,7 @@ spec:
     # fleet:
     #   oauth2CredentialsSecretRef: ka-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for KubernautAgent only -- used when fleet.enabled: true, for its list_clusters/list_tools_for_cluster MCP tools (ADR-068 decision #11)
 
-  # --- Native network-policy adapter (optional provider capability) ---
+  # --- Native network-policy adapter (required provider capability) ---
   # networkPolicies:
   #   provider: Auto                         # Auto, Cilium, Calico, or OVN
   #   # apiServerCIDR/apiServerCIDRs are deprecated and rejected by native

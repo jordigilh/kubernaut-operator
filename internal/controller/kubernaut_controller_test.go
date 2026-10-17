@@ -113,7 +113,7 @@ func newMinimalCR() *kubernautv1alpha2.Kubernaut {
 			Namespace: testNamespace,
 		},
 		Spec: kubernautv1alpha2.KubernautSpec{
-			NetworkPolicies: kubernautv1alpha2.NetworkPoliciesSpec{Mode: kubernautv1alpha2.NetworkIsolationRequired},
+			NetworkPolicies: kubernautv1alpha2.NetworkPoliciesSpec{},
 			Image: kubernautv1alpha2.ImageSpec{
 				PullPolicy: corev1.PullIfNotPresent,
 			},
