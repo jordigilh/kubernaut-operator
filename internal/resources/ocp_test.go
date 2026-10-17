@@ -222,9 +222,12 @@ var _ = Describe("DataStorageDBSecret", func() {
 })
 
 var _ = Describe("GatewayAlertManagerConfig", func() {
-	It("creates an AlertmanagerConfig with Bearer auth when alertManagerTokenSecretName is set (BYO, #377)", func() {
+	It("UT-539-GW-AUTH-AM-001 [AC-3, AC-6, IA-5; ASVS v5.0.0-V8.2.1, v5.0.0-V8.3.1, v5.0.0-V13.3.1]: creates a Bearer SecretKeySelector from nested auth without rendering token bytes", func() {
 		kn := testKubernaut()
-		kn.Spec.Gateway.AlertManagerTokenSecretName = "my-alertmanager-token"
+		tokenSecretName := "my-alertmanager-token"
+		enabled := true
+		kn.Spec.Gateway.Auth.Enabled = &enabled
+		kn.Spec.Gateway.Auth.AlertManager.TokenSecretName = tokenSecretName
 		amcfg := GatewayAlertManagerConfig(kn)
 
 		Expect(amcfg).NotTo(BeNil(), "AlertmanagerConfig should not be nil when monitoring is enabled")
@@ -250,11 +253,12 @@ var _ = Describe("GatewayAlertManagerConfig", func() {
 
 		Expect(wh.HTTPConfig).NotTo(BeNil())
 		Expect(wh.HTTPConfig.Authorization).NotTo(BeNil(),
-			"BYO: when alertManagerTokenSecretName is set, Authorization must reference it")
+			"BYO: when nested auth is enabled, Authorization must reference the administrator-owned Secret")
 		Expect(wh.HTTPConfig.Authorization.Type).To(Equal("Bearer"))
-		Expect(wh.HTTPConfig.Authorization.Credentials.Name).To(Equal("my-alertmanager-token"),
+		Expect(wh.HTTPConfig.Authorization.Credentials.Name).To(Equal(tokenSecretName),
 			"#377: the Secret name must be BYO (from the CR field), never a hardcoded operator-owned name")
 		Expect(wh.HTTPConfig.Authorization.Credentials.Key).To(Equal("token"))
+		Expect(wh.HTTPConfig.Authorization.Credentials.Name).NotTo(ContainSubstring("token-value"))
 		Expect(wh.HTTPConfig.TLSConfig).NotTo(BeNil())
 		Expect(wh.HTTPConfig.TLSConfig.CA.ConfigMap).NotTo(BeNil(),
 			"TLS CA should reference the inter-service CA ConfigMap")
@@ -262,7 +266,7 @@ var _ = Describe("GatewayAlertManagerConfig", func() {
 		Expect(wh.HTTPConfig.TLSConfig.CA.ConfigMap.Key).To(Equal("service-ca.crt"))
 	})
 
-	It("omits Authorization entirely when alertManagerTokenSecretName is unset (#377)", func() {
+	It("UT-539-GW-AUTH-AM-002 [AC-3, CM-6; ASVS v5.0.0-V8.3.1, v5.0.0-V16.5.2]: omits the bearer reference when authentication is explicitly disabled while preserving TLS routing", func() {
 		// #377: the operator must never reference a Secret it didn't
 		// confirm exists -- previously this hardcoded a reference to
 		// "alertmanager-gateway-token", a Secret the controller never
@@ -272,14 +276,17 @@ var _ = Describe("GatewayAlertManagerConfig", func() {
 		// unconfigured keeps the CR valid and lets the controller's
 		// ConditionAlertManagerAuthConfigured status condition explain why.
 		kn := testKubernaut()
-		Expect(kn.Spec.Gateway.AlertManagerTokenSecretName).To(BeEmpty())
+		enabled := false
+		kn.Spec.Gateway.Auth.Enabled = &enabled
+		kn.Spec.Gateway.Auth.AlertManager.TokenSecretName = "must-not-be-referenced"
 
 		amcfg := GatewayAlertManagerConfig(kn)
 		Expect(amcfg).NotTo(BeNil())
 		wh := amcfg.Spec.Receivers[0].WebhookConfigs[0]
 		Expect(wh.HTTPConfig).NotTo(BeNil(), "TLS config should still be present")
 		Expect(wh.HTTPConfig.Authorization).To(BeNil(),
-			"must not reference any Secret when alertManagerTokenSecretName is unset")
+			"must not reference any Secret when Gateway authentication is disabled")
+		Expect(*wh.URL).To(ContainSubstring("/api/v1/signals/prometheus"))
 	})
 })
 

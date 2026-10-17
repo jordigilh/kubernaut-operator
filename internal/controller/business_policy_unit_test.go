@@ -22,6 +22,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	controllerconfig "sigs.k8s.io/controller-runtime/pkg/config"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
@@ -277,6 +278,7 @@ var _ = Describe("independent provider policy lifecycle", Label("unit"), func() 
 		}
 		manager, err := ctrl.NewManager(&rest.Config{Host: "https://unit.invalid"}, ctrl.Options{
 			Scheme: k8sClient.Scheme(), Metrics: metricsserver.Options{BindAddress: "0"}, HealthProbeBindAddress: "0",
+			Controller:     controllerconfig.Controller{SkipNameValidation: ptr.To(true)},
 			MapperProvider: func(*rest.Config, *http.Client) (meta.RESTMapper, error) { return mapper, nil },
 		})
 		Expect(err).NotTo(HaveOccurred())

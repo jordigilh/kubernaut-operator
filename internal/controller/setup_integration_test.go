@@ -22,14 +22,17 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	controllerconfig "sigs.k8s.io/controller-runtime/pkg/config"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
 var _ = Describe("controller manager wiring", func() {
 	It("starts the reconciler with discovered optional APIs", func() {
 		mgr, err := ctrl.NewManager(cfg, ctrl.Options{
-			Scheme: k8sClient.Scheme(),
+			Scheme:     k8sClient.Scheme(),
+			Controller: controllerconfig.Controller{SkipNameValidation: ptr.To(true)},
 			Metrics: metricsserver.Options{
 				BindAddress: "0",
 			},

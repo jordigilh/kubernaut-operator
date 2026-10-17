@@ -196,6 +196,9 @@ spec:
   gateway:
     route:
       enabled: true
+    # Authentication is disabled by default so this minimal CR does not
+    # require an additional AlertManager token Secret. Enable it only after
+    # following the "Configure AlertManager" step below.
     # logging:
     #   level: info
     # config:
@@ -399,9 +402,9 @@ For signals to flow into Kubernaut, OCP AlertManager must route alerts to the Ga
 
 ### Option A: Operator-managed AlertmanagerConfig (recommended)
 
-The operator always creates a namespace-scoped `AlertmanagerConfig` CR that routes alerts originating from the `kubernaut-system` namespace to the Gateway, and provisions the RBAC binding (`alertmanager-main` SA → `gateway-signal-source` ClusterRole) so the AlertManager bearer token is authorized by the Gateway's SAR middleware.
+The operator always creates a namespace-scoped `AlertmanagerConfig` CR that routes alerts originating from the `kubernaut-system` namespace to the Gateway, and provisions the RBAC binding (`alertmanager-main` SA → `gateway-signal-source` ClusterRole) for authenticated delivery through the Gateway's SAR middleware.
 
-**One manual step is required**: unlike Option B (where AlertManager's pod uses its own auto-mounted ServiceAccount token), the `AlertmanagerConfig` CRD's `authorization` field only accepts a Secret reference, not a file path -- Prometheus Operator's `SafeAuthorization` type intentionally has no `credentials_file` option, to prevent namespaced `AlertmanagerConfig` authors from reading arbitrary files off the Alertmanager container. The operator therefore never mints or stores this token itself (it is bring-your-own, like `spec.postgresql.secretName`); you must create it once:
+Authentication is disabled by default, so a minimal deployment needs no token Secret or manual credential step: the operator-managed `AlertmanagerConfig` remains routable without an `Authorization` reference. To enable Gateway TokenReview/SAR authentication and authenticated Alertmanager delivery, one manual step is required. Unlike Option B (where AlertManager's pod uses its own auto-mounted ServiceAccount token), the `AlertmanagerConfig` CRD's `authorization` field only accepts a Secret reference, not a file path -- Prometheus Operator's `SafeAuthorization` type intentionally has no `credentials_file` option, to prevent namespaced `AlertmanagerConfig` authors from reading arbitrary files off the Alertmanager container. The operator therefore never mints or stores this token itself (it is bring-your-own, like `spec.postgresql.secretName`); create it once:
 
 ```bash
 # Mint a long-lived token for alertmanager-main and copy it into a Secret
@@ -414,7 +417,18 @@ oc create secret generic alertmanager-gateway-token \
   --from-literal=token="$TOKEN"
 ```
 
-Then set `spec.gateway.alertManagerTokenSecretName: alertmanager-gateway-token` on your Kubernaut CR. The CR's `AlertManagerAuthConfigured` status condition reports whether this is correctly configured (`Ready`) or explains what's missing (`SecretNameNotConfigured`, `TokenSecretNotFound`, `TokenKeyMissing`) -- check it if alerts aren't reaching Gateway.
+Then set the nested Gateway auth contract on your Kubernaut CR:
+
+```yaml
+spec:
+  gateway:
+    auth:
+      enabled: true # opt in after creating the administrator-owned Secret
+      alertManager:
+        tokenSecretName: alertmanager-gateway-token
+```
+
+The CR's `AlertManagerAuthConfigured` status condition reports whether this is correctly configured (`Ready`) or explains what's missing (`SecretNameNotConfigured`, `TokenSecretNotFound`, `TokenKeyMissing`). When `auth` is omitted or `enabled: false`, the condition is `True/Disabled` and the minimal deployment remains routable without a bearer reference. Set `enabled: true` when Gateway must enforce TokenReview/SAR authentication; authenticated operator-managed Alertmanager delivery then requires the Secret reference above.
 
 > **Note on rotation**: this token is a snapshot, not a live projection -- it does **not** auto-rotate the way a pod's mounted ServiceAccount token does. Re-run the command above (and update the Secret) before the `--duration` you chose elapses, or scope a shorter duration and rotate via your own automation/cron if you need tighter token lifetimes.
 
@@ -422,7 +436,7 @@ To route alerts from **other** namespaces (e.g. `demo-*`), you must use Option B
 
 ### Option B: Manual global AlertManager configuration
 
-For cluster-wide alert routing (e.g. matching alerts from any namespace), edit the global AlertManager secret. The Gateway serves HTTPS on port 8443 with SAR-based bearer token authentication:
+For cluster-wide alert routing (e.g. matching alerts from any namespace), edit the global AlertManager secret. If the global configuration uses a bearer token, set `spec.gateway.auth.enabled: true` first; Gateway authentication is otherwise disabled by default. The Gateway serves HTTPS on port 8443 with SAR-based bearer token authentication when enabled:
 
 ```bash
 oc apply -f - <<EOF
@@ -466,7 +480,7 @@ EOF
 
 Key points:
 - **HTTPS required**: The Gateway serves TLS on port 8443 (inter-service encryption per FedRAMP SC-8).
-- **Bearer token auth**: The Gateway validates the caller's identity via Kubernetes SubjectAccessReview. The `alertmanager-main` ServiceAccount is bound to the `gateway-signal-source` ClusterRole by the operator.
+- **Bearer token auth**: When enabled, the Gateway validates the caller's identity via Kubernetes SubjectAccessReview. The `alertmanager-main` ServiceAccount is bound to the `gateway-signal-source` ClusterRole by the operator.
 - **`insecure_skip_verify`**: The Gateway uses an OCP service-ca certificate. Set this to `true` for intra-cluster traffic, or mount the service CA and set `ca_file` for strict verification.
 
 ## Troubleshooting
@@ -526,9 +540,10 @@ oc get kubernaut kubernaut -n kubernaut-system \
 
 | Reason | Meaning | Fix |
 |---|---|---|
-| `SecretNameNotConfigured` | `spec.gateway.alertManagerTokenSecretName` is unset | Follow the one-time setup step in [Option A](#option-a-operator-managed-alertmanagerconfig-recommended) above |
+| `SecretNameNotConfigured` | `spec.gateway.auth.alertManager.tokenSecretName` is unset while Gateway authentication is enabled | Follow the one-time setup step in [Option A](#option-a-operator-managed-alertmanagerconfig-recommended) above |
 | `TokenSecretNotFound` | The named Secret doesn't exist in the CR's namespace | Re-check the Secret name/namespace, or re-run the `oc create secret` step |
 | `TokenKeyMissing` | The Secret exists but has no `token` key | Recreate the Secret with `--from-literal=token=...` |
+| `Disabled` | Gateway authentication is disabled because `spec.gateway.auth` is omitted or `enabled: false` | Expected for minimal deployments; set `spec.gateway.auth.enabled: true` when Gateway must enforce bearer authentication |
 | `Ready` | Configuration is valid | If alerts still aren't arriving, check the token hasn't expired (see the rotation note above) or inspect Gateway's logs for `403` SAR-authorization failures |
 
 **API Frontend cannot validate OIDC tokens:**

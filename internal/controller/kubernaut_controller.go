@@ -127,6 +127,7 @@ const (
 	ReasonAlertManagerAuthSecretMissing   = "TokenSecretNotFound"
 	ReasonAlertManagerAuthKeyMissing      = "TokenKeyMissing"
 	ReasonAlertManagerAuthGatewayDisabled = "GatewayDisabled"
+	ReasonAlertManagerAuthDisabled        = "Disabled"
 )
 
 const (
@@ -3842,14 +3843,16 @@ func (r *KubernautReconciler) validateAnsibleConfig(ctx context.Context, kn *kub
 }
 
 // validateAlertManagerAuthConfig evaluates the AlertManagerAuthConfigured
-// condition (#377) based on spec.gateway.alertManagerTokenSecretName and
+// condition (#377) based on spec.gateway.auth and
 // cluster state. It mirrors validateAnsibleConfig's BYO-token-Secret
-// validation shape. When Gateway is disabled the condition is vacuously
-// True. When enabled but the field is unset, resources.GatewayAlertManagerConfig
-// still renders a valid (unauthenticated) AlertmanagerConfig, so this
-// reports False without blocking reconciliation -- non-blocking by design,
-// matching validateAnsibleConfig's contract (never returns an error or sets
-// PhaseError).
+// validation shape. When Gateway is disabled or authentication is disabled
+// (including the default), the condition is intentionally True with an
+// observable reason.
+// When authentication is enabled but the nested field is unset,
+// resources.GatewayAlertManagerConfig still renders a valid unauthenticated
+// AlertmanagerConfig, so this reports False without blocking reconciliation --
+// non-blocking by design, matching validateAnsibleConfig's contract (never
+// returns an error or sets PhaseError).
 func (r *KubernautReconciler) validateAlertManagerAuthConfig(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) metav1.Condition {
 	if !kn.Spec.GatewayEnabled() {
 		return metav1.Condition{
@@ -3861,13 +3864,23 @@ func (r *KubernautReconciler) validateAlertManagerAuthConfig(ctx context.Context
 		}
 	}
 
-	secretName := kn.Spec.Gateway.AlertManagerTokenSecretName
+	if !kn.Spec.Gateway.Auth.AuthenticationEnabled() {
+		return metav1.Condition{
+			Type:               kubernautv1alpha2.ConditionAlertManagerAuthConfigured,
+			Status:             metav1.ConditionTrue,
+			Reason:             ReasonAlertManagerAuthDisabled,
+			Message:            "Gateway authentication is disabled; set spec.gateway.auth.enabled=true to enable it",
+			ObservedGeneration: kn.Generation,
+		}
+	}
+
+	secretName := kn.Spec.Gateway.Auth.AlertManager.TokenSecretName
 	if secretName == "" {
 		return metav1.Condition{
 			Type:   kubernautv1alpha2.ConditionAlertManagerAuthConfigured,
 			Status: metav1.ConditionFalse,
 			Reason: ReasonAlertManagerAuthNotConfigured,
-			Message: "spec.gateway.alertManagerTokenSecretName is not set -- AlertManager's webhook calls to " +
+			Message: "spec.gateway.auth.alertManager.tokenSecretName is not set -- AlertManager's webhook calls to " +
 				"Gateway will be unauthenticated and rejected; see docs/installation/03-deploy.md",
 			ObservedGeneration: kn.Generation,
 		}
