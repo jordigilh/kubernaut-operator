@@ -414,7 +414,18 @@ oc create secret generic alertmanager-gateway-token \
   --from-literal=token="$TOKEN"
 ```
 
-Then set `spec.gateway.alertManagerTokenSecretName: alertmanager-gateway-token` on your Kubernaut CR. The CR's `AlertManagerAuthConfigured` status condition reports whether this is correctly configured (`Ready`) or explains what's missing (`SecretNameNotConfigured`, `TokenSecretNotFound`, `TokenKeyMissing`) -- check it if alerts aren't reaching Gateway.
+Then set the nested Gateway auth contract on your Kubernaut CR:
+
+```yaml
+spec:
+  gateway:
+    auth:
+      enabled: true # secure default; set false only as an explicit exception
+      alertManager:
+        tokenSecretName: alertmanager-gateway-token
+```
+
+The CR's `AlertManagerAuthConfigured` status condition reports whether this is correctly configured (`Ready`) or explains what's missing (`SecretNameNotConfigured`, `TokenSecretNotFound`, `TokenKeyMissing`). If `enabled: false` is selected, the condition is `True/Disabled`, the AlertmanagerConfig remains routable without a bearer reference, and Gateway accepts unauthenticated requests; treat that as an intentional insecure exception and review it against your authorization policy.
 
 > **Note on rotation**: this token is a snapshot, not a live projection -- it does **not** auto-rotate the way a pod's mounted ServiceAccount token does. Re-run the command above (and update the Secret) before the `--duration` you chose elapses, or scope a shorter duration and rotate via your own automation/cron if you need tighter token lifetimes.
 
@@ -526,9 +537,10 @@ oc get kubernaut kubernaut -n kubernaut-system \
 
 | Reason | Meaning | Fix |
 |---|---|---|
-| `SecretNameNotConfigured` | `spec.gateway.alertManagerTokenSecretName` is unset | Follow the one-time setup step in [Option A](#option-a-operator-managed-alertmanagerconfig-recommended) above |
+| `SecretNameNotConfigured` | `spec.gateway.auth.alertManager.tokenSecretName` is unset while Gateway authentication is enabled | Follow the one-time setup step in [Option A](#option-a-operator-managed-alertmanagerconfig-recommended) above |
 | `TokenSecretNotFound` | The named Secret doesn't exist in the CR's namespace | Re-check the Secret name/namespace, or re-run the `oc create secret` step |
 | `TokenKeyMissing` | The Secret exists but has no `token` key | Recreate the Secret with `--from-literal=token=...` |
+| `Disabled` | `spec.gateway.auth.enabled: false` explicitly disables Gateway authentication | Re-enable authentication unless this insecure mode is a documented, approved exception |
 | `Ready` | Configuration is valid | If alerts still aren't arriving, check the token hasn't expired (see the rotation note above) or inspect Gateway's logs for `403` SAR-authorization failures |
 
 **API Frontend cannot validate OIDC tokens:**

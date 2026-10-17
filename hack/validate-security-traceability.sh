@@ -10,6 +10,7 @@ tls_matrix="${repo_root}/docs/security/ISSUE-491-TLS-CONTROL-ATTESTATION.md"
 ci_matrix="${repo_root}/docs/design/ISSUE-501-OPERATOR-UPSTREAM-CI-BOUNDARY.md"
 otlp_matrix="${repo_root}/docs/security/ISSUE-478-CONTROL-TRACEABILITY.md"
 monitoring_matrix="${repo_root}/docs/security/ISSUE-513-CONTROL-TRACEABILITY.md"
+gateway_auth_matrix="${repo_root}/docs/security/ISSUE-539-CONTROL-TRACEABILITY.md"
 ownership_matrix="${repo_root}/docs/security/ISSUE-514-CONTROL-TRACEABILITY.md"
 fleet_matrix="${repo_root}/docs/security/ISSUE-431-CONTROL-TRACEABILITY.md"
 audit_hmac_matrix="${repo_root}/docs/security/ISSUE-209-CONTROL-TRACEABILITY.md"
@@ -27,6 +28,7 @@ fail() {
 [[ -f "${ci_matrix}" ]] || fail "missing ${ci_matrix}"
 [[ -f "${otlp_matrix}" ]] || fail "missing ${otlp_matrix}"
 [[ -f "${monitoring_matrix}" ]] || fail "missing ${monitoring_matrix}"
+[[ -f "${gateway_auth_matrix}" ]] || fail "missing ${gateway_auth_matrix}"
 [[ -f "${audit_hmac_matrix}" ]] || fail "missing ${audit_hmac_matrix}"
 [[ -f "${handoff_matrix}" ]] || fail "missing ${handoff_matrix}"
 [[ -f "${workflowexecution_retention_matrix}" ]] || fail "missing ${workflowexecution_retention_matrix}"
@@ -303,6 +305,46 @@ for test_id in \
 	grep -R -n --include='*_test.go' -F "${test_id}" "${repo_root}/internal" >/dev/null \
 		|| fail "Issue #513 evidence ID ${test_id} has no executable test"
 	grep -Fq "${test_id}" "${monitoring_matrix}" || fail "Issue #513 matrix omits evidence ID ${test_id}"
+done
+
+# Issue #539 Gateway authentication contract evidence is independently checked
+# because its secure default and administrator-owned Secret boundary are
+# security-sensitive even though they reuse existing reconciliation paths.
+for scope in 'NIST SP 800-53 Rev. 5' 'FedRAMP' 'SOC 2' 'OWASP ASVS 5.0.0'; do
+	grep -Fq "${scope}" "${gateway_auth_matrix}" || fail "Issue #539 matrix is missing ${scope} scope"
+done
+grep -Fq 'does not claim formal FedRAMP' "${gateway_auth_matrix}" \
+	|| fail "Issue #539 matrix must reject formal compliance claims"
+for control in AC-3 AC-6 CM-3 CM-6 CM-8 IA-2 IA-5 SI-4 SI-10; do
+	grep -Eq "(^|[^A-Za-z0-9-])${control}([^A-Za-z0-9-]|$)" "${gateway_auth_matrix}" \
+		|| fail "Issue #539 matrix is missing control ${control}"
+done
+for requirement in v5.0.0-V2.2.1 v5.0.0-V8.2.1 v5.0.0-V8.3.1 v5.0.0-V13.3.1 v5.0.0-V13.3.2 v5.0.0-V15.2.4 v5.0.0-V16.1.1 v5.0.0-V16.5.2; do
+	grep -Fq "${requirement}" "${gateway_auth_matrix}" \
+		|| fail "Issue #539 matrix is missing ASVS requirement ${requirement}"
+done
+for artifact in \
+	'api/v1alpha2/kubernaut_types.go' \
+	'api/v1alpha2/clean_break_test.go' \
+	'internal/resources/configmaps.go' \
+	'internal/resources/configmaps_test.go' \
+	'internal/resources/ocp.go' \
+	'internal/resources/ocp_test.go' \
+	'internal/controller/kubernaut_controller.go' \
+	'internal/controller/kubernaut_lifecycle_test.go' \
+	'internal/controller/monitoring_wiring_integration_test.go' \
+	'config/crd/bases/kubernaut.ai_kubernauts.yaml' \
+	'bundle/manifests/kubernaut.ai_kubernauts.yaml' \
+	'charts/kubernaut-operator/files/kubernaut.ai_kubernauts.yaml' \
+	'dist/install.yaml'; do
+	grep -Fq "${artifact}" "${gateway_auth_matrix}" || fail "Issue #539 matrix is missing evidence artifact ${artifact}"
+done
+for test_id in UT-539-GW-AUTH-API-001 UT-539-GW-AUTH-CM-001 UT-539-GW-AUTH-CM-002 \
+	UT-539-GW-AUTH-AM-001 UT-539-GW-AUTH-AM-002 UT-539-GW-AUTH-CONDITION-001 \
+	IT-539-GW-AUTH-RECONCILE IT-539-GW-AUTH-CONDITION; do
+	grep -R -n --include='*_test.go' -F "${test_id}" "${repo_root}/api" "${repo_root}/internal" >/dev/null \
+		|| fail "Issue #539 evidence ID ${test_id} has no executable test"
+	grep -Fq "${test_id}" "${gateway_auth_matrix}" || fail "Issue #539 matrix omits evidence ID ${test_id}"
 done
 
 # Issue #514's deny-by-default ownership boundary must have independent logic,
