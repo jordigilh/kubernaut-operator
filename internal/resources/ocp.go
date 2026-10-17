@@ -130,15 +130,15 @@ func APIFrontendRouteStub(kn *kubernautv1alpha2.Kubernaut) *routev1.Route {
 // webhook. This eliminates the need to manually edit the global AlertManager
 // secret in openshift-monitoring.
 //
-// Authorization is only included when spec.gateway.alertManagerTokenSecretName
-// is set (#377): the referenced Secret is bring-your-own, never minted or
-// owned by the operator (consistent with spec.postgresql.secretName and
-// spec.llmProfiles[*].credentialsSecretName), since the token belongs to a
-// Kubernetes identity in openshift-monitoring that the operator has no
-// business impersonating or provisioning credentials for. It must be bound
-// to the gateway-signal-source ClusterRole (handled by the operator's RBAC
-// provisioning) so the bearer token is authorized by Gateway's SAR
-// middleware. When unset, the CR is still valid but unauthenticated calls
+// Authorization is included only when Gateway authentication is enabled and
+// spec.gateway.auth.alertManager.tokenSecretName is set (#377): the referenced
+// Secret is bring-your-own, never minted or owned by the operator (consistent
+// with spec.postgresql.secretName and spec.llmProfiles[*].credentialsSecretName),
+// since the token belongs to a Kubernetes identity in openshift-monitoring that
+// the operator has no business impersonating or provisioning credentials for.
+// It must be bound to the gateway-signal-source ClusterRole (handled by the
+// operator's RBAC provisioning) so the bearer token is authorized by Gateway's
+// SAR middleware. When unset, the CR is still valid but unauthenticated calls
 // will be rejected by Gateway -- the controller surfaces this via the
 // ConditionAlertManagerAuthConfigured status condition rather than silently
 // referencing a Secret that may not exist.
@@ -156,13 +156,16 @@ func GatewayAlertManagerConfig(kn *kubernautv1alpha2.Kubernaut) *monitoringv1alp
 			},
 		},
 	}
-	if secretName := kn.Spec.Gateway.AlertManagerTokenSecretName; secretName != "" {
-		httpConfig.Authorization = &monitoringv1.SafeAuthorization{
-			Type: "Bearer",
-			Credentials: &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
-				Key:                  "token",
-			},
+	if kn.Spec.Gateway.Auth.AuthenticationEnabled() {
+		secretName := kn.Spec.Gateway.Auth.AlertManager.TokenSecretName
+		if secretName != "" {
+			httpConfig.Authorization = &monitoringv1.SafeAuthorization{
+				Type: "Bearer",
+				Credentials: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+					Key:                  "token",
+				},
+			}
 		}
 	}
 

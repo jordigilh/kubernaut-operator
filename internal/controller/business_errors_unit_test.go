@@ -148,7 +148,7 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 		kn.Spec.WorkflowExecution.Ansible.Enabled = true
 		Expect(r.validateAnsibleConfig(ctx, kn).Reason).To(Equal(ReasonAnsibleTokenNotFound))
 		kn.Spec.WorkflowExecution.Ansible.TokenSecretRef = &kubernautv1alpha2.SecretKeyRef{Name: "unit-token"}
-		kn.Spec.Gateway.AlertManagerTokenSecretName = "unit-token"
+		kn.Spec.Gateway.Auth.AlertManager.TokenSecretName = "unit-token"
 		Expect(r.validateAnsibleConfig(ctx, kn).Reason).To(Equal(ReasonAnsibleTokenNotFound))
 		Expect(r.validateAlertManagerAuthConfig(ctx, kn).Reason).To(Equal(ReasonAlertManagerAuthSecretMissing))
 		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "unit-token", Namespace: kn.Namespace}}
@@ -164,6 +164,19 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 		kn.Spec.WorkflowExecution.Ansible.TokenSecretRef = nil
 		_, err := r.phaseRunning(ctx, kn, kn)
 		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("UT-539-GW-AUTH-CONDITION-001 [AC-3, CM-6; ASVS v5.0.0-V8.3.1, v5.0.0-V16.5.2]: treats explicit Gateway auth disablement as intentional rather than missing credentials", func() {
+		kn := newMinimalCR()
+		disabled := false
+		kn.Spec.Gateway.Auth.Enabled = &disabled
+		kn.Spec.Gateway.Auth.AlertManager.TokenSecretName = "must-not-be-read"
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
+
+		condition := r.validateAlertManagerAuthConfig(ctx, kn)
+		Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+		Expect(condition.Reason).To(Equal(ReasonAlertManagerAuthDisabled))
+		Expect(condition.Message).To(ContainSubstring("explicitly disabled"))
 	})
 
 	It("UT-AUDIT-515-ERRORS-007: prunes additional-role and persona bindings on shrink and preserves required bindings", func() {

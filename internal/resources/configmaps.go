@@ -65,6 +65,7 @@ type gatewayServerYAML struct {
 	ListenAddr            string        `json:"listenAddr" yaml:"listenAddr"`
 	HealthAddr            string        `json:"healthAddr" yaml:"healthAddr"`
 	MetricsAddr           string        `json:"metricsAddr" yaml:"metricsAddr"`
+	AuthenticationEnabled bool          `json:"authenticationEnabled" yaml:"authenticationEnabled"`
 	MaxConcurrentRequests int           `json:"maxConcurrentRequests" yaml:"maxConcurrentRequests"`
 	ReadTimeout           string        `json:"readTimeout" yaml:"readTimeout"`
 	WriteTimeout          string        `json:"writeTimeout" yaml:"writeTimeout"`
@@ -115,6 +116,7 @@ func gatewayServerConfig(knV2 *kubernautv1alpha2.Kubernaut, gwCfg *kubernautv1al
 		ListenAddr:            ":8443",
 		HealthAddr:            ":8081",
 		MetricsAddr:           ":9090",
+		AuthenticationEnabled: knV2.Spec.Gateway.Auth.AuthenticationEnabled(),
 		MaxConcurrentRequests: 100,
 		ReadTimeout:           "3600s",
 		WriteTimeout:          "3600s",

@@ -34,6 +34,38 @@ const testOpenAIEndpoint = "http://llm-gateway:8080"
 
 var _ = Describe("ConfigMaps", func() {
 	Describe("Gateway ConfigMap", func() {
+		It("UT-539-GW-AUTH-CM-001 [IA-2, AC-3; ASVS v5.0.0-V8.2.1, v5.0.0-V16.5.2]: enables Gateway authentication by default", func() {
+			kn := testKubernaut()
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			var rendered struct {
+				Server struct {
+					AuthenticationEnabled *bool `yaml:"authenticationEnabled"`
+				} `yaml:"server"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &rendered)).To(Succeed())
+			Expect(rendered.Server.AuthenticationEnabled).NotTo(BeNil())
+			Expect(*rendered.Server.AuthenticationEnabled).To(BeTrue())
+		})
+
+		It("UT-539-GW-AUTH-CM-002 [CM-6]: renders an explicit authentication disablement", func() {
+			kn := testKubernaut()
+			enabled := false
+			kn.Spec.Gateway.Auth.Enabled = &enabled
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			var rendered struct {
+				Server struct {
+					AuthenticationEnabled *bool `yaml:"authenticationEnabled"`
+				} `yaml:"server"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &rendered)).To(Succeed())
+			Expect(rendered.Server.AuthenticationEnabled).NotTo(BeNil())
+			Expect(*rendered.Server.AuthenticationEnabled).To(BeFalse())
+		})
+
 		It("contains DataStorage URL and expected keys", func() {
 			kn := testKubernaut()
 			cm, err := GatewayConfigMap(kn, testKnV2(kn))

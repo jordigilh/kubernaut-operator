@@ -18,12 +18,14 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/go-logr/zapr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	routev1 "github.com/openshift/api/route/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 	corev1 "k8s.io/api/core/v1"
@@ -38,6 +40,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
@@ -235,6 +238,7 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 			installMonitoringCRDs(ctx)
 		})
 		AfterEach(func() {
+			deleteAnsibleSecret(ctx, "alertmanager-gateway-token")
 			cleanupMonitoringObjects(ctx)
 			cleanupNamespacedResources(ctx)
 			deleteCRIfExists(ctx)
@@ -310,6 +314,53 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 			Expect(k8sClient.Get(ctx, singletonKey(), updated)).To(Succeed())
 			Expect(updated.Status.Phase).To(Equal(kubernautv1alpha2.PhaseRunning))
 		})
+
+		It("IT-539-GW-AUTH-RECONCILE [IA-2, AC-3, AC-6, IA-5, CM-6; ASVS v5.0.0-V8.2.1, v5.0.0-V8.3.1, v5.0.0-V13.3.1, v5.0.0-V16.5.2]: reconciles nested Gateway auth into runtime config, AlertmanagerConfig, and status", func() {
+			createBYOSecrets(ctx)
+			createAnsibleSecret(ctx, "alertmanager-gateway-token", "token", "opaque-token-value")
+
+			kn := newMinimalCR()
+			kn.Spec.Gateway.Route.Enabled = ptr.To(false)
+			kn.Spec.Monitoring.Prometheus.Enabled = ptr.To(false)
+			kn.Spec.Monitoring.AlertManager.URL = "https://alertmanager.example.com:9093"
+			enabled := true
+			kn.Spec.Gateway.Auth.Enabled = &enabled
+			kn.Spec.Gateway.Auth.AlertManager.TokenSecretName = "alertmanager-gateway-token"
+			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			configMap := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: "gateway-config"}, configMap)).To(Succeed())
+			var rendered struct {
+				Server struct {
+					AuthenticationEnabled *bool `yaml:"authenticationEnabled"`
+				} `yaml:"server"`
+			}
+			Expect(yaml.Unmarshal([]byte(configMap.Data["config.yaml"]), &rendered)).To(Succeed())
+			Expect(rendered.Server.AuthenticationEnabled).NotTo(BeNil())
+			Expect(*rendered.Server.AuthenticationEnabled).To(BeTrue())
+
+			alertManagerConfig := &monitoringv1alpha1.AlertmanagerConfig{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: "kubernaut-gateway-alerts"}, alertManagerConfig)).To(Succeed())
+			webhook := alertManagerConfig.Spec.Receivers[0].WebhookConfigs[0]
+			Expect(webhook.HTTPConfig).NotTo(BeNil())
+			Expect(webhook.HTTPConfig.Authorization).NotTo(BeNil())
+			Expect(webhook.HTTPConfig.Authorization.Type).To(Equal("Bearer"))
+			Expect(webhook.HTTPConfig.Authorization.Credentials.Name).To(Equal("alertmanager-gateway-token"))
+			Expect(webhook.HTTPConfig.Authorization.Credentials.Key).To(Equal("token"))
+			renderedAlertManagerConfig, err := json.Marshal(alertManagerConfig)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(renderedAlertManagerConfig)).NotTo(ContainSubstring("opaque-token-value"),
+				"the AlertmanagerConfig must contain only a SecretKeySelector, never token bytes")
+
+			updated := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), updated)).To(Succeed())
+			condition := findCondition(updated.Status.Conditions, kubernautv1alpha2.ConditionAlertManagerAuthConfigured)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(condition.Reason).To(Equal(ReasonAlertManagerAuthReady))
+		})
 	})
 })
 
@@ -369,6 +420,23 @@ func monitoringTestCRDs() []*apiextensionsv1.CustomResourceDefinition {
 				}},
 			},
 		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "alertmanagerconfigs.monitoring.coreos.com"},
+			Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+				Group: "monitoring.coreos.com",
+				Names: apiextensionsv1.CustomResourceDefinitionNames{
+					Plural: "alertmanagerconfigs", Singular: "alertmanagerconfig", Kind: "AlertmanagerConfig",
+				},
+				Scope: apiextensionsv1.NamespaceScoped,
+				Versions: []apiextensionsv1.CustomResourceDefinitionVersion{{
+					Name: "v1alpha1", Served: true, Storage: true,
+					Schema: &apiextensionsv1.CustomResourceValidation{OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
+						Type:                   "object",
+						XPreserveUnknownFields: &preserveUnknownFields,
+					}},
+				}},
+			},
+		},
 	}
 }
 
@@ -398,6 +466,12 @@ func cleanupMonitoringObjects(ctx context.Context) {
 	if err := k8sClient.List(ctx, rules, client.InNamespace(testNamespace)); err == nil {
 		for index := range rules.Items {
 			_ = k8sClient.Delete(ctx, &rules.Items[index])
+		}
+	}
+	alertManagerConfigs := &monitoringv1alpha1.AlertmanagerConfigList{}
+	if err := k8sClient.List(ctx, alertManagerConfigs, client.InNamespace(testNamespace)); err == nil {
+		for index := range alertManagerConfigs.Items {
+			_ = k8sClient.Delete(ctx, &alertManagerConfigs.Items[index])
 		}
 	}
 }

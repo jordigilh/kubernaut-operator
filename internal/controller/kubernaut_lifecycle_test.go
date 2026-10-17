@@ -2418,10 +2418,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		})
 
 		It("AM1 [CM-6]: sets AlertManagerAuthConfigured=False/SecretNameNotConfigured "+
-			"when Gateway is enabled and alertManagerTokenSecretName is unset", func() {
+			"when Gateway authentication is enabled and tokenSecretName is unset", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			Expect(cr.Spec.Gateway.AlertManagerTokenSecretName).To(BeEmpty())
+			Expect(cr.Spec.Gateway.Auth.AlertManager.TokenSecretName).To(BeEmpty())
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
 			reconcileToRunning(ctx)
@@ -2440,7 +2440,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			createBYOSecrets(ctx)
 			createAnsibleSecret(ctx, amTokenSecretName, "token", "my-token-value")
 			cr := newCRWithRouteDisabled()
-			cr.Spec.Gateway.AlertManagerTokenSecretName = amTokenSecretName
+			cr.Spec.Gateway.Auth.AlertManager.TokenSecretName = amTokenSecretName
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
 			reconcileToRunning(ctx)
@@ -2458,7 +2458,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			"when the referenced Secret does not exist", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
-			cr.Spec.Gateway.AlertManagerTokenSecretName = "nonexistent-secret"
+			cr.Spec.Gateway.Auth.AlertManager.TokenSecretName = "nonexistent-secret"
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
 			reconcileToRunning(ctx)
@@ -2477,7 +2477,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			createBYOSecrets(ctx)
 			createAnsibleSecret(ctx, amTokenSecretName, "wrong-key", "value")
 			cr := newCRWithRouteDisabled()
-			cr.Spec.Gateway.AlertManagerTokenSecretName = amTokenSecretName
+			cr.Spec.Gateway.Auth.AlertManager.TokenSecretName = amTokenSecretName
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
 			reconcileToRunning(ctx)
@@ -2506,6 +2506,25 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAlertManagerAuthConfigured)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+		})
+
+		It("IT-539-GW-AUTH-CONDITION [AC-3, CM-6; ASVS v5.0.0-V8.3.1, v5.0.0-V16.5.2]: exposes an explicit authentication disablement without a missing-credential warning", func() {
+			createBYOSecrets(ctx)
+			cr := newCRWithRouteDisabled()
+			enabled := false
+			cr.Spec.Gateway.Auth.Enabled = &enabled
+			cr.Spec.Gateway.Auth.AlertManager.TokenSecretName = amTokenSecretName
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			kn := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			cond := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionAlertManagerAuthConfigured)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(cond.Reason).To(Equal(ReasonAlertManagerAuthDisabled))
+			Expect(cond.Message).To(ContainSubstring("explicitly disabled"))
 		})
 	})
 
