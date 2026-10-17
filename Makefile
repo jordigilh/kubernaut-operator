@@ -172,6 +172,8 @@ test-helm: ## Validate the operator-only Helm chart and its render contracts.
 	@command -v $(HELM_BIN) >/dev/null 2>&1 || { echo "Helm CLI not found: $(HELM_BIN)"; exit 1; }
 	$(HELM_BIN) lint charts/kubernaut-operator
 	HELM_BIN=$(HELM_BIN) ./hack/verify-helm-chart.sh
+	$(HELM_BIN) lint charts/kubernaut-dev-bootstrap
+	HELM_BIN=$(HELM_BIN) ./hack/verify-dev-bootstrap-chart.sh
 	HELM_BIN=$(HELM_BIN) go test $(HELM_PKGS) -v
 
 .PHONY: test
@@ -193,6 +195,7 @@ test-hack-scripts: yq ## Run fixture-based tests for standalone hack/ shell tool
 .PHONY: test-e2e
 test-e2e: manifests generate fmt vet ## Run the e2e tests against a live OCP cluster. Requires: oc login, IMG set.
 	@command -v oc >/dev/null 2>&1 || { echo "oc CLI not found. Install the OpenShift CLI."; exit 1; }
+	@command -v helm >/dev/null 2>&1 || { echo "Helm CLI not found."; exit 1; }
 	@oc whoami >/dev/null 2>&1 || { echo "Not logged in to OCP. Run 'oc login' first."; exit 1; }
 	go test ./test/e2e/ -v -ginkgo.v -timeout 30m
 

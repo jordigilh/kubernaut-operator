@@ -39,8 +39,9 @@ seams on the `feat/491-tls-parity` line:
   adds separate real-API `Reconcile` journeys in
   `internal/controller/runtime_tls_wiring_integration_test.go` and
   `internal/controller/certmanager_lifecycle_test.go`.
-- `.github/workflows/test.yml` currently has a generic/development Kind lane and
-  a cert-manager Kind lane, but no hook or manual/administrator-managed lane.
+- `.github/workflows/test.yml` now has explicit Cilium development,
+  hook, manual/administrator-managed, and cert-manager Kind lanes, plus a
+  Calico development lane.
 - `test/e2e/kind/tlsSourceFromEnvironment` currently accepts only development and
   cert-manager selectors.
 - `test/e2e/kind/journey.go` directly constructs only development self-signed or
@@ -64,7 +65,7 @@ provisioner.
 
 | Lane | Selector | CR mode(s) | Ownership proof |
 |---|---|---|---|
-| Generic development | `development` | `DevelopmentSelfSigned` | Operator owns generated CA/leaves and removes them during CR cleanup |
+| Cilium development | `development` | `DevelopmentSelfSigned` | Operator owns generated CA/leaves and removes them during CR cleanup |
 | Hook | `hook` | `hook` | Operator-owned hook-equivalent material, trust publication, rotation, and cleanup |
 | Manual/admin | `manual-admin` | `manual`, `AdministratorManaged` | Pre-created material remains administrator-owned; data and ownership metadata are unchanged (excluding server-managed `resourceVersion`) |
 | Cert-manager | `certmanager` | `cert-manager` and reference-only `CertManager` scenarios | cert-manager owns output Secrets; operator owns only its Issuer/Certificate objects |
@@ -255,8 +256,8 @@ Add failing tests before production wiring:
 - Add deterministic certificate fixtures using the repository's existing Go
   certificate helpers or a narrowly scoped test helper; do not use live PKI.
 - Add `kind-hook` and `kind-manual-admin` workflow jobs.
-- Set the existing generic lane's selector explicitly to `development` so its
-  meaning is not inferred from an empty environment variable.
+- Set every native-provider lane's selector explicitly so its meaning is not
+  inferred from an empty environment variable.
 - Wire each scenario through the real operator Helm-chart install and
   reconciliation journey (CHECKPOINT W).
 
@@ -307,8 +308,9 @@ following:
    reconciliation paths and fail-closed conditions.
 3. `test/e2e/kind/scenarios_test.go` contains the required E2E IDs and calls the
    real CR/application/probe helpers rather than resource builders.
-4. `.github/workflows/test.yml` contains one explicit job for each selector and
-   does not rely on an empty selector or a generic development job.
+4. `.github/workflows/test.yml` contains one explicit native-provider job for
+   each selector and does not rely on an empty selector or a no-provider
+   lifecycle job.
 5. No E2E test uses `Skip`, `XIt`, `PIt`, or a missing-source early return that
    can hide an unconfigured lane.
 
@@ -328,7 +330,7 @@ expected status, and a real workload trust/identity probe succeeds.
 | Hook fixture/provisioner | Production Kind journey | `test/e2e/kind/journey.go`, `tls_fixtures.go`, `scenarios_test.go` | `IT-TLS-HOOK-001`, `E2E-TLS-HOOK-001`, `E2E-TLS-HOOK-002` |
 | Manual/admin fixture | Production Kind journey | `test/e2e/kind/tls_fixtures.go` and `journey.go` | `IT-TLS-MANUAL-001`, `IT-TLS-ADMIN-001`, `E2E-TLS-MANUAL-001`, `E2E-TLS-ADMIN-001`, `E2E-TLS-CLEANUP-001` |
 | Cert-manager resources | `KubernautReconciler.ensureCertManagerTLSResources` | `internal/controller/kubernaut_controller.go` → `internal/resources.CertManagerTLSResources` | `IT-TLS-PARITY-001`, `IT-TLS-CERTMANAGER-READY-001`, `E2E-TLS-CERTMANAGER-001`, `E2E-TLS-CERTMANAGER-002` |
-| Generic Kind workflow lanes | `make test-e2e-kind` | `.github/workflows/test.yml` | `KUBERNAUT_E2E_TLS_SOURCE=development`, `hook`, `manual-admin`, `certmanager` |
+| Native-provider Kind workflow lanes | `make test-e2e-kind` | `.github/workflows/test.yml` | Cilium `development`, `hook`, `manual-admin`, `certmanager`; Calico `development` |
 | Pyramid enforcement | `make test-pyramid` | `hack/verify-test-pyramid.sh` and `test/e2e/kind/contract/selector_test.go` | `UT-TLS-498-001`, `PYR-TLS-*` |
 | Evidence traceability | Repository security evidence | `docs/security/ISSUE-491-TLS-CONTROL-ATTESTATION.md` | All `BA-*`, `UT-*`, `IT-*`, and `E2E-*` rows |
 

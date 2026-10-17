@@ -102,7 +102,7 @@ own any future retained qualification artifact and cleanup receipt.
 
 | Risk | Decision | Rationale |
 |---|---|---|
-| Generic/no-provider lifecycle | Code path is sufficiently evidenced for the current plan | Focused envtest proves optional API startup and required-isolation blocking; no provider fallback is rendered |
+| Generic/no-provider fail-closed lifecycle | Code path is sufficiently evidenced for the current plan | Focused envtest proves optional API startup and required-isolation blocking; no provider fallback is rendered |
 | Cilium/Calico policy wiring | No production change indicated by this spike | Focused IT proves deployment-phase submission, readiness, monitoring degradation, and native object behavior |
 | OVN policy path | Keep dataplane qualification deferred | Focused IT and the manual OCP run prove DNS/policy intent and live ANP/BANP submission, but not dataplane enforcement |
 | Full OCP application lifecycle | External release-qualification item | The available cluster proves platform/API availability, bootstrap behavior, and native policy submission, not complete operand readiness |

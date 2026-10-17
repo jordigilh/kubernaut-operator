@@ -261,6 +261,18 @@ func (r *KubernautReconciler) authorizeSingleton(ctx context.Context, kn *kubern
 func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 	log.Info("reconciling phases", "currentPhase", kn.Status.Phase)
+	// Validate startup inputs before provider-specific dependency resolution so
+	// invalid CRs publish their precise validation condition. Validation creates
+	// no migration Job or workload; native isolation is still required before
+	// migration and service-workload activation below.
+	result, err := r.phaseValidate(ctx, kn, knV2)
+	if err != nil || result.RequeueAfter > 0 {
+		return result, err
+	}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(kn), kn); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Required isolation must exist before a migration Job or service workload
 	// can start. Failure never prunes the last known-good provider policy.
 	if err := r.reconcileProviderPolicies(ctx, kn, knV2); err != nil {
@@ -268,20 +280,12 @@ func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernaut
 		return ctrl.Result{}, err
 	}
 
-	// Validate and migrate always run (cheap: secret checks + Job status).
-	for _, phase := range []func(context.Context, *kubernautv1alpha2.Kubernaut) (ctrl.Result, error){
-		func(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
-			return r.phaseValidate(ctx, kn, knV2)
-		},
-		r.phaseMigrate,
-	} {
-		result, err := phase(ctx, kn)
-		if err != nil || result.RequeueAfter > 0 {
-			return result, err
-		}
-		if err := r.Get(ctx, client.ObjectKeyFromObject(kn), kn); err != nil {
-			return ctrl.Result{}, err
-		}
+	result, err = r.phaseMigrate(ctx, kn)
+	if err != nil || result.RequeueAfter > 0 {
+		return result, err
+	}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(kn), kn); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Always run phaseDeploy — the spec-hash check inside ensureResource
@@ -2121,12 +2125,6 @@ func (r *KubernautReconciler) reconcileProviderPolicies(ctx context.Context, kn 
 			Message:  err.Error(),
 		}, false, err)
 	}
-	if kn.Spec.NetworkPolicies.Mode == kubernautv1alpha2.NetworkIsolationInherited {
-		return r.patchProviderPolicyStatus(ctx, kn, policy.DetectionResult{
-			Provider: policy.ProviderNone, Reason: "InheritedIsolation",
-			Message: "administrator explicitly supplies inherited isolation; external enforcement is not verified by the operator",
-		}, true, nil)
-	}
 	// ValidateNativeOverrides already rejected every legacy static-CIDR input.
 	intent, err := policy.BuildIntent(kn.Namespace, components, nil)
 	if err != nil {
@@ -2158,6 +2156,12 @@ func (r *KubernautReconciler) reconcileProviderPolicies(ctx context.Context, kn 
 			detection.PolicyMessage = err.Error()
 			return r.patchProviderPolicyStatus(ctx, kn, detection, false, err)
 		}
+	}
+	intent.Dependencies, err = r.resolveDependencyDestinations(ctx, kn, detection.Provider)
+	if err != nil {
+		detection.PolicyReason = policy.ReasonDependencyUnavailable
+		detection.PolicyMessage = err.Error()
+		return r.patchProviderPolicyStatus(ctx, kn, detection, false, err)
 	}
 	monitoringDestinations, monitoringErr := r.resolveMonitoringDestinations(ctx, knV2, detection)
 	intent.Monitoring = monitoringDestinations
@@ -2193,6 +2197,17 @@ func (r *KubernautReconciler) reconcileProviderPolicies(ctx context.Context, kn 
 		detection.PolicyMessage = fmt.Sprintf("native provider is ready but monitoring egress is unavailable: %v", monitoringErr)
 	}
 	return r.patchProviderPolicyStatus(ctx, kn, detection, detection.Ready && monitoringErr == nil, nil)
+}
+
+func (r *KubernautReconciler) resolveDependencyDestinations(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, provider policy.Provider) ([]policy.MonitoringDestination, error) {
+	valkeyPort := kn.Spec.Valkey.Port
+	if valkeyPort == 0 {
+		valkeyPort = resources.DefaultValkeyPort
+	}
+	return policy.ResolveServiceDestinations(ctx, r.Client, provider, []policy.ServiceEndpoint{
+		{Name: "postgresql", Host: kn.Spec.PostgreSQL.Host, Namespace: kn.Namespace, Port: resources.PostgreSQLPort(kn)},
+		{Name: "valkey", Host: kn.Spec.Valkey.Host, Namespace: kn.Namespace, Port: valkeyPort},
+	})
 }
 
 // generatedMetricsPorts derives authorization from the actual Service builders,
@@ -2372,9 +2387,6 @@ func providerPolicyConditions(generation int64, detection policy.DetectionResult
 	}
 	if ready {
 		policyStatus, policyReason, policyMessage = metav1.ConditionTrue, policy.ReasonProviderReady, detection.Message
-		if detection.Reason == "InheritedIsolation" {
-			policyReason = detection.Reason
-		}
 	}
 	return []metav1.Condition{
 		{Type: kubernautv1alpha2.ConditionProviderDetected, Status: providerStatus,
@@ -2690,8 +2702,7 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 		})
 	}
 
-	if kn.Spec.NetworkPolicies.Mode != kubernautv1alpha2.NetworkIsolationInherited &&
-		!meta.IsStatusConditionTrue(kn.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady) {
+	if !meta.IsStatusConditionTrue(kn.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady) {
 		allReady = false
 	}
 	finalStatuses := serviceStatuses
@@ -5147,10 +5158,7 @@ func (r *KubernautReconciler) monitoringObjectToKubernaut(ctx context.Context, o
 		return nil
 	}
 
-	serviceName := object.GetName()
-	if endpointSlice, ok := object.(*discoveryv1.EndpointSlice); ok {
-		serviceName = endpointSlice.Labels[discoveryv1.LabelServiceName]
-	}
+	serviceName := monitoredServiceName(object)
 	if serviceName == "" {
 		return nil
 	}
@@ -5165,26 +5173,46 @@ func (r *KubernautReconciler) monitoringObjectToKubernaut(ctx context.Context, o
 	requests := make([]reconcile.Request, 0, len(list.Items))
 	for index := range list.Items {
 		kn := &list.Items[index]
-		if object.GetNamespace() == resources.OCPDNSNamespace && serviceName == resources.OCPDNSServiceName &&
-			kn.Spec.NetworkPolicies.Mode != kubernautv1alpha2.NetworkIsolationInherited {
-			switch kn.Spec.NetworkPolicies.Provider {
-			case "", kubernautv1alpha2.NetworkPolicyProviderAuto, kubernautv1alpha2.NetworkPolicyProviderOVN:
-				requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)})
-				continue
-			}
-		}
-		monitoring := r.monitoringConfigView(ctx, kn)
-		for _, endpoint := range monitoringEndpoints(monitoring) {
-			reference, err := policy.MonitoringServiceReferenceFromURL(endpoint.URL)
-			if err != nil {
-				continue
-			}
-			if reference.Name != serviceName || reference.Namespace != object.GetNamespace() {
-				continue
-			}
+		if policyDependencyEventMatches(kn, object.GetNamespace(), serviceName) || monitoringDependencyEventMatches(ctx, r, kn, object.GetNamespace(), serviceName) {
 			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)})
-			break
 		}
 	}
 	return requests
+}
+
+func monitoredServiceName(object client.Object) string {
+	if endpointSlice, ok := object.(*discoveryv1.EndpointSlice); ok {
+		return endpointSlice.Labels[discoveryv1.LabelServiceName]
+	}
+	return object.GetName()
+}
+
+func policyDependencyEventMatches(kn *kubernautv1alpha2.Kubernaut, namespace, serviceName string) bool {
+	if namespace == resources.OCPDNSNamespace && serviceName == resources.OCPDNSServiceName {
+		switch kn.Spec.NetworkPolicies.Provider {
+		case "", kubernautv1alpha2.NetworkPolicyProviderAuto, kubernautv1alpha2.NetworkPolicyProviderOVN:
+			return true
+		}
+	}
+	for _, endpoint := range []policy.ServiceEndpoint{
+		{Name: "postgresql", Host: kn.Spec.PostgreSQL.Host, Namespace: kn.Namespace},
+		{Name: "valkey", Host: kn.Spec.Valkey.Host, Namespace: kn.Namespace},
+	} {
+		reference, err := policy.ServiceReferenceFromHost(endpoint.Host, endpoint.Namespace)
+		if err == nil && reference.Name == serviceName && reference.Namespace == namespace {
+			return true
+		}
+	}
+	return false
+}
+
+func monitoringDependencyEventMatches(ctx context.Context, r *KubernautReconciler, kn *kubernautv1alpha2.Kubernaut, namespace, serviceName string) bool {
+	monitoring := r.monitoringConfigView(ctx, kn)
+	for _, endpoint := range monitoringEndpoints(monitoring) {
+		reference, err := policy.MonitoringServiceReferenceFromURL(endpoint.URL)
+		if err == nil && reference.Name == serviceName && reference.Namespace == namespace {
+			return true
+		}
+	}
+	return false
 }

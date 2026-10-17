@@ -202,6 +202,22 @@ var _ = Describe("provider discovery", func() {
 		Expect(candidate.SchemaValid).To(BeFalse())
 	})
 
+	It("rejects a Calico schema with no egress destination object", func() {
+		gvk := schema.GroupVersionKind{Group: "projectcalico.org", Version: "v3", Kind: "NetworkPolicy"}
+		mapper := testRESTMapper(gvk, meta.RESTScopeNamespace)
+		crd := testProviderCRD(gvk, "networkpolicies", apiextensionsv1.NamespaceScoped)
+		egress := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["egress"]
+		delete(egress.Items.Schema.Properties, "destination")
+		crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["egress"] = egress
+		client := fake.NewClientBuilder().WithScheme(testDiscoveryScheme()).WithRuntimeObjects(
+			crd,
+			readyDaemonSet("calico-node", "docker.io/calico/node:v3.31.1"),
+		).Build()
+
+		candidate := (Detector{Client: client, RESTMapper: mapper}).Discover(context.Background()).Candidates[ProviderCalico]
+		Expect(candidate.SchemaValid).To(BeFalse())
+	})
+
 	It("rejects a Calico schema that omits policy order consumed by the renderer", func() {
 		gvk := schema.GroupVersionKind{Group: "projectcalico.org", Version: "v3", Kind: "NetworkPolicy"}
 		mapper := testRESTMapper(gvk, meta.RESTScopeNamespace)
@@ -302,8 +318,12 @@ func testProviderCRD(gvk schema.GroupVersionKind, plural string, scope apiextens
 				Items: &apiextensionsv1.JSONSchemaPropsOrArray{Schema: &apiextensionsv1.JSONSchemaProps{
 					Type: "object",
 					Properties: map[string]apiextensionsv1.JSONSchemaProps{
+						"protocol": {Type: "string"},
 						"destination": {Type: "object", Properties: map[string]apiextensionsv1.JSONSchemaProps{
-							"services": {Type: "object"},
+							"services":          {Type: "object"},
+							"selector":          {Type: "string"},
+							"namespaceSelector": {Type: "string"},
+							"ports":             {Type: "array"},
 						}},
 					},
 				}},

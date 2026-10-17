@@ -1,0 +1,6 @@
+{{- if not (has .Values.postgresql.sslMode (list "require" "verify-ca" "verify-full")) -}}
+{{- fail (printf "postgresql.sslMode %q is unsupported; use require, verify-ca, or verify-full" .Values.postgresql.sslMode) -}}
+{{- end -}}
+{{- if not (has .Values.postgresql.commandMode (list "rhel" "official")) -}}
+{{- fail (printf "postgresql.commandMode %q is unsupported; use rhel or official" .Values.postgresql.commandMode) -}}
+{{- end -}}

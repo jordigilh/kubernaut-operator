@@ -46,6 +46,17 @@ type MonitoringEndpoint struct {
 	URL  string
 }
 
+// ServiceEndpoint identifies an in-cluster BYO Service that operator-managed
+// workloads must reach. External DNS, ExternalName, headless, and selector-less
+// destinations are rejected because native policy adapters cannot safely
+// represent them without a provider-specific administrator contract.
+type ServiceEndpoint struct {
+	Name      string
+	Host      string
+	Namespace string
+	Port      int32
+}
+
 // MonitoringServiceReference identifies the in-cluster Service addressed by a
 // monitoring endpoint URL. Controllers use it to scope event-driven watches
 // without duplicating URL parsing or accepting external destinations.
@@ -68,9 +79,10 @@ type MonitoringServicePort struct {
 }
 
 // MonitoringDestination is the provider-neutral, normalized destination for
-// one monitoring integration. BackendPort is required by Cilium and OVN and
-// may be zero for Calico when the Service uses a named targetPort, because
-// Calico's native Service match performs that translation itself.
+// one in-cluster Service integration. BackendPort is the numeric port reached
+// after Service translation; all provider adapters require it so they can
+// preserve the requested port scope without relying on provider-specific
+// implicit translation.
 type MonitoringDestination struct {
 	Name            string
 	ServiceName     string
@@ -141,6 +153,77 @@ func ResolveMonitoringDestinations(ctx context.Context, reader client.Reader, op
 	return destinations, errors.Join(resolutionErrors...)
 }
 
+// ResolveServiceDestinations resolves in-cluster BYO Service endpoints into
+// provider-neutral destinations for native egress policy rendering.
+func ResolveServiceDestinations(ctx context.Context, reader client.Reader, provider Provider, endpoints []ServiceEndpoint) ([]MonitoringDestination, error) {
+	if provider != ProviderCilium && provider != ProviderCalico && provider != ProviderOVN {
+		return nil, fmt.Errorf("BYO service destinations are unsupported for provider %s", provider)
+	}
+	if reader == nil {
+		return nil, fmt.Errorf("kubernetes client is required to resolve BYO service destinations")
+	}
+	ordered := append([]ServiceEndpoint(nil), endpoints...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Name < ordered[j].Name })
+	seen := make(map[string]struct{}, len(ordered))
+	destinations := make([]MonitoringDestination, 0, len(ordered))
+	resolutionErrors := make([]error, 0)
+	for _, endpoint := range ordered {
+		name := strings.ToLower(strings.TrimSpace(endpoint.Name))
+		if name == "" {
+			resolutionErrors = append(resolutionErrors, fmt.Errorf("BYO service destination name is required"))
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			resolutionErrors = append(resolutionErrors, fmt.Errorf("BYO service destination %q is configured more than once", name))
+			continue
+		}
+		seen[name] = struct{}{}
+		destination, err := resolveServiceDestination(ctx, reader, provider, endpoint, name)
+		if err != nil {
+			resolutionErrors = append(resolutionErrors, err)
+			continue
+		}
+		destinations = append(destinations, destination)
+	}
+	return destinations, errors.Join(resolutionErrors...)
+}
+
+func resolveServiceDestination(ctx context.Context, reader client.Reader, provider Provider, endpoint ServiceEndpoint, name string) (MonitoringDestination, error) {
+	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(endpoint.Host)), ".")
+	serviceName, namespace, err := parseServiceEndpointHost(host, endpoint.Namespace)
+	if err != nil {
+		return MonitoringDestination{}, fmt.Errorf("resolving BYO %s: %w", name, err)
+	}
+	service := &corev1.Service{}
+	if err := reader.Get(ctx, client.ObjectKey{Name: serviceName, Namespace: namespace}, service); err != nil {
+		return MonitoringDestination{}, fmt.Errorf("resolving BYO service %s/%s: %w", namespace, serviceName, err)
+	}
+	if err := validateMonitoringService(service); err != nil {
+		return MonitoringDestination{}, fmt.Errorf("resolving BYO service %s/%s: %w", namespace, serviceName, err)
+	}
+	servicePorts, selected, err := selectMonitoringServicePort(service, endpoint.Port, provider)
+	if err != nil {
+		return MonitoringDestination{}, fmt.Errorf("resolving BYO service %s/%s: %w", namespace, serviceName, err)
+	}
+	backendPort := selected.TargetPort
+	if selected.TargetPortName != "" {
+		backendPort, err = resolveNamedTargetPort(ctx, reader, service, selected)
+		if err != nil {
+			return MonitoringDestination{}, fmt.Errorf("resolving BYO service %s/%s targetPort: %w", namespace, serviceName, err)
+		}
+	}
+	destination := MonitoringDestination{
+		Name:            name,
+		ServiceName:     serviceName,
+		Namespace:       namespace,
+		ServicePort:     selected.Port,
+		BackendPort:     backendPort,
+		ServiceSelector: copyStringMap(service.Spec.Selector),
+		ServicePorts:    servicePorts,
+	}
+	return destination, validateMonitoringDestination(provider, destination)
+}
+
 func resolveMonitoringEndpoint(ctx context.Context, reader client.Reader, provider Provider, endpoint MonitoringEndpoint) (MonitoringDestination, error) {
 	serviceName, namespace, requestedPort, err := parseMonitoringURL(endpoint.URL)
 	if err != nil {
@@ -158,7 +241,7 @@ func resolveMonitoringEndpoint(ctx context.Context, reader client.Reader, provid
 		return MonitoringDestination{}, fmt.Errorf("resolving monitoring service %s/%s: %w", namespace, serviceName, err)
 	}
 	backendPort := selected.TargetPort
-	if (provider == ProviderCilium || provider == ProviderOVN) && selected.TargetPortName != "" {
+	if selected.TargetPortName != "" {
 		backendPort, err = resolveNamedTargetPort(ctx, reader, service, selected)
 		if err != nil {
 			return MonitoringDestination{}, fmt.Errorf("resolving monitoring service %s/%s targetPort: %w", namespace, serviceName, err)
@@ -203,6 +286,17 @@ func ValidateMonitoringDestinations(provider Provider, destinations []Monitoring
 }
 
 func validateMonitoringDestination(provider Provider, destination MonitoringDestination) error {
+	if len(validation.IsDNS1035Label(destination.ServiceName)) > 0 || len(validation.IsDNS1123Label(destination.Namespace)) > 0 {
+		return fmt.Errorf("monitoring endpoint %q has an invalid service identity", destination.Name)
+	}
+	if len(destination.ServiceSelector) == 0 {
+		return fmt.Errorf("monitoring endpoint %q has no Service selector", destination.Name)
+	}
+	for key, value := range destination.ServiceSelector {
+		if len(validation.IsQualifiedName(key)) > 0 || len(validation.IsValidLabelValue(value)) > 0 {
+			return fmt.Errorf("monitoring endpoint %q has an invalid Service selector", destination.Name)
+		}
+	}
 	if destination.ServicePort < 1 || destination.ServicePort > 65535 {
 		return fmt.Errorf("monitoring endpoint %q has an invalid service port", destination.Name)
 	}
@@ -228,6 +322,9 @@ func validateCiliumMonitoringDestination(destination MonitoringDestination) erro
 }
 
 func validateCalicoMonitoringDestination(destination MonitoringDestination) error {
+	if destination.BackendPort < 1 || destination.BackendPort > 65535 {
+		return fmt.Errorf("monitoring endpoint %q has no resolved numeric backend port", destination.Name)
+	}
 	if len(destination.ServicePorts) != 1 || destination.ServicePorts[0].Protocol != string(corev1.ProtocolTCP) {
 		return fmt.Errorf("monitoring endpoint %q requires exactly one TCP service port for Calico", destination.Name)
 	}
@@ -238,9 +335,6 @@ func validateCalicoMonitoringDestination(destination MonitoringDestination) erro
 }
 
 func validateOVNMonitoringDestination(destination MonitoringDestination) error {
-	if len(destination.ServiceSelector) == 0 {
-		return fmt.Errorf("monitoring endpoint %q has no Service selector for OVN", destination.Name)
-	}
 	return validateCiliumMonitoringDestination(destination)
 }
 
@@ -291,6 +385,34 @@ func parseServiceHost(host string) (string, string, error) {
 		return "", "", fmt.Errorf("monitoring URL must reference a valid service and namespace")
 	}
 	return parts[0], parts[1], nil
+}
+
+func parseServiceEndpointHost(host, defaultNamespace string) (string, string, error) {
+	if host == "" {
+		return "", "", fmt.Errorf("BYO service host is required")
+	}
+	if !strings.Contains(host, ".") {
+		if len(validation.IsDNS1035Label(host)) > 0 {
+			return "", "", fmt.Errorf("BYO service host must be a valid in-cluster service")
+		}
+		if len(validation.IsDNS1123Label(defaultNamespace)) > 0 {
+			return "", "", fmt.Errorf("BYO service namespace must be a valid namespace")
+		}
+		return host, defaultNamespace, nil
+	}
+	return parseServiceHost(host)
+}
+
+// ServiceReferenceFromHost normalizes a BYO Service host for dependency
+// watches. Bare hosts resolve in defaultNamespace; fully-qualified Service
+// names must use the in-cluster .svc form.
+func ServiceReferenceFromHost(host, defaultNamespace string) (MonitoringServiceReference, error) {
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	name, namespace, err := parseServiceEndpointHost(host, defaultNamespace)
+	if err != nil {
+		return MonitoringServiceReference{}, err
+	}
+	return MonitoringServiceReference{Name: name, Namespace: namespace}, nil
 }
 
 func validateMonitoringService(service *corev1.Service) error {

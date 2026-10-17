@@ -2,7 +2,7 @@
 
 This document is the compatibility contract for the platform-neutral operator work tracked by [#486](https://github.com/jordigilh/kubernaut-operator/issues/486) and documented by [#487](https://github.com/jordigilh/kubernaut-operator/issues/487).
 
-> **Implementation status:** the core platform-neutral path and the Cilium/Calico capability-gated adapters are implemented. Focused controller IT covers generic startup, native policy wiring, monitoring degradation, and OVN DNS intent. OpenShift 4.22 capability/bootstrap behavior and live ANP/BANP submission were manually observed on an external qualification cluster; full OpenShift application lifecycle and OVN enforcement remain unverified, and this document makes no OpenShift/OVN release claim.
+> **Implementation status:** the core platform-neutral path and the Cilium/Calico capability-gated adapters are implemented. Focused controller IT covers generic startup, fail-closed no-provider behavior, native policy wiring, monitoring degradation, and OVN DNS intent. OpenShift 4.22 capability/bootstrap behavior and live ANP/BANP submission were manually observed on an external qualification cluster; full OpenShift application lifecycle and OVN enforcement remain unverified, and this document makes no OpenShift/OVN release claim.
 
 ## Platform outcomes
 
@@ -10,10 +10,13 @@ The operator's core lifecycle is intended to work on both generic Kubernetes and
 
 | Platform profile | Core lifecycle | Optional integrations |
 |---|---|---|
-| Generic Kubernetes / Kind | Singleton CR, workloads, Services, ConfigMaps, Secrets, RBAC, PDBs, status, cleanup | Kubernetes Ingress, administrator/cert-manager TLS, explicitly configured Prometheus/AlertManager, supported Cilium or Calico policy adapter |
+| Generic Kubernetes / Kind with a supported CNI | Singleton CR, workloads, Services, ConfigMaps, Secrets, RBAC, PDBs, status, cleanup | Kubernetes Ingress, administrator/cert-manager TLS, explicitly configured Prometheus/AlertManager, supported Cilium or Calico policy adapter |
 | OpenShift 4.19–4.22 with OVN-Kubernetes | Core APIs, bootstrap behavior, and native ANP/BANP submission manually observed on an external OCP 4.22 cluster; full lifecycle not qualified | OpenShift Routes, service-CA/router CA, TLS security profile, monitoring readiness, and live OVN policy enforcement remain unverified |
 
-OpenShift is not required for the generic profile. A plain Kind cluster with no policy provider may run the core lifecycle without creating provider-policy resources. It must report that provider policy enforcement is not active; it must not silently claim equivalent network enforcement.
+OpenShift is not required for the generic profile, but a supported native Cilium
+or Calico provider is required before migration and workload activation. A plain
+Kind cluster with no qualified provider fails closed, creates no provider-policy
+resources, and reports `ProviderDetected=False` and `ProviderPolicyReady=False`.
 
 OpenShift 4.19–4.22 with OVN-Kubernetes is also **not live-qualified by this
 work**. It requires the deferred compatibility review, qualified payloads, and
@@ -71,7 +74,7 @@ The operator follows this behavior:
 | Detection result | Provider policy resources | Status behavior |
 |---|---|---|
 | One active supported provider in range | Render and reconcile the provider-native resources | Report provider and API version; `ProviderPolicyReady` reflects submission/readiness only |
-| No provider / plain Kind profile | None | Report `NoSupportedProvider`; do not claim provider policy enforcement |
+| No provider / plain Kind profile | None | Report `NoSupportedProvider`; block migration and workload activation |
 | Ambiguous active providers | None | Report `AmbiguousProvider`; recommend an explicit override |
 | Unsupported or out-of-range provider | None | Report `UnsupportedProvider` or `UnsupportedVersion` |
 | Explicit provider unavailable or API/schema mismatch | None | Report `ProviderUnavailable`, `NoActiveInstallation`, or `SchemaInvalid` |
@@ -112,15 +115,16 @@ Supported source modes are:
 
 | Source | Generic Kubernetes / Kind | OpenShift |
 |---|---|---|
-| `hook` | Explicit Helm-compatible hook mode; the operator provisions and owns the generated CA, leaves, trust bundle, webhook trust, and signing material | Not live-qualified by the current generic Kind evidence |
+| `hook` | Explicit Helm-compatible hook mode; the operator provisions and owns the generated CA, leaves, trust bundle, webhook trust, and signing material | Not live-qualified by the current native-provider Kind evidence |
 | `manual` | Reference pre-created Secrets/ConfigMaps; the operator validates keys, CA consistency, and SANs without overwriting them | Supported where the referenced material satisfies the same contract, but not live-qualified here |
 | `AdministratorManaged` | Reference pre-created administrator-owned Secrets; the operator validates and publishes trust without adopting or deleting the inputs | Supported where the referenced material satisfies the same contract, but not live-qualified here |
 | cert-manager | Requires a pre-installed cert-manager, configured issuer, and its output Secrets; the operator never installs cert-manager or its CRDs | Optional; not installed by Kubernaut |
 | Development self-signed | Explicit opt-in for Kind/development; creates a dedicated CA and leaves and reports non-production status | Available only if explicitly selected; service-CA remains the preferred platform adapter |
 | OpenShift service-CA/router-CA | Not available | Optional adapter for Service leaves, webhook CA injection, Routes, and router trust |
 
-The generic Kind acceptance matrix runs isolated `development`, `hook`,
-`manual-admin`, and `certmanager` selectors. The `manual-admin` lane exercises
+The native-provider Kind acceptance matrix runs isolated Cilium `development`,
+`hook`, `manual-admin`, and `certmanager` selectors plus a Calico development
+lane. The `manual-admin` lane exercises
 both the lower-case `manual` mode and the title-case `AdministratorManaged`
 mode against pre-created administrator-owned material. These hosted journeys
 are implementation evidence rather than a FedRAMP, SOC 2, or OWASP ASVS
@@ -146,8 +150,8 @@ For generated `DevelopmentSelfSigned` and `hook` modes, the operator owns
 per-instance AuthWebhook, inter-service, and runtime trust artifacts once a
 `Kubernaut` instance is reconciled. In `manual` and `AdministratorManaged`
 modes, the referenced Secrets remain administrator-owned and survive operator
-cleanup. A future Helm chart and the operator must never co-own the same Secret
-or ConfigMap.
+cleanup. A development dependency chart and the operator must never co-own the
+same Secret or ConfigMap.
 
 ## OpenShift integrations
 
@@ -169,20 +173,21 @@ it does not create a `Kubernaut` CR or application workloads. The
 GitOps controllers apply the CR separately after installing the Helm chart or
 the OLM package.
 
-The separate `kubernaut-dependencies` chart is an explicitly non-production
-convenience chart for testing, demos, and CI. It may deploy single-replica,
-PVC-backed PostgreSQL and Valkey, but it is not a production-ready HA,
-backup, or upgrade solution and is never installed as a dependency of the
-operator chart. Production users should provide managed PostgreSQL and Valkey
-outside this chart.
+The separate `charts/kubernaut-dev-bootstrap` chart is an explicitly
+non-production convenience chart for testing, demos, and CI. It deploys
+single-replica PostgreSQL and Valkey with disposable storage by default, but it
+is not a production-ready HA, backup, or upgrade solution and is never
+installed as a dependency of the operator chart. Production users should
+provide managed PostgreSQL and Valkey outside this chart.
 
 The installation sequence is:
 
 1. On generic Kubernetes or Kind, install the operator Helm chart. On
    OpenShift, install the operator through OLM.
 2. Wait for the operator manager and CRD to become ready.
-3. For testing/demo/CI only, optionally install `kubernaut-dependencies`; in
-   production, provision managed PostgreSQL and Valkey externally.
+3. For testing/demo/CI only, optionally install
+   `charts/kubernaut-dev-bootstrap`; in production, provision managed
+   PostgreSQL and Valkey externally.
 4. Provision credentials, policy input ConfigMaps, and any selected
    certificate-provider material.
 5. Apply the `Kubernaut` CR from GitOps or another user-controlled workflow.

@@ -119,6 +119,15 @@ var _ = Describe("native policy boundary decisions", func() {
 		wrongPort := valid
 		wrongPort.ServicePorts = []MonitoringServicePort{{Port: 9091, Protocol: "TCP"}}
 		Expect(ValidateMonitoringDestinations(ProviderCalico, []MonitoringDestination{wrongPort})).To(MatchError(ContainSubstring("configured service port")))
+		invalidIdentity := valid
+		invalidIdentity.ServiceName = "invalid_service"
+		Expect(ValidateMonitoringDestinations(ProviderCilium, []MonitoringDestination{invalidIdentity})).To(MatchError(ContainSubstring("invalid service identity")))
+		invalidSelector := valid
+		invalidSelector.ServiceSelector = map[string]string{"invalid key": "value"}
+		Expect(ValidateMonitoringDestinations(ProviderCilium, []MonitoringDestination{invalidSelector})).To(MatchError(ContainSubstring("invalid Service selector")))
+		missingCalicoBackend := valid
+		missingCalicoBackend.BackendPort = 0
+		Expect(ValidateMonitoringDestinations(ProviderCalico, []MonitoringDestination{missingCalicoBackend})).To(MatchError(ContainSubstring("numeric backend port")))
 		noSelector := valid
 		noSelector.ServiceSelector = nil
 		Expect(ValidateMonitoringDestinations(ProviderOVN, []MonitoringDestination{noSelector})).To(MatchError(ContainSubstring("no Service selector")))

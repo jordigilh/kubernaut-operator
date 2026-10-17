@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.valkey.serviceName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ .Values.valkey.name }}
+    app.kubernetes.io/part-of: kubernaut-dev-bootstrap
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: valkey
+      port: 6379
+      targetPort: valkey
+      protocol: TCP

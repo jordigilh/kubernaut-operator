@@ -2,6 +2,29 @@
 
 Before deploying Kubernaut, provision the required backing services and namespace on your OCP cluster.
 
+## Disposable development bootstrap
+
+For operator development, Kind, and disposable OCP qualification, use the
+repository-owned bootstrap chart instead of reproducing the dependency
+manifests by hand:
+
+```bash
+helm upgrade --install kubernaut-dev-bootstrap \
+  ./charts/kubernaut-dev-bootstrap \
+  --namespace kubernaut-system \
+  --create-namespace \
+  --wait --timeout 10m
+```
+
+The chart creates selector-backed PostgreSQL and Valkey Services, synthetic
+credentials, the sample policy ConfigMaps, readiness probes, and a generated
+short-lived PostgreSQL TLS certificate. Its default CR contract is
+`spec.postgresql.sslMode: require`; `disable` is not supported. See the
+[bootstrap chart README](../../charts/kubernaut-dev-bootstrap/README.md) for
+image pinning, restricted-SCC settings, Kind overrides, persistence, and
+cleanup. It is intentionally separate from the production operator chart and
+must not be installed over administrator-owned BYO Services or Secrets.
+
 ## Namespace
 
 ```bash

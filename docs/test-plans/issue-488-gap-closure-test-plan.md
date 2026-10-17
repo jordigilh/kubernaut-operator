@@ -37,7 +37,7 @@ The current baseline has:
   Issue #488 matrix does not duplicate its lifecycle evidence;
 - no live OpenShift/OVN qualification because the local `oc` environment is
   incomplete;
-- generic Kind E2E coverage using explicit development self-signed TLS, but no
+- native-provider Kind E2E coverage using explicit development self-signed TLS, but no
   live administrator-managed, cert-manager, or certificate-rotation journey;
 - a control-objective table in
   `docs/design/ISSUE-488-IMPLEMENTATION-PLAN.md`, but no versioned,
@@ -274,7 +274,7 @@ git diff --exit-code config/ bundle/ dist/
 ### Environment-dependent gates
 
 ```text
-make test-e2e-kind                         # generic/Cilium/Calico
+make test-e2e-kind                         # Cilium/Calico; no-provider is fail-closed IT evidence
 KUBERNAUT_E2E_PROVIDER=... make test-e2e-kind
 KUBERNAUT_E2E_TLS_SOURCE=certmanager make test-e2e-kind
 make test-e2e                              # authenticated OpenShift
@@ -305,7 +305,7 @@ This gap-closure work is complete only when:
 - the approved architectural decisions are recorded;
 - RED/GREEN/REFACTOR and Checkpoint W pass for each approved workstream;
 - every claimed control row has evidence or an explicit residual-risk status;
-- generic/Cilium/Calico remain green after changes;
+- Cilium/Calico remain green after changes and no-provider remains fail-closed;
 - approved TLS lanes have passing evidence; OCP/OVN remains explicitly deferred,
   while Helm evidence is maintained separately under Issue #489;
 - generated artifacts and documentation are current;
