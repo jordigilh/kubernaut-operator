@@ -2216,11 +2216,6 @@ func (in *ShutdownSpec) DeepCopy() *ShutdownSpec {
 func (in *SignalProcessingSpec) DeepCopyInto(out *SignalProcessingSpec) {
 	*out = *in
 	out.Policy = in.Policy
-	if in.ProactiveSignalMappings != nil {
-		in, out := &in.ProactiveSignalMappings, &out.ProactiveSignalMappings
-		*out = new(ConfigMapRef)
-		**out = **in
-	}
 	out.Logging = in.Logging
 	in.Resources.DeepCopyInto(&out.Resources)
 	if in.Fleet != nil {

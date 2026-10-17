@@ -1631,34 +1631,6 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(proactiveCM.Data).To(HaveKey("proactive-signal-mappings.yaml"))
 		})
 
-		// #423 CONS-006: signalProcessing.proactiveSignalMappings was
-		// flagged as a cross-consumer consistency gap (consumer exists in
-		// internal/controller, no test in that package). Reinterpreted per
-		// docs/tests/421/TEST_PLAN.md: the controller only nil-checks the
-		// *parent* ProactiveSignalMappings pointer before calling
-		// buildCoreConfigMaps (resources.ProactiveSignalMappingsConfigMap
-		// already has its own UT for the nil-check itself) -- this targets
-		// the reconcile-loop wiring of that pointer-check, which the
-		// existing test above never exercises with a non-nil pointer.
-		It("CONS-006 [CM-6]: does not create the auto-generated proactive-signal-mappings CM when the user supplies their own", func() {
-			createBYOSecrets(ctx)
-			customMappings := &corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{Name: "my-proactive-signal-mappings", Namespace: testNamespace},
-				Data:       map[string]string{"proactive-signal-mappings.yaml": "proactive_signal_mappings: {}"},
-			}
-			Expect(k8sClient.Create(ctx, customMappings)).To(Succeed())
-			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, customMappings))).To(Succeed()) })
-			kn := newCRWithRouteDisabled()
-			kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "my-proactive-signal-mappings"}
-			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
-			reconcileToRunning(ctx)
-
-			proactiveCM := &corev1.ConfigMap{}
-			err := k8sClient.Get(ctx, types.NamespacedName{
-				Name: "signalprocessing-proactive-signal-mappings", Namespace: testNamespace,
-			}, proactiveCM)
-			Expect(errors.IsNotFound(err)).To(BeTrue(), "operator must not create the auto-generated proactive-signal-mappings CM when spec.signalProcessing.proactiveSignalMappings is set, got err=%v", err)
-		})
 	})
 
 	// #423 CONS-003: notification.routing.configMapName was flagged as a

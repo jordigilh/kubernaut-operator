@@ -167,7 +167,6 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 	It("UT-CONFIG-512-003 accepts valid conditional references", func() {
 		kn := newMinimalCR()
 		kn.Spec.KubernautAgent.RuntimeConfigMapName = "custom-llm-runtime"
-		kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "custom-proactive"}
 		kn.Spec.Notification.Routing = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "custom-routing"}
 		kn.Spec.Notification.Slack.SecretName = "slack-webhook"
 		kn.Spec.Gateway.Auth.AlertManager.TokenSecretName = "alertmanager-token"
@@ -195,7 +194,6 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		seedValidPrecreatedInputs(r, kn)
 		for _, object := range []client.Object{
 			&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "custom-llm-runtime", Namespace: kn.Namespace}, Data: map[string]string{"llm-runtime.yaml": "model: gpt-4o"}},
-			&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "custom-proactive", Namespace: kn.Namespace}, Data: map[string]string{"proactive-signal-mappings.yaml": "proactive_signal_mappings: {}"}},
 			&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "custom-routing", Namespace: kn.Namespace}, Data: map[string]string{"routing.yaml": "route: {}"}},
 			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "slack-webhook", Namespace: kn.Namespace}, Data: map[string][]byte{"webhook-url": []byte("https://hooks.slack.example/unit")}},
 			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "alertmanager-token", Namespace: kn.Namespace}, Data: map[string][]byte{"token": []byte("unit-token")}},
@@ -258,7 +256,6 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		Expect(defaultErrs).To(BeEmpty())
 
 		kn.Spec.AIAnalysis.Policy.ConfigMapName = ""
-		kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha2.ConfigMapRef{}
 		kn.Spec.WorkflowExecution.Ansible.Enabled = true
 		kn.Spec.WorkflowExecution.Ansible.TokenSecretRef = nil
 		const primaryProfile = "primary"
@@ -305,7 +302,6 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 	It("UT-CONFIG-512-004 does not require omitted optional references or generated runtime ConfigMaps", func() {
 		kn := newMinimalCR()
 		kn.Spec.KubernautAgent.RuntimeConfigMapName = ""
-		kn.Spec.SignalProcessing.ProactiveSignalMappings = nil
 		kn.Spec.Notification.Routing = nil
 		kn.Spec.Notification.Slack.SecretName = ""
 		kn.Spec.WorkflowExecution.Ansible.Enabled = false

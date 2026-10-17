@@ -1757,9 +1757,7 @@ func buildCoreConfigMaps(
 		return nil, nil, err
 	}
 
-	if cm := resources.ProactiveSignalMappingsConfigMap(kn); cm != nil {
-		configMaps = append(configMaps, cm)
-	}
+	configMaps = append(configMaps, resources.ProactiveSignalMappingsConfigMap(kn))
 	llmRuntimeCM, err := resources.KubernautAgentLLMRuntimeConfigMap(kn)
 	if err != nil {
 		return nil, nil, fmt.Errorf("building kubernaut-agent-llm-runtime ConfigMap: %w", err)
@@ -3489,10 +3487,6 @@ func appendPrecreatedOptionalReferences(c *precreatedReferenceCollector, kn *kub
 func appendPrecreatedConfigMapReferences(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
 	if name := kn.Spec.KubernautAgent.RuntimeConfigMapName; name != "" {
 		c.add(precreatedConfigMapReference, "spec.kubernautAgent.runtimeConfigMapName", name, "llm-runtime.yaml")
-	}
-	if ref := kn.Spec.SignalProcessing.ProactiveSignalMappings; ref != nil {
-		c.add(precreatedConfigMapReference, "spec.signalProcessing.proactiveSignalMappings.configMapName",
-			ref.ConfigMapName, "proactive-signal-mappings.yaml")
 	}
 	if ref := kn.Spec.Notification.Routing; ref != nil {
 		c.add(precreatedConfigMapReference, "spec.notification.routing.configMapName",
