@@ -27,6 +27,7 @@ for required in \
 	'name: kubernaut-console-oidc' \
 	'name: aianalysis-policy' \
 	'name: signalprocessing-policy' \
+	'authorized_user' \
 	'name: postgresql' \
 	'name: valkey' \
 	'ssl = on' \

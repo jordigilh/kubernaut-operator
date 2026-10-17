@@ -254,14 +254,17 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred(), "Deployment %q should exist", dep)
 				Expect(output).To(Equal(dep))
 
-				readyCmd := exec.Command("kubectl", "get", "deployment", dep,
-					"-n", crNS, "-o", "jsonpath={.status.readyReplicas}")
-				readyOutput, err := utils.Run(readyCmd)
-				Expect(err).NotTo(HaveOccurred(), "Deployment %q readyReplicas should be readable", dep)
-				Expect(readyOutput).NotTo(Equal("0"),
-					"Deployment %q should have at least one ready replica", dep)
-				Expect(readyOutput).NotTo(BeEmpty(),
-					"Deployment %q should have at least one ready replica", dep)
+				Eventually(func(g Gomega) {
+					readyCmd := exec.Command("kubectl", "get", "deployment", dep,
+						"-n", crNS, "-o", "jsonpath={.status.readyReplicas}")
+					readyOutput, getErr := utils.Run(readyCmd)
+					g.Expect(getErr).NotTo(HaveOccurred(),
+						"Deployment %q readyReplicas should be readable", dep)
+					g.Expect(readyOutput).NotTo(BeEmpty(),
+						"Deployment %q should have at least one ready replica", dep)
+					g.Expect(readyOutput).NotTo(Equal("0"),
+						"Deployment %q should have at least one ready replica", dep)
+				}, 10*time.Minute, 5*time.Second).Should(Succeed())
 			}
 		})
 
@@ -275,20 +278,21 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			}
 			for _, svc := range []string{
 				"gateway-service", "data-storage-service", "aianalysis-service",
-				"signalprocessing-service", "remediationorchestrator-service",
-				"workflowexecution-service", "effectivenessmonitor-service",
-				"notification-service", "kubernaut-agent-service", "authwebhook-service",
+				"signalprocessing-controller-metrics", "remediationorchestrator-controller",
+				"workflowexecution-controller-metrics", "effectivenessmonitor-metrics",
+				"notification-metrics", "kubernaut-agent", "authwebhook-service",
+				"apifrontend", "kubernaut-console",
 			} {
 				verifyService(svc)
 			}
 		})
 
-		It("should create the OCP Route for Gateway", func() {
+		It("should honor the disabled Gateway OCP Route", func() {
 			cmd := exec.Command("kubectl", "get", "route", "gateway-route",
-				"-n", crNS, "-o", "jsonpath={.spec.to.name}")
+				"-n", crNS, "--ignore-not-found=true", "-o", "jsonpath={.metadata.name}")
 			output, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Gateway Route should exist")
-			Expect(output).To(Equal("gateway-service"))
+			Expect(err).NotTo(HaveOccurred(), "Gateway Route lookup should succeed")
+			Expect(output).To(BeEmpty(), "Gateway Route should remain disabled by the sample CR")
 		})
 
 		It("should create ClusterRoles with kubernaut labels", func() {
@@ -362,15 +366,22 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			}
 		})
 
-		It("should NOT create default policy ConfigMaps (user-provided prerequisite)", func() {
+		It("should preserve bootstrap-provided policy ConfigMaps without operator ownership", func() {
 			for _, name := range []string{
 				"aianalysis-policy",
 				"signalprocessing-policy",
 			} {
 				cmd := exec.Command("kubectl", "get", "configmap", name,
-					"-n", crNS)
-				_, err := utils.Run(cmd)
-				Expect(err).To(HaveOccurred(), "ConfigMap %q should not be created by the operator", name)
+					"-n", crNS, "-o", "jsonpath={.metadata.labels.app\\.kubernetes\\.io/managed-by}")
+				output, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "ConfigMap %q should be provided by the bootstrap chart", name)
+				Expect(output).To(Equal("Helm"), "ConfigMap %q should remain Helm-owned", name)
+
+				cmd = exec.Command("kubectl", "get", "configmap", name,
+					"-n", crNS, "-o", "jsonpath={.metadata.ownerReferences}")
+				output, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "ConfigMap %q ownership should be readable", name)
+				Expect(output).To(BeEmpty(), "ConfigMap %q should not be adopted by the operator", name)
 			}
 		})
 
@@ -402,16 +413,33 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			verifyCleanedUp("clusterrolebindings")
 		})
 
-		It("should clean up the workflow namespace", func() {
-			verifyCleaned := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "namespace", workflowNS,
-					"--ignore-not-found=true", "-o", "jsonpath={.metadata.name}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(BeEmpty(),
-					"workflow namespace should be deleted")
+		It("should retain the workflow namespace and clean operator-owned contents", func() {
+			cmd := exec.Command("kubectl", "get", "namespace", workflowNS,
+				"-o", "jsonpath={.metadata.name}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "workflow namespace should be retained")
+			Expect(output).To(Equal(workflowNS))
+
+			cmd = exec.Command("kubectl", "get", "namespace", workflowNS,
+				"-o", "jsonpath={.metadata.labels.app\\.kubernetes\\.io/managed-by}")
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "workflow namespace ownership should be readable")
+			Expect(output).To(Equal("kubernaut-operator"),
+				"retained workflow namespace should keep operator provenance")
+
+			for _, kind := range []string{"role", "rolebinding", "serviceaccount"} {
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", kind,
+						"-n", workflowNS,
+						"-l", "app.kubernetes.io/managed-by=kubernaut-operator",
+						"-o", `go-template={{range .items}}{{.metadata.name}}{{"\n"}}{{end}}`)
+					output, getErr := utils.Run(cmd)
+					g.Expect(getErr).NotTo(HaveOccurred(),
+						"operator-owned workflow %s should be readable", kind)
+					g.Expect(utils.GetNonEmptyLines(output)).To(BeEmpty(),
+						"operator-owned workflow %s should be deleted", kind)
+				}, 2*time.Minute).Should(Succeed())
 			}
-			Eventually(verifyCleaned, 2*time.Minute).Should(Succeed())
 		})
 
 		It("should clean up webhook configurations", func() {

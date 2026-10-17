@@ -10,7 +10,7 @@ type: Opaque
 stringData:
   api_key: {{ .Values.fixtures.llm.apiKey | quote }}
   api-key: {{ .Values.fixtures.llm.apiKey | quote }}
-  credentials.json: '{}'
+  credentials.json: {{ .Values.fixtures.llm.apiKey | quote }}
 ---
 apiVersion: v1
 kind: Secret
