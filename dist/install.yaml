@@ -3480,17 +3480,6 @@ spec:
                     required:
                     - configMapName
                     type: object
-                  proactiveSignalMappings:
-                    description: |-
-                      Optional proactive signal mappings ConfigMap reference.
-                      Must contain key "proactive-signal-mappings.yaml".
-                    properties:
-                      configMapName:
-                        description: Name of the ConfigMap.
-                        type: string
-                    required:
-                    - configMapName
-                    type: object
                   resources:
                     description: Resource requirements.
                     properties:

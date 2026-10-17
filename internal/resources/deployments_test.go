@@ -592,23 +592,13 @@ var _ = Describe("Deployments", func() {
 			expectHasVolumeMount(dep, "policy", "/etc/signalprocessing/policies")
 		})
 
-		It("uses custom proactive signal mappings", func() {
-			kn := testKubernaut()
-			kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "my-mappings"}
-			dep, err := SignalProcessingDeployment(kn, testKnV2(kn))
-			Expect(err).NotTo(HaveOccurred())
-
-			expectHasVolume(dep, "proactive-mappings")
-			expectHasVolumeMount(dep, "proactive-mappings", "/etc/signalprocessing/proactive-signal-mappings.yaml")
-		})
-
 		It("uses default proactive signal mappings", func() {
 			kn := testKubernaut()
 			dep, err := SignalProcessingDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			expectHasVolume(dep, "proactive-mappings")
-			expectVolumeSourceConfigMap(dep, "proactive-mappings", "signalprocessing-proactive-signal-mappings")
+			expectVolumeSourceConfigMap(dep, "proactive-mappings", SignalProcessingProactiveSignalMappingsConfigMapName)
 			expectHasVolumeMount(dep, "proactive-mappings", "/etc/signalprocessing/proactive-signal-mappings.yaml")
 		})
 	})

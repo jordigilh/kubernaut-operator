@@ -49,11 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   precedence over the legacy `alignmentCheck.llm` literal for backward
   compatibility.
 - Backfilled test coverage and/or FedRAMP control-tag traceability for
-  ~100 fields across 17 components; closed 7 cross-consumer consistency
+  ~100 fields across 17 components; closed 6 cross-consumer consistency
   gaps (a field tested in `internal/resources` but its `internal/controller`
   consumer had zero sibling coverage): `image.pullSecrets`,
   `postgresql.sslMode`, `notification.routing.configMapName`,
-  `signalProcessing.proactiveSignalMappings.configMapName`,
   `gateway.resources`, `additionalClusterRoles`.
 - **`workflowexecution-controller` RBAC missing `get`/`list`/`watch` on core
   `events`** ([#411](https://github.com/jordigilh/kubernaut-operator/issues/411),

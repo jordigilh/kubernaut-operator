@@ -275,10 +275,7 @@ func SignalProcessingDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernaut
 		corev1.VolumeMount{Name: "policy", MountPath: "/etc/signalprocessing/policies", ReadOnly: true},
 	)
 
-	proactiveCMName := "signalprocessing-proactive-signal-mappings"
-	if kn.Spec.SignalProcessing.ProactiveSignalMappings != nil {
-		proactiveCMName = kn.Spec.SignalProcessing.ProactiveSignalMappings.ConfigMapName
-	}
+	proactiveCMName := SignalProcessingProactiveSignalMappingsConfigMapName
 	volumes = append(volumes, configMapVolume("proactive-mappings", proactiveCMName))
 	mounts = append(mounts, corev1.VolumeMount{
 		Name: "proactive-mappings", MountPath: "/etc/signalprocessing/proactive-signal-mappings.yaml", SubPath: "proactive-signal-mappings.yaml",

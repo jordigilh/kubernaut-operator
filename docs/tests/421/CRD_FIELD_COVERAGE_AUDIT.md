@@ -68,7 +68,7 @@ Per the plan, ~15 flagged fields were manually re-verified by reading the actual
 
 1. **`spec.networkPolicies.*` -- 24 fields, 100% dead on arrival.** Every tuning field under `NetworkPoliciesSpec` (`apiServerCIDR(s)`, `apiServerPort`, per-destination `cidr`/`port` overrides for monitoring/externalWebhooks/externalRegistry/llm/mcpGateway/prometheus, and per-component `ingressCIDRs`/`ingressNamespaces`/`ingressNamespaceSelectors` overrides for gateway/apifrontend/console/datastorage/kubernautAgent) is new in v1alpha2 and accepted by the CRD schema, but `internal/resources/networkpolicies.go`'s builder functions read `kn.Spec.NetworkPolicies` -- the **v1alpha1** struct, which has none of these fields -- and never read the corresponding `knV2` fields either (confirmed: `knV2` is used in that file only for Fleet/Monitoring-URL egress, never for any `NetworkPolicies.*` field). A cluster-admin setting any of these 24 fields in a v1alpha2 CR gets silent no-op behavior: no validation error, no effect on the rendered NetworkPolicy. This is a strictly worse variant of the #417 bug class (not "wrong inference," but "never wired at all") and is security-relevant (these are meant to tighten network isolation). **Recommend filing immediately as its own issue, independent of this audit's broader test-coverage gaps.**
 2. **`kubernautAgent.alignmentCheck.llmProfileRef` -- already tracked as #419.** Confirmed again here as `CONVERSION-ONLY` with zero downstream consumers.
-3. **Cross-consumer consistency gaps (7 fields, high-confidence, business-package-scoped):** `image.pullSecrets`, `postgresql.sslMode`, `notification.routing.configMapName`, `signalProcessing.proactiveSignalMappings.configMapName`, `gateway.resources`, `apiFrontend.rbacRolesConfigMapRef.configMapName`, `additionalClusterRoles` -- each has a production consumer in one package (mostly `internal/controller/kubernaut_controller.go`) with zero test coverage in that same package, even though the field is tested elsewhere (`internal/resources`). Same shape as #417's gap, lower severity since the field IS correctly wired, just untested at that specific call site.
+3. **Cross-consumer consistency gaps (6 fields, high-confidence, business-package-scoped):** `image.pullSecrets`, `postgresql.sslMode`, `notification.routing.configMapName`, `gateway.resources`, `apiFrontend.rbacRolesConfigMapRef.configMapName`, `additionalClusterRoles` -- each has a production consumer in one package (mostly `internal/controller/kubernaut_controller.go`) with zero test coverage in that same package, even though the field is tested elsewhere (`internal/resources`). Same shape as #417's gap, lower severity since the field IS correctly wired, just untested at that specific call site.
 4. **Resolved by #424:** the former `monitoring.prometheus.tlsCaFile` / `monitoring.alertManager.tlsCaFile` fields were removed before v1alpha2 publication and replaced with the shared monitoring client TLS trust contract.
 5. **32 security/compliance-relevant fields are entirely UNTESTED** (see the per-component detail below for the full list) -- these are the highest-value targets for new regression tests given FedRAMP control traceability requirements.
 
@@ -455,14 +455,12 @@ Summary: COVERED=2 | PARTIAL=2 | UNTESTED=1
 - `spec.notification.slack.secretName` (string) -- **PARTIAL** **[security-relevant]**
   - CONTROL-TAG: security/compliance-relevant field with no test carrying an [AC-x]/[SC-x]/[IA-x]/[AU-x]/[CM-x]/[SI-x] tag
 
-## Component: `signalProcessing` (5 fields)
+## Component: `signalProcessing` (4 fields)
 
-Summary: COVERED=3 | PARTIAL=1 | UNTESTED=1
+Summary: COVERED=3 | PARTIAL=0 | UNTESTED=1
 
 - `spec.signalProcessing.resources` (corev1.ResourceRequirements) -- **UNTESTED**
   - zero test references found
-- `spec.signalProcessing.proactiveSignalMappings.configMapName` (string) -- **PARTIAL**
-  - CONSISTENCY: production file(s) with no sibling test reference: ['internal/controller']
 
 ## Component: `effectivenessMonitor` (5 fields)
 

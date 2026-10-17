@@ -301,29 +301,6 @@ data:
 EOF
 ```
 
-### Proactive signal mappings (optional)
-
-To enable proactive remediation for `predict_linear()` alerts, create a mapping ConfigMap. Signals matching a key are classified as `proactive` and normalized to the base type so existing workflows are reused:
-
-```bash
-oc apply -f - <<EOF
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: proactive-signal-mappings
-  namespace: kubernaut-system
-data:
-  proactive-signal-mappings.yaml: |
-    proactive_signal_mappings:
-      PredictedOOMKill: OOMKilled
-      PredictedCPUThrottling: CPUThrottling
-      PredictedDiskPressure: DiskPressure
-      PredictedNodeNotReady: NodeNotReady
-EOF
-```
-
-Reference it in the CR under `spec.signalProcessing.proactiveSignalMappings.configMapName`.
-
 ## AI Analysis (AA) -- Approval Policy (Required)
 
 The AA controller uses a Rego policy to decide whether an AI-generated remediation plan should be auto-approved or require human review. **This is a required prerequisite** -- the operator will not create a default policy. You must provide a ConfigMap with your Rego policy and reference it in `spec.aiAnalysis.policy.configMapName`. The operator will reject the CR with a validation error if this field is empty.
@@ -633,12 +610,11 @@ oc get configmap -n kubernaut-system \
 
 > **Note**: The operator validates that `spec.signalProcessing.policy.configMapName` and `spec.aiAnalysis.policy.configMapName` are set. If either is missing, reconciliation will fail with a clear validation error on the CR status.
 
-If using BYO LLM runtime config or proactive mappings:
+If using BYO LLM runtime config:
 
 ```bash
 oc get configmap -n kubernaut-system \
-  custom-llm-runtime \
-  proactive-signal-mappings
+  custom-llm-runtime
 ```
 
 ## Additional RBAC for API Frontend

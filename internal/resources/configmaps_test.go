@@ -2762,12 +2762,12 @@ var _ = Describe("ConfigMaps", func() {
 	})
 
 	Describe("ProactiveSignalMappings", func() {
-		It("default mappings are generated when no user override", func() {
+		It("built-in default mappings are generated", func() {
 			kn := testKubernaut()
 
 			cm := ProactiveSignalMappingsConfigMap(kn)
-			Expect(cm).NotTo(BeNil(), "ProactiveSignalMappingsConfigMap should return non-nil when no user override")
-			Expect(cm.Name).To(Equal("signalprocessing-proactive-signal-mappings"), "Name = %q, want %q", cm.Name, "signalprocessing-proactive-signal-mappings")
+			Expect(cm).NotTo(BeNil(), "ProactiveSignalMappingsConfigMap should return the built-in default")
+			Expect(cm.Name).To(Equal(SignalProcessingProactiveSignalMappingsConfigMapName), "Name = %q, want %q", cm.Name, SignalProcessingProactiveSignalMappingsConfigMapName)
 			data, ok := cm.Data["proactive-signal-mappings.yaml"]
 			Expect(ok).To(BeTrue(), "ConfigMap should contain proactive-signal-mappings.yaml key")
 			for _, mapping := range []string{
@@ -2780,14 +2780,11 @@ var _ = Describe("ConfigMaps", func() {
 			}
 		})
 
-		It("returns nil when user provides ConfigMapName", func() {
+		It("always returns the built-in default mappings", func() {
 			kn := testKubernaut()
-			kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha2.ConfigMapRef{
-				ConfigMapName: "user-proactive-mappings",
-			}
 
 			cm := ProactiveSignalMappingsConfigMap(kn)
-			Expect(cm).To(BeNil(), "ProactiveSignalMappingsConfigMap should return nil when user provides ConfigMapName")
+			Expect(cm).NotTo(BeNil(), "ProactiveSignalMappingsConfigMap should always return the built-in default")
 		})
 	})
 

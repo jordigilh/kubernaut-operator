@@ -155,8 +155,6 @@ spec:
   signalProcessing:
     policy:
       configMapName: signalprocessing-policy
-    # proactiveSignalMappings:
-    #   configMapName: proactive-signal-mappings  # uncomment to enable proactive mode
     # fleet:
     #   oauth2CredentialsSecretRef: sp-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for SignalProcessing only
 

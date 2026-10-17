@@ -665,11 +665,6 @@ type SignalProcessingSpec struct {
 	// The ConfigMap must contain key "policy.rego".
 	Policy PolicyConfigMapRef `json:"policy"`
 
-	// Optional proactive signal mappings ConfigMap reference.
-	// Must contain key "proactive-signal-mappings.yaml".
-	// +optional
-	ProactiveSignalMappings *ConfigMapRef `json:"proactiveSignalMappings,omitempty"`
-
 	// +optional
 	Logging LoggingSpec `json:"logging,omitempty"`
 

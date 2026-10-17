@@ -81,7 +81,6 @@ already covers all 3 (`cidr`, `port`, `extraPorts`) together.
 | `notification.routing.configMapName` | consumer in `internal/controller`, no test in that package | Confirmed as stated |
 | `gateway.resources` | consumer in `internal/resources`, no test in that package | Confirmed as stated |
 | `additionalClusterRoles` | consumer in `internal/controller`, no test in that package | Confirmed as stated |
-| `signalProcessing.proactiveSignalMappings.configMapName` | consumer in `internal/controller`, no test in that package | **Reinterpreted**: the controller only nil-checks the *parent* `ProactiveSignalMappings` pointer before calling `buildCoreConfigMaps`, never reads the leaf `ConfigMapName` field itself. The new regression test targets that pointer-check path, not a direct read of the leaf field. |
 | `apiFrontend.rbacRolesConfigMapRef.configMapName` | consumer in `internal/controller`, no test in that package | **False positive**: zero reads of this field exist anywhere in `internal/controller`. Its real (and already-tested) consumer is [internal/resources/validation.go:334](../../../internal/resources/validation.go). Closed via documentation note in the PR, no speculative test added. |
 
 ## 2. Test Strategy
@@ -96,9 +95,9 @@ phases per [AGENTS.md](../../../AGENTS.md), following the Pyramid Invariant:
   an assertion on the builder's rendered output, following each file's
   existing `Describe`/`Context`/`It` conventions.
 - **IT** (`internal/controller/*_test.go`, envtest-backed): the
-  `networkPolicies.*` wiring and the 5 confirmed #423 consistency gaps
+  `networkPolicies.*` wiring and the 4 confirmed #423 consistency gaps
   (`postgresql.sslMode`, `notification.routing.configMapName`,
-  `additionalClusterRoles`, the `signalProcessing` pointer-check,
+  `additionalClusterRoles`,
   `image.pullSecrets` if its consumer sits in the reconcile path) get
   controller-level coverage proving the field reaches the reconciler's
   actual output, not just the builder function in isolation.
@@ -200,7 +199,6 @@ phases per [AGENTS.md](../../../AGENTS.md), following the Pyramid Invariant:
 | CONS-003 | `notification.routing.configMapName` reaches the controller's ConfigMap build path | `internal/controller/*_test.go` | Yes |
 | CONS-004 | `additionalClusterRoles` reach the controller's RBAC binding path | `internal/controller/*_test.go` | Yes |
 | CONS-005 | `gateway.resources` propagate onto the rendered Gateway Deployment | `internal/resources/deployments_test.go` | Yes |
-| CONS-006 | `signalProcessing.proactiveSignalMappings` nil-vs-non-nil pointer check reaches `buildCoreConfigMaps` | `internal/controller/*_test.go` | Yes |
 | (doc-only) | `apiFrontend.rbacRolesConfigMapRef.configMapName` false positive documented in PR, real consumer already tested in `internal/resources/validation.go` | N/A | N/A |
 
 **CONS-004 refinement (post-implementation):** `internal/controller/additionalcomponentrbac_test.go`
