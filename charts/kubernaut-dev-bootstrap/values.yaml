@@ -83,6 +83,12 @@ fixtures:
     # Deliberately synthetic; the operator never calls this endpoint in the
     # bootstrap qualification path.
     apiKey: dev-only-not-a-real-credential
+  slack:
+    webhookURL: https://hooks.slack.example/e2e
+  console:
+    clientID: e2e-client
+    clientSecret: e2e-secret
+    cookieSecret: "01234567890123456789012345678901"
   policies:
     aiAnalysis: |
       package approval

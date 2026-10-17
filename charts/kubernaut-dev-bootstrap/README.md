@@ -36,8 +36,9 @@ The chart creates:
 * `postgresql-secret` with `POSTGRES_USER`, `POSTGRES_PASSWORD`, and
   `POSTGRES_DB`;
 * `valkey-secret` with the operator-required `valkey-secrets.yaml` key;
-* synthetic `llm-credentials`, `aianalysis-policy`, and
-  `signalprocessing-policy` fixtures for the sample CR; and
+* synthetic `llm-credentials`, `slack-webhook`, `kubernaut-console-oidc`,
+  `aianalysis-policy`, and `signalprocessing-policy` fixtures for the sample
+  CR; and
 * `kubernaut-dev-bootstrap-contract`, which records the hostnames, Secret
   names, and selected PostgreSQL `sslMode` for the Kubernaut CR.
 

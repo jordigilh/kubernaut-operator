@@ -28,6 +28,22 @@
             "apiKey": { "type": "string", "minLength": 1 }
           }
         },
+        "slack": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "webhookURL": { "type": "string", "minLength": 1 }
+          }
+        },
+        "console": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "clientID": { "type": "string", "minLength": 1 },
+            "clientSecret": { "type": "string", "minLength": 1 },
+            "cookieSecret": { "type": "string", "minLength": 32 }
+          }
+        },
         "policies": {
           "type": "object",
           "additionalProperties": false,

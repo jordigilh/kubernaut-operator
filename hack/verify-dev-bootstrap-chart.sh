@@ -23,6 +23,8 @@ for required in \
 	'name: postgresql-secret' \
 	'name: valkey-secret' \
 	'name: llm-credentials' \
+	'name: slack-webhook' \
+	'name: kubernaut-console-oidc' \
 	'name: aianalysis-policy' \
 	'name: signalprocessing-policy' \
 	'name: postgresql' \
