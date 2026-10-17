@@ -10,8 +10,11 @@ data:
     ssl = on
     ssl_cert_file = '/tmp/bootstrap-tls/tls.crt'
     ssl_key_file = '/tmp/bootstrap-tls/tls.key'
-    hba_file = '/tmp/bootstrap-config/pg_hba.conf'
-  pg_hba.conf: |-
+    hba_file = '/tmp/bootstrap-config/pg_hba'
+  # Keep this key free of the .conf suffix. The RHEL image includes every
+  # *.conf file in postgresql-cfg as PostgreSQL configuration; pg_hba records
+  # are data for hba_file, not PostgreSQL parameter assignments.
+  pg_hba: |-
     local all all trust
     hostnossl all all 0.0.0.0/0 reject
     hostnossl all all ::0/0 reject

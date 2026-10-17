@@ -31,6 +31,8 @@ for required in \
 	'hostnossl all all 0.0.0.0/0 reject' \
 	'kind: Deployment' \
 	'readinessProbe:' \
+	'pg_hba: |-' \
+	"hba_file = '/tmp/bootstrap-config/pg_hba'" \
 	'registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e' \
 	'docker.io/valkey/valkey@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9'; do
 	grep -Fq "${required}" "${rendered}" || {

@@ -31,7 +31,7 @@ spec:
             - |
               cp /tmp/bootstrap-tls/tls.crt /tmp/postgresql-tls.crt
               cp /tmp/bootstrap-tls/tls.key /tmp/postgresql-tls.key
-              cp /tmp/bootstrap-config/pg_hba.conf /tmp/pg_hba.conf
+              cp /tmp/bootstrap-config/pg_hba /tmp/pg_hba.conf
               chown 999:999 /tmp/postgresql-tls.crt /tmp/postgresql-tls.key /tmp/pg_hba.conf
               chmod 600 /tmp/postgresql-tls.key
               exec docker-entrypoint.sh postgres \
