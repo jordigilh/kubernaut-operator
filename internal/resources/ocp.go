@@ -138,10 +138,10 @@ func APIFrontendRouteStub(kn *kubernautv1alpha2.Kubernaut) *routev1.Route {
 // the operator has no business impersonating or provisioning credentials for.
 // It must be bound to the gateway-signal-source ClusterRole (handled by the
 // operator's RBAC provisioning) so the bearer token is authorized by Gateway's
-// SAR middleware. When unset, the CR is still valid but unauthenticated calls
-// will be rejected by Gateway -- the controller surfaces this via the
-// ConditionAlertManagerAuthConfigured status condition rather than silently
-// referencing a Secret that may not exist.
+// SAR middleware. When authentication is enabled but the token name is unset,
+// the CR is still valid but unauthenticated calls will be rejected by Gateway
+// -- the controller surfaces this via the ConditionAlertManagerAuthConfigured
+// status condition rather than silently referencing a Secret that may not exist.
 func GatewayAlertManagerConfig(kn *kubernautv1alpha2.Kubernaut) *monitoringv1alpha1.AlertmanagerConfig {
 	gwURL := fmt.Sprintf("https://gateway-service.%s.svc.cluster.local:%d/api/v1/signals/prometheus",
 		kn.Namespace, PortHTTPS)

@@ -308,7 +308,7 @@ for test_id in \
 done
 
 # Issue #539 Gateway authentication contract evidence is independently checked
-# because its secure default and administrator-owned Secret boundary are
+# because its explicit opt-in and administrator-owned Secret boundary are
 # security-sensitive even though they reuse existing reconciliation paths.
 for scope in 'NIST SP 800-53 Rev. 5' 'FedRAMP' 'SOC 2' 'OWASP ASVS 5.0.0'; do
 	grep -Fq "${scope}" "${gateway_auth_matrix}" || fail "Issue #539 matrix is missing ${scope} scope"

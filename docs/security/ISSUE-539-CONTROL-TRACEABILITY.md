@@ -9,14 +9,24 @@ Gateway authentication contract:
 spec:
   gateway:
     auth:
+      enabled: false
+```
+
+Authenticated delivery is an explicit opt-in:
+
+```yaml
+spec:
+  gateway:
+    auth:
       enabled: true
       alertManager:
         tokenSecretName: alertmanager-gateway-token
 ```
 
-The evidence covers operator API publication, secure defaulting, runtime
-configuration rendering, Alertmanager SecretKeySelector boundaries, explicit
-disablement visibility, and real reconciliation wiring. It does not execute
+The evidence covers operator API publication, deployable defaulting, explicit
+authentication opt-in, runtime configuration rendering, Alertmanager
+SecretKeySelector boundaries, default-disabled visibility, and real
+reconciliation wiring. It does not execute
 or independently qualify the upstream Gateway binary's TokenReview/SAR
 implementation. It does not claim formal FedRAMP authorization, SOC 2
 attestation, or OWASP ASVS authorization/conformance.
@@ -29,9 +39,9 @@ they are not certification claims.
 
 | Business assertion | Status | Unit evidence | Integration evidence | FedRAMP/NIST | SOC 2 | OWASP ASVS 5.0.0 |
 |---|---|---|---|---|---|---|
-| Gateway authentication is enabled when omitted and the effective policy reaches `server.authenticationEnabled`. | verified | `UT-539-GW-AUTH-CM-001`, `UT-539-GW-AUTH-CM-002` in `internal/resources/configmaps_test.go` | `IT-539-GW-AUTH-RECONCILE` in `internal/controller/monitoring_wiring_integration_test.go` | IA-2, AC-3, CM-6 | CC6.1, CC8.1 | v5.0.0-V8.2.1, v5.0.0-V8.3.1, v5.0.0-V16.5.2 |
+| Gateway authentication is disabled when omitted so a minimal deployment has no extra Secret prerequisite; explicit opt-in reaches `server.authenticationEnabled` and identity enforcement. | verified | `UT-539-GW-AUTH-CM-001`, `UT-539-GW-AUTH-CM-002` in `internal/resources/configmaps_test.go` | `IT-539-GW-AUTH-RECONCILE` in `internal/controller/monitoring_wiring_integration_test.go` | AC-3, IA-2, CM-6 | CC6.1, CC8.1 | v5.0.0-V8.2.1, v5.0.0-V8.3.1, v5.0.0-V16.5.2 |
 | AlertManager receives only a SecretKeySelector for the administrator-owned bearer Secret; token bytes are not rendered into the AlertmanagerConfig or operator-owned configuration. | verified | `UT-539-GW-AUTH-AM-001` in `internal/resources/ocp_test.go` | `IT-539-GW-AUTH-RECONCILE` in `internal/controller/monitoring_wiring_integration_test.go` | AC-3, AC-6, IA-5 | CC6.1, CC6.6 | v5.0.0-V8.2.1, v5.0.0-V8.3.1, v5.0.0-V13.3.1, v5.0.0-V13.3.2 |
-| Explicitly disabling Gateway authentication is observable and removes the bearer reference while retaining Alertmanager TLS routing. | verified | `UT-539-GW-AUTH-AM-002` in `internal/resources/ocp_test.go`; `UT-539-GW-AUTH-CONDITION-001` in `internal/controller/business_errors_unit_test.go` | `IT-539-GW-AUTH-CONDITION` in `internal/controller/kubernaut_lifecycle_test.go` | AC-3, CM-6, CM-8 | CC6.1, CC8.1 | v5.0.0-V8.3.1, v5.0.0-V16.5.2 |
+| Default-disabled Gateway authentication is observable and removes the bearer reference while retaining Alertmanager TLS routing. | verified | `UT-539-GW-AUTH-AM-002` in `internal/resources/ocp_test.go`; `UT-539-GW-AUTH-CONDITION-001` in `internal/controller/business_errors_unit_test.go` | `IT-539-GW-AUTH-CONDITION` in `internal/controller/kubernaut_lifecycle_test.go` | AC-3, CM-6, CM-8 | CC6.1, CC8.1 | v5.0.0-V8.3.1, v5.0.0-V16.5.2 |
 | Missing or malformed Secret material remains visible as an actionable condition and never becomes a falsely ready authenticated configuration. | verified | Existing AM1/AM3/AM4 lifecycle assertions in `internal/controller/kubernaut_lifecycle_test.go` | Existing AM2/AM5 lifecycle reconciliation assertions in `internal/controller/kubernaut_lifecycle_test.go` | IA-5, SI-4, SI-10 | CC7.2, CC8.1 | v5.0.0-V2.2.1, v5.0.0-V16.1.1, v5.0.0-V16.5.2 |
 | The unpublished API has one deterministic nested contract and does not expose the removed flat field, generic signal sources, or Kubernetes Events. | verified | `UT-539-GW-AUTH-API-001` in `api/v1alpha2/clean_break_test.go` and `api/v1alpha2/kubernaut_types.go` | Generated CRD and reconciliation artifacts in `config/crd/bases/`, `bundle/`, `dist/`, and the Helm chart copy | CM-3, CM-6, CM-8, SI-10 | CC8.1 | v5.0.0-V2.2.1, v5.0.0-V15.2.4, v5.0.0-V16.5.2 |
 

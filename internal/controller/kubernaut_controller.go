@@ -3834,8 +3834,9 @@ func (r *KubernautReconciler) validateAnsibleConfig(ctx context.Context, kn *kub
 // validateAlertManagerAuthConfig evaluates the AlertManagerAuthConfigured
 // condition (#377) based on spec.gateway.auth and
 // cluster state. It mirrors validateAnsibleConfig's BYO-token-Secret
-// validation shape. When Gateway is disabled or authentication is explicitly
-// disabled, the condition is intentionally True with an observable reason.
+// validation shape. When Gateway is disabled or authentication is disabled
+// (including the default), the condition is intentionally True with an
+// observable reason.
 // When authentication is enabled but the nested field is unset,
 // resources.GatewayAlertManagerConfig still renders a valid unauthenticated
 // AlertmanagerConfig, so this reports False without blocking reconciliation --
@@ -3857,7 +3858,7 @@ func (r *KubernautReconciler) validateAlertManagerAuthConfig(ctx context.Context
 			Type:               kubernautv1alpha2.ConditionAlertManagerAuthConfigured,
 			Status:             metav1.ConditionTrue,
 			Reason:             ReasonAlertManagerAuthDisabled,
-			Message:            "Gateway authentication is explicitly disabled",
+			Message:            "Gateway authentication is disabled; set spec.gateway.auth.enabled=true to enable it",
 			ObservedGeneration: kn.Generation,
 		}
 	}

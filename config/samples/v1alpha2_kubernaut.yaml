@@ -229,9 +229,9 @@ spec:
   gateway:
     enabled: true
     auth:
-      enabled: true
-      alertManager:
-        tokenSecretName: alertmanager-gateway-token
+      # Authentication is opt-in because authenticated Alertmanager delivery
+      # requires the additional administrator-owned token Secret.
+      enabled: false
     logging:
       level: INFO
     route:

@@ -1525,8 +1525,8 @@ type GatewaySpec struct {
 
 	// Authentication configures Gateway TokenReview/SAR enforcement and the
 	// AlertManager bearer credential used by the operator-managed webhook
-	// adapter. Authentication is enabled by default to preserve the secure
-	// fail-closed Gateway contract.
+	// adapter. Authentication is disabled by default so a minimal Gateway can
+	// deploy without requiring an additional administrator-owned token Secret.
 	// +optional
 	Auth GatewayAuthSpec `json:"auth,omitempty"`
 
@@ -1547,9 +1547,11 @@ type GatewaySpec struct {
 // applies the same policy to the AlertManager adapter credential reference.
 type GatewayAuthSpec struct {
 	// Whether Gateway TokenReview/SAR authentication is enforced. Unset
-	// defaults to true; false is an explicit administrator-selected insecure
-	// mode and is surfaced through the AlertManagerAuthConfigured condition.
-	// +kubebuilder:default=true
+	// defaults to false so the minimal Gateway deployment does not require an
+	// additional AlertManager token Secret. Set true together with
+	// alertManager.tokenSecretName to enable authenticated operator-managed
+	// Alertmanager delivery.
+	// +kubebuilder:default=false
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
@@ -1571,9 +1573,9 @@ type GatewayAlertManagerAuthSpec struct {
 }
 
 // AuthenticationEnabled returns the effective Gateway authentication policy.
-// A nil auth block or nil enabled pointer preserves the secure default.
+// A nil auth block or nil enabled pointer preserves the deployable default.
 func (s *GatewayAuthSpec) AuthenticationEnabled() bool {
-	return s == nil || s.Enabled == nil || *s.Enabled
+	return s != nil && s.Enabled != nil && *s.Enabled
 }
 
 // ConsoleSpec configures the standalone web console (A2A chat UI).

@@ -148,6 +148,8 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 		kn.Spec.WorkflowExecution.Ansible.Enabled = true
 		Expect(r.validateAnsibleConfig(ctx, kn).Reason).To(Equal(ReasonAnsibleTokenNotFound))
 		kn.Spec.WorkflowExecution.Ansible.TokenSecretRef = &kubernautv1alpha2.SecretKeyRef{Name: "unit-token"}
+		kn.Spec.Gateway.Auth.Enabled = ptr.To(true)
+		Expect(r.validateAlertManagerAuthConfig(ctx, kn).Reason).To(Equal(ReasonAlertManagerAuthNotConfigured))
 		kn.Spec.Gateway.Auth.AlertManager.TokenSecretName = "unit-token"
 		Expect(r.validateAnsibleConfig(ctx, kn).Reason).To(Equal(ReasonAnsibleTokenNotFound))
 		Expect(r.validateAlertManagerAuthConfig(ctx, kn).Reason).To(Equal(ReasonAlertManagerAuthSecretMissing))
@@ -159,9 +161,13 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 		Expect(r.Update(ctx, secret)).To(Succeed())
 		Expect(r.validateAnsibleConfig(ctx, kn).Status).To(Equal(metav1.ConditionTrue))
 		Expect(r.validateAlertManagerAuthConfig(ctx, kn).Status).To(Equal(metav1.ConditionTrue))
+		kn.Spec.WorkflowExecution.Ansible.TokenSecretRef = nil
+		kn.Spec.Gateway.Auth.AlertManager.TokenSecretName = ""
+		Expect(r.validateAnsibleConfig(ctx, kn).Status).To(Equal(metav1.ConditionFalse))
+		_, phaseErr := r.phaseRunning(ctx, kn, kn)
+		Expect(phaseErr).NotTo(HaveOccurred())
 		kn.Spec.Gateway.Enabled = ptr.To(false)
 		Expect(r.validateAlertManagerAuthConfig(ctx, kn).Reason).To(Equal(ReasonAlertManagerAuthGatewayDisabled))
-		kn.Spec.WorkflowExecution.Ansible.TokenSecretRef = nil
 		_, err := r.phaseRunning(ctx, kn, kn)
 		Expect(err).NotTo(HaveOccurred())
 	})
@@ -176,7 +182,7 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 		condition := r.validateAlertManagerAuthConfig(ctx, kn)
 		Expect(condition.Status).To(Equal(metav1.ConditionTrue))
 		Expect(condition.Reason).To(Equal(ReasonAlertManagerAuthDisabled))
-		Expect(condition.Message).To(ContainSubstring("explicitly disabled"))
+		Expect(condition.Message).To(ContainSubstring("set spec.gateway.auth.enabled=true"))
 	})
 
 	It("UT-AUDIT-515-ERRORS-007: prunes additional-role and persona bindings on shrink and preserves required bindings", func() {

@@ -15,11 +15,22 @@ default ingress adapter is AlertManager, whose bearer credential and the
 Gateway's TokenReview/SAR enforcement policy belong under the same Gateway auth
 boundary.
 
-The change must preserve the operator's current fail-closed default, keep
-administrator-owned credentials read-only, and prove the production reconciliation
-path rather than only testing isolated struct fields.
+The change must keep minimal Gateway deployments deployable without an
+authentication-specific Secret, make authenticated delivery an explicit
+administrator opt-in, keep administrator-owned credentials read-only, and prove
+the production reconciliation path rather than only testing isolated struct
+fields.
 
 ## Effective API
+
+```yaml
+spec:
+  gateway:
+    auth:
+      enabled: false
+```
+
+When authenticated delivery is required, the opt-in contract is:
 
 ```yaml
 spec:
@@ -32,15 +43,16 @@ spec:
 
 Design rules:
 
-- `auth.enabled` defaults to `true`, preserving the current operator contract
-  that unauthenticated Gateway signal requests are rejected. An explicit
-  `false` is an administrator-selected insecure mode and must be observable.
+- `auth.enabled` defaults to `false`, so deploying a minimal Gateway does not
+  require an additional BYO token Secret. Setting it to `true` is an explicit
+  administrator opt-in to TokenReview/SAR enforcement and authenticated
+  operator-managed Alertmanager delivery.
 - `auth.alertManager.tokenSecretName` is a Secret name in the Kubernaut CR
   namespace. The Secret must contain `token`; its bytes must never enter a
   ConfigMap, status, event, or log.
 - When authentication is disabled, the AlertmanagerConfig remains routable but
   does not require or reference the bearer Secret, and the
-  `AlertManagerAuthConfigured` condition reports an intentional disabled state.
+  `AlertManagerAuthConfigured` condition reports the default-disabled state.
 - Remove the unpublished flat
   `spec.gateway.alertManagerTokenSecretName` field; no compatibility alias is
   required. The replacement is `spec.gateway.auth.alertManager.tokenSecretName`.
@@ -128,10 +140,10 @@ existing ConfigMap, AlertmanagerConfig, and status callers remain live.
 Add business-level failing tests before production edits:
 
 - `UT-539-GW-AUTH-API-001`: generated CRD exposes nested `gateway.auth`,
-  publishes `enabled=true`, exposes `alertManager.tokenSecretName`, and no
+  publishes `enabled=false`, exposes `alertManager.tokenSecretName`, and no
   longer exposes the flat field, generic signal sources, or Kubernetes Events.
 - `UT-539-GW-AUTH-CM-001`: an unset auth block renders
-  `server.authenticationEnabled: true`; an explicit false renders false.
+  `server.authenticationEnabled: false`; an explicit true renders true.
 - `UT-539-GW-AUTH-AM-001`: a nested token Secret is referenced as a Bearer
   credential without copying token bytes into the AlertmanagerConfig.
 - `UT-539-GW-AUTH-AM-002`: disabled authentication does not reference the
@@ -176,7 +188,7 @@ SOC 2 attestation, or OWASP ASVS conformance.
 
 | Business assertion | Unit evidence | Integration evidence | FedRAMP/NIST objective | SOC 2 | OWASP ASVS 5.0.0 |
 |---|---|---|---|---|---|
-| Gateway authentication is enabled by default and the explicit policy reaches the runtime config. | `UT-539-GW-AUTH-CM-001` | `IT-539-GW-AUTH-RECONCILE` | IA-2, AC-3, CM-6 | CC6.1, CC8.1 | `v5.0.0-V8.2.1`, `v5.0.0-V8.3.1`, `v5.0.0-V16.5.2` |
+| Gateway authentication is disabled by default so a minimal deployment has no extra Secret prerequisite; explicit opt-in reaches the runtime config. | `UT-539-GW-AUTH-CM-001`, `UT-539-GW-AUTH-CM-002` | `IT-539-GW-AUTH-RECONCILE` | AC-3, CM-6 | CC6.1, CC8.1 | `v5.0.0-V8.2.1`, `v5.0.0-V8.3.1`, `v5.0.0-V16.5.2` |
 | AlertManager uses the administrator-supplied bearer Secret and the existing TokenReview/SAR authorization boundary; no token bytes are rendered or logged. | `UT-539-GW-AUTH-AM-001`, existing RBAC tests | `IT-539-GW-AUTH-RECONCILE` | AC-3, AC-6, IA-5 | CC6.1, CC6.6 | `v5.0.0-V8.2.1`, `v5.0.0-V8.3.1`, `v5.0.0-V13.3.1`, `v5.0.0-V13.3.2` |
 | Missing or malformed Secret material is visible and never silently converted into a working authenticated configuration. | Existing `AM1`/`AM3`/`AM4` lifecycle assertions; `UT-539-GW-AUTH-CONDITION-001` | `IT-539-GW-AUTH-CONDITION` | IA-5, SI-10, SI-4 | CC7.2, CC8.1 | `v5.0.0-V2.2.1`, `v5.0.0-V16.1.1`, `v5.0.0-V16.5.2` |
 | The unpublished API has one deterministic nested contract with no dead legacy/source fields. | `UT-539-GW-AUTH-API-001` | generated-manifest and reconciliation checks | CM-3, CM-6, CM-8, SI-10 | CC8.1 | `v5.0.0-V2.2.1`, `v5.0.0-V15.2.4`, `v5.0.0-V16.5.2` |
@@ -205,8 +217,9 @@ make test-pyramid
 
 - **Runtime key mismatch:** use the exact rc24 `server.authenticationEnabled`
   key and assert the rendered YAML.
-- **Security regression from defaulting:** default `enabled` to true and test
-  both unset and explicit false behavior.
+- **UX/security regression from defaulting:** default `enabled` to false so
+  minimal deployment does not require a BYO token, and test both unset and
+  explicit true behavior.
 - **Credential leakage:** use SecretKeySelector references only; assert token
   values never occur in ConfigMaps, status, messages, or events.
 - **False readiness:** retain non-blocking but explicit status conditions for
