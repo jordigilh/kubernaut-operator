@@ -659,10 +659,10 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		}
 		kn := newMinimalCR()
 		kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
-		r := businessUnitReconciler(kn, interceptor.Funcs{})
+		r := businessUnitReconcilerWithoutProvider(kn, interceptor.Funcs{})
 		_, err := r.reconcilePhases(ctx, kn, kn)
 		Expect(err).To(HaveOccurred())
-		kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationInherited
+		kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 		job, err := resources.MigrationJob(kn)
 		Expect(err).NotTo(HaveOccurred())
 		kn.Status.LastMigrationHash = resources.SpecHash(job)
@@ -868,7 +868,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		_, _, err := r.ensureRuntimeTLS(ctx, kn)
 		Expect(err).To(MatchError(ContainSubstring("reading development TLS secret")))
 		kn.Spec.TLS.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{RotationBefore: "not-a-duration"}
-		r = businessUnitReconciler(kn, interceptor.Funcs{})
+		r = businessUnitReconcilerWithoutProvider(kn, interceptor.Funcs{})
 		_, _, err = r.ensureRuntimeTLS(ctx, kn)
 		Expect(err).To(HaveOccurred())
 		kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired

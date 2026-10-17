@@ -101,15 +101,15 @@ var _ = Describe("bounded external metrics scraper authorization", func() {
 		}
 	})
 
-	It("UT-AUDIT-515-SCRAPE-005: validates bounded limits and rejects inherited/provider contradictions", func() {
+	It("UT-AUDIT-515-SCRAPE-005: validates bounded limits and rejects unsupported mode/provider contradictions", func() {
 		source := kubernautv1alpha2.MetricsScrapeSource{Namespace: "monitoring", PodLabels: map[string]string{"app": "prometheus"}}
-		for _, mode := range []string{"invalid", kubernautv1alpha2.NetworkIsolationInherited} {
+		for _, mode := range []string{"invalid", "Inherited"} {
 			Expect(ValidateNativeOverrides(kubernautv1alpha2.NetworkPoliciesSpec{Mode: mode,
 				ScrapeSources: []kubernautv1alpha2.MetricsScrapeSource{source}})).To(HaveOccurred())
 		}
 		Expect(ValidateNativeOverrides(kubernautv1alpha2.NetworkPoliciesSpec{
-			Mode: kubernautv1alpha2.NetworkIsolationInherited, Provider: kubernautv1alpha2.NetworkPolicyProviderCilium,
-		})).To(MatchError(ContainSubstring("inherited isolation")))
+			Mode: "Inherited", Provider: kubernautv1alpha2.NetworkPolicyProviderCilium,
+		})).To(MatchError(ContainSubstring("unsupported")))
 		Expect(ValidateNativeOverrides(kubernautv1alpha2.NetworkPoliciesSpec{
 			ScrapeSources: make([]kubernautv1alpha2.MetricsScrapeSource, 17),
 		})).To(MatchError(ContainSubstring("at most 16")))

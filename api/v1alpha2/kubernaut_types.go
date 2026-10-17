@@ -2694,17 +2694,13 @@ const (
 )
 
 const (
-	NetworkIsolationRequired  = "Required"
-	NetworkIsolationInherited = "Inherited"
+	NetworkIsolationRequired = "Required"
 )
 
 type NetworkPoliciesSpec struct {
-	// Mode requires a qualified native provider by default. Inherited is an
-	// explicit administrator acknowledgement that isolation is supplied outside
-	// this operator; it does not attest that such protection has been verified.
-	// Existing native policies are retained in Inherited mode, not silently
-	// pruned on a discovery failure or opt-out. See PR-515-AUDIT-REMEDIATION.md.
-	// +kubebuilder:validation:Enum=Required;Inherited
+	// Mode is retained only for compatibility with older manifests. Native
+	// policy enforcement is always required; omit this field.
+	// +kubebuilder:validation:Enum=Required
 	// +kubebuilder:default=Required
 	// +optional
 	Mode string `json:"mode,omitempty"`

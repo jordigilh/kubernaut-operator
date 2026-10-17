@@ -45,6 +45,7 @@ type Intent struct {
 	DNS                  DNSDestination
 	StaticAPIServerCIDRs []string
 	Monitoring           []MonitoringDestination
+	Dependencies         []MonitoringDestination
 	ScrapeSources        []kubernautv1alpha2.MetricsScrapeSource
 	MetricsPorts         map[string]int32
 }
@@ -154,17 +155,8 @@ func unsupportedLegacyFields(spec kubernautv1alpha2.NetworkPoliciesSpec) []strin
 }
 
 func validateIsolationMode(spec kubernautv1alpha2.NetworkPoliciesSpec) error {
-	if spec.Mode != "" && spec.Mode != kubernautv1alpha2.NetworkIsolationRequired && spec.Mode != kubernautv1alpha2.NetworkIsolationInherited {
-		return fmt.Errorf("network isolation mode must be Required or Inherited")
-	}
-	if spec.Mode != kubernautv1alpha2.NetworkIsolationInherited {
-		return nil
-	}
-	if spec.Provider != "" && spec.Provider != kubernautv1alpha2.NetworkPolicyProviderAuto {
-		return fmt.Errorf("inherited isolation cannot select an operator-managed native provider")
-	}
-	if len(spec.ScrapeSources) > 0 {
-		return fmt.Errorf("inherited isolation cannot request operator-managed scraper ingress")
+	if spec.Mode != "" && spec.Mode != kubernautv1alpha2.NetworkIsolationRequired {
+		return fmt.Errorf("network policy mode %q is unsupported; omit mode or use Required", spec.Mode)
 	}
 	return nil
 }

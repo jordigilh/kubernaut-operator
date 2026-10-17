@@ -18,6 +18,7 @@ package policy
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -33,6 +34,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+const monitoringTestNamespace = "kubernaut-system"
 
 var _ = Describe("monitoring destination resolution", func() {
 	It("resolves a numeric Cilium targetPort from a configured Service URL", func() {
@@ -62,6 +65,105 @@ var _ = Describe("monitoring destination resolution", func() {
 		}))
 	})
 
+	It("resolves bare BYO Service hosts in the Kubernaut namespace", func() {
+		postgres := monitoringServiceWithName("postgresql", map[string]string{"app": "postgresql"}, corev1.ServicePort{
+			Name: "postgresql", Protocol: corev1.ProtocolTCP, Port: 5432, TargetPort: intstr.FromInt(5432),
+		})
+		postgres.Namespace = monitoringTestNamespace
+		valkey := monitoringServiceWithName("valkey", map[string]string{"app": "valkey"}, corev1.ServicePort{
+			Name: "valkey", Protocol: corev1.ProtocolTCP, Port: 6379, TargetPort: intstr.FromInt(6379),
+		})
+		valkey.Namespace = monitoringTestNamespace
+
+		destinations, err := ResolveServiceDestinations(context.Background(), fake.NewClientBuilder().WithScheme(clientgoscheme.Scheme).WithObjects(postgres, valkey).Build(), ProviderOVN, []ServiceEndpoint{
+			{Name: "postgresql", Host: "postgresql", Namespace: monitoringTestNamespace, Port: 5432},
+			{Name: "valkey", Host: "valkey", Namespace: monitoringTestNamespace, Port: 6379},
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(destinations).To(HaveLen(2))
+		Expect(destinations[0]).To(MatchFields(IgnoreExtras, Fields{
+			"Name":            Equal("postgresql"),
+			"Namespace":       Equal("kubernaut-system"),
+			"ServiceSelector": Equal(map[string]string{"app": "postgresql"}),
+			"BackendPort":     Equal(int32(5432)),
+		}))
+		Expect(destinations[1].Name).To(Equal("valkey"))
+	})
+
+	It("fails closed when a BYO host is not a resolvable in-cluster Service", func() {
+		_, err := ResolveServiceDestinations(context.Background(), fake.NewClientBuilder().WithScheme(clientgoscheme.Scheme).Build(), ProviderOVN, []ServiceEndpoint{{
+			Name: "postgresql", Host: "postgres.example.com", Namespace: "kubernaut-system", Port: 5432,
+		}})
+
+		Expect(err).To(MatchError(ContainSubstring("in-cluster service")))
+	})
+
+	It("rejects unsupported clients, missing readers, malformed endpoints, duplicates, and unsafe Services", func() {
+		_, err := ResolveServiceDestinations(context.Background(), nil, Provider("unsupported"), nil)
+		Expect(err).To(MatchError(ContainSubstring("unsupported for provider")))
+
+		_, err = ResolveServiceDestinations(context.Background(), nil, ProviderOVN, nil)
+		Expect(err).To(MatchError(ContainSubstring("kubernetes client is required")))
+
+		service := monitoringServiceWithName("postgresql", map[string]string{"app": "postgresql"}, corev1.ServicePort{
+			Name: "postgresql", Protocol: corev1.ProtocolTCP, Port: 5432, TargetPort: intstr.FromInt(5432),
+		})
+		service.Namespace = "kubernaut-system"
+		api := fake.NewClientBuilder().WithScheme(clientgoscheme.Scheme).WithObjects(service).Build()
+
+		_, err = ResolveServiceDestinations(context.Background(), api, ProviderOVN, []ServiceEndpoint{{
+			Name: "", Host: "postgresql", Namespace: service.Namespace, Port: 5432,
+		}})
+		Expect(err).To(MatchError(ContainSubstring("destination name is required")))
+
+		destinations, err := ResolveServiceDestinations(context.Background(), api, ProviderOVN, []ServiceEndpoint{
+			{Name: "postgresql", Host: "postgresql", Namespace: service.Namespace, Port: 5432},
+			{Name: "POSTGRESQL", Host: "postgresql", Namespace: service.Namespace, Port: 5432},
+		})
+		Expect(err).To(MatchError(ContainSubstring("configured more than once")))
+		Expect(destinations).To(HaveLen(1))
+
+		_, err = ResolveServiceDestinations(context.Background(), api, ProviderOVN, []ServiceEndpoint{{
+			Name: "valkey", Host: "valkey", Namespace: service.Namespace, Port: 6379,
+		}})
+		Expect(err).To(MatchError(ContainSubstring("resolving BYO service")))
+
+		selectorless := service.DeepCopy()
+		selectorless.Spec.Selector = nil
+		selectorless.Name = "selectorless"
+		selectorless.ResourceVersion = ""
+		Expect(api.Create(context.Background(), selectorless)).To(Succeed())
+		_, err = ResolveServiceDestinations(context.Background(), api, ProviderOVN, []ServiceEndpoint{{
+			Name: "selectorless", Host: selectorless.Name, Namespace: selectorless.Namespace, Port: 5432,
+		}})
+		Expect(err).To(MatchError(ContainSubstring("has no selector")))
+
+		_, err = ResolveServiceDestinations(context.Background(), api, ProviderOVN, []ServiceEndpoint{{
+			Name: "postgresql", Host: service.Name, Namespace: service.Namespace, Port: 6379,
+		}})
+		Expect(err).To(MatchError(ContainSubstring("requested TCP port")))
+
+		named := service.DeepCopy()
+		named.Name = "named"
+		named.ResourceVersion = ""
+		named.Spec.Ports[0].TargetPort = intstr.FromString("postgresql")
+		Expect(api.Create(context.Background(), named)).To(Succeed())
+		_, err = ResolveServiceDestinations(context.Background(), api, ProviderOVN, []ServiceEndpoint{{
+			Name: "named", Host: named.Name, Namespace: named.Namespace, Port: 5432,
+		}})
+		Expect(err).To(MatchError(ContainSubstring("has no ready endpointslice endpoint")))
+	})
+
+	It("validates bare Service-reference inputs before registering dependency watches", func() {
+		_, err := ServiceReferenceFromHost("", "kubernaut-system")
+		Expect(err).To(MatchError(ContainSubstring("host is required")))
+		_, err = ServiceReferenceFromHost("invalid_host", "kubernaut-system")
+		Expect(err).To(MatchError(ContainSubstring("valid in-cluster service")))
+		_, err = ServiceReferenceFromHost("postgresql", "invalid_namespace")
+		Expect(err).To(MatchError(ContainSubstring("valid namespace")))
+	})
+
 	It("resolves an OVN Service selector and numeric backend port", func() {
 		service := monitoringService(map[string]string{
 			"app":  "prometheus",
@@ -89,7 +191,7 @@ var _ = Describe("monitoring destination resolution", func() {
 		}))
 	})
 
-	It("resolves a named Cilium targetPort from an unambiguous EndpointSlice port", func() {
+	It("resolves a named Cilium or Calico targetPort from an unambiguous EndpointSlice port", func() {
 		service := monitoringService(map[string]string{"app": "prometheus"}, corev1.ServicePort{
 			Name:       "web",
 			Protocol:   corev1.ProtocolTCP,
@@ -116,16 +218,18 @@ var _ = Describe("monitoring destination resolution", func() {
 			}},
 		}
 
-		destinations, err := ResolveMonitoringDestinations(context.Background(), monitoringClient(service, endpoints), MonitoringResolutionOptions{
-			Provider: ProviderCilium,
-			Endpoints: []MonitoringEndpoint{{
-				Name: MonitoringPrometheus,
-				URL:  "https://prometheus.monitoring.svc:9090",
-			}},
-		})
+		for _, provider := range []Provider{ProviderCilium, ProviderCalico} {
+			destinations, err := ResolveMonitoringDestinations(context.Background(), monitoringClient(service, endpoints), MonitoringResolutionOptions{
+				Provider: provider,
+				Endpoints: []MonitoringEndpoint{{
+					Name: MonitoringPrometheus,
+					URL:  "https://prometheus.monitoring.svc:9090",
+				}},
+			})
 
-		Expect(err).NotTo(HaveOccurred())
-		Expect(destinations[0].BackendPort).To(Equal(int32(8080)))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(destinations[0].BackendPort).To(Equal(int32(8080)))
+		}
 	})
 
 	It("resolves a named OVN targetPort from an unambiguous ready EndpointSlice port", func() {
@@ -375,7 +479,8 @@ var _ = Describe("monitoring native policy rendering", func() {
 		intent.Monitoring = []MonitoringDestination{
 			{
 				Name: "prometheus", ServiceName: "prometheus", Namespace: "monitoring", ServicePort: 9090, BackendPort: 8080,
-				ServicePorts: []MonitoringServicePort{{Port: 9090, Protocol: string(corev1.ProtocolTCP), TargetPort: 8080}},
+				ServiceSelector: map[string]string{"app": "prometheus"},
+				ServicePorts:    []MonitoringServicePort{{Port: 9090, Protocol: string(corev1.ProtocolTCP), TargetPort: 8080}},
 			},
 		}
 
@@ -403,12 +508,13 @@ var _ = Describe("monitoring native policy rendering", func() {
 		}
 	})
 
-	It("renders Calico Service rules without an explicit egress port", func() {
+	It("renders Calico Service selector rules with an exact backend port", func() {
 		intent, err := BuildIntent("kubernaut-system", []string{"kubernaut-agent"}, nil)
 		Expect(err).NotTo(HaveOccurred())
 		intent.Monitoring = []MonitoringDestination{{
 			Name: "prometheus", ServiceName: "prometheus", Namespace: "monitoring", ServicePort: 9090, BackendPort: 8080,
-			ServicePorts: []MonitoringServicePort{{Port: 9090, Protocol: string(corev1.ProtocolTCP), TargetPort: 8080}},
+			ServiceSelector: map[string]string{"app": "prometheus"},
+			ServicePorts:    []MonitoringServicePort{{Port: 9090, Protocol: string(corev1.ProtocolTCP), TargetPort: 8080}},
 		}}
 
 		objects, err := Render(DiscoveryResultForTest(ProviderCalico, "3.31.4"), intent)
@@ -421,9 +527,51 @@ var _ = Describe("monitoring native policy rendering", func() {
 		Expect(found).To(BeTrue())
 		monitoringRule := findMonitoringCalicoRule(egress)
 		Expect(monitoringRule).NotTo(BeNil())
+		Expect(monitoringRule).To(HaveKeyWithValue("protocol", "TCP"))
 		destination := monitoringRule["destination"].(map[string]interface{})
-		Expect(destination).To(HaveKey("services"))
-		Expect(destination).NotTo(HaveKey("ports"))
+		Expect(destination).To(HaveKeyWithValue("namespaceSelector", "projectcalico.org/name == 'monitoring'"))
+		Expect(destination).To(HaveKeyWithValue("selector", "app == 'prometheus'"))
+		Expect(destination["ports"]).To(Equal([]interface{}{int64(8080)}))
+		Expect(destination).NotTo(HaveKey("services"))
+	})
+
+	It("renders Calico dependency rules with an exact backend port", func() {
+		intent, err := BuildIntent("kubernaut-system", []string{"kubernaut-agent"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		intent.Dependencies = []MonitoringDestination{{
+			Name: "postgresql", ServiceName: "postgresql", Namespace: "kubernaut-system", ServicePort: 5432, BackendPort: 5432,
+			ServiceSelector: map[string]string{"app": "postgresql"},
+			ServicePorts:    []MonitoringServicePort{{Port: 5432, Protocol: string(corev1.ProtocolTCP), TargetPort: 5432}},
+		}}
+
+		objects, err := Render(DiscoveryResultForTest(ProviderCalico, "3.31.4"), intent)
+		Expect(err).NotTo(HaveOccurred())
+		spec, found, err := unstructured.NestedMap(objects[0].Object.Object, "spec")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		egress, found, err := unstructured.NestedSlice(spec, "egress")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+		dependencyRule := findCalicoServiceRule(egress, "postgresql")
+		Expect(dependencyRule).NotTo(BeNil())
+		Expect(dependencyRule).To(HaveKeyWithValue("protocol", "TCP"))
+		destination := dependencyRule["destination"].(map[string]interface{})
+		Expect(destination).To(HaveKeyWithValue("namespaceSelector", "projectcalico.org/name == 'kubernaut-system'"))
+		Expect(destination).To(HaveKeyWithValue("selector", "app == 'postgresql'"))
+		Expect(destination["ports"]).To(Equal([]interface{}{int64(5432)}))
+		Expect(destination).NotTo(HaveKey("services"))
+	})
+
+	It("fails closed when a dependency destination bypasses resolution", func() {
+		intent, err := BuildIntent("kubernaut-system", []string{"kubernaut-agent"}, nil)
+		Expect(err).NotTo(HaveOccurred())
+		intent.Dependencies = []MonitoringDestination{{
+			Name: "postgresql", ServiceName: "postgresql", Namespace: "kubernaut-system", ServicePort: 5432,
+			BackendPort: 5432,
+		}}
+
+		_, err = Render(DiscoveryResultForTest(ProviderCalico, "3.31.4"), intent)
+		Expect(err).To(MatchError(ContainSubstring("no Service selector")))
 	})
 
 	It("fails closed when a renderer receives an unsafe monitoring destination", func() {
@@ -431,6 +579,7 @@ var _ = Describe("monitoring native policy rendering", func() {
 		Expect(err).NotTo(HaveOccurred())
 		intent.Monitoring = []MonitoringDestination{{
 			Name: "prometheus", ServiceName: "prometheus", Namespace: "monitoring", ServicePort: 9090,
+			BackendPort: 9090, ServiceSelector: map[string]string{"app": "prometheus"},
 			ServicePorts: []MonitoringServicePort{
 				{Port: 9090, Protocol: string(corev1.ProtocolTCP), TargetPort: 9090},
 				{Port: 9091, Protocol: string(corev1.ProtocolTCP), TargetPort: 9091},
@@ -482,9 +631,26 @@ func findMonitoringCalicoRule(egress []interface{}) map[string]interface{} {
 		}
 		destination, ok := rule["destination"].(map[string]interface{})
 		if ok {
-			if _, found := destination["services"]; found {
+			if destination["namespaceSelector"] == "projectcalico.org/name == 'monitoring'" {
 				return rule
 			}
+		}
+	}
+	return nil
+}
+
+func findCalicoServiceRule(egress []interface{}, serviceName string) map[string]interface{} {
+	for _, item := range egress {
+		rule, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		destination, ok := rule["destination"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if destination["selector"] == fmt.Sprintf("app == '%s'", serviceName) {
+			return rule
 		}
 	}
 	return nil

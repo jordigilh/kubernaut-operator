@@ -33,6 +33,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -296,11 +297,20 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 		It("IT-MON-513-010 [CM-6, CM-8, SI-4; ASVS v5.0.0-V16.5.2]: reaches Running through real reconciliation when monitoring CRDs are unavailable", func() {
 			deleteMonitoringCRDs(ctx)
 			createBYOSecrets(ctx)
+			monitoringService := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: "prometheus", Namespace: testNamespace},
+				Spec: corev1.ServiceSpec{
+					Selector: map[string]string{"app": "prometheus"},
+					Ports:    []corev1.ServicePort{{Name: "web", Protocol: corev1.ProtocolTCP, Port: 9090, TargetPort: intstr.FromInt(9090)}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, monitoringService)).To(Succeed())
+			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, monitoringService))).To(Succeed()) })
 
 			kn := newMinimalCR()
 			kn.Spec.Gateway.Enabled = ptr.To(false)
 			kn.Spec.APIFrontend.Enabled = ptr.To(false)
-			kn.Spec.Monitoring.Prometheus.URL = "https://prometheus.example.com:9090"
+			kn.Spec.Monitoring.Prometheus.URL = "https://prometheus.default.svc:9090"
 			kn.Spec.Monitoring.AlertManager.Enabled = ptr.To(false)
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 

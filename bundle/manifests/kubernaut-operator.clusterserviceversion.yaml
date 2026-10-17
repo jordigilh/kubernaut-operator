@@ -21,7 +21,7 @@ metadata:
       \         \"namespace\": \"managed-clusters\",\n          \"type\": \"eaigw\"\n        },\n        \"oauth2\": {\n          \"credentialsSecretRef\": \"fleet-oauth2-creds\",\n          \"scopes\"\
       : [\n            \"openid\",\n            \"groups\"\n          ],\n          \"tokenURL\": \"https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token\"\n        },\n        \"\
       scopeCheck\": {\n          \"backend\": \"fleetmetadatacache\"\n        }\n      },\n      \"gateway\": {\n        \"config\": {\n          \"cors\": {\n            \"allowCredentials\": false,\n\
-      \            \"maxAge\": 300\n          },\n          \"deduplicationCooldown\": \"5m\",\n          \"k8sRequestTimeout\": \"15s\"\n        },\n        \"enabled\": false,\n        \"logging\": {\n\
+      \            \"maxAge\": 300\n          },\n          \"deduplicationCooldown\": \"5m\",\n          \"k8sRequestTimeout\": \"15s\"\n        },\n        \"enabled\": true,\n        \"logging\": {\n\
       \          \"level\": \"INFO\"\n        },\n        \"route\": {\n          \"enabled\": false\n        }\n      },\n      \"image\": {\n        \"pullPolicy\": \"IfNotPresent\"\n      },\n      \"\
       kubernautAgent\": {\n        \"alignmentCheck\": {\n          \"enabled\": false,\n          \"maxStepTokens\": 500,\n          \"timeout\": \"10s\"\n        },\n        \"audit\": {\n          \"\
       enabled\": true\n        },\n        \"interactive\": {\n          \"enabled\": true,\n          \"inactivityTimeout\": \"10m\",\n          \"maxConcurrentSessions\": 10,\n          \"rateLimitPerUser\"\

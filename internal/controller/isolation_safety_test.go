@@ -34,18 +34,18 @@ var _ = Describe("native isolation activation safety", Label("unit"), func() {
 		Expect(live.Object["spec"]).To(Equal(lastPolicy.Object["spec"]))
 	})
 
-	It("UT-AUDIT-515-POLICY-002: acknowledges explicit inherited isolation without claiming provider discovery", func() {
+	It("UT-AUDIT-515-POLICY-002: rejects an unsupported legacy isolation mode", func() {
 		kn := newMinimalCR()
 		Expect(json.Unmarshal([]byte(`{"mode":"Inherited"}`), &kn.Spec.NetworkPolicies)).To(Succeed())
 		api := fake.NewClientBuilder().WithScheme(k8sClient.Scheme()).WithStatusSubresource(kn).WithObjects(kn).Build()
 		r := &KubernautReconciler{Client: api, Scheme: api.Scheme()}
-		Expect(r.reconcileProviderPolicies(ctx, kn, kn)).To(Succeed())
+		Expect(r.reconcileProviderPolicies(ctx, kn, kn)).To(MatchError(ContainSubstring("unsupported")))
 		live := &kubernautv1alpha2.Kubernaut{}
 		Expect(api.Get(ctx, client.ObjectKeyFromObject(kn), live)).To(Succeed())
 		condition := meta.FindStatusCondition(live.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady)
 		Expect(condition).NotTo(BeNil())
-		Expect(condition.Status).To(Equal(metav1.ConditionTrue))
-		Expect(condition.Reason).To(Equal("InheritedIsolation"))
+		Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+		Expect(condition.Reason).To(Equal(policy.ReasonUnsupportedProvider))
 		provider := meta.FindStatusCondition(live.Status.Conditions, kubernautv1alpha2.ConditionProviderDetected)
 		Expect(provider).NotTo(BeNil())
 		Expect(provider.Status).To(Equal(metav1.ConditionFalse))
@@ -65,8 +65,9 @@ var _ = Describe("native isolation activation safety", Label("unit"), func() {
 	})
 })
 
-var _ = Describe("required isolation through real reconciliation", func() {
+var _ = Describe("required isolation through real reconciliation", Label("requires-no-provider"), func() {
 	It("IT-AUDIT-515-POLICY-001 [SC-7, AC-4, CM-6]: blocks migration and workloads when a native provider is not qualified", func() {
+		createBYOSecrets(ctx)
 		kn := newMinimalCR()
 		kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())

@@ -698,7 +698,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		Expect(live).To(Equal(before), "foreign trust cannot be copied into an authorized replacement observation")
 	})
 
-	DescribeTable("IT-OWN-514-019 [AC-3, AC-6; SOC2 CC6.6; ASVS v5.0.0-V8.3.1] enforces provider policy owner identity despite matching markers and hashes",
+	DescribeTable("IT-OWN-514-019 [AC-3, AC-6; SOC2 CC6.6; ASVS v5.0.0-V8.3.1] enforces provider policy owner identity despite matching markers and hashes", Label("manages-provider-fixture"),
 		func(operation string) {
 			createBYOSecrets(ctx)
 			waitForCiliumPolicyCRDDeletion(ctx)

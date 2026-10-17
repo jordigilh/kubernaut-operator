@@ -113,9 +113,7 @@ func newMinimalCR() *kubernautv1alpha2.Kubernaut {
 			Namespace: testNamespace,
 		},
 		Spec: kubernautv1alpha2.KubernautSpec{
-			// Generic envtest has no CNI. Explicit acknowledgement must not be
-			// confused with default-required native isolation qualification.
-			NetworkPolicies: kubernautv1alpha2.NetworkPoliciesSpec{Mode: kubernautv1alpha2.NetworkIsolationInherited},
+			NetworkPolicies: kubernautv1alpha2.NetworkPoliciesSpec{Mode: kubernautv1alpha2.NetworkIsolationRequired},
 			Image: kubernautv1alpha2.ImageSpec{
 				PullPolicy: corev1.PullIfNotPresent,
 			},
@@ -209,6 +207,21 @@ func createBYOSecrets(ctx context.Context) {
 			Expect(k8sClient.Create(ctx, s)).To(Succeed())
 		}
 	}
+	services := []*corev1.Service{
+		{ObjectMeta: metav1.ObjectMeta{Name: "postgresql", Namespace: testNamespace}, Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "postgresql"}, Ports: []corev1.ServicePort{{Name: "postgresql", Protocol: corev1.ProtocolTCP, Port: 5432, TargetPort: intstr.FromInt(5432)}},
+		}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "valkey", Namespace: testNamespace}, Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "valkey"}, Ports: []corev1.ServicePort{{Name: "valkey", Protocol: corev1.ProtocolTCP, Port: 6379, TargetPort: intstr.FromInt(6379)}},
+		}},
+	}
+	for _, service := range services {
+		existing := &corev1.Service{}
+		err := k8sClient.Get(ctx, client.ObjectKeyFromObject(service), existing)
+		if errors.IsNotFound(err) {
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+		}
+	}
 
 	configMaps := []*corev1.ConfigMap{
 		{
@@ -242,6 +255,12 @@ func deleteBYOSecrets(ctx context.Context) {
 		err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: testNamespace}, s)
 		if err == nil {
 			_ = k8sClient.Delete(ctx, s)
+		}
+	}
+	for _, name := range []string{"postgresql", "valkey"} {
+		service := &corev1.Service{}
+		if err := k8sClient.Get(ctx, client.ObjectKey{Name: name, Namespace: testNamespace}, service); err == nil {
+			_ = k8sClient.Delete(ctx, service)
 		}
 	}
 	for _, name := range []string{"aianalysis-policy", "signalprocessing-policy"} {
@@ -650,7 +669,7 @@ var _ = Describe("Kubernaut Controller", func() {
 			Expect(k8sClient.Get(ctx, singletonKey(), status)).To(Succeed())
 			condition := findCondition(status.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady)
 			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
-			Expect(condition.Reason).To(Equal("InheritedIsolation"), "envtest explicitly acknowledges inherited isolation; no native provider is claimed")
+			Expect(condition.Reason).To(Equal(policy.ReasonProviderReady), "envtest uses the synthetic Cilium provider fixture and must report native policy readiness")
 		})
 	})
 

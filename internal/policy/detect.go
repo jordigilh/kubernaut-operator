@@ -36,6 +36,7 @@ import (
 const (
 	schemaTypeArray  = "array"
 	schemaTypeObject = "object"
+	schemaTypeString = "string"
 )
 
 // Detector combines provider API/schema discovery with active-installation
@@ -259,25 +260,56 @@ func schemaSupportsMonitoringFields(gvk schema.GroupVersionKind, egress apiexten
 	if gvk.Group != "cilium.io" && gvk.Group != "projectcalico.org" {
 		return true
 	}
-	if egress.Type != schemaTypeArray || egress.Items == nil || egress.Items.Schema == nil {
-		return false
-	}
-	item := egress.Items.Schema
-	if item.Type != schemaTypeObject || item.Properties == nil {
+	item, ok := policyEgressItemSchema(egress)
+	if !ok {
 		return false
 	}
 	switch gvk {
 	case schema.GroupVersionKind{Group: "cilium.io", Version: "v2", Kind: "CiliumNetworkPolicy"}:
-		return item.Properties["toServices"].Type == schemaTypeArray && item.Properties["toPorts"].Type == schemaTypeArray
+		return schemaHasTypes(item.Properties, map[string]string{
+			"toServices": schemaTypeArray,
+			"toPorts":    schemaTypeArray,
+		})
 	case schema.GroupVersionKind{Group: "projectcalico.org", Version: "v3", Kind: "NetworkPolicy"}:
-		destination, ok := item.Properties["destination"]
-		if !ok || destination.Type != schemaTypeObject || destination.Properties == nil {
-			return false
-		}
-		return destination.Properties["services"].Type == schemaTypeObject
+		return schemaSupportsCalicoMonitoringFields(item.Properties)
 	default:
 		return true
 	}
+}
+
+func policyEgressItemSchema(egress apiextensionsv1.JSONSchemaProps) (*apiextensionsv1.JSONSchemaProps, bool) {
+	if egress.Type != schemaTypeArray || egress.Items == nil || egress.Items.Schema == nil {
+		return nil, false
+	}
+	item := egress.Items.Schema
+	if item.Type != schemaTypeObject || item.Properties == nil {
+		return nil, false
+	}
+	return item, true
+}
+
+func schemaSupportsCalicoMonitoringFields(properties map[string]apiextensionsv1.JSONSchemaProps) bool {
+	destination, ok := properties["destination"]
+	if !ok || destination.Type != schemaTypeObject || destination.Properties == nil {
+		return false
+	}
+	return schemaHasTypes(properties, map[string]string{"protocol": schemaTypeString}) &&
+		schemaHasTypes(destination.Properties, map[string]string{
+			"services":          schemaTypeObject,
+			"selector":          schemaTypeString,
+			"namespaceSelector": schemaTypeString,
+			"ports":             schemaTypeArray,
+		})
+}
+
+func schemaHasTypes(properties map[string]apiextensionsv1.JSONSchemaProps, expected map[string]string) bool {
+	for name, expectedType := range expected {
+		property, ok := properties[name]
+		if !ok || property.Type != expectedType {
+			return false
+		}
+	}
+	return true
 }
 
 func expectedScope(gvk schema.GroupVersionKind) meta.RESTScopeName {

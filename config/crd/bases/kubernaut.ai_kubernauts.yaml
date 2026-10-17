@@ -2966,14 +2966,10 @@ spec:
                   mode:
                     default: Required
                     description: |-
-                      Mode requires a qualified native provider by default. Inherited is an
-                      explicit administrator acknowledgement that isolation is supplied outside
-                      this operator; it does not attest that such protection has been verified.
-                      Existing native policies are retained in Inherited mode, not silently
-                      pruned on a discovery failure or opt-out. See PR-515-AUDIT-REMEDIATION.md.
+                      Mode is retained only for compatibility with older manifests. Native
+                      policy enforcement is always required; omit this field.
                     enum:
                     - Required
-                    - Inherited
                     type: string
                   monitoring:
                     description: |-

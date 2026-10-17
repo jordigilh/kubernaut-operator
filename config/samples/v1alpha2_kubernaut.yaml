@@ -227,7 +227,7 @@ spec:
     #   oauth2CredentialsSecretRef: af-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for APIFrontend only (used only when fleet.enabled: true, for its list_clusters MCP tool)
 
   gateway:
-    enabled: false
+    enabled: true
     logging:
       level: INFO
     route:
@@ -335,7 +335,8 @@ spec:
 
   # Native isolation is required by default before migration/workload activation.
   # Auto requires a supported, active provider. Generic Kubernetes deployments
-  # must explicitly select mode: Inherited and supply their own isolation.
+  # without a supported provider fail closed; select a supported provider before
+  # activating the operator.
   # No raw NetworkPolicy fallback or external scraper identity is inferred.
   # networkPolicies:
   #   mode: Required

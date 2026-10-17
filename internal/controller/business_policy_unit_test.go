@@ -9,7 +9,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	configv1 "github.com/openshift/api/config/v1"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -17,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -38,18 +38,16 @@ const policyDeleteOperation = "delete"
 
 func (c businessMappedClient) RESTMapper() meta.RESTMapper { return c.mapper }
 
+func (c businessMappedClient) Watch(ctx context.Context, list client.ObjectList, options ...client.ListOption) (watch.Interface, error) {
+	watchClient, ok := c.Client.(client.WithWatch)
+	if !ok {
+		return nil, fmt.Errorf("underlying business test client does not support watch")
+	}
+	return watchClient.Watch(ctx, list, options...)
+}
+
 func ciliumBusinessReconciler(kn *kubernautv1alpha2.Kubernaut, faults interceptor.Funcs) *KubernautReconciler {
 	r := businessUnitReconciler(kn, faults)
-	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{{Group: "cilium.io", Version: "v2"}})
-	mapper.Add(policy.RequiredGVKs(policy.ProviderCilium)[0], meta.RESTScopeNamespace)
-	r.Client = businessMappedClient{Client: r.Client, mapper: mapper}
-	ExpectWithOffset(1, r.Create(ctx, ciliumPolicyCRD())).To(Succeed())
-	ExpectWithOffset(1, r.Create(ctx, &appsv1.DaemonSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "cilium", Namespace: "kube-system"},
-		Spec: appsv1.DaemonSetSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
-			Containers: []corev1.Container{{Name: "cilium", Image: "quay.io/cilium/cilium:v1.19.2"}},
-		}}}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberReady: 1},
-	})).To(Succeed())
 	return r
 }
 
@@ -89,8 +87,8 @@ var _ = Describe("independent provider policy lifecycle", Label("unit"), func() 
 		kn.Spec.Monitoring.Prometheus.URL = "https://missing.metrics.svc:9090"
 		Expect(r.reconcileProviderPolicies(ctx, kn, kn)).To(Succeed(), "partial endpoint resolution is represented in status")
 		Expect(meta.IsStatusConditionFalse(kn.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady)).To(BeTrue())
-		kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationInherited
-		Expect(r.reconcileProviderPolicies(ctx, kn, kn)).To(MatchError(ContainSubstring("inherited isolation")))
+		kn.Spec.NetworkPolicies.Mode = "Inherited"
+		Expect(r.reconcileProviderPolicies(ctx, kn, kn)).To(MatchError(ContainSubstring("unsupported")))
 	})
 
 	It("UT-AUDIT-515-NATIVE-002: rejects native read, create, raced-read, update and pruning failures", func() {
@@ -209,6 +207,17 @@ var _ = Describe("independent provider policy lifecycle", Label("unit"), func() 
 		Expect(condition.Reason).To(Equal(policy.ReasonDNSUnavailable))
 	})
 
+	It("UT-AUDIT-537-NATIVE-001: fails closed when a configured BYO Service disappears", func() {
+		kn := newMinimalCR()
+		kn.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderCilium
+		kn.Spec.Monitoring.Prometheus.Enabled = ptr.To(false)
+		kn.Spec.Monitoring.AlertManager.Enabled = ptr.To(false)
+		r := ciliumBusinessReconciler(kn, interceptor.Funcs{})
+		Expect(r.Delete(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "postgresql", Namespace: kn.Namespace}})).To(Succeed())
+		Expect(r.reconcileProviderPolicies(ctx, kn, kn)).To(MatchError(ContainSubstring("resolving BYO service")))
+		Expect(meta.IsStatusConditionFalse(kn.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady)).To(BeTrue())
+	})
+
 	It("UT-AUDIT-515-SCRAPE-007: derives custom metrics authorization from generated Services and excludes metrics-less components", func() {
 		kn := newMinimalCR()
 		kn.Spec.APIFrontend.MetricsPort = ptr.To[int32](19180)
@@ -250,10 +259,20 @@ var _ = Describe("independent provider policy lifecycle", Label("unit"), func() 
 		Entry("default provider", kubernautv1alpha2.NetworkPolicyProvider(""), "", true),
 		Entry("Auto", kubernautv1alpha2.NetworkPolicyProviderAuto, kubernautv1alpha2.NetworkIsolationRequired, true),
 		Entry("OVN", kubernautv1alpha2.NetworkPolicyProviderOVN, kubernautv1alpha2.NetworkIsolationRequired, true),
-		Entry("Inherited", kubernautv1alpha2.NetworkPolicyProviderOVN, kubernautv1alpha2.NetworkIsolationInherited, false),
+		Entry("unsupported legacy isolation mode", kubernautv1alpha2.NetworkPolicyProviderOVN, "Inherited", false),
 		Entry("Cilium", kubernautv1alpha2.NetworkPolicyProviderCilium, kubernautv1alpha2.NetworkIsolationRequired, false),
 		Entry("Calico", kubernautv1alpha2.NetworkPolicyProviderCalico, kubernautv1alpha2.NetworkIsolationRequired, false),
 	)
+
+	It("UT-AUDIT-537-WATCH-001: requeues a Kubernaut when a configured BYO Service changes", func() {
+		kn := newMinimalCR()
+		kn.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderCilium
+		r := ciliumBusinessReconciler(kn, interceptor.Funcs{})
+		service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "postgresql", Namespace: kn.Namespace}}
+		requests := r.monitoringObjectToKubernaut(ctx, service)
+		Expect(requests).To(HaveLen(1))
+		Expect(requests[0].NamespacedName).To(Equal(client.ObjectKeyFromObject(kn)))
+	})
 
 	It("UT-AUDIT-515-WATCH-001: configures actual controller registration without starting an API server", func() {
 		mapper := meta.NewDefaultRESTMapper(k8sClient.Scheme().PrioritizedVersionsAllGroups())

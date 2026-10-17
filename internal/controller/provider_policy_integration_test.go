@@ -43,7 +43,7 @@ import (
 
 const agentPolicyName = "kubernaut-kubernaut-agent"
 
-var _ = Describe("native provider policy reconciliation wiring", func() {
+var _ = Describe("native provider policy reconciliation wiring", Label("manages-provider-fixture"), func() {
 	It("submits a Cilium policy through the deployment phase and reports readiness", func() {
 		createBYOSecrets(ctx)
 		waitForCiliumPolicyCRDDeletion(ctx)
@@ -127,7 +127,7 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 		egress, found, err := unstructured.NestedSlice(spec, "egress")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(found).To(BeTrue())
-		monitoringPorts := make(map[string]string, 2)
+		servicePorts := make(map[string]string, 4)
 		for _, item := range egress {
 			rule, ok := item.(map[string]interface{})
 			if !ok {
@@ -167,10 +167,12 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 			}
 			portValue, ok := port["port"].(string)
 			if ok {
-				monitoringPorts[serviceName] = portValue
+				servicePorts[serviceName] = portValue
 			}
 		}
-		Expect(monitoringPorts).To(Equal(map[string]string{"prometheus": "8080", "alertmanager": "8081"}))
+		Expect(servicePorts).To(Equal(map[string]string{
+			"postgresql": "5432", "valkey": "6379", "prometheus": "8080", "alertmanager": "8081",
+		}))
 		ingress, found, err := unstructured.NestedSlice(spec, "ingress")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(found).To(BeTrue())
@@ -239,9 +241,20 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 		egress, found, err := unstructured.NestedSlice(spec, "egress")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(found).To(BeTrue())
+		resolvedDependencies := make(map[string]bool)
 		for _, item := range egress {
-			Expect(item.(map[string]interface{})).NotTo(HaveKey("toServices"))
+			rule := item.(map[string]interface{})
+			services, hasServices := rule["toServices"].([]interface{})
+			if !hasServices || len(services) != 1 {
+				continue
+			}
+			serviceRule := services[0].(map[string]interface{})
+			service := serviceRule["k8sService"].(map[string]interface{})
+			name := service["serviceName"].(string)
+			Expect(name).To(Or(Equal("postgresql"), Equal("valkey")))
+			resolvedDependencies[name] = true
 		}
+		Expect(resolvedDependencies).To(Equal(map[string]bool{"postgresql": true, "valkey": true}))
 
 		status := &kubernautv1alpha2.Kubernaut{}
 		Expect(k8sClient.Get(ctx, singletonKey(), status)).To(Succeed())
@@ -342,7 +355,9 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 				monitoringServicesFound[name] = true
 			}
 		}
-		Expect(monitoringServicesFound).To(Equal(map[string]bool{"prometheus": true}))
+		Expect(monitoringServicesFound).To(Equal(map[string]bool{
+			"postgresql": true, "valkey": true, "prometheus": true,
+		}))
 
 		status := &kubernautv1alpha2.Kubernaut{}
 		Expect(k8sClient.Get(ctx, singletonKey(), status)).To(Succeed())
@@ -440,19 +455,36 @@ var _ = Describe("native provider policy reconciliation wiring", func() {
 			if !ok {
 				continue
 			}
+			protocol, ok := rule["protocol"].(string)
+			if !ok || protocol != string(corev1.ProtocolTCP) {
+				continue
+			}
 			destination, ok := rule["destination"].(map[string]interface{})
 			if !ok {
 				continue
 			}
-			service, ok := destination["services"].(map[string]interface{})
+			if destination["namespaceSelector"] != "projectcalico.org/name == 'monitoring-policy-calico'" {
+				continue
+			}
+			selector, ok := destination["selector"].(string)
 			if !ok {
 				continue
 			}
-			name, ok := service["name"].(string)
-			if ok && (name == "prometheus" || name == "alertmanager") {
-				monitoringServicesFound[name] = true
-				Expect(destination).NotTo(HaveKey("ports"))
+			var name string
+			var backendPort int64
+			switch selector {
+			case "app == 'prometheus'":
+				name, backendPort = "prometheus", 8080
+			case "app == 'alertmanager'":
+				name, backendPort = "alertmanager", 8081
+			default:
+				continue
 			}
+			ports, ok := destination["ports"].([]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(ports).To(Equal([]interface{}{backendPort}))
+			Expect(destination).NotTo(HaveKey("services"))
+			monitoringServicesFound[name] = true
 		}
 		Expect(monitoringServicesFound).To(Equal(map[string]bool{"prometheus": true, "alertmanager": true}))
 		ingress, found, err := unstructured.NestedSlice(spec, "ingress")
@@ -886,8 +918,15 @@ func calicoPolicyCRD() *apiextensionsv1.CustomResourceDefinition {
 									Items: &apiextensionsv1.JSONSchemaPropsOrArray{Schema: &apiextensionsv1.JSONSchemaProps{
 										Type: "object",
 										Properties: map[string]apiextensionsv1.JSONSchemaProps{
+											"action":   {Type: "string"},
+											"protocol": {Type: "string"},
 											"destination": {Type: "object", Properties: map[string]apiextensionsv1.JSONSchemaProps{
-												"services": {Type: "object", XPreserveUnknownFields: ptr.To(true)},
+												"services":          {Type: "object", XPreserveUnknownFields: ptr.To(true)},
+												"namespaceSelector": {Type: "string"},
+												"selector":          {Type: "string"},
+												"ports": {Type: "array", Items: &apiextensionsv1.JSONSchemaPropsOrArray{
+													Schema: &apiextensionsv1.JSONSchemaProps{Type: "integer"},
+												}},
 											}},
 										},
 									}},
