@@ -1580,23 +1580,33 @@ spec:
               gateway:
                 description: Gateway service settings.
                 properties:
-                  alertManagerTokenSecretName:
+                  auth:
                     description: |-
-                      Name of a Secret (in this Kubernaut CR's namespace) containing a
-                      bearer token AlertManager presents when calling Gateway's webhook
-                      endpoint. The Secret must contain a "token" key holding a valid
-                      Kubernetes ServiceAccount token for an identity authorized to call
-                      this Gateway (bound to the generated gateway-signal-source
-                      ClusterRole -- see docs/security/credentials-and-tls.md).
-
-                      This is a bring-your-own credential, consistent with
-                      spec.postgresql.secretName/spec.llmProfiles[*].credentialsSecretName:
-                      the operator never mints or stores this token itself. When unset,
-                      the generated AlertmanagerConfig omits webhook authentication
-                      entirely (Gateway will reject unauthenticated calls) and the CR's
-                      ConditionAlertManagerAuthConfigured status condition explains why.
-                      See docs/installation/03-deploy.md "Configure AlertManager".
-                    type: string
+                      Authentication configures Gateway TokenReview/SAR enforcement and the
+                      AlertManager bearer credential used by the operator-managed webhook
+                      adapter. Authentication is enabled by default to preserve the secure
+                      fail-closed Gateway contract.
+                    properties:
+                      alertManager:
+                        description: |-
+                          AlertManager configures the administrator-owned bearer credential used by
+                          the operator-managed AlertmanagerConfig webhook.
+                        properties:
+                          tokenSecretName:
+                            description: |-
+                              Name of the administrator-owned Secret containing the Kubernetes
+                              ServiceAccount bearer token. The operator emits only a SecretKeySelector;
+                              token bytes never enter rendered configuration, status, or logs.
+                            type: string
+                        type: object
+                      enabled:
+                        default: true
+                        description: |-
+                          Whether Gateway TokenReview/SAR authentication is enforced. Unset
+                          defaults to true; false is an explicit administrator-selected insecure
+                          mode and is surfaced through the AlertManagerAuthConfigured condition.
+                        type: boolean
+                    type: object
                   config:
                     description: Gateway server and middleware configuration.
                     properties:

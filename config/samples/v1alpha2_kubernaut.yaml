@@ -227,7 +227,11 @@ spec:
     #   oauth2CredentialsSecretRef: af-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for APIFrontend only (used only when fleet.enabled: true, for its list_clusters MCP tool)
 
   gateway:
-    enabled: false
+    enabled: true
+    auth:
+      enabled: true
+      alertManager:
+        tokenSecretName: alertmanager-gateway-token
     logging:
       level: INFO
     route:

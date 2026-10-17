@@ -167,6 +167,29 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		}
 	})
 
+	It("UT-539-GW-AUTH-API-001 [IA-2, AC-3, CM-3, CM-6; ASVS v5.0.0-V8.2.1, v5.0.0-V8.3.1, v5.0.0-V16.5.2]: publishes the nested Gateway auth contract with a secure default and no dead source fields", func() {
+		crd := loadKubernautCRD()
+		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+		gateway := schema.Properties["spec"].Properties["gateway"]
+		auth := gateway.Properties["auth"]
+
+		Expect(auth.Type).To(Equal("object"))
+		Expect(auth.Properties).To(HaveKey("enabled"))
+		enabled := auth.Properties["enabled"]
+		Expect(enabled.Type).To(Equal("boolean"))
+		Expect(enabled.Default).NotTo(BeNil())
+		Expect(string(enabled.Default.Raw)).To(Equal("true"))
+
+		Expect(auth.Properties).To(HaveKey("alertManager"))
+		alertManager := auth.Properties["alertManager"]
+		Expect(alertManager.Properties).To(HaveKey("tokenSecretName"))
+		Expect(gateway.Properties).NotTo(HaveKey("alertManagerTokenSecretName"))
+		Expect(gateway.Properties).NotTo(HaveKey("signalSources"))
+		Expect(gateway.Properties).NotTo(HaveKey("kubernetesEvents"))
+		Expect(auth.Properties).NotTo(HaveKey("signalSources"))
+		Expect(auth.Properties).NotTo(HaveKey("kubernetesEvents"))
+	})
+
 	It("retains OAuth2 enabled only for the separate LLM profile API", func() {
 		profile := LLMProfileSpec{
 			Provider:              "openai",

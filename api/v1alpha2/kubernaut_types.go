@@ -1523,6 +1523,13 @@ type GatewaySpec struct {
 	// +optional
 	Logging LoggingSpec `json:"logging,omitempty"`
 
+	// Authentication configures Gateway TokenReview/SAR enforcement and the
+	// AlertManager bearer credential used by the operator-managed webhook
+	// adapter. Authentication is enabled by default to preserve the secure
+	// fail-closed Gateway contract.
+	// +optional
+	Auth GatewayAuthSpec `json:"auth,omitempty"`
+
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
@@ -1533,23 +1540,40 @@ type GatewaySpec struct {
 	// back to spec.fleet.oauth2.credentialsSecretRef when unset.
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
+}
 
-	// Name of a Secret (in this Kubernaut CR's namespace) containing a
-	// bearer token AlertManager presents when calling Gateway's webhook
-	// endpoint. The Secret must contain a "token" key holding a valid
-	// Kubernetes ServiceAccount token for an identity authorized to call
-	// this Gateway (bound to the generated gateway-signal-source
-	// ClusterRole -- see docs/security/credentials-and-tls.md).
-	//
-	// This is a bring-your-own credential, consistent with
-	// spec.postgresql.secretName/spec.llmProfiles[*].credentialsSecretName:
-	// the operator never mints or stores this token itself. When unset,
-	// the generated AlertmanagerConfig omits webhook authentication
-	// entirely (Gateway will reject unauthenticated calls) and the CR's
-	// ConditionAlertManagerAuthConfigured status condition explains why.
-	// See docs/installation/03-deploy.md "Configure AlertManager".
+// GatewayAuthSpec configures the Gateway authentication boundary. The
+// operator renders AuthenticationEnabled into the Gateway server config and
+// applies the same policy to the AlertManager adapter credential reference.
+type GatewayAuthSpec struct {
+	// Whether Gateway TokenReview/SAR authentication is enforced. Unset
+	// defaults to true; false is an explicit administrator-selected insecure
+	// mode and is surfaced through the AlertManagerAuthConfigured condition.
+	// +kubebuilder:default=true
 	// +optional
-	AlertManagerTokenSecretName string `json:"alertManagerTokenSecretName,omitempty"`
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// AlertManager configures the administrator-owned bearer credential used by
+	// the operator-managed AlertmanagerConfig webhook.
+	// +optional
+	AlertManager GatewayAlertManagerAuthSpec `json:"alertManager,omitempty"`
+}
+
+// GatewayAlertManagerAuthSpec identifies the Secret used by AlertManager when
+// it calls the Gateway webhook. The Secret is read-only BYO material in the
+// Kubernaut CR namespace and must contain a "token" key.
+type GatewayAlertManagerAuthSpec struct {
+	// Name of the administrator-owned Secret containing the Kubernetes
+	// ServiceAccount bearer token. The operator emits only a SecretKeySelector;
+	// token bytes never enter rendered configuration, status, or logs.
+	// +optional
+	TokenSecretName string `json:"tokenSecretName,omitempty"`
+}
+
+// AuthenticationEnabled returns the effective Gateway authentication policy.
+// A nil auth block or nil enabled pointer preserves the secure default.
+func (s *GatewayAuthSpec) AuthenticationEnabled() bool {
+	return s == nil || s.Enabled == nil || *s.Enabled
 }
 
 // ConsoleSpec configures the standalone web console (A2A chat UI).
