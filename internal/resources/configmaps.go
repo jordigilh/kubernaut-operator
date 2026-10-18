@@ -1718,7 +1718,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubern
 	em := &kn.Spec.EffectivenessMonitor
 	cfg := effectivenessMonitorConfigYAML{
 		TLSProfile: o.tlsProfile,
-		Logging:    loggingYAML{Level: withDefault(em.Logging.Level, "info")},
+		Logging:    loggingYAML{Level: withDefault(em.Logging.Level, "INFO")},
 		Assessment: emAssessmentYAML{
 			StabilizationWindow: withDefault(em.Assessment.StabilizationWindow, "30s"),
 			ValidityWindow:      withDefault(em.Assessment.ValidityWindow, "300s"),
