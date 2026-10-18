@@ -27,7 +27,8 @@ The operator and managed workloads expect Kubernetes Secret objects (bring-your-
 | Ansible or AAP (optional, `spec.ansible.tokenSecretRef`) | `token` | Authenticate to AWX or Ansible Automation Platform API |
 | OTLP private CA (Issue #478, `spec.<component>.telemetry.tls.caCertSecretRef`) | `ca.crt` by default, or the referenced key | Verify a private OTLP collector certificate |
 | OTLP mTLS client (Issue #478, `spec.<component>.telemetry.tls.tlsClientSecretRef`) | `tls.crt`, `tls.key` | Authenticate the telemetry exporter to an OTLP collector |
-| DataStorage audit HMAC (`spec.dataStorage.auditHashKey.existingSecret`, or the operator default) | `audit-hmac-key.yaml` containing `hmacKey` (or configured `secretKey`) | Keyed audit hash-chain tamper evidence (FedRAMP AU-9 / SOC 2 CC8.1) |
+| DataStorage audit HMAC (`spec.dataStorage.audit.hashKey.existingSecret`, or the operator default) | `audit-hmac-key.yaml` containing `hmacKey` (or configured `secretKey`) | Keyed audit hash-chain tamper evidence (FedRAMP AU-9 / SOC 2 CC8.1) |
+| DataStorage audit signing certificate (`spec.dataStorage.audit.signingCertificate.secretName`) | `tls.crt`, `tls.key` | Sign exported audit records (FedRAMP AU-9 / SC-12) |
 
 Additional keys may be required for specific provider integrations; consult provider documentation and the Kubernaut CRD for optional fields.
 
@@ -45,6 +46,12 @@ OTLP CA and client Secrets remain administrator-owned inputs. The operator
 validates and mounts them read-only, but never adopts, edits, rotates, or
 deletes them. See [OTLP telemetry TLS and operational rotation](#otlp-telemetry-tls-and-operational-rotation)
 for the runtime rollout contract.
+
+The DataStorage audit-signing Secret is also administrator- or cert-manager-owned
+and is mounted read-only. The operator derives the signing directory from
+`spec.dataStorage.audit.signingCertificate.mountPath` and uses only a
+resource-version-derived, non-sensitive pod-template revision to roll
+DataStorage after Secret changes; certificate bytes never enter annotations.
 
 LLM API keys and OAuth client secrets should be rotated on a regular schedule; rotating LLM API credentials at least every ninety days is recommended.
 
