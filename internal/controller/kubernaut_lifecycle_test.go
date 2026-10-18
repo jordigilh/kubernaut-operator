@@ -241,6 +241,19 @@ func newCRWithRouteDisabled() *kubernautv1alpha2.Kubernaut {
 	return cr
 }
 
+func setDataStorageAuditHashKey(kn *kubernautv1alpha2.Kubernaut, spec *kubernautv1alpha2.DataStorageAuditHashKeySpec) {
+	if spec == nil {
+		if kn.Spec.DataStorage.Audit != nil {
+			kn.Spec.DataStorage.Audit.HashKey = nil
+		}
+		return
+	}
+	if kn.Spec.DataStorage.Audit == nil {
+		kn.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{}
+	}
+	kn.Spec.DataStorage.Audit.HashKey = spec
+}
+
 // reconcileToRunning drives a CR through all phases until Running.
 // Returns the reconciler for subsequent use.
 func reconcileToRunning(ctx context.Context) *KubernautReconciler {

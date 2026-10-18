@@ -613,6 +613,18 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		r = businessUnitReconciler(kn, interceptor.Funcs{})
 		Expect(r.phaseDeploy(ctx, kn, kn)).To(MatchError(ContainSubstring("resolving telemetry material revision")))
 		kn.Spec.DataStorage.Telemetry = kubernautv1alpha2.TelemetrySpec{}
+		kn.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{
+			SigningCertificate: &kubernautv1alpha2.SigningCertSpec{SecretName: "signing-revision-error"},
+		}
+		r = businessUnitReconciler(kn, interceptor.Funcs{Get: func(ctx context.Context, api client.WithWatch,
+			key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+			if key.Name == "signing-revision-error" {
+				return fmt.Errorf("%s", unitAPIDenial)
+			}
+			return api.Get(ctx, key, object, options...)
+		}})
+		Expect(r.phaseDeploy(ctx, kn, kn)).To(MatchError(ContainSubstring("resolving DataStorage signing material revision")))
+		kn.Spec.DataStorage.Audit = nil
 		kn.Spec.PostgreSQL.SecretName = unitMissingReference
 		r = businessUnitReconciler(kn, interceptor.Funcs{})
 		Expect(r.phaseDeploy(ctx, kn, kn)).To(MatchError(ContainSubstring("fetching pg secret for config")))
@@ -767,7 +779,9 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 			AdministratorManaged: &kubernautv1alpha2.AdministratorManagedTLSConfig{
 				InternalCASecretName: generated[0].Name, ServiceTLSSecretNames: certManagerServiceTLSSecretNames(),
 			}}
-		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha2.SigningCertSpec{SecretName: "datastorage-signing-cert"}
+		kn.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{
+			SigningCertificate: &kubernautv1alpha2.SigningCertSpec{SecretName: "datastorage-signing-cert"},
+		}
 		material, err := resources.ResolveTLSMaterial(kn)
 		Expect(err).NotTo(HaveOccurred())
 		r := businessUnitReconciler(kn, interceptor.Funcs{})
@@ -792,7 +806,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		Expect(r.validateRuntimeTLSSecret(ctx, kn, material, ca, resources.TLSServiceGateway, ca.Name)).To(HaveOccurred())
 		Expect(r.validateExplicitTLS(ctx, kn, material)).To(Succeed())
 		signing := &corev1.Secret{}
-		Expect(r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: kn.Spec.DataStorage.SigningCert.SecretName}, signing)).To(Succeed())
+		Expect(r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: kn.Spec.DataStorage.Audit.SigningCertificate.SecretName}, signing)).To(Succeed())
 		Expect(r.Delete(ctx, signing)).To(Succeed())
 		Expect(r.validateExplicitTLS(ctx, kn, material)).To(HaveOccurred())
 		_, _, err = r.ensureRuntimeTLS(ctx, kn)

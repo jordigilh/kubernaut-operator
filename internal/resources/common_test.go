@@ -224,6 +224,33 @@ func testKnV2(kn *kubernautv1alpha2.Kubernaut) *kubernautv1alpha2.Kubernaut {
 	return kn.DeepCopy()
 }
 
+func setDataStorageAuditHashKey(kn *kubernautv1alpha2.Kubernaut, spec *kubernautv1alpha2.DataStorageAuditHashKeySpec) {
+	if spec == nil {
+		if kn.Spec.DataStorage.Audit != nil {
+			kn.Spec.DataStorage.Audit.HashKey = nil
+		}
+		return
+	}
+	if kn.Spec.DataStorage.Audit == nil {
+		kn.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{}
+	}
+	kn.Spec.DataStorage.Audit.HashKey = spec
+}
+
+func setDataStorageSigningCertificate(kn *kubernautv1alpha2.Kubernaut, spec *kubernautv1alpha2.SigningCertSpec) {
+	if kn.Spec.DataStorage.Audit == nil {
+		kn.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{}
+	}
+	kn.Spec.DataStorage.Audit.SigningCertificate = spec
+}
+
+func setDataStorageRetention(kn *kubernautv1alpha2.Kubernaut, spec *kubernautv1alpha2.RetentionSpec) {
+	if kn.Spec.DataStorage.Audit == nil {
+		kn.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{}
+	}
+	kn.Spec.DataStorage.Audit.Retention = spec
+}
+
 // fleetNamespaceFromYAML extracts fleet.namespace from a rendered
 // config.yaml (#227). Unmarshals into a thin wrapper around the actual
 // production fleetConfigYAML type (this file is package resources,

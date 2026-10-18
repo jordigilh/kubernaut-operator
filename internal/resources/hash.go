@@ -47,6 +47,10 @@ const (
 	// revision for the shared monitoring CA source. It contains only a
 	// controller-derived digest of the referenced Secret/ConfigMap metadata.
 	AnnotationMonitoringMaterialRevision = "kubernaut.ai/monitoring-material-revision"
+
+	// AnnotationDataStorageSigningMaterialRevision is a non-sensitive
+	// DataStorage pod-template revision for the effective audit-signing Secret.
+	AnnotationDataStorageSigningMaterialRevision = "kubernaut.ai/datastorage-signing-material-revision"
 )
 
 // ConfigMapDataHash computes a stable SHA-256 hex digest of a ConfigMap's

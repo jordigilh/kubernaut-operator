@@ -1393,6 +1393,72 @@ var _ = Describe("shared monitoring TLS contract", func() {
 	})
 })
 
+var _ = Describe("DataStorage validation", func() {
+	It("UT-DS-550-VAL-001 [SI-10, ASVS V2.2.1, V2.2.2] rejects invalid durations and negative limits", func() {
+		kn := testKubernaut()
+		maxOpen := -1
+		maxConcurrent := -1
+		kn.Spec.DataStorage.EndpointPropagationDelay = "not-a-duration"
+		kn.Spec.DataStorage.Server = &kubernautv1alpha2.DataStorageServerSpec{
+			ReadTimeout:           "not-a-duration",
+			WriteTimeout:          "0s",
+			MaxConcurrentRequests: &maxConcurrent,
+		}
+		kn.Spec.DataStorage.Database = &kubernautv1alpha2.DataStorageDatabaseSpec{MaxOpenConns: &maxOpen}
+		negativeRate := -1
+		kn.Spec.DataStorage.Server.RateLimit = &kubernautv1alpha2.DataStorageRateLimitSpec{
+			RequestsPerSecond: &negativeRate,
+		}
+		kn.Spec.DataStorage.Redis = &kubernautv1alpha2.DataStorageRedisSpec{DLQMaxLen: &negativeRate}
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.dataStorage.endpointPropagationDelay"))
+		Expect(joined).To(ContainSubstring("spec.dataStorage.server.readTimeout"))
+		Expect(joined).To(ContainSubstring("spec.dataStorage.server.writeTimeout: duration must be positive"))
+		Expect(joined).To(ContainSubstring("maxConcurrentRequests must be non-negative"))
+		Expect(joined).To(ContainSubstring("rateLimit.requestsPerSecond must be non-negative"))
+		Expect(joined).To(ContainSubstring("maxOpenConns must be non-negative"))
+		Expect(joined).To(ContainSubstring("redis.dlqMaxLen must be non-negative"))
+	})
+
+	It("UT-DS-550-VAL-002 [AU-11, CM-6] rejects invalid retention bounds", func() {
+		kn := testKubernaut()
+		batchSize := 0
+		defaultDays := 2556
+		kn.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{
+			Retention: &kubernautv1alpha2.RetentionSpec{
+				Interval:    "not-a-duration",
+				BatchSize:   &batchSize,
+				DefaultDays: &defaultDays,
+			},
+		}
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.dataStorage.audit.retention.interval"))
+		Expect(joined).To(ContainSubstring("batchSize must be positive"))
+		Expect(joined).To(ContainSubstring("defaultDays must be at most 2555"))
+	})
+
+	It("UT-DS-550-VAL-003 [SI-10, CM-6] accepts valid durations and boundary values", func() {
+		kn := testKubernaut()
+		zero := 0
+		batchSize := 1
+		defaultDays := 2555
+		kn.Spec.DataStorage.EndpointPropagationDelay = "5s"
+		kn.Spec.DataStorage.Server = &kubernautv1alpha2.DataStorageServerSpec{
+			ReadTimeout:           "1s",
+			WriteTimeout:          "2s",
+			MaxConcurrentRequests: &zero,
+		}
+		kn.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{
+			Retention: &kubernautv1alpha2.RetentionSpec{
+				Interval:    "1h",
+				BatchSize:   &batchSize,
+				DefaultDays: &defaultDays,
+			},
+		}
+		Expect(ValidateKubernaut(kn)).To(BeEmpty())
+	})
+})
+
 func errorStrings(errs []error) []string {
 	result := make([]string, len(errs))
 	for i, err := range errs {

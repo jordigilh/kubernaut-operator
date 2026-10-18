@@ -458,14 +458,25 @@ type gatewayCORSYAML struct {
 }
 
 type dataStorageServerYAML struct {
-	Port          int           `json:"port" yaml:"port"`
-	Host          string        `json:"host" yaml:"host"`
-	HealthPort    int           `json:"healthPort" yaml:"healthPort"`
-	MetricsPort   int           `json:"metricsPort" yaml:"metricsPort"`
-	ReadTimeout   string        `json:"readTimeout" yaml:"readTimeout"`
-	WriteTimeout  string        `json:"writeTimeout" yaml:"writeTimeout"`
-	TLS           tlsConfigYAML `json:"tls" yaml:"tls"`
-	SignerCertDir string        `json:"signerCertDir,omitempty" yaml:"signerCertDir,omitempty"`
+	Port                     int                      `json:"port" yaml:"port"`
+	Host                     string                   `json:"host" yaml:"host"`
+	HealthPort               int                      `json:"healthPort" yaml:"healthPort"`
+	MetricsPort              int                      `json:"metricsPort" yaml:"metricsPort"`
+	ReadTimeout              string                   `json:"readTimeout" yaml:"readTimeout"`
+	WriteTimeout             string                   `json:"writeTimeout" yaml:"writeTimeout"`
+	EndpointPropagationDelay string                   `json:"endpointPropagationDelay,omitempty" yaml:"endpointPropagationDelay,omitempty"`
+	MaxBodySize              string                   `json:"maxBodySize,omitempty" yaml:"maxBodySize,omitempty"`
+	MaxConcurrentRequests    int                      `json:"maxConcurrentRequests,omitempty" yaml:"maxConcurrentRequests,omitempty"`
+	CORSAllowedOrigins       []string                 `json:"corsAllowedOrigins,omitempty" yaml:"corsAllowedOrigins,omitempty"`
+	RateLimit                dataStorageRateLimitYAML `json:"rateLimit" yaml:"rateLimit"`
+	TLS                      tlsConfigYAML            `json:"tls" yaml:"tls"`
+	SignerCertDir            string                   `json:"signerCertDir,omitempty" yaml:"signerCertDir,omitempty"`
+}
+
+type dataStorageRateLimitYAML struct {
+	Enabled           bool    `json:"enabled" yaml:"enabled"`
+	RequestsPerSecond float64 `json:"requestsPerSecond" yaml:"requestsPerSecond"`
+	Burst             int     `json:"burst" yaml:"burst"`
 }
 
 type dataStorageDatabaseYAML struct {
@@ -508,16 +519,15 @@ type dataStorageLoggingYAML struct {
 }
 
 type dataStorageConfigYAML struct {
-	TLSProfile               string                    `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
-	Server                   dataStorageServerYAML     `json:"server" yaml:"server"`
-	Database                 dataStorageDatabaseYAML   `json:"database" yaml:"database"`
-	Redis                    dataStorageRedisYAML      `json:"redis" yaml:"redis"`
-	Logging                  dataStorageLoggingYAML    `json:"logging" yaml:"logging"`
-	EndpointPropagationDelay string                    `json:"endpointPropagationDelay,omitempty" yaml:"endpointPropagationDelay,omitempty"`
-	Retention                *dataStorageRetentionYAML `json:"retention,omitempty" yaml:"retention,omitempty"`
-	Audit                    *dataStorageAuditYAML     `json:"audit" yaml:"audit"`
-	Telemetry                *telemetryYAML            `json:"telemetry,omitempty" yaml:"telemetry,omitempty"`
-	Debug                    debugYAML                 `json:"debug" yaml:"debug"`
+	TLSProfile string                    `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
+	Server     dataStorageServerYAML     `json:"server" yaml:"server"`
+	Database   dataStorageDatabaseYAML   `json:"database" yaml:"database"`
+	Redis      dataStorageRedisYAML      `json:"redis" yaml:"redis"`
+	Logging    dataStorageLoggingYAML    `json:"logging" yaml:"logging"`
+	Retention  *dataStorageRetentionYAML `json:"retention,omitempty" yaml:"retention,omitempty"`
+	Audit      *dataStorageAuditYAML     `json:"audit" yaml:"audit"`
+	Telemetry  *telemetryYAML            `json:"telemetry,omitempty" yaml:"telemetry,omitempty"`
+	Debug      debugYAML                 `json:"debug" yaml:"debug"`
 }
 
 type dataStorageRetentionYAML struct {
@@ -1359,7 +1369,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 	auditHashKey := DataStorageAuditHashKeyReferenceFor(knV2)
 	cfg := dataStorageConfigYAML{
 		TLSProfile: o.tlsProfile,
-		Server:     dataStorageServerConfig(kn, knV2),
+		Server:     dataStorageServerConfig(knV2),
 		Database: func() dataStorageDatabaseYAML {
 			sslMode := withDefault(kn.Spec.PostgreSQL.SSLMode, DefaultSSLMode)
 			db := dataStorageDatabaseYAML{
@@ -1389,13 +1399,12 @@ func DataStorageConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 			}
 			return db
 		}(),
-		Redis: dataStorageRedisConfig(kn),
+		Redis: dataStorageRedisConfig(kn, knV2),
 		Logging: dataStorageLoggingYAML{
-			Level:  withDefault(kn.Spec.DataStorage.Logging.Level, "info"),
+			Level:  withDefault(knV2.Spec.DataStorage.Logging.Level, "info"),
 			Format: "json",
 		},
-		EndpointPropagationDelay: withDefault(kn.Spec.DataStorage.EndpointPropagationDelay, "10s"),
-		Retention:                dataStorageRetentionConfig(kn),
+		Retention: dataStorageRetentionConfig(knV2),
 		Audit: &dataStorageAuditYAML{
 			HashKeySecretsFile: DataStorageAuditHashKeySecretsFile,
 			HashKeyKey:         auditHashKey.SecretKey,
@@ -1407,47 +1416,76 @@ func DataStorageConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 }
 
 func dataStorageRetentionConfig(kn *kubernautv1alpha2.Kubernaut) *dataStorageRetentionYAML {
-	r := kn.Spec.DataStorage.Retention
-	if r == nil {
-		return nil
+	var r *kubernautv1alpha2.RetentionSpec
+	if kn.Spec.DataStorage.Audit != nil {
+		r = kn.Spec.DataStorage.Audit.Retention
 	}
-	days := intPtrDefault(r.DefaultDays, 2555)
+	enabled := true
+	interval := "24h"
+	batchSize := 1000
+	days := 2555
+	if r != nil {
+		if r.Enabled != nil {
+			enabled = *r.Enabled
+		}
+		interval = withDefault(r.Interval, interval)
+		batchSize = intPtrDefault(r.BatchSize, batchSize)
+		days = intPtrDefault(r.DefaultDays, days)
+	}
 	if days > 2555 {
 		days = 2555
 	}
 	return &dataStorageRetentionYAML{
-		Enabled:     r.Enabled != nil && *r.Enabled,
-		Interval:    withDefault(r.Interval, "24h"),
-		BatchSize:   intPtrDefault(r.BatchSize, 1000),
+		Enabled:     enabled,
+		Interval:    interval,
+		BatchSize:   batchSize,
 		DefaultDays: days,
 	}
 }
 
-func dataStorageServerConfig(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) dataStorageServerYAML {
+func dataStorageServerConfig(knV2 *kubernautv1alpha2.Kubernaut) dataStorageServerYAML {
 	s := dataStorageServerYAML{
-		Port:         8443,
-		Host:         "0.0.0.0",
-		HealthPort:   8081,
-		MetricsPort:  9090,
-		ReadTimeout:  "30s",
-		WriteTimeout: "30s",
-		TLS:          tlsConfigYAML{CertDir: InterServiceTLSCertDirFor(knV2)},
+		Port:                     8443,
+		Host:                     "0.0.0.0",
+		HealthPort:               8081,
+		MetricsPort:              9090,
+		ReadTimeout:              "30s",
+		WriteTimeout:             "30s",
+		EndpointPropagationDelay: "10s",
+		MaxBodySize:              "5242880",
+		MaxConcurrentRequests:    100,
+		RateLimit: dataStorageRateLimitYAML{
+			Enabled:           true,
+			RequestsPerSecond: 50,
+			Burst:             100,
+		},
+		TLS: tlsConfigYAML{CertDir: InterServiceTLSCertDirFor(knV2)},
 	}
+	s.EndpointPropagationDelay = withDefault(knV2.Spec.DataStorage.EndpointPropagationDelay, s.EndpointPropagationDelay)
 	// #260: v1alpha2-only addition, defaulting to the operator's prior
 	// hardcoded values above.
 	if srv := knV2.Spec.DataStorage.Server; srv != nil {
 		s.ReadTimeout = withDefault(srv.ReadTimeout, s.ReadTimeout)
 		s.WriteTimeout = withDefault(srv.WriteTimeout, s.WriteTimeout)
+		s.MaxBodySize = withDefault(srv.MaxBodySize, s.MaxBodySize)
+		s.MaxConcurrentRequests = intPtrDefault(srv.MaxConcurrentRequests, s.MaxConcurrentRequests)
+		s.CORSAllowedOrigins = srv.CORSAllowedOrigins
+		if rate := srv.RateLimit; rate != nil {
+			if rate.RequestsPerSecond != nil {
+				s.RateLimit.RequestsPerSecond = float64(*rate.RequestsPerSecond)
+			}
+			s.RateLimit.Burst = intPtrDefault(rate.Burst, s.RateLimit.Burst)
+		}
 	}
 	dir := "/etc/certs"
-	if sc := kn.Spec.DataStorage.SigningCert; sc != nil && sc.MountPath != "" {
-		dir = sc.MountPath
+	if knV2.Spec.DataStorage.Audit != nil && knV2.Spec.DataStorage.Audit.SigningCertificate != nil && knV2.Spec.DataStorage.Audit.SigningCertificate.MountPath != "" {
+		dir = knV2.Spec.DataStorage.Audit.SigningCertificate.MountPath
 	}
 	s.SignerCertDir = dir
 	return s
 }
 
-func dataStorageRedisConfig(kn *kubernautv1alpha2.Kubernaut) dataStorageRedisYAML {
+func dataStorageRedisConfig(kn, knV2 *kubernautv1alpha2.Kubernaut) dataStorageRedisYAML {
 	valkeyHost := kn.Spec.Valkey.Host
 	valkeyPort := kn.Spec.Valkey.Port
 	if valkeyPort == 0 {
@@ -1457,7 +1495,7 @@ func dataStorageRedisConfig(kn *kubernautv1alpha2.Kubernaut) dataStorageRedisYAM
 		Addr:             fmt.Sprintf("%s:%d", valkeyHost, valkeyPort),
 		DB:               0,
 		DLQStreamName:    "dlq-stream",
-		DLQMaxLen:        1000,
+		DLQMaxLen:        10000,
 		DLQConsumerGroup: "dlq-group",
 		SecretsFile:      "/etc/datastorage/secrets/valkey-secrets.yaml",
 		PasswordKey:      "password",
@@ -1474,6 +1512,9 @@ func dataStorageRedisConfig(kn *kubernautv1alpha2.Kubernaut) dataStorageRedisYAM
 			t.CertFile = "/etc/valkey-tls/client/tls.crt"
 			t.KeyFile = "/etc/valkey-tls/client/tls.key"
 		}
+	}
+	if knV2.Spec.DataStorage.Redis != nil {
+		r.DLQMaxLen = intPtrDefault(knV2.Spec.DataStorage.Redis.DLQMaxLen, r.DLQMaxLen)
 	}
 	r.TLS = t
 	return r

@@ -1,9 +1,9 @@
----
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
+  creationTimestamp: null
   name: kubernauts.kubernaut.ai
 spec:
   group: kubernaut.ai
@@ -897,30 +897,78 @@ spec:
               dataStorage:
                 description: DataStorage service settings.
                 properties:
-                  auditHashKey:
-                    description: |-
-                      AuditHashKey configures the mandatory keyed HMAC-SHA256 audit hash chain
-                      (FedRAMP AU-9, SOC 2 CC8.1). When ExistingSecret is empty, the operator
-                      creates and preserves a stable Secret automatically. When set, the named
-                      administrator-managed Secret is validated and mounted read-only.
+                  audit:
+                    description: Audit groups retention, export signing, and audit-chain
+                      key settings.
                     properties:
-                      existingSecret:
+                      hashKey:
                         description: |-
-                          ExistingSecret names an administrator-managed Secret. When empty, the
-                          operator provisions the stable default Secret.
-                        type: string
-                      secretKey:
-                        default: hmacKey
-                        description: SecretKey is the key inside the mounted audit
-                          YAML file.
-                        pattern: ^[A-Za-z0-9._-]+$
-                        type: string
+                          HashKey configures the mandatory keyed HMAC-SHA256 audit chain
+                          (FedRAMP AU-9, SOC 2 CC8.1).
+                        properties:
+                          existingSecret:
+                            description: |-
+                              ExistingSecret names an administrator-managed Secret. When empty, the
+                              operator provisions the stable default Secret.
+                            type: string
+                          secretKey:
+                            default: hmacKey
+                            description: SecretKey is the key inside the mounted audit
+                              YAML file.
+                            pattern: ^[A-Za-z0-9._-]+$
+                            type: string
+                        type: object
+                      retention:
+                        description: Retention configures periodic purge of expired
+                          audit events (FedRAMP AU-11).
+                        properties:
+                          batchSize:
+                            default: 1000
+                            description: Maximum number of rows deleted per batch.
+                            minimum: 1
+                            type: integer
+                          defaultDays:
+                            default: 2555
+                            description: |-
+                              Number of days to retain audit events before purge.
+                              Clamped to a maximum of 2555 (≈7 years per ADR-034 / SOC 2 / ISO 27001).
+                            maximum: 2555
+                            minimum: 1
+                            type: integer
+                          enabled:
+                            default: true
+                            description: |-
+                              Whether the retention purge worker is active.
+                              Defaults to true to preserve the DataStorage production retention floor.
+                              Set false explicitly for controlled development environments.
+                            type: boolean
+                          interval:
+                            default: 24h
+                            description: How often the purge worker runs. Must be
+                              a valid Go duration string.
+                            type: string
+                        type: object
+                      signingCertificate:
+                        description: |-
+                          SigningCertificate configures the audit export signing certificate
+                          (FedRAMP AU-9). When set, the named Secret is mounted read-only.
+                        properties:
+                          mountPath:
+                            default: /etc/certs
+                            description: Mount path inside the container. Defaults
+                              to /etc/certs.
+                            type: string
+                          secretName:
+                            description: Name of the Kubernetes Secret containing
+                              the signing cert (tls.crt, tls.key).
+                            type: string
+                        required:
+                        - secretName
+                        type: object
                     type: object
                   database:
-                    description: |-
-                      Database connection-pool tuning for the DataStorage PostgreSQL
-                      connection. When unset, defaults match the operator's prior
-                      hardcoded behavior (#260).
+                    description: Database configures DataStorage's PostgreSQL connection
+                      pool.
                     properties:
                       connMaxIdleTime:
                         default: 10m
@@ -964,6 +1012,18 @@ spec:
                         - WARN
                         - ERROR
                         type: string
+                    type: object
+                  redis:
+                    description: |-
+                      Redis configures DataStorage-specific Redis/Valkey behavior.
+                      Connection address, credentials, and TLS remain in spec.valkey.
+                    properties:
+                      dlqMaxLen:
+                        default: 10000
+                        description: Maximum Redis DLQ stream length. Zero is a valid
+                          explicit bound.
+                        minimum: 0
+                        type: integer
                     type: object
                   resources:
                     description: Resource requirements.
@@ -1024,39 +1084,46 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
-                  retention:
-                    description: Retention configures periodic purge of expired audit
-                      events (FedRAMP AU-11).
-                    properties:
-                      batchSize:
-                        default: 1000
-                        description: Maximum number of rows deleted per batch.
-                        minimum: 1
-                        type: integer
-                      defaultDays:
-                        default: 2555
-                        description: |-
-                          Number of days to retain audit events before purge.
-                          Clamped to a maximum of 2555 (≈7 years per ADR-034 / SOC 2 / ISO 27001).
-                        maximum: 2555
-                        minimum: 1
-                        type: integer
-                      enabled:
-                        description: |-
-                          Whether the retention purge worker is active.
-                          Defaults to false (safe default — no data is deleted without opt-in).
-                        type: boolean
-                      interval:
-                        default: 24h
-                        description: How often the purge worker runs. Must be a valid
-                          Go duration string.
-                        type: string
-                    type: object
                   server:
-                    description: |-
-                      Server timeout tuning for the DataStorage HTTP server.
-                      When unset, defaults match the operator's prior hardcoded behavior (#260).
+                    description: Server configures DataStorage's HTTP server and admission
+                      safeguards.
                     properties:
+                      corsAllowedOrigins:
+                        description: Cross-origin origins. Empty denies all cross-origin
+                          requests.
+                        items:
+                          type: string
+                        type: array
+                      maxBodySize:
+                        default: "5242880"
+                        description: |-
+                          Maximum request body size in bytes. The DataStorage service applies its
+                          existing 1 MiB–50 MiB safety clamp and 5 MiB default.
+                        type: string
+                      maxConcurrentRequests:
+                        default: 100
+                        description: Maximum concurrent HTTP requests. Zero disables
+                          the concurrency limit.
+                        minimum: 0
+                        type: integer
+                      rateLimit:
+                        description: |-
+                          Optional per-IP rate limiting. The rendered service contract keeps the
+                          safeguard enabled; this object controls its rate and burst values.
+                        properties:
+                          burst:
+                            default: 100
+                            description: Token-bucket burst size. Non-positive values
+                              use the service default.
+                            minimum: 0
+                            type: integer
+                          requestsPerSecond:
+                            default: 50
+                            description: Sustained integer requests per second. Non-positive
+                              values use the service default.
+                            minimum: 0
+                            type: integer
+                        type: object
                       readTimeout:
                         default: 30s
                         description: HTTP server read timeout. Must be a valid Go
@@ -1067,23 +1134,6 @@ spec:
                         description: HTTP server write timeout. Must be a valid Go
                           duration string.
                         type: string
-                    type: object
-                  signingCert:
-                    description: |-
-                      SigningCert configures the audit export signing certificate (FedRAMP AU-9).
-                      When set, the named Secret is mounted into the DS pod at /etc/certs.
-                    properties:
-                      mountPath:
-                        default: /etc/certs
-                        description: Mount path inside the container. Defaults to
-                          /etc/certs.
-                        type: string
-                      secretName:
-                        description: Name of the Kubernetes Secret containing the
-                          signing cert (tls.crt, tls.key).
-                        type: string
-                    required:
-                    - secretName
                     type: object
                   telemetry:
                     description: OpenTelemetry distributed-trace export configuration.
@@ -4140,3 +4190,9 @@ spec:
     storage: true
     subresources:
       status: {}
+status:
+  acceptedNames:
+    kind: ""
+    plural: ""
+  conditions: null
+  storedVersions: null
