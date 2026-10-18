@@ -26,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
@@ -80,6 +81,8 @@ func (r *KubernautReconciler) dataStorageSigningSecretToKubernaut(ctx context.Co
 	}
 	instances := &kubernautv1alpha2.KubernautList{}
 	if err := reader.List(ctx, instances, client.InNamespace(secret.Namespace)); err != nil {
+		logf.FromContext(ctx).Error(err, "listing Kubernaut objects for DataStorage signing Secret event",
+			"namespace", secret.Namespace, "name", secret.Name)
 		return nil
 	}
 	requests := make([]reconcile.Request, 0, len(instances.Items))

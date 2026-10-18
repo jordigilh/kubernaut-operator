@@ -466,7 +466,7 @@ type dataStorageServerYAML struct {
 	WriteTimeout             string                   `json:"writeTimeout" yaml:"writeTimeout"`
 	EndpointPropagationDelay string                   `json:"endpointPropagationDelay,omitempty" yaml:"endpointPropagationDelay,omitempty"`
 	MaxBodySize              string                   `json:"maxBodySize,omitempty" yaml:"maxBodySize,omitempty"`
-	MaxConcurrentRequests    int                      `json:"maxConcurrentRequests,omitempty" yaml:"maxConcurrentRequests,omitempty"`
+	MaxConcurrentRequests    int                      `json:"maxConcurrentRequests" yaml:"maxConcurrentRequests"`
 	CORSAllowedOrigins       []string                 `json:"corsAllowedOrigins,omitempty" yaml:"corsAllowedOrigins,omitempty"`
 	RateLimit                dataStorageRateLimitYAML `json:"rateLimit" yaml:"rateLimit"`
 	TLS                      tlsConfigYAML            `json:"tls" yaml:"tls"`

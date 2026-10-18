@@ -2,8 +2,8 @@
 
 ## Status
 
-**Implementation complete; final repository verification is partially blocked
-by unrelated uncommitted Notification tests.** The user approved the
+**Implementation complete and verified (`make test`, `go build ./...`,
+`golangci-lint run`).** The user approved the
 semantic nested design. `kubernaut.ai/v1alpha2` is unreleased, so this change
 may make a clean breaking API reshaping without a compatibility shim.
 
