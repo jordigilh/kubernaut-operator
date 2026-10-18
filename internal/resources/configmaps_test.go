@@ -682,6 +682,40 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(strings.Contains(data, "confidenceThreshold") && strings.Contains(data, "0.85")).To(BeTrue(), "aianalysis config should contain confidence threshold, got:\n%s", data)
 		})
 
+		It("renders low confidence floor as a numeric Rego value", func() {
+			kn := testKubernaut()
+			kn.Spec.AIAnalysis.LowConfidenceFloor = "0.73"
+			cm, err := AIAnalysisConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			var rendered aiAnalysisConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &rendered)).To(Succeed())
+			Expect(rendered.Rego.LowConfidenceFloor).NotTo(BeNil())
+			Expect(*rendered.Rego.LowConfidenceFloor).To(Equal(float64(0.73)))
+		})
+
+		It("omits low confidence floor when unset", func() {
+			kn := testKubernaut()
+			cm, err := AIAnalysisConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			var rendered aiAnalysisConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &rendered)).To(Succeed())
+			Expect(rendered.Rego.LowConfidenceFloor).To(BeNil())
+		})
+
+		DescribeTable("rejects invalid low confidence floor values", func(value string) {
+			kn := testKubernaut()
+			kn.Spec.AIAnalysis.LowConfidenceFloor = value
+
+			_, err := AIAnalysisConfigMap(kn, testKnV2(kn))
+			Expect(err).To(MatchError(ContainSubstring("lowConfidenceFloor")))
+		},
+			Entry("malformed", "not-a-number"),
+			Entry("zero", "0"),
+			Entry("above one", "1.01"),
+		)
+
 		It("uses agent key and not legacy kubernautAgent key", func() {
 			kn := testKubernaut()
 			cm, err := AIAnalysisConfigMap(kn, testKnV2(kn))
