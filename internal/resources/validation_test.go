@@ -1398,9 +1398,9 @@ var _ = Describe("DataStorage validation", func() {
 		kn := testKubernaut()
 		maxOpen := -1
 		maxConcurrent := -1
-		kn.Spec.DataStorage.EndpointPropagationDelay = "not-a-duration"
+		kn.Spec.DataStorage.EndpointPropagationDelay = invalidRotationBefore
 		kn.Spec.DataStorage.Server = &kubernautv1alpha2.DataStorageServerSpec{
-			ReadTimeout:           "not-a-duration",
+			ReadTimeout:           invalidRotationBefore,
 			WriteTimeout:          "0s",
 			MaxConcurrentRequests: &maxConcurrent,
 		}
@@ -1426,7 +1426,7 @@ var _ = Describe("DataStorage validation", func() {
 		defaultDays := 2556
 		kn.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{
 			Retention: &kubernautv1alpha2.RetentionSpec{
-				Interval:    "not-a-duration",
+				Interval:    invalidRotationBefore,
 				BatchSize:   &batchSize,
 				DefaultDays: &defaultDays,
 			},
