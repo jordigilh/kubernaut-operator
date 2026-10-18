@@ -76,10 +76,10 @@ var _ = Describe("DataStorage audit HMAC lifecycle", Label("unit"), func() {
 
 	It("UT-AUDIT-209-CTRL-003 [AC-6, IA-5, ASVS V13.3.1/V13.3.2] validates and preserves an administrator-managed Secret", func() {
 		kn := newMinimalCR()
-		kn.Spec.DataStorage.AuditHashKey = &kubernautv1alpha2.DataStorageAuditHashKeySpec{
+		setDataStorageAuditHashKey(kn, &kubernautv1alpha2.DataStorageAuditHashKeySpec{
 			ExistingSecret: "customer-audit-key",
 			SecretKey:      "customHMACKey",
-		}
+		})
 		r := businessUnitReconciler(kn, clientInterceptorNone())
 		secret := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "customer-audit-key", Namespace: kn.Namespace},
@@ -103,7 +103,7 @@ var _ = Describe("DataStorage audit HMAC lifecycle", Label("unit"), func() {
 
 	It("UT-AUDIT-209-CTRL-004 [SI-10, ASVS V16.5.2] blocks an invalid administrator-managed Secret before migration", func() {
 		kn := newMinimalCR()
-		kn.Spec.DataStorage.AuditHashKey = &kubernautv1alpha2.DataStorageAuditHashKeySpec{ExistingSecret: "customer-audit-key"}
+		setDataStorageAuditHashKey(kn, &kubernautv1alpha2.DataStorageAuditHashKeySpec{ExistingSecret: "customer-audit-key"})
 		r := businessUnitReconciler(kn, clientInterceptorNone())
 		sentinel := "secret-material-sentinel"
 		Expect(r.Create(context.Background(), &corev1.Secret{
@@ -129,7 +129,7 @@ var _ = Describe("DataStorage audit HMAC lifecycle", Label("unit"), func() {
 		r := businessUnitReconciler(kn, clientInterceptorNone())
 		Expect(r.phaseValidate(context.Background(), kn, kn)).To(Equal(ctrl.Result{}))
 
-		kn.Spec.DataStorage.AuditHashKey = &kubernautv1alpha2.DataStorageAuditHashKeySpec{ExistingSecret: "customer-audit-key"}
+		setDataStorageAuditHashKey(kn, &kubernautv1alpha2.DataStorageAuditHashKeySpec{ExistingSecret: "customer-audit-key"})
 		Expect(r.Create(context.Background(), &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "customer-audit-key", Namespace: kn.Namespace},
 			Data:       map[string][]byte{resources.DataStorageAuditHashKeySecretDataKey: []byte("hmacKey: " + strings.Repeat("y", 32))},
@@ -173,11 +173,11 @@ var _ = Describe("DataStorage audit HMAC lifecycle", Label("unit"), func() {
 		}})
 		Expect(r.ensureDataStorageAuditHashKey(context.Background(), kn)).To(MatchError(ContainSubstring("reading audit HMAC state")))
 
-		kn.Spec.DataStorage.AuditHashKey = &kubernautv1alpha2.DataStorageAuditHashKeySpec{ExistingSecret: "missing-audit"}
+		setDataStorageAuditHashKey(kn, &kubernautv1alpha2.DataStorageAuditHashKeySpec{ExistingSecret: "missing-audit"})
 		r = businessUnitReconciler(kn, clientInterceptorNone())
 		Expect(r.ensureDataStorageAuditHashKey(context.Background(), kn)).To(MatchError(ContainSubstring("not found")))
 
-		kn.Spec.DataStorage.AuditHashKey = nil
+		setDataStorageAuditHashKey(kn, nil)
 		r = businessUnitReconciler(kn, interceptor.Funcs{Create: func(ctx context.Context, api client.WithWatch, object client.Object, options ...client.CreateOption) error {
 			if _, ok := object.(*corev1.Secret); ok && object.GetName() == resources.DataStorageAuditHashKeySecretName {
 				return errors.New("secret create denied")
@@ -380,7 +380,7 @@ var _ = Describe("DataStorage audit HMAC lifecycle", Label("unit"), func() {
 
 	It("UT-AUDIT-209-CTRL-017 [SI-10] validates the audit Secret reference before state mutation", func() {
 		kn := newMinimalCR()
-		kn.Spec.DataStorage.AuditHashKey = &kubernautv1alpha2.DataStorageAuditHashKeySpec{ExistingSecret: "bad name"}
+		setDataStorageAuditHashKey(kn, &kubernautv1alpha2.DataStorageAuditHashKeySpec{ExistingSecret: "bad name"})
 		r := businessUnitReconciler(kn, clientInterceptorNone())
 		Expect(r.ensureDataStorageAuditHashKey(context.Background(), kn)).To(MatchError(ContainSubstring("invalid")))
 		state := &corev1.ConfigMap{}
@@ -411,14 +411,14 @@ var _ = Describe("DataStorage audit HMAC lifecycle", Label("unit"), func() {
 
 	It("UT-AUDIT-209-CTRL-020 [SI-10, CP-10] permits correcting a BYO reference before commitment", func() {
 		kn := newMinimalCR()
-		kn.Spec.DataStorage.AuditHashKey = &kubernautv1alpha2.DataStorageAuditHashKeySpec{ExistingSecret: "old-audit-key"}
+		setDataStorageAuditHashKey(kn, &kubernautv1alpha2.DataStorageAuditHashKeySpec{ExistingSecret: "old-audit-key"})
 		oldRef := resources.DataStorageAuditHashKeyReferenceFor(kn)
 		state := resources.DataStorageAuditHashKeyStateConfigMap(kn, oldRef)
 		state.Data[resources.DataStorageAuditHashKeyStatePhaseKey] = resources.DataStorageAuditHashKeyStateProvisioning
 		r := businessUnitReconciler(kn, clientInterceptorNone())
 		resources.StampOwnership(kn, state)
 		Expect(r.Create(context.Background(), state)).To(Succeed())
-		kn.Spec.DataStorage.AuditHashKey.ExistingSecret = "new-audit-key"
+		kn.Spec.DataStorage.Audit.HashKey.ExistingSecret = "new-audit-key"
 		newRef := resources.DataStorageAuditHashKeyReferenceFor(kn)
 		Expect(r.Create(context.Background(), &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: newRef.SecretName, Namespace: kn.Namespace},
@@ -433,14 +433,14 @@ var _ = Describe("DataStorage audit HMAC lifecycle", Label("unit"), func() {
 
 	It("UT-AUDIT-209-CTRL-021 [SI-4, CP-10] reports a pending-state update failure", func() {
 		kn := newMinimalCR()
-		kn.Spec.DataStorage.AuditHashKey = &kubernautv1alpha2.DataStorageAuditHashKeySpec{ExistingSecret: "old-audit-key"}
+		setDataStorageAuditHashKey(kn, &kubernautv1alpha2.DataStorageAuditHashKeySpec{ExistingSecret: "old-audit-key"})
 		oldRef := resources.DataStorageAuditHashKeyReferenceFor(kn)
 		state := resources.DataStorageAuditHashKeyStateConfigMap(kn, oldRef)
 		state.Data[resources.DataStorageAuditHashKeyStatePhaseKey] = resources.DataStorageAuditHashKeyStateProvisioning
 		r := businessUnitReconciler(kn, clientInterceptorNone())
 		resources.StampOwnership(kn, state)
 		Expect(r.Create(context.Background(), state)).To(Succeed())
-		kn.Spec.DataStorage.AuditHashKey.ExistingSecret = "new-audit-key"
+		kn.Spec.DataStorage.Audit.HashKey.ExistingSecret = "new-audit-key"
 		newRef := resources.DataStorageAuditHashKeyReferenceFor(kn)
 		Expect(r.Create(context.Background(), &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: newRef.SecretName, Namespace: kn.Namespace},

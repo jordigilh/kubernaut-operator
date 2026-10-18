@@ -64,7 +64,7 @@ var _ = Describe("independent resource-generation boundary outcomes", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(material.InternalCASecretName).To(Equal("kubernaut-interservice-ca-secret"))
 		Expect(DataStorageSigningSecretName(kn)).To(Equal("datastorage-signing-cert"))
-		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha2.SigningCertSpec{SecretName: "custom-signing", MountPath: "/custom"}
+		setDataStorageSigningCertificate(kn, &kubernautv1alpha2.SigningCertSpec{SecretName: "custom-signing", MountPath: "/custom"})
 		kn.Spec.TLS.CertManager = &kubernautv1alpha2.CertManagerTLSConfig{
 			Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{ExtraSANs: []string{" ", "127.0.0.1", "10.0.0.1", "extra.example"}},
 		}
@@ -79,7 +79,7 @@ var _ = Describe("independent resource-generation boundary outcomes", func() {
 			Expect(getErr).NotTo(HaveOccurred())
 			Expect(addresses).To(ConsistOf("127.0.0.1", "10.0.0.1"))
 		}
-		Expect(dataStorageServerConfig(kn, kn).SignerCertDir).To(Equal("/custom"))
+		Expect(dataStorageServerConfig(kn).SignerCertDir).To(Equal("/custom"))
 		Expect(firstNonEmpty("", "")).To(BeEmpty())
 	})
 

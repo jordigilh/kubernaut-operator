@@ -94,6 +94,30 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		Expect(auth.Required).NotTo(ContainElement("providerLogoutURL"))
 	})
 
+	It("UT-DS-550-API-001 publishes the semantic DataStorage contract with secure defaults", func() {
+		crd := loadKubernautCRD()
+		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+		dataStorage := schema.Properties["spec"].Properties["dataStorage"]
+		Expect(dataStorage.Properties).To(HaveKey("server"))
+		Expect(dataStorage.Properties).To(HaveKey("database"))
+		Expect(dataStorage.Properties).To(HaveKey("redis"))
+		Expect(dataStorage.Properties).To(HaveKey("audit"))
+		Expect(dataStorage.Properties).NotTo(HaveKey("retention"))
+		Expect(dataStorage.Properties).NotTo(HaveKey("signingCert"))
+		Expect(dataStorage.Properties).NotTo(HaveKey("auditHashKey"))
+
+		server := dataStorage.Properties["server"]
+		Expect(string(server.Properties["maxBodySize"].Default.Raw)).To(Equal(`"5242880"`))
+		Expect(string(server.Properties["maxConcurrentRequests"].Default.Raw)).To(Equal("100"))
+		Expect(string(server.Properties["rateLimit"].Properties["requestsPerSecond"].Default.Raw)).To(Equal("50"))
+
+		audit := dataStorage.Properties["audit"]
+		retention := audit.Properties["retention"]
+		Expect(string(retention.Properties["enabled"].Default.Raw)).To(Equal("true"))
+		Expect(string(retention.Properties["defaultDays"].Default.Raw)).To(Equal("2555"))
+		Expect(*retention.Properties["defaultDays"].Maximum).To(BeEquivalentTo(2555))
+	})
+
 	It("resolves only configured issuer sources", func() {
 		spec := KubernautSpec{}
 		Expect(spec.EffectiveIssuerURL()).To(BeEmpty())

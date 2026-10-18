@@ -340,8 +340,10 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 		if activeManualTLSSelection == manualTLSSelectionAdmin {
 			prefix = manualTLSAdminPrefix
 		}
-		dataStorage.SigningCert = &kubernautv1alpha2.SigningCertSpec{
-			SecretName: manualTLSSigningSecretName(prefix),
+		dataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{
+			SigningCertificate: &kubernautv1alpha2.SigningCertSpec{
+				SecretName: manualTLSSigningSecretName(prefix),
+			},
 		}
 	case tlsCertManager:
 		tls = kubernautv1alpha2.TLSConfigSpec{

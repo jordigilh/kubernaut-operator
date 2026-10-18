@@ -57,10 +57,11 @@ type telemetryLane struct {
 // map-shaped, but this internal value has a fixed schema and should not accept
 // arbitrary component names.
 type telemetryMaterialRevisionSet struct {
-	Gateway        string
-	DataStorage    string
-	KubernautAgent string
-	Monitoring     string
+	Gateway            string
+	DataStorage        string
+	DataStorageSigning string
+	KubernautAgent     string
+	Monitoring         string
 }
 
 func (s *telemetryMaterialRevisionSet) set(component, revision string) {

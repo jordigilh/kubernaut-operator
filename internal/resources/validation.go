@@ -53,7 +53,95 @@ func ValidateKubernaut(kn *kubernautv1alpha2.Kubernaut) []error {
 	errs = append(errs, validateAlignmentCheck(kn)...)
 	errs = append(errs, validateDryRun(kn)...)
 	errs = append(errs, validateInteractive(kn)...)
+	errs = append(errs, validateDataStorage(kn)...)
 	return errs
+}
+
+func validateDataStorage(kn *kubernautv1alpha2.Kubernaut) []error {
+	ds := kn.Spec.DataStorage
+	errs := validatePositiveDuration("spec.dataStorage.endpointPropagationDelay", ds.EndpointPropagationDelay)
+	errs = append(errs, validateDataStorageServer(ds.Server)...)
+	errs = append(errs, validateDataStorageDatabase(ds.Database)...)
+	errs = append(errs, validateDataStorageRedis(ds.Redis)...)
+	errs = append(errs, validateDataStorageAudit(ds.Audit)...)
+	return errs
+}
+
+func validateDataStorageServer(server *kubernautv1alpha2.DataStorageServerSpec) []error {
+	if server == nil {
+		return nil
+	}
+	errs := validatePositiveDuration("spec.dataStorage.server.readTimeout", server.ReadTimeout)
+	errs = append(errs, validatePositiveDuration("spec.dataStorage.server.writeTimeout", server.WriteTimeout)...)
+	errs = append(errs, validateNonNegativeInt("spec.dataStorage.server.maxConcurrentRequests", server.MaxConcurrentRequests)...)
+	if server.RateLimit == nil {
+		return errs
+	}
+	errs = append(errs, validateNonNegativeInt("spec.dataStorage.server.rateLimit.requestsPerSecond", server.RateLimit.RequestsPerSecond)...)
+	return append(errs, validateNonNegativeInt("spec.dataStorage.server.rateLimit.burst", server.RateLimit.Burst)...)
+}
+
+func validateDataStorageDatabase(database *kubernautv1alpha2.DataStorageDatabaseSpec) []error {
+	if database == nil {
+		return nil
+	}
+	errs := validatePositiveDuration("spec.dataStorage.database.connMaxLifetime", database.ConnMaxLifetime)
+	errs = append(errs, validatePositiveDuration("spec.dataStorage.database.connMaxIdleTime", database.ConnMaxIdleTime)...)
+	errs = append(errs, validateNonNegativeInt("spec.dataStorage.database.maxOpenConns", database.MaxOpenConns)...)
+	return append(errs, validateNonNegativeInt("spec.dataStorage.database.maxIdleConns", database.MaxIdleConns)...)
+}
+
+func validateDataStorageRedis(redis *kubernautv1alpha2.DataStorageRedisSpec) []error {
+	if redis == nil {
+		return nil
+	}
+	return validateNonNegativeInt("spec.dataStorage.redis.dlqMaxLen", redis.DLQMaxLen)
+}
+
+func validateDataStorageAudit(audit *kubernautv1alpha2.DataStorageAuditSpec) []error {
+	if audit == nil || audit.Retention == nil {
+		return nil
+	}
+	retention := audit.Retention
+	errs := validatePositiveDuration("spec.dataStorage.audit.retention.interval", retention.Interval)
+	errs = append(errs, validatePositiveInt("spec.dataStorage.audit.retention.batchSize", retention.BatchSize)...)
+	errs = append(errs, validatePositiveInt("spec.dataStorage.audit.retention.defaultDays", retention.DefaultDays)...)
+	return append(errs, validateMaximumInt("spec.dataStorage.audit.retention.defaultDays", retention.DefaultDays, 2555)...)
+}
+
+func validatePositiveDuration(path, value string) []error {
+	if value == "" {
+		return nil
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return []error{fmt.Errorf("%s: invalid duration %q: %w", path, value, err)}
+	}
+	if duration <= 0 {
+		return []error{fmt.Errorf("%s: duration must be positive, got %q", path, value)}
+	}
+	return nil
+}
+
+func validateNonNegativeInt(path string, value *int) []error {
+	if value == nil || *value >= 0 {
+		return nil
+	}
+	return []error{fmt.Errorf("%s must be non-negative, got %d", path, *value)}
+}
+
+func validatePositiveInt(path string, value *int) []error {
+	if value == nil || *value >= 1 {
+		return nil
+	}
+	return []error{fmt.Errorf("%s must be positive, got %d", path, *value)}
+}
+
+func validateMaximumInt(path string, value *int, maximum int) []error {
+	if value == nil || *value <= maximum {
+		return nil
+	}
+	return []error{fmt.Errorf("%s must be at most %d, got %d", path, maximum, *value)}
 }
 
 // validateMonitoringEndpoints rejects plaintext monitoring connections before

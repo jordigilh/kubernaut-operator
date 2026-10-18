@@ -208,7 +208,8 @@ func dataStorageVolumesAndMounts(kn *kubernautv1alpha2.Kubernaut) ([]corev1.Volu
 		}
 	}
 
-	if sc := kn.Spec.DataStorage.SigningCert; sc != nil {
+	if kn.Spec.DataStorage.Audit != nil && kn.Spec.DataStorage.Audit.SigningCertificate != nil {
+		sc := kn.Spec.DataStorage.Audit.SigningCertificate
 		mountPath := sc.MountPath
 		if mountPath == "" {
 			mountPath = "/etc/certs"

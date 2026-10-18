@@ -247,6 +247,34 @@ spec:
 
   dataStorage:
     endpointPropagationDelay: 10s
+    server:
+      readTimeout: 30s
+      writeTimeout: 30s
+      maxBodySize: "5242880"
+      maxConcurrentRequests: 100
+      corsAllowedOrigins: []
+      rateLimit:
+        requestsPerSecond: 50
+        burst: 100
+    database:
+      maxOpenConns: 100
+      maxIdleConns: 20
+      connMaxLifetime: 1h
+      connMaxIdleTime: 10m
+    redis:
+      dlqMaxLen: 10000
+    audit:
+      retention:
+        enabled: true
+        interval: 24h
+        batchSize: 1000
+        defaultDays: 2555
+      signingCertificate:
+        secretName: datastorage-signing-cert
+        mountPath: /etc/certs
+      hashKey:
+        existingSecret: ""
+        secretKey: hmacKey
     logging:
       level: INFO
 
