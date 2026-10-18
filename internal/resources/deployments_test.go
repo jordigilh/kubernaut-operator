@@ -38,6 +38,7 @@ const (
 	testMTLSKeyFile        = "/etc/tls/tls.key"
 	testVolumeFleetOAuth2  = "fleet-oauth2"
 	testVolumeSecrets      = "secrets"
+	testVolumeSigningCert  = "signing-cert"
 )
 
 func getAllDeployments(kn *kubernautv1alpha2.Kubernaut) []*appsv1.Deployment {
@@ -592,7 +593,7 @@ var _ = Describe("Deployments", func() {
 			Expect(err).NotTo(HaveOccurred())
 			expectHasVolumeMount(dep, "signing-cert", "/custom/certs")
 			for _, mount := range dep.Spec.Template.Spec.Containers[0].VolumeMounts {
-				if mount.Name == "signing-cert" || mount.Name == testVolumeSecrets {
+				if mount.Name == testVolumeSigningCert || mount.Name == testVolumeSecrets {
 					Expect(mount.ReadOnly).To(BeTrue())
 				}
 			}
@@ -2472,6 +2473,22 @@ var _ = Describe("DataStorage Signing Cert", func() {
 		dep, err := DataStorageDeployment(kn)
 		Expect(err).NotTo(HaveOccurred())
 		expectHasVolumeMount(dep, "signing-cert", "/custom/certs")
+	})
+
+	It("uses the effective fallback Secret when signingCertificate.secretName is empty", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
+		setDataStorageSigningCertificate(kn, &kubernautv1alpha2.SigningCertSpec{MountPath: "/custom/certs"})
+
+		dep, err := DataStorageDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolumeMount(dep, testVolumeSigningCert, "/custom/certs")
+		for _, volume := range dep.Spec.Template.Spec.Volumes {
+			if volume.Name == testVolumeSigningCert {
+				Expect(volume.Secret).NotTo(BeNil())
+				Expect(volume.Secret.SecretName).To(Equal(defaultCertManagerSigningSecretName))
+			}
+		}
 	})
 
 	It("falls back to service-ca TLS cert when signing cert is not configured", func() {

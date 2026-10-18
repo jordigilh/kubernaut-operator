@@ -208,25 +208,20 @@ func dataStorageVolumesAndMounts(kn *kubernautv1alpha2.Kubernaut) ([]corev1.Volu
 		}
 	}
 
-	if kn.Spec.DataStorage.Audit != nil && kn.Spec.DataStorage.Audit.SigningCertificate != nil {
-		sc := kn.Spec.DataStorage.Audit.SigningCertificate
-		mountPath := sc.MountPath
-		if mountPath == "" {
-			mountPath = "/etc/certs"
-		}
-		volumes = append(volumes, secretVolume("signing-cert", sc.SecretName))
-		mounts = append(mounts, corev1.VolumeMount{Name: "signing-cert", MountPath: mountPath, ReadOnly: true})
-	} else {
-		// Chart-compatible hook and cert-manager modes provision a dedicated
-		// RSA signing Secret. Legacy operator modes retain the historical
-		// service-certificate fallback when no explicit signing Secret exists.
-		signingSecretName := DataStorageSigningSecretName(kn)
-		if signingSecretName == "" {
-			signingSecretName = TLSSecretName(kn, TLSServiceDataStorage)
-		}
-		volumes = append(volumes, secretVolume("signing-cert", signingSecretName))
-		mounts = append(mounts, corev1.VolumeMount{Name: "signing-cert", MountPath: "/etc/certs", ReadOnly: true})
+	// Chart-compatible hook and cert-manager modes provision a dedicated RSA
+	// signing Secret. Legacy operator modes retain the historical
+	// service-certificate fallback when no explicit signing Secret exists.
+	signingSecretName := DataStorageSigningSecretName(kn)
+	if signingSecretName == "" {
+		signingSecretName = TLSSecretName(kn, TLSServiceDataStorage)
 	}
+	mountPath := "/etc/certs"
+	if kn.Spec.DataStorage.Audit != nil && kn.Spec.DataStorage.Audit.SigningCertificate != nil &&
+		kn.Spec.DataStorage.Audit.SigningCertificate.MountPath != "" {
+		mountPath = kn.Spec.DataStorage.Audit.SigningCertificate.MountPath
+	}
+	volumes = append(volumes, secretVolume("signing-cert", signingSecretName))
+	mounts = append(mounts, corev1.VolumeMount{Name: "signing-cert", MountPath: mountPath, ReadOnly: true})
 
 	return volumes, mounts
 }

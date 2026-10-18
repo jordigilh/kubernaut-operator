@@ -739,6 +739,19 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("signerCertDir: /custom/certs"))
 		})
 
+		It("UT-DS-550-CM-003 [SC-5, SI-10] preserves an explicit zero concurrency limit", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			maxConcurrent := 0
+			knV2.Spec.DataStorage.Server = &kubernautv1alpha2.DataStorageServerSpec{
+				MaxConcurrentRequests: &maxConcurrent,
+			}
+
+			cm, err := DataStorageConfigMap(kn, knV2, "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["config.yaml"]).To(ContainSubstring("maxConcurrentRequests: 0"))
+		})
+
 		It("UT-DS-550-CM-002 [AU-11, SOC2 CC8.1] enables retention with production defaults when audit configuration is omitted", func() {
 			kn := testKubernaut()
 			cm, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
