@@ -523,7 +523,7 @@ func developmentTLSSettingsFor(kn *kubernautv1alpha2.Kubernaut) (developmentTLSS
 		extraSANs:      developmentExtraSANs(kn),
 		includeSigningCertificate: (kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeHook ||
 			kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeDevelopmentSelfSigned) &&
-			(kn.Spec.DataStorage.SigningCert == nil || kn.Spec.DataStorage.SigningCert.SecretName == ""),
+			(kn.Spec.DataStorage.Audit == nil || kn.Spec.DataStorage.Audit.SigningCertificate == nil || kn.Spec.DataStorage.Audit.SigningCertificate.SecretName == ""),
 		signingSecretName: DataStorageSigningSecretName(kn),
 	}
 	if cfg != nil {

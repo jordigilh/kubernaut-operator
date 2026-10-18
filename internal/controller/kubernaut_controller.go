@@ -770,6 +770,11 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 	if err != nil {
 		return fmt.Errorf("resolving telemetry material revision: %w", err)
 	}
+	signingRevision, err := r.dataStorageSigningMaterialRevision(ctx, kn)
+	if err != nil {
+		return fmt.Errorf("resolving DataStorage signing material revision: %w", err)
+	}
+	telemetryRevisions.DataStorageSigning = signingRevision
 	if err := r.deployAdmissionWebhooks(ctx, kn, tlsMaterial, tlsBundle); err != nil {
 		return err
 	}
@@ -2045,6 +2050,7 @@ func (r *KubernautReconciler) ensureDeployments(
 		}
 		stampConfigMapHash(dep, cmHashes)
 		stampTelemetryMaterialRevision(dep, telemetryRevisions)
+		stampDataStorageSigningMaterialRevision(dep, telemetryRevisions)
 		stampMonitoringMaterialRevision(dep, telemetryRevisions)
 		if err := r.ensureNamespaced(ctx, kn, dep); err != nil {
 			return fmt.Errorf("ensuring Deployment %s: %w", dep.Name, err)
@@ -5006,6 +5012,7 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.telemetrySecretToKubernaut)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.precreatedConfigurationToKubernaut)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.auditHashKeySecretToKubernaut)).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.dataStorageSigningSecretToKubernaut)).
 		Owns(&batchv1.Job{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Owns(&networkingv1.Ingress{}).

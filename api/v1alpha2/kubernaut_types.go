@@ -2467,6 +2467,23 @@ func (s *KubernautSpec) ConsoleIssuerURL() string {
 
 // DataStorageSpec configures the DataStorage service.
 type DataStorageSpec struct {
+	// Server configures DataStorage's HTTP server and admission safeguards.
+	// +optional
+	Server *DataStorageServerSpec `json:"server,omitempty"`
+
+	// Database configures DataStorage's PostgreSQL connection pool.
+	// +optional
+	Database *DataStorageDatabaseSpec `json:"database,omitempty"`
+
+	// Redis configures DataStorage-specific Redis/Valkey behavior.
+	// Connection address, credentials, and TLS remain in spec.valkey.
+	// +optional
+	Redis *DataStorageRedisSpec `json:"redis,omitempty"`
+
+	// Audit groups retention, export signing, and audit-chain key settings.
+	// +optional
+	Audit *DataStorageAuditSpec `json:"audit,omitempty"`
+
 	// EndpointPropagationDelay is the delay before newly created endpoints
 	// are considered ready. Prevents traffic routing to pods that haven't
 	// finished warming up. Must be a valid Go duration string.
@@ -2481,36 +2498,26 @@ type DataStorageSpec struct {
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
+	// OpenTelemetry distributed-trace export configuration. Off by default.
+	// +optional
+	Telemetry TelemetrySpec `json:"telemetry,omitempty"`
+}
+
+// DataStorageAuditSpec groups DataStorage audit lifecycle configuration.
+type DataStorageAuditSpec struct {
 	// Retention configures periodic purge of expired audit events (FedRAMP AU-11).
 	// +optional
 	Retention *RetentionSpec `json:"retention,omitempty"`
 
-	// SigningCert configures the audit export signing certificate (FedRAMP AU-9).
-	// When set, the named Secret is mounted into the DS pod at /etc/certs.
+	// SigningCertificate configures the audit export signing certificate
+	// (FedRAMP AU-9). When set, the named Secret is mounted read-only.
 	// +optional
-	SigningCert *SigningCertSpec `json:"signingCert,omitempty"`
+	SigningCertificate *SigningCertSpec `json:"signingCertificate,omitempty"`
 
-	// AuditHashKey configures the mandatory keyed HMAC-SHA256 audit hash chain
-	// (FedRAMP AU-9, SOC 2 CC8.1). When ExistingSecret is empty, the operator
-	// creates and preserves a stable Secret automatically. When set, the named
-	// administrator-managed Secret is validated and mounted read-only.
+	// HashKey configures the mandatory keyed HMAC-SHA256 audit chain
+	// (FedRAMP AU-9, SOC 2 CC8.1).
 	// +optional
-	AuditHashKey *DataStorageAuditHashKeySpec `json:"auditHashKey,omitempty"`
-
-	// OpenTelemetry distributed-trace export configuration. Off by default.
-	// +optional
-	Telemetry TelemetrySpec `json:"telemetry,omitempty"`
-
-	// Database connection-pool tuning for the DataStorage PostgreSQL
-	// connection. When unset, defaults match the operator's prior
-	// hardcoded behavior (#260).
-	// +optional
-	Database *DataStorageDatabaseSpec `json:"database,omitempty"`
-
-	// Server timeout tuning for the DataStorage HTTP server.
-	// When unset, defaults match the operator's prior hardcoded behavior (#260).
-	// +optional
-	Server *DataStorageServerSpec `json:"server,omitempty"`
+	HashKey *DataStorageAuditHashKeySpec `json:"hashKey,omitempty"`
 }
 
 // DataStorageAuditHashKeySpec configures the DataStorage audit HMAC key source.
@@ -2555,7 +2562,31 @@ type DataStorageDatabaseSpec struct {
 	ConnMaxIdleTime string `json:"connMaxIdleTime,omitempty"`
 }
 
-// DataStorageServerSpec configures DataStorage's HTTP server timeouts.
+// DataStorageRateLimitSpec configures per-IP DataStorage HTTP rate limiting.
+type DataStorageRateLimitSpec struct {
+	// Sustained integer requests per second. Non-positive values use the service default.
+	// +kubebuilder:default=50
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	RequestsPerSecond *int `json:"requestsPerSecond,omitempty"`
+
+	// Token-bucket burst size. Non-positive values use the service default.
+	// +kubebuilder:default=100
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	Burst *int `json:"burst,omitempty"`
+}
+
+// DataStorageRedisSpec configures DataStorage-specific Redis/Valkey behavior.
+type DataStorageRedisSpec struct {
+	// Maximum Redis DLQ stream length. Zero is a valid explicit bound.
+	// +kubebuilder:default=10000
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	DLQMaxLen *int `json:"dlqMaxLen,omitempty"`
+}
+
+// DataStorageServerSpec configures DataStorage's HTTP server and safeguards.
 type DataStorageServerSpec struct {
 	// HTTP server read timeout. Must be a valid Go duration string.
 	// +kubebuilder:default="30s"
@@ -2566,6 +2597,27 @@ type DataStorageServerSpec struct {
 	// +kubebuilder:default="30s"
 	// +optional
 	WriteTimeout string `json:"writeTimeout,omitempty"`
+
+	// Maximum request body size in bytes. The DataStorage service applies its
+	// existing 1 MiB–50 MiB safety clamp and 5 MiB default.
+	// +kubebuilder:default="5242880"
+	// +optional
+	MaxBodySize string `json:"maxBodySize,omitempty"`
+
+	// Maximum concurrent HTTP requests. Zero disables the concurrency limit.
+	// +kubebuilder:default=100
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	MaxConcurrentRequests *int `json:"maxConcurrentRequests,omitempty"`
+
+	// Cross-origin origins. Empty denies all cross-origin requests.
+	// +optional
+	CORSAllowedOrigins []string `json:"corsAllowedOrigins,omitempty"`
+
+	// Optional per-IP rate limiting. The rendered service contract keeps the
+	// safeguard enabled; this object controls its rate and burst values.
+	// +optional
+	RateLimit *DataStorageRateLimitSpec `json:"rateLimit,omitempty"`
 }
 
 // SigningCertSpec configures the audit export signing certificate.
@@ -2582,7 +2634,9 @@ type SigningCertSpec struct {
 // RetentionSpec configures audit event retention and purge for FedRAMP AU-11.
 type RetentionSpec struct {
 	// Whether the retention purge worker is active.
-	// Defaults to false (safe default — no data is deleted without opt-in).
+	// Defaults to true to preserve the DataStorage production retention floor.
+	// Set false explicitly for controlled development environments.
+	// +kubebuilder:default=true
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 

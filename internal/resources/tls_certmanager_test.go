@@ -30,10 +30,10 @@ var _ = Describe("cert-manager TLS provisioning", func() {
 		Expect(DataStorageSigningSecretName(nil)).To(BeEmpty())
 
 		kn := testKubernaut()
-		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha2.SigningCertSpec{SecretName: "customer-signing-cert"}
+		setDataStorageSigningCertificate(kn, &kubernautv1alpha2.SigningCertSpec{SecretName: "customer-signing-cert"})
 		Expect(DataStorageSigningSecretName(kn)).To(Equal("customer-signing-cert"))
 
-		kn.Spec.DataStorage.SigningCert = nil
+		setDataStorageSigningCertificate(kn, nil)
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHelmCertManager
 		Expect(DataStorageSigningSecretName(kn)).To(Equal(defaultCertManagerSigningSecretName))
 
@@ -62,7 +62,7 @@ var _ = Describe("cert-manager TLS provisioning", func() {
 				},
 			},
 		}
-		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha2.SigningCertSpec{SecretName: "customer-signing-cert"}
+		setDataStorageSigningCertificate(kn, &kubernautv1alpha2.SigningCertSpec{SecretName: "customer-signing-cert"})
 
 		objects, err := CertManagerTLSResources(kn)
 		Expect(err).NotTo(HaveOccurred())

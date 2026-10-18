@@ -90,12 +90,13 @@ func CertManagerBootstrapIssuerNames(kn *kubernautv1alpha2.Kubernaut) []string {
 // DataStorageSigningSecretName resolves the chart-compatible AU-9 signing
 // Secret name. Explicit development and Helm hook modes use the dedicated
 // RSA signing Secret; legacy OpenShift/cert-manager reference modes retain the
-// prior service-certificate fallback unless an explicit SigningCert is set.
+// prior service-certificate fallback unless an explicit signing certificate is set.
 func DataStorageSigningSecretName(kn *kubernautv1alpha2.Kubernaut) string {
 	if kn == nil {
 		return ""
 	}
-	if signing := kn.Spec.DataStorage.SigningCert; signing != nil && signing.SecretName != "" {
+	if kn.Spec.DataStorage.Audit != nil && kn.Spec.DataStorage.Audit.SigningCertificate != nil && kn.Spec.DataStorage.Audit.SigningCertificate.SecretName != "" {
+		signing := kn.Spec.DataStorage.Audit.SigningCertificate
 		return signing.SecretName
 	}
 	if CertManagerTLSProvisioningEnabled(kn) {
@@ -263,12 +264,13 @@ func certManagerProvisioningValuesFor(kn *kubernautv1alpha2.Kubernaut, cfg *kube
 			settings.serviceSecretNames[key] = name
 		}
 	}
-	if sc := kn.Spec.DataStorage.SigningCert; sc != nil && sc.SecretName != "" {
+	if kn.Spec.DataStorage.Audit != nil && kn.Spec.DataStorage.Audit.SigningCertificate != nil && kn.Spec.DataStorage.Audit.SigningCertificate.SecretName != "" {
+		sc := kn.Spec.DataStorage.Audit.SigningCertificate
 		settings.signingSecretName = sc.SecretName
 	}
 	if p != nil {
 		settings.signingCertificateName = firstNonEmpty(p.SigningCertificateName, settings.signingCertificateName)
-		if sc := kn.Spec.DataStorage.SigningCert; sc == nil || sc.SecretName == "" {
+		if kn.Spec.DataStorage.Audit == nil || kn.Spec.DataStorage.Audit.SigningCertificate == nil || kn.Spec.DataStorage.Audit.SigningCertificate.SecretName == "" {
 			settings.signingSecretName = firstNonEmpty(p.SigningCertificateSecretName, settings.signingSecretName)
 		}
 	}

@@ -505,10 +505,10 @@ var _ = Describe("ConfigMaps", func() {
 		It("UT-AUDIT-209-CM-002 [AC-6, IA-5, ASVS V13.3.1/V13.3.2] renders a configured audit key name", func() {
 			kn := testKubernaut()
 			knV2 := testKnV2(kn)
-			knV2.Spec.DataStorage.AuditHashKey = &kubernautv1alpha2.DataStorageAuditHashKeySpec{
+			knV2.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{HashKey: &kubernautv1alpha2.DataStorageAuditHashKeySpec{
 				ExistingSecret: "customer-audit-key",
 				SecretKey:      "customHMACKey",
-			}
+			}}
 			cm, err := DataStorageConfigMap(kn, knV2, "kubernautdb", "kubernautuser")
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
@@ -531,13 +531,24 @@ var _ = Describe("ConfigMaps", func() {
 			kn := testKubernaut()
 			cmDefault, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cmDefault.Data["config.yaml"]).To(ContainSubstring("endpointPropagationDelay: 10s"), "unset endpointPropagationDelay should default to 10s")
+			var defaultRoot struct {
+				dataStorageConfigYAML    `yaml:",inline"`
+				EndpointPropagationDelay string `yaml:"endpointPropagationDelay"`
+			}
+			Expect(yaml.Unmarshal([]byte(cmDefault.Data["config.yaml"]), &defaultRoot)).To(Succeed())
+			Expect(defaultRoot.Server.EndpointPropagationDelay).To(Equal("10s"))
+			Expect(defaultRoot.EndpointPropagationDelay).To(BeEmpty())
 
 			kn.Spec.DataStorage.EndpointPropagationDelay = "25s"
 			cm, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
 			Expect(err).NotTo(HaveOccurred())
-			data := cm.Data["config.yaml"]
-			Expect(data).To(ContainSubstring("endpointPropagationDelay: 25s"), "spec.dataStorage.endpointPropagationDelay should propagate verbatim, got:\n%s", data)
+			var root struct {
+				dataStorageConfigYAML    `yaml:",inline"`
+				EndpointPropagationDelay string `yaml:"endpointPropagationDelay"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Server.EndpointPropagationDelay).To(Equal("25s"))
+			Expect(root.EndpointPropagationDelay).To(BeEmpty())
 		})
 
 		It("#399 [SC-8]: renders the configured PostgreSQL/Valkey hostnames verbatim, never pre-resolved to an IP", func() {
@@ -668,6 +679,89 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
 			Expect(root.Server.ReadTimeout).To(Equal("60s"))
 			Expect(root.Server.WriteTimeout).To(Equal("45s"))
+		})
+
+		It("UT-DS-550-CM-001 [SC-5, SI-10, AU-11] renders the semantic server, Redis, and audit contract", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			maxConcurrent := 42
+			rps := 12
+			burst := 24
+			dlqMaxLen := 1234
+			enabled := false
+			batchSize := 500
+			defaultDays := 365
+			knV2.Spec.DataStorage.Server = &kubernautv1alpha2.DataStorageServerSpec{
+				ReadTimeout:           "60s",
+				WriteTimeout:          "45s",
+				MaxBodySize:           "10485760",
+				MaxConcurrentRequests: &maxConcurrent,
+				CORSAllowedOrigins:    []string{"https://console.example.com"},
+				RateLimit: &kubernautv1alpha2.DataStorageRateLimitSpec{
+					RequestsPerSecond: &rps,
+					Burst:             &burst,
+				},
+			}
+			knV2.Spec.DataStorage.Redis = &kubernautv1alpha2.DataStorageRedisSpec{DLQMaxLen: &dlqMaxLen}
+			knV2.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{
+				Retention: &kubernautv1alpha2.RetentionSpec{
+					Enabled:     &enabled,
+					Interval:    "12h",
+					BatchSize:   &batchSize,
+					DefaultDays: &defaultDays,
+				},
+				SigningCertificate: &kubernautv1alpha2.SigningCertSpec{
+					SecretName: "customer-signing-cert",
+					MountPath:  "/custom/certs",
+				},
+				HashKey: &kubernautv1alpha2.DataStorageAuditHashKeySpec{
+					ExistingSecret: "customer-audit-key",
+					SecretKey:      "customHMACKey",
+				},
+			}
+
+			cm, err := DataStorageConfigMap(kn, knV2, "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("readTimeout: 60s"))
+			Expect(data).To(ContainSubstring("writeTimeout: 45s"))
+			Expect(data).To(ContainSubstring("maxBodySize: \"10485760\""))
+			Expect(data).To(ContainSubstring("maxConcurrentRequests: 42"))
+			Expect(data).To(ContainSubstring("https://console.example.com"))
+			Expect(data).To(ContainSubstring("requestsPerSecond: 12"))
+			Expect(data).To(ContainSubstring("burst: 24"))
+			Expect(data).To(ContainSubstring("dlqMaxLen: 1234"))
+			Expect(data).To(ContainSubstring("enabled: false"))
+			Expect(data).To(ContainSubstring("interval: 12h"))
+			Expect(data).To(ContainSubstring("batchSize: 500"))
+			Expect(data).To(ContainSubstring("defaultDays: 365"))
+			Expect(data).To(ContainSubstring("hashKeyKey: customHMACKey"))
+			Expect(data).To(ContainSubstring("signerCertDir: /custom/certs"))
+		})
+
+		It("UT-DS-550-CM-003 [SC-5, SI-10] preserves an explicit zero concurrency limit", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			maxConcurrent := 0
+			knV2.Spec.DataStorage.Server = &kubernautv1alpha2.DataStorageServerSpec{
+				MaxConcurrentRequests: &maxConcurrent,
+			}
+
+			cm, err := DataStorageConfigMap(kn, knV2, "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["config.yaml"]).To(ContainSubstring("maxConcurrentRequests: 0"))
+		})
+
+		It("UT-DS-550-CM-002 [AU-11, SOC2 CC8.1] enables retention with production defaults when audit configuration is omitted", func() {
+			kn := testKubernaut()
+			cm, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("retention:"))
+			Expect(data).To(ContainSubstring("enabled: true"))
+			Expect(data).To(ContainSubstring("interval: 24h"))
+			Expect(data).To(ContainSubstring("batchSize: 1000"))
+			Expect(data).To(ContainSubstring("defaultDays: 2555"))
 		})
 	})
 
@@ -4480,9 +4574,9 @@ var _ = Describe("APIFrontendRBACRolesConfigMap", func() {
 var _ = Describe("DataStorage SignerCertDir Config", func() {
 	It("[SC-12] renders signerCertDir when signing cert is configured", func() {
 		kn := testKubernaut()
-		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha2.SigningCertSpec{
+		setDataStorageSigningCertificate(kn, &kubernautv1alpha2.SigningCertSpec{
 			SecretName: "datastorage-signing-cert",
-		}
+		})
 		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
@@ -4524,9 +4618,9 @@ var _ = Describe("DataStorage Retention Config", func() {
 	It("renders retention block with defaults when spec is provided", func() {
 		kn := testKubernaut()
 		enabled := true
-		kn.Spec.DataStorage.Retention = &kubernautv1alpha2.RetentionSpec{
+		setDataStorageRetention(kn, &kubernautv1alpha2.RetentionSpec{
 			Enabled: &enabled,
-		}
+		})
 		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
@@ -4537,20 +4631,21 @@ var _ = Describe("DataStorage Retention Config", func() {
 		Expect(data).To(ContainSubstring("defaultDays: 2555"))
 	})
 
-	It("omits retention block when spec is nil", func() {
+	It("renders retention production defaults when spec is nil", func() {
 		kn := testKubernaut()
 		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
-		Expect(data).NotTo(ContainSubstring("retention:"))
+		Expect(data).To(ContainSubstring("retention:"))
+		Expect(data).To(ContainSubstring("enabled: true"))
 	})
 
 	It("clamps defaultDays to 2555", func() {
 		kn := testKubernaut()
 		days := 5000
-		kn.Spec.DataStorage.Retention = &kubernautv1alpha2.RetentionSpec{
+		setDataStorageRetention(kn, &kubernautv1alpha2.RetentionSpec{
 			DefaultDays: &days,
-		}
+		})
 		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
@@ -4563,12 +4658,12 @@ var _ = Describe("DataStorage Retention Config", func() {
 		enabled := false
 		batch := 500
 		days := 365
-		kn.Spec.DataStorage.Retention = &kubernautv1alpha2.RetentionSpec{
+		setDataStorageRetention(kn, &kubernautv1alpha2.RetentionSpec{
 			Enabled:     &enabled,
 			Interval:    "12h",
 			BatchSize:   &batch,
 			DefaultDays: &days,
-		}
+		})
 		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
