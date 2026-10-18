@@ -1391,6 +1391,23 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("stabilizationWindow: 30s"), "EM config should have default stabilization window, got:\n%s", data)
 		})
 
+		// UT-EM-LOG-001 directly evidences the configuration baseline mapped to
+		// FedRAMP/NIST CM-6. AU-2/AU-3/AU-12, SOC 2 CC7.2/CC8.1, and OWASP
+		// ASVS 5.0.0 V16.1.1/V16.2.1 remain contextual boundaries, not claims
+		// proven by this serialization test or formal compliance.
+		It("UT-EM-LOG-001 renders canonical INFO when logging level is omitted", func() {
+			kn := testKubernaut()
+			Expect(kn.Spec.EffectivenessMonitor.Logging.Level).To(BeEmpty())
+			cm, err := EffectivenessMonitorConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			data := cm.Data["effectivenessmonitor.yaml"]
+			var rendered effectivenessMonitorConfigYAML
+			Expect(yaml.Unmarshal([]byte(data), &rendered)).To(Succeed())
+			Expect(rendered.Logging.Level).To(Equal("INFO"), "omitted EM logging level should render canonical INFO, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("level: info"), "EM config should not render the lowercase logging fallback, got:\n%s", data)
+		})
+
 		// #423 coverage backfill: assessment.stabilizationWindow/
 		// validityWindow non-default overrides had zero test references
 		// (only the stabilizationWindow default was covered above).
@@ -1516,6 +1533,9 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("alertManagerEnabled: false"), "EM config should reflect spec.monitoring.alertManager.enabled=false, got:\n%s", data)
 		})
 
+		// This direct builder test intentionally uses lowercase input to verify
+		// pass-through behavior; API admission enforces the uppercase LoggingSpec
+		// enum before a production CR reaches reconciliation.
 		It("renders v1.4 logging and datastorage buffer settings", func() {
 			kn := testKubernaut()
 			kn.Spec.EffectivenessMonitor.Logging.Level = "debug"
