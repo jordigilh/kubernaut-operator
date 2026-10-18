@@ -115,7 +115,7 @@ func MigrationJob(kn *kubernautv1alpha2.Kubernaut) (*batchv1.Job, error) {
 						}},
 						VolumeMounts:    mounts,
 						SecurityContext: ContainerSecurityContext(),
-						Resources:       DefaultResources(),
+						Resources:       DefaultBootstrapResources(),
 					}},
 					Volumes:          volumes,
 					ImagePullSecrets: kn.Spec.Image.PullSecrets,

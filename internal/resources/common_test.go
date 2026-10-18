@@ -657,6 +657,10 @@ var _ = Describe("MergeResources", func() {
 	It("uses defaults when user spec is empty", func() {
 		res := MergeResources(corev1.ResourceRequirements{})
 		Expect(res.Requests.Cpu().IsZero()).To(BeFalse())
+		Expect(res.Requests[corev1.ResourceCPU]).To(Equal(resource.MustParse("100m")))
+		Expect(res.Requests[corev1.ResourceMemory]).To(Equal(resource.MustParse("128Mi")))
+		Expect(res.Limits[corev1.ResourceCPU]).To(Equal(resource.MustParse("500m")))
+		Expect(res.Limits[corev1.ResourceMemory]).To(Equal(resource.MustParse("256Mi")))
 	})
 
 	It("uses user spec when provided", func() {

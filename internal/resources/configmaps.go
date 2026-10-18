@@ -553,8 +553,9 @@ type aiAnalysisDatastorageYAML struct {
 }
 
 type aiAnalysisRegoYAML struct {
-	PolicyPath          string `json:"policyPath" yaml:"policyPath"`
-	ConfidenceThreshold string `json:"confidenceThreshold,omitempty" yaml:"confidenceThreshold,omitempty"`
+	PolicyPath          string   `json:"policyPath" yaml:"policyPath"`
+	ConfidenceThreshold string   `json:"confidenceThreshold,omitempty" yaml:"confidenceThreshold,omitempty"`
+	LowConfidenceFloor  *float64 `json:"lowConfidenceFloor,omitempty" yaml:"lowConfidenceFloor,omitempty"`
 }
 
 // aiAnalysisConfigYAML embeds controllerConfig under "controller" via controllerBlock.
@@ -1482,8 +1483,15 @@ func dataStorageRedisConfig(kn *kubernautv1alpha2.Kubernaut) dataStorageRedisYAM
 func AIAnalysisConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ns := kn.Namespace
+	lowConfidenceFloor, hasLowConfidenceFloor, err := parseLowConfidenceFloor(kn.Spec.AIAnalysis.LowConfidenceFloor)
+	if err != nil {
+		return nil, err
+	}
 	rego := aiAnalysisRegoYAML{
 		PolicyPath: "/etc/aianalysis/policies/approval.rego",
+	}
+	if hasLowConfidenceFloor {
+		rego.LowConfidenceFloor = &lowConfidenceFloor
 	}
 	if kn.Spec.AIAnalysis.ConfidenceThreshold != "" {
 		rego.ConfidenceThreshold = kn.Spec.AIAnalysis.ConfidenceThreshold
@@ -1512,6 +1520,18 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha
 		Debug: debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
 	}
 	return yamlConfigMap(ObjectMeta(kn, "aianalysis-config", ComponentAIAnalysis), "config.yaml", "aianalysis config", cfg)
+}
+
+func parseLowConfidenceFloor(raw string) (float64, bool, error) {
+	if raw == "" {
+		return 0, false, nil
+	}
+
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil || !(value > 0 && value <= 1) {
+		return 0, false, fmt.Errorf("invalid aiAnalysis.lowConfidenceFloor %q: expected a number greater than 0 and at most 1", raw)
+	}
+	return value, true, nil
 }
 
 // SignalProcessingConfigMap builds the signalprocessing-config ConfigMap.

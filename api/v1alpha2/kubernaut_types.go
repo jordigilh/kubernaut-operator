@@ -650,6 +650,12 @@ type AIAnalysisSpec struct {
 	// +optional
 	ConfidenceThreshold string `json:"confidenceThreshold,omitempty"`
 
+	// Optional floor for auto-proceeding with a Kubernaut Agent-selected
+	// workflow during investigation. Expressed as a decimal string, e.g.
+	// "0.7", and rendered as a numeric value in the AI Analysis config.
+	// +optional
+	LowConfidenceFloor string `json:"lowConfidenceFloor,omitempty"`
+
 	// +optional
 	Logging LoggingSpec `json:"logging,omitempty"`
 
