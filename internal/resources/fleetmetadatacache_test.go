@@ -203,6 +203,13 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 		expectDeploymentBasics(dep, "fleetmetadatacache")
 	})
 
+	It("uses shared stateless defaults when resources are unset", func() {
+		kn, knV2 := testKubernautWithFMC()
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(dep.Spec.Template.Spec.Containers[0].Resources).To(Equal(DefaultResources()))
+	})
+
 	It("exposes api (8080), health (8081), and metrics (9090) ports", func() {
 		kn, knV2 := testKubernautWithFMC()
 		dep, err := FleetMetadataCacheDeployment(kn, knV2)

@@ -146,7 +146,7 @@ func dataStorageInitContainer(kn *kubernautv1alpha2.Kubernaut) (corev1.Container
 			{Name: "PGPORT", Value: strconv.FormatInt(int64(pgPort), 10)},
 		},
 		SecurityContext: ContainerSecurityContext(),
-		Resources:       DefaultResources(),
+		Resources:       DefaultBootstrapResources(),
 	}, nil
 }
 
@@ -732,23 +732,10 @@ func appendKAAlignmentCredentialMounts(kn *kubernautv1alpha2.Kubernaut, kaProfil
 	return volumes, mounts
 }
 
-// kaResources returns the administrator-configured resource requirements
-// for kubernaut-agent, or documented defaults when unset.
+// kaResources applies the shared resource default and preserves administrator
+// overrides for kubernaut-agent.
 func kaResources(kn *kubernautv1alpha2.Kubernaut) corev1.ResourceRequirements {
-	res := kn.Spec.KubernautAgent.Resources
-	if len(res.Requests) > 0 || len(res.Limits) > 0 {
-		return res
-	}
-	return corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("200m"),
-			corev1.ResourceMemory: resource.MustParse("256Mi"),
-		},
-		Limits: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("1000m"),
-			corev1.ResourceMemory: resource.MustParse("1Gi"),
-		},
-	}
+	return MergeResources(kn.Spec.KubernautAgent.Resources)
 }
 
 // kaInitContainers returns the build-ca-bundle init container, which

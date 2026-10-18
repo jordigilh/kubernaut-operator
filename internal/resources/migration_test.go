@@ -93,6 +93,10 @@ var _ = Describe("MigrationJob", func() {
 		Expect(container.Command[len(container.Command)-1]).To(Equal("up"), "goose command should run the up subcommand, got %v", container.Command)
 
 		Expect(container.Resources.Requests).NotTo(BeNil(), "migration container should have resource requests")
+		Expect(container.Resources.Requests.Cpu().String()).To(Equal("500m"))
+		Expect(container.Resources.Requests.Memory().String()).To(Equal("256Mi"))
+		Expect(container.Resources.Limits.Cpu().String()).To(Equal("500m"))
+		Expect(container.Resources.Limits.Memory().String()).To(Equal("256Mi"))
 	})
 
 	// #423 coverage backfill: this only checked the fixture's default

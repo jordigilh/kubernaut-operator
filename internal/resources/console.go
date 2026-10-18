@@ -22,7 +22,6 @@ import (
 	routev1 "github.com/openshift/api/route/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
@@ -71,6 +70,7 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*
 	}
 
 	oauthArgs := consoleOAuthArgs(issuerURL, redirectURL, caFile, logoutURL)
+	resources := consoleContainerResources(kn)
 
 	volumes := consoleDeploymentVolumes(kn, logoutURL != "")
 
@@ -95,8 +95,8 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*
 						},
 					},
 					Containers: []corev1.Container{
-						consoleOAuth2ProxyContainer(oauth2ProxyImage, oauthArgs, secretName, caDir, combinedCAFile),
-						consoleAppContainer(kn, consoleImage),
+						consoleOAuth2ProxyContainer(oauth2ProxyImage, oauthArgs, secretName, caDir, combinedCAFile, resources),
+						consoleAppContainer(kn, consoleImage, resources),
 					},
 					Volumes: volumes,
 				},
@@ -197,7 +197,7 @@ func consoleLogoutCAInitContainer(kn *kubernautv1alpha2.Kubernaut, image, caFile
 
 // consoleOAuth2ProxyContainer builds the oauth2-proxy sidecar container that
 // terminates OIDC auth in front of the static console container.
-func consoleOAuth2ProxyContainer(image string, args []string, secretName, caDir, combinedCAFile string) corev1.Container {
+func consoleOAuth2ProxyContainer(image string, args []string, secretName, caDir, combinedCAFile string, resources corev1.ResourceRequirements) corev1.Container {
 	env := []corev1.EnvVar{
 		{Name: "OAUTH2_PROXY_CLIENT_ID", ValueFrom: &corev1.EnvVarSource{
 			SecretKeyRef: &corev1.SecretKeySelector{
@@ -256,22 +256,13 @@ func consoleOAuth2ProxyContainer(image string, args []string, secretName, caDir,
 			}},
 			InitialDelaySeconds: 10, PeriodSeconds: 15,
 		},
-		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("25m"),
-				corev1.ResourceMemory: resource.MustParse("32Mi"),
-			},
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("100m"),
-				corev1.ResourceMemory: resource.MustParse("128Mi"),
-			},
-		},
+		Resources: resources,
 	}
 }
 
 // consoleAppContainer builds the static nginx container that serves the
 // console SPA and proxies /a2a, /mcp, and /.well-known to API Frontend.
-func consoleAppContainer(kn *kubernautv1alpha2.Kubernaut, image string) corev1.Container {
+func consoleAppContainer(kn *kubernautv1alpha2.Kubernaut, image string, resources corev1.ResourceRequirements) corev1.Container {
 	return corev1.Container{
 		Name:            "console",
 		Image:           image,
@@ -295,7 +286,7 @@ func consoleAppContainer(kn *kubernautv1alpha2.Kubernaut, image string) corev1.C
 			}},
 			InitialDelaySeconds: 5, PeriodSeconds: 10,
 		},
-		Resources: consoleContainerResources(kn),
+		Resources: resources,
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "nginx-tmp", MountPath: "/tmp"},
 			{Name: "nginx-config", MountPath: "/opt/app-root/etc/nginx.d/kubernaut-http.conf", SubPath: "http.conf", ReadOnly: true},
@@ -488,17 +479,5 @@ func consoleRedirectURL(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) s
 }
 
 func consoleContainerResources(kn *kubernautv1alpha2.Kubernaut) corev1.ResourceRequirements {
-	if len(kn.Spec.Console.Resources.Requests) > 0 || len(kn.Spec.Console.Resources.Limits) > 0 {
-		return kn.Spec.Console.Resources
-	}
-	return corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("10m"),
-			corev1.ResourceMemory: resource.MustParse("16Mi"),
-		},
-		Limits: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("50m"),
-			corev1.ResourceMemory: resource.MustParse("64Mi"),
-		},
-	}
+	return MergeResources(kn.Spec.Console.Resources)
 }

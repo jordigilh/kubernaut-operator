@@ -417,13 +417,60 @@ var _ = Describe("Deployments", func() {
 			}),
 		)
 
+		It("applies shared stateless defaults to every buildDeployment service", func() {
+			want := DefaultResources()
+			cases := []struct {
+				name  string
+				build func(*kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error)
+				kn    *kubernautv1alpha2.Kubernaut
+			}{
+				{name: "gateway", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return GatewayDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "dataStorage", build: DataStorageDeployment, kn: testKubernaut()},
+				{name: "aiAnalysis", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return AIAnalysisDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "signalProcessing", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return SignalProcessingDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "remediationOrchestrator", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return RemediationOrchestratorDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "workflowExecution", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return WorkflowExecutionDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "effectivenessMonitor", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return EffectivenessMonitorDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "notification", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return NotificationDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "kubernautAgent", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return KubernautAgentDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "authWebhook", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return AuthWebhookDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "apiFrontend", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return APIFrontendDeployment(kn, testKnV2(kn))
+				}, kn: testKubernautWithAF()},
+			}
+
+			for _, tc := range cases {
+				dep, err := tc.build(tc.kn)
+				Expect(err).NotTo(HaveOccurred(), tc.name)
+				Expect(dep.Spec.Template.Spec.Containers[0].Resources).To(Equal(want), tc.name)
+			}
+		})
+
 		// kaResources (KubernautAgentDeployment's resources resolver) has a
 		// distinct, non-obvious merge rule worth its own regression test:
 		// it is all-or-nothing on the *pair* (Requests, Limits), not a
 		// per-field deep merge -- setting only one of the two still counts
 		// as "user specified" and the other stays at its zero value rather
 		// than falling back to the default for that half.
-		DescribeTable("UT-RES-KA [CM-6]: kaResources() default-merge behavior",
+		DescribeTable("UT-RES-KA [CM-6]: shared resource default-merge behavior",
 			func(userSpec corev1.ResourceRequirements, expectRequestsCPU, expectLimitsCPU string) {
 				kn := testKubernaut()
 				kn.Spec.KubernautAgent.Resources = userSpec
@@ -433,8 +480,8 @@ var _ = Describe("Deployments", func() {
 				Expect(got.Requests.Cpu().String()).To(Equal(expectRequestsCPU))
 				Expect(got.Limits.Cpu().String()).To(Equal(expectLimitsCPU))
 			},
-			Entry("unset -> documented defaults (200m request / 1000m limit)",
-				corev1.ResourceRequirements{}, "200m", "1"),
+			Entry("unset -> shared defaults (100m request / 500m limit)",
+				corev1.ResourceRequirements{}, "100m", "500m"),
 			Entry("fully specified -> verbatim passthrough",
 				corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("300m")},
@@ -458,6 +505,10 @@ var _ = Describe("Deployments", func() {
 			init := dep.Spec.Template.Spec.InitContainers[0]
 			Expect(init.Name).To(Equal("wait-for-postgres"))
 			Expect(init.Resources.Requests).NotTo(BeNil())
+			Expect(init.Resources.Requests.Cpu().String()).To(Equal("500m"))
+			Expect(init.Resources.Requests.Memory().String()).To(Equal("256Mi"))
+			Expect(init.Resources.Limits.Cpu().String()).To(Equal("500m"))
+			Expect(init.Resources.Limits.Memory().String()).To(Equal("256Mi"))
 		})
 
 		It("has projected secrets volume", func() {

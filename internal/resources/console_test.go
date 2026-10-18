@@ -211,6 +211,10 @@ var _ = Describe("Console Resources", func() {
 			Expect(*oauth2.SecurityContext.ReadOnlyRootFilesystem).To(BeTrue())
 			Expect(*oauth2.SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
 			Expect(oauth2.SecurityContext.RunAsUser).To(BeNil(), "hardcoded RunAsUser breaks OCP restricted SCC")
+			Expect(oauth2.Resources.Requests[corev1.ResourceCPU]).To(Equal(resource.MustParse("100m")))
+			Expect(oauth2.Resources.Requests[corev1.ResourceMemory]).To(Equal(resource.MustParse("128Mi")))
+			Expect(oauth2.Resources.Limits[corev1.ResourceCPU]).To(Equal(resource.MustParse("500m")))
+			Expect(oauth2.Resources.Limits[corev1.ResourceMemory]).To(Equal(resource.MustParse("256Mi")))
 			Expect(oauth2.Ports).To(HaveLen(1))
 			Expect(oauth2.Ports[0].ContainerPort).To(Equal(consoleProxyPort))
 			Expect(oauth2.Env).To(HaveLen(3))
@@ -226,6 +230,10 @@ var _ = Describe("Console Resources", func() {
 			Expect(console.ImagePullPolicy).To(Equal(corev1.PullIfNotPresent))
 			Expect(*console.SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
 			Expect(console.SecurityContext.RunAsUser).To(BeNil(), "hardcoded RunAsUser breaks OCP restricted SCC")
+			Expect(console.Resources.Requests[corev1.ResourceCPU]).To(Equal(resource.MustParse("100m")))
+			Expect(console.Resources.Requests[corev1.ResourceMemory]).To(Equal(resource.MustParse("128Mi")))
+			Expect(console.Resources.Limits[corev1.ResourceCPU]).To(Equal(resource.MustParse("500m")))
+			Expect(console.Resources.Limits[corev1.ResourceMemory]).To(Equal(resource.MustParse("256Mi")))
 			Expect(console.VolumeMounts).To(HaveLen(4))
 
 			Expect(spec.Volumes).To(HaveLen(3))
@@ -233,6 +241,25 @@ var _ = Describe("Console Resources", func() {
 			Expect(spec.Volumes[1].Name).To(Equal("nginx-config"))
 			Expect(spec.Volumes[1].ConfigMap.Name).To(Equal(ComponentConsole + "-nginx"))
 			Expect(spec.Volumes[2].Name).To(Equal("tls-ca"))
+		})
+
+		It("applies spec.console.resources to both long-running containers", func() {
+			kn := testKubernautWithConsole()
+			kn.Spec.Console.Resources = corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("250m"),
+					corev1.ResourceMemory: resource.MustParse("256Mi"),
+				},
+				Limits: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("750m"),
+					corev1.ResourceMemory: resource.MustParse("512Mi"),
+				},
+			}
+
+			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dep.Spec.Template.Spec.Containers[0].Resources).To(Equal(kn.Spec.Console.Resources))
+			Expect(dep.Spec.Template.Spec.Containers[1].Resources).To(Equal(kn.Spec.Console.Resources))
 		})
 	})
 
@@ -567,10 +594,10 @@ var _ = Describe("Console Resources", func() {
 			kn.Spec.Console.Resources = corev1.ResourceRequirements{}
 
 			res := consoleContainerResources(kn)
-			Expect(res.Requests[corev1.ResourceCPU]).To(Equal(resource.MustParse("10m")))
-			Expect(res.Requests[corev1.ResourceMemory]).To(Equal(resource.MustParse("16Mi")))
-			Expect(res.Limits[corev1.ResourceCPU]).To(Equal(resource.MustParse("50m")))
-			Expect(res.Limits[corev1.ResourceMemory]).To(Equal(resource.MustParse("64Mi")))
+			Expect(res.Requests[corev1.ResourceCPU]).To(Equal(resource.MustParse("100m")))
+			Expect(res.Requests[corev1.ResourceMemory]).To(Equal(resource.MustParse("128Mi")))
+			Expect(res.Limits[corev1.ResourceCPU]).To(Equal(resource.MustParse("500m")))
+			Expect(res.Limits[corev1.ResourceMemory]).To(Equal(resource.MustParse("256Mi")))
 		})
 
 		It("UT-CCR-02 [CM-6, CC8.1]: operator overrides take precedence", func() {

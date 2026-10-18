@@ -633,8 +633,25 @@ func ContainerSecurityContext() *corev1.SecurityContext {
 	}
 }
 
-// DefaultResources returns sensible defaults when the user hasn't specified limits/requests.
+// DefaultResources returns shared defaults for stateless application
+// containers when the user hasn't specified limits or requests.
 func DefaultResources() corev1.ResourceRequirements {
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("100m"),
+			corev1.ResourceMemory: resource.MustParse("128Mi"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("500m"),
+			corev1.ResourceMemory: resource.MustParse("256Mi"),
+		},
+	}
+}
+
+// DefaultBootstrapResources returns the established resources for init and
+// migration containers. These workloads are not stateless application
+// containers and retain their previous resource profile.
+func DefaultBootstrapResources() corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
 			corev1.ResourceCPU:    resource.MustParse("500m"),
@@ -647,7 +664,8 @@ func DefaultResources() corev1.ResourceRequirements {
 	}
 }
 
-// MergeResources returns the user-specified resources if non-zero, otherwise defaults.
+// MergeResources preserves a non-empty user override, otherwise returning the
+// shared stateless application-container defaults.
 func MergeResources(userSpec corev1.ResourceRequirements) corev1.ResourceRequirements {
 	if len(userSpec.Requests) > 0 || len(userSpec.Limits) > 0 {
 		return userSpec
