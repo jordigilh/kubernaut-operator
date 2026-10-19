@@ -29,7 +29,6 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 	corev1 "k8s.io/api/core/v1"
-	discoveryv1 "k8s.io/api/discovery/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,7 +39,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
@@ -52,26 +50,11 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 		Expect(monitoringResourceSupported(nil, "ServiceMonitor")).To(BeFalse())
 	})
 
-	It("maps external monitoring Services and EndpointSlices to the configured Kubernaut", Label("unit"), func() {
-		scheme := runtime.NewScheme()
-		Expect(corev1.AddToScheme(scheme)).To(Succeed())
-		Expect(discoveryv1.AddToScheme(scheme)).To(Succeed())
-		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
-		kn := newMinimalCR()
-		kn.Spec.Monitoring.Prometheus.URL = "https://prometheus.external-monitoring.svc:9090"
-		kn.Spec.Monitoring.AlertManager.Enabled = ptr.To(false)
-		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(kn).Build()
-		reconciler := &KubernautReconciler{Client: fakeClient, Scheme: scheme}
-		service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "prometheus", Namespace: "external-monitoring"}}
-		endpointSlice := &discoveryv1.EndpointSlice{ObjectMeta: metav1.ObjectMeta{
-			Name: "prometheus-1", Namespace: "external-monitoring",
-			Labels: map[string]string{discoveryv1.LabelServiceName: "prometheus"},
-		}}
-
-		serviceRequests := reconciler.monitoringObjectToKubernaut(ctx, service)
-		endpointRequests := reconciler.monitoringObjectToKubernaut(ctx, endpointSlice)
-		Expect(serviceRequests).To(Equal([]reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(kn)}}))
-		Expect(endpointRequests).To(Equal(serviceRequests))
+	It("does not depend on external monitoring Services or EndpointSlices", Label("unit"), func() {
+		reconciler := &KubernautReconciler{}
+		Expect(reconciler.monitoringObjectToKubernaut(ctx, &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "prometheus", Namespace: "external-monitoring"},
+		})).To(BeEmpty())
 	})
 
 	It("removes a stale optional route when no route is desired", func() {

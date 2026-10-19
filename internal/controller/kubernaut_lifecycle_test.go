@@ -1027,7 +1027,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				"Console Deployment should not exist when console is disabled")
 		})
 
-		It("[SC-7] reports unavailable native policy without creating a raw fallback", Label("requires-no-provider"), func() {
+		It("[SC-7, AC-3, CC6.6] applies standard policies without provider gating or API egress restriction", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
@@ -1035,48 +1035,45 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			Expect(err).To(MatchError(ContainSubstring("native network isolation")))
+			Expect(err).NotTo(HaveOccurred())
 
 			npList := &networkingv1.NetworkPolicyList{}
 			Expect(k8sClient.List(ctx, npList, client.InNamespace(testNamespace), client.MatchingLabels{
 				"app.kubernetes.io/managed-by": "kubernaut-operator",
 			})).To(Succeed())
-			Expect(npList.Items).To(BeEmpty(), "native policy adapters must not create raw Kubernetes NetworkPolicy")
+			Expect(npList.Items).NotTo(BeEmpty(), "the portable contract must apply standard NetworkPolicies")
+			for _, networkPolicy := range npList.Items {
+				Expect(networkPolicy.Spec.Egress).To(BeEmpty(), "API-server egress remains administrator-owned")
+			}
 			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady).Status).To(Equal(metav1.ConditionFalse))
-			Expect(kn.Status.Phase).NotTo(Equal(kubernautv1alpha2.PhaseRunning))
+			Expect(findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionNetworkPolicyReady).Status).To(Equal(metav1.ConditionTrue))
 		})
 
-		It("[SC-7] keeps the no-fallback policy result after a CR update", func() {
+		It("[SC-7] keeps standard policies applied after a CR update", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			r := reconcileToRunning(ctx)
 
-			By("verifying raw NPs are absent after deploy")
 			npList := &networkingv1.NetworkPolicyList{}
 			Expect(k8sClient.List(ctx, npList, client.InNamespace(testNamespace), client.MatchingLabels{
 				"app.kubernetes.io/managed-by": "kubernaut-operator",
 			})).To(Succeed())
-			Expect(npList.Items).To(BeEmpty(), "raw Kubernetes NetworkPolicy must not be used as a fallback")
+			Expect(npList.Items).NotTo(BeEmpty(), "standard NetworkPolicy is the runtime contract")
 
-			By("updating an unrelated v1alpha2 field")
 			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			kn.Spec.WorkflowExecution.CooldownPeriod = "2m"
 			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
-
-			By("reconciling after the update")
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
-
 			Expect(k8sClient.List(ctx, npList, client.InNamespace(testNamespace), client.MatchingLabels{
 				"app.kubernetes.io/managed-by": "kubernaut-operator",
 			})).To(Succeed())
-			Expect(npList.Items).To(BeEmpty(),
-				"raw Kubernetes NetworkPolicy must remain absent after the update")
+			Expect(npList.Items).NotTo(BeEmpty(), "standard policies must remain applied after the update")
 		})
+
 	})
 
 	// ======================================================================

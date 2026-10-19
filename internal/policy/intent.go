@@ -18,47 +18,34 @@ package policy
 
 import (
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
-// APIServerIdentity describes the provider-native service identity used for
-// Kubernetes API access. It intentionally has no CIDR field.
-type APIServerIdentity struct {
-	ServiceName string
-	Namespace   string
+// Intent is the portable traffic contract rendered into standard Kubernetes
+// NetworkPolicy objects. It contains no provider, API-server address, or
+// provider-specific identity because egress enforcement is administrator-owned.
+type Intent struct {
+	Namespace        string
+	InstanceName     string
+	Components       []string
+	ScrapeSources    []kubernautv1alpha2.MetricsScrapeSource
+	MetricsPorts     map[string]int32
+	IngressOverrides map[string]kubernautv1alpha2.NetworkPolicyNamedIngressOverride
 }
 
-// Intent is the provider-neutral traffic contract. Provider adapters may
-// express this contract only with their native identity and selector fields;
-// they must reject any part they cannot express safely.
-type Intent struct {
-	Namespace            string
-	InstanceName         string
-	Components           []string
-	APIServerIdentity    APIServerIdentity
-	DNSNamespace         string
-	DNS                  DNSDestination
-	StaticAPIServerCIDRs []string
-	Monitoring           []MonitoringDestination
-	Dependencies         []MonitoringDestination
-	ScrapeSources        []kubernautv1alpha2.MetricsScrapeSource
-	MetricsPorts         map[string]int32
-}
+const maxIngressPeers = 16
 
 // BuildIntent constructs the common policy intent for one Kubernaut namespace.
-// staticAPIServerCIDRs is retained as an input guard for callers migrating
-// from the legacy renderer; it is never copied into the resulting intent.
-func BuildIntent(namespace string, components, staticAPIServerCIDRs []string) (Intent, error) {
+func BuildIntent(namespace string, components []string) (Intent, error) {
 	if namespace == "" {
 		return Intent{}, fmt.Errorf("policy namespace is required")
-	}
-	if len(staticAPIServerCIDRs) > 0 {
-		return Intent{}, fmt.Errorf("static API-server CIDRs are not supported by native policy adapters")
 	}
 	unique := make(map[string]struct{}, len(components))
 	for _, component := range components {
@@ -76,84 +63,74 @@ func BuildIntent(namespace string, components, staticAPIServerCIDRs []string) (I
 	}
 	sort.Strings(result)
 	return Intent{
-		Namespace:    namespace,
-		InstanceName: namespace,
-		Components:   result,
-		APIServerIdentity: APIServerIdentity{
-			ServiceName: "kubernetes",
-			Namespace:   "default",
-		},
-		DNSNamespace: "kube-system",
+		Namespace:        namespace,
+		InstanceName:     namespace,
+		Components:       result,
+		MetricsPorts:     make(map[string]int32),
+		IngressOverrides: make(map[string]kubernautv1alpha2.NetworkPolicyNamedIngressOverride),
 	}, nil
 }
 
-// ValidateNativeOverrides rejects legacy raw-NetworkPolicy tuning fields that
-// the bounded native adapters cannot express without silently changing the
-// requested traffic contract. Ignoring one of these fields would be worse than
-// refusing reconciliation because the user could believe the policy was
-// narrowed when the provider object did not change.
-func ValidateNativeOverrides(spec kubernautv1alpha2.NetworkPoliciesSpec) error {
+// ValidateNetworkPoliciesSpec validates the portions of the CRD contract that
+// are not fully enforced by the structural schema, including programmatic
+// callers that bypass API-server validation.
+func ValidateNetworkPoliciesSpec(spec kubernautv1alpha2.NetworkPoliciesSpec) error {
 	if err := validateScrapeSources(spec.ScrapeSources); err != nil {
 		return err
 	}
-	unsupported := unsupportedLegacyFields(spec)
-	if len(unsupported) == 0 {
-		return nil
-	}
-	sort.Strings(unsupported)
-	return fmt.Errorf("network policy fields are not supported by native adapters: %s", strings.Join(unsupported, ", "))
-}
-
-func unsupportedLegacyFields(spec kubernautv1alpha2.NetworkPoliciesSpec) []string {
-	unsupported := make([]string, 0, 16)
-	if spec.APIServerCIDR != "" {
-		unsupported = append(unsupported, "apiServerCIDR")
-	}
-	if len(spec.APIServerCIDRs) > 0 {
-		unsupported = append(unsupported, "apiServerCIDRs")
-	}
-	if spec.APIServerPort != 0 {
-		unsupported = append(unsupported, "apiServerPort")
-	}
-	if hasEgressOverride(spec.Monitoring.Namespace, spec.Monitoring.PrometheusPort, spec.Monitoring.AlertManagerPort) {
-		unsupported = append(unsupported, "monitoring")
-	}
-	for name, override := range map[string]kubernautv1alpha2.NetworkPolicyEgressOverride{
-		"externalWebhooks": spec.ExternalWebhooks,
-		"llm":              spec.LLM,
-		"mcpGateway":       spec.MCPGateway,
-		"prometheus":       spec.Prometheus,
-	} {
-		if hasEgressOverride(override.CIDR, override.Port) {
-			unsupported = append(unsupported, name)
-		}
-	}
-	if hasEgressOverride(spec.IdP.CIDR, spec.IdP.Port) || len(spec.IdP.ExtraPorts) > 0 {
-		unsupported = append(unsupported, "idp")
-	}
-	for name, override := range map[string]kubernautv1alpha2.NetworkPolicyNamedIngressOverride{
+	for component, override := range map[string]kubernautv1alpha2.NetworkPolicyNamedIngressOverride{
 		"gateway":     spec.Gateway,
 		"apifrontend": spec.APIFrontend,
 		"console":     spec.Console,
 	} {
-		if hasNamedIngressOverride(override) {
-			unsupported = append(unsupported, name)
+		if err := validateIngressOverride(component, override.NetworkPolicyIngressOverride); err != nil {
+			return err
+		}
+		if len(override.IngressNamespaces) > maxIngressPeers {
+			return fmt.Errorf("network policy %s supports at most %d ingress namespaces", component, maxIngressPeers)
+		}
+		for _, namespace := range override.IngressNamespaces {
+			if len(validation.IsDNS1123Label(namespace)) != 0 {
+				return fmt.Errorf("network policy %s ingress namespace %q is invalid", component, namespace)
+			}
 		}
 	}
-	for name, override := range map[string]kubernautv1alpha2.NetworkPolicyIngressOverride{
+	for component, override := range map[string]kubernautv1alpha2.NetworkPolicyIngressOverride{
 		"datastorage":    spec.DataStorage,
 		"kubernautAgent": spec.KubernautAgent,
 	} {
-		if hasIngressOverride(override) {
-			unsupported = append(unsupported, name)
+		if err := validateIngressOverride(component, override); err != nil {
+			return err
 		}
 	}
-	return unsupported
+	return nil
 }
 
-// validateScrapeSources also protects programmatic callers that bypass CRD
-// validation, including selector-expression injection and reserved Cilium
-// namespace identity keys. See PR-515-AUDIT-REMEDIATION.md.
+func validateIngressOverride(component string, override kubernautv1alpha2.NetworkPolicyIngressOverride) error {
+	if len(override.IngressCIDRs) > maxIngressPeers {
+		return fmt.Errorf("network policy %s supports at most %d ingress CIDRs", component, maxIngressPeers)
+	}
+	if len(override.IngressNamespaceSelectors) > maxIngressPeers {
+		return fmt.Errorf("network policy %s supports at most %d ingress namespace selectors", component, maxIngressPeers)
+	}
+	for _, cidr := range override.IngressCIDRs {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf("network policy %s ingress CIDR %q is invalid: %w", component, cidr, err)
+		}
+	}
+	for index, selector := range override.IngressNamespaceSelectors {
+		if len(selector.MatchLabels) == 0 && len(selector.MatchExpressions) == 0 {
+			return fmt.Errorf("network policy %s ingress namespace selector %d must not be empty", component, index)
+		}
+		if _, err := metav1.LabelSelectorAsSelector(&selector); err != nil {
+			return fmt.Errorf("network policy %s ingress namespace selector %d is invalid: %w", component, index, err)
+		}
+	}
+	return nil
+}
+
+// validateScrapeSources protects programmatic callers from selector injection
+// and reserved namespace identity keys.
 func validateScrapeSources(sources []kubernautv1alpha2.MetricsScrapeSource) error {
 	if len(sources) > 16 {
 		return fmt.Errorf("at most 16 metrics scrape sources are supported")
@@ -169,30 +146,10 @@ func validateScrapeSources(sources []kubernautv1alpha2.MetricsScrapeSource) erro
 			if len(validation.IsQualifiedName(key)) != 0 || len(validation.IsValidLabelValue(value)) != 0 {
 				return fmt.Errorf("metrics scrape source %d has an invalid pod label", index)
 			}
-			if key == "io.kubernetes.pod.namespace" || strings.HasPrefix(key, "io.cilium.k8s.namespace.labels.") {
+			if key == "kubernetes.io/metadata.name" || strings.HasPrefix(key, "kubernetes.io/") {
 				return fmt.Errorf("metrics scrape source %d cannot override reserved namespace identity", index)
 			}
 		}
 	}
 	return nil
-}
-
-func hasEgressOverride(cidr string, ports ...int32) bool {
-	if cidr != "" {
-		return true
-	}
-	for _, port := range ports {
-		if port != 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func hasIngressOverride(spec kubernautv1alpha2.NetworkPolicyIngressOverride) bool {
-	return len(spec.IngressCIDRs) > 0 || len(spec.IngressNamespaceSelectors) > 0
-}
-
-func hasNamedIngressOverride(spec kubernautv1alpha2.NetworkPolicyNamedIngressOverride) bool {
-	return hasIngressOverride(spec.NetworkPolicyIngressOverride) || len(spec.IngressNamespaces) > 0
 }

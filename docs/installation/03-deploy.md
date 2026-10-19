@@ -141,11 +141,16 @@ spec:
     # fleet:
     #   oauth2CredentialsSecretRef: ka-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for KubernautAgent only -- used when fleet.enabled: true, for its list_clusters/list_tools_for_cluster MCP tools (ADR-068 decision #11)
 
-  # --- Native network-policy adapter (required provider capability) ---
+  # --- Portable Kubernetes NetworkPolicy ingress isolation ---
   # networkPolicies:
-  #   provider: Auto                         # Auto, Cilium, Calico, or OVN
-  #   # apiServerCIDR/apiServerCIDRs are deprecated and rejected by native
-  #   # adapters; use provider-native API-server identity discovery instead.
+  #   scrapeSources:
+  #     - namespace: monitoring
+  #       podLabels:
+  #         app.kubernetes.io/name: prometheus
+  # The operator emits selector-based ingress policies only. Kubernetes
+  # API-server and external dependency egress remains administrator/SRE-owned.
+  # Console browser/Route ingress is intentionally administrator-owned; add a
+  # supplemental policy if the deployment requires source restriction.
 
   # --- Policies (from Step 2: Configure Services) ---
   aiAnalysis:

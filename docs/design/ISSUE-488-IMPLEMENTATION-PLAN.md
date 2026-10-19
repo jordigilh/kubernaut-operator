@@ -1,5 +1,7 @@
 # Issue #488 Implementation Plan
 
+> **Historical / superseded by issue #555 for provider-native policy work.**
+
 **Issue:** [kubernaut-operator#488](https://github.com/jordigilh/kubernaut-operator/issues/488)
 
 **Parent initiative:** [#486](https://github.com/jordigilh/kubernaut-operator/issues/486)

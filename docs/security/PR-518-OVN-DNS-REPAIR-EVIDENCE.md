@@ -1,5 +1,7 @@
 # PR #518: scoped OVN isolation and DNS verification
 
+> **Historical / superseded by issue #555.** OVN-native enforcement evidence is retained for history only.
+
 ## Outcome and boundary
 
 The approved repository repairs are implemented: common OVN ANP/BANP allowances

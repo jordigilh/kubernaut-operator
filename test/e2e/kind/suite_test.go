@@ -14,10 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package kind contains the platform-neutral and native-provider E2E suite.
-// The suite creates its own throwaway Kind cluster so it never depends on an
-// OpenShift kubeconfig or on provider resources being present in the caller's
-// cluster.
+// Package kind contains the portable Kubernetes NetworkPolicy E2E suite. The
+// suite creates its own throwaway Kind cluster so it never depends on an
+// OpenShift kubeconfig or CNI-specific resources in the caller's cluster.
 package kind
 
 import (
@@ -32,14 +31,14 @@ import (
 
 func TestKindE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
-	_, _ = fmt.Fprintf(GinkgoWriter, "Starting kubernaut-operator Kind provider E2E suite\n") //nolint:errcheck
-	RunSpecs(t, "kind provider e2e suite")
+	_, _ = fmt.Fprintf(
+		GinkgoWriter, "Starting kubernaut-operator Kind portable NetworkPolicy E2E suite\n",
+	) //nolint:errcheck
+	RunSpecs(t, "kind portable NetworkPolicy e2e suite")
 }
 
 var _ = BeforeSuite(func() {
 	var err error
-	configuredProvider, err = providerFromEnvironment()
-	Expect(err).NotTo(HaveOccurred())
 	configuredTLS, err = tlsSourceFromEnvironment()
 	Expect(err).NotTo(HaveOccurred())
 
@@ -51,19 +50,10 @@ var _ = BeforeSuite(func() {
 	defer cancel()
 
 	By("creating a throwaway Kind cluster")
-	Expect(createKindCluster(ctx, configuredProvider)).To(Succeed())
+	Expect(createKindCluster(ctx)).To(Succeed())
 
 	By("waiting for the Kubernetes control plane")
-	Expect(waitForCluster(ctx, configuredProvider)).To(Succeed())
-
-	switch configuredProvider {
-	case providerCilium:
-		By("installing the pinned Cilium provider")
-		Expect(installCilium(ctx)).To(Succeed())
-	case providerCalico:
-		By("installing the pinned Calico provider")
-		Expect(installCalico(ctx)).To(Succeed())
-	}
+	Expect(waitForCluster(ctx)).To(Succeed())
 
 	By("waiting for Kubernetes nodes")
 	Expect(waitForNodes(ctx)).To(Succeed())

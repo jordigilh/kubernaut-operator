@@ -94,7 +94,7 @@ require_text test/e2e/helm/suite_test.go 'operator-only Helm lifecycle' \
 require_text test/e2e/kind/suite_test.go 'loadOperatorImage\(ctx\)' 'Kind suite does not load the operator image'
 require_text test/e2e/kind/suite_test.go 'installOperator\(ctx\)' 'Kind suite does not install the operator Helm chart'
 require_text test/e2e/kind/scenarios_test.go 'applyKubernautCR\(ctx\)' 'Kind suite does not create a real Kubernaut CR'
-require_text test/e2e/kind/scenarios_test.go 'ProviderPolicyReady' 'Kind suite does not assert provider policy status'
+require_text test/e2e/kind/scenarios_test.go 'NetworkPolicyReady' 'Kind suite does not assert standard NetworkPolicy status'
 require_text test/e2e/kind/scenarios_test.go 'TLSReady' 'Kind suite does not assert runtime TLS readiness'
 require_text test/e2e/kind/scenarios_test.go 'E2E-TLS-CERTMANAGER-002' 'Kind suite does not assert cert-manager leaf rotation'
 require_text test/e2e/kind/scenarios_test.go 'E2E-TLS-HOOK-001' 'Kind suite does not assert the hook TLS journey'
@@ -175,7 +175,7 @@ require_text internal/controller/kubernaut_controller.go 'r.checkResourceOwnersh
 require_text internal/controller/kubernaut_controller.go 'r.deleteObservedResource\(' \
 	'Issue #514 conditional deletion is not wired to production cleanup'
 require_text internal/controller/kubernaut_controller.go 'policy.OwnershipError\(' \
-	'Issue #514 native policy authorization has no controller caller'
+	'Issue #514 NetworkPolicy ownership authorization has no controller caller'
 require_text internal/policy/ownership_test.go 'UT-OWN-514-005' \
 	'Issue #514 native policy authorization has no independent unit evidence'
 require_text internal/resources/ownership_test.go 'UT-OWN-514-001' \

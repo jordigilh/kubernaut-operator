@@ -115,10 +115,9 @@ type KubernautSpec struct {
 	// +optional
 	DataStorage DataStorageSpec `json:"dataStorage,omitempty"`
 
-	// NetworkPolicies selects and tunes the supported native policy adapter.
-	// Provider policy resources are created only after active installation and
-	// runtime GVK/schema compatibility are positively identified; no raw
-	// Kubernetes NetworkPolicy or static API-server CIDR fallback is used.
+	// NetworkPolicies configures operator-managed, ingress-only standard
+	// Kubernetes NetworkPolicy objects. Egress and API-server reachability remain
+	// administrator-owned; applied objects do not attest CNI enforcement.
 	// +optional
 	NetworkPolicies NetworkPoliciesSpec `json:"networkPolicies,omitempty"`
 
@@ -2788,73 +2787,19 @@ func (s *AlertManagerSpec) AlertManagerEnabled() bool {
 	return s.Enabled == nil || *s.Enabled
 }
 
-type NetworkPolicyProvider string
-
-const (
-	NetworkPolicyProviderAuto   NetworkPolicyProvider = "Auto"
-	NetworkPolicyProviderCilium NetworkPolicyProvider = "Cilium"
-	NetworkPolicyProviderCalico NetworkPolicyProvider = "Calico"
-	NetworkPolicyProviderOVN    NetworkPolicyProvider = "OVN"
-)
-
+// NetworkPoliciesSpec configures the portable Kubernetes NetworkPolicy contract.
+// The operator manages namespaced, selector-based ingress policies only. Egress
+// to the Kubernetes API server and external dependencies remains an
+// administrator/SRE responsibility so the operator cannot accidentally block
+// API clients or claim provider-specific dataplane enforcement.
 type NetworkPoliciesSpec struct {
-	// ScrapeSources authorizes explicitly identified scraper pods, only on
-	// generated component metrics ports. An empty list grants no external
-	// scraper access; a Prometheus query URL is not a scraper identity.
+	// ScrapeSources authorizes explicitly identified scraper pods on generated
+	// component metrics ports. An empty list grants no external scraper access.
 	// +kubebuilder:validation:MaxItems=16
 	// +optional
 	ScrapeSources []MetricsScrapeSource `json:"scrapeSources,omitempty"`
 
-	// NetworkPoliciesSpec configures the common traffic intent submitted to a
-	// positively identified native policy provider. Provider resources are
-	// created only when the selected provider is active, schema-compatible, and
-	// within the supported release range; generic Kubernetes without a supported
-	// provider fails closed without a raw NetworkPolicy fallback.
-	// Provider selects the native policy provider. Auto requires exactly one
-	// active, supported provider installation; an explicit provider is still
-	// validated against its discovered GVK, schema, and release range.
-	// +kubebuilder:validation:Enum=Auto;Cilium;Calico;OVN
-	// +kubebuilder:default=Auto
-	// +optional
-	Provider NetworkPolicyProvider `json:"provider,omitempty"`
-
-	// Primary K8s API server backend CIDR, for environments where default
-	// detection doesn't resolve correctly. Deprecated: native policy adapters
-	// use provider-native API-server identity and reject static CIDRs.
-	// +optional
-	APIServerCIDR string `json:"apiServerCIDR,omitempty"`
-
-	// Additional API server backend endpoint IPs as /32 CIDRs, for HA
-	// clusters with multiple control-plane nodes. Deprecated: native policy
-	// adapters do not accept static API-server CIDRs.
-	// +optional
-	APIServerCIDRs []string `json:"apiServerCIDRs,omitempty"`
-
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	// +optional
-	APIServerPort int32 `json:"apiServerPort,omitempty"`
-
-	// +optional
-	Monitoring NetworkPolicyMonitoringOverride `json:"monitoring,omitempty"`
-
-	// +optional
-	ExternalWebhooks NetworkPolicyEgressOverride `json:"externalWebhooks,omitempty"`
-
-	// +optional
-	IdP NetworkPolicyIdPEgressOverride `json:"idp,omitempty"`
-
-	// +optional
-	LLM NetworkPolicyEgressOverride `json:"llm,omitempty"`
-
-	// +optional
-	MCPGateway NetworkPolicyEgressOverride `json:"mcpGateway,omitempty"`
-
-	// +optional
-	Prometheus NetworkPolicyEgressOverride `json:"prometheus,omitempty"`
-
-	// Gateway also exposes a simple ingressNamespaces name-list, matching
-	// Helm's networkPolicies.gateway.*.
+	// Optional standard NetworkPolicy ingress peers for the named component.
 	// +optional
 	Gateway NetworkPolicyNamedIngressOverride `json:"gateway,omitempty"`
 
@@ -2864,7 +2809,6 @@ type NetworkPoliciesSpec struct {
 	// +optional
 	Console NetworkPolicyNamedIngressOverride `json:"console,omitempty"`
 
-	// Helm exposes only CIDR/selector overrides here (no ingressNamespaces).
 	// +optional
 	DataStorage NetworkPolicyIngressOverride `json:"datastorage,omitempty"`
 
@@ -2872,8 +2816,9 @@ type NetworkPoliciesSpec struct {
 	KubernautAgent NetworkPolicyIngressOverride `json:"kubernautAgent,omitempty"`
 }
 
-// MetricsScrapeSource is a bounded native-policy ingress identity. Only exact
-// pod label matches are accepted, never namespace-only or wildcard access.
+// MetricsScrapeSource is a bounded standard-NetworkPolicy ingress identity.
+// Only exact pod label matches are accepted, never namespace-only or wildcard
+// access.
 type MetricsScrapeSource struct {
 	// Namespace is the exact, administrator-selected scraper namespace.
 	// +kubebuilder:validation:MinLength=1
@@ -2887,70 +2832,26 @@ type MetricsScrapeSource struct {
 	PodLabels map[string]string `json:"podLabels"`
 }
 
-// NetworkPolicyIngressOverride adds allowed ingress sources beyond the
-// operator's default same-namespace/component allow rules. CIDRs cover
-// traffic not associated with any pod/namespace (e.g. NodePort-sourced
-// host traffic, a hostNetwork-mode ingress controller); selectors cover
-// cases the simple namespace-name list (NetworkPolicyNamedIngressOverride)
-// cannot express.
+// NetworkPolicyIngressOverride adds standard NetworkPolicy ingress peers
+// beyond the operator's default same-namespace component allow rule.
 type NetworkPolicyIngressOverride struct {
+	// +kubebuilder:validation:MaxItems=16
 	// +optional
 	IngressCIDRs []string `json:"ingressCIDRs,omitempty"`
 
+	// +kubebuilder:validation:MaxItems=16
 	// +optional
 	IngressNamespaceSelectors []metav1.LabelSelector `json:"ingressNamespaceSelectors,omitempty"`
 }
 
-// NetworkPolicyNamedIngressOverride extends NetworkPolicyIngressOverride
-// with a namespace-name allowlist, mirroring the subset of components
-// (Gateway, APIFrontend, Console) the upstream Helm chart exposes this
-// simpler option on.
+// NetworkPolicyNamedIngressOverride extends NetworkPolicyIngressOverride with
+// an exact namespace-name allowlist.
 type NetworkPolicyNamedIngressOverride struct {
 	NetworkPolicyIngressOverride `json:",inline"`
 
+	// +kubebuilder:validation:MaxItems=16
 	// +optional
 	IngressNamespaces []string `json:"ingressNamespaces,omitempty"`
-}
-
-// NetworkPolicyEgressOverride overrides a single egress allow rule's target.
-type NetworkPolicyEgressOverride struct {
-	// Legacy field: native provider adapters do not render arbitrary CIDR
-	// destinations. Non-empty values are rejected during reconciliation rather
-	// than becoming an unsafe allow-all policy or being silently ignored.
-	// +optional
-	CIDR string `json:"cidr,omitempty"`
-
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	// +optional
-	Port int32 `json:"port,omitempty"`
-}
-
-// NetworkPolicyIdPEgressOverride is NetworkPolicyEgressOverride plus a
-// second port, for deployments where a service must reach two IdPs on two
-// different ports.
-type NetworkPolicyIdPEgressOverride struct {
-	NetworkPolicyEgressOverride `json:",inline"`
-
-	// +optional
-	ExtraPorts []int32 `json:"extraPorts,omitempty"`
-}
-
-// NetworkPolicyMonitoringOverride overrides where/how the monitoring-stack
-// ingress/egress rules (Prometheus scrape, AlertManager webhook) are shaped.
-type NetworkPolicyMonitoringOverride struct {
-	// +optional
-	Namespace string `json:"namespace,omitempty"`
-
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	// +optional
-	PrometheusPort int32 `json:"prometheusPort,omitempty"`
-
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	// +optional
-	AlertManagerPort int32 `json:"alertManagerPort,omitempty"`
 }
 
 // ---------- Status ----------
@@ -3040,8 +2941,7 @@ const (
 	ConditionTLSReady                   ConditionType = "TLSReady"
 	ConditionExposureReady              ConditionType = "ExposureReady"
 	ConditionMonitoringReady            ConditionType = "MonitoringReady"
-	ConditionProviderDetected           ConditionType = "ProviderDetected"
-	ConditionProviderPolicyReady        ConditionType = "ProviderPolicyReady"
+	ConditionNetworkPolicyReady         ConditionType = "NetworkPolicyReady"
 )
 
 // Finalizer used for cluster-scoped resource cleanup.

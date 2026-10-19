@@ -99,7 +99,7 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 		trust := &corev1.ConfigMap{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.InterServiceCAConfigMapName}, trust)).To(Succeed())
 		Expect(r.telemetryAmbientConfigMapToKubernaut(ctx, trust)).To(Equal(expected))
-		Expect(r.monitoringObjectToKubernaut(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "prometheus", Namespace: "monitoring"}})).To(Equal(expected))
+		Expect(r.monitoringObjectToKubernaut(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "prometheus", Namespace: "monitoring"}})).To(BeEmpty())
 		Expect(r.monitoringObjectToKubernaut(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: "monitoring"}})).To(BeEmpty())
 	})
 

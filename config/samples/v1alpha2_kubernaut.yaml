@@ -377,13 +377,13 @@ spec:
     logging:
       level: INFO
 
-  # Native isolation is always required before migration/workload activation.
-  # Auto requires a supported, active provider. Generic Kubernetes deployments
-  # without a supported provider fail closed; select a supported provider before
-  # activating the operator. There is no mode switch or raw NetworkPolicy
-  # fallback, and no external scraper identity is inferred.
+  # Portable Kubernetes NetworkPolicy ingress isolation is always required
+  # before migration/workload activation. The operator creates standard
+  # networking.k8s.io/v1 NetworkPolicy objects without provider detection or
+  # CNI enforcement attestation. Kubernetes API-server and external dependency
+  # egress remains administrator/SRE-owned; no external scraper identity is
+  # inferred.
   # networkPolicies:
-  #   provider: Auto
   #   scrapeSources:
   #     - namespace: monitoring
   #       podLabels:

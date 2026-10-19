@@ -176,26 +176,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - lane: Cilium (development TLS)
-            provider: cilium
+          - lane: generic (development TLS)
             tls_source: development
-            cluster_name: kubernaut-kind-cilium-development
-          - lane: Cilium (hook TLS)
-            provider: cilium
+            cluster_name: kubernaut-kind-generic
+          - lane: generic (hook TLS)
             tls_source: hook
-            cluster_name: kubernaut-kind-cilium-hook
-          - lane: Cilium (manual/administrator-managed TLS)
-            provider: cilium
+            cluster_name: kubernaut-kind-hook
+          - lane: generic (manual/administrator-managed TLS)
             tls_source: manual-admin
-            cluster_name: kubernaut-kind-cilium-manual-admin
-          - lane: Cilium (cert-manager TLS)
-            provider: cilium
+            cluster_name: kubernaut-kind-manual-admin
+          - lane: generic (cert-manager TLS)
             tls_source: certmanager
-            cluster_name: kubernaut-kind-cilium-certmanager
-          - lane: Calico
-            provider: calico
-            tls_source: development
-            cluster_name: kubernaut-kind-calico
+            cluster_name: kubernaut-kind-certmanager
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -241,7 +233,6 @@ jobs:
         env:
           KIND_OPERATOR_VERSION: ci
           KUBERNAUT_OPERATOR_IMAGE: ${{ env.OPERATOR_IMAGE }}
-          KUBERNAUT_E2E_PROVIDER: ${{ matrix.provider }}
           KUBERNAUT_E2E_TLS_SOURCE: ${{ matrix.tls_source }}
           KIND_CLUSTER_NAME: ${{ matrix.cluster_name }}
         run: make test-e2e-kind

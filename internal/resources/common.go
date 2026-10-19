@@ -434,7 +434,7 @@ func effectivePrometheusURL(knV2 *kubernautv1alpha2.Kubernaut) string {
 }
 
 // EffectivePrometheusURL exposes the same capability-aware endpoint used by
-// Agent configuration to the native policy resolver.
+// workload configuration and monitoring resources.
 func EffectivePrometheusURL(knV2 *kubernautv1alpha2.Kubernaut) string {
 	return effectivePrometheusURL(knV2)
 }
@@ -452,7 +452,7 @@ func effectiveAlertManagerURL(knV2 *kubernautv1alpha2.Kubernaut) string {
 }
 
 // EffectiveAlertManagerURL exposes the same capability-aware endpoint used by
-// Agent configuration to the native policy resolver.
+// workload configuration and monitoring resources.
 func EffectiveAlertManagerURL(knV2 *kubernautv1alpha2.Kubernaut) string {
 	return effectiveAlertManagerURL(knV2)
 }

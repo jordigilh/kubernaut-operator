@@ -1,5 +1,7 @@
 # Issue #488 Gap-Closure Test and Implementation Plan
 
+> **Historical / superseded by issue #555 for provider-native policy tests.**
+
 **Test Plan Identifier:** KO-TP-488-GAP-001
 **Version:** 0.1
 **Date:** 2026-10-02

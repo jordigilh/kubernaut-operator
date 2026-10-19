@@ -85,7 +85,7 @@ func activeManualTLSFixture() (manualTLSFixture, error) {
 }
 
 // TLSProbeLabels returns labels that make the disposable TLS trust probe an
-// allowed peer of operator-managed provider policies.
+// allowed peer of operator-managed NetworkPolicies.
 func TLSProbeLabels() map[string]string {
 	labels := managedProbeLabels(tlsTrustProbeRole)
 	labels["kubernaut.ai/tls-probe"] = "true"

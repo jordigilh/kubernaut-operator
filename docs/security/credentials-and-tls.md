@@ -189,10 +189,33 @@ support bundles.
 
 ## NetworkPolicy (SC-7)
 
-Network policy intent is always enabled, but the operator submits it only through a positively identified native provider adapter. Select `spec.networkPolicies.provider` as `Auto`, `Cilium`, `Calico`, or `OVN`. `Auto` requires exactly one active, schema-compatible provider in the supported release range. A plain Kubernetes/Kind cluster without one continues without provider policy objects and reports `ProviderPolicyReady=False`; it never receives a raw Kubernetes `NetworkPolicy` fallback.
+The operator reconciles namespaced `networking.k8s.io/v1` `NetworkPolicy`
+objects using stable namespace/pod selectors. `NetworkPolicyReady=True` means
+the desired objects were applied and ownership checks passed; it is not a claim
+that the installed CNI enforces them.
 
-The adapters use provider-native API-server identities/entities and do not accept static API-server CIDRs. Unsupported, ambiguous, unavailable, or incompatible providers fail closed and are surfaced in status. Provider CRDs and operators are prerequisites owned by the platform administrator; Kubernaut does not install them.
+Runtime policies are ingress-only. The operator does not discover or require
+Cilium, Calico, or OVN APIs, does not render API-server CIDR/IPBlock rules, and
+does not generate restrictive egress that could block Kubernetes API clients,
+DNS, databases, Valkey, monitoring, IdP, or LLM dependencies. Administrators,
+SREs, and the cloud network own those egress paths.
 
-The operator owns only its labeled native policy objects. It does not prescribe browser-origin policy for the Console or overwrite platform/admin policies; administrators may add supplemental provider-native policy for deployment-specific ingress requirements.
+The generated operand policy excludes `AuthWebhook`, because the Kubernetes API
+server reaches that admission endpoint from the host network and has no
+portable namespace/pod selector. Administrators and the CNI own that ingress
+boundary.
 
-For questions about this document or security practices, contact **jgil@redhat.com** on behalf of **Kubernaut AI**.
+Console browser/Route ingress is also intentionally excluded from the generated
+operand policy. Browser source identity is deployment- and organization-specific;
+administrators must add any Console ingress policy required by their Route.
+
+The OLM manager policy permits all sources to TCP 9443 for the same host-network
+webhook reason. Standard NetworkPolicy allows are additive, so another standard
+allow policy cannot narrow that source set; administrators must use a
+CNI-specific deny or equivalent enforcement when a narrower boundary is needed.
+
+Only objects carrying the operator ownership markers are updated or cleaned up.
+Administrator-owned policies remain untouched. See
+`docs/design/ADR-PLATFORM-003-portable-kubernetes-networkpolicy.md` for the
+security evidence mapping to AC-3/AC-6, SC-7, SOC 2 CC6/CC7, and OWASP ASVS
+V4.1–V4.3.

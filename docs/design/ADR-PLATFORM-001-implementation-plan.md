@@ -1,5 +1,7 @@
 # ADR-PLATFORM-001 Implementation Plan
 
+> **Historical / superseded by issue #555 for network-policy architecture.**
+
 **Issue**: [kubernaut-operator#486](https://github.com/jordigilh/kubernaut-operator/issues/486)
 **ADR**: [ADR-PLATFORM-001-platform-neutral-provider-policy.md](ADR-PLATFORM-001-platform-neutral-provider-policy.md)
 **Documentation issue**: [kubernaut-operator#487](https://github.com/jordigilh/kubernaut-operator/issues/487)

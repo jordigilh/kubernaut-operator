@@ -28,16 +28,13 @@ import (
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
-var _ = Describe("Kind operator journey and native provider contract", Ordered, func() {
+var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Ordered, func() {
 	var ctx context.Context
 	var provisioned, namespaces []ownershipWitness
 
 	BeforeAll(func() {
 		ctx = context.Background()
 		Expect(ensureProbeWorkloads(ctx)).To(Succeed())
-		if configuredProvider != providerGeneric {
-			Expect(ensureMonitoringWorkloads(ctx)).To(Succeed())
-		}
 		var err error
 		provisioned, err = captureProvisioningWitnesses(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -53,21 +50,6 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 	It("E2E-OWN-514-001 [AC-3, AC-6, CM-3, SI-4; SOC2 CC6.1, CC6.6, CC7.2, CC8.1; "+
 		"ASVS v5.0.0-V8.3.1, v5.0.0-V16.2.1] preserves administrator resources across failed install, "+
 		"recovery, upgrade, uninstall and marked reinstall", func() {
-		if configuredProvider == providerGeneric {
-			By("proving an unsupported generic topology fails closed")
-			Expect(applyKubernautCR(ctx)).To(Succeed())
-			Eventually(func(g Gomega) {
-				g.Expect(kubernautCondition(ctx, "BYOValidated")).To(Equal(conditionTrue))
-				g.Expect(kubernautCondition(ctx, "ProviderDetected")).To(Equal("False"))
-				g.Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal("False"))
-				phase, err := kubernautPhase(ctx)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(phase).NotTo(Equal(string(kubernautv1alpha2.PhaseRunning)))
-			}).Should(Succeed())
-			Expect(noManagedPolicies(ctx)).To(Succeed())
-			return
-		}
-
 		By("creating administrator resources before the real CR")
 		witnesses, err := createOwnershipConflicts(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -164,12 +146,8 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			"E2E-TLS-MANUAL-001 / E2E-TLS-ADMIN-001 / E2E-TLS-CLEANUP-001 [SC-8, SC-13, SC-17, SI-4; "+
 			"SOC2 CC6, CC7, A1; ASVS v5.0.0-V12.1.3, v5.0.0-V13.2.1, v5.0.0-V16.5.2] drives the CR through "+
 			"validation, migration, deployment, "+
-			"TLS source, and provider status",
+			"TLS source, and NetworkPolicy status",
 		func() {
-			if configuredProvider == providerGeneric {
-				return
-			}
-
 			By("waiting for the real operator to validate the CR")
 			Eventually(func(g Gomega) {
 				g.Expect(kubernautCondition(ctx, "BYOValidated")).To(Equal(conditionTrue))
@@ -183,7 +161,7 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 				g.Expect(kubernautCondition(ctx, "MigrationComplete")).To(Equal(conditionTrue))
 			}).Should(Succeed())
 
-			By("waiting for service manifests and native policy reconciliation")
+			By("waiting for service manifests and standard NetworkPolicy reconciliation")
 			Eventually(func(g Gomega) {
 				g.Expect(kubernautCondition(ctx, "ServicesDeployed")).To(Equal(conditionTrue))
 			}).Should(Succeed())
@@ -221,10 +199,6 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			caKey, err := tlsProbeCAKey()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(verifyTLSWorkloadTrust(ctx, caKey)).To(Succeed())
-			if configuredProvider != providerGeneric {
-				By("qualifying Secret, ConfigMap, and system monitoring trust sources")
-				Expect(exerciseMonitoringTLSSources(ctx)).To(Succeed())
-			}
 
 			switch configuredTLS {
 			case tlsHook:
@@ -264,27 +238,13 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 				}).Should(Succeed())
 			}
 
-			if configuredProvider == providerGeneric {
-				Eventually(func(g Gomega) {
-					g.Expect(kubernautCondition(ctx, "ProviderDetected")).To(Equal("False"))
-				}).Should(Succeed())
-				Eventually(func(g Gomega) {
-					g.Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal(conditionTrue))
-				}).Should(Succeed())
-				Expect(noManagedPolicies(ctx)).To(Succeed())
-				return
-			}
-
 			Eventually(func(g Gomega) {
-				g.Expect(kubernautCondition(ctx, "ProviderDetected")).To(Equal(conditionTrue))
-			}).Should(Succeed())
-			Eventually(func(g Gomega) {
-				g.Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal(conditionTrue))
+				g.Expect(kubernautCondition(ctx, "NetworkPolicyReady")).To(Equal(conditionTrue))
 			}).Should(Succeed())
 			Eventually(func(g Gomega) {
 				g.Expect(managedNativePolicyExists(ctx)).To(Succeed())
 			}).Should(Succeed())
-			Expect(ensureNoRawNetworkPolicy(ctx)).To(Succeed())
+			Expect(ensureManagedPoliciesHaveNoEgress(ctx)).To(Succeed())
 		})
 
 	It(
@@ -292,10 +252,6 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			"ASVS v5.0.0-V2.2.1, v5.0.0-V14.2.4, v5.0.0-V16.5.2] reconciles the live KA evidence handoff "+
 			"default and explicit override",
 		func() {
-			if configuredProvider == providerGeneric {
-				return
-			}
-
 			By("verifying the operator-generated live KA ConfigMap and read-only ConfigMap mount")
 			Eventually(func(g Gomega) {
 				config, err := kubectl(ctx, "get", "configmap", "kubernaut-agent-config", "-n", kubernautNamespace,
@@ -327,10 +283,6 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			"ASVS v5.0.0-V12.2.1, v5.0.0-V16.5.2] refuses invalid administrator "+
 			"material without a plaintext fallback",
 		func() {
-			if configuredProvider == providerGeneric {
-				return
-			}
-
 			if configuredTLS != tlsManualAdmin {
 				return
 			}
@@ -364,10 +316,6 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			"ASVS v5.0.0-V11.1.1, v5.0.0-V11.1.2, v5.0.0-V12.1.1, "+
 			"v5.0.0-V16.5.2] rotates a hook leaf without losing trust",
 		func() {
-			if configuredProvider == providerGeneric {
-				return
-			}
-
 			if configuredTLS != tlsHook {
 				return
 			}
@@ -393,83 +341,24 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 		},
 	)
 
-	It("proves provider enforcement through the reconciled policy", func() {
-		if configuredProvider == providerGeneric {
-			Eventually(func(g Gomega) {
-				allowed, err := probeHTTP(ctx, "probe-target")
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(allowed).To(BeTrue(), "generic Kubernetes must preserve ordinary pod connectivity")
-			}).Should(Succeed())
-			Eventually(func(g Gomega) {
-				allowed, err := probeHTTPFromRole(ctx, "probe-target", probeUnmanagedClientRole)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(allowed).To(BeTrue(), "generic Kubernetes must not receive an implicit raw policy")
-			}).Should(Succeed())
-			return
-		}
-
-		Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal(conditionTrue))
-		Expect(ensureNoRawNetworkPolicy(ctx)).To(Succeed())
-
-		Eventually(func(g Gomega) {
-			allowed, err := probeHTTP(ctx, "probe-target")
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(allowed).To(BeTrue(), "a provider-managed endpoint must accept traffic from a managed endpoint")
-		}).Should(Succeed())
-		Eventually(func(g Gomega) {
-			allowed, err := probeHTTPFromRole(ctx, "probe-target", probeUnmanagedClientRole)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(allowed).To(BeFalse(), "the reconciled provider policy must deny an unmanaged source")
-		}).Should(Succeed())
+	It("proves the standard policy is applied without claiming dataplane enforcement", func() {
+		Expect(kubernautCondition(ctx, "NetworkPolicyReady")).To(Equal(conditionTrue))
+		Expect(managedNativePolicyExists(ctx)).To(Succeed())
+		Expect(ensureManagedPoliciesHaveNoEgress(ctx)).To(Succeed())
+		By("proving the Kubernetes API client remains usable")
+		_, err := kubectl(ctx, "get", "kubernaut", "kubernaut", "-n", kubernautNamespace, "-o", "name")
+		Expect(err).NotTo(HaveOccurred())
 	})
 
-	It("E2E-POLICY-MONITORING-001 [AC-4, SC-7, SC-8, SI-4; SOC2 CC6.1, CC7.2; "+
-		"ASVS V4.1, V5.1] preserves Agent get_metric_names and get_alerts while denying unrelated monitoring egress", func() {
-		if configuredProvider == providerGeneric {
-			return
-		}
-
-		Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal(conditionTrue))
-		Expect(agentMonitoringConfigContains(ctx, monitoringPrometheusURL())).To(Succeed())
-		Expect(agentMonitoringConfigContains(ctx, monitoringAlertManagerURL())).To(Succeed())
-
-		By("calling the Prometheus API path used by get_metric_names from the kubernaut-agent workload")
-		Eventually(func(g Gomega) {
-			body, err := agentMonitoringGET(
-				ctx, monitoringPrometheusServiceName, monitoringPrometheusServicePort,
-				"/api/v1/label/__name__/values",
-			)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(body).To(ContainSubstring("kubernaut_e2e_metric"))
-		}).Should(Succeed())
-
-		By("calling the Alertmanager API path used by get_alerts from the kubernaut-agent workload")
-		Eventually(func(g Gomega) {
-			body, err := agentMonitoringGET(
-				ctx, monitoringAlertManagerServiceName, monitoringAlertManagerServicePort,
-				"/api/v2/alerts",
-			)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(body).To(Equal("[]"))
-		}).Should(Succeed())
-
-		By("proving the native monitoring allowlist does not widen to another Service")
-		Eventually(func(g Gomega) {
-			_, err := agentMonitoringGET(
-				ctx, monitoringBlockedServiceName, monitoringBlockedServicePort,
-				"/api/v1/label/__name__/values",
-			)
-			g.Expect(err).To(HaveOccurred())
-		}).Should(Succeed())
+	It("E2E-POLICY-PORTABLE-001 [AC-3, SC-7, SI-4; SOC2 CC6.1, CC7.2; "+
+		"ASVS V4.1, V4.2] does not generate egress restrictions", func() {
+		Expect(kubernautCondition(ctx, "NetworkPolicyReady")).To(Equal(conditionTrue))
+		Expect(ensureManagedPoliciesHaveNoEgress(ctx)).To(Succeed())
 	})
 
 	It("E2E-TLS-CERTMANAGER-002 [SC-8, SC-12, SC-13, SI-4; SOC2 CC7, A1; "+
 		"ASVS v5.0.0-V11.1.1, v5.0.0-V11.1.2, v5.0.0-V12.1.1, v5.0.0-V16.5.2] rotates a cert-manager leaf "+
 		"without losing operator trust", func() {
-		if configuredProvider == providerGeneric {
-			return
-		}
-
 		if configuredTLS != tlsCertManager {
 			return
 		}
@@ -494,15 +383,7 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 		}).Should(Succeed())
 	})
 
-	It("preserves a user-owned provider policy while cleaning up the CR journey", func() {
-		if configuredProvider == providerGeneric {
-			Expect(deleteKubernautCR(ctx)).To(Succeed())
-			Eventually(func(g Gomega) {
-				g.Expect(noManagedPolicies(ctx)).To(Succeed())
-			}).Should(Succeed())
-			return
-		}
-
+	It("preserves a user-owned NetworkPolicy while cleaning up the CR journey", func() {
 		Expect(applyUnmanagedNativePolicy(ctx)).To(Succeed())
 		Expect(unmanagedNativePolicyExists(ctx)).To(Succeed())
 
@@ -512,10 +393,7 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			g.Expect(assertRetainedNamespaces(ctx, namespaces)).To(Succeed())
 			g.Expect(assertProvisioningWitnesses(ctx, provisioned)).To(Succeed())
 			g.Expect(noManagedPolicies(ctx)).To(Succeed())
-			g.Expect(ensureNoRawNetworkPolicy(ctx)).To(Succeed())
-			if configuredProvider != providerGeneric {
-				g.Expect(unmanagedNativePolicyExists(ctx)).To(Succeed())
-			}
+			g.Expect(unmanagedNativePolicyExists(ctx)).To(Succeed())
 			if configuredTLS == tlsManualAdmin {
 				g.Expect(assertManualTLSFixtureUnchanged(ctx, activeManualTLSSelection)).To(Succeed())
 			}
@@ -531,8 +409,5 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 
 	AfterAll(func() {
 		Expect(deleteProbeWorkloads(context.Background())).To(Succeed())
-		if configuredProvider != providerGeneric {
-			Expect(deleteMonitoringWorkloads(context.Background())).To(Succeed())
-		}
 	})
 })

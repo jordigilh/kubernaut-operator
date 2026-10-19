@@ -1,5 +1,7 @@
 # Issue #492: Kubernaut Agent monitoring egress policy
 
+> **Historical / superseded by issue #555 for native monitoring-policy rendering.**
+
 **Status:** Cilium/Calico and OVN monitoring implementations are complete, and the 2026-10-07 production-readiness follow-up remediates named target-port resolution, independent endpoint gating, and external monitoring resource watches. The change is still not GA-ready: requested coverage targets are not met and OVN/OpenShift qualification remains manual rather than CI-backed. The OVN API/dataplane statements below are historical #492 evidence tied to their recorded SNO runs; they are not an automated regression guarantee or a current #486 release claim. Current #486 preflight separately re-observed OCP 4.22 native policy submission but did not requalify dataplane enforcement or full application lifecycle. Build, lint, manifest, security, integration, and Cilium/Calico provider E2E claims below remain historical evidence for the #492 implementation line and must not be read as current #486 gate results.
 **Issue:** [kubernaut-operator#492](https://github.com/jordigilh/kubernaut-operator/issues/492)
 **Milestone:** v1.6

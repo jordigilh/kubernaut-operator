@@ -27,8 +27,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/yaml"
-
-	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
 const (
@@ -83,146 +81,6 @@ func ensureProbeWorkloads(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-// ensureMonitoringWorkloads creates disposable Prometheus- and
-// Alertmanager-shaped HTTPS Services for the qualified native-provider lane.
-// The responses use the exact API paths called by the Agent's
-// get_metric_names/get_alerts clients, while the third Service provides a
-// distinct backend that must remain denied by the native allowlist.
-func ensureMonitoringWorkloads(ctx context.Context) error {
-	if err := ensureNamespace(ctx, monitoringNamespace); err != nil {
-		return err
-	}
-
-	tlsObjects, err := monitoringTLSObjects()
-	if err != nil {
-		return fmt.Errorf("creating monitoring tls fixtures: %w", err)
-	}
-	prometheusLabels := monitoringBackendLabels("prometheus")
-	alertManagerLabels := monitoringBackendLabels("alertmanager")
-	blockedLabels := monitoringBackendLabels("blocked")
-	objects := append([]interface{}{}, tlsObjects...)
-	objects = append(objects,
-		monitoringDeployment(monitoringPrometheusServiceName, prometheusLabels),
-		monitoringService(monitoringPrometheusServiceName, prometheusLabels, monitoringPrometheusServicePort),
-		monitoringDeployment(monitoringAlertManagerServiceName, alertManagerLabels),
-		monitoringService(monitoringAlertManagerServiceName, alertManagerLabels, monitoringAlertManagerServicePort),
-		monitoringDeployment(monitoringBlockedServiceName, blockedLabels),
-		monitoringService(monitoringBlockedServiceName, blockedLabels, monitoringBlockedServicePort),
-	)
-	if err := applyYAML(ctx, objects...); err != nil {
-		return fmt.Errorf("applying monitoring fixtures: %w", err)
-	}
-	for _, name := range []string{
-		monitoringPrometheusServiceName,
-		monitoringAlertManagerServiceName,
-		monitoringBlockedServiceName,
-	} {
-		if _, err := kubectl(
-			ctx, "wait", "--for=condition=Available", "deployment/"+name,
-			"-n", monitoringNamespace, "--timeout=5m",
-		); err != nil {
-			return fmt.Errorf("waiting for monitoring deployment %s: %w", name, err)
-		}
-	}
-	return nil
-}
-
-func deleteMonitoringWorkloads(ctx context.Context) error {
-	for _, resource := range []string{
-		"deployment/" + monitoringPrometheusServiceName,
-		"service/" + monitoringPrometheusServiceName,
-		"deployment/" + monitoringAlertManagerServiceName,
-		"service/" + monitoringAlertManagerServiceName,
-		"deployment/" + monitoringBlockedServiceName,
-		"service/" + monitoringBlockedServiceName,
-	} {
-		if _, err := kubectl(
-			ctx, "delete", resource, "-n", monitoringNamespace,
-			"--ignore-not-found=true", "--wait=false",
-		); err != nil {
-			return fmt.Errorf("deleting monitoring fixture %s: %w", resource, err)
-		}
-	}
-	if _, err := kubectl(
-		ctx, "delete", "namespace", monitoringNamespace,
-		"--ignore-not-found=true", "--wait=false",
-	); err != nil {
-		return fmt.Errorf("deleting monitoring fixture namespace: %w", err)
-	}
-	if _, err := kubectl(
-		ctx, "delete", "secret", monitoringCASecretName, "-n", kubernautNamespace,
-		"--ignore-not-found=true", "--wait=false",
-	); err != nil {
-		return fmt.Errorf("deleting monitoring ca secret: %w", err)
-	}
-	return nil
-}
-
-func monitoringBackendLabels(role string) map[string]string {
-	return map[string]string{
-		"app":             "kubernaut-monitoring-e2e",
-		"monitoring-role": role,
-	}
-}
-
-func monitoringDeployment(name string, labels map[string]string) *appsv1.Deployment {
-	replicas := int32(1)
-	selectorLabels := map[string]string{"monitoring-role": labels["monitoring-role"]}
-	return &appsv1.Deployment{
-		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: monitoringNamespace,
-			Labels:    labels,
-		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: &replicas,
-			Selector: &metav1.LabelSelector{MatchLabels: selectorLabels},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{
-						Name:  "monitoring",
-						Image: monitoringServerImage,
-						Ports: []corev1.ContainerPort{{Name: "https", ContainerPort: 8080}},
-						VolumeMounts: []corev1.VolumeMount{
-							{Name: "nginx-config", MountPath: "/etc/nginx/nginx.conf", SubPath: "nginx.conf", ReadOnly: true},
-							{Name: "monitoring-tls", MountPath: "/etc/nginx/tls", ReadOnly: true},
-						},
-					}},
-					Volumes: []corev1.Volume{
-						{Name: "nginx-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-							LocalObjectReference: corev1.LocalObjectReference{Name: monitoringConfigMapName(name)},
-						}}},
-						{Name: "monitoring-tls", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
-							SecretName: monitoringTLSSecretName(name),
-						}}},
-					},
-				},
-			},
-		},
-	}
-}
-
-func monitoringService(name string, labels map[string]string, port int32) *corev1.Service {
-	return &corev1.Service{
-		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: monitoringNamespace,
-		},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{"monitoring-role": labels["monitoring-role"]},
-			Ports: []corev1.ServicePort{{
-				Name:       "https",
-				Protocol:   corev1.ProtocolTCP,
-				Port:       port,
-				TargetPort: intstr.FromInt32(8080),
-			}},
-		},
-	}
 }
 
 func probeLabels(role string) map[string]string {
@@ -306,213 +164,9 @@ func applyYAML(ctx context.Context, objects ...interface{}) error {
 	return nil
 }
 
-func probeHTTP(ctx context.Context, serviceName string) (bool, error) {
-	return probeHTTPFromRole(ctx, serviceName, probeClientRole)
-}
-
-func probeHTTPFromRole(ctx context.Context, serviceName, role string) (bool, error) {
-	podOutput, err := kubectl(
-		ctx, "get", "pods", "-n", probeNamespace, "-l", "e2e-role="+role,
-		"-o", "jsonpath={.items[0].metadata.name}",
-	)
-	if err != nil {
-		return false, fmt.Errorf("finding probe client pod: %w", err)
-	}
-	podName := strings.TrimSpace(podOutput)
-	if podName == "" {
-		return false, fmt.Errorf("probe client pod is not ready")
-	}
-	probeArgs := []string{
-		"exec", "-n", probeNamespace, podName, "--", "curl", "--fail", "--silent", "--show-error",
-		"--connect-timeout", "2", "--max-time", "4", "http://" + serviceName + ":8080",
-	}
-	_, err = kubectl(ctx, probeArgs...)
-	if err != nil {
-		return false, nil //nolint:nilerr // curl failure is the expected denied-probe result
-	}
-	return true, nil
-}
-
-func monitoringPrometheusURL() string {
-	return fmt.Sprintf(
-		"https://%s.%s.svc:%d", monitoringPrometheusServiceName,
-		monitoringNamespace, monitoringPrometheusServicePort,
-	)
-}
-
-func monitoringAlertManagerURL() string {
-	return fmt.Sprintf(
-		"https://%s.%s.svc:%d", monitoringAlertManagerServiceName,
-		monitoringNamespace, monitoringAlertManagerServicePort,
-	)
-}
-
-func agentMonitoringConfigContains(ctx context.Context, value string) error {
-	output, err := kubectl(
-		ctx, "get", "configmap", "kubernaut-agent-config", "-n", kubernautNamespace,
-		"-o", "jsonpath={.data.config\\.yaml}",
-	)
-	if err != nil {
-		return fmt.Errorf("reading kubernaut-agent monitoring config: %w", err)
-	}
-	if !strings.Contains(output, value) {
-		return fmt.Errorf("kubernaut-agent config does not contain %q", value)
-	}
-	return nil
-}
-
-func agentMonitoringGET(ctx context.Context, serviceName string, port int32, path string) (string, error) {
-	podOutput, err := kubectl(
-		ctx, "get", "pods", "-n", kubernautNamespace, "-l", "app=kubernaut-agent",
-		"-o", "json",
-	)
-	if err != nil {
-		return "", fmt.Errorf("finding kubernaut-agent pod: %w", err)
-	}
-	podName, err := readyAgentPodName(podOutput)
-	if err != nil {
-		return "", err
-	}
-	podName = strings.TrimSpace(podName)
-	if podName == "" {
-		return "", fmt.Errorf("kubernaut-agent pod is not ready")
-	}
-	url := fmt.Sprintf("https://%s.%s.svc:%d%s", serviceName, monitoringNamespace, port, path)
-	output, err := kubectl(
-		ctx, "exec", "-n", kubernautNamespace, podName, "--",
-		"curl", "--fail", "--silent", "--show-error", "--cacert", resources.MonitoringTLSCAFile,
-		"--connect-timeout", "4", "--max-time", "4", url,
-	)
-	if err != nil {
-		return "", fmt.Errorf("kubernaut-agent GET %s: %w", url, err)
-	}
-	return strings.TrimSpace(output), nil
-}
-
-func readyAgentPodName(output string) (string, error) {
-	pods := &corev1.PodList{}
-	if err := yaml.Unmarshal([]byte(output), pods); err != nil {
-		return "", fmt.Errorf("decoding kubernaut-agent pods: %w", err)
-	}
-	for _, pod := range pods.Items {
-		if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning {
-			continue
-		}
-		for _, condition := range pod.Status.Conditions {
-			if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
-				return pod.Name, nil
-			}
-		}
-	}
-	return "", fmt.Errorf("kubernaut-agent pod is not ready")
-}
-
-func monitoringTLSObjects() ([]interface{}, error) {
-	now := time.Now().UTC()
-	caCertificate, caKey, caPEM, err := generateManualCA(now, "monitoring")
-	if err != nil {
-		return nil, err
-	}
-
-	objects := []interface{}{
-		&corev1.Secret{
-			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      monitoringCASecretName,
-				Namespace: kubernautNamespace,
-			},
-			Type: corev1.SecretTypeOpaque,
-			Data: map[string][]byte{tlsCACertificateKey: caPEM},
-		},
-	}
-
-	for _, name := range []string{
-		monitoringPrometheusServiceName,
-		monitoringAlertManagerServiceName,
-		monitoringBlockedServiceName,
-	} {
-		certificate, key, leafErr := generateManualLeaf(
-			now, caCertificate, caKey, name, monitoringNamespace, name,
-		)
-		if leafErr != nil {
-			return nil, fmt.Errorf("generating %s certificate: %w", name, leafErr)
-		}
-		objects = append(objects,
-			&corev1.Secret{
-				TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      monitoringTLSSecretName(name),
-					Namespace: monitoringNamespace,
-				},
-				Type: corev1.SecretTypeTLS,
-				Data: map[string][]byte{
-					corev1.TLSCertKey:       certificate,
-					corev1.TLSPrivateKeyKey: key,
-				},
-			},
-			&corev1.ConfigMap{
-				TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      monitoringConfigMapName(name),
-					Namespace: monitoringNamespace,
-				},
-				Data: map[string]string{"nginx.conf": monitoringNginxConfig()},
-			},
-		)
-	}
-	return objects, nil
-}
-
-func monitoringTLSSecretName(serviceName string) string {
-	return serviceName + "-monitoring-tls"
-}
-
-func monitoringConfigMapName(serviceName string) string {
-	return serviceName + "-monitoring-nginx"
-}
-
-func monitoringNginxConfig() string {
-	return `events {}
-http {
-  default_type application/json;
-  server {
-    listen 8080 ssl;
-    ssl_certificate /etc/nginx/tls/tls.crt;
-    ssl_certificate_key /etc/nginx/tls/tls.key;
-    location = /api/v1/label/__name__/values {
-      return 200 '{"status":"success","data":["kubernaut_e2e_metric"]}';
-    }
-    location = /api/v2/alerts {
-      return 200 '[]';
-    }
-    location / {
-      return 200 '{"status":"success"}';
-    }
-  }
-}
-`
-}
-
-func nativePolicyResource(provider policyProvider) string {
-	switch provider {
-	case providerCilium:
-		return "ciliumnetworkpolicies.cilium.io"
-	case providerCalico:
-		return "networkpolicies.projectcalico.org"
-	default:
-		return ""
-	}
-}
-
 func noManagedPolicies(ctx context.Context) error {
-	resource := nativePolicyResource(configuredProvider)
-	if resource == "" {
-		resource = "networkpolicies.networking.k8s.io"
-	}
-	output, err := kubectl(
-		ctx, "get", resource, "-n", probeNamespace, "-l", managedPolicyLabel,
-		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
-	)
+	output, err := kubectl(ctx, "get", "networkpolicies.networking.k8s.io", "-n", probeNamespace,
+		"-l", managedPolicyLabel, "-o", `jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}`)
 	if err != nil {
 		return err
 	}
@@ -522,77 +176,40 @@ func noManagedPolicies(ctx context.Context) error {
 	return nil
 }
 
+// managedNativePolicyExists retains the historical helper name while checking
+// the portable standard NetworkPolicy contract.
 func managedNativePolicyExists(ctx context.Context) error {
-	resource := nativePolicyResource(configuredProvider)
-	if resource == "" {
-		return fmt.Errorf("native policy resource is not configured")
-	}
-	output, err := kubectl(
-		ctx, "get", resource, "-n", probeNamespace, "-l", managedPolicyLabel,
-		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
-	)
+	output, err := kubectl(ctx, "get", "networkpolicies.networking.k8s.io", "-n", probeNamespace,
+		"-l", managedPolicyLabel, "-o", `jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}`)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(output) == "" {
-		return fmt.Errorf("managed native policy has not been submitted")
+		return fmt.Errorf("managed NetworkPolicy has not been submitted")
 	}
 	return nil
 }
 
 func applyUnmanagedNativePolicy(ctx context.Context) error {
-	resource := nativePolicyResource(configuredProvider)
-	if resource == "" {
-		return fmt.Errorf("native policy resource is not configured")
-	}
-
-	var object map[string]interface{}
-	switch configuredProvider {
-	case providerCilium:
-		object = map[string]interface{}{
-			"apiVersion": "cilium.io/v2",
-			"kind":       "CiliumNetworkPolicy",
-			"metadata": map[string]interface{}{
-				"name":      userPolicyName,
-				"namespace": probeNamespace,
-				"labels": map[string]string{
-					"kubernaut.ai/managed-policy":  "false",
-					"app.kubernetes.io/managed-by": "user",
-				},
-			},
-			"spec": map[string]interface{}{
-				"endpointSelector": map[string]interface{}{
-					"matchLabels": map[string]string{"k8s:app": "user-owned"},
-				},
-				"ingress": []interface{}{map[string]interface{}{
-					"fromEndpoints": []interface{}{map[string]interface{}{
-						"matchLabels": map[string]string{"k8s:app": "user-owned"},
-					}},
+	object := map[string]interface{}{
+		"apiVersion": "networking.k8s.io/v1",
+		"kind":       "NetworkPolicy",
+		"metadata": map[string]interface{}{
+			"name": userPolicyName, "namespace": probeNamespace,
+			"labels": map[string]string{"kubernaut.ai/managed-policy": "false", "app.kubernetes.io/managed-by": "user"},
+		},
+		"spec": map[string]interface{}{
+			"podSelector": map[string]interface{}{"matchLabels": map[string]string{"app": "user-owned"}},
+			"policyTypes": []string{"Ingress"},
+			"ingress": []interface{}{map[string]interface{}{
+				"from": []interface{}{map[string]interface{}{
+					"podSelector": map[string]interface{}{
+						"matchLabels": map[string]string{"app": "user-owned"},
+					},
 				}},
-			},
-		}
-	case providerCalico:
-		object = map[string]interface{}{
-			"apiVersion": "projectcalico.org/v3",
-			"kind":       "NetworkPolicy",
-			"metadata": map[string]interface{}{
-				"name":      userPolicyName,
-				"namespace": probeNamespace,
-				"labels": map[string]string{
-					"kubernaut.ai/managed-policy":  "false",
-					"app.kubernetes.io/managed-by": "user",
-				},
-			},
-			"spec": map[string]interface{}{
-				"selector": "app == 'user-owned'",
-				"types":    []string{"Ingress"},
-				"ingress":  []interface{}{map[string]interface{}{"action": "Allow"}},
-			},
-		}
-	default:
-		return fmt.Errorf("native policy resource is not configured")
+			}},
+		},
 	}
-
 	encoded, err := yaml.Marshal(object)
 	if err != nil {
 		return fmt.Errorf("marshalling user-owned policy: %w", err)
@@ -604,18 +221,14 @@ func applyUnmanagedNativePolicy(ctx context.Context) error {
 }
 
 func unmanagedNativePolicyExists(ctx context.Context) error {
-	resource := nativePolicyResource(configuredProvider)
-	if resource == "" {
-		return fmt.Errorf("native policy resource is not configured")
-	}
-	if _, err := kubectl(ctx, "get", resource, userPolicyName, "-n", probeNamespace); err != nil {
+	if _, err := kubectl(ctx, "get", "networkpolicy.networking.k8s.io", userPolicyName, "-n", probeNamespace); err != nil {
 		return fmt.Errorf("user-owned policy is missing: %w", err)
 	}
 	return nil
 }
 
 // deleteProbeWorkloads removes only the fixtures created by this suite.
-// probeNamespace intentionally aliases kubernautNamespace so provider-native
+// probeNamespace intentionally aliases kubernautNamespace so portable policy
 // selectors see the same namespace as the reconciled Kubernaut workloads; the
 // namespace also contains operator-managed resources and must never be deleted
 // as probe cleanup.
@@ -633,13 +246,9 @@ func deleteProbeWorkloads(ctx context.Context) error {
 			return fmt.Errorf("deleting probe %s: %w", resource, err)
 		}
 	}
-	if resource := nativePolicyResource(configuredProvider); resource != "" {
-		if _, err := kubectl(
-			ctx, "delete", resource, userPolicyName, "-n", probeNamespace,
-			"--ignore-not-found=true", "--wait=false",
-		); err != nil {
-			return fmt.Errorf("deleting user-owned provider policy: %w", err)
-		}
+	if _, err := kubectl(ctx, "delete", "networkpolicy.networking.k8s.io", userPolicyName,
+		"-n", probeNamespace, "--ignore-not-found=true", "--wait=false"); err != nil {
+		return fmt.Errorf("deleting user-owned NetworkPolicy: %w", err)
 	}
 
 	return pollUntilSuccess(ctx, 2*time.Minute, 2*time.Second, func() error {
@@ -662,17 +271,17 @@ func deleteProbeWorkloads(ctx context.Context) error {
 	})
 }
 
-func ensureNoRawNetworkPolicy(ctx context.Context) error {
+func ensureManagedPoliciesHaveNoEgress(ctx context.Context) error {
 	output, err := kubectl(
 		ctx, "get", "networkpolicies.networking.k8s.io", "-n", probeNamespace,
 		"-l", managedPolicyLabel,
-		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}",
+		"-o", `jsonpath={range .items[*]}{.spec.egress}{"\n"}{end}`,
 	)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(output) != "" && !strings.Contains(output, "No resources found") {
-		return fmt.Errorf("raw Kubernetes NetworkPolicy fallback exists: %s", strings.TrimSpace(output))
+		return fmt.Errorf("managed NetworkPolicy unexpectedly contains egress: %s", strings.TrimSpace(output))
 	}
 	return nil
 }

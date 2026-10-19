@@ -14,6 +14,12 @@ The Kubernaut Operator manages the full lifecycle of a Kubernaut deployment:
 
 The operator is designed as a **singleton**: exactly one `Kubernaut` CR named `kubernaut` should exist per cluster.
 
+Runtime isolation uses namespaced, selector-based Kubernetes
+`networking.k8s.io/v1` `NetworkPolicy` objects. The operator reports desired
+objects and ownership/readiness only; CNI dataplane enforcement and
+Kubernetes API-server/external dependency egress remain administrator/SRE
+responsibilities. See [ADR-PLATFORM-003](docs/design/ADR-PLATFORM-003-portable-kubernetes-networkpolicy.md).
+
 ## Prerequisites
 
 | Requirement | Version |

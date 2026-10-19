@@ -1,8 +1,8 @@
-# Platform and Policy-Provider Support
+# Platform and NetworkPolicy Support
 
 This document is the compatibility contract for the platform-neutral operator work tracked by [#486](https://github.com/jordigilh/kubernaut-operator/issues/486) and documented by [#487](https://github.com/jordigilh/kubernaut-operator/issues/487).
 
-> **Implementation status:** the core platform-neutral path and the Cilium/Calico capability-gated adapters are implemented. Focused controller IT covers generic startup, fail-closed no-provider behavior, native policy wiring, monitoring degradation, and OVN DNS intent. OpenShift 4.22 capability/bootstrap behavior and live ANP/BANP submission were manually observed on an external qualification cluster; full OpenShift application lifecycle and OVN enforcement remain unverified, and this document makes no OpenShift/OVN release claim.
+> **Implementation status:** issue #555 replaces the provider-native policy architecture with the portable Kubernetes NetworkPolicy contract in `docs/design/ADR-PLATFORM-003-portable-kubernetes-networkpolicy.md`.
 
 ## Platform outcomes
 
@@ -10,89 +10,24 @@ The operator's core lifecycle is intended to work on both generic Kubernetes and
 
 | Platform profile | Core lifecycle | Optional integrations |
 |---|---|---|
-| Generic Kubernetes / Kind with a supported CNI | Singleton CR, workloads, Services, ConfigMaps, Secrets, RBAC, PDBs, status, cleanup | Kubernetes Ingress, administrator/cert-manager TLS, explicitly configured Prometheus/AlertManager, supported Cilium or Calico policy adapter |
-| OpenShift 4.19–4.22 with OVN-Kubernetes | Core APIs, bootstrap behavior, and native ANP/BANP submission manually observed on an external OCP 4.22 cluster; full lifecycle not qualified | OpenShift Routes, service-CA/router CA, TLS security profile, monitoring readiness, and live OVN policy enforcement remain unverified |
+| Generic Kubernetes / Kind | Singleton CR, workloads, Services, ConfigMaps, Secrets, RBAC, PDBs, status, cleanup, standard NetworkPolicies | Kubernetes Ingress, administrator/cert-manager TLS, explicitly configured Prometheus/AlertManager |
+| OpenShift | Same core lifecycle and standard NetworkPolicy object contract | Routes, service-CA/router CA, TLS security profile, and OpenShift monitoring remain capability-specific; no OVN policy API is required |
 
-OpenShift is not required for the generic profile, but a supported native Cilium
-or Calico provider is required before migration and workload activation. A plain
-Kind cluster with no qualified provider fails closed, creates no provider-policy
-resources, and reports `ProviderDetected=False` and `ProviderPolicyReady=False`.
+The operator creates standard `NetworkPolicy` objects and reports
+`NetworkPolicyReady=True` after ownership-safe application. This reports object
+state only; it does not claim that the installed CNI enforces the policy.
 
-OpenShift 4.19–4.22 with OVN-Kubernetes is also **not live-qualified by this
-work**. It requires the deferred compatibility review, qualified payloads, and
-enforcement testing before any release claim is made. OpenShift 4.23 and later
-are outside the initial OVN policy contract as well.
+Runtime policies are selector-based and ingress-only. The operator does not
+discover provider APIs, version-gate a CNI, track Pod IPs, or generate
+API-server CIDR/IPBlock egress. Kubernetes API-server and external dependency
+egress is an administrator/SRE/cloud-network responsibility.
 
-## Initial policy-provider matrix
-
-| Provider | Release range | Policy API/GVKs | Platform range |
-|---|---|---|---|
-| Cilium | 1.19.x–1.20.x | `cilium.io/v2` `CiliumNetworkPolicy`; `CiliumClusterwideNetworkPolicy` where cluster scope is required | Cilium 1.19 with Kubernetes 1.32–1.35; Cilium 1.20 with Kubernetes 1.33–1.36 |
-| Calico | 3.31.x–3.32.x | `projectcalico.org/v3` `NetworkPolicy`; `GlobalNetworkPolicy` where cluster scope is required | Calico 3.31 with Kubernetes 1.32–1.35; Calico 3.32 with Kubernetes 1.34–1.36 |
-| OpenShift OVN-Kubernetes | OpenShift 4.19–4.22 (submission observed; enforcement deferred) | `policy.networking.k8s.io/v1alpha1` `AdminNetworkPolicy` and `BaselineAdminNetworkPolicy` | OpenShift `Network` configuration must positively identify `OVNKubernetes`; live enforcement and release claim remain deferred |
-
-The three version numbers are different contracts and must not be conflated:
-
-1. **Kubernaut CRD version**: the operator API is the clean-break `kubernaut.ai/v1alpha2`.
-2. **Provider resource API version**: the GVKs in the table are the APIs the operator submits.
-3. **Provider/platform release**: the Cilium, Calico, or OpenShift release range is the qualification boundary.
-
-The Calico adapter additionally requires the Kubernetes datastore and a
-discovered `projectcalico.org/v3` API (either Calico's aggregation API server
-or native v3 CRDs). Calico's etcd datastore, or an installation exposing only
-the legacy `crd.projectcalico.org/v1` storage API, is rejected because the
-provider-native ServiceMatch API-server identity is unavailable. The operator
-does not install or enable the Calico API server, native CRDs, or any Calico
-operator.
-
-## Unsupported initially
-
-The operator does not initially support:
-
-- Antrea or other unlisted providers;
-- Cilium or Calico releases outside the listed ranges;
-- upstream `policy.networking.k8s.io/v1alpha2` `ClusterNetworkPolicy`;
-- OpenShift 4.23+ for the OVN adapter;
-- using OVN `EgressFirewall` as a replacement for general policy (it is egress-only);
-- installing a CNI operator or provider CRD;
-- falling back to raw Kubernetes `NetworkPolicy` when a provider policy API is absent or unsupported;
-- static install-time API-server CIDRs as the API-server identity.
-
-## Provider selection and detection
-
-`auto` detection is the default. An explicit provider override is available for an ambiguous generic cluster, but the override still has to pass API and compatibility checks.
-
-Detection requires both:
-
-- discovery of the expected provider API and compatible GVK/schema; and
-- evidence that the provider is actively installed and serving the cluster, such as provider-owned DaemonSets/pods, labels, or OpenShift network configuration.
-
-CRD presence alone is insufficient. This prevents a stale CRD or an inactive second provider from being selected.
-
-The operator follows this behavior:
-
-| Detection result | Provider policy resources | Status behavior |
-|---|---|---|
-| One active supported provider in range | Render and reconcile the provider-native resources | Report provider and API version; `ProviderPolicyReady` reflects submission/readiness only |
-| No provider / plain Kind profile | None | Report `NoSupportedProvider`; block migration and workload activation |
-| Ambiguous active providers | None | Report `AmbiguousProvider`; recommend an explicit override |
-| Unsupported or out-of-range provider | None | Report `UnsupportedProvider` or `UnsupportedVersion` |
-| Explicit provider unavailable or API/schema mismatch | None | Report `ProviderUnavailable`, `NoActiveInstallation`, or `SchemaInvalid` |
-
-The operator does not own dataplane enforcement. A successful policy-object update means that the provider API accepted the object; it does not mean that every node is enforcing it. Live enforcement is validated in provider-specific test lanes.
-
-## Policy ownership and safety
-
-The operator translates one common Kubernaut traffic intent into provider-native policy objects. The CNI or platform operator owns:
-
-- provider CRD installation and upgrades;
-- provider controller/agent lifecycle;
-- dataplane programming and enforcement;
-- provider-specific defaults and unrelated policy bundles.
-
-The Kubernaut operator owns only its labeled policy objects and cleans them up deterministically. It must not overwrite platform-owned objects. Namespaced objects use owner references where Kubernetes permits them; cluster-scoped objects use deterministic labels and finalizer cleanup.
-
-The API-server destination is represented through provider-native identity/entity semantics where supported. The operator does not pin policy to an install-time API-server CIDR. If a provider cannot safely express a required target, the adapter reports the capability gap instead of broadening access or emitting a raw `NetworkPolicy` fallback.
+Only policies carrying the operator ownership markers are updated, pruned, or
+deleted. Administrator-owned policies are preserved across reconcile, uninstall,
+and reinstall. The OLM bundle carries a narrowly scoped static operator-manager
+metrics ingress policy; the generic Helm bootstrap does not install a policy
+before the webhook path is available. Operand policies are reconciled after the
+Kubernaut CR is applied.
 
 ## Generic Kubernetes integrations
 
@@ -115,16 +50,15 @@ Supported source modes are:
 
 | Source | Generic Kubernetes / Kind | OpenShift |
 |---|---|---|
-| `hook` | Explicit Helm-compatible hook mode; the operator provisions and owns the generated CA, leaves, trust bundle, webhook trust, and signing material | Not live-qualified by the current native-provider Kind evidence |
+| `hook` | Explicit Helm-compatible hook mode; the operator provisions and owns the generated CA, leaves, trust bundle, webhook trust, and signing material | Not live-qualified by the current generic Kind evidence |
 | `manual` | Reference pre-created Secrets/ConfigMaps; the operator validates keys, CA consistency, and SANs without overwriting them | Supported where the referenced material satisfies the same contract, but not live-qualified here |
 | `AdministratorManaged` | Reference pre-created administrator-owned Secrets; the operator validates and publishes trust without adopting or deleting the inputs | Supported where the referenced material satisfies the same contract, but not live-qualified here |
 | cert-manager | Requires a pre-installed cert-manager, configured issuer, and its output Secrets; the operator never installs cert-manager or its CRDs | Optional; not installed by Kubernaut |
 | Development self-signed | Explicit opt-in for Kind/development; creates a dedicated CA and leaves and reports non-production status | Available only if explicitly selected; service-CA remains the preferred platform adapter |
 | OpenShift service-CA/router-CA | Not available | Optional adapter for Service leaves, webhook CA injection, Routes, and router trust |
 
-The native-provider Kind acceptance matrix runs isolated Cilium `development`,
-`hook`, `manual-admin`, and `certmanager` selectors plus a Calico development
-lane. The `manual-admin` lane exercises
+The generic Kind acceptance matrix runs isolated `development`, `hook`,
+`manual-admin`, and `certmanager` selectors. The `manual-admin` lane exercises
 both the lower-case `manual` mode and the title-case `AdministratorManaged`
 mode against pre-created administrator-owned material. These hosted journeys
 are implementation evidence rather than a FedRAMP, SOC 2, or OWASP ASVS
@@ -150,8 +84,8 @@ For generated `DevelopmentSelfSigned` and `hook` modes, the operator owns
 per-instance AuthWebhook, inter-service, and runtime trust artifacts once a
 `Kubernaut` instance is reconciled. In `manual` and `AdministratorManaged`
 modes, the referenced Secrets remain administrator-owned and survive operator
-cleanup. A development dependency chart and the operator must never co-own the
-same Secret or ConfigMap.
+cleanup. A future Helm chart and the operator must never co-own the same Secret
+or ConfigMap.
 
 ## OpenShift integrations
 
@@ -161,7 +95,7 @@ On a supported OpenShift release, optional adapters may use:
 - service-CA serving certificates and injected CA bundles;
 - `config.openshift.io` TLS profile and ingress-domain data;
 - OpenShift monitoring and `AlertmanagerConfig` APIs;
-- OVN-Kubernetes `AdminNetworkPolicy` and `BaselineAdminNetworkPolicy`.
+- OpenShift NetworkPolicy API compatibility.
 
 Missing OpenShift APIs must not prevent the generic operator manager from starting. OpenShift-specific status and events identify which optional capability was not available.
 
@@ -173,21 +107,20 @@ it does not create a `Kubernaut` CR or application workloads. The
 GitOps controllers apply the CR separately after installing the Helm chart or
 the OLM package.
 
-The separate `charts/kubernaut-dev-bootstrap` chart is an explicitly
-non-production convenience chart for testing, demos, and CI. It deploys
-single-replica PostgreSQL and Valkey with disposable storage by default, but it
-is not a production-ready HA, backup, or upgrade solution and is never
-installed as a dependency of the operator chart. Production users should
-provide managed PostgreSQL and Valkey outside this chart.
+The separate `kubernaut-dependencies` chart is an explicitly non-production
+convenience chart for testing, demos, and CI. It may deploy single-replica,
+PVC-backed PostgreSQL and Valkey, but it is not a production-ready HA,
+backup, or upgrade solution and is never installed as a dependency of the
+operator chart. Production users should provide managed PostgreSQL and Valkey
+outside this chart.
 
 The installation sequence is:
 
 1. On generic Kubernetes or Kind, install the operator Helm chart. On
    OpenShift, install the operator through OLM.
 2. Wait for the operator manager and CRD to become ready.
-3. For testing/demo/CI only, optionally install
-   `charts/kubernaut-dev-bootstrap`; in production, provision managed
-   PostgreSQL and Valkey externally.
+3. For testing/demo/CI only, optionally install `kubernaut-dependencies`; in
+   production, provision managed PostgreSQL and Valkey externally.
 4. Provision credentials, policy input ConfigMaps, and any selected
    certificate-provider material.
 5. Apply the `Kubernaut` CR from GitOps or another user-controlled workflow.
@@ -201,23 +134,12 @@ Do not use Helm and the operator to manage the same Deployments, Services, Confi
 
 ## Updating this contract
 
-A provider or platform release may be added only after all of the following are available:
-
-1. official release/API compatibility evidence;
-2. runtime GVK and schema validation;
-3. rendered-object fixtures for the common policy intent;
-4. unit and envtest coverage for detection, status, lifecycle, and cleanup;
-5. a qualified live enforcement lane;
-6. updated RBAC, installation documentation, and upgrade notes.
-
-Until then, an unlisted release is unsupported and produces no provider policy resources.
+Changes to the portable policy contract require standard-API schema, selector,
+ownership, lifecycle, packaging, and security-traceability evidence. A live
+CNI qualification may establish enforcement for that CNI, but it must not be
+presented as a baseline operator guarantee.
 
 ## Upstream references
 
-- [OpenShift 4.19 AdminNetworkPolicy API](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/network_apis/adminnetworkpolicy-policy-networking-k8s-io-v1alpha1)
-- [OpenShift network policy APIs](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/network_security/network-policy-apis)
-- [Cilium 1.19 Kubernetes compatibility](https://docs.cilium.io/en/v1.19/network/kubernetes/compatibility)
-- [Cilium 1.20 Kubernetes compatibility](https://docs.cilium.io/en/stable/network/kubernetes/compatibility)
-- [Calico Kubernetes requirements](https://docs.tigera.io/calico/latest/getting-started/kubernetes/requirements)
-- [Calico NetworkPolicy resources](https://docs.tigera.io/calico/latest/reference/resources/networkpolicy)
-- [Calico GlobalNetworkPolicy resources](https://docs.tigera.io/calico/latest/reference/resources/globalnetworkpolicy)
+- [Kubernetes NetworkPolicy](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
+- [OpenShift NetworkPolicy API](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/network_apis/networkpolicy-networking-k8s-io-v1)
