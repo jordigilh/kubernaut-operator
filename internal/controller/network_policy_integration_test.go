@@ -62,7 +62,7 @@ var _ = Describe("portable NetworkPolicy controller wiring", Label("integration"
 
 		policies := &networkingv1.NetworkPolicyList{}
 		Expect(k8sClient.List(ctx, policies, client.InNamespace(testNamespace), client.MatchingLabels{"kubernaut.ai/managed-policy": "true"})).To(Succeed())
-		Expect(policies.Items).To(HaveLen(len(resources.ActiveComponents(cr, cr))))
+		Expect(policies.Items).To(HaveLen(len(resources.ActiveComponents(cr, cr))-1), "AuthWebhook admission ingress remains administrator-owned")
 		for _, networkPolicy := range policies.Items {
 			Expect(networkPolicy.Spec.PolicyTypes).To(Equal([]networkingv1.PolicyType{networkingv1.PolicyTypeIngress}))
 			Expect(networkPolicy.Spec.Egress).To(BeEmpty())
@@ -127,6 +127,15 @@ var _ = Describe("portable NetworkPolicy controller wiring", Label("integration"
 		createBYOSecrets(ctx)
 		cr := newCRWithRouteDisabled()
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+		DeferCleanup(func() {
+			deleteCRIfExists(ctx)
+			_ = client.IgnoreNotFound(k8sClient.Delete(ctx, &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{
+				Name: "user-owned-policy", Namespace: testNamespace,
+			}}))
+			cleanupNamespacedResources(ctx)
+			deleteBYOSecrets(ctx)
+			cleanupClusterScoped(ctx)
+		})
 		reconcileToDeployPhase(ctx)
 
 		before := &networkingv1.NetworkPolicy{}

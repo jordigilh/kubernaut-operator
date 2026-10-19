@@ -19,6 +19,11 @@ could block Kubernetes API clients, DNS, databases, Valkey, monitoring, IdP,
 LLM, or other external dependencies. Cluster administrators/SREs own those
 egress and cloud-network paths.
 
+The generated operand policy intentionally excludes `AuthWebhook`: its
+admission server is called by the Kubernetes API server, whose host-network
+source has no portable namespace/pod selector. Administrators and the CNI own
+that external admission-ingress boundary.
+
 The operator reports `NetworkPolicyReady` when the desired objects are applied
 and ownership-safe. This is not an assertion that the installed CNI enforces
 the objects. Enforcement qualification is a separate cluster/CNI concern.

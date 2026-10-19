@@ -200,6 +200,11 @@ does not generate restrictive egress that could block Kubernetes API clients,
 DNS, databases, Valkey, monitoring, IdP, or LLM dependencies. Administrators,
 SREs, and the cloud network own those egress paths.
 
+The generated operand policy excludes `AuthWebhook`, because the Kubernetes API
+server reaches that admission endpoint from the host network and has no
+portable namespace/pod selector. Administrators and the CNI own that ingress
+boundary.
+
 Only objects carrying the operator ownership markers are updated or cleaned up.
 Administrator-owned policies remain untouched. See
 `docs/design/ADR-PLATFORM-003-portable-kubernetes-networkpolicy.md` for the

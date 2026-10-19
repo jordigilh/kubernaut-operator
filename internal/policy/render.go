@@ -18,7 +18,6 @@ package policy
 
 import (
 	"fmt"
-	"sort"
 
 	corev1 "k8s.io/api/core/v1"
 	kubernetnetworking "k8s.io/api/networking/v1"
@@ -30,8 +29,9 @@ import (
 )
 
 const (
-	instanceLabel  = "app.kubernetes.io/instance"
-	componentLabel = "app.kubernetes.io/component"
+	instanceLabel        = "app.kubernetes.io/instance"
+	componentLabel       = "app.kubernetes.io/component"
+	authWebhookComponent = "authwebhook"
 )
 
 // RenderedPolicy is a standard Kubernetes NetworkPolicy plus its namespaced
@@ -62,6 +62,12 @@ func Render(intent Intent) ([]RenderedPolicy, error) {
 	}
 	objects := make([]RenderedPolicy, 0, len(intent.Components))
 	for _, component := range intent.Components {
+		// AuthWebhook serves Kubernetes admission webhooks. Its caller is the
+		// API server, which has no portable NetworkPolicy namespace/pod identity;
+		// administrators own the external admission ingress boundary.
+		if component == authWebhookComponent {
+			continue
+		}
 		policy := &kubernetnetworking.NetworkPolicy{
 			TypeMeta: metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},
 			ObjectMeta: metav1.ObjectMeta{
@@ -143,10 +149,5 @@ func ingressOverrideRules(override kubernautv1alpha2.NetworkPolicyNamedIngressOv
 	if len(rules) == 0 {
 		return nil
 	}
-	// Keep output deterministic when callers construct maps or selectors from
-	// external configuration.
-	sort.SliceStable(rules, func(i, j int) bool {
-		return fmt.Sprint(rules[i].From) < fmt.Sprint(rules[j].From)
-	})
 	return rules
 }

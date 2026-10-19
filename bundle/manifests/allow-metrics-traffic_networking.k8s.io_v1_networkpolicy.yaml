@@ -14,6 +14,9 @@ spec:
     ports:
     - port: 8443
       protocol: TCP
+  - ports:
+    - port: 9443
+      protocol: TCP
   podSelector:
     matchLabels:
       app.kubernetes.io/name: kubernaut-operator

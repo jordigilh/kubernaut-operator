@@ -91,6 +91,15 @@ var _ = Describe("portable Kubernetes NetworkPolicy contract", func() {
 		Expect(rendered[0].Object.Spec.Egress).To(BeEmpty())
 	})
 
+	It("UT-NP-555-RENDER-003 [SC-7; SOC2 CC6.6; ASVS V4.1] leaves AuthWebhook admission ingress administrator-owned", func() {
+		intent, err := BuildIntent("kubernaut-system", []string{"gateway", "authwebhook"})
+		Expect(err).NotTo(HaveOccurred())
+		rendered, err := Render(intent)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rendered).To(HaveLen(1))
+		Expect(rendered[0].Object.Name).To(Equal("kubernaut-gateway"))
+	})
+
 	It("UT-NP-555-VALIDATE-001 [AC-3, AC-6; SOC2 CC6.6; ASVS V4.1] rejects malformed standard policy inputs", func() {
 		_, err := BuildIntent("", []string{"gateway"})
 		Expect(err).To(MatchError("policy namespace is required"))

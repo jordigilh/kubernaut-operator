@@ -20,6 +20,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	controllerconfig "sigs.k8s.io/controller-runtime/pkg/config"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
@@ -35,11 +36,22 @@ var _ = Describe("portable NetworkPolicy unit lifecycle", Label("unit"), func() 
 		Expect(r.reconcileNetworkPolicies(ctx, kn, kn)).To(Succeed())
 		policies := &networkingv1.NetworkPolicyList{}
 		Expect(r.List(ctx, policies, client.InNamespace(kn.Namespace))).To(Succeed())
-		Expect(policies.Items).To(HaveLen(len(resources.ActiveComponents(kn, kn))))
+		Expect(policies.Items).To(HaveLen(len(resources.ActiveComponents(kn, kn))-1), "AuthWebhook admission ingress remains administrator-owned")
 		for _, object := range policies.Items {
 			Expect(object.Spec.PolicyTypes).To(Equal([]networkingv1.PolicyType{networkingv1.PolicyTypeIngress}))
 			Expect(object.Spec.Egress).To(BeEmpty())
 		}
+		managed := &networkingv1.NetworkPolicy{}
+		Expect(r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: "kubernaut-gateway"}, managed)).To(Succeed())
+		originalSpec := managed.Spec.DeepCopy()
+		originalHash := managed.Annotations[resources.AnnotationSpecHash]
+		managed.Spec.Ingress = nil
+		managed.Annotations[resources.AnnotationSpecHash] = originalHash
+		Expect(r.Update(ctx, managed)).To(Succeed())
+		Expect(r.reconcileNetworkPolicies(ctx, kn, kn)).To(Succeed())
+		restored := &networkingv1.NetworkPolicy{}
+		Expect(r.Get(ctx, client.ObjectKeyFromObject(managed), restored)).To(Succeed())
+		Expect(restored.Spec).To(Equal(*originalSpec))
 
 		kn.Spec.NetworkPolicies.ScrapeSources = []kubernautv1alpha2.MetricsScrapeSource{{
 			Namespace: "monitoring", PodLabels: map[string]string{"app": "prometheus"},
@@ -192,6 +204,7 @@ var _ = Describe("portable NetworkPolicy unit lifecycle", Label("unit"), func() 
 		}
 		manager, err := ctrl.NewManager(&rest.Config{Host: "https://unit.invalid"}, ctrl.Options{
 			Scheme: k8sClient.Scheme(), Metrics: metricsserver.Options{BindAddress: "0"}, HealthProbeBindAddress: "0",
+			Controller:     controllerconfig.Controller{SkipNameValidation: ptr.To(true)},
 			MapperProvider: func(*rest.Config, *http.Client) (meta.RESTMapper, error) { return mapper, nil },
 		})
 		Expect(err).NotTo(HaveOccurred())

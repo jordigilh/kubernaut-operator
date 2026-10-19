@@ -71,7 +71,7 @@ spec:
 
     1. Create the required BYO secrets (PostgreSQL, Valkey, LLM credentials)
     2. Create Rego policy ConfigMaps
-    3. Select TLS/exposure options and apply a `Kubernaut` CR
+    3. Select TLS/exposure options
     4. Apply a `Kubernaut` CR — see the sample in the operator bundle
   displayName: Kubernaut Operator
   icon:

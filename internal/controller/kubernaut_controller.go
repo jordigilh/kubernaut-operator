@@ -252,7 +252,7 @@ func (r *KubernautReconciler) authorizeSingleton(ctx context.Context, kn *kubern
 func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 	log.Info("reconciling phases", "currentPhase", kn.Status.Phase)
-	// Validate startup inputs before provider-specific dependency resolution so
+	// Validate startup inputs before policy reconciliation so
 	// invalid CRs publish their precise validation condition. Validation creates
 	// no migration Job or workload; native isolation is still required before
 	// migration and service-workload activation below.
@@ -265,7 +265,7 @@ func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernaut
 	}
 
 	// Required isolation must exist before a migration Job or service workload
-	// can start. Failure never prunes the last known-good provider policy.
+	// can start. Failure never prunes the last known-good standard policy.
 	if err := r.reconcileNetworkPolicies(ctx, kn, knV2); err != nil {
 		log.Error(err, "native isolation blocks active reconciliation")
 		return ctrl.Result{}, err
@@ -2144,11 +2144,11 @@ func (r *KubernautReconciler) reconcileNetworkPolicies(ctx context.Context, kn *
 
 func networkPolicyIngressOverrides(spec kubernautv1alpha2.NetworkPoliciesSpec) map[string]kubernautv1alpha2.NetworkPolicyNamedIngressOverride {
 	return map[string]kubernautv1alpha2.NetworkPolicyNamedIngressOverride{
-		"gateway":         spec.Gateway,
-		"apifrontend":     spec.APIFrontend,
-		"console":         spec.Console,
-		"datastorage":     {NetworkPolicyIngressOverride: spec.DataStorage},
-		"kubernaut-agent": {NetworkPolicyIngressOverride: spec.KubernautAgent},
+		"gateway":                      spec.Gateway,
+		"apifrontend":                  spec.APIFrontend,
+		"console":                      spec.Console,
+		resources.ComponentDataStorage: {NetworkPolicyIngressOverride: spec.DataStorage},
+		"kubernaut-agent":              {NetworkPolicyIngressOverride: spec.KubernautAgent},
 	}
 }
 
@@ -2214,7 +2214,10 @@ func (r *KubernautReconciler) updateNetworkPolicy(ctx context.Context, existing,
 	if err := networkPolicyOwnershipError(existing, desired); err != nil {
 		return err
 	}
-	if existing.Annotations[resources.AnnotationSpecHash] == desiredHash && equality.Semantic.DeepEqual(existing.OwnerReferences, desired.OwnerReferences) {
+	if existing.Annotations[resources.AnnotationSpecHash] == desiredHash &&
+		equality.Semantic.DeepEqual(existing.OwnerReferences, desired.OwnerReferences) &&
+		equality.Semantic.DeepEqual(existing.Spec, desired.Spec) &&
+		equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
 		return nil
 	}
 	desired.ResourceVersion = existing.ResourceVersion

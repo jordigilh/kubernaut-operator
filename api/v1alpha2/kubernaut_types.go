@@ -115,10 +115,9 @@ type KubernautSpec struct {
 	// +optional
 	DataStorage DataStorageSpec `json:"dataStorage,omitempty"`
 
-	// NetworkPolicies selects and tunes the supported native policy adapter.
-	// Provider policy resources are created only after active installation and
-	// runtime GVK/schema compatibility are positively identified; no raw
-	// Kubernetes NetworkPolicy or static API-server CIDR fallback is used.
+	// NetworkPolicies configures operator-managed, ingress-only standard
+	// Kubernetes NetworkPolicy objects. Egress and API-server reachability remain
+	// administrator-owned; applied objects do not attest CNI enforcement.
 	// +optional
 	NetworkPolicies NetworkPoliciesSpec `json:"networkPolicies,omitempty"`
 
