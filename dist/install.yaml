@@ -3142,6 +3142,49 @@ spec:
               notification:
                 description: Notification controller settings.
                 properties:
+                  credentials:
+                    description: |-
+                      Provider-neutral credentials projected into the Notification credentials directory.
+                      Each name is the file name used by routing credentialRef values.
+                    items:
+                      description: NotificationCredentialSpec maps one namespace-local
+                        Secret key to a named credential file.
+                      properties:
+                        name:
+                          description: Name is the projected credential file name
+                            and routing credentialRef value.
+                          maxLength: 63
+                          minLength: 1
+                          pattern: ^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$
+                          type: string
+                        secretRef:
+                          description: SecretRef identifies the namespace-local Secret
+                            key containing the credential.
+                          properties:
+                            key:
+                              description: Key is the Secret data key containing the
+                                credential.
+                              minLength: 1
+                              pattern: ^[A-Za-z0-9._-]+$
+                              type: string
+                            name:
+                              description: Name is the Secret name.
+                              maxLength: 253
+                              minLength: 1
+                              pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                              type: string
+                          required:
+                          - key
+                          - name
+                          type: object
+                      required:
+                      - name
+                      - secretRef
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -3226,19 +3269,6 @@ spec:
                         type: string
                     required:
                     - configMapName
-                    type: object
-                  slack:
-                    description: Slack quickstart shortcut.
-                    properties:
-                      channel:
-                        default: '#kubernaut-alerts'
-                        description: Slack channel for notifications.
-                        type: string
-                      secretName:
-                        description: |-
-                          Name of the Secret containing the Slack webhook URL (key: "webhook-url").
-                          Empty = no Slack, console-only delivery.
-                        type: string
                     type: object
                 type: object
               postgresql:

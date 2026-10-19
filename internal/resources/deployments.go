@@ -456,50 +456,51 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuber
 }
 
 // NotificationDeployment builds the notification Deployment.
+const (
+	notificationCredentialsVolumeName = "credentials"
+	notificationCredentialsMountPath  = "/etc/notification/credentials" //nolint:gosec // mount path, not credential material
+)
+
 func NotificationDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	routingCMName := "notification-routing-config"
 	if kn.Spec.Notification.Routing != nil && kn.Spec.Notification.Routing.ConfigMapName != "" {
 		routingCMName = kn.Spec.Notification.Routing.ConfigMapName
 	}
-	volumes := []corev1.Volume{
+	volumes := make([]corev1.Volume, 0, 4)
+	volumes = append(volumes,
 		configMapVolume("config", "notification-controller-config"),
 		configMapVolume("routing-config", routingCMName),
-		{Name: "notification-output", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-	}
-	mounts := []corev1.VolumeMount{
-		{Name: "config", MountPath: "/etc/notification", ReadOnly: true},
-		{Name: "routing-config", MountPath: "/etc/notification-routing", ReadOnly: true},
-		{Name: "notification-output", MountPath: "/tmp/notifications"},
-	}
+		corev1.Volume{Name: "notification-output", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+	)
+	mounts := make([]corev1.VolumeMount, 0, 4)
+	mounts = append(mounts,
+		corev1.VolumeMount{Name: "config", MountPath: "/etc/notification", ReadOnly: true},
+		corev1.VolumeMount{Name: "routing-config", MountPath: "/etc/notification-routing", ReadOnly: true},
+		corev1.VolumeMount{Name: "notification-output", MountPath: "/tmp/notifications"},
+	)
 
-	if kn.Spec.Notification.Slack.SecretName != "" {
-		optional := true
-		volumes = append(volumes, corev1.Volume{
-			Name: "credentials",
-			VolumeSource: corev1.VolumeSource{
-				Projected: &corev1.ProjectedVolumeSource{
-					Sources: []corev1.VolumeProjection{
-						{Secret: &corev1.SecretProjection{
-							LocalObjectReference: corev1.LocalObjectReference{Name: kn.Spec.Notification.Slack.SecretName},
-							Items:                []corev1.KeyToPath{{Key: "webhook-url", Path: "slack-webhook"}},
-							Optional:             &optional,
-						}},
-					},
-				},
+	credentialSources := make([]corev1.VolumeProjection, 0, len(kn.Spec.Notification.Credentials))
+	for _, credential := range kn.Spec.Notification.Credentials {
+		credentialSources = append(credentialSources, corev1.VolumeProjection{
+			Secret: &corev1.SecretProjection{
+				LocalObjectReference: corev1.LocalObjectReference{Name: credential.SecretRef.Name},
+				Items: []corev1.KeyToPath{{
+					Key:  credential.SecretRef.Key,
+					Path: credential.Name,
+				}},
 			},
 		})
-		mounts = append(mounts, corev1.VolumeMount{
-			Name: "credentials", MountPath: "/etc/notification/credentials", ReadOnly: true,
-		})
-	} else {
-		volumes = append(volumes, corev1.Volume{
-			Name:         "credentials",
-			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-		})
-		mounts = append(mounts, corev1.VolumeMount{
-			Name: "credentials", MountPath: "/etc/notification/credentials", ReadOnly: true,
-		})
 	}
+	credentialsVolume := corev1.Volume{Name: notificationCredentialsVolumeName}
+	if len(credentialSources) > 0 {
+		credentialsVolume.Projected = &corev1.ProjectedVolumeSource{Sources: credentialSources}
+	} else {
+		credentialsVolume.EmptyDir = &corev1.EmptyDirVolumeSource{}
+	}
+	volumes = append(volumes, credentialsVolume)
+	mounts = append(mounts, corev1.VolumeMount{
+		Name: notificationCredentialsVolumeName, MountPath: notificationCredentialsMountPath, ReadOnly: true,
+	})
 
 	env := []corev1.EnvVar{
 		{Name: "CONFIG_PATH", Value: "/etc/notification/config.yaml"},

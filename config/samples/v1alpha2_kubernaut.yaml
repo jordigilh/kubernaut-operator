@@ -357,9 +357,21 @@ spec:
   notification:
     logging:
       level: INFO
-    slack:
-      channel: "#kubernaut-alerts"
-      secretName: slack-webhook
+    credentials:
+      - name: slack-ops
+        secretRef:
+          name: slack-webhook
+          key: webhook-url
+      - name: teams-primary
+        secretRef:
+          name: notification-teams
+          key: webhook-url
+      - name: pagerduty-critical
+        secretRef:
+          name: notification-pagerduty
+          key: routing-key
+    routing:
+      configMapName: notification-routing
 
   authWebhook:
     logging:
