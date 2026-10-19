@@ -614,7 +614,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		kn := newMinimalCR()
 		r := businessUnitReconciler(kn, interceptor.Funcs{})
 		_, err := r.reconcilePhases(ctx, kn, kn)
-		Expect(err).To(HaveOccurred())
+		Expect(err).NotTo(HaveOccurred(), "invalid TLS material was already observed above; workload deployment must not add a provider gate")
 		job, err := resources.MigrationJob(kn)
 		Expect(err).NotTo(HaveOccurred())
 		kn.Status.LastMigrationHash = resources.SpecHash(job)
@@ -825,7 +825,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		_, _, err = r.ensureRuntimeTLS(ctx, kn)
 		Expect(err).To(HaveOccurred())
 		_, err = r.deployWorkloads(ctx, kn, kn, nil, telemetryMaterialRevisionSet{})
-		Expect(err).To(HaveOccurred())
+		Expect(err).NotTo(HaveOccurred(), "standard NetworkPolicy reconciliation must not add a provider gate")
 		kn.Spec.Monitoring.Prometheus.Enabled = ptr.To(false)
 		kn.Spec.Monitoring.AlertManager.Enabled = ptr.To(true)
 		kn.Spec.Monitoring.AlertManager.URL = "not-a-url"
