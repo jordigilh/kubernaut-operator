@@ -26,8 +26,10 @@ spec:
         - port: 8443
           protocol: TCP
     # The API server reaches the manager webhook from the host network, which
-    # has no portable namespace/pod selector. Keep this allowance port-scoped;
-    # administrators may add a narrower CNI-specific source policy.
+    # has no portable namespace/pod selector. This rule allows all sources to
+    # TCP 9443. Standard NetworkPolicy allows are additive, so an additional
+    # source allowlist cannot narrow it; restriction requires a CNI-specific
+    # deny or equivalent enforcement mechanism.
     - ports:
         - port: 9443
           protocol: TCP

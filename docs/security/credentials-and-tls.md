@@ -205,6 +205,11 @@ server reaches that admission endpoint from the host network and has no
 portable namespace/pod selector. Administrators and the CNI own that ingress
 boundary.
 
+The OLM manager policy permits all sources to TCP 9443 for the same host-network
+webhook reason. Standard NetworkPolicy allows are additive, so another standard
+allow policy cannot narrow that source set; administrators must use a
+CNI-specific deny or equivalent enforcement when a narrower boundary is needed.
+
 Only objects carrying the operator ownership markers are updated or cleaned up.
 Administrator-owned policies remain untouched. See
 `docs/design/ADR-PLATFORM-003-portable-kubernetes-networkpolicy.md` for the
