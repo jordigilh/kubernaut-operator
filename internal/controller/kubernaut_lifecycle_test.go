@@ -1071,7 +1071,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.List(ctx, npList, client.InNamespace(testNamespace), client.MatchingLabels{
 				"app.kubernetes.io/managed-by": "kubernaut-operator",
 			})).To(Succeed())
-		Expect(npList.Items).NotTo(BeEmpty(), "standard policies must remain applied after the update")
+			Expect(npList.Items).NotTo(BeEmpty(), "standard policies must remain applied after the update")
 		})
 
 	})

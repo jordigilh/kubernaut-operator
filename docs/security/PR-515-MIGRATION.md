@@ -1,5 +1,7 @@
 # PR #515 remediation: deployment preflight and migration
 
+> **Historical / superseded by issue #555 for network-policy behavior.**
+
 These are operator engineering changes, not a FedRAMP authorization or proof of
 outside cluster controls. Do not upgrade blindly: the default isolation behavior
 changes intentionally from best-effort provider submission to fail-closed native

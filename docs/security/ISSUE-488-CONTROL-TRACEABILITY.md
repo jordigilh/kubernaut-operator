@@ -1,5 +1,7 @@
 # Issue #488 security control traceability
 
+> **Historical / superseded by issue #555 for provider-native network-policy evidence.** Current evidence is defined in ADR-PLATFORM-003.
+
 **Matrix ID:** KO-SEC-TR-488-001
 **Version:** 0.2
 **Date:** 2026-10-15

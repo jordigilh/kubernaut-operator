@@ -1,5 +1,7 @@
 # PR #518: OVN pod isolation and DNS repair
 
+> **Historical / superseded by issue #555.** OVN-native policy guidance is no longer part of the operator runtime contract.
+
 ## Approval and scope
 
 The user approved addressing the reviewed default-deny and DNS-selector findings

@@ -1,5 +1,7 @@
 # ADR-PLATFORM-001: Platform-Neutral Operator and Bounded Provider Policy Contract
 
+> **Historical / superseded by issue #555.** Provider-native policy portions of this document are no longer authoritative. See [`ADR-PLATFORM-003-portable-kubernetes-networkpolicy.md`](ADR-PLATFORM-003-portable-kubernetes-networkpolicy.md).
+
 **Status**: Accepted — implementation complete on `fix/488-platform-neutrality`; live provider/OpenShift qualification remains environment-dependent
 **Decision Date**: 2026-10-01
 **Version**: 1.0

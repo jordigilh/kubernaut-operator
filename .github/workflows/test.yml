@@ -241,7 +241,6 @@ jobs:
         env:
           KIND_OPERATOR_VERSION: ci
           KUBERNAUT_OPERATOR_IMAGE: ${{ env.OPERATOR_IMAGE }}
-          KUBERNAUT_E2E_PROVIDER: ${{ matrix.provider }}
           KUBERNAUT_E2E_TLS_SOURCE: ${{ matrix.tls_source }}
           KIND_CLUSTER_NAME: ${{ matrix.cluster_name }}
         run: make test-e2e-kind
