@@ -24,6 +24,51 @@ stringData:
   webhook-url: {{ .Values.fixtures.slack.webhookURL | quote }}
 ---
 apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notification-routing
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+data:
+  routing.yaml: |-
+    route:
+      receiver: slack-ops
+    receivers:
+      - name: slack-ops
+        slackConfigs:
+          - channel: "#kubernaut-alerts"
+            credentialRef: slack-ops
+      - name: teams-primary
+        teamsConfigs:
+          - credentialRef: teams-primary
+      - name: pagerduty-critical
+        pagerdutyConfigs:
+          - credentialRef: pagerduty-critical
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: notification-teams
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  webhook-url: {{ .Values.fixtures.teams.webhookURL | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: notification-pagerduty
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  routing-key: {{ .Values.fixtures.pagerduty.routingKey | quote }}
+---
+apiVersion: v1
 kind: Secret
 metadata:
   name: kubernaut-console-oidc

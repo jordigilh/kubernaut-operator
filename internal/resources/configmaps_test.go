@@ -1756,16 +1756,19 @@ var _ = Describe("ConfigMaps", func() {
 	})
 
 	Describe("Notification ConfigMap", func() {
-		It("routing includes Slack when configured", func() {
+		It("routing remains provider-neutral when credentials are configured", func() {
 			kn := testKubernaut()
-			kn.Spec.Notification.Slack.SecretName = "slack-webhook"
-			kn.Spec.Notification.Slack.Channel = "#ops"
+			kn.Spec.Notification.Credentials = []kubernautv1alpha2.NotificationCredentialSpec{{
+				Name:      "slack-ops",
+				SecretRef: kubernautv1alpha2.NotificationSecretRef{Name: "slack-webhook", Key: "webhook-url"},
+			}}
 			cm, err := NotificationRoutingConfigMap(kn)
 			Expect(err).NotTo(HaveOccurred())
 
 			data := cm.Data["routing.yaml"]
-			Expect(data).To(ContainSubstring("slack"), "routing config should reference slack receiver, got:\n%s", data)
-			Expect(data).To(ContainSubstring("#ops"), "routing config should contain channel #ops, got:\n%s", data)
+			Expect(data).To(ContainSubstring("console"), "default routing should remain console-only, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("slackConfigs"))
+			Expect(data).NotTo(ContainSubstring("credentialsSecretName"))
 		})
 
 		It("routing falls back to console without Slack", func() {

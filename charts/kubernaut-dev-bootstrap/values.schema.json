@@ -35,6 +35,20 @@
             "webhookURL": { "type": "string", "minLength": 1 }
           }
         },
+        "teams": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "webhookURL": { "type": "string", "minLength": 1 }
+          }
+        },
+        "pagerduty": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "routingKey": { "type": "string", "minLength": 1 }
+          }
+        },
         "console": {
           "type": "object",
           "additionalProperties": false,

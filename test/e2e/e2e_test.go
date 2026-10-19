@@ -268,6 +268,33 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			}
 		})
 
+		It("E2E-NOT-SECRET-001 [IA-5, SC-28, CM-6; SOC2 CC6.1, CC6.6, CC8.1; "+
+			"ASVS v5.0.0-V8.2.1, v5.0.0-V16.5.2] projects the provider-neutral "+
+			"Notification credential and preserves its routing reference", func() {
+			By("checking the namespace-local Secret projection")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deployment", "notification-controller",
+					"-n", crNS,
+					"-o", "yaml")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("name: slack-webhook"))
+				g.Expect(output).To(ContainSubstring("name: notification-teams"))
+				g.Expect(output).To(ContainSubstring("name: notification-pagerduty"))
+				g.Expect(output).To(ContainSubstring("mountPath: /etc/notification/credentials"))
+				g.Expect(output).To(ContainSubstring("readOnly: true"))
+			}, 5*time.Minute, 2*time.Second).Should(Succeed())
+
+			By("checking the explicit routing credential reference")
+			cmd := exec.Command("kubectl", "get", "configmap", "notification-routing",
+				"-n", crNS, "-o", "jsonpath={.data.routing\\.yaml}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(ContainSubstring("credentialRef: slack-ops"))
+			Expect(output).To(ContainSubstring("credentialRef: teams-primary"))
+			Expect(output).To(ContainSubstring("credentialRef: pagerduty-critical"))
+		})
+
 		It("should create Services for reachable components", func() {
 			verifyService := func(name string) {
 				cmd := exec.Command("kubectl", "get", "service", name,
