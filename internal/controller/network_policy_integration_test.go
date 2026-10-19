@@ -90,6 +90,15 @@ var _ = Describe("portable NetworkPolicy controller wiring", Label("integration"
 			Name: "kubernaut-gateway", Namespace: testNamespace,
 			Labels: map[string]string{"app.kubernetes.io/managed-by": "administrator"},
 		}}
+		existing := &networkingv1.NetworkPolicy{}
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(foreign), existing); err == nil {
+			Expect(k8sClient.Delete(ctx, existing)).To(Succeed())
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(foreign), &networkingv1.NetworkPolicy{}))
+			}, timeout, interval).Should(BeTrue())
+		} else {
+			Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		}
 		Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
 		cr := newCRWithRouteDisabled()
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())

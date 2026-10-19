@@ -195,7 +195,7 @@ var _ = Describe("portable NetworkPolicy unit lifecycle", Label("unit"), func() 
 			MapperProvider: func(*rest.Config, *http.Client) (meta.RESTMapper, error) { return mapper, nil },
 		})
 		Expect(err).NotTo(HaveOccurred())
-		reconciler := &KubernautReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+		reconciler := &KubernautReconciler{}
 		Expect(reconciler.SetupWithManager(manager)).To(Succeed())
 		Expect(reconciler.APIReader).NotTo(BeNil())
 		Expect(monitoringResourceSupported(mapper, "ServiceMonitor")).To(BeTrue())

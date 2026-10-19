@@ -3,6 +3,7 @@
 resources:
 - bases/kubernaut-operator.clusterserviceversion.yaml
 - ../default
+- ../network-policy
 - ../samples
 - ../scorecard
 
