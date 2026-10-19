@@ -44,9 +44,9 @@ spec:
     ## Kubernaut Operator
 
     The Kubernaut Operator deploys and manages the **Kubernaut AIOps Remediation Platform**
-    on Kubernetes and OpenShift. Routes, service-CA, monitoring, and OVN policy
-    resources are optional capability adapters; generic clusters use explicit
-    Kubernetes-native configuration.
+    on Kubernetes and OpenShift. Routes, service-CA, and monitoring resources
+    are optional capability adapters; runtime isolation uses the portable
+    Kubernetes NetworkPolicy API.
 
     ### Features
 
@@ -54,7 +54,7 @@ spec:
     - **BYO infrastructure**: bring your own PostgreSQL and Valkey/Redis
     - **Portable lifecycle**: workloads, Services, RBAC, PDBs, status, and cleanup use core Kubernetes APIs
     - **Explicit TLS and exposure**: administrator-managed, cert-manager, or development self-signed TLS plus generic Ingress
-    - **Native policy adapters**: capability-gated Cilium, Calico, or OpenShift OVN submission without raw-policy fallback
+    - **Portable network isolation**: selector-based Kubernetes NetworkPolicy objects with administrator-owned API-server/external egress
     - **Policy-governed**: Rego policies control signal classification and AI analysis approval
     - **LLM-powered analysis**: integrates with OpenAI, Anthropic, and other LLM providers
     - **Ansible integration**: optional AWX/AAP for Ansible-based remediation workflows
@@ -71,7 +71,7 @@ spec:
 
     1. Create the required BYO secrets (PostgreSQL, Valkey, LLM credentials)
     2. Create Rego policy ConfigMaps
-    3. Select TLS/exposure options and any installed policy provider
+    3. Select TLS/exposure options and apply a `Kubernaut` CR
     4. Apply a `Kubernaut` CR — see the sample in the operator bundle
   displayName: Kubernaut Operator
   icon:

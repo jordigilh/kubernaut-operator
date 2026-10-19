@@ -59,6 +59,20 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		Expect(apiFrontend.Properties).NotTo(HaveKey("spire"))
 	})
 
+	It("UT-NP-555-API-001 [AC-3, AC-6; SOC2 CC6.1, CC6.6; ASVS V4.1, V4.2] publishes only the portable NetworkPolicy contract", func() {
+		crd := loadKubernautCRD()
+		networkPolicies := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["networkPolicies"]
+		Expect(networkPolicies.Properties).To(HaveKey("scrapeSources"))
+		Expect(networkPolicies.Properties).To(HaveKey("gateway"))
+		Expect(networkPolicies.Properties).To(HaveKey("apifrontend"))
+		Expect(networkPolicies.Properties).To(HaveKey("console"))
+		Expect(networkPolicies.Properties).To(HaveKey("datastorage"))
+		Expect(networkPolicies.Properties).To(HaveKey("kubernautAgent"))
+		for _, removed := range []string{"mode", "provider", "apiServerCIDR", "apiServerCIDRs", "apiServerPort", "monitoring", "externalWebhooks", "idp", "llm", "mcpGateway", "prometheus"} {
+			Expect(networkPolicies.Properties).NotTo(HaveKey(removed), "obsolete network policy field %s must not be published", removed)
+		}
+	})
+
 	It("UT-WE-480-API-001 publishes bounded failed WorkflowExecution retention with safe defaults", func() {
 		crd := loadKubernautCRD()
 		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema

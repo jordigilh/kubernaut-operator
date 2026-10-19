@@ -107,29 +107,26 @@ var _ = Describe("ClusterRoles", func() {
 		}
 	})
 
-	It("grants Calico tier and tiered-policy access in the generated manager role", func() {
+	It("grants only standard NetworkPolicy access in the generated manager role", func() {
 		manifest, err := os.ReadFile(filepath.Join("..", "..", "config", "rbac", "role.yaml"))
 		Expect(err).NotTo(HaveOccurred())
 
 		role := &rbacv1.ClusterRole{}
 		Expect(yaml.Unmarshal(manifest, role)).To(Succeed())
 
-		var tierRule *rbacv1.PolicyRule
-		var tierPolicyRule *rbacv1.PolicyRule
+		var networkPolicyRule *rbacv1.PolicyRule
 		for i := range role.Rules {
 			rule := &role.Rules[i]
-			if slices.Contains(rule.APIGroups, "projectcalico.org") && slices.Contains(rule.Resources, "tiers") {
-				tierRule = rule
+			if slices.Contains(rule.APIGroups, "networking.k8s.io") && slices.Contains(rule.Resources, "networkpolicies") {
+				networkPolicyRule = rule
 			}
-			if slices.Contains(rule.APIGroups, "projectcalico.org") && slices.Contains(rule.Resources, "tier.networkpolicies") {
-				tierPolicyRule = rule
-			}
+			Expect(rule.APIGroups).NotTo(ContainElement("cilium.io"))
+			Expect(rule.APIGroups).NotTo(ContainElement("projectcalico.org"))
+			Expect(rule.APIGroups).NotTo(ContainElement("policy.networking.k8s.io"))
 		}
 
-		Expect(tierRule).NotTo(BeNil(), "manager role must read Calico tiers for native NetworkPolicy authorization")
-		Expect(tierRule.Verbs).To(ConsistOf("get", "list", "watch"))
-		Expect(tierPolicyRule).NotTo(BeNil(), "manager role must manage Calico tiered NetworkPolicies")
-		Expect(tierPolicyRule.Verbs).To(ConsistOf("create", "delete", "get", "list", "patch", "update", "watch"))
+		Expect(networkPolicyRule).NotTo(BeNil(), "manager role must manage standard NetworkPolicies")
+		Expect(networkPolicyRule.Verbs).To(ConsistOf("create", "delete", "get", "list", "patch", "update", "watch"))
 	})
 
 	Describe("GatewayClusterRole", func() {

@@ -18,7 +18,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/events"
@@ -29,7 +28,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
-	"github.com/jordigilh/kubernaut-operator/internal/policy"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
@@ -87,31 +85,18 @@ func businessUnitReconciler(kn *kubernautv1alpha2.Kubernaut, faults interceptor.
 		"alertmanagerconfigs.monitoring.coreos.com"} {
 		objects = append(objects, &apiextensionsv1.CustomResourceDefinition{ObjectMeta: metav1.ObjectMeta{Name: name}})
 	}
-	providerCRD := ciliumPolicyCRD()
-	providerDaemonSet := ciliumProviderDaemonSet()
-	providerDaemonSet.Status.DesiredNumberScheduled = 1
-	providerDaemonSet.Status.NumberReady = 1
-	objects = append(objects, providerCRD, providerDaemonSet)
 	certificate := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "cert-manager.io/v1", "kind": "Certificate",
 	}}
 	api := fake.NewClientBuilder().WithScheme(k8sClient.Scheme()).WithObjects(objects...).
 		WithStatusSubresource(&kubernautv1alpha2.Kubernaut{}, &batchv1.Job{}, &appsv1.Deployment{}, certificate).
 		WithInterceptorFuncs(faults).Build()
-	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{{Group: "cilium.io", Version: "v2"}})
-	mapper.Add(policy.RequiredGVKs(policy.ProviderCilium)[0], meta.RESTScopeNamespace)
+	mapper := meta.NewDefaultRESTMapper(nil)
 	mapped := businessMappedClient{Client: api, mapper: mapper}
 	return &KubernautReconciler{Client: mapped, APIReader: mapped, Scheme: api.Scheme(),
 		Recorder: events.NewFakeRecorder(10000), now: time.Now,
 		RestCfg: &rest.Config{Host: "https://unit.invalid", Transport: crdUnitTransport{}},
 	}
-}
-
-func businessUnitReconcilerWithoutProvider(kn *kubernautv1alpha2.Kubernaut, faults interceptor.Funcs) *KubernautReconciler {
-	r := businessUnitReconciler(kn, faults)
-	ExpectWithOffset(1, r.Delete(ctx, ciliumPolicyCRD())).To(Succeed())
-	ExpectWithOffset(1, r.Delete(ctx, ciliumProviderDaemonSet())).To(Succeed())
-	return r
 }
 
 func refreshBusinessUnitCR(r *KubernautReconciler, kn *kubernautv1alpha2.Kubernaut) {

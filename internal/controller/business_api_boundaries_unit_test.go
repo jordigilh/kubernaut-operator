@@ -20,7 +20,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
@@ -30,7 +29,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
-	"github.com/jordigilh/kubernaut-operator/internal/policy"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 	"github.com/jordigilh/kubernaut/pkg/shared/assets"
 )
@@ -396,61 +394,6 @@ var _ = Describe("independent activation and exposure failure decisions", Label(
 		Expect(err).To(MatchError(ContainSubstring(unitAPIDenial)))
 	})
 
-	It("UT-AUDIT-515-API-012: propagates native policy render, ownership, prune and status failures", func() {
-		kn := newMinimalCR()
-		kn.Spec.Monitoring.Prometheus.Enabled, kn.Spec.Monitoring.AlertManager.Enabled = ptr.To(false), ptr.To(false)
-		for _, faults := range []interceptor.Funcs{
-			{Create: func(ctx context.Context, api client.WithWatch, object client.Object, options ...client.CreateOption) error {
-				if _, native := object.(*unstructured.Unstructured); native {
-					return fmt.Errorf("%s", unitAPIDenial)
-				}
-				return api.Create(ctx, object, options...)
-			}},
-			{List: func(ctx context.Context, api client.WithWatch, list client.ObjectList, options ...client.ListOption) error {
-				if _, native := list.(*unstructured.UnstructuredList); native {
-					return fmt.Errorf("%s", unitAPIDenial)
-				}
-				return api.List(ctx, list, options...)
-			}},
-		} {
-			r := ciliumBusinessReconciler(kn, faults)
-			Expect(r.reconcileProviderPolicies(ctx, kn, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
-		}
-		r := ciliumBusinessReconciler(kn, interceptor.Funcs{})
-		kn.Spec.NetworkPolicies.ScrapeSources = []kubernautv1alpha2.MetricsScrapeSource{{Namespace: "metrics"}}
-		Expect(r.reconcileProviderPolicies(ctx, kn, kn)).To(HaveOccurred())
-		kn.Spec.NetworkPolicies.ScrapeSources = nil
-		r.Client = interceptor.NewClient(r.Client.(businessMappedClient).Client.(client.WithWatch),
-			interceptor.Funcs{SubResourcePatch: deniedUnitStatus})
-		Expect(r.patchProviderPolicyStatus(ctx, kn, policy.DetectionResult{}, false, nil)).To(HaveOccurred())
-		desired := nativePolicyOwnershipFixture()
-		existing := desired.DeepCopy()
-		existing.SetLabels(nil)
-		Expect(providerPolicyOwnershipError(existing, desired)).To(HaveOccurred())
-		r.Scheme = runtime.NewScheme()
-		_, err := r.ensureRenderedProviderPolicies(ctx, kn, []policy.RenderedPolicy{{Object: desired, Namespaced: true}})
-		Expect(err).To(HaveOccurred())
-		for index, faults := range []interceptor.Funcs{{List: deniedUnitList}, {Delete: deniedUnitDelete},
-			{List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
-				return &meta.NoKindMatchError{GroupKind: schema.GroupKind{Kind: "AbsentPolicy"}}
-			}}} {
-			r = businessUnitReconciler(kn, interceptor.Funcs{})
-			desired.SetNamespace(kn.Namespace)
-			Expect(r.Create(ctx, desired.DeepCopy())).To(Succeed())
-			r.Client = interceptor.NewClient(r.Client.(client.WithWatch), faults)
-			errors := r.deleteProviderPolicies(ctx, kn.Namespace, kn.Name)
-			if index == 2 {
-				// NoKindMatch is an absent optional API, not a cleanup failure.
-				Expect(errors).To(BeEmpty())
-			} else {
-				Expect(errors).NotTo(BeEmpty())
-			}
-		}
-		kn.Namespace = ""
-		r = businessUnitReconciler(kn, interceptor.Funcs{})
-		Expect(r.reconcileProviderPolicies(ctx, kn, kn)).To(HaveOccurred())
-	})
-
 	It("UT-AUDIT-515-API-013: reconciles all OpenShift exposures and surfaces per-component write failures", func() {
 		kn := newMinimalCR()
 		kn.Spec.Console.Enabled = ptr.To(true)
@@ -669,7 +612,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 			Expect(err).To(MatchError(ContainSubstring(unitAPIDenial)))
 		}
 		kn := newMinimalCR()
-		r := businessUnitReconcilerWithoutProvider(kn, interceptor.Funcs{})
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
 		_, err := r.reconcilePhases(ctx, kn, kn)
 		Expect(err).To(HaveOccurred())
 		job, err := resources.MigrationJob(kn)
@@ -878,7 +821,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		_, _, err := r.ensureRuntimeTLS(ctx, kn)
 		Expect(err).To(MatchError(ContainSubstring("reading development TLS secret")))
 		kn.Spec.TLS.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{RotationBefore: "not-a-duration"}
-		r = businessUnitReconcilerWithoutProvider(kn, interceptor.Funcs{})
+		r = businessUnitReconciler(kn, interceptor.Funcs{})
 		_, _, err = r.ensureRuntimeTLS(ctx, kn)
 		Expect(err).To(HaveOccurred())
 		_, err = r.deployWorkloads(ctx, kn, kn, nil, telemetryMaterialRevisionSet{})

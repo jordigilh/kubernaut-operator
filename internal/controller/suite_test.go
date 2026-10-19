@@ -31,7 +31,6 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -164,80 +163,17 @@ var _ = BeforeSuite(func() {
 })
 
 var _ = BeforeEach(func() {
-	for _, label := range CurrentSpecReport().Labels() {
-		if label == "manages-provider-fixture" || label == "requires-no-provider" {
-			removeIntegrationCiliumFixture(ctx)
-			return
-		}
-	}
 	ensureIntegrationPolicyFixture(ctx)
 	ensureIntegrationBYOServices(ctx)
 })
-
-func removeIntegrationCiliumFixture(ctx context.Context) {
-	if os.Getenv("KUBERNAUT_CONTROLLER_TEST_TIER") == controllerUnitTier || k8sClient == nil {
-		return
-	}
-
-	daemonSet := ciliumProviderDaemonSet()
-	if err := k8sClient.Delete(ctx, daemonSet); err != nil && !apierrors.IsNotFound(err) {
-		ExpectWithOffset(1, err).NotTo(HaveOccurred())
-	}
-	crd := ciliumPolicyCRD()
-	if err := k8sClient.Delete(ctx, crd); err != nil && !apierrors.IsNotFound(err) {
-		ExpectWithOffset(1, err).NotTo(HaveOccurred())
-	}
-	EventuallyWithOffset(1, func() bool {
-		live := &apiextensionsv1.CustomResourceDefinition{}
-		return apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(crd), live))
-	}, timeout, interval).Should(BeTrue())
-	apimeta.MaybeResetRESTMapper(k8sClient.RESTMapper())
-}
 
 func ensureIntegrationPolicyFixture(ctx context.Context) {
 	if os.Getenv("KUBERNAUT_CONTROLLER_TEST_TIER") == controllerUnitTier || k8sClient == nil {
 		return
 	}
 
-	crd := ciliumPolicyCRD()
-	liveCRD := &apiextensionsv1.CustomResourceDefinition{}
-	err := k8sClient.Get(ctx, client.ObjectKeyFromObject(crd), liveCRD)
-	if apierrors.IsNotFound(err) {
-		ExpectWithOffset(1, k8sClient.Create(ctx, crd)).To(Succeed())
-	} else {
-		ExpectWithOffset(1, err).NotTo(HaveOccurred())
-		if liveCRD.DeletionTimestamp != nil {
-			EventuallyWithOffset(1, func() bool {
-				return apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(crd), liveCRD))
-			}, timeout, interval).Should(BeTrue())
-			ExpectWithOffset(1, k8sClient.Create(ctx, crd)).To(Succeed())
-		}
-	}
-
-	daemonSet := ciliumProviderDaemonSet()
-	liveDaemonSet := &appsv1.DaemonSet{}
-	err = k8sClient.Get(ctx, client.ObjectKeyFromObject(daemonSet), liveDaemonSet)
-	if apierrors.IsNotFound(err) {
-		ExpectWithOffset(1, k8sClient.Create(ctx, daemonSet)).To(Succeed())
-		liveDaemonSet = daemonSet
-	} else {
-		ExpectWithOffset(1, err).NotTo(HaveOccurred())
-		if liveDaemonSet.DeletionTimestamp != nil {
-			EventuallyWithOffset(1, func() bool {
-				return apierrors.IsNotFound(k8sClient.Get(ctx, client.ObjectKeyFromObject(daemonSet), liveDaemonSet))
-			}, timeout, interval).Should(BeTrue())
-			ExpectWithOffset(1, k8sClient.Create(ctx, daemonSet)).To(Succeed())
-			liveDaemonSet = daemonSet
-		}
-	}
-	if liveDaemonSet.Status.NumberReady == 0 {
-		liveDaemonSet.Status.DesiredNumberScheduled = 1
-		liveDaemonSet.Status.NumberReady = 1
-		ExpectWithOffset(1, k8sClient.Status().Update(ctx, liveDaemonSet)).To(Succeed())
-	}
-
 	monitoringNamespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: resources.OCPMonitoringNamespace}}
-	err = k8sClient.Get(ctx, client.ObjectKeyFromObject(monitoringNamespace), &corev1.Namespace{})
+	err := k8sClient.Get(ctx, client.ObjectKeyFromObject(monitoringNamespace), &corev1.Namespace{})
 	if apierrors.IsNotFound(err) {
 		ExpectWithOffset(1, k8sClient.Create(ctx, monitoringNamespace)).To(Succeed())
 	} else {

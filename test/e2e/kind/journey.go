@@ -18,20 +18,16 @@ package kind
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
-	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
 const (
@@ -294,20 +290,15 @@ func ensureNamespace(ctx context.Context, namespace string) error {
 }
 
 func applyKubernautCR(ctx context.Context) error {
-	if err := applyYAML(ctx, kubernautCR()); err != nil {
-		return fmt.Errorf("creating Kubernaut CR: %w", err)
-	}
-	return nil
+	return pollUntilSuccess(ctx, 2*time.Minute, 2*time.Second, func() error {
+		if err := applyYAML(ctx, kubernautCR()); err != nil {
+			return fmt.Errorf("creating Kubernaut CR: %w", err)
+		}
+		return nil
+	})
 }
 
 func kubernautCR() *kubernautv1alpha2.Kubernaut {
-	provider := kubernautv1alpha2.NetworkPolicyProviderAuto
-	switch configuredProvider {
-	case providerCilium:
-		provider = kubernautv1alpha2.NetworkPolicyProviderCilium
-	case providerCalico:
-		provider = kubernautv1alpha2.NetworkPolicyProviderCalico
-	}
 	tlsMode, err := TLSModeForSource(string(configuredTLS), string(activeManualTLSSelection))
 	if err != nil {
 		panic(fmt.Sprintf("resolving configured TLS fixture mode: %v", err))
@@ -315,18 +306,6 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 	tls := kubernautv1alpha2.TLSConfigSpec{Mode: tlsMode}
 	dataStorage := kubernautv1alpha2.DataStorageSpec{}
 	monitoring := kubernautv1alpha2.MonitoringSpec{}
-	if configuredProvider != providerGeneric {
-		monitoring = kubernautv1alpha2.MonitoringSpec{
-			TLS: &kubernautv1alpha2.MonitoringTLSSpec{
-				Source: kubernautv1alpha2.MonitoringTLSSourceSecret,
-				CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{
-					Name: monitoringCASecretName,
-				},
-			},
-			Prometheus:   kubernautv1alpha2.PrometheusSpec{URL: monitoringPrometheusURL()},
-			AlertManager: kubernautv1alpha2.AlertManagerSpec{URL: monitoringAlertManagerURL()},
-		}
-	}
 	switch configuredTLS {
 	case tlsDevelopment:
 		tls.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}
@@ -405,206 +384,9 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 			Gateway:         kubernautv1alpha2.GatewaySpec{Enabled: ptr.To(false)},
 			APIFrontend:     apiFrontend,
 			TLS:             tls,
-			NetworkPolicies: kubernautv1alpha2.NetworkPoliciesSpec{Provider: provider},
+			NetworkPolicies: kubernautv1alpha2.NetworkPoliciesSpec{},
 		},
 	}
-}
-
-func exerciseMonitoringTLSSources(ctx context.Context) error {
-	if configuredProvider == providerGeneric {
-		return nil
-	}
-	encoded, err := kubectl(ctx, "get", "secret", monitoringCASecretName, "-n", kubernautNamespace,
-		"-o", "jsonpath={.data.ca\\.crt}")
-	if err != nil {
-		return fmt.Errorf("reading monitoring CA Secret for ConfigMap fixture: %w", err)
-	}
-	caPEM, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
-	if err != nil {
-		return fmt.Errorf("decoding monitoring CA Secret for ConfigMap fixture: %w", err)
-	}
-	configMap := &corev1.ConfigMap{
-		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "monitoring-ca-config",
-			Namespace: kubernautNamespace,
-		},
-		Data: map[string]string{tlsCACertificateKey: string(caPEM)},
-	}
-	if err := applyYAML(ctx, configMap); err != nil {
-		return fmt.Errorf("creating monitoring ConfigMap fixture: %w", err)
-	}
-	defer func() {
-		_, _ = kubectl(ctx, "delete", "configmap", configMap.Name, "-n", configMap.Namespace,
-			"--ignore-not-found=true") //nolint:errcheck
-	}()
-
-	if err := patchMonitoringTLSSource(ctx, "configMap"); err != nil {
-		return err
-	}
-	if err := waitForMonitoringTLSDeploymentSource(
-		ctx, kubernautv1alpha2.MonitoringTLSSourceConfigMap, configMap.Name,
-	); err != nil {
-		return err
-	}
-	if _, err := agentMonitoringGET(
-		ctx, monitoringPrometheusServiceName, monitoringPrometheusServicePort,
-		"/api/v1/label/__name__/values",
-	); err != nil {
-		return fmt.Errorf("ConfigMap-backed monitoring trust handshake failed: %w", err)
-	}
-
-	if err := patchMonitoringTLSSource(ctx, "system"); err != nil {
-		return err
-	}
-	if err := waitForMonitoringTLSDeploymentSource(ctx, kubernautv1alpha2.MonitoringTLSSourceSystem, ""); err != nil {
-		return err
-	}
-	if _, err := agentMonitoringGET(
-		ctx, monitoringPrometheusServiceName, monitoringPrometheusServicePort,
-		"/api/v1/label/__name__/values",
-	); err == nil {
-		return fmt.Errorf("system monitoring trust unexpectedly accepted the private fixture CA without a mounted CA")
-	}
-
-	if err := patchMonitoringTLSSource(ctx, "secret"); err != nil {
-		return err
-	}
-	if err := waitForMonitoringTLSDeploymentSource(
-		ctx, kubernautv1alpha2.MonitoringTLSSourceSecret, monitoringCASecretName,
-	); err != nil {
-		return err
-	}
-	if _, err := agentMonitoringGET(
-		ctx, monitoringPrometheusServiceName, monitoringPrometheusServicePort,
-		"/api/v1/label/__name__/values",
-	); err != nil {
-		return fmt.Errorf("secret-backed monitoring trust handshake failed after source restoration: %w", err)
-	}
-	_, _, wrongCAPEM, err := generateManualCA(time.Now().UTC(), "wrong-monitoring")
-	if err != nil {
-		return fmt.Errorf("generating wrong monitoring CA fixture: %w", err)
-	}
-	wrongCA := &corev1.Secret{
-		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      monitoringCASecretName,
-			Namespace: kubernautNamespace,
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{tlsCACertificateKey: wrongCAPEM},
-	}
-	if err := applyYAML(ctx, wrongCA); err != nil {
-		return fmt.Errorf("applying wrong monitoring CA fixture: %w", err)
-	}
-	if err := pollUntilSuccess(ctx, 3*time.Minute, 2*time.Second, func() error {
-		_, getErr := agentMonitoringGET(
-			ctx, monitoringPrometheusServiceName, monitoringPrometheusServicePort,
-			"/api/v1/label/__name__/values",
-		)
-		if getErr == nil {
-			return fmt.Errorf("wrong monitoring CA is still accepted")
-		}
-		return nil
-	}); err != nil {
-		return fmt.Errorf("wrong monitoring CA was not rejected: %w", err)
-	}
-	restoredCA := wrongCA.DeepCopy()
-	restoredCA.Data[tlsCACertificateKey] = caPEM
-	if err := applyYAML(ctx, restoredCA); err != nil {
-		return fmt.Errorf("restoring monitoring CA fixture: %w", err)
-	}
-	if err := pollUntilSuccess(ctx, 3*time.Minute, 2*time.Second, func() error {
-		_, getErr := agentMonitoringGET(
-			ctx, monitoringPrometheusServiceName, monitoringPrometheusServicePort,
-			"/api/v1/label/__name__/values",
-		)
-		return getErr
-	}); err != nil {
-		return fmt.Errorf("monitoring CA trust was not restored: %w", err)
-	}
-	return nil
-}
-
-func patchMonitoringTLSSource(ctx context.Context, source string) error {
-	tls := fmt.Sprintf(`{"source":%q,"caCertSecretRef":null,"caCertConfigMapRef":null}`, source)
-	switch source {
-	case "secret":
-		tls = fmt.Sprintf(
-			`{"source":%q,"caCertSecretRef":{"name":%q},"caCertConfigMapRef":null}`,
-			source, monitoringCASecretName,
-		)
-	case "configMap":
-		tls = fmt.Sprintf(`{"source":%q,"caCertSecretRef":null,"caCertConfigMapRef":{"name":"monitoring-ca-config"}}`, source)
-	}
-	if _, err := kubectl(ctx, "patch", "kubernaut", kubernautv1alpha2.SingletonName, "-n", kubernautNamespace,
-		"--type=merge", "-p", fmt.Sprintf(`{"spec":{"monitoring":{"tls":%s}}}`, tls)); err != nil {
-		return fmt.Errorf("patching monitoring TLS source to %s: %w", source, err)
-	}
-	return nil
-}
-
-func waitForMonitoringTLSDeploymentSource(
-	ctx context.Context, source kubernautv1alpha2.MonitoringTLSSource, objectName string,
-) error {
-	return pollUntilSuccess(ctx, 3*time.Minute, 2*time.Second, func() error {
-		for _, component := range monitoringTLSDeploymentComponents() {
-			output, err := kubectl(
-				ctx, "get", "deployment", resources.DeploymentName(component), "-n", kubernautNamespace, "-o", "json",
-			)
-			if err != nil {
-				return fmt.Errorf("reading %s monitoring TLS Deployment: %w", component, err)
-			}
-			deployment := &appsv1.Deployment{}
-			if err := yaml.Unmarshal([]byte(output), deployment); err != nil {
-				return fmt.Errorf("decoding %s monitoring TLS Deployment: %w", component, err)
-			}
-			desiredReplicas := int32(1)
-			if deployment.Spec.Replicas != nil {
-				desiredReplicas = *deployment.Spec.Replicas
-			}
-			rolloutReady := deployment.Status.ObservedGeneration >= deployment.Generation &&
-				deployment.Status.Replicas == desiredReplicas &&
-				deployment.Status.UpdatedReplicas >= desiredReplicas &&
-				deployment.Status.ReadyReplicas >= desiredReplicas
-			volume := findMonitoringDeploymentVolume(deployment)
-			matches := false
-			if source == kubernautv1alpha2.MonitoringTLSSourceSystem {
-				matches = rolloutReady && volume == nil &&
-					deployment.Spec.Template.Annotations[resources.AnnotationMonitoringMaterialRevision] == ""
-			} else if volume != nil {
-				matches = rolloutReady
-				switch source {
-				case kubernautv1alpha2.MonitoringTLSSourceSecret:
-					matches = matches && volume.Secret != nil && volume.Secret.SecretName == objectName
-				case kubernautv1alpha2.MonitoringTLSSourceConfigMap:
-					matches = matches && volume.ConfigMap != nil && volume.ConfigMap.Name == objectName
-				}
-			}
-			if !matches {
-				return fmt.Errorf("%s deployment has not selected monitoring TLS source %s", component, source)
-			}
-		}
-		return nil
-	})
-}
-
-func monitoringTLSDeploymentComponents() []string {
-	components := []string{resources.ComponentEffectivenessMonitor, resources.ComponentKubernautAgent}
-	if kubernautCR().Spec.APIFrontendEnabled() {
-		components = append(components, resources.ComponentAPIFrontend)
-	}
-	return components
-}
-
-func findMonitoringDeploymentVolume(deployment *appsv1.Deployment) *corev1.Volume {
-	for index := range deployment.Spec.Template.Spec.Volumes {
-		volume := &deployment.Spec.Template.Spec.Volumes[index]
-		if volume.Name == resources.MonitoringTLSCAVolumeName {
-			return volume
-		}
-	}
-	return nil
 }
 
 func manualAdminTLSConfig(selection manualTLSSelection) kubernautv1alpha2.TLSConfigSpec {

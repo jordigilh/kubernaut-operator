@@ -39,7 +39,6 @@ import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -153,7 +152,6 @@ var dataStorageAuditHashKeyFingerprint = resources.DataStorageAuditHashKeyFinger
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=services;configmaps;secrets;serviceaccounts;namespaces,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=endpoints,resourceNames=kubernetes,verbs=get
 // +kubebuilder:rbac:groups="",resources=configmaps,resourceNames=default-ingress-cert,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
@@ -161,15 +159,8 @@ var dataStorageAuditHashKeyFingerprint = resources.DataStorageAuditHashKeyFinger
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings;roles;rolebindings,verbs=get;list;watch;create;update;patch;delete;escalate;bind
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=cilium.io,resources=ciliumnetworkpolicies,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=projectcalico.org,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
-// Calico authorizes namespaced NetworkPolicy access through the referenced tier.
-// Read-only tier access is sufficient for policy reconciliation and cleanup.
-// +kubebuilder:rbac:groups=projectcalico.org,resources=tiers,verbs=get;list;watch
-// Calico's extension API maps CRUD access to the tiered pseudo-resource rather
-// than the ordinary NetworkPolicy resource.
-// +kubebuilder:rbac:groups=projectcalico.org,resources=tier.networkpolicies,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=policy.networking.k8s.io,resources=adminnetworkpolicies;baselineadminnetworkpolicies,verbs=get;list;watch;create;update;patch;delete
+// Standard NetworkPolicy is the only runtime policy API managed by the operator.
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes/custom-host,verbs=create;update
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingwebhookconfigurations;validatingwebhookconfigurations,verbs=get;list;watch;create;update;patch;delete
@@ -275,7 +266,7 @@ func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernaut
 
 	// Required isolation must exist before a migration Job or service workload
 	// can start. Failure never prunes the last known-good provider policy.
-	if err := r.reconcileProviderPolicies(ctx, kn, knV2); err != nil {
+	if err := r.reconcileNetworkPolicies(ctx, kn, knV2); err != nil {
 		log.Error(err, "native isolation blocks active reconciliation")
 		return ctrl.Result{}, err
 	}
@@ -2059,7 +2050,7 @@ func (r *KubernautReconciler) ensureDeployments(
 }
 
 func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, cmHashes map[string]string, telemetryRevisions telemetryMaterialRevisionSet) (hasRoute bool, _ error) {
-	if err := r.reconcileProviderPolicies(ctx, kn, knV2); err != nil {
+	if err := r.reconcileNetworkPolicies(ctx, kn, knV2); err != nil {
 		return false, err
 	}
 	depBuilders, err := r.enabledDeploymentBuilders(ctx, kn, knV2)
@@ -2120,98 +2111,45 @@ func (r *KubernautReconciler) ensureServices(ctx context.Context, kn *kubernautv
 	return nil
 }
 
-func (r *KubernautReconciler) reconcileProviderPolicies(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
-	components := resources.ActiveComponents(kn, knV2)
-	if err := policy.ValidateNativeOverrides(kn.Spec.NetworkPolicies); err != nil {
-		return r.patchProviderPolicyStatus(ctx, kn, policy.DetectionResult{
-			Provider: policy.ProviderNone,
-			Reason:   policy.ReasonUnsupportedProvider,
-			Message:  err.Error(),
-		}, false, err)
+func (r *KubernautReconciler) reconcileNetworkPolicies(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
+	if err := policy.ValidateNetworkPoliciesSpec(kn.Spec.NetworkPolicies); err != nil {
+		return r.patchNetworkPolicyStatus(ctx, kn, false, err)
 	}
-	// ValidateNativeOverrides already rejected every legacy static-CIDR input.
-	intent, err := policy.BuildIntent(kn.Namespace, components, nil)
+	intent, err := policy.BuildIntent(kn.Namespace, resources.ActiveComponents(kn, knV2))
 	if err != nil {
-		return r.patchProviderPolicyStatus(ctx, kn, policy.DetectionResult{
-			Provider: policy.ProviderNone,
-			Reason:   policy.ReasonUnsupportedProvider,
-			Message:  err.Error(),
-		}, false, err)
+		return r.patchNetworkPolicyStatus(ctx, kn, false, err)
 	}
 	intent.InstanceName = kn.Name
 	intent.ScrapeSources = kn.Spec.NetworkPolicies.ScrapeSources
 	intent.MetricsPorts = generatedMetricsPorts(kn, knV2)
+	intent.IngressOverrides = networkPolicyIngressOverrides(kn.Spec.NetworkPolicies)
 
-	detector := policy.Detector{Client: r.Client, RESTMapper: r.RESTMapper()}
-	detection := policy.Detect(detector.Discover(ctx), policy.Provider(kn.Spec.NetworkPolicies.Provider))
-	if !detection.Ready {
-		err := fmt.Errorf("native network isolation is required but unavailable: %s", detection.Message)
-		logf.FromContext(ctx).Error(err, "retaining existing native policies; activation denied", "reason", detection.Reason)
-		return r.patchProviderPolicyStatus(ctx, kn, detection, false, err)
-	}
-	if detection.Provider == policy.ProviderOVN && detection.Platform == "OpenShift" {
-		// Resolve the platform Service rather than assuming app=dns or copying
-		// frontend ports. See docs/design/PR-518-OVN-ISOLATION-DNS.md.
-		intent.DNS, err = policy.ResolveDNSDestination(ctx, r.Client, client.ObjectKey{
-			Namespace: resources.OCPDNSNamespace, Name: resources.OCPDNSServiceName,
-		})
-		if err != nil {
-			detection.PolicyReason = policy.ReasonDNSUnavailable
-			detection.PolicyMessage = err.Error()
-			return r.patchProviderPolicyStatus(ctx, kn, detection, false, err)
-		}
-	}
-	intent.Dependencies, err = r.resolveDependencyDestinations(ctx, kn, detection.Provider)
+	objects, err := policy.Render(intent)
 	if err != nil {
-		detection.PolicyReason = policy.ReasonDependencyUnavailable
-		detection.PolicyMessage = err.Error()
-		return r.patchProviderPolicyStatus(ctx, kn, detection, false, err)
+		return r.patchNetworkPolicyStatus(ctx, kn, false, err)
 	}
-	monitoringDestinations, monitoringErr := r.resolveMonitoringDestinations(ctx, knV2, detection)
-	intent.Monitoring = monitoringDestinations
-	if monitoringErr != nil {
-		logf.FromContext(ctx).Error(monitoringErr, "native monitoring policy destination unavailable",
-			"provider", detection.Provider,
-			"resolvedDestinationCount", len(monitoringDestinations),
-			"generation", kn.Generation,
-			"resourceVersion", kn.ResourceVersion)
-	}
-	objects, err := policy.Render(detection, intent)
+	desired, err := r.ensureRenderedNetworkPolicies(ctx, kn, objects)
 	if err != nil {
-		return r.patchProviderPolicyStatus(ctx, kn, detection, false, err)
+		return r.patchNetworkPolicyStatus(ctx, kn, false, err)
 	}
-
-	desired, err := r.ensureRenderedProviderPolicies(ctx, kn, objects)
-	if err != nil {
-		return err
+	if err := r.pruneNetworkPolicies(ctx, kn.Namespace, kn.Name, desired); err != nil {
+		return r.patchNetworkPolicyStatus(ctx, kn, false, err)
 	}
-	if err := r.pruneProviderPolicies(ctx, kn.Namespace, kn.Name, desired); err != nil {
-		return err
-	}
-	if detection.Ready {
-		logf.FromContext(ctx).Info("native policy provider reconciled",
-			"provider", detection.Provider,
-			"version", detection.Version,
-			"generation", kn.Generation,
-			"resourceVersion", kn.ResourceVersion,
-			"policyCount", len(objects))
-	}
-	if monitoringErr != nil {
-		detection.PolicyReason = policy.ReasonMonitoringUnavailable
-		detection.PolicyMessage = fmt.Sprintf("native provider is ready but monitoring egress is unavailable: %v", monitoringErr)
-	}
-	return r.patchProviderPolicyStatus(ctx, kn, detection, detection.Ready && monitoringErr == nil, nil)
+	logf.FromContext(ctx).Info("standard Kubernetes NetworkPolicies reconciled",
+		"generation", kn.Generation, "resourceVersion", kn.ResourceVersion,
+		"namespace", kn.Namespace, "name", kn.Name, "policyCount", len(objects),
+		"enforcementAttested", false)
+	return r.patchNetworkPolicyStatus(ctx, kn, true, nil)
 }
 
-func (r *KubernautReconciler) resolveDependencyDestinations(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, provider policy.Provider) ([]policy.MonitoringDestination, error) {
-	valkeyPort := kn.Spec.Valkey.Port
-	if valkeyPort == 0 {
-		valkeyPort = resources.DefaultValkeyPort
+func networkPolicyIngressOverrides(spec kubernautv1alpha2.NetworkPoliciesSpec) map[string]kubernautv1alpha2.NetworkPolicyNamedIngressOverride {
+	return map[string]kubernautv1alpha2.NetworkPolicyNamedIngressOverride{
+		"gateway":         spec.Gateway,
+		"apifrontend":     spec.APIFrontend,
+		"console":         spec.Console,
+		"datastorage":     {NetworkPolicyIngressOverride: spec.DataStorage},
+		"kubernaut-agent": {NetworkPolicyIngressOverride: spec.KubernautAgent},
 	}
-	return policy.ResolveServiceDestinations(ctx, r.Client, provider, []policy.ServiceEndpoint{
-		{Name: "postgresql", Host: kn.Spec.PostgreSQL.Host, Namespace: kn.Namespace, Port: resources.PostgreSQLPort(kn)},
-		{Name: "valkey", Host: kn.Spec.Valkey.Host, Namespace: kn.Namespace, Port: valkeyPort},
-	})
 }
 
 // generatedMetricsPorts derives authorization from the actual Service builders,
@@ -2229,7 +2167,7 @@ func generatedMetricsPorts(kn, knV2 *kubernautv1alpha2.Kubernaut) map[string]int
 	return ports
 }
 
-func (r *KubernautReconciler) ensureRenderedProviderPolicies(
+func (r *KubernautReconciler) ensureRenderedNetworkPolicies(
 	ctx context.Context,
 	kn *kubernautv1alpha2.Kubernaut,
 	objects []policy.RenderedPolicy,
@@ -2238,196 +2176,102 @@ func (r *KubernautReconciler) ensureRenderedProviderPolicies(
 	for _, rendered := range objects {
 		object := rendered.Object
 		desired[policyObjectKey(object)] = struct{}{}
-		if rendered.Namespaced {
-			if err := resources.SetOwnerReference(kn, object, r.Scheme); err != nil {
-				return nil, fmt.Errorf("setting provider policy owner reference on %s: %w", object.GetName(), err)
-			}
+		if err := resources.SetOwnerReference(kn, object, r.Scheme); err != nil {
+			return nil, fmt.Errorf("setting NetworkPolicy owner reference on %s: %w", object.Name, err)
 		}
-		if err := r.ensureProviderPolicy(ctx, object); err != nil {
+		if err := r.ensureNetworkPolicy(ctx, object); err != nil {
 			if errors.Is(err, resources.ErrOwnershipConflict) && r.Recorder != nil {
-				r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "OwnershipConflict", "Reconcile", "native %s policy %s: %v", object.GetKind(), object.GetName(), err)
+				r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "OwnershipConflict", "Reconcile", "NetworkPolicy %s: %v", object.Name, err)
 			}
-			return nil, fmt.Errorf("ensuring native %s policy %s: %w", object.GetKind(), object.GetName(), err)
+			return nil, fmt.Errorf("ensuring NetworkPolicy %s: %w", object.Name, err)
 		}
 	}
 	return desired, nil
 }
 
-func (r *KubernautReconciler) resolveMonitoringDestinations(
-	ctx context.Context,
-	knV2 *kubernautv1alpha2.Kubernaut,
-	detection policy.DetectionResult,
-) ([]policy.MonitoringDestination, error) {
-	if !detection.Ready || !providerSupportsMonitoring(detection.Provider) {
-		return nil, nil
-	}
-	monitoring := r.monitoringConfigView(ctx, knV2)
-	return policy.ResolveMonitoringDestinations(ctx, r.Client, policy.MonitoringResolutionOptions{
-		Provider:  detection.Provider,
-		Endpoints: monitoringEndpoints(monitoring),
-	})
-}
-
-func providerSupportsMonitoring(provider policy.Provider) bool {
-	return provider == policy.ProviderCilium || provider == policy.ProviderCalico || provider == policy.ProviderOVN
-}
-
-func monitoringEndpoints(kn *kubernautv1alpha2.Kubernaut) []policy.MonitoringEndpoint {
-	endpoints := make([]policy.MonitoringEndpoint, 0, 2)
-	if kn.Spec.Monitoring.Prometheus.PrometheusEnabled() {
-		endpoints = append(endpoints, policy.MonitoringEndpoint{
-			Name: policy.MonitoringPrometheus,
-			URL:  resources.EffectivePrometheusURL(kn),
-		})
-	}
-	if kn.Spec.Monitoring.AlertManager.AlertManagerEnabled() {
-		endpoints = append(endpoints, policy.MonitoringEndpoint{
-			Name: policy.MonitoringAlertManager,
-			URL:  resources.EffectiveAlertManagerURL(kn),
-		})
-	}
-	return endpoints
-}
-
-// ensureProviderPolicy refuses to adopt a provider/platform-owned object that
-// happens to use one of the deterministic names emitted by this controller.
-// Provider policies are security boundaries; a generic create-or-update must
-// not overwrite an object that lacks the operator ownership marker.
-func (r *KubernautReconciler) ensureProviderPolicy(ctx context.Context, desired *unstructured.Unstructured) error {
+func (r *KubernautReconciler) ensureNetworkPolicy(ctx context.Context, desired *networkingv1.NetworkPolicy) error {
 	desiredHash := resources.SpecHash(desired)
 	setHashAnnotation(desired, desiredHash)
-
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(desired.GroupVersionKind())
-	key := client.ObjectKey{Name: desired.GetName(), Namespace: desired.GetNamespace()}
-	err := r.Get(ctx, key, existing)
-	if err == nil {
-		return r.updateProviderPolicy(ctx, existing, desired, desiredHash)
+	existing := &networkingv1.NetworkPolicy{}
+	key := client.ObjectKey{Name: desired.Name, Namespace: desired.Namespace}
+	if err := r.Get(ctx, key, existing); err == nil {
+		return r.updateNetworkPolicy(ctx, existing, desired, desiredHash)
+	} else if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("checking existing NetworkPolicy %s: %w", key, err)
 	}
-	if !apierrors.IsNotFound(err) {
-		return fmt.Errorf("checking existing native policy %s: %w", key, err)
-	}
-
-	err = r.Create(ctx, desired)
-	if err == nil {
+	if err := r.Create(ctx, desired); err == nil {
 		return nil
-	}
-	if !apierrors.IsAlreadyExists(err) {
-		return fmt.Errorf("creating native policy %s: %w", key, err)
+	} else if !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("creating NetworkPolicy %s: %w", key, err)
 	}
 	if err := r.ownershipReader().Get(ctx, key, existing); err != nil {
-		return fmt.Errorf("getting raced native policy %s: %w", key, err)
+		return fmt.Errorf("getting raced NetworkPolicy %s: %w", key, err)
 	}
-	return r.updateProviderPolicy(ctx, existing, desired, desiredHash)
+	return r.updateNetworkPolicy(ctx, existing, desired, desiredHash)
 }
 
-func (r *KubernautReconciler) updateProviderPolicy(ctx context.Context, existing, desired *unstructured.Unstructured, desiredHash string) error {
-	if err := providerPolicyOwnershipError(existing, desired); err != nil {
-		logf.FromContext(ctx).Error(err, "native policy ownership conflict", "kind", existing.GetKind(),
-			"namespace", existing.GetNamespace(), "name", existing.GetName(), "ownerReferences", existing.GetOwnerReferences(), "ownershipLabels", existing.GetLabels())
+func (r *KubernautReconciler) updateNetworkPolicy(ctx context.Context, existing, desired *networkingv1.NetworkPolicy, desiredHash string) error {
+	if err := networkPolicyOwnershipError(existing, desired); err != nil {
 		return err
 	}
-	if existing.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash &&
-		equality.Semantic.DeepEqual(existing.GetOwnerReferences(), desired.GetOwnerReferences()) {
+	if existing.Annotations[resources.AnnotationSpecHash] == desiredHash && equality.Semantic.DeepEqual(existing.OwnerReferences, desired.OwnerReferences) {
 		return nil
 	}
-	desired.SetResourceVersion(existing.GetResourceVersion())
+	desired.ResourceVersion = existing.ResourceVersion
 	return r.Update(ctx, desired)
 }
 
-func providerPolicyOwnershipError(existing, desired *unstructured.Unstructured) error {
+func networkPolicyOwnershipError(existing, desired client.Object) error {
 	if err := policy.OwnershipError(existing, desired); err != nil {
 		return fmt.Errorf("%w: %w", resources.ErrOwnershipConflict, err)
 	}
 	return nil
 }
 
-func (r *KubernautReconciler) patchProviderPolicyStatus(
-	ctx context.Context,
-	kn *kubernautv1alpha2.Kubernaut,
-	detection policy.DetectionResult,
-	ready bool,
-	reconcileErr error,
-) error {
+func (r *KubernautReconciler) patchNetworkPolicyStatus(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, ready bool, reconcileErr error) error {
+	reason := policy.ReasonNetworkPolicyReady
+	message := "standard Kubernetes NetworkPolicy objects are applied; dataplane enforcement is not attested"
 	if reconcileErr != nil {
-		detection.Message = reconcileErr.Error()
-		logf.FromContext(ctx).Error(reconcileErr, "native policy reconciliation failed", "provider", detection.Provider)
+		reason = policy.ReasonNetworkPolicyApplyFailed
+		message = reconcileErr.Error()
 	}
 	if err := r.patchStatus(ctx, kn, func() {
 		if !ready && kn.Status.Phase == kubernautv1alpha2.PhaseRunning {
 			r.setPhase(kn, kubernautv1alpha2.PhaseDegraded)
 		}
-		for _, condition := range providerPolicyConditions(kn.Generation, detection, ready) {
-			meta.SetStatusCondition(&kn.Status.Conditions, condition)
-		}
+		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{Type: kubernautv1alpha2.ConditionNetworkPolicyReady,
+			Status: conditionStatus(ready), Reason: reason, Message: message, ObservedGeneration: kn.Generation})
 	}); err != nil {
-		return fmt.Errorf("patching provider policy status: %w", err)
+		return fmt.Errorf("patching NetworkPolicy status: %w", err)
 	}
 	if reconcileErr != nil {
-		return reconcileErr
-	}
-	if r.Recorder != nil && !ready {
-		eventMessage := detection.Message
-		if detection.PolicyMessage != "" {
-			eventMessage = detection.PolicyMessage
+		if r.Recorder != nil {
+			r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "NetworkPolicyUnavailable", "Reconcile", "%s", message)
 		}
-		r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, "ProviderPolicyUnavailable", "Reconcile", "%s", eventMessage)
+		return reconcileErr
 	}
 	return nil
 }
 
-func providerPolicyConditions(generation int64, detection policy.DetectionResult, ready bool) []metav1.Condition {
-	providerStatus := metav1.ConditionFalse
-	if detection.Provider != policy.ProviderNone && detection.Ready {
-		providerStatus = metav1.ConditionTrue
-	}
-	policyStatus := metav1.ConditionFalse
-	policyReason, policyMessage := detection.Reason, detection.Message
-	if detection.PolicyReason != "" {
-		policyReason = detection.PolicyReason
-	}
-	if detection.PolicyMessage != "" {
-		policyMessage = detection.PolicyMessage
-	}
+func conditionStatus(ready bool) metav1.ConditionStatus {
 	if ready {
-		policyStatus, policyReason, policyMessage = metav1.ConditionTrue, policy.ReasonProviderReady, detection.Message
+		return metav1.ConditionTrue
 	}
-	return []metav1.Condition{
-		{Type: kubernautv1alpha2.ConditionProviderDetected, Status: providerStatus,
-			Reason: detection.Reason, Message: detection.Message, ObservedGeneration: generation},
-		{Type: kubernautv1alpha2.ConditionProviderPolicyReady, Status: policyStatus,
-			Reason: policyReason, Message: policyMessage, ObservedGeneration: generation},
-	}
+	return metav1.ConditionFalse
 }
 
-func (r *KubernautReconciler) pruneProviderPolicies(ctx context.Context, namespace, instance string, desired map[string]struct{}) error {
-	for _, kind := range policy.ManagedResourceKinds() {
-		list := &unstructured.UnstructuredList{}
-		list.SetGroupVersionKind(schema.GroupVersionKind{Group: kind.GVK.Group, Version: kind.GVK.Version, Kind: kind.ListKind})
-		listOptions := []client.ListOption{client.MatchingLabels{
-			policy.ManagedPolicyLabel:    "true",
-			policy.ManagedByLabel:        "kubernaut-operator",
-			policy.PolicyNamespaceLabel:  namespace,
-			"app.kubernetes.io/instance": instance,
-			policy.ProviderLabel:         string(policy.ProviderForGVK(kind.GVK)),
-		}}
-		if kind.Namespaced {
-			listOptions = append(listOptions, client.InNamespace(namespace))
+func (r *KubernautReconciler) pruneNetworkPolicies(ctx context.Context, namespace, instance string, desired map[string]struct{}) error {
+	list := &networkingv1.NetworkPolicyList{}
+	if err := r.List(ctx, list, client.InNamespace(namespace), client.MatchingLabels{policy.ManagedPolicyLabel: "true", policy.ManagedByLabel: "kubernaut-operator", policy.PolicyNamespaceLabel: namespace, "app.kubernetes.io/instance": instance}); err != nil {
+		return fmt.Errorf("listing stale NetworkPolicies: %w", err)
+	}
+	for index := range list.Items {
+		object := &list.Items[index]
+		if _, ok := desired[policyObjectKey(object)]; ok {
+			continue
 		}
-		if err := r.List(ctx, list, listOptions...); err != nil {
-			if meta.IsNoMatchError(err) || apierrors.IsNotFound(err) {
-				continue
-			}
-			return fmt.Errorf("listing stale native %s policies: %w", kind.GVK.Kind, err)
-		}
-		for index := range list.Items {
-			object := &list.Items[index]
-			if _, ok := desired[policyObjectKey(object)]; ok {
-				continue
-			}
-			if err := r.deleteObservedProviderPolicy(ctx, object); err != nil {
-				return fmt.Errorf("deleting stale native %s policy %s: %w", kind.GVK.Kind, object.GetName(), err)
-			}
+		if err := r.deleteObservedNetworkPolicy(ctx, object); err != nil {
+			return fmt.Errorf("deleting stale NetworkPolicy %s: %w", object.Name, err)
 		}
 	}
 	return nil
@@ -2435,6 +2279,9 @@ func (r *KubernautReconciler) pruneProviderPolicies(ctx context.Context, namespa
 
 func policyObjectKey(object client.Object) string {
 	gvk := object.GetObjectKind().GroupVersionKind()
+	if gvk.Group == "" || gvk.Version == "" || gvk.Kind == "" {
+		gvk = networkingv1.SchemeGroupVersion.WithKind("NetworkPolicy")
+	}
 	return gvk.GroupVersion().String() + "/" + gvk.Kind + "/" + object.GetNamespace() + "/" + object.GetName()
 }
 
@@ -2706,7 +2553,7 @@ func (r *KubernautReconciler) phaseRunning(ctx context.Context, kn *kubernautv1a
 		})
 	}
 
-	if !meta.IsStatusConditionTrue(kn.Status.Conditions, kubernautv1alpha2.ConditionProviderPolicyReady) {
+	if !meta.IsStatusConditionTrue(kn.Status.Conditions, kubernautv1alpha2.ConditionNetworkPolicyReady) {
 		allReady = false
 	}
 	finalStatuses := serviceStatuses
@@ -2796,7 +2643,7 @@ func (r *KubernautReconciler) deleteClusterScopedResources(ctx context.Context, 
 	errs = append(errs, r.deleteRBACResources(ctx, kn, knV2)...)
 	errs = append(errs, r.deleteWebhookResources(ctx, kn)...)
 	errs = append(errs, r.deleteWorkflowResources(ctx, kn)...)
-	errs = append(errs, r.deleteProviderPolicies(ctx, kn.Namespace, kn.Name)...)
+	errs = append(errs, r.deleteNetworkPolicies(ctx, kn.Namespace, kn.Name)...)
 
 	if len(errs) > 0 {
 		return fmt.Errorf("cluster-scoped cleanup: %w", errors.Join(errs...))
@@ -2806,33 +2653,22 @@ func (r *KubernautReconciler) deleteClusterScopedResources(ctx context.Context, 
 	return nil
 }
 
-func (r *KubernautReconciler) deleteProviderPolicies(ctx context.Context, namespace, instance string) []error {
+func (r *KubernautReconciler) deleteNetworkPolicies(ctx context.Context, namespace, instance string) []error {
+	list := &networkingv1.NetworkPolicyList{}
+	if err := r.List(ctx, list, client.InNamespace(namespace), client.MatchingLabels{
+		policy.ManagedPolicyLabel: "true", policy.ManagedByLabel: "kubernaut-operator",
+		policy.PolicyNamespaceLabel: namespace, "app.kubernetes.io/instance": instance,
+	}); err != nil {
+		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			return nil
+		}
+		return []error{fmt.Errorf("listing NetworkPolicies: %w", err)}
+	}
 	var errs []error
-	for _, kind := range policy.ManagedResourceKinds() {
-		list := &unstructured.UnstructuredList{}
-		list.SetGroupVersionKind(schema.GroupVersionKind{Group: kind.GVK.Group, Version: kind.GVK.Version, Kind: kind.ListKind})
-		options := []client.ListOption{client.MatchingLabels{
-			policy.ManagedPolicyLabel:    "true",
-			policy.ManagedByLabel:        "kubernaut-operator",
-			policy.PolicyNamespaceLabel:  namespace,
-			"app.kubernetes.io/instance": instance,
-			policy.ProviderLabel:         string(policy.ProviderForGVK(kind.GVK)),
-		}}
-		if kind.Namespaced {
-			options = append(options, client.InNamespace(namespace))
-		}
-		if err := r.List(ctx, list, options...); err != nil {
-			if meta.IsNoMatchError(err) || apierrors.IsNotFound(err) {
-				continue
-			}
-			errs = append(errs, fmt.Errorf("listing %s policies: %w", kind.GVK.Kind, err))
-			continue
-		}
-		for index := range list.Items {
-			object := &list.Items[index]
-			if err := r.deleteObservedProviderPolicy(ctx, object); err != nil {
-				errs = append(errs, fmt.Errorf("deleting %s policy %s: %w", kind.GVK.Kind, object.GetName(), err))
-			}
+	for index := range list.Items {
+		object := &list.Items[index]
+		if err := r.deleteObservedNetworkPolicy(ctx, object); err != nil {
+			errs = append(errs, fmt.Errorf("deleting NetworkPolicy %s: %w", object.Name, err))
 		}
 	}
 	return errs
@@ -5014,8 +4850,7 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&kubernautv1alpha2.Kubernaut{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
-		Watches(&corev1.Service{}, handler.EnqueueRequestsFromMapFunc(r.monitoringObjectToKubernaut)).
-		Watches(&discoveryv1.EndpointSlice{}, handler.EnqueueRequestsFromMapFunc(r.monitoringObjectToKubernaut)).
+		Owns(&networkingv1.NetworkPolicy{}).
 		Owns(&corev1.ConfigMap{}).
 		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.telemetryAmbientConfigMapToKubernaut)).
 		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.precreatedConfigurationToKubernaut)).
@@ -5177,71 +5012,9 @@ func (r *KubernautReconciler) apiServerToKubernaut(ctx context.Context, _ client
 	return reqs
 }
 
-// monitoringObjectToKubernaut maps monitoring and platform DNS Service and
-// EndpointSlice changes to Kubernaut instances using those dependencies.
-// This keeps native policy rules exact when selectors,
-// Service ports, or resolved backends change instead of waiting for the
-// periodic reconciliation timer.
+// monitoringObjectToKubernaut is retained as a no-op compatibility seam for
+// focused controller tests. Standard NetworkPolicies do not depend on Service
+// or EndpointSlice discovery; owned Service changes reconcile normally.
 func (r *KubernautReconciler) monitoringObjectToKubernaut(ctx context.Context, object client.Object) []reconcile.Request {
-	if object == nil {
-		return nil
-	}
-
-	serviceName := monitoredServiceName(object)
-	if serviceName == "" {
-		return nil
-	}
-
-	list := &kubernautv1alpha2.KubernautList{}
-	if err := r.List(ctx, list); err != nil {
-		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for policy dependency event",
-			"namespace", object.GetNamespace(), "service", serviceName)
-		return nil
-	}
-
-	requests := make([]reconcile.Request, 0, len(list.Items))
-	for index := range list.Items {
-		kn := &list.Items[index]
-		if policyDependencyEventMatches(kn, object.GetNamespace(), serviceName) || monitoringDependencyEventMatches(ctx, r, kn, object.GetNamespace(), serviceName) {
-			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)})
-		}
-	}
-	return requests
-}
-
-func monitoredServiceName(object client.Object) string {
-	if endpointSlice, ok := object.(*discoveryv1.EndpointSlice); ok {
-		return endpointSlice.Labels[discoveryv1.LabelServiceName]
-	}
-	return object.GetName()
-}
-
-func policyDependencyEventMatches(kn *kubernautv1alpha2.Kubernaut, namespace, serviceName string) bool {
-	if namespace == resources.OCPDNSNamespace && serviceName == resources.OCPDNSServiceName {
-		switch kn.Spec.NetworkPolicies.Provider {
-		case "", kubernautv1alpha2.NetworkPolicyProviderAuto, kubernautv1alpha2.NetworkPolicyProviderOVN:
-			return true
-		}
-	}
-	for _, endpoint := range []policy.ServiceEndpoint{
-		{Name: "postgresql", Host: kn.Spec.PostgreSQL.Host, Namespace: kn.Namespace},
-		{Name: "valkey", Host: kn.Spec.Valkey.Host, Namespace: kn.Namespace},
-	} {
-		reference, err := policy.ServiceReferenceFromHost(endpoint.Host, endpoint.Namespace)
-		if err == nil && reference.Name == serviceName && reference.Namespace == namespace {
-			return true
-		}
-	}
-	return false
-}
-
-func monitoringDependencyEventMatches(ctx context.Context, r *KubernautReconciler, kn *kubernautv1alpha2.Kubernaut, namespace, serviceName string) bool {
-	monitoring := r.monitoringConfigView(ctx, kn)
-	for _, endpoint := range monitoringEndpoints(monitoring) {
-		reference, err := policy.MonitoringServiceReferenceFromURL(endpoint.URL)
-		if err == nil && reference.Name == serviceName && reference.Namespace == namespace {
-			return true
-		}
-	}
-	return false
+	return nil
 }
