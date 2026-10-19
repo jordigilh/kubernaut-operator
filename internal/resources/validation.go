@@ -170,31 +170,6 @@ func validateNotificationCredentials(kn *kubernautv1alpha2.Kubernaut) []error {
 	return errs
 }
 
-// validateNotificationCredentials validates credential identities and namespace-local Secret references.
-func validateNotificationCredentials(kn *kubernautv1alpha2.Kubernaut) []error {
-	var errs []error
-	seen := make(map[string]struct{}, len(kn.Spec.Notification.Credentials))
-	for index, credential := range kn.Spec.Notification.Credentials {
-		base := fmt.Sprintf("spec.notification.credentials[%d]", index)
-		if len(k8svalidation.IsValidLabelValue(credential.Name)) > 0 {
-			errs = append(errs, fmt.Errorf("%s.name must be a valid credential file name", base))
-		}
-		if _, exists := seen[credential.Name]; exists {
-			errs = append(errs, fmt.Errorf("%s.name must be unique", base))
-		}
-		seen[credential.Name] = struct{}{}
-
-		secretPath := base + ".secretRef"
-		if len(k8svalidation.IsDNS1123Subdomain(credential.SecretRef.Name)) > 0 {
-			errs = append(errs, fmt.Errorf("%s.name must be a valid Kubernetes object name", secretPath))
-		}
-		if len(k8svalidation.IsConfigMapKey(credential.SecretRef.Key)) > 0 {
-			errs = append(errs, fmt.Errorf("%s.key must be a valid Secret key", secretPath))
-		}
-	}
-	return errs
-}
-
 // validateMonitoringEndpoints rejects plaintext monitoring connections before
 // any endpoint is rendered into a client configuration. A CA trust source
 // cannot protect an HTTP connection, so every configured monitoring endpoint
