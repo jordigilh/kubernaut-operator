@@ -88,6 +88,10 @@ fixtures:
       {"type":"authorized_user","client_id":"dev-only-client","client_secret":"dev-only-secret","refresh_token":"dev-only-refresh-token"}
   slack:
     webhookURL: https://hooks.slack.example/e2e
+  teams:
+    webhookURL: https://teams.example.invalid/e2e
+  pagerduty:
+    routingKey: pagerduty-routing-key
   console:
     clientID: e2e-client
     clientSecret: e2e-secret

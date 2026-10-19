@@ -142,13 +142,16 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		Expect(jobs.Items).To(BeEmpty())
 	})
 
-	It("UT-CONFIG-512-002 rejects a referenced Secret with a missing required key", func() {
+	It("UT-CONFIG-512-002 rejects a provider-neutral credential Secret with a missing required key", func() {
 		kn := newMinimalCR()
-		kn.Spec.Notification.Slack.SecretName = "missing-slack-key"
+		kn.Spec.Notification.Credentials = []kubernautv1alpha2.NotificationCredentialSpec{{
+			Name:      "teams-primary",
+			SecretRef: kubernautv1alpha2.NotificationSecretRef{Name: "missing-credential-key", Key: "webhook-url"},
+		}}
 		r := businessUnitReconciler(kn, clientInterceptorNone())
 		seedValidPrecreatedInputs(r, kn)
 		seedPrecreatedObject(r, &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: "missing-slack-key", Namespace: kn.Namespace},
+			ObjectMeta: metav1.ObjectMeta{Name: "missing-credential-key", Namespace: kn.Namespace},
 			Data:       map[string][]byte{},
 		})
 
@@ -168,7 +171,10 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		kn := newMinimalCR()
 		kn.Spec.KubernautAgent.RuntimeConfigMapName = "custom-llm-runtime"
 		kn.Spec.Notification.Routing = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "custom-routing"}
-		kn.Spec.Notification.Slack.SecretName = "slack-webhook"
+		kn.Spec.Notification.Credentials = []kubernautv1alpha2.NotificationCredentialSpec{{
+			Name:      "slack-ops",
+			SecretRef: kubernautv1alpha2.NotificationSecretRef{Name: "slack-webhook", Key: "webhook-url"},
+		}}
 		kn.Spec.Gateway.Auth.AlertManager.TokenSecretName = "alertmanager-token"
 		kn.Spec.WorkflowExecution.Ansible.Enabled = true
 		kn.Spec.WorkflowExecution.Ansible.APIURL = "https://awx.example.com"
@@ -309,7 +315,7 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		kn := newMinimalCR()
 		kn.Spec.KubernautAgent.RuntimeConfigMapName = ""
 		kn.Spec.Notification.Routing = nil
-		kn.Spec.Notification.Slack.SecretName = ""
+		kn.Spec.Notification.Credentials = nil
 		kn.Spec.WorkflowExecution.Ansible.Enabled = false
 		kn.Spec.Console.Enabled = ptr.To(false)
 		kn.Spec.APIFrontend.Enabled = ptr.To(false)
@@ -364,7 +370,7 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		}
 		seedPrecreatedObject(r, invalidJSON)
 		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
-			kind: precreatedSecretReference, path: "spec.credentials", name: invalidJSON.Name, requiredKeys: []string{"credentials.json"},
+			kind: precreatedSecretReference, path: "spec.credentials", name: invalidJSON.Name, requiredKeys: []string{"credentials.json"}, jsonKeys: []string{"credentials.json"},
 		})).To(MatchError(ContainSubstring("invalid JSON")))
 
 		validRuntime := &corev1.ConfigMap{
@@ -411,7 +417,7 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		}
 		seedPrecreatedObject(r, invalidCA)
 		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
-			kind: precreatedSecretReference, path: "spec.ca", name: invalidCA.Name, requiredKeys: []string{"ca.crt"},
+			kind: precreatedSecretReference, path: "spec.ca", name: invalidCA.Name, requiredKeys: []string{"ca.crt"}, pemKeys: []string{"ca.crt"},
 		})).To(MatchError(ContainSubstring("valid CA PEM")))
 
 		invalidTLS := &corev1.Secret{
@@ -423,14 +429,14 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 			kind: precreatedSecretReference, path: "spec.tls", name: invalidTLS.Name, requiredKeys: []string{corev1.TLSCertKey, corev1.TLSPrivateKeyKey},
 		})).To(MatchError(ContainSubstring("invalid TLS certificate/key pair")))
 
-		invalidURL := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: "invalid-url", Namespace: kn.Namespace},
-			Data:       map[string][]byte{"webhook-url": []byte("not-a-url")},
+		opaqueCredential := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "opaque-credential", Namespace: kn.Namespace},
+			Data:       map[string][]byte{"webhook-url": []byte("provider-specific-value")},
 		}
-		seedPrecreatedObject(r, invalidURL)
+		seedPrecreatedObject(r, opaqueCredential)
 		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
-			kind: precreatedSecretReference, path: "spec.slack", name: invalidURL.Name, requiredKeys: []string{"webhook-url"},
-		})).To(MatchError(ContainSubstring("valid URL")))
+			kind: precreatedSecretReference, path: "spec.notification.credentials[0].secretRef", name: opaqueCredential.Name, requiredKeys: []string{"webhook-url"},
+		})).NotTo(HaveOccurred())
 
 		Expect(r.precreatedConfigurationToKubernaut(ctx, nil)).To(BeEmpty())
 		Expect(r.precreatedConfigurationToKubernaut(ctx, &appsv1.Deployment{})).To(BeEmpty())

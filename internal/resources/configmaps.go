@@ -906,22 +906,9 @@ type notificationControllerConfigYAML struct {
 	Debug       debugYAML                   `json:"debug" yaml:"debug"`
 }
 
-type notificationRoutingSlackRoute struct {
+type notificationRoutingRoute struct {
 	Receiver string            `json:"receiver" yaml:"receiver"`
 	MatchRE  map[string]string `json:"matchRe,omitempty" yaml:"matchRe,omitempty"`
-}
-
-type notificationRoutingSlackReceiver struct {
-	Name  string `json:"name" yaml:"name"`
-	Slack struct {
-		Channel               string `json:"channel" yaml:"channel"`
-		CredentialsSecretName string `json:"credentialsSecretName" yaml:"credentialsSecretName"`
-	} `json:"slack" yaml:"slack"`
-}
-
-type notificationRoutingSlackYAML struct {
-	Route     notificationRoutingSlackRoute      `json:"route" yaml:"route"`
-	Receivers []notificationRoutingSlackReceiver `json:"receivers" yaml:"receivers"`
 }
 
 type notificationRoutingConsoleReceiver struct {
@@ -930,7 +917,7 @@ type notificationRoutingConsoleReceiver struct {
 }
 
 type notificationRoutingConsoleYAML struct {
-	Route     notificationRoutingSlackRoute        `json:"route" yaml:"route"`
+	Route     notificationRoutingRoute             `json:"route" yaml:"route"`
 	Receivers []notificationRoutingConsoleReceiver `json:"receivers" yaml:"receivers"`
 }
 
@@ -1831,31 +1818,12 @@ func NotificationControllerConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kube
 	return yamlConfigMap(ObjectMeta(kn, "notification-controller-config", ComponentNotification), "config.yaml", "notification-controller config", cfg)
 }
 
-// NotificationRoutingConfigMap builds the notification-routing-config ConfigMap.
-// When Slack is configured, routes are generated; otherwise a console-only fallback is used.
+// NotificationRoutingConfigMap builds the provider-neutral console fallback routing ConfigMap.
+// Provider-specific routes are supplied through an administrator-owned ConfigMap.
 func NotificationRoutingConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
-	slack := kn.Spec.Notification.Slack
-	channel := slack.Channel
-	if channel == "" {
-		channel = "#kubernaut-alerts"
-	}
 	metadata := ObjectMeta(kn, "notification-routing-config", ComponentNotification)
-	if slack.SecretName != "" {
-		cfg := notificationRoutingSlackYAML{
-			Route: notificationRoutingSlackRoute{
-				Receiver: "slack",
-				MatchRE:  map[string]string{"severity": ".*"},
-			},
-			Receivers: []notificationRoutingSlackReceiver{
-				{Name: "slack"},
-			},
-		}
-		cfg.Receivers[0].Slack.Channel = channel
-		cfg.Receivers[0].Slack.CredentialsSecretName = slack.SecretName
-		return yamlConfigMap(metadata, "routing.yaml", "notification-routing slack config", cfg)
-	}
 	console := notificationRoutingConsoleYAML{
-		Route: notificationRoutingSlackRoute{
+		Route: notificationRoutingRoute{
 			Receiver: "console",
 		},
 		Receivers: []notificationRoutingConsoleReceiver{

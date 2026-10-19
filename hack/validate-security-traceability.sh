@@ -17,6 +17,7 @@ audit_hmac_matrix="${repo_root}/docs/security/ISSUE-209-CONTROL-TRACEABILITY.md"
 handoff_matrix="${repo_root}/docs/security/ISSUE-527-CONTROL-TRACEABILITY.md"
 workflowexecution_retention_matrix="${repo_root}/docs/security/ISSUE-480-CONTROL-TRACEABILITY.md"
 console_matrix="${repo_root}/docs/security/ISSUE-476-CONTROL-TRACEABILITY.md"
+notification_matrix="${repo_root}/docs/security/ISSUE-549-CONTROL-TRACEABILITY.md"
 
 fail() {
 	echo "security traceability validation failed: $*" >&2
@@ -33,6 +34,31 @@ fail() {
 [[ -f "${handoff_matrix}" ]] || fail "missing ${handoff_matrix}"
 [[ -f "${workflowexecution_retention_matrix}" ]] || fail "missing ${workflowexecution_retention_matrix}"
 [[ -f "${console_matrix}" ]] || fail "missing ${console_matrix}"
+[[ -f "${notification_matrix}" ]] || fail "missing ${notification_matrix}"
+
+grep -Fq 'NIST SP 800-53' "${notification_matrix}" || fail "Issue #549 matrix is missing NIST scope"
+grep -Fq 'SOC 2' "${notification_matrix}" || fail "Issue #549 matrix is missing SOC 2 scope"
+grep -Fq 'OWASP ASVS 5.0.0' "${notification_matrix}" || fail "Issue #549 matrix is missing ASVS scope"
+if ! grep -Fq 'formal FedRAMP' "${notification_matrix}" \
+	|| ! grep -Fq 'formal SOC 2' "${notification_matrix}" \
+	|| ! grep -Fq 'formal OWASP' "${notification_matrix}" \
+	|| ! grep -Fq 'ASVS conformance' "${notification_matrix}"; then
+	fail "Issue #549 matrix must reject formal compliance claims"
+fi
+for control in AC-6 IA-5 CM-3 CM-6 SC-28 SI-10; do
+	grep -Eq "(^|[^A-Za-z0-9-])${control}([^A-Za-z0-9-]|$)" "${notification_matrix}" \
+		|| fail "Issue #549 matrix is missing control ${control}"
+done
+for requirement in v5.0.0-V2.1.1 v5.0.0-V2.2.1 v5.0.0-V2.2.2 v5.0.0-V2.2.3 v5.0.0-V8.2.1 v5.0.0-V8.3.1 v5.0.0-V16.5.2; do
+	grep -Fq "${requirement}" "${notification_matrix}" \
+		|| fail "Issue #549 matrix is missing ASVS requirement ${requirement}"
+done
+for evidence_id in UT-NOT-API-001 UT-NOT-DEP-002 UT-NOT-ROUTE-004 UT-NOT-SECRET-005 IT-NOT-CRD-RECON-001 E2E-NOT-SECRET-001; do
+	grep -R -n --include='*.go' -F "${evidence_id}" "${repo_root}/internal" "${repo_root}/test" >/dev/null \
+		|| fail "Issue #549 evidence ${evidence_id} has no executable artifact"
+	grep -Fq "${evidence_id}" "${notification_matrix}" \
+		|| fail "Issue #549 matrix omits evidence ID ${evidence_id}"
+done
 
 grep -Fq 'NIST SP 800-53 Rev. 5' "${matrix}" || fail "missing NIST SP 800-53 Rev. 5 declaration"
 grep -Fq 'OWASP ASVS 5.0.0' "${matrix}" || fail "missing OWASP ASVS 5.0.0 declaration"

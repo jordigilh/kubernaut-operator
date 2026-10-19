@@ -25,7 +25,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -3286,6 +3285,7 @@ type precreatedReference struct {
 	name         string
 	requiredKeys []string
 	pemKeys      []string
+	jsonKeys     []string
 }
 
 // validatePrecreatedConfiguration verifies administrator/GitOps-owned inputs
@@ -3394,11 +3394,14 @@ func validatePrecreatedSecretKeys(secret *corev1.Secret, reference precreatedRef
 		}
 		values[key] = value
 	}
-	if value, ok := values["credentials.json"]; ok && !json.Valid(value) {
-		return fmt.Errorf("%s: Secret %q key %q contains invalid JSON", reference.path, reference.name, "credentials.json")
-	}
 	if err := validatePrecreatedSecretPEMKeys(values, reference); err != nil {
 		return err
+	}
+	for _, key := range reference.jsonKeys {
+		value, ok := values[key]
+		if ok && !json.Valid(value) {
+			return fmt.Errorf("%s: Secret %q key %q contains invalid JSON", reference.path, reference.name, key)
+		}
 	}
 	if cert, certOK := values[corev1.TLSCertKey]; certOK {
 		key, keyOK := values[corev1.TLSPrivateKeyKey]
@@ -3408,22 +3411,12 @@ func validatePrecreatedSecretKeys(secret *corev1.Secret, reference precreatedRef
 			}
 		}
 	}
-	if value, ok := values["webhook-url"]; ok {
-		parsed, err := url.ParseRequestURI(string(value))
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			return fmt.Errorf("%s: Secret %q key %q must contain a valid URL", reference.path, reference.name, "webhook-url")
-		}
-	}
 	return nil
 }
 
 func validatePrecreatedSecretPEMKeys(values map[string][]byte, reference precreatedReference) error {
-	keys := append([]string{monitoringTLSDefaultCAKey}, reference.pemKeys...)
-	for _, key := range keys {
-		value, ok := values[key]
-		if !ok || key != monitoringTLSDefaultCAKey && !slices.Contains(reference.pemKeys, key) {
-			continue
-		}
+	for _, key := range reference.pemKeys {
+		value := values[key]
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(value) {
 			return fmt.Errorf("%s: Secret %q key %q does not contain valid CA PEM", reference.path, reference.name, key)
@@ -3482,6 +3475,21 @@ func (c *precreatedReferenceCollector) addPEMSecretReference(path, name, key str
 	}
 }
 
+// addJSONSecretReference registers a Secret key whose content must be valid JSON.
+func (c *precreatedReferenceCollector) addJSONSecretReference(path, name, key string) {
+	c.add(precreatedSecretReference, path, name, key)
+	for i := range c.references {
+		reference := &c.references[i]
+		if reference.kind != precreatedSecretReference || reference.name != name || len(reference.requiredKeys) != 1 || reference.requiredKeys[0] != key {
+			continue
+		}
+		if !slices.Contains(reference.jsonKeys, key) {
+			reference.jsonKeys = append(reference.jsonKeys, key)
+		}
+		return
+	}
+}
+
 func appendPrecreatedOptionalReferences(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
 	appendPrecreatedConfigMapReferences(c, kn)
 	appendPrecreatedFeatureSecretReferences(c, kn)
@@ -3503,8 +3511,9 @@ func appendPrecreatedConfigMapReferences(c *precreatedReferenceCollector, kn *ku
 }
 
 func appendPrecreatedFeatureSecretReferences(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
-	if name := kn.Spec.Notification.Slack.SecretName; name != "" {
-		c.add(precreatedSecretReference, "spec.notification.slack.secretName", name, "webhook-url")
+	for index, credential := range kn.Spec.Notification.Credentials {
+		path := fmt.Sprintf("spec.notification.credentials[%d].secretRef", index)
+		c.add(precreatedSecretReference, path, credential.SecretRef.Name, credential.SecretRef.Key)
 	}
 	appendPrecreatedConsoleSecret(c, kn)
 	appendPrecreatedValkeyTLSSecrets(c, kn)
@@ -3523,7 +3532,7 @@ func appendPrecreatedValkeyTLSSecrets(c *precreatedReferenceCollector, kn *kuber
 		return
 	}
 	if name := kn.Spec.Valkey.TLS.CASecretName; name != "" {
-		c.add(precreatedSecretReference, "spec.valkey.tls.caSecretName", name, "ca.crt")
+		c.addPEMSecretReference("spec.valkey.tls.caSecretName", name, "ca.crt")
 	}
 	if name := kn.Spec.Valkey.TLS.ClientCertSecretName; name != "" {
 		c.add(precreatedSecretReference, "spec.valkey.tls.clientCertSecretName", name,
@@ -3560,7 +3569,11 @@ func appendPrecreatedLLMProfileReference(c *precreatedReferenceCollector, kn *ku
 	if profile.Provider == resources.LLMProviderVertexAI {
 		credentialKey = "credentials.json"
 	}
-	c.add(precreatedSecretReference, profilePath+".credentialsSecretName", profile.CredentialsSecretName, credentialKey)
+	if credentialKey == "credentials.json" {
+		c.addJSONSecretReference(profilePath+".credentialsSecretName", profile.CredentialsSecretName, credentialKey)
+	} else {
+		c.add(precreatedSecretReference, profilePath+".credentialsSecretName", profile.CredentialsSecretName, credentialKey)
+	}
 	if profile.OAuth2.Enabled {
 		if profile.OAuth2.CredentialsSecretRef == "" {
 			c.addError(fmt.Errorf("%s.oauth2.credentialsSecretRef: must be set when OAuth2 is enabled", profilePath))

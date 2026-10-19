@@ -677,35 +677,39 @@ var _ = Describe("Deployments", func() {
 	})
 
 	Context("Notification", func() {
-		It("[IA-5, SC-28] mounts Slack credentials when configured", func() {
+		It("[IA-5, SC-28] mounts provider-neutral credentials when configured", func() {
 			kn := testKubernaut()
-			kn.Spec.Notification.Slack.SecretName = "slack-secret"
+			kn.Spec.Notification.Credentials = []kubernautv1alpha2.NotificationCredentialSpec{{
+				Name:      "slack-ops",
+				SecretRef: kubernautv1alpha2.NotificationSecretRef{Name: "slack-secret", Key: "webhook-url"},
+			}}
 			dep, err := NotificationDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
-			expectHasVolume(dep, "credentials")
-			expectHasVolumeMount(dep, "credentials", "/etc/notification/credentials")
+			expectHasVolume(dep, notificationCredentialsVolumeName)
+			expectHasVolumeMount(dep, notificationCredentialsVolumeName, notificationCredentialsMountPath)
 
 			for _, v := range dep.Spec.Template.Spec.Volumes {
-				if v.Name == "credentials" {
+				if v.Name == notificationCredentialsVolumeName {
 					Expect(v.Projected).NotTo(BeNil())
 					src := v.Projected.Sources[0].Secret
-					Expect(src.Optional).NotTo(BeNil())
-					Expect(*src.Optional).To(BeTrue(), "slack secret projection should be optional")
+					Expect(src.Optional).To(BeNil(), "provider-neutral Secret projections must be required")
+					Expect(src.Items[0].Key).To(Equal("webhook-url"))
+					Expect(src.Items[0].Path).To(Equal("slack-ops"))
 				}
 			}
 		})
 
-		It("uses emptyDir credentials when Slack is not configured", func() {
+		It("uses emptyDir credentials when no provider credentials are configured", func() {
 			kn := testKubernaut()
 			dep, err := NotificationDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			found := false
 			for _, v := range dep.Spec.Template.Spec.Volumes {
-				if v.Name == "credentials" {
+				if v.Name == notificationCredentialsVolumeName {
 					found = true
-					Expect(v.EmptyDir).NotTo(BeNil(), "credentials volume should be an emptyDir without Slack")
+					Expect(v.EmptyDir).NotTo(BeNil(), "credentials volume should be an emptyDir without provider credentials")
 				}
 			}
 			Expect(found).To(BeTrue(), "Notification should have a credentials volume even without Slack")

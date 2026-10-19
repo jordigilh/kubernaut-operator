@@ -444,16 +444,16 @@ Summary: COVERED=6 | PARTIAL=0 | UNTESTED=0
 
 _All fields in this component are COVERED._
 
-## Component: `notification` (5 fields)
+## Component: `notification` (4 fields)
 
-Summary: COVERED=2 | PARTIAL=2 | UNTESTED=1
+Summary: COVERED=3 | PARTIAL=1 | UNTESTED=0
 
-- `spec.notification.resources` (corev1.ResourceRequirements) -- **UNTESTED**
-  - zero test references found
+- `spec.notification.resources` (corev1.ResourceRequirements) -- **COVERED**
+  - `internal/resources/deployments_test.go`
 - `spec.notification.routing.configMapName` (string) -- **PARTIAL**
   - CONSISTENCY: production file(s) with no sibling test reference: ['internal/controller']
-- `spec.notification.slack.secretName` (string) -- **PARTIAL** **[security-relevant]**
-  - CONTROL-TAG: security/compliance-relevant field with no test carrying an [AC-x]/[SC-x]/[IA-x]/[AU-x]/[CM-x]/[SI-x] tag
+- `spec.notification.credentials` (array) -- **COVERED** **[security-relevant]**
+  - `UT-NOT-API-001`, `UT-NOT-DEP-002`, `UT-NOT-SECRET-005`, `IT-NOT-CRD-RECON-001`
 
 ## Component: `signalProcessing` (4 fields)
 

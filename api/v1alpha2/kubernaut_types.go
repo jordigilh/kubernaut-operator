@@ -591,9 +591,12 @@ type SecretKeyRef struct {
 
 // NotificationSpec configures the notification controller.
 type NotificationSpec struct {
-	// Slack quickstart shortcut.
+	// Provider-neutral credentials projected into the Notification credentials directory.
+	// Each name is the file name used by routing credentialRef values.
 	// +optional
-	Slack SlackSpec `json:"slack,omitempty"`
+	// +listType=map
+	// +listMapKey=name
+	Credentials []NotificationCredentialSpec `json:"credentials,omitempty"`
 
 	// Optional routing ConfigMap reference for advanced notification routing.
 	// Must contain key "routing.yaml" with Alertmanager-style routing rules.
@@ -608,17 +611,30 @@ type NotificationSpec struct {
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
-// SlackSpec configures Slack delivery for notifications.
-type SlackSpec struct {
-	// Name of the Secret containing the Slack webhook URL (key: "webhook-url").
-	// Empty = no Slack, console-only delivery.
-	// +optional
-	SecretName string `json:"secretName,omitempty"`
+// NotificationCredentialSpec maps one namespace-local Secret key to a named credential file.
+type NotificationCredentialSpec struct {
+	// Name is the projected credential file name and routing credentialRef value.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$`
+	Name string `json:"name"`
 
-	// Slack channel for notifications.
-	// +kubebuilder:default="#kubernaut-alerts"
-	// +optional
-	Channel string `json:"channel,omitempty"`
+	// SecretRef identifies the namespace-local Secret key containing the credential.
+	SecretRef NotificationSecretRef `json:"secretRef"`
+}
+
+// NotificationSecretRef references a key in a Secret in the Kubernaut resource namespace.
+type NotificationSecretRef struct {
+	// Name is the Secret name.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	Name string `json:"name"`
+
+	// Key is the Secret data key containing the credential.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9._-]+$`
+	Key string `json:"key"`
 }
 
 // ConfigMapRef references a ConfigMap by name.

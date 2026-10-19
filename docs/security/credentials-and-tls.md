@@ -12,6 +12,9 @@ This document summarizes how Kubernaut manages secrets referenced by the operato
 
 ## Managed secrets
 
+The authoritative current Notification credential contract is documented in
+[`docs/design/ISSUE-549-NOTIFICATION-CREDENTIALS.md`](../design/ISSUE-549-NOTIFICATION-CREDENTIALS.md).
+
 The operator and managed workloads expect Kubernetes Secret objects (bring-your-own or provisioned by the customer) with the keys below. Secret names are typically set on the Kubernaut CR.
 
 | Secret | Required keys | Purpose |
@@ -23,14 +26,14 @@ The operator and managed workloads expect Kubernetes Secret objects (bring-your-
 | LLM profile CA (`spec.llmProfiles.<name>.tlsCaSecretRef`) | `ca.crt` by default, or the referenced key | Verify a private LLM endpoint certificate; mounted read-only at the profile's deterministic TLS path |
 | LLM profile mTLS client (`spec.llmProfiles.<name>.tlsClientSecretRef`) | `tls.crt`, `tls.key` | Authenticate a sibling LLM agent to the endpoint; projected read-only with only the selected keys |
 | OAuth2 (optional, `spec.llmProfiles.<name>.oauth2.credentialsSecretRef`) | `client-id`, `client-secret` | OAuth2 client-credentials flow for LLM access |
-| Notification Slack (optional, `spec.notification.slack.secretName`) | `webhook-url` | Deliver notifications to Slack |
+| Notification provider credentials (optional, `spec.notification.credentials[].secretRef`) | Provider-specific key/value, such as `webhook-url` or `routing-key` | Project a namespace-local named credential file for Slack, Microsoft Teams, PagerDuty, or another configured Notification receiver; routing uses `credentials[].name` as `credentialRef` |
 | Ansible or AAP (optional, `spec.ansible.tokenSecretRef`) | `token` | Authenticate to AWX or Ansible Automation Platform API |
 | OTLP private CA (Issue #478, `spec.<component>.telemetry.tls.caCertSecretRef`) | `ca.crt` by default, or the referenced key | Verify a private OTLP collector certificate |
 | OTLP mTLS client (Issue #478, `spec.<component>.telemetry.tls.tlsClientSecretRef`) | `tls.crt`, `tls.key` | Authenticate the telemetry exporter to an OTLP collector |
 | DataStorage audit HMAC (`spec.dataStorage.audit.hashKey.existingSecret`, or the operator default) | `audit-hmac-key.yaml` containing `hmacKey` (or configured `secretKey`) | Keyed audit hash-chain tamper evidence (FedRAMP AU-9 / SOC 2 CC8.1) |
 | DataStorage audit signing certificate (`spec.dataStorage.audit.signingCertificate.secretName`) | `tls.crt`, `tls.key` | Sign exported audit records (FedRAMP AU-9 / SC-12) |
 
-Additional keys may be required for specific provider integrations; consult provider documentation and the Kubernaut CRD for optional fields.
+Notification Secret references are namespace-local: `secretRef.name` and `secretRef.key` resolve in the Kubernaut resource namespace. Additional keys may be required for specific provider integrations; consult provider documentation and the Kubernaut CRD for optional fields.
 
 ## Credential rotation
 

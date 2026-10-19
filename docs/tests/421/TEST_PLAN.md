@@ -234,7 +234,7 @@ known follow-on if a future profile with distinct credentials is needed for alig
 |---|---|---|---|
 | `.resources` passthrough | 10 fields (apiFrontend, kubernautAgent, remediationOrchestrator, dataStorage, workflowExecution, notification, signalProcessing, effectivenessMonitor, aiAnalysis, authWebhook) + `kaResources()` 3-case default-merge | `internal/resources/deployments_test.go` | Yes |
 | config-rendering | ~60 fields across apiFrontend/EM/RO/gateway/KA/llmProfiles/notification/dataStorage/workflowExecution/valkey/fleet, plus control-tag additions to existing `PARTIAL` fields | `internal/resources/configmaps_test.go` | Yes |
-| Secret/volume-mount | fleet, valkey, notification.slack, llmProfiles.tlsClientSecretRef, dataStorage.signingCert | `internal/resources/deployments_test.go` | Yes |
+| Secret/volume-mount | fleet, valkey, notification.credentials, llmProfiles.tlsClientSecretRef, dataStorage.signingCert | `internal/resources/deployments_test.go` | Yes |
 | single-field | console.auth.secretName tag, postgresql.secretName, image.pullPolicy, dataStorage.retention.defaultDays, gateway.enabled predicate | scattered (`console_test.go`, `deployments_test.go`, controller tests) | Yes |
 
 Full per-field detail is in [CRD_FIELD_COVERAGE_AUDIT.md](CRD_FIELD_COVERAGE_AUDIT.md)'s
