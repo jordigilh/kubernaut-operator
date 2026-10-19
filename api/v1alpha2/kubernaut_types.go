@@ -2835,9 +2835,11 @@ type MetricsScrapeSource struct {
 // NetworkPolicyIngressOverride adds standard NetworkPolicy ingress peers
 // beyond the operator's default same-namespace component allow rule.
 type NetworkPolicyIngressOverride struct {
+	// +kubebuilder:validation:MaxItems=16
 	// +optional
 	IngressCIDRs []string `json:"ingressCIDRs,omitempty"`
 
+	// +kubebuilder:validation:MaxItems=16
 	// +optional
 	IngressNamespaceSelectors []metav1.LabelSelector `json:"ingressNamespaceSelectors,omitempty"`
 }
@@ -2847,6 +2849,7 @@ type NetworkPolicyIngressOverride struct {
 type NetworkPolicyNamedIngressOverride struct {
 	NetworkPolicyIngressOverride `json:",inline"`
 
+	// +kubebuilder:validation:MaxItems=16
 	// +optional
 	IngressNamespaces []string `json:"ingressNamespaces,omitempty"`
 }

@@ -11,6 +11,7 @@ ci_matrix="${repo_root}/docs/design/ISSUE-501-OPERATOR-UPSTREAM-CI-BOUNDARY.md"
 otlp_matrix="${repo_root}/docs/security/ISSUE-478-CONTROL-TRACEABILITY.md"
 monitoring_matrix="${repo_root}/docs/security/ISSUE-513-CONTROL-TRACEABILITY.md"
 gateway_auth_matrix="${repo_root}/docs/security/ISSUE-539-CONTROL-TRACEABILITY.md"
+portable_networkpolicy_matrix="${repo_root}/docs/security/ISSUE-555-CONTROL-TRACEABILITY.md"
 ownership_matrix="${repo_root}/docs/security/ISSUE-514-CONTROL-TRACEABILITY.md"
 fleet_matrix="${repo_root}/docs/security/ISSUE-431-CONTROL-TRACEABILITY.md"
 audit_hmac_matrix="${repo_root}/docs/security/ISSUE-209-CONTROL-TRACEABILITY.md"
@@ -30,6 +31,7 @@ fail() {
 [[ -f "${otlp_matrix}" ]] || fail "missing ${otlp_matrix}"
 [[ -f "${monitoring_matrix}" ]] || fail "missing ${monitoring_matrix}"
 [[ -f "${gateway_auth_matrix}" ]] || fail "missing ${gateway_auth_matrix}"
+[[ -f "${portable_networkpolicy_matrix}" ]] || fail "missing ${portable_networkpolicy_matrix}"
 [[ -f "${audit_hmac_matrix}" ]] || fail "missing ${audit_hmac_matrix}"
 [[ -f "${handoff_matrix}" ]] || fail "missing ${handoff_matrix}"
 [[ -f "${workflowexecution_retention_matrix}" ]] || fail "missing ${workflowexecution_retention_matrix}"
@@ -63,6 +65,60 @@ done
 grep -Fq 'NIST SP 800-53 Rev. 5' "${matrix}" || fail "missing NIST SP 800-53 Rev. 5 declaration"
 grep -Fq 'OWASP ASVS 5.0.0' "${matrix}" || fail "missing OWASP ASVS 5.0.0 declaration"
 grep -Eq 'v5\.0\.0-V[0-9]+\.[0-9]+\.[0-9]+' "${matrix}" || fail "missing versioned ASVS requirement IDs"
+
+# Issue #555 portable policy evidence is independently checked because this
+# change removes the provider-policy test lanes and changes the runtime API.
+# A passing historical #488 matrix must not silently satisfy the new contract.
+for scope in 'NIST SP 800-53 Rev. 5' 'FedRAMP' 'SOC 2' 'OWASP ASVS 5.0.0'; do
+	grep -Fq "${scope}" "${portable_networkpolicy_matrix}" \
+		|| fail "Issue #555 matrix is missing ${scope} scope"
+done
+grep -Eiq 'does not claim formal (FedRAMP|SOC 2|ASVS)' "${portable_networkpolicy_matrix}" \
+	|| fail "Issue #555 matrix must reject formal compliance claims"
+for control in AC-3 AC-6 SC-7 CM-2 CM-3 CM-6 CM-8 SI-4 AU-3 AU-12 SI-10 SA-11; do
+	grep -Eq "(^|[^A-Za-z0-9-])${control}([^A-Za-z0-9-]|$)" "${portable_networkpolicy_matrix}" \
+		|| fail "Issue #555 matrix is missing control ${control}"
+done
+for requirement in \
+	v5.0.0-V2.1.1 v5.0.0-V2.2.1 v5.0.0-V2.2.2 v5.0.0-V2.2.3 \
+	v5.0.0-V8.2.1 v5.0.0-V8.3.1 \
+	v5.0.0-V13.1.1 v5.0.0-V13.2.4 \
+	v5.0.0-V15.1.2 v5.0.0-V15.2.3 v5.0.0-V15.2.4 v5.0.0-V15.2.5 \
+	v5.0.0-V16.1.1 v5.0.0-V16.2.1 v5.0.0-V16.3.3 v5.0.0-V16.3.4 \
+	v5.0.0-V16.5.2 v5.0.0-V16.5.3; do
+	grep -Fq "${requirement}" "${portable_networkpolicy_matrix}" \
+		|| fail "Issue #555 matrix is missing ASVS requirement ${requirement}"
+done
+for artifact in \
+	'api/v1alpha2/clean_break_test.go' \
+	'config/samples/v1alpha2_kubernaut.yaml' \
+	'config/crd/bases/kubernaut.ai_kubernauts.yaml' \
+	'config/rbac/role.yaml' \
+	'bundle/manifests/allow-metrics-traffic_networking.k8s.io_v1_networkpolicy.yaml' \
+	'internal/policy/networkpolicy_contract_test.go' \
+	'internal/policy/ownership_test.go' \
+	'internal/controller/network_policy_unit_test.go' \
+	'internal/controller/network_policy_integration_test.go' \
+	'test/helm/chart_test.go'; do
+	grep -Fq "${artifact}" "${portable_networkpolicy_matrix}" \
+		|| fail "Issue #555 matrix is missing evidence artifact ${artifact}"
+done
+for test_id in \
+	UT-NP-555-API-001 UT-NP-555-RENDER-001 UT-NP-555-RENDER-002 \
+	UT-NP-555-RENDER-003 UT-NP-555-VALIDATE-001 \
+	UT-NP-555-CTRL-001 UT-NP-555-CTRL-002 UT-NP-555-CTRL-003 \
+	UT-NP-555-CTRL-004 UT-NP-555-CTRL-005 UT-NP-555-CTRL-006 UT-NP-555-CTRL-007 \
+	IT-NP-555-RECONCILE-001 IT-NP-555-OWNERSHIP-002 IT-NP-555-LIFECYCLE-003 \
+	IT-NP-555-FAILCLOSED-004 IT-NP-555-SCRAPE-005 IT-NP-555-API-ERROR-006 \
+	IT-NP-555-WIRING-007 IT-NP-555-WIRING-008 IT-NP-555-COVERAGE-009; do
+	grep -R -n --include='*_test.go' -F "${test_id}" "${repo_root}/api" "${repo_root}/internal" "${repo_root}/test" >/dev/null \
+		|| fail "Issue #555 evidence ID ${test_id} has no executable test"
+	grep -Fq "${test_id}" "${portable_networkpolicy_matrix}" \
+		|| fail "Issue #555 matrix omits evidence ID ${test_id}"
+done
+if grep -Eq 'provider: Auto|ProviderPolicyReady|supported, active provider' "${repo_root}/config/samples/v1alpha2_kubernaut.yaml"; then
+	fail "Issue #555 sample still advertises removed provider-policy configuration"
+fi
 
 grep -Fq 'NIST SP 800-53' "${audit_hmac_matrix}" || fail "audit HMAC matrix is missing NIST scope"
 grep -Fq 'SOC 2' "${audit_hmac_matrix}" || fail "audit HMAC matrix is missing SOC 2 scope"

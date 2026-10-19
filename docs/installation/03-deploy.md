@@ -149,6 +149,8 @@ spec:
   #         app.kubernetes.io/name: prometheus
   # The operator emits selector-based ingress policies only. Kubernetes
   # API-server and external dependency egress remains administrator/SRE-owned.
+  # Console browser/Route ingress is intentionally administrator-owned; add a
+  # supplemental policy if the deployment requires source restriction.
 
   # --- Policies (from Step 2: Configure Services) ---
   aiAnalysis:

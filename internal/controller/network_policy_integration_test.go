@@ -62,7 +62,7 @@ var _ = Describe("portable NetworkPolicy controller wiring", Label("integration"
 
 		policies := &networkingv1.NetworkPolicyList{}
 		Expect(k8sClient.List(ctx, policies, client.InNamespace(testNamespace), client.MatchingLabels{"kubernaut.ai/managed-policy": "true"})).To(Succeed())
-		Expect(policies.Items).To(HaveLen(len(resources.ActiveComponents(cr, cr))-1), "AuthWebhook admission ingress remains administrator-owned")
+		Expect(policies.Items).To(HaveLen(expectedNetworkPolicyCount(cr, cr)), "AuthWebhook and Console ingress remain administrator-owned")
 		for _, networkPolicy := range policies.Items {
 			Expect(networkPolicy.Spec.PolicyTypes).To(Equal([]networkingv1.PolicyType{networkingv1.PolicyTypeIngress}))
 			Expect(networkPolicy.Spec.Egress).To(BeEmpty())

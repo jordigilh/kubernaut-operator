@@ -40,6 +40,8 @@ type Intent struct {
 	IngressOverrides map[string]kubernautv1alpha2.NetworkPolicyNamedIngressOverride
 }
 
+const maxIngressPeers = 16
+
 // BuildIntent constructs the common policy intent for one Kubernaut namespace.
 func BuildIntent(namespace string, components []string) (Intent, error) {
 	if namespace == "" {
@@ -84,6 +86,9 @@ func ValidateNetworkPoliciesSpec(spec kubernautv1alpha2.NetworkPoliciesSpec) err
 		if err := validateIngressOverride(component, override.NetworkPolicyIngressOverride); err != nil {
 			return err
 		}
+		if len(override.IngressNamespaces) > maxIngressPeers {
+			return fmt.Errorf("network policy %s supports at most %d ingress namespaces", component, maxIngressPeers)
+		}
 		for _, namespace := range override.IngressNamespaces {
 			if len(validation.IsDNS1123Label(namespace)) != 0 {
 				return fmt.Errorf("network policy %s ingress namespace %q is invalid", component, namespace)
@@ -102,12 +107,21 @@ func ValidateNetworkPoliciesSpec(spec kubernautv1alpha2.NetworkPoliciesSpec) err
 }
 
 func validateIngressOverride(component string, override kubernautv1alpha2.NetworkPolicyIngressOverride) error {
+	if len(override.IngressCIDRs) > maxIngressPeers {
+		return fmt.Errorf("network policy %s supports at most %d ingress CIDRs", component, maxIngressPeers)
+	}
+	if len(override.IngressNamespaceSelectors) > maxIngressPeers {
+		return fmt.Errorf("network policy %s supports at most %d ingress namespace selectors", component, maxIngressPeers)
+	}
 	for _, cidr := range override.IngressCIDRs {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {
 			return fmt.Errorf("network policy %s ingress CIDR %q is invalid: %w", component, cidr, err)
 		}
 	}
 	for index, selector := range override.IngressNamespaceSelectors {
+		if len(selector.MatchLabels) == 0 && len(selector.MatchExpressions) == 0 {
+			return fmt.Errorf("network policy %s ingress namespace selector %d must not be empty", component, index)
+		}
 		if _, err := metav1.LabelSelectorAsSelector(&selector); err != nil {
 			return fmt.Errorf("network policy %s ingress namespace selector %d is invalid: %w", component, index, err)
 		}

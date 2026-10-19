@@ -22,6 +22,7 @@ import (
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -135,18 +136,33 @@ func (r *KubernautReconciler) deleteObservedResource(ctx context.Context, obj cl
 	return r.Delete(ctx, obj, opts...)
 }
 
-// deleteObservedNetworkPolicy is called only after the managed-policy label
-// selector. The independent owner/scope/lifecycle veto still applies before
-// deletion.
-func (r *KubernautReconciler) deleteObservedNetworkPolicy(ctx context.Context, obj client.Object) error {
+// deleteObservedNetworkPolicy is called only after the managed-policy and
+// instance label selectors. The independent owner/scope/lifecycle veto still
+// applies before deletion.
+func (r *KubernautReconciler) deleteObservedNetworkPolicy(ctx context.Context, obj client.Object, instance string) error {
 	logger := logf.FromContext(ctx).WithValues("kind", r.resourceKind(ctx, obj), "namespace", obj.GetNamespace(),
 		"name", obj.GetName(), "ownerReferences", obj.GetOwnerReferences(), "ownershipLabels", obj.GetLabels(),
 		"objectResourceVersion", obj.GetResourceVersion())
 	labels := obj.GetLabels()
 	if labels[policy.ManagedPolicyLabel] != managedPolicyTrue || labels[policy.ManagedByLabel] != operatorManagedBy ||
-		labels[policy.PolicyNamespaceLabel] != obj.GetNamespace() {
+		labels[policy.PolicyNamespaceLabel] != obj.GetNamespace() || labels["app.kubernetes.io/instance"] != instance {
 		logger.Info("NetworkPolicy preserved outside ownership contract")
 		return nil //nolint:nilerr // diagnosed preservation is successful cleanup, not permission to delete
+	}
+	expected := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{
+		Name:      obj.GetName(),
+		Namespace: obj.GetNamespace(),
+		Labels: map[string]string{
+			policy.ManagedPolicyLabel:    managedPolicyTrue,
+			policy.ManagedByLabel:        operatorManagedBy,
+			policy.PolicyNamespaceLabel:  obj.GetNamespace(),
+			"app.kubernetes.io/instance": instance,
+		},
+	}}
+	if err := policy.OwnershipError(obj, expected); err != nil {
+		conflict := fmt.Errorf("refusing to delete NetworkPolicy %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
+		logger.Error(conflict, "NetworkPolicy preserved outside ownership contract")
+		return fmt.Errorf("%w: %w", resources.ErrOwnershipConflict, conflict)
 	}
 	if err := client.IgnoreNotFound(r.deleteObservedResource(ctx, obj)); err != nil {
 		logger.Error(err, "NetworkPolicy deletion failed")

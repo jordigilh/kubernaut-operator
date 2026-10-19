@@ -36,7 +36,7 @@ var _ = Describe("portable NetworkPolicy unit lifecycle", Label("unit"), func() 
 		Expect(r.reconcileNetworkPolicies(ctx, kn, kn)).To(Succeed())
 		policies := &networkingv1.NetworkPolicyList{}
 		Expect(r.List(ctx, policies, client.InNamespace(kn.Namespace))).To(Succeed())
-		Expect(policies.Items).To(HaveLen(len(resources.ActiveComponents(kn, kn))-1), "AuthWebhook admission ingress remains administrator-owned")
+		Expect(policies.Items).To(HaveLen(expectedNetworkPolicyCount(kn, kn)), "AuthWebhook and Console ingress remain administrator-owned")
 		for _, object := range policies.Items {
 			Expect(object.Spec.PolicyTypes).To(Equal([]networkingv1.PolicyType{networkingv1.PolicyTypeIngress}))
 			Expect(object.Spec.Egress).To(BeEmpty())
@@ -79,6 +79,7 @@ var _ = Describe("portable NetworkPolicy unit lifecycle", Label("unit"), func() 
 		Expect(r.Get(ctx, client.ObjectKeyFromObject(foreign), live)).To(Succeed())
 		Expect(live.Labels).To(HaveKeyWithValue("app.kubernetes.io/managed-by", "administrator"))
 		Expect(meta.IsStatusConditionFalse(kn.Status.Conditions, kubernautv1alpha2.ConditionNetworkPolicyReady)).To(BeTrue())
+		Expect(meta.FindStatusCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionNetworkPolicyReady).Reason).To(Equal(policy.ReasonNetworkPolicyOwnershipConflict))
 
 		invalid := newMinimalCR()
 		invalid.Spec.NetworkPolicies.Gateway.IngressCIDRs = []string{"not-a-cidr"}
@@ -227,14 +228,34 @@ var _ = Describe("portable NetworkPolicy unit lifecycle", Label("unit"), func() 
 		}}
 		preserve := businessUnitReconciler(kn, interceptor.Funcs{})
 		Expect(preserve.Create(ctx, foreign)).To(Succeed())
-		Expect(preserve.deleteObservedNetworkPolicy(ctx, foreign)).To(Succeed())
+		Expect(preserve.deleteObservedNetworkPolicy(ctx, foreign, kn.Name)).To(Succeed())
 		Expect(preserve.Get(ctx, client.ObjectKeyFromObject(foreign), &networkingv1.NetworkPolicy{})).To(Succeed())
 
 		denied := businessUnitReconciler(kn, interceptor.Funcs{Delete: deniedUnitDelete})
+		foreignOwner := foreign.DeepCopy()
+		foreignOwner.ResourceVersion = ""
+		foreignOwner.Labels[policy.ManagedByLabel] = "kubernaut-operator"
+		foreignOwner.OwnerReferences = []metav1.OwnerReference{{APIVersion: "v1", Kind: "ConfigMap", Name: "foreign"}}
+		Expect(denied.Create(ctx, foreignOwner)).To(Succeed())
+		Expect(denied.deleteObservedNetworkPolicy(ctx, foreignOwner, kn.Name)).To(MatchError(ContainSubstring("ownership")))
+		Expect(denied.Get(ctx, client.ObjectKeyFromObject(foreignOwner), &networkingv1.NetworkPolicy{})).To(Succeed())
+
 		owned := foreign.DeepCopy()
+		owned.Name = "owned"
 		owned.ResourceVersion = ""
 		owned.Labels[policy.ManagedByLabel] = "kubernaut-operator"
 		Expect(denied.Create(ctx, owned)).To(Succeed())
-		Expect(denied.deleteObservedNetworkPolicy(ctx, owned)).To(HaveOccurred())
+		Expect(denied.deleteObservedNetworkPolicy(ctx, owned, kn.Name)).To(HaveOccurred())
 	})
 })
+
+func expectedNetworkPolicyCount(kn, knV2 *kubernautv1alpha2.Kubernaut) int {
+	count := 0
+	for _, component := range resources.ActiveComponents(kn, knV2) {
+		if component == resources.ComponentAuthWebhook || component == resources.ComponentConsole {
+			continue
+		}
+		count++
+	}
+	return count
+}

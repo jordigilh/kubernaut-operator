@@ -2641,6 +2641,7 @@ spec:
                       ingressCIDRs:
                         items:
                           type: string
+                        maxItems: 16
                         type: array
                       ingressNamespaceSelectors:
                         items:
@@ -2692,10 +2693,12 @@ spec:
                               type: object
                           type: object
                           x-kubernetes-map-type: atomic
+                        maxItems: 16
                         type: array
                       ingressNamespaces:
                         items:
                           type: string
+                        maxItems: 16
                         type: array
                     type: object
                   console:
@@ -2706,6 +2709,7 @@ spec:
                       ingressCIDRs:
                         items:
                           type: string
+                        maxItems: 16
                         type: array
                       ingressNamespaceSelectors:
                         items:
@@ -2757,10 +2761,12 @@ spec:
                               type: object
                           type: object
                           x-kubernetes-map-type: atomic
+                        maxItems: 16
                         type: array
                       ingressNamespaces:
                         items:
                           type: string
+                        maxItems: 16
                         type: array
                     type: object
                   datastorage:
@@ -2771,6 +2777,7 @@ spec:
                       ingressCIDRs:
                         items:
                           type: string
+                        maxItems: 16
                         type: array
                       ingressNamespaceSelectors:
                         items:
@@ -2822,6 +2829,7 @@ spec:
                               type: object
                           type: object
                           x-kubernetes-map-type: atomic
+                        maxItems: 16
                         type: array
                     type: object
                   gateway:
@@ -2831,6 +2839,7 @@ spec:
                       ingressCIDRs:
                         items:
                           type: string
+                        maxItems: 16
                         type: array
                       ingressNamespaceSelectors:
                         items:
@@ -2882,10 +2891,12 @@ spec:
                               type: object
                           type: object
                           x-kubernetes-map-type: atomic
+                        maxItems: 16
                         type: array
                       ingressNamespaces:
                         items:
                           type: string
+                        maxItems: 16
                         type: array
                     type: object
                   kubernautAgent:
@@ -2896,6 +2907,7 @@ spec:
                       ingressCIDRs:
                         items:
                           type: string
+                        maxItems: 16
                         type: array
                       ingressNamespaceSelectors:
                         items:
@@ -2947,6 +2959,7 @@ spec:
                               type: object
                           type: object
                           x-kubernetes-map-type: atomic
+                        maxItems: 16
                         type: array
                     type: object
                   scrapeSources:

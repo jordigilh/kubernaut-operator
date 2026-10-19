@@ -205,6 +205,10 @@ server reaches that admission endpoint from the host network and has no
 portable namespace/pod selector. Administrators and the CNI own that ingress
 boundary.
 
+Console browser/Route ingress is also intentionally excluded from the generated
+operand policy. Browser source identity is deployment- and organization-specific;
+administrators must add any Console ingress policy required by their Route.
+
 The OLM manager policy permits all sources to TCP 9443 for the same host-network
 webhook reason. Standard NetworkPolicy allows are additive, so another standard
 allow policy cannot narrow that source set; administrators must use a

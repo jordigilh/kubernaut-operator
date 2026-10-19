@@ -2236,6 +2236,9 @@ func (r *KubernautReconciler) patchNetworkPolicyStatus(ctx context.Context, kn *
 	message := "standard Kubernetes NetworkPolicy objects are applied; dataplane enforcement is not attested"
 	if reconcileErr != nil {
 		reason = policy.ReasonNetworkPolicyApplyFailed
+		if errors.Is(reconcileErr, resources.ErrOwnershipConflict) {
+			reason = policy.ReasonNetworkPolicyOwnershipConflict
+		}
 		message = reconcileErr.Error()
 	}
 	if err := r.patchStatus(ctx, kn, func() {
@@ -2249,7 +2252,11 @@ func (r *KubernautReconciler) patchNetworkPolicyStatus(ctx context.Context, kn *
 	}
 	if reconcileErr != nil {
 		if r.Recorder != nil {
-			r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, "NetworkPolicyUnavailable", "Reconcile", "%s", message)
+			eventReason := "NetworkPolicyUnavailable"
+			if reason == policy.ReasonNetworkPolicyOwnershipConflict {
+				eventReason = policy.ReasonNetworkPolicyOwnershipConflict
+			}
+			r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, eventReason, "Reconcile", "%s", message)
 		}
 		return reconcileErr
 	}
@@ -2273,7 +2280,7 @@ func (r *KubernautReconciler) pruneNetworkPolicies(ctx context.Context, namespac
 		if _, ok := desired[policyObjectKey(object)]; ok {
 			continue
 		}
-		if err := r.deleteObservedNetworkPolicy(ctx, object); err != nil {
+		if err := r.deleteObservedNetworkPolicy(ctx, object, instance); err != nil {
 			return fmt.Errorf("deleting stale NetworkPolicy %s: %w", object.Name, err)
 		}
 	}
@@ -2670,7 +2677,7 @@ func (r *KubernautReconciler) deleteNetworkPolicies(ctx context.Context, namespa
 	var errs []error
 	for index := range list.Items {
 		object := &list.Items[index]
-		if err := r.deleteObservedNetworkPolicy(ctx, object); err != nil {
+		if err := r.deleteObservedNetworkPolicy(ctx, object, instance); err != nil {
 			errs = append(errs, fmt.Errorf("deleting NetworkPolicy %s: %w", object.Name, err))
 		}
 	}

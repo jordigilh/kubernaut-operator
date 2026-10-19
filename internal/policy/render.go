@@ -32,6 +32,7 @@ const (
 	instanceLabel        = "app.kubernetes.io/instance"
 	componentLabel       = "app.kubernetes.io/component"
 	authWebhookComponent = "authwebhook"
+	consoleComponent     = "console"
 )
 
 // RenderedPolicy is a standard Kubernetes NetworkPolicy plus its namespaced
@@ -62,10 +63,10 @@ func Render(intent Intent) ([]RenderedPolicy, error) {
 	}
 	objects := make([]RenderedPolicy, 0, len(intent.Components))
 	for _, component := range intent.Components {
-		// AuthWebhook serves Kubernetes admission webhooks. Its caller is the
-		// API server, which has no portable NetworkPolicy namespace/pod identity;
-		// administrators own the external admission ingress boundary.
-		if component == authWebhookComponent {
+		// AuthWebhook serves Kubernetes admission webhooks and Console serves
+		// browser/Route traffic. Neither caller has a portable namespace/pod
+		// identity; administrators own both external ingress boundaries.
+		if component == authWebhookComponent || component == consoleComponent {
 			continue
 		}
 		policy := &kubernetnetworking.NetworkPolicy{

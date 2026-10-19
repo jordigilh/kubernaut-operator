@@ -24,6 +24,10 @@ admission server is called by the Kubernetes API server, whose host-network
 source has no portable namespace/pod selector. Administrators and the CNI own
 that external admission-ingress boundary.
 
+Console browser/Route ingress is likewise intentionally excluded. Its browser
+source identity is deployment- and organization-specific; administrators own
+any supplemental Console ingress policy.
+
 The operator reports `NetworkPolicyReady` when the desired objects are applied
 and ownership-safe. This is not an assertion that the installed CNI enforces
 the objects. Enforcement qualification is a separate cluster/CNI concern.

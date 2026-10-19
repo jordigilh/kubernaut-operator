@@ -91,8 +91,8 @@ var _ = Describe("portable Kubernetes NetworkPolicy contract", func() {
 		Expect(rendered[0].Object.Spec.Egress).To(BeEmpty())
 	})
 
-	It("UT-NP-555-RENDER-003 [SC-7; SOC2 CC6.6; ASVS V4.1] leaves AuthWebhook admission ingress administrator-owned", func() {
-		intent, err := BuildIntent("kubernaut-system", []string{"gateway", "authwebhook"})
+	It("UT-NP-555-RENDER-003 [SC-7; SOC2 CC6.6; ASVS V4.1] leaves admission and browser ingress administrator-owned", func() {
+		intent, err := BuildIntent("kubernaut-system", []string{"gateway", "authwebhook", "console"})
 		Expect(err).NotTo(HaveOccurred())
 		rendered, err := Render(intent)
 		Expect(err).NotTo(HaveOccurred())
@@ -121,6 +121,32 @@ var _ = Describe("portable Kubernetes NetworkPolicy contract", func() {
 				},
 			},
 		})).To(MatchError(ContainSubstring("namespace selector")))
+		Expect(ValidateNetworkPoliciesSpec(kubernautv1alpha2.NetworkPoliciesSpec{
+			Gateway: kubernautv1alpha2.NetworkPolicyNamedIngressOverride{
+				NetworkPolicyIngressOverride: kubernautv1alpha2.NetworkPolicyIngressOverride{
+					IngressNamespaceSelectors: []metav1.LabelSelector{{}},
+				},
+			},
+		})).To(MatchError(ContainSubstring("must not be empty")))
+		Expect(ValidateNetworkPoliciesSpec(kubernautv1alpha2.NetworkPoliciesSpec{
+			Gateway: kubernautv1alpha2.NetworkPolicyNamedIngressOverride{
+				NetworkPolicyIngressOverride: kubernautv1alpha2.NetworkPolicyIngressOverride{
+					IngressCIDRs: make([]string, 17),
+				},
+			},
+		})).To(MatchError(ContainSubstring("at most 16 ingress CIDRs")))
+		Expect(ValidateNetworkPoliciesSpec(kubernautv1alpha2.NetworkPoliciesSpec{
+			Gateway: kubernautv1alpha2.NetworkPolicyNamedIngressOverride{
+				IngressNamespaces: make([]string, 17),
+			},
+		})).To(MatchError(ContainSubstring("at most 16 ingress namespaces")))
+		Expect(ValidateNetworkPoliciesSpec(kubernautv1alpha2.NetworkPoliciesSpec{
+			Gateway: kubernautv1alpha2.NetworkPolicyNamedIngressOverride{
+				NetworkPolicyIngressOverride: kubernautv1alpha2.NetworkPolicyIngressOverride{
+					IngressNamespaceSelectors: make([]metav1.LabelSelector, 17),
+				},
+			},
+		})).To(MatchError(ContainSubstring("at most 16 ingress namespace selectors")))
 		Expect(ValidateNetworkPoliciesSpec(kubernautv1alpha2.NetworkPoliciesSpec{
 			DataStorage: kubernautv1alpha2.NetworkPolicyIngressOverride{IngressCIDRs: []string{"invalid"}},
 		})).To(MatchError(ContainSubstring("datastorage")))
