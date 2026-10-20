@@ -324,11 +324,12 @@ type fleetOAuth2YAML struct {
 // volume mounts added in deployments.go (GatewayDeployment /
 // RemediationOrchestratorDeployment).
 const (
-	fleetCAMountPath           = "/etc/fleet-tls/scope-check/ca.crt"
-	fleetOAuth2CAMountPath     = "/etc/fleet-tls/oauth2/ca.crt"
-	fleetMCPGatewayCAMountDir  = "/etc/fleet-tls/mcp-gateway"
-	fleetMCPGatewayCAMountPath = "/etc/fleet-tls/mcp-gateway/ca.crt"
-	fleetTokenMountPath        = "/etc/fleet-token/token"
+	fleetCAMountPath            = "/etc/fleet-tls/scope-check/ca.crt"
+	fleetOAuth2CAMountPath      = "/etc/fleet-tls/oauth2/ca.crt"
+	fleetMCPGatewayCAMountDir   = "/etc/fleet-tls/mcp-gateway"
+	fleetMCPGatewayCAMountPath  = "/etc/fleet-tls/mcp-gateway/ca.crt"
+	fleetMCPGatewayCAVolumeName = "fleet-mcp-gateway-ca"
+	fleetTokenMountPath         = "/etc/fleet-token/token"
 )
 
 // apifrontendTLSCAFile is AF's own combined inter-service CA bundle mount

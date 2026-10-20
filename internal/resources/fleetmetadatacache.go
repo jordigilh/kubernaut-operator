@@ -204,10 +204,7 @@ func FleetMetadataCacheDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuberna
 		{Name: "tls-certs", MountPath: InterServiceTLSCertDirFor(tlsKn), ReadOnly: true},
 		InterServiceTLSCAMount(tlsKn),
 	}
-	if trust := knV2.Spec.Fleet.MCPGateway.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
-		volumes = append(volumes, secretKeyVolume("fleet-mcp-gateway-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
-		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-mcp-gateway-ca", MountPath: fleetMCPGatewayCAMountDir, ReadOnly: true})
-	}
+	volumes, mounts = appendFleetMCPGatewayCASecretMount(volumes, mounts, &knV2.Spec.Fleet)
 	if trust := knV2.Spec.Fleet.OAuth2.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
 		volumes = append(volumes, secretKeyVolume("fleet-oauth2-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
 		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-oauth2-ca", MountPath: "/etc/fleet-tls/oauth2", ReadOnly: true})

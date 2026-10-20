@@ -201,6 +201,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		})
 
 		It("IT-FLEET-557-RECONCILE-MCP-CA: wires MCP Gateway CA rendering and read-only mounts through Reconcile", func() {
+			const mcpGatewayCAVolumeName = "fleet-mcp-gateway-ca"
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: "mcp-gateway-ca", Namespace: testNamespace},
@@ -228,7 +229,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.DeploymentName(resources.ComponentGateway), Namespace: testNamespace}, gateway)).To(Succeed())
 			foundVolume := false
 			for _, volume := range gateway.Spec.Template.Spec.Volumes {
-				if volume.Name == "fleet-mcp-gateway-ca" {
+				if volume.Name == mcpGatewayCAVolumeName {
 					foundVolume = true
 					Expect(volume.Secret).NotTo(BeNil())
 					Expect(volume.Secret.SecretName).To(Equal("mcp-gateway-ca"))
@@ -237,7 +238,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(foundVolume).To(BeTrue())
 			foundMount := false
 			for _, mount := range gateway.Spec.Template.Spec.Containers[0].VolumeMounts {
-				if mount.Name == "fleet-mcp-gateway-ca" && mount.MountPath == "/etc/fleet-tls/mcp-gateway" {
+				if mount.Name == mcpGatewayCAVolumeName && mount.MountPath == "/etc/fleet-tls/mcp-gateway" {
 					foundMount = true
 					Expect(mount.ReadOnly).To(BeTrue())
 				}
@@ -248,7 +249,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.DeploymentName(resources.ComponentFleetMetadataCache), Namespace: testNamespace}, fmc)).To(Succeed())
 			fmcVolume := false
 			for _, volume := range fmc.Spec.Template.Spec.Volumes {
-				if volume.Name == "fleet-mcp-gateway-ca" {
+				if volume.Name == mcpGatewayCAVolumeName {
 					fmcVolume = true
 					Expect(volume.Secret.SecretName).To(Equal("mcp-gateway-ca"))
 				}

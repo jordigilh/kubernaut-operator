@@ -1274,10 +1274,10 @@ var _ = Describe("Deployments", func() {
 				}
 				dep, err := GatewayDeployment(kn, knV2)
 				Expect(err).NotTo(HaveOccurred())
-				expectHasVolume(dep, "fleet-mcp-gateway-ca")
-				expectHasVolumeMount(dep, "fleet-mcp-gateway-ca", "/etc/fleet-tls/mcp-gateway")
+				expectHasVolume(dep, fleetMCPGatewayCAVolumeName)
+				expectHasVolumeMount(dep, fleetMCPGatewayCAVolumeName, fleetMCPGatewayCAMountDir)
 				for _, volume := range dep.Spec.Template.Spec.Volumes {
-					if volume.Name == "fleet-mcp-gateway-ca" {
+					if volume.Name == fleetMCPGatewayCAVolumeName {
 						Expect(volume.Secret).NotTo(BeNil())
 						Expect(volume.Secret.SecretName).To(Equal("fleet-mcp-gateway-ca"))
 						Expect(volume.Secret.Items).To(ConsistOf(corev1.KeyToPath{Key: "ca.crt", Path: "ca.crt"}))
@@ -1677,8 +1677,8 @@ var _ = Describe("Deployments", func() {
 			knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
 			dep, err := WorkflowExecutionDeployment(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
-			expectHasVolume(dep, "fleet-mcp-gateway-ca")
-			expectHasVolumeMount(dep, "fleet-mcp-gateway-ca", "/etc/fleet-tls/mcp-gateway")
+			expectHasVolume(dep, fleetMCPGatewayCAVolumeName)
+			expectHasVolumeMount(dep, fleetMCPGatewayCAVolumeName, fleetMCPGatewayCAMountDir)
 		})
 	})
 
