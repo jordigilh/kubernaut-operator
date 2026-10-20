@@ -5,7 +5,7 @@ go 1.26.9
 require (
 	github.com/go-logr/logr v1.4.4
 	github.com/go-logr/zapr v1.3.0
-	github.com/jordigilh/kubernaut v1.6.0-rc9.0.20261016121528-50eafbb4cd12
+	github.com/jordigilh/kubernaut v1.6.0-rc9.0.20261020200650-0a332d71d7e4
 	github.com/onsi/ginkgo/v2 v2.33.1
 	github.com/onsi/gomega v1.44.0
 	github.com/openshift/api v0.0.0-20260327162646-993e604705e3

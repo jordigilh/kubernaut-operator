@@ -62,6 +62,7 @@ type telemetryMaterialRevisionSet struct {
 	DataStorageSigning string
 	KubernautAgent     string
 	Monitoring         string
+	FleetMCPGateway    string
 }
 
 func (s *telemetryMaterialRevisionSet) set(component, revision string) {
@@ -408,6 +409,26 @@ func stampTelemetryMaterialRevision(dep *appsv1.Deployment, revisions telemetryM
 		annotations = make(map[string]string, 1)
 	}
 	annotations[resources.AnnotationTelemetryMaterialRevision] = revision
+	dep.Spec.Template.Annotations = annotations
+}
+
+func stampFleetMCPGatewayMaterialRevision(dep *appsv1.Deployment, revisions telemetryMaterialRevisionSet) {
+	if revisions.FleetMCPGateway == "" {
+		return
+	}
+	switch dep.Spec.Template.Labels["app"] {
+	case resources.ComponentGateway, resources.ComponentRemediationOrchestrator,
+		resources.ComponentSignalProcessing, resources.ComponentAPIFrontend,
+		resources.ComponentEffectivenessMonitor, resources.ComponentWorkflowExecution,
+		resources.ComponentKubernautAgent, resources.ComponentFleetMetadataCache:
+	default:
+		return
+	}
+	annotations := dep.Spec.Template.Annotations
+	if annotations == nil {
+		annotations = make(map[string]string, 1)
+	}
+	annotations[resources.AnnotationFleetMCPGatewayMaterialRevision] = revisions.FleetMCPGateway
 	dep.Spec.Template.Annotations = annotations
 }
 

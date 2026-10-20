@@ -1356,6 +1356,10 @@ func appendWorkflowExecutionFleetSecretMount(volumes []corev1.Volume, mounts []c
 	if fleet.Enabled == nil || !*fleet.Enabled {
 		return volumes, mounts
 	}
+	if trust := fleet.MCPGateway.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
+		volumes = append(volumes, secretKeyVolume("fleet-mcp-gateway-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
+		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-mcp-gateway-ca", MountPath: fleetMCPGatewayCAMountDir, ReadOnly: true})
+	}
 	if trust := fleet.OAuth2.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
 		volumes = append(volumes, secretKeyVolume("fleet-oauth2-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
 		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-oauth2-ca", MountPath: "/etc/fleet-tls/oauth2", ReadOnly: true})
@@ -1377,6 +1381,10 @@ func appendFleetSecretMountsVariant(volumes []corev1.Volume, mounts []corev1.Vol
 	fleet := &knV2.Spec.Fleet
 	if fleet.Enabled == nil || !*fleet.Enabled {
 		return volumes, mounts
+	}
+	if trust := fleet.MCPGateway.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
+		volumes = append(volumes, secretKeyVolume("fleet-mcp-gateway-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
+		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-mcp-gateway-ca", MountPath: fleetMCPGatewayCAMountDir, ReadOnly: true})
 	}
 	if includeBackend {
 		var trust *kubernautv1alpha2.FleetTrustSpec

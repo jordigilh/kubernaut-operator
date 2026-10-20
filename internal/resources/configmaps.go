@@ -228,13 +228,14 @@ type fleetConfigYAML struct {
 	// instead (#464). GW/RO's admission validation (validateFleetConfig)
 	// still requires non-empty values regardless of which components
 	// render them, so this is safe.
-	Backend            string           `json:"backend,omitempty" yaml:"backend,omitempty"`
-	Endpoint           string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
-	TLSCAFile          string           `json:"tlsCAFile,omitempty" yaml:"tlsCAFile,omitempty"`
-	TokenPath          string           `json:"tokenPath,omitempty" yaml:"tokenPath,omitempty"`
-	MCPGatewayEndpoint string           `json:"mcpGatewayEndpoint,omitempty" yaml:"mcpGatewayEndpoint,omitempty"`
-	MCPGatewayType     string           `json:"mcpGatewayType,omitempty" yaml:"mcpGatewayType,omitempty"`
-	OAuth2             *fleetOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	Backend             string           `json:"backend,omitempty" yaml:"backend,omitempty"`
+	Endpoint            string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	TLSCAFile           string           `json:"tlsCAFile,omitempty" yaml:"tlsCAFile,omitempty"`
+	TokenPath           string           `json:"tokenPath,omitempty" yaml:"tokenPath,omitempty"`
+	MCPGatewayEndpoint  string           `json:"mcpGatewayEndpoint,omitempty" yaml:"mcpGatewayEndpoint,omitempty"`
+	MCPGatewayType      string           `json:"mcpGatewayType,omitempty" yaml:"mcpGatewayType,omitempty"`
+	MCPGatewayTLSCAFile string           `json:"mcpGatewayTLSCAFile,omitempty" yaml:"mcpGatewayTLSCAFile,omitempty"`
+	OAuth2              *fleetOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
 
 	// Namespace scopes AF/EM's ClusterRegistry to a single namespace's MCP
 	// Gateway CRDs (registry.RegistryConfig{Namespace: ...}, kubernaut#1720
@@ -323,9 +324,11 @@ type fleetOAuth2YAML struct {
 // volume mounts added in deployments.go (GatewayDeployment /
 // RemediationOrchestratorDeployment).
 const (
-	fleetCAMountPath       = "/etc/fleet-tls/scope-check/ca.crt"
-	fleetOAuth2CAMountPath = "/etc/fleet-tls/oauth2/ca.crt"
-	fleetTokenMountPath    = "/etc/fleet-token/token"
+	fleetCAMountPath           = "/etc/fleet-tls/scope-check/ca.crt"
+	fleetOAuth2CAMountPath     = "/etc/fleet-tls/oauth2/ca.crt"
+	fleetMCPGatewayCAMountDir  = "/etc/fleet-tls/mcp-gateway"
+	fleetMCPGatewayCAMountPath = "/etc/fleet-tls/mcp-gateway/ca.crt"
+	fleetTokenMountPath        = "/etc/fleet-token/token"
 )
 
 // apifrontendTLSCAFile is AF's own combined inter-service CA bundle mount
@@ -380,12 +383,13 @@ func resolveFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefO
 		return nil
 	}
 	cfg := &fleetConfigYAML{
-		Enabled:            true,
-		Backend:            fleet.ScopeCheck.Backend,
-		Endpoint:           resolveFleetEndpoint(knV2),
-		MCPGatewayEndpoint: fleet.MCPGateway.Endpoint,
-		MCPGatewayType:     fleet.MCPGateway.Type,
-		Resilience:         resolveMCPClient(knV2),
+		Enabled:             true,
+		Backend:             fleet.ScopeCheck.Backend,
+		Endpoint:            resolveFleetEndpoint(knV2),
+		MCPGatewayEndpoint:  fleet.MCPGateway.Endpoint,
+		MCPGatewayType:      fleet.MCPGateway.Type,
+		MCPGatewayTLSCAFile: resolveFleetTrustCAFile(fleet.MCPGateway.TLS, defaultOAuth2CAFile, fleetMCPGatewayCAMountPath),
+		Resilience:          resolveMCPClient(knV2),
 	}
 	var scopeTLS *kubernautv1alpha2.FleetTrustSpec
 	var tokenRef *kubernautv1alpha2.SecretKeyRef
@@ -624,11 +628,12 @@ type signalProcessingConfigYAML struct {
 // validation error, since YAML unmarshal leaves the zero value on a key
 // mismatch.
 type signalProcessingFleetYAML struct {
-	Endpoint       string               `json:"endpoint" yaml:"endpoint"`
-	OAuth2         *fleetOAuth2YAML     `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
-	MCPGatewayType string               `json:"mcpGatewayType,omitempty" yaml:"mcpGatewayType,omitempty"`
-	Namespace      string               `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Resilience     *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
+	Endpoint            string               `json:"endpoint" yaml:"endpoint"`
+	OAuth2              *fleetOAuth2YAML     `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	MCPGatewayType      string               `json:"mcpGatewayType,omitempty" yaml:"mcpGatewayType,omitempty"`
+	MCPGatewayTLSCAFile string               `json:"mcpGatewayTLSCAFile,omitempty" yaml:"mcpGatewayTLSCAFile,omitempty"`
+	Namespace           string               `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Resilience          *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
 }
 
 // resolveSignalProcessingFleetConfig builds the fleet: block rendered into
@@ -646,10 +651,11 @@ func resolveSignalProcessingFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) *sign
 	}
 	override := knV2.Spec.SignalProcessing.Fleet
 	cfg := &signalProcessingFleetYAML{
-		Endpoint:       fleet.MCPGateway.Endpoint,
-		MCPGatewayType: fleet.MCPGateway.Type,
-		Namespace:      fleet.MCPGateway.Namespace,
-		Resilience:     resolveMCPClient(knV2),
+		Endpoint:            fleet.MCPGateway.Endpoint,
+		MCPGatewayType:      fleet.MCPGateway.Type,
+		MCPGatewayTLSCAFile: resolveFleetTrustCAFile(fleet.MCPGateway.TLS, InterServiceTLSCAFileFor(knV2), fleetMCPGatewayCAMountPath),
+		Namespace:           fleet.MCPGateway.Namespace,
+		Resilience:          resolveMCPClient(knV2),
 	}
 	cfg.OAuth2 = &fleetOAuth2YAML{
 		Enabled:              true,
@@ -784,9 +790,10 @@ type workflowExecutionConfigYAML struct {
 // Backend/MCPServerRegistration CRDs so there is no namespace field either
 // (DD-235).
 type weFleetYAML struct {
-	Endpoint   string               `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
-	OAuth2     *fleetOAuth2YAML     `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
-	Resilience *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
+	Endpoint            string               `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	MCPGatewayTLSCAFile string               `json:"mcpGatewayTLSCAFile,omitempty" yaml:"mcpGatewayTLSCAFile,omitempty"`
+	OAuth2              *fleetOAuth2YAML     `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	Resilience          *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
 }
 
 // resolveWEFleetConfig builds the fleet: block rendered into
@@ -806,8 +813,9 @@ func resolveWEFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, defaultOAuth2CAFile
 		return nil
 	}
 	cfg := &weFleetYAML{
-		Endpoint:   fleet.MCPGateway.Endpoint,
-		Resilience: resolveMCPClient(knV2),
+		Endpoint:            fleet.MCPGateway.Endpoint,
+		MCPGatewayTLSCAFile: resolveFleetTrustCAFile(fleet.MCPGateway.TLS, defaultOAuth2CAFile, fleetMCPGatewayCAMountPath),
+		Resilience:          resolveMCPClient(knV2),
 		OAuth2: &fleetOAuth2YAML{
 			Enabled:              true,
 			TokenURL:             fleet.OAuth2.TokenURL,
@@ -1094,10 +1102,11 @@ type kaIntegrationsYAML struct {
 // GatewayDiscoverer (Kuadrant vs EAIGW) and register the
 // list_clusters/list_tools_for_cluster tools (ADR-068 decision #11).
 type kaFleetYAML struct {
-	Endpoint    string               `json:"endpoint" yaml:"endpoint"`
-	GatewayType string               `json:"gatewayType" yaml:"gatewayType"`
-	OAuth2      *kaFleetOAuth2YAML   `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
-	Resilience  *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
+	Endpoint            string               `json:"endpoint" yaml:"endpoint"`
+	GatewayType         string               `json:"gatewayType" yaml:"gatewayType"`
+	MCPGatewayTLSCAFile string               `json:"mcpGatewayTLSCAFile,omitempty" yaml:"mcpGatewayTLSCAFile,omitempty"`
+	OAuth2              *kaFleetOAuth2YAML   `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	Resilience          *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
 }
 
 // kaFleetOAuth2YAML mirrors upstream internal/kubernautagent/config.FleetOAuth2.
@@ -1124,9 +1133,10 @@ func resolveKAFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) *kaFleetYAML {
 		return nil
 	}
 	cfg := &kaFleetYAML{
-		Endpoint:    fleet.MCPGateway.Endpoint,
-		GatewayType: fleet.MCPGateway.Type,
-		Resilience:  resolveMCPClient(knV2),
+		Endpoint:            fleet.MCPGateway.Endpoint,
+		GatewayType:         fleet.MCPGateway.Type,
+		MCPGatewayTLSCAFile: resolveFleetTrustCAFile(fleet.MCPGateway.TLS, InterServiceTLSCAFileFor(knV2), fleetMCPGatewayCAMountPath),
+		Resilience:          resolveMCPClient(knV2),
 		OAuth2: &kaFleetOAuth2YAML{
 			Enabled:              true,
 			TokenURL:             fleet.OAuth2.TokenURL,

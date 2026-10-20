@@ -51,6 +51,11 @@ const (
 	// AnnotationDataStorageSigningMaterialRevision is a non-sensitive
 	// DataStorage pod-template revision for the effective audit-signing Secret.
 	AnnotationDataStorageSigningMaterialRevision = "kubernaut.ai/datastorage-signing-material-revision"
+
+	// AnnotationFleetMCPGatewayMaterialRevision is a non-sensitive pod-template
+	// revision for the Secret-backed Fleet MCP Gateway CA. It contains only
+	// Secret identity/resourceVersion metadata, never CA bytes.
+	AnnotationFleetMCPGatewayMaterialRevision = "kubernaut.ai/fleet-mcp-gateway-material-revision"
 )
 
 // ConfigMapDataHash computes a stable SHA-256 hex digest of a ConfigMap's

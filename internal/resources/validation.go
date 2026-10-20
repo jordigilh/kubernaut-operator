@@ -1176,6 +1176,7 @@ func validateFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	// explicit namespace scopes every fleet-aware component's CRD watch to
 	// exactly one of them instead of watching cluster-wide.
 	errs = append(errs, validateFleetMCPGateway(&fleet.MCPGateway, base)...)
+	errs = append(errs, validateFleetTrust("spec.fleet.mcpGateway.tls", fleet.MCPGateway.TLS)...)
 
 	errs = append(errs, validateFleetOAuth2(knV2, fleet)...)
 	errs = append(errs, validateFleetTrust("spec.fleet.oauth2.tls", fleet.OAuth2.TLS)...)

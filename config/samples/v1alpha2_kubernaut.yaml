@@ -32,6 +32,13 @@ spec:
       endpoint: "https://mcp-gateway.example.com/sse"
       type: eaigw   # or "kuadrant"
       namespace: managed-clusters
+      # Optional trust-source override for the MCP Gateway session. Omitted
+      # source defaults to the operator's inter-service trust bundle.
+      # tls:
+      #   source: secret
+      #   caCertSecretRef:
+      #     name: mcp-gateway-ca
+      #     key: ca.crt
     scopeCheck:
       backend: fleetmetadatacache
       # For ACM instead use:

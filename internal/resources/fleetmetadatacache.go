@@ -61,6 +61,7 @@ type fleetMetadataCacheMCPGatewayYAML struct {
 	Endpoint    string               `json:"endpoint" yaml:"endpoint"`
 	GatewayType string               `json:"gatewayType" yaml:"gatewayType"`
 	Namespace   string               `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	TLSCAFile   string               `json:"tlsCAFile,omitempty" yaml:"tlsCAFile,omitempty"`
 	Resilience  *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
 }
 
@@ -129,6 +130,7 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernau
 			Endpoint:    fleet.MCPGateway.Endpoint,
 			GatewayType: fleet.MCPGateway.Type,
 			Namespace:   fleet.MCPGateway.Namespace,
+			TLSCAFile:   resolveFleetTrustCAFile(fleet.MCPGateway.TLS, InterServiceTLSCAFileFor(knV2), fleetMCPGatewayCAMountPath),
 			Resilience:  resolveMCPClient(knV2),
 		},
 		Valkey: fleetMetadataCacheValkeyYAML{
@@ -201,6 +203,10 @@ func FleetMetadataCacheDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuberna
 		{Name: "fleet-oauth2", MountPath: fleetMetadataCacheOAuth2Dir, ReadOnly: true},
 		{Name: "tls-certs", MountPath: InterServiceTLSCertDirFor(tlsKn), ReadOnly: true},
 		InterServiceTLSCAMount(tlsKn),
+	}
+	if trust := knV2.Spec.Fleet.MCPGateway.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
+		volumes = append(volumes, secretKeyVolume("fleet-mcp-gateway-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
+		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-mcp-gateway-ca", MountPath: fleetMCPGatewayCAMountDir, ReadOnly: true})
 	}
 	if trust := knV2.Spec.Fleet.OAuth2.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
 		volumes = append(volumes, secretKeyVolume("fleet-oauth2-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))

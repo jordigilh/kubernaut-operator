@@ -760,6 +760,11 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 	if err != nil {
 		return fmt.Errorf("resolving telemetry material revision: %w", err)
 	}
+	fleetMCPGatewayRevision, err := r.fleetMCPGatewayTrustRevision(ctx, knV2)
+	if err != nil {
+		return fmt.Errorf("resolving Fleet MCP Gateway trust revision: %w", err)
+	}
+	telemetryRevisions.FleetMCPGateway = fleetMCPGatewayRevision
 	signingRevision, err := r.dataStorageSigningMaterialRevision(ctx, kn)
 	if err != nil {
 		return fmt.Errorf("resolving DataStorage signing material revision: %w", err)
@@ -2040,6 +2045,7 @@ func (r *KubernautReconciler) ensureDeployments(
 		}
 		stampConfigMapHash(dep, cmHashes)
 		stampTelemetryMaterialRevision(dep, telemetryRevisions)
+		stampFleetMCPGatewayMaterialRevision(dep, telemetryRevisions)
 		stampDataStorageSigningMaterialRevision(dep, telemetryRevisions)
 		stampMonitoringMaterialRevision(dep, telemetryRevisions)
 		if err := r.ensureNamespaced(ctx, kn, dep); err != nil {
@@ -3520,6 +3526,7 @@ func (r *KubernautReconciler) validateFleetTrustSecrets(ctx context.Context, kn 
 			}
 			return kn.Spec.Fleet.ScopeCheck.ACM.TLS
 		}()},
+		{path: "spec.fleet.mcpGateway.tls", trust: kn.Spec.Fleet.MCPGateway.TLS},
 		{path: "spec.fleet.oauth2.tls", trust: kn.Spec.Fleet.OAuth2.TLS},
 	}
 	for _, lane := range lanes {
@@ -3546,6 +3553,77 @@ func (r *KubernautReconciler) validateFleetTrustSecrets(ctx context.Context, kn 
 		}
 	}
 	return nil
+}
+
+// fleetTrustSecretToKubernaut maps changes to administrator-owned Fleet CA
+// Secrets back to the singleton CR. The operator remains read-only with
+// respect to these Secrets; the event only causes revalidation and, for a
+// valid revision, a dependent workload rollout.
+func (r *KubernautReconciler) fleetTrustSecretToKubernaut(ctx context.Context, object client.Object) []reconcile.Request {
+	secret, ok := object.(*corev1.Secret)
+	if !ok || secret == nil {
+		return nil
+	}
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	instances := &kubernautv1alpha2.KubernautList{}
+	if err := reader.List(ctx, instances); err != nil {
+		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for Fleet trust Secret event",
+			"namespace", secret.Namespace, "name", secret.Name)
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(instances.Items))
+	for index := range instances.Items {
+		kn := &instances.Items[index]
+		if kn.Namespace == secret.Namespace && fleetTrustSecretReferenced(kn, secret.Name) {
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)})
+		}
+	}
+	return requests
+}
+
+func fleetTrustSecretReferenced(kn *kubernautv1alpha2.Kubernaut, name string) bool {
+	if !kn.Spec.FleetEnabled() {
+		return false
+	}
+	refs := make([]*kubernautv1alpha2.FleetTrustSpec, 0, 3)
+	if kn.Spec.Fleet.ScopeCheck.ACM != nil {
+		refs = append(refs, kn.Spec.Fleet.ScopeCheck.ACM.TLS)
+	}
+	refs = append(refs, kn.Spec.Fleet.MCPGateway.TLS, kn.Spec.Fleet.OAuth2.TLS)
+	for _, trust := range refs {
+		if trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil && trust.CACertSecretRef.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// fleetMCPGatewayTrustRevision returns a non-sensitive rollout revision for
+// the MCP Gateway CA Secret. Kubernetes refreshes Secret volumes in place, but
+// the MCP client loads its CA when a session is constructed; a Deployment
+// rollout is therefore the explicit freshness boundary. External file sources
+// remain administrator-managed and are not observable here.
+func (r *KubernautReconciler) fleetMCPGatewayTrustRevision(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (string, error) {
+	if !kn.Spec.FleetEnabled() {
+		return "", nil
+	}
+	trust := kn.Spec.Fleet.MCPGateway.TLS
+	if trust == nil || trust.Source != kubernautv1alpha2.FleetTrustSourceSecret || trust.CACertSecretRef == nil {
+		return "", nil
+	}
+	secret := &corev1.Secret{}
+	key := client.ObjectKey{Namespace: kn.Namespace, Name: trust.CACertSecretRef.Name}
+	if err := r.Get(ctx, key, secret); err != nil {
+		return "", fmt.Errorf("reading MCP Gateway CA Secret %q for rollout revision: %w", key.Name, err)
+	}
+	return resources.ConfigMapDataHash(map[string]string{
+		"namespace":       secret.Namespace,
+		"name":            secret.Name,
+		"resourceVersion": secret.ResourceVersion,
+	}), nil
 }
 
 func (r *KubernautReconciler) validateFleetTokenSecret(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
@@ -4868,6 +4946,7 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&corev1.Secret{}).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.telemetrySecretToKubernaut)).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.fleetTrustSecretToKubernaut)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.precreatedConfigurationToKubernaut)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.auditHashKeySecretToKubernaut)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.dataStorageSigningSecretToKubernaut)).

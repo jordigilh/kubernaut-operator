@@ -1394,6 +1394,40 @@ spec:
                         description: Namespace restricting MCP Gateway provider CRD
                           watches and RBAC.
                         type: string
+                      tls:
+                        description: |-
+                          TLS selects the CA trust source for MCP Gateway session connections.
+                          Omitted source defaults to the operator's resolved inter-service trust;
+                          this is a trust-source override, not a TLS disable switch.
+                        properties:
+                          caCertSecretRef:
+                            description: Secret/key containing CA PEM when source=secret.
+                            properties:
+                              key:
+                                default: ca.crt
+                                description: Key within the Secret containing the
+                                  CA PEM.
+                                type: string
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          caFile:
+                            description: Absolute path to administrator-provided CA
+                              material when source=file.
+                            type: string
+                          source:
+                            description: Source of the CA bundle. Omitted defaults
+                              to interService.
+                            enum:
+                            - interService
+                            - system
+                            - file
+                            - secret
+                            type: string
+                        type: object
                       type:
                         description: MCP Gateway provider. Supported values are eaigw
                           and kuadrant.

@@ -101,6 +101,8 @@ github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/jordigilh/kubernaut v1.6.0-rc9.0.20261016121528-50eafbb4cd12 h1:wfozwUpzXwJYQMHDMmjyL/IodhetArM+2oGZAOrBPTo=
 github.com/jordigilh/kubernaut v1.6.0-rc9.0.20261016121528-50eafbb4cd12/go.mod h1:DBdNyyGrNnrByNyi0K035hHaJ3hOblrX1Ccv6pKuZSA=
+github.com/jordigilh/kubernaut v1.6.0-rc9.0.20261020200650-0a332d71d7e4 h1:1oQr2buEJu3DVT/QU5FOeObUFHktVJsQA88quSiibnk=
+github.com/jordigilh/kubernaut v1.6.0-rc9.0.20261020200650-0a332d71d7e4/go.mod h1:DBdNyyGrNnrByNyi0K035hHaJ3hOblrX1Ccv6pKuZSA=
 github.com/joshdk/go-junit v1.0.0 h1:S86cUKIdwBHWwA6xCmFlf3RTLfVXYQfvanM5Uh+K6GE=
 github.com/joshdk/go-junit v1.0.0/go.mod h1:TiiV0PqkaNfFXjEiyjWM3XXrhVyCa1K4Zfga6W52ung=
 github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnrnM=
