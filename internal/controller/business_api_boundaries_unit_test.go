@@ -568,7 +568,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		listError := businessUnitReconciler(kn, interceptor.Funcs{List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
 			return fmt.Errorf("fleet trust list denied")
 		}})
-		Expect(listError.fleetTrustSecretToKubernaut(ctx, secret)).To(BeEmpty())
+		Expect(listError.fleetTrustSecretToKubernaut(ctx, secret)).To(Equal(expected))
 
 		kn.Spec.Fleet.MCPGateway.TLS.Source = kubernautv1alpha2.FleetTrustSourceSystem
 		Expect(fleetTrustSecretReferenced(kn, "mcp-gateway-ca")).To(BeFalse())

@@ -3572,7 +3572,9 @@ func (r *KubernautReconciler) fleetTrustSecretToKubernaut(ctx context.Context, o
 	if err := reader.List(ctx, instances); err != nil {
 		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for Fleet trust Secret event",
 			"namespace", secret.Namespace, "name", secret.Name)
-		return nil
+		return []reconcile.Request{{NamespacedName: types.NamespacedName{
+			Name: kubernautv1alpha2.SingletonName, Namespace: secret.Namespace,
+		}}}
 	}
 	requests := make([]reconcile.Request, 0, len(instances.Items))
 	for index := range instances.Items {
