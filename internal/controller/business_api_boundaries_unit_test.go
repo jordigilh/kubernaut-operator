@@ -529,6 +529,92 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		Expect(r.validateFleetTrustSecrets(ctx, kn)).To(Succeed())
 	})
 
+	It("UT-FLEET-557-SECRET-001 [IA-5, SC-8, SI-10]: validates the MCP Gateway CA Secret before deployment", func() {
+		kn := newMinimalCR()
+		kn.Spec.Fleet = defaultFMCFleetSpec()
+		kn.Spec.Fleet.MCPGateway.TLS = &kubernautv1alpha2.FleetTrustSpec{
+			Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "mcp-gateway-ca"},
+		}
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
+		Expect(r.validateFleetTrustSecrets(ctx, kn)).To(MatchError(ContainSubstring("could not be read")))
+		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "mcp-gateway-ca", Namespace: kn.Namespace}}
+		Expect(r.Create(ctx, secret)).To(Succeed())
+		Expect(r.validateFleetTrustSecrets(ctx, kn)).To(MatchError(ContainSubstring("missing key")))
+		secret.Data = map[string][]byte{"ca.crt": []byte("malformed")}
+		Expect(r.Update(ctx, secret)).To(Succeed())
+		Expect(r.validateFleetTrustSecrets(ctx, kn)).To(MatchError(ContainSubstring("valid ca pem")))
+		secret.Data["ca.crt"] = telemetryCAPEM()
+		Expect(r.Update(ctx, secret)).To(Succeed())
+		Expect(r.validateFleetTrustSecrets(ctx, kn)).To(Succeed())
+	})
+
+	It("UT-FLEET-557-SECRET-002 [AC-6, SI-4]: maps only active Fleet trust Secret events", func() {
+		kn := newMinimalCR()
+		enabled := true
+		kn.Spec.Fleet = defaultFMCFleetSpec()
+		kn.Spec.Fleet.Enabled = &enabled
+		kn.Spec.Fleet.MCPGateway.TLS = &kubernautv1alpha2.FleetTrustSpec{
+			Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "mcp-gateway-ca"},
+		}
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
+		expected := []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(kn)}}
+		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "mcp-gateway-ca", Namespace: kn.Namespace}}
+		Expect(r.fleetTrustSecretToKubernaut(ctx, secret)).To(Equal(expected))
+		Expect(r.fleetTrustSecretToKubernaut(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: kn.Namespace}})).To(BeEmpty())
+		Expect(r.fleetTrustSecretToKubernaut(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "mcp-gateway-ca", Namespace: "other"}})).To(BeEmpty())
+		Expect(r.fleetTrustSecretToKubernaut(ctx, &corev1.ConfigMap{})).To(BeEmpty())
+		listError := businessUnitReconciler(kn, interceptor.Funcs{List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+			return fmt.Errorf("fleet trust list denied")
+		}})
+		Expect(listError.fleetTrustSecretToKubernaut(ctx, secret)).To(BeEmpty())
+
+		kn.Spec.Fleet.MCPGateway.TLS.Source = kubernautv1alpha2.FleetTrustSourceSystem
+		Expect(fleetTrustSecretReferenced(kn, "mcp-gateway-ca")).To(BeFalse())
+		kn.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{TLS: &kubernautv1alpha2.FleetTrustSpec{
+			Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "scope-ca"},
+		}}
+		Expect(fleetTrustSecretReferenced(kn, "scope-ca")).To(BeTrue())
+		disabled := false
+		kn.Spec.Fleet.Enabled = &disabled
+		Expect(fleetTrustSecretReferenced(kn, "mcp-gateway-ca")).To(BeFalse())
+	})
+
+	It("UT-FLEET-557-ROTATION-002 [SC-8, SI-4]: computes no gateway revision for non-Secret trust and fails closed when the Secret disappears", func() {
+		kn := newMinimalCR()
+		kn.Spec.Fleet = defaultFMCFleetSpec()
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
+		revision, err := r.fleetMCPGatewayTrustRevision(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(revision).To(BeEmpty())
+
+		kn.Spec.Fleet.MCPGateway.TLS = &kubernautv1alpha2.FleetTrustSpec{
+			Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "missing-mcp-ca"},
+		}
+		_, err = r.fleetMCPGatewayTrustRevision(ctx, kn)
+		Expect(err).To(MatchError(ContainSubstring("reading MCP Gateway CA Secret")))
+	})
+
+	It("UT-FLEET-557-ROTATION-003 [SC-8, SI-4]: blocks deployment when gateway trust disappears during phase deploy", func() {
+		kn := newMinimalCR()
+		kn.Spec.Fleet = defaultFMCFleetSpec()
+		kn.Spec.Fleet.MCPGateway.TLS = &kubernautv1alpha2.FleetTrustSpec{
+			Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "missing-mcp-ca"},
+		}
+		r := businessUnitReconciler(kn, interceptor.Funcs{Get: func(ctx context.Context, api client.WithWatch,
+			key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+			if key.Name == "missing-mcp-ca" {
+				return apierrors.NewNotFound(corev1.Resource("secrets"), key.Name)
+			}
+			return api.Get(ctx, key, object, options...)
+		}})
+		Expect(r.phaseDeploy(ctx, kn, kn)).To(MatchError(ContainSubstring("resolving Fleet MCP Gateway trust revision")))
+	})
+
 	It("UT-AUDIT-515-API-016: prevents validation and deployment from concealing telemetry, database or TLS read failures", func() {
 		kn := newMinimalCR()
 		kn.Spec.DataStorage.Telemetry = telemetrySecretSpec()

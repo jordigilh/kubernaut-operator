@@ -261,6 +261,24 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 		}
 	})
 
+	It("UT-FLEET-557-MOUNT-003 [AC-6, SC-8, SC-12]: mounts FMC's MCP Gateway CA Secret read-only", func() {
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.Fleet.MCPGateway.TLS = &kubernautv1alpha2.FleetTrustSpec{
+			Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fleet-mcp-gateway-ca"},
+		}
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(dep, "fleet-mcp-gateway-ca")
+		expectHasVolumeMount(dep, "fleet-mcp-gateway-ca", fleetMCPGatewayCAMountDir)
+		for _, volume := range dep.Spec.Template.Spec.Volumes {
+			if volume.Name == "fleet-mcp-gateway-ca" {
+				Expect(volume.Secret).NotTo(BeNil())
+				Expect(volume.Secret.SecretName).To(Equal("fleet-mcp-gateway-ca"))
+			}
+		}
+	})
+
 	It("#267: mounts tls-ca volume from the trust-bundle ConfigMap so the OAuth2 token-source client can trust a self-signed IdP CA", func() {
 		kn, knV2 := testKubernautWithFMC()
 		dep, err := FleetMetadataCacheDeployment(kn, knV2)

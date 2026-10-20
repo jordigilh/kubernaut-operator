@@ -1742,6 +1742,28 @@ var _ = Describe("Fleet Config Validation", func() {
 		Expect(ValidateFleet(kn)).To(BeEmpty())
 	})
 
+	It("UT-FLEET-557-API-001: validates the MCP Gateway trust lane independently", func() {
+		kn := validFleet()
+		kn.Spec.Fleet.MCPGateway.TLS = &kubernautv1alpha2.FleetTrustSpec{
+			Source: kubernautv1alpha2.FleetTrustSourceFile,
+			CAFile: "relative-ca.pem",
+		}
+		errs := ValidateFleet(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGateway.tls.caFile"))
+
+		kn.Spec.Fleet.MCPGateway.TLS.CAFile = "/etc/fleet/mcp-gateway-ca.pem"
+		Expect(ValidateFleet(kn)).To(BeEmpty())
+
+		kn.Spec.Fleet.MCPGateway.TLS = &kubernautv1alpha2.FleetTrustSpec{
+			Source: kubernautv1alpha2.FleetTrustSourceSystem,
+			CAFile: "/etc/fleet/ca.pem",
+		}
+		errs = ValidateFleet(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGateway.tls"))
+	})
+
 	It("UT-FLEET-521-VALIDATE-002: rejects non-positive MCP-client durations", func() {
 		kn := validFleet()
 		kn.Spec.Fleet.MCPClient = &kubernautv1alpha2.FleetMCPClientSpec{
