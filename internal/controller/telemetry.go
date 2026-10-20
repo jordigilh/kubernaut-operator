@@ -412,6 +412,8 @@ func stampTelemetryMaterialRevision(dep *appsv1.Deployment, revisions telemetryM
 	dep.Spec.Template.Annotations = annotations
 }
 
+// stampFleetMCPGatewayMaterialRevision adds the non-sensitive MCP Gateway CA
+// revision to workloads that open Fleet MCP sessions.
 func stampFleetMCPGatewayMaterialRevision(dep *appsv1.Deployment, revisions telemetryMaterialRevisionSet) {
 	if revisions.FleetMCPGateway == "" {
 		return

@@ -762,7 +762,7 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 	}
 	fleetMCPGatewayRevision, err := r.fleetMCPGatewayTrustRevision(ctx, knV2)
 	if err != nil {
-		return fmt.Errorf("resolving Fleet MCP Gateway trust revision: %w", err)
+		return fmt.Errorf("resolving fleet MCP Gateway trust revision: %w", err)
 	}
 	telemetryRevisions.FleetMCPGateway = fleetMCPGatewayRevision
 	signingRevision, err := r.dataStorageSigningMaterialRevision(ctx, kn)
@@ -3584,6 +3584,8 @@ func (r *KubernautReconciler) fleetTrustSecretToKubernaut(ctx context.Context, o
 	return requests
 }
 
+// fleetTrustSecretReferenced reports whether an active Fleet trust lane uses
+// the named Secret in the Kubernaut resource namespace.
 func fleetTrustSecretReferenced(kn *kubernautv1alpha2.Kubernaut, name string) bool {
 	if !kn.Spec.FleetEnabled() {
 		return false

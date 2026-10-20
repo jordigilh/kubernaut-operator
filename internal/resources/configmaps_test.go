@@ -281,9 +281,13 @@ var _ = Describe("ConfigMaps", func() {
 			cm, err := GatewayConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
-			Expect(data).To(ContainSubstring("mcpGatewayTLSCAFile: /etc/fleet/mcp-gateway-ca.pem"))
-			Expect(data).NotTo(ContainSubstring("oauth2:\n    enabled: true\n    tokenURL: https://keycloak.example.com/token\n    credentialsSecretRef: fleet-oauth2-creds\n    tlsCAFile:"),
-				"MCP Gateway trust must not overwrite the OAuth2 token-endpoint trust path")
+			var root gatewayConfigYAML
+			Expect(yaml.Unmarshal([]byte(data), &root)).To(Succeed())
+			Expect(root.Fleet).NotTo(BeNil())
+			Expect(root.Fleet.MCPGatewayTLSCAFile).To(Equal("/etc/fleet/mcp-gateway-ca.pem"))
+			Expect(root.Fleet.OAuth2).NotTo(BeNil())
+			Expect(root.Fleet.OAuth2.TLSCAFile).To(BeEmpty(),
+				"system OAuth2 trust must not inherit the MCP Gateway CA path")
 		})
 
 		It("omits the Fleet block when Fleet is disabled, regardless of pre-staged OAuth2 fields", func() {

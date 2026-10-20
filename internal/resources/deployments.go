@@ -1411,6 +1411,8 @@ func appendFleetSecretMountsVariant(volumes []corev1.Volume, mounts []corev1.Vol
 	return volumes, mounts
 }
 
+// appendFleetMCPGatewayCASecretMount adds the keyed, read-only Secret volume
+// used by source=secret MCP Gateway trust.
 func appendFleetMCPGatewayCASecretMount(volumes []corev1.Volume, mounts []corev1.VolumeMount, fleet *kubernautv1alpha2.FleetSpec) ([]corev1.Volume, []corev1.VolumeMount) {
 	trust := fleet.MCPGateway.TLS
 	if trust == nil || trust.Source != kubernautv1alpha2.FleetTrustSourceSecret || trust.CACertSecretRef == nil {

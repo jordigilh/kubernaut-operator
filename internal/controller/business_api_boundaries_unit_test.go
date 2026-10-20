@@ -612,7 +612,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 			}
 			return api.Get(ctx, key, object, options...)
 		}})
-		Expect(r.phaseDeploy(ctx, kn, kn)).To(MatchError(ContainSubstring("resolving Fleet MCP Gateway trust revision")))
+		Expect(r.phaseDeploy(ctx, kn, kn)).To(MatchError(ContainSubstring("resolving fleet MCP Gateway trust revision")))
 	})
 
 	It("UT-AUDIT-515-API-016: prevents validation and deployment from concealing telemetry, database or TLS read failures", func() {
