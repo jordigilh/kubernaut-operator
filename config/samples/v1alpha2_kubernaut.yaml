@@ -1,3 +1,6 @@
+# Fully annotated reference CR: this file demonstrates optional configuration
+# knobs. For the minimum applyable CR, use v1alpha2_kubernaut_minimal.yaml or
+# docs/installation/00-quickstart.md.
 apiVersion: kubernaut.ai/v1alpha2
 kind: Kubernaut
 metadata:
