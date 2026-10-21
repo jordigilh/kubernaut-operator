@@ -165,12 +165,12 @@ spec:
       level: DEBUG
     # Audit logging defaults to enabled; add audit: only to override its
     # buffering or flush settings, or set enabled: false for an explicit opt-out.
+    # KA Interactive mode defaults to enabled when API Frontend is deployed.
+    # These are sample limit overrides; the standalone Console is enabled
+    # separately under spec.console below.
     interactive:
-      enabled: true
-      inactivityTimeout: 10m
       maxConcurrentSessions: 10
       rateLimitPerUser: 10
-      sessionTTL: 30m
     safety:
       anomaly:
         maxRepeatedFailures: 3
@@ -189,16 +189,12 @@ spec:
       # llmProfileRef: primary   # v1alpha2/F5: references a named profile instead of v1alpha1's inline {provider,model,endpoint} block (which never had a working credentials path, see #237)
     session:
       ttl: 30m
-    serverRateLimit:
-      requestsPerSecond: 50
-      burst: 100
     shutdown:
       drainSeconds: 15
     # fleet:
     #   oauth2CredentialsSecretRef: ka-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for KubernautAgent only (used only when fleet.enabled: true, for its list_clusters/list_tools_for_cluster MCP tools, ADR-068 decision #11)
 
   apiFrontend:
-    enabled: true
     llmProfileRef: primary
     auth:
       # Replace this reserved example with the complete issuer URL for your
