@@ -163,8 +163,8 @@ spec:
       maxEvidenceHandoffBytes: 262144
     logging:
       level: DEBUG
-    audit:
-      enabled: true
+    # Audit logging defaults to enabled; add audit: only to override its
+    # buffering or flush settings, or set enabled: false for an explicit opt-out.
     interactive:
       enabled: true
       inactivityTimeout: 10m
