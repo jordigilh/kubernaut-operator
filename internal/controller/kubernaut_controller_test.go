@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -85,6 +86,7 @@ func newMinimalCR() *kubernautv1alpha2.Kubernaut {
 				Host:       "valkey",
 			},
 			APIFrontend: kubernautv1alpha2.APIFrontendSpec{
+				Enabled: ptr.To(true),
 				Auth: kubernautv1alpha2.APIFrontendAuthSpec{
 					IssuerURL: "https://idp.example.com/realms/kubernaut",
 					Audience:  "kubernaut-apifrontend",

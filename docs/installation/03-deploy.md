@@ -171,10 +171,10 @@ spec:
 
   # --- API Frontend (optional) ---
   # The API Frontend provides external MCP/A2A access to Kubernaut Agent.
-  # Set the complete issuer URL for the IdP used by this installation, or
-  # disable AF entirely.
+  # Enable it explicitly and set the complete issuer URL for the IdP used by
+  # this installation.
   apiFrontend:
-    # enabled: false                        # uncomment to disable AF
+    enabled: true
     auth:
       issuerURL: "https://idp.example.com/realms/kubernaut"
       audience: "kubernaut-apifrontend"     # must match the OIDC client
@@ -182,7 +182,7 @@ spec:
       # issuerURL using Keycloak's well-known JWKS path convention
       # (kubernaut-operator#462). Only set it explicitly if your OIDC
       # provider isn't Keycloak or uses a non-standard JWKS path.
-    # REQUIRED whenever AF is enabled (default) -- there is no working
+    # REQUIRED whenever AF is enabled -- there is no working
     # fallback if rbac/roleBindings is left unset: every user, including
     # cluster-admin, sees "Access Denied" on the Console and every tool
     # call is rejected. Replace the group name with a real OIDC group your

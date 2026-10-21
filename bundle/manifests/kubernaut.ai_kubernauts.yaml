@@ -306,9 +306,9 @@ spec:
                         type: string
                     type: object
                   enabled:
-                    default: true
+                    default: false
                     description: |-
-                      Whether the API Frontend component is deployed. Defaults to true.
+                      Whether the API Frontend component is deployed. Defaults to false.
                       Set to false to skip all AF resources (Deployment, Service, RBAC, etc.).
                     type: boolean
                   fleet:
