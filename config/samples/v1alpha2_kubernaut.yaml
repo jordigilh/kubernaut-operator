@@ -21,8 +21,10 @@ spec:
     port: 6379
     secretName: valkey-secret
 
-  # Federated scope-checking and multi-cluster reads (ADR-068). Disabled by
-  # default; nested values may be pre-staged and remain inert until enabled.
+  # Federated scope-checking and multi-cluster reads (ADR-068). Keep this
+  # generic sample disabled so it applies without external Gateway/IdP/Secret
+  # dependencies; nested values are a copy/paste preview and remain inert until
+  # enabled. Replace placeholder endpoints and Secret names before enabling.
   # When enabled, mcpGateway.endpoint/type/namespace and oauth2.tokenURL plus
   # effective credentials are required. ACM additionally requires its nested
   # endpoint and token Secret; FMC derives its endpoint and trust internally.
