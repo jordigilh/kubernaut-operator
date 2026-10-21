@@ -1,6 +1,6 @@
 # Quickstart: Minimal Kubernaut CR
 
-This page is the fast path to a `Running` Kubernaut deployment: only the fields the operator actually requires, nothing else. Everything not listed here has a working default -- except the identity provider, which must be supplied by the administrator.
+This page is the fast path to a `Running` Kubernaut deployment with the Gateway as the only external API: only the fields the operator actually requires, nothing else. API Frontend and Console are optional and disabled in the minimum sample.
 
 If you want the fuller, every-knob-annotated walkthrough instead (LLM reasoning, safety controls, rate limits, Fleet federation, Ansible/AAP, GitOps layout, Slack, etc.), skip ahead to [Configure Services](02-configure-services.md) and [Deploy Kubernaut](03-deploy.md). This page and those two aren't redundant: this one gets you to `Running` fastest; those cover depth.
 
@@ -19,7 +19,7 @@ Provision these before applying the CR (see [Infrastructure Prerequisites](01-in
 - PostgreSQL 15+, reachable, with a Secret containing `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`.
 - Valkey/Redis 7+, reachable, with a Secret containing key `valkey-secrets.yaml`.
 - LLM API credentials (OpenAI, Anthropic, or GCP Vertex AI) in a Secret.
-- An OIDC provider configured with the issuer URL you will set for API Frontend -- or set `apiFrontend.enabled: false` in the CR below if you don't need API/Console access yet.
+- An OIDC provider is only required if you later enable API Frontend/Console.
 
 Both Rego policy ConfigMaps below are schema-required with no bundled default -- create minimal starter policies now (tune them properly later, see [Configure Services](02-configure-services.md#signal-processing-sp----classification-policy-required) and [Configure Services](02-configure-services.md#ai-analysis-aa----approval-policy-required)):
 
@@ -101,13 +101,14 @@ spec:
     policy:
       configMapName: signalprocessing-policy
 
-  # apiFrontend is enabled by default and requires your complete OIDC issuer URL.
-  # Replace this example with the issuer for your IdP, or set
-  # apiFrontend.enabled: false if you do not need API access yet.
+  # Gateway is the only external API enabled by this minimum sample.
+  gateway:
+    enabled: true
+
+  # API Frontend and Console are optional; enable AF separately when OIDC and
+  # external MCP/A2A access are required.
   apiFrontend:
-    auth:
-      issuerURL: "https://idp.example.com/realms/kubernaut"
-      audience: "kubernaut-apifrontend"
+    enabled: false
 ```
 
 Apply it:
@@ -126,7 +127,11 @@ The CR progresses through **Validating** -> **Migrating** -> **Deploying** -> **
 
 ## Before you rely on this for real use
 
-The minimal CR above deliberately omits one thing you should not skip in practice: `apiFrontend.rbac.roleBindings`. It isn't schema-required and isn't checked at reconcile time either, so the CR above reaches `Running` without it -- but with it unset, **every** tool call is rejected for **every** user (including `cluster-admin`), fail-closed by design, with no permissive fallback. The Console itself still opens: its own coarse-grained access gate is authentication-only by default (`apiFrontend.rbac.consoleAccessAuthorizationCheckEnabled` defaults to `false`, kubernaut#2150) -- but every chat/tool action inside it 403s until `roleBindings` is set. Add it as soon as you're ready to actually use API Frontend/Console -- see [Additional RBAC for API Frontend](02-configure-services.md#additional-rbac-for-api-frontend).
+The minimum CR disables API Frontend, so it does not require an IdP or
+`apiFrontend.rbac.roleBindings`. When you enable API Frontend/Console, add
+`roleBindings` before relying on tool access: without it, **every** tool call is
+rejected for **every** user (including `cluster-admin`), fail-closed by design.
+See [Additional RBAC for API Frontend](02-configure-services.md#additional-rbac-for-api-frontend).
 
 ## What's next
 
