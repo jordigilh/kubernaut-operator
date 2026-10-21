@@ -25,6 +25,14 @@ must not map this lane to process-wide `TLS_CA_FILE`/`SSL_CERT_FILE`, because
 that would conflate MCP Gateway, internal-service, scope-check, and OAuth2
 trust domains.
 
+## Related autonomous-default decision
+
+API Frontend is opt-in in v1alpha2: `spec.apiFrontend.enabled` defaults to
+`false`. Autonomous/core deployments therefore do not require an external IdP;
+administrators explicitly enable API Frontend and configure OIDC when external
+MCP/A2A or Console access is needed. This is a clean-break v1alpha2 default
+change, not a compatibility alias or runtime fallback.
+
 ## Wiring manifest
 
 | Component | Production entry point | Evidence |

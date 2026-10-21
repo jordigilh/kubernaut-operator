@@ -620,13 +620,13 @@ oc get configmap -n kubernaut-system \
 ## Additional RBAC for API Frontend
 
 > **Hard requirement, not optional, for tool access:** whenever
-> `spec.apiFrontend.enabled` is true (the default),
+> `spec.apiFrontend.enabled` is true,
 > `spec.apiFrontend.rbac.roleBindings` **must** list at least one OIDC
 > group your users actually belong to, before you apply the CR. There is
 > no permissive fallback if it's left unset — every user, including
 > `cluster-admin`, gets every tool call rejected. This is fail-closed by
 > design (least-privilege), with no dev-mode bypass; skip this section
-> only if you set `spec.apiFrontend.enabled: false`.
+> when API Frontend remains disabled.
 >
 > The Console UI itself is a *separate* gate and, unlike tool access, is
 > permissive by default (kubernaut#2150) — see "Console access" (2) below

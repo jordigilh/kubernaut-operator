@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
@@ -97,6 +98,7 @@ func testKubernaut() *kubernautv1alpha2.Kubernaut {
 				Port:       6379,
 			},
 			APIFrontend: kubernautv1alpha2.APIFrontendSpec{
+				Enabled: ptr.To(true),
 				Auth: kubernautv1alpha2.APIFrontendAuthSpec{
 					IssuerURL: "https://idp.example.com/realms/kubernaut",
 					Audience:  "kubernaut-apifrontend",
@@ -136,6 +138,7 @@ func testKubernautWithDevelopmentTLS() *kubernautv1alpha2.Kubernaut {
 func testKubernautWithAF() *kubernautv1alpha2.Kubernaut {
 	kn := testKubernaut()
 	kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
+		Enabled:       ptr.To(true),
 		LLMProfileRef: "primary",
 		Auth: kubernautv1alpha2.APIFrontendAuthSpec{
 			IssuerURL: "https://idp.example.com/realms/kubernaut",
@@ -441,7 +444,7 @@ var _ = Describe("ActiveComponents", func() {
 		Expect(ActiveComponents(kn, testKnV2(kn))).NotTo(ContainElement(ComponentGateway))
 	})
 
-	It("includes apifrontend when enabled by default", func() {
+	It("includes apifrontend when explicitly enabled", func() {
 		kn := testKubernautWithAF()
 		Expect(ActiveComponents(kn, testKnV2(kn))).To(ContainElement(ComponentAPIFrontend))
 	})

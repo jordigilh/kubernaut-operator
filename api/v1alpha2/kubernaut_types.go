@@ -2088,9 +2088,9 @@ type AuthWebhookSpec struct {
 // The API Frontend provides external access to Kubernaut Agent via MCP and A2A
 // protocols with OIDC authentication, rate limiting, and RBAC-scoped tool access.
 type APIFrontendSpec struct {
-	// Whether the API Frontend component is deployed. Defaults to true.
+	// Whether the API Frontend component is deployed. Defaults to false.
 	// Set to false to skip all AF resources (Deployment, Service, RBAC, etc.).
-	// +kubebuilder:default=true
+	// +kubebuilder:default=false
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
@@ -2437,9 +2437,9 @@ type DebugSpec struct {
 }
 
 // APIFrontendEnabled returns whether the API Frontend component should be deployed.
-// Defaults to true when Enabled is nil.
+// Defaults to false when Enabled is nil.
 func (s *KubernautSpec) APIFrontendEnabled() bool {
-	return s.APIFrontend.Enabled == nil || *s.APIFrontend.Enabled
+	return s.APIFrontend.Enabled != nil && *s.APIFrontend.Enabled
 }
 
 // GatewayEnabled returns whether the Gateway component should be deployed.

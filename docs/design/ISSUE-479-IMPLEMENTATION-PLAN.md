@@ -91,7 +91,8 @@ guess an identity provider. The contract is deliberately explicit:
 - require a complete issuer URL for enabled single-provider API Frontend auth;
 - keep `jwtProviders` authoritative when configured, with no requirement for the
   top-level single-provider field in that mode;
-- allow `apiFrontend.enabled: false` when a deployment does not need OIDC access.
+- default `apiFrontend.enabled` to false; administrators explicitly enable it
+  when external MCP/A2A access and OIDC are required.
 
 This keeps the CRD provider-neutral and prevents a non-existent or environment-
 specific portal from becoming an accidental platform dependency.

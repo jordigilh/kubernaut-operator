@@ -44,6 +44,17 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		Expect(crd.Spec.Conversion).To(BeNil())
 	})
 
+	It("defaults API Frontend to disabled for autonomous deployments", func() {
+		crd := loadKubernautCRD()
+		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+		apiFrontend := schema.Properties["spec"].Properties["apiFrontend"]
+		enabled := apiFrontend.Properties["enabled"]
+		Expect(enabled.Default).NotTo(BeNil())
+		Expect(string(enabled.Default.Raw)).To(Equal("false"))
+		spec := KubernautSpec{}
+		Expect(spec.APIFrontendEnabled()).To(BeFalse())
+	})
+
 	It("does not publish a fabricated issuer default", func() {
 		crd := loadKubernautCRD()
 		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
