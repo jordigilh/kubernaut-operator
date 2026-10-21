@@ -1356,6 +1356,7 @@ func appendWorkflowExecutionFleetSecretMount(volumes []corev1.Volume, mounts []c
 	if fleet.Enabled == nil || !*fleet.Enabled {
 		return volumes, mounts
 	}
+	volumes, mounts = appendFleetMCPGatewayCASecretMount(volumes, mounts, fleet)
 	if trust := fleet.OAuth2.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
 		volumes = append(volumes, secretKeyVolume("fleet-oauth2-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
 		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-oauth2-ca", MountPath: "/etc/fleet-tls/oauth2", ReadOnly: true})
@@ -1378,6 +1379,7 @@ func appendFleetSecretMountsVariant(volumes []corev1.Volume, mounts []corev1.Vol
 	if fleet.Enabled == nil || !*fleet.Enabled {
 		return volumes, mounts
 	}
+	volumes, mounts = appendFleetMCPGatewayCASecretMount(volumes, mounts, fleet)
 	if includeBackend {
 		var trust *kubernautv1alpha2.FleetTrustSpec
 		var tokenRef *kubernautv1alpha2.SecretKeyRef
@@ -1406,6 +1408,18 @@ func appendFleetSecretMountsVariant(volumes []corev1.Volume, mounts []corev1.Vol
 			ReadOnly:  true,
 		})
 	}
+	return volumes, mounts
+}
+
+// appendFleetMCPGatewayCASecretMount adds the keyed, read-only Secret volume
+// used by source=secret MCP Gateway trust.
+func appendFleetMCPGatewayCASecretMount(volumes []corev1.Volume, mounts []corev1.VolumeMount, fleet *kubernautv1alpha2.FleetSpec) ([]corev1.Volume, []corev1.VolumeMount) {
+	trust := fleet.MCPGateway.TLS
+	if trust == nil || trust.Source != kubernautv1alpha2.FleetTrustSourceSecret || trust.CACertSecretRef == nil {
+		return volumes, mounts
+	}
+	volumes = append(volumes, secretKeyVolume(fleetMCPGatewayCAVolumeName, trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
+	mounts = append(mounts, corev1.VolumeMount{Name: fleetMCPGatewayCAVolumeName, MountPath: fleetMCPGatewayCAMountDir, ReadOnly: true})
 	return volumes, mounts
 }
 

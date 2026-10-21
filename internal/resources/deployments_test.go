@@ -1265,6 +1265,30 @@ var _ = Describe("Deployments", func() {
 					}
 				}
 			})
+
+			It("UT-FLEET-557-MOUNT-001 [AC-6, SC-8, SC-12]: mounts the MCP Gateway CA Secret read-only at its independent trust path", func() {
+				kn, knV2 := testKubernautWithFleetMCP()
+				knV2.Spec.Fleet.MCPGateway.TLS = &kubernautv1alpha2.FleetTrustSpec{
+					Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+					CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fleet-mcp-gateway-ca"},
+				}
+				dep, err := GatewayDeployment(kn, knV2)
+				Expect(err).NotTo(HaveOccurred())
+				expectHasVolume(dep, fleetMCPGatewayCAVolumeName)
+				expectHasVolumeMount(dep, fleetMCPGatewayCAVolumeName, fleetMCPGatewayCAMountDir)
+				for _, volume := range dep.Spec.Template.Spec.Volumes {
+					if volume.Name == fleetMCPGatewayCAVolumeName {
+						Expect(volume.Secret).NotTo(BeNil())
+						Expect(volume.Secret.SecretName).To(Equal("fleet-mcp-gateway-ca"))
+						Expect(volume.Secret.Items).To(ConsistOf(corev1.KeyToPath{Key: "ca.crt", Path: "ca.crt"}))
+					}
+				}
+				for _, mount := range dep.Spec.Template.Spec.Containers[0].VolumeMounts {
+					if mount.Name == "fleet-mcp-gateway-ca" {
+						Expect(mount.ReadOnly).To(BeTrue())
+					}
+				}
+			})
 		})
 	})
 
@@ -1642,6 +1666,19 @@ var _ = Describe("Deployments", func() {
 			Expect(err).NotTo(HaveOccurred())
 			expectHasVolume(dep, "fleet-oauth2-ca")
 			expectHasVolumeMount(dep, "fleet-oauth2-ca", "/etc/fleet-tls/oauth2")
+		})
+
+		It("UT-FLEET-557-MOUNT-002 [AC-6, SC-8, SC-12]: mounts the MCP Gateway CA independently from WE's OAuth2 CA", func() {
+			kn, knV2 := testKubernautWithFleetMCP()
+			knV2.Spec.Fleet.MCPGateway.TLS = &kubernautv1alpha2.FleetTrustSpec{
+				Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+				CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fleet-mcp-gateway-ca"},
+			}
+			knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+			dep, err := WorkflowExecutionDeployment(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, fleetMCPGatewayCAVolumeName)
+			expectHasVolumeMount(dep, fleetMCPGatewayCAVolumeName, fleetMCPGatewayCAMountDir)
 		})
 	})
 

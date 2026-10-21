@@ -262,6 +262,34 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("mcpGatewayType: eaigw"), "gateway config should render mcpGatewayType, got:\n%s", data)
 		})
 
+		It("UT-FLEET-557-RENDER-001: renders MCP Gateway trust independently from scope-check and OAuth2 trust", func() {
+			kn := testKubernaut()
+			enabled := true
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+				Enabled:    &enabled,
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
+				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{
+					Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw",
+					TLS: &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceFile, CAFile: "/etc/fleet/mcp-gateway-ca.pem"},
+				},
+				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
+					TokenURL: "https://keycloak.example.com/token", CredentialsSecretRef: "fleet-oauth2-creds",
+					TLS: &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSystem},
+				},
+			}
+			cm, err := GatewayConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			var root gatewayConfigYAML
+			Expect(yaml.Unmarshal([]byte(data), &root)).To(Succeed())
+			Expect(root.Fleet).NotTo(BeNil())
+			Expect(root.Fleet.MCPGatewayTLSCAFile).To(Equal("/etc/fleet/mcp-gateway-ca.pem"))
+			Expect(root.Fleet.OAuth2).NotTo(BeNil())
+			Expect(root.Fleet.OAuth2.TLSCAFile).To(BeEmpty(),
+				"system OAuth2 trust must not inherit the MCP Gateway CA path")
+		})
+
 		It("omits the Fleet block when Fleet is disabled, regardless of pre-staged OAuth2 fields", func() {
 			kn, knV2 := testKubernautWithFMC()
 			disabled := false

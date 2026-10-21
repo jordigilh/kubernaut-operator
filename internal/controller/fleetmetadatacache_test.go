@@ -200,6 +200,63 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}, rb)).To(Succeed())
 		})
 
+		It("IT-FLEET-557-RECONCILE-MCP-CA: wires MCP Gateway CA rendering and read-only mounts through Reconcile", func() {
+			const mcpGatewayCAVolumeName = "fleet-mcp-gateway-ca"
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "mcp-gateway-ca", Namespace: testNamespace},
+				Data:       map[string][]byte{"ca.crt": telemetryCAPEM()},
+			})).To(Succeed())
+			fleet := defaultFMCFleetSpec()
+			fleet.MCPGateway.TLS = &kubernautv1alpha2.FleetTrustSpec{
+				Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+				CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "mcp-gateway-ca"},
+			}
+			cr := newCRWithRouteDisabled()
+			cr.Spec.Fleet = fleet
+			cr.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			reconcileToRunning(ctx)
+
+			gatewayConfig := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "gateway-config", Namespace: testNamespace}, gatewayConfig)).To(Succeed())
+			Expect(gatewayConfig.Data["config.yaml"]).To(ContainSubstring("mcpGatewayTLSCAFile: /etc/fleet-tls/mcp-gateway/ca.crt"))
+			fmcConfig := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "fleetmetadatacache-config", Namespace: testNamespace}, fmcConfig)).To(Succeed())
+			Expect(fmcConfig.Data["config.yaml"]).To(ContainSubstring("tlsCAFile: /etc/fleet-tls/mcp-gateway/ca.crt"))
+
+			gateway := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.DeploymentName(resources.ComponentGateway), Namespace: testNamespace}, gateway)).To(Succeed())
+			foundVolume := false
+			for _, volume := range gateway.Spec.Template.Spec.Volumes {
+				if volume.Name == mcpGatewayCAVolumeName {
+					foundVolume = true
+					Expect(volume.Secret).NotTo(BeNil())
+					Expect(volume.Secret.SecretName).To(Equal("mcp-gateway-ca"))
+				}
+			}
+			Expect(foundVolume).To(BeTrue())
+			foundMount := false
+			for _, mount := range gateway.Spec.Template.Spec.Containers[0].VolumeMounts {
+				if mount.Name == mcpGatewayCAVolumeName && mount.MountPath == "/etc/fleet-tls/mcp-gateway" {
+					foundMount = true
+					Expect(mount.ReadOnly).To(BeTrue())
+				}
+			}
+			Expect(foundMount).To(BeTrue())
+
+			fmc := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.DeploymentName(resources.ComponentFleetMetadataCache), Namespace: testNamespace}, fmc)).To(Succeed())
+			fmcVolume := false
+			for _, volume := range fmc.Spec.Template.Spec.Volumes {
+				if volume.Name == mcpGatewayCAVolumeName {
+					fmcVolume = true
+					Expect(volume.Secret.SecretName).To(Equal("mcp-gateway-ca"))
+				}
+			}
+			Expect(fmcVolume).To(BeTrue())
+		})
+
 		It("IT-FLEET-521-RECONCILE-ACM: reconciles ACM endpoint, trust default, and token mount", func() {
 			createBYOSecrets(ctx)
 			cr := newCRWithRouteDisabled()

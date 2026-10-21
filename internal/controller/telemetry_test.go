@@ -238,6 +238,39 @@ var _ = Describe("Telemetry controller material lifecycle", Label("unit"), func(
 		Expect(second.DataStorage).NotTo(ContainSubstring("telemetry-test-ca"))
 	})
 
+	It("UT-FLEET-557-ROTATION-001 [AC-6, SC-8, SI-4]: maps MCP Gateway CA Secret events and stamps only metadata revisions", func() {
+		kn := telemetryUnitKubernaut()
+		enabled := true
+		kn.Spec.Fleet.Enabled = &enabled
+		kn.Spec.Fleet.MCPGateway.TLS = &kubernautv1alpha2.FleetTrustSpec{
+			Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "mcp-gateway-ca"},
+		}
+		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+			Name: "mcp-gateway-ca", Namespace: kn.Namespace, ResourceVersion: "11",
+		}, Data: map[string][]byte{"ca.crt": telemetryCAPEM()}}
+		r := newTelemetryUnitReconciler(kn, secret)
+
+		expected := []reconcile.Request{{NamespacedName: types.NamespacedName{Name: kn.Name, Namespace: kn.Namespace}}}
+		Expect(r.fleetTrustSecretToKubernaut(context.Background(), secret)).To(Equal(expected))
+		first, err := r.fleetMCPGatewayTrustRevision(context.Background(), kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(first).NotTo(BeEmpty())
+		Expect(first).NotTo(ContainSubstring("mcp-gateway-ca"))
+
+		gateway := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{
+			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": resources.ComponentGateway}},
+		}}}
+		stampFleetMCPGatewayMaterialRevision(gateway, telemetryMaterialRevisionSet{FleetMCPGateway: first})
+		Expect(gateway.Spec.Template.Annotations).To(HaveKeyWithValue(resources.AnnotationFleetMCPGatewayMaterialRevision, first))
+
+		notification := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{
+			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": resources.ComponentNotification}},
+		}}}
+		stampFleetMCPGatewayMaterialRevision(notification, telemetryMaterialRevisionSet{FleetMCPGateway: first})
+		Expect(notification.Spec.Template.Annotations).To(BeEmpty())
+	})
+
 	It("maps effective ambient trust ConfigMap events only to network telemetry producers", func() {
 		kn := telemetryUnitKubernaut()
 		kn.Spec.DataStorage.Telemetry = kubernautv1alpha2.TelemetrySpec{Endpoint: "otel-collector:4317"}

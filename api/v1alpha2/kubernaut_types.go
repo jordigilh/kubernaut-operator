@@ -339,6 +339,12 @@ type FleetMCPGatewaySpec struct {
 	// Namespace restricting MCP Gateway provider CRD watches and RBAC.
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
+
+	// TLS selects the CA trust source for MCP Gateway session connections.
+	// Omitted source defaults to the operator's resolved inter-service trust;
+	// this is a trust-source override, not a TLS disable switch.
+	// +optional
+	TLS *FleetTrustSpec `json:"tls,omitempty"`
 }
 
 // FleetScopeCheckSpec configures the backend used for federated scope checks.
