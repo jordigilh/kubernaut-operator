@@ -126,7 +126,7 @@ func (r *KubernautReconciler) ensureTelemetryAmbientTrustSource(ctx context.Cont
 	if err != nil {
 		return fmt.Errorf("ensuring runtime trust source: %w", err)
 	}
-	if material.Source == resources.TLSMaterialSourceOpenShiftServiceCA {
+	if material.Source == resources.TLSMaterialSourceServiceCA {
 		if err := r.ensureNamespaced(ctx, kn, resources.InterServiceCAConfigMap(kn)); err != nil {
 			return fmt.Errorf("ensuring inter-service CA ConfigMap: %w", err)
 		}
@@ -490,7 +490,7 @@ func ambientTrustSecretReferenced(kn *kubernautv1alpha2.Kubernaut, secretName st
 		return false
 	}
 	material, err := resources.ResolveTLSMaterial(kn)
-	if err != nil || material.Source == resources.TLSMaterialSourceOpenShiftServiceCA {
+	if err != nil || material.Source == resources.TLSMaterialSourceServiceCA {
 		return false
 	}
 	return material.InternalCASecretName != "" && material.InternalCASecretName == secretName
@@ -581,8 +581,9 @@ func (r *KubernautReconciler) setTelemetryAmbientTrustPending(ctx context.Contex
 }
 
 func ambientTrustConfigMapRelevant(kn *kubernautv1alpha2.Kubernaut, configMap *corev1.ConfigMap) bool {
+	serviceCA := kn.Spec.TLS.Mode == "" || kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeServiceCA
 	if configMap.Namespace == openshiftConfigManagedNamespace && configMap.Name == "default-ingress-cert" {
-		return kn.Spec.TLS.Mode == ""
+		return serviceCA
 	}
 	if configMap.Name == resources.TrustBundleConfigMapName {
 		return kn.Spec.TLS.Mode != kubernautv1alpha2.TLSModeManual
@@ -594,7 +595,7 @@ func ambientTrustConfigMapRelevant(kn *kubernautv1alpha2.Kubernaut, configMap *c
 		material, err := resources.ResolveTLSMaterial(kn)
 		return err == nil && material.InternalCASecretName == ""
 	}
-	return kn.Spec.TLS.Mode == ""
+	return serviceCA
 }
 
 func telemetryAmbientConfigMap(configMap *corev1.ConfigMap) bool {

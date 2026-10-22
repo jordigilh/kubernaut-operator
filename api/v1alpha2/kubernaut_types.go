@@ -1823,31 +1823,23 @@ func (s *IngressSpec) IngressEnabled() bool {
 }
 
 // TLSMode identifies the source of runtime certificate and trust material.
-// The lower-case values are the one-to-one Helm chart contract. The title-case
-// values are retained as backward-compatible operator aliases introduced by
-// the platform-neutral API.
-// The empty value means that an optional OpenShift service-CA adapter may be
-// selected; it is not a generic-cluster plaintext fallback.
-// +kubebuilder:validation:Enum=hook;cert-manager;manual;AdministratorManaged;CertManager;DevelopmentSelfSigned
+// The empty value selects the OpenShift service-CA adapter only when that
+// capability is discovered; it is not a generic-cluster plaintext fallback.
+// +kubebuilder:validation:Enum=cert-manager;manual;service-ca
 type TLSMode string
 
 const (
-	// TLSModeHook mirrors Helm tls.mode=hook.
-	TLSModeHook TLSMode = "hook"
-	// TLSModeHelmCertManager mirrors Helm tls.mode=cert-manager. Unlike the
-	// legacy title-case alias, this mode enables operator provisioning by
-	// default.
-	TLSModeHelmCertManager TLSMode = "cert-manager"
-	// TLSModeManual mirrors Helm tls.mode=manual.
+	// TLSModeCertManager selects cert-manager-issued runtime material.
+	TLSModeCertManager TLSMode = "cert-manager"
+	// TLSModeManual selects administrator- or external-PKI-provided Secrets.
 	TLSModeManual TLSMode = "manual"
-
-	TLSModeAdministratorManaged  TLSMode = "AdministratorManaged"
-	TLSModeCertManager           TLSMode = "CertManager"
-	TLSModeDevelopmentSelfSigned TLSMode = "DevelopmentSelfSigned"
+	// TLSModeServiceCA selects a discovered platform service-CA provider.
+	TLSModeServiceCA TLSMode = "service-ca"
 )
 
 // TLSConfigSpec defines the explicit runtime certificate source contract.
-// Exactly one mode-specific block must be populated when Mode is set.
+// The manual and cert-manager blocks configure the selected source. The
+// service-ca mode uses platform capability discovery and has no block.
 type TLSConfigSpec struct {
 	// Source mode. Empty selects only a positively discovered OpenShift
 	// service-CA adapter; generic clusters must not treat it as plaintext.
@@ -1859,40 +1851,30 @@ type TLSConfigSpec struct {
 	// +optional
 	InterService *InterServiceTLSConfig `json:"interService,omitempty"`
 
-	// Hooks mirrors Helm hooks.tlsCerts. Helm hook Jobs are replaced by the
-	// operator's reconciliation loop, while the extra SAN input remains the
-	// same migration-compatible configuration surface.
+	// References administrator- or external-PKI-owned internal CA and serving
+	// Secrets. The operator validates these objects but does not mutate or
+	// delete them.
 	// +optional
-	Hooks *TLSHooksConfig `json:"hooks,omitempty"`
-
-	// References administrator-owned internal CA and service serving Secrets.
-	// The operator validates these objects but does not mutate or delete them.
-	// +optional
-	AdministratorManaged *AdministratorManagedTLSConfig `json:"administratorManaged,omitempty"`
+	Manual *ManualTLSConfig `json:"manual,omitempty"`
 
 	// References cert-manager issuer output Secrets. cert-manager must already
 	// be installed; the operator never installs its CRDs or controller.
 	// +optional
 	CertManager *CertManagerTLSConfig `json:"certManager,omitempty"`
-
-	// Configures the explicit development-only self-signed provisioner.
-	// +optional
-	DevelopmentSelfSigned *DevelopmentSelfSignedTLSConfig `json:"developmentSelfSigned,omitempty"`
 }
 
-// AdministratorManagedTLSConfig references administrator-owned TLS material.
-type AdministratorManagedTLSConfig struct {
+// ManualTLSConfig references administrator- or external-PKI-owned TLS material.
+type ManualTLSConfig struct {
 	// Secret containing the public internal CA under ca.crt.
-	// Required when mode=AdministratorManaged. In other modes this field is
-	// ignored unless it is used as an explicit output-name override.
+	// Required when mode=manual with explicit Secret material.
 	// +optional
 	InternalCASecretName string `json:"internalCASecretName"`
 
 	// Serving Secret names keyed by component: gateway, datastorage,
 	// kubernautagent, apifrontend, and authwebhook. Each Secret contains
 	// tls.crt and tls.key with SANs covering its Service DNS names.
-	// Required when mode=AdministratorManaged. Provisioned cert-manager mode
-	// fills omitted entries with the stable operator defaults.
+	// Required when mode=manual with explicit Secret material. Empty values use
+	// the stable service names used by the operator's manual source.
 	// +optional
 	ServiceTLSSecretNames map[string]string `json:"serviceTLSSecretNames"`
 }
@@ -1910,31 +1892,13 @@ type InterServiceTLSConfig struct {
 	CAFile string `json:"caFile,omitempty"`
 }
 
-// TLSHooksConfig mirrors the upstream Helm hooks values relevant to TLS.
-type TLSHooksConfig struct {
-	// TLSCerts configures the self-signed certificate SAN additions used by the
-	// Helm tls-cert-job. The operator reconciles the equivalent Secrets directly.
-	// +optional
-	TLSCerts TLSCertsConfig `json:"tlsCerts,omitempty"`
-}
-
-// TLSCertsConfig mirrors hooks.tlsCerts in the upstream chart.
-type TLSCertsConfig struct {
-	// Additional DNS SANs for inter-service certificates. When non-empty, the
-	// loopback IP 127.0.0.1 is also included, matching the chart behavior.
-	// +optional
-	ExtraSANs []string `json:"extraSANs,omitempty"`
-}
-
 // TLSIssuerRef identifies an existing cert-manager issuer.
 type TLSIssuerRef struct {
-	// Issuer name. When empty in Helm-compatible cert-manager mode, the
-	// controller selects the sole Issuer/ClusterIssuer in scope, matching the
-	// chart's live-cluster lookup behavior.
+	// Issuer name. When empty, the controller may select the sole
+	// Issuer/ClusterIssuer in scope.
 	// +optional
 	Name string `json:"name,omitempty"`
-	// Issuer kind, normally Issuer or ClusterIssuer. The lower-case Helm mode
-	// defaults to ClusterIssuer; legacy title-case mode defaults to Issuer.
+	// Issuer kind, normally Issuer or ClusterIssuer.
 	// +optional
 	Kind string `json:"kind,omitempty"`
 	// API group, normally cert-manager.io.
@@ -1943,17 +1907,16 @@ type TLSIssuerRef struct {
 	Group string `json:"group,omitempty"`
 }
 
-// CertManagerTLSConfig references cert-manager-managed runtime Secrets.
+// CertManagerTLSConfig references cert-manager-issued runtime Secrets.
 type CertManagerTLSConfig struct {
-	// Issuer is the legacy operator spelling for the cert-manager issuer
-	// reference. It remains accepted for existing CRs.
+	// Issuer is the concise cert-manager issuer reference.
 	// +optional
 	Issuer TLSIssuerRef `json:"issuer,omitempty"`
-	// IssuerRef mirrors Helm tls.certManager.issuerRef. When populated it takes
-	// precedence over the legacy Issuer field.
+	// IssuerRef is the structured cert-manager issuer reference. When populated
+	// it takes precedence over Issuer.
 	// +optional
 	IssuerRef TLSIssuerRef `json:"issuerRef,omitempty"`
-	// Public CA Secret containing ca.crt for administrator-managed material or
+	// Public CA Secret containing ca.crt for manual material or
 	// tls.crt for cert-manager Certificate output.
 	// Required for reference-only mode. Provisioning mode defaults this to the
 	// dedicated inter-service CA Secret unless an override is supplied here or
@@ -1961,13 +1924,14 @@ type CertManagerTLSConfig struct {
 	// +optional
 	InternalCASecretName string `json:"internalCASecretName"`
 	// Serving Secret names keyed by component, with the same keys as the
-	// administrator-managed mode. Required for reference-only mode;
+	// manual mode. Required for reference-only mode;
 	// provisioning mode fills omitted entries with stable defaults.
 	// +optional
 	ServiceTLSSecretNames map[string]string `json:"serviceTLSSecretNames"`
-	// Provisioning enables operator-owned cert-manager Issuer and Certificate
-	// resources. cert-manager remains the owner of generated output Secrets.
-	// When omitted, the existing reference-only contract is preserved.
+	// Provisioning controls optional operator reconciliation of cert-manager
+	// Issuer and Certificate resources. It defaults to reference-only; set
+	// enabled=true to reconcile these objects. cert-manager remains the owner of
+	// generated output Secrets.
 	// +optional
 	Provisioning *CertManagerTLSProvisioning `json:"provisioning,omitempty"`
 }
@@ -2042,17 +2006,6 @@ type CertManagerTLSProvisioning struct {
 	// +kubebuilder:default="datastorage-signing-cert"
 	// +optional
 	SigningCertificateSecretName string `json:"signingCertificateSecretName,omitempty"`
-}
-
-// DevelopmentSelfSignedTLSConfig configures namespace-scoped development TLS.
-type DevelopmentSelfSignedTLSConfig struct {
-	// Secret name for the generated CA. Defaults to kubernaut-internal-ca.
-	// +optional
-	CASecretName string `json:"caSecretName,omitempty"`
-	// How long before expiry the operator should rotate generated leaves.
-	// +kubebuilder:default="168h"
-	// +optional
-	RotationBefore string `json:"rotationBefore,omitempty"`
 }
 
 // APIFrontendRouteSpec configures the OCP Route for the API Frontend.

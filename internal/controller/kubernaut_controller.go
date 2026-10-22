@@ -136,11 +136,12 @@ const (
 // KubernautReconciler reconciles a Kubernaut object.
 type KubernautReconciler struct {
 	client.Client
-	Scheme    *runtime.Scheme
-	Recorder  events.EventRecorder
-	RestCfg   *rest.Config
-	APIReader client.Reader
-	now       func() time.Time
+	Scheme                      *runtime.Scheme
+	Recorder                    events.EventRecorder
+	RestCfg                     *rest.Config
+	APIReader                   client.Reader
+	now                         func() time.Time
+	ensureTLSConfigMapsOverride func(context.Context, *kubernautv1alpha2.Kubernaut, resources.TLSMaterial, []byte) error
 }
 
 var newGeneratedAuditHashKeySecret = resources.NewDataStorageAuditHashKeySecret
@@ -345,6 +346,7 @@ func (r *KubernautReconciler) validateDatabaseInputs(ctx context.Context, kn *ku
 	return ctrl.Result{}, nil, false
 }
 
+//nolint:funlen // validation order is intentionally explicit and phase-gated.
 func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -393,9 +395,14 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 	if result, err, handled := r.validateTelemetryTrust(ctx, kn); handled {
 		return result, err
 	}
+	tlsMode := string(kn.Spec.TLS.Mode)
+	if tlsMode == "" {
+		tlsMode = string(kubernautv1alpha2.TLSModeServiceCA)
+	}
 	log.Info("BYO and runtime TLS sources validated",
 		"generation", kn.Generation,
 		"resourceVersion", kn.ResourceVersion,
+		"tlsMode", tlsMode,
 		"tlsSource", tlsMaterial.Source)
 	return ctrl.Result{}, r.patchStatus(ctx, kn, func() {
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
@@ -404,7 +411,7 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 			ObservedGeneration: kn.Generation,
 		})
 		platformMessage := "generic Kubernetes capabilities detected; optional OpenShift and monitoring APIs are not required"
-		if tlsMaterial.Source == resources.TLSMaterialSourceOpenShiftServiceCA {
+		if tlsMaterial.Source == resources.TLSMaterialSourceServiceCA {
 			platformMessage = "OpenShift capabilities detected; optional platform adapters are enabled"
 		}
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
@@ -418,7 +425,7 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 			Type:               kubernautv1alpha2.ConditionTLSReady,
 			Status:             metav1.ConditionTrue,
 			Reason:             ReasonTLSReady,
-			Message:            fmt.Sprintf("runtime TLS source %s is configured", tlsMaterial.Source),
+			Message:            fmt.Sprintf("runtime TLS mode %s is configured", tlsMode),
 			ObservedGeneration: kn.Generation,
 		})
 		r.setPhase(kn, kubernautv1alpha2.PhaseValidating)
@@ -542,10 +549,8 @@ func (r *KubernautReconciler) ensureMigrationPrereqs(ctx context.Context, kn *ku
 	if err != nil {
 		return fmt.Errorf("ensuring runtime TLS before migration: %w", err)
 	}
-	if tlsMaterial.Source != resources.TLSMaterialSourceOpenShiftServiceCA {
-		if err := r.ensureGenericTLSConfigMaps(ctx, kn, tlsBundle); err != nil {
-			return fmt.Errorf("ensuring generic TLS trust before migration: %w", err)
-		}
+	if err := r.ensureTLSConfigMapsForMaterial(ctx, kn, tlsMaterial, tlsBundle); err != nil {
+		return fmt.Errorf("ensuring generic TLS trust before migration: %w", err)
 	}
 
 	pgSecret := &corev1.Secret{}
@@ -568,7 +573,7 @@ func (r *KubernautReconciler) ensureMigrationPrereqs(ctx context.Context, kn *ku
 		return fmt.Errorf("ensuring migration configmap: %w", err)
 	}
 
-	if tlsMaterial.Source == resources.TLSMaterialSourceOpenShiftServiceCA {
+	if tlsMaterial.Source == resources.TLSMaterialSourceServiceCA {
 		caCM := resources.InterServiceCAConfigMap(kn)
 		if err := r.ensureNamespaced(ctx, kn, caCM); err != nil {
 			return fmt.Errorf("ensuring inter-service-ca configmap: %w", err)
@@ -751,10 +756,8 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 	if err != nil {
 		return err
 	}
-	if tlsMaterial.Source != resources.TLSMaterialSourceOpenShiftServiceCA {
-		if err := r.ensureGenericTLSConfigMaps(ctx, kn, tlsBundle); err != nil {
-			return err
-		}
+	if err := r.ensureTLSConfigMapsForMaterial(ctx, kn, tlsMaterial, tlsBundle); err != nil {
+		return err
 	}
 	telemetryRevisions, err := r.telemetryMaterialRevisions(ctx, knV2)
 	if err != nil {
@@ -1827,7 +1830,7 @@ func buildConfigMapSet(builders []cmBuilder, configMaps []*corev1.ConfigMap, cmH
 // per-component service-CA ConfigMaps consumed by mTLS-scraping sidecars.
 func appendServiceCAConfigMaps(kn *kubernautv1alpha2.Kubernaut, configMaps []*corev1.ConfigMap) []*corev1.ConfigMap {
 	material, err := resources.ResolveTLSMaterial(kn)
-	if err == nil && material.Source != resources.TLSMaterialSourceOpenShiftServiceCA {
+	if err == nil && material.Source != resources.TLSMaterialSourceServiceCA {
 		// Generic trust ConfigMaps are created by ensureRuntimeTLS after the
 		// selected CA has been validated or generated. Do not append empty
 		// placeholders here: this builder runs before the runtime TLS adapter
@@ -1869,7 +1872,7 @@ func mutatingWebhookConfigurationForTLS(
 	tlsMaterial resources.TLSMaterial,
 	tlsBundle []byte,
 ) *admissionregistrationv1.MutatingWebhookConfiguration {
-	if tlsMaterial.Source == resources.TLSMaterialSourceOpenShiftServiceCA {
+	if tlsMaterial.Source == resources.TLSMaterialSourceServiceCA {
 		return resources.MutatingWebhookConfiguration(kn)
 	}
 	if tlsMaterial.Source == resources.TLSMaterialSourceCertManager && resources.CertManagerTLSProvisioningEnabled(kn) {
@@ -1888,7 +1891,7 @@ func validatingWebhookConfigurationForTLS(
 	tlsMaterial resources.TLSMaterial,
 	tlsBundle []byte,
 ) *admissionregistrationv1.ValidatingWebhookConfiguration {
-	if tlsMaterial.Source == resources.TLSMaterialSourceOpenShiftServiceCA {
+	if tlsMaterial.Source == resources.TLSMaterialSourceServiceCA {
 		return resources.ValidatingWebhookConfiguration(kn)
 	}
 	if tlsMaterial.Source == resources.TLSMaterialSourceCertManager && resources.CertManagerTLSProvisioningEnabled(kn) {
@@ -3936,12 +3939,10 @@ func (r *KubernautReconciler) validateTLSConfiguration(
 		return resources.TLSMaterial{}, err
 	}
 	switch material.Source {
-	case resources.TLSMaterialSourceOpenShiftServiceCA:
+	case resources.TLSMaterialSourceServiceCA:
 		if !r.openShiftPlatformDetected(ctx) {
-			return resources.TLSMaterial{}, fmt.Errorf("tls.mode is unset and OpenShift service-CA capability was not discovered; select AdministratorManaged, CertManager, or DevelopmentSelfSigned")
+			return resources.TLSMaterial{}, fmt.Errorf("tls.mode is unset or service-ca and OpenShift service-CA capability was not discovered; select manual or cert-manager")
 		}
-	case resources.TLSMaterialSourceDevelopmentSelfSigned:
-		return material, nil
 	default:
 		if err := r.validateExplicitTLS(ctx, kn, material); err != nil {
 			return resources.TLSMaterial{}, err
@@ -4046,8 +4047,8 @@ func (r *KubernautReconciler) validateTLSWebhookReadiness(
 }
 
 // ensureRuntimeTLS resolves the selected source for deployment wiring. The
-// operator only creates Secrets in explicit DevelopmentSelfSigned mode; all
-// other explicit sources remain administrator/cert-manager owned.
+// operator never creates runtime TLS Secrets; manual material remains external
+// input and cert-manager remains the output owner.
 func (r *KubernautReconciler) ensureRuntimeTLS(
 	ctx context.Context,
 	kn *kubernautv1alpha2.Kubernaut,
@@ -4056,13 +4057,10 @@ func (r *KubernautReconciler) ensureRuntimeTLS(
 	if err != nil {
 		return resources.TLSMaterial{}, nil, err
 	}
-	if material.Source == resources.TLSMaterialSourceOpenShiftServiceCA {
+	if material.Source == resources.TLSMaterialSourceServiceCA {
 		return material, nil, nil
 	}
 
-	if material.Source == resources.TLSMaterialSourceDevelopmentSelfSigned {
-		return r.ensureDevelopmentSelfSignedTLS(ctx, kn, material)
-	}
 	if material.Source == resources.TLSMaterialSourceCertManager && resources.CertManagerTLSProvisioningEnabled(kn) {
 		if err := r.ensureCertManagerTLSResources(ctx, kn); err != nil {
 			return resources.TLSMaterial{}, nil, err
@@ -4250,52 +4248,23 @@ func (r *KubernautReconciler) readRuntimeTLSCA(
 	return ca, nil
 }
 
-func (r *KubernautReconciler) ensureDevelopmentSelfSignedTLS(
+func (r *KubernautReconciler) ensureTLSConfigMapsForMaterial(
 	ctx context.Context,
 	kn *kubernautv1alpha2.Kubernaut,
 	material resources.TLSMaterial,
-) (resources.TLSMaterial, []byte, error) {
-	reader := client.Reader(r.Client)
-	if r.APIReader != nil {
-		reader = r.APIReader
+	caBundle []byte,
+) error {
+	if r.ensureTLSConfigMapsOverride != nil {
+		return r.ensureTLSConfigMapsOverride(ctx, kn, material, caBundle)
 	}
-	existing := make(map[string]*corev1.Secret, len(material.ServiceTLSSecretNames)+1)
-	names := make([]string, 0, len(material.ServiceTLSSecretNames)+1)
-	names = append(names, material.InternalCASecretName)
-	for _, name := range material.ServiceTLSSecretNames {
-		names = append(names, name)
+	if material.Source == resources.TLSMaterialSourceServiceCA {
+		return nil
 	}
-	if signingName := resources.DataStorageSigningSecretName(kn); signingName != "" {
-		names = append(names, signingName)
-	}
-	for _, name := range names {
-		secret := &corev1.Secret{}
-		err := reader.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: name}, secret)
-		if apierrors.IsNotFound(err) {
-			continue
-		}
-		if err != nil {
-			return resources.TLSMaterial{}, nil, fmt.Errorf("reading development TLS secret %q: %w", name, err)
-		}
-		if err := r.checkResourceOwnership(ctx, kn, secret, true); err != nil {
-			return resources.TLSMaterial{}, nil, err
-		}
-		existing[name] = secret
-	}
-	secrets, err := resources.DevelopmentSelfSignedTLSSecrets(kn, existing, r.currentTime())
-	if err != nil {
-		return resources.TLSMaterial{}, nil, err
-	}
-	for _, secret := range secrets {
-		if err := r.ensureNamespaced(ctx, kn, secret); err != nil {
-			return resources.TLSMaterial{}, nil, fmt.Errorf("ensuring development TLS secret %s: %w", secret.Name, err)
-		}
-	}
-	return material, secrets[0].Data["ca.crt"], nil
+	return r.ensureGenericTLSConfigMaps(ctx, kn, caBundle)
 }
 
 func (r *KubernautReconciler) ensureGenericTLSConfigMaps(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, caBundle []byte) error {
-	// Helm manual mode deliberately uses the administrator-owned
+	// Manual mode deliberately uses the administrator-owned
 	// inter-service-ca ConfigMap as-is. Creating a derived ConfigMap with the
 	// same stable name would adopt and overwrite user-managed trust material.
 	if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual {
@@ -4305,19 +4274,6 @@ func (r *KubernautReconciler) ensureGenericTLSConfigMaps(ctx context.Context, kn
 		return fmt.Errorf("generic runtime TLS CA bundle is empty")
 	}
 	configMaps := resources.GenericTLSConfigMaps(kn, caBundle)
-	if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeAdministratorManaged {
-		// Explicit administrator-managed mode reads the CA from the named Secret
-		// but still mounts the operator-owned derived trust bundle. The stable
-		// inter-service-ca ConfigMap remains external input when it already
-		// exists, so never adopt or overwrite it.
-		filtered := make([]*corev1.ConfigMap, 0, len(configMaps)-1)
-		for _, configMap := range configMaps {
-			if configMap.Name != resources.InterServiceCAConfigMapName {
-				filtered = append(filtered, configMap)
-			}
-		}
-		configMaps = filtered
-	}
 	for _, configMap := range configMaps {
 		if err := r.ensureNamespaced(ctx, kn, configMap); err != nil {
 			return fmt.Errorf("ensuring generic TLS ConfigMap %s: %w", configMap.Name, err)
@@ -4349,9 +4305,6 @@ func (r *KubernautReconciler) ensureCertManagerTLSResources(ctx context.Context,
 	}
 
 	desiredKn := kn.DeepCopy()
-	if desiredKn.Spec.TLS.CertManager == nil {
-		desiredKn.Spec.TLS.CertManager = &kubernautv1alpha2.CertManagerTLSConfig{}
-	}
 	desiredKn.Spec.TLS.CertManager.IssuerRef = kubernautv1alpha2.TLSIssuerRef{
 		Name:  issuerRef.name,
 		Kind:  issuerRef.kind,
@@ -4462,11 +4415,7 @@ func (r *KubernautReconciler) validateCertManagerIssuer(ctx context.Context, kn 
 func (r *KubernautReconciler) resolveCertManagerIssuer(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (certManagerIssuerReference, error) {
 	cfg := kn.Spec.TLS.CertManager
 	if cfg == nil {
-		if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeHelmCertManager {
-			cfg = &kubernautv1alpha2.CertManagerTLSConfig{}
-		} else {
-			return certManagerIssuerReference{}, fmt.Errorf("tls.certManager is required")
-		}
+		return certManagerIssuerReference{}, fmt.Errorf("tls.certManager is required")
 	}
 	issuerConfig := cfg.EffectiveIssuerRef()
 	group := issuerConfig.Group
@@ -4476,9 +4425,6 @@ func (r *KubernautReconciler) resolveCertManagerIssuer(ctx context.Context, kn *
 	kind := issuerConfig.Kind
 	if kind == "" {
 		kind = certManagerClusterIssuerKind
-		if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeCertManager {
-			kind = certManagerIssuerKind
-		}
 	}
 	if kind != certManagerIssuerKind && kind != certManagerClusterIssuerKind {
 		return certManagerIssuerReference{}, fmt.Errorf("tls.certManager.issuer.kind %q is unsupported", kind)
