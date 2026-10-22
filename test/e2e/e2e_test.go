@@ -426,10 +426,10 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 				}, 5*time.Minute, 2*time.Second).Should(Succeed())
 				probeScript := `set -eu; token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token); ` +
 					`curl -fsS --connect-timeout 10 --cacert /etc/monitoring-ca/service-ca.crt ` +
-					`-H 'Authorization: Bearer ${token}' ` +
+					`-H \"Authorization: Bearer ${token}\" ` +
 					`https://thanos-querier.openshift-monitoring.svc:9091/api/v1/status/buildinfo ` +
 					`>/dev/null; curl -fsS --connect-timeout 10 --cacert /etc/monitoring-ca/service-ca.crt ` +
-					`-H 'Authorization: Bearer ${token}' ` +
+					`-H \"Authorization: Bearer ${token}\" ` +
 					`https://alertmanager-main.openshift-monitoring.svc:9094/api/v2/status >/dev/null`
 				probeOverrides := `{
 				"spec": {
@@ -465,13 +465,30 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 					}]
 				}
 			}`
+				var probePayload struct {
+					Spec struct {
+						Containers []struct {
+							Args []string `json:"args"`
+						} `json:"containers"`
+					} `json:"spec"`
+				}
+				Expect(json.Unmarshal([]byte(probeOverrides), &probePayload)).To(Succeed())
+				Expect(probePayload.Spec.Containers).To(HaveLen(1))
+				Expect(probePayload.Spec.Containers[0].Args).To(HaveLen(1))
+				Expect(probePayload.Spec.Containers[0].Args[0]).To(
+					ContainSubstring(`-H "Authorization: Bearer ${token}"`),
+				)
 				cmd := exec.Command("kubectl", "run", probeName, "--restart=Never", "--namespace", crNS,
 					"--image=curlimages/curl:latest", "--overrides", probeOverrides)
 				_, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() {
-					cmd := exec.Command("kubectl", "delete", "pod", probeName, "-n", crNS, "--ignore-not-found=true")
-					_, _ = utils.Run(cmd)
+					cmd := exec.Command(
+						"kubectl", "delete", "pod", probeName, "-n", crNS,
+						"--ignore-not-found=true",
+					)
+					_, cleanupErr := utils.Run(cmd)
+					Expect(cleanupErr).NotTo(HaveOccurred(), "failed to delete monitoring TLS probe pod")
 				})
 
 				Eventually(func(g Gomega) {
