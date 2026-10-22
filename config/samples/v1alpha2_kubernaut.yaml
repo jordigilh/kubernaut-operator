@@ -67,6 +67,8 @@ spec:
   # Gateway is the only external API enabled by this minimum sample.
   gateway:
     enabled: true
+    route:
+      enabled: false
 
   # Generic Kubernetes/Kind TLS. Install cert-manager before applying this CR
   # and pre-create the referenced Issuer/Certificates. Set provisioning.enabled

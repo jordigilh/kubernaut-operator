@@ -56,5 +56,7 @@ var _ = Describe("disposable OCP sample contract", func() {
 			"teams-primary":      {Name: "notification-teams", Key: "webhook-url"},
 			"pagerduty-critical": {Name: "notification-pagerduty", Key: "routing-key"},
 		}))
+		Expect(sample.Spec.Gateway.Route.Enabled).NotTo(BeNil())
+		Expect(*sample.Spec.Gateway.Route.Enabled).To(BeFalse(), "the disposable E2E sample must keep the Gateway Route disabled")
 	})
 })
