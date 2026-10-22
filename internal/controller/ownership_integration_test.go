@@ -38,6 +38,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -266,9 +267,8 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 	It("IT-OWN-514-007 [AC-6, IA-5; ASVS v5.0.0-V13.3.1] rejects unowned development CA material before reusing it", func() {
 		createBYOSecrets(ctx)
 		kn := newCRWithRouteDisabled()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeDevelopmentSelfSigned
-		kn.Spec.TLS.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}
-		secrets, err := resources.DevelopmentSelfSignedTLSSecrets(kn, nil, time.Now().UTC())
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
+		secrets, err := testRuntimeTLSSecrets(kn, nil, time.Now().UTC())
 		Expect(err).NotTo(HaveOccurred())
 		foreign := secrets[0]
 		foreign.Labels = nil
@@ -618,10 +618,10 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		before := certificate.DeepCopy()
 		kn := newCRWithRouteDisabled()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
-			Mode: kubernautv1alpha2.TLSModeHelmCertManager,
+			Mode: kubernautv1alpha2.TLSModeCertManager,
 			CertManager: &kubernautv1alpha2.CertManagerTLSConfig{IssuerRef: kubernautv1alpha2.TLSIssuerRef{
 				Name: issuer.GetName(), Kind: "Issuer", Group: "cert-manager.io",
-			}},
+			}, Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{Enabled: ptr.To(true)}},
 		}
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 		r := newReconciler()

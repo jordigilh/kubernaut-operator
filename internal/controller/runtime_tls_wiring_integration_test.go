@@ -52,7 +52,26 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 
 	It("IT-TELEMETRY-AUDIT-515-001: blocks malformed client chains through Reconcile and resumes only after valid external material is restored", func() {
 		kn := newCRWithRouteDisabled()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
+		kn.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{
+			InternalCASecretName:  "kubernaut-internal-ca",
+			ServiceTLSSecretNames: certManagerServiceTLSSecretNames(),
+		}
+		runtimeSecrets, err := testRuntimeTLSSecrets(kn, nil, time.Now().Add(-time.Hour))
+		Expect(err).NotTo(HaveOccurred())
+		for _, secret := range runtimeSecrets {
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			DeferCleanup(func() {
+				deleteErr := k8sClient.Delete(context.Background(), secret)
+				Expect(deleteErr == nil || apierrors.IsNotFound(deleteErr)).To(BeTrue())
+			})
+		}
+		for _, webhook := range []client.Object{
+			resources.MutatingWebhookConfigurationWithCABundle(kn, runtimeSecrets[0].Data["ca.crt"]),
+			resources.ValidatingWebhookConfigurationWithCABundle(kn, runtimeSecrets[0].Data["ca.crt"]),
+		} {
+			Expect(k8sClient.Create(ctx, webhook)).To(Succeed())
+		}
 		kn.Spec.DataStorage.Telemetry = telemetrySecretSpec()
 		ca := telemetryCASecret("telemetry-ca", "ca.crt")
 		clientSecret := telemetryClientSecret()
@@ -70,7 +89,7 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 		r := newReconciler()
 		for range 2 {
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 		}
 		Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
@@ -96,50 +115,28 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 		kn.Spec.Monitoring.AlertManager.Enabled = ptr.To(false)
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		Expect(k8sClient.Update(ctx, kn)).To(Succeed())
+		trustFixture := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: resources.InterServiceCAConfigMapName, Namespace: kn.Namespace},
+			Data:       map[string]string{"ca.crt": string(runtimeSecrets[0].Data["ca.crt"])},
+		}
+		Expect(k8sClient.Create(ctx, trustFixture)).To(Succeed())
+		DeferCleanup(func() {
+			deleteErr := k8sClient.Delete(context.Background(), trustFixture)
+			Expect(deleteErr == nil || apierrors.IsNotFound(deleteErr)).To(BeTrue())
+		})
 		trust := &corev1.ConfigMap{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.InterServiceCAConfigMapName}, trust)).To(Succeed())
-		Expect(r.telemetryAmbientConfigMapToKubernaut(ctx, trust)).To(Equal(expected))
+		Expect(r.telemetryAmbientConfigMapToKubernaut(ctx, trust)).To(BeEmpty())
 		Expect(r.monitoringObjectToKubernaut(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "prometheus", Namespace: "monitoring"}})).To(BeEmpty())
 		Expect(r.monitoringObjectToKubernaut(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: "monitoring"}})).To(BeEmpty())
 	})
 
-	for _, mode := range []kubernautv1alpha2.TLSMode{kubernautv1alpha2.TLSModeHook, kubernautv1alpha2.TLSModeDevelopmentSelfSigned} {
-		It("IT-TLS-AUDIT-515-001: persists development trust, serving material and webhook bundles through Reconcile for "+string(mode), func() {
-			kn := newCRWithRouteDisabled()
-			kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: mode,
-				DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}}
-			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
-			r := reconcileToRunning(ctx)
-			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha2.PhaseRunning))
-			Expect(meta.IsStatusConditionTrue(kn.Status.Conditions, kubernautv1alpha2.ConditionTLSReady)).To(BeTrue())
-			ca := &corev1.Secret{}
-			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: "kubernaut-internal-ca"}, ca)).To(Succeed())
-			serving := &corev1.Secret{}
-			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.GatewayTLSSecretName}, serving)).To(Succeed())
-			Expect(resources.ValidateServingTLSSecretForService(serving, ca, resources.TLSServiceGateway, kn.Namespace)).To(Succeed())
-			Expect(serving.OwnerReferences).To(ContainElement(HaveField("UID", kn.UID)))
-			trust := &corev1.ConfigMap{}
-			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.TrustBundleConfigMapName}, trust)).To(Succeed())
-			Expect(trust.Data["ca.crt"]).To(Equal(string(ca.Data["ca.crt"])))
-			mutating := &admissionv1.MutatingWebhookConfiguration{}
-			Expect(k8sClient.Get(ctx, client.ObjectKey{Name: kn.Namespace + "-authwebhook-mutating"}, mutating)).To(Succeed())
-			Expect(mutating.Webhooks[0].ClientConfig.CABundle).To(Equal(ca.Data["ca.crt"]))
-			oldLeaf := append([]byte(nil), serving.Data[corev1.TLSCertKey]...)
-			r.now = func() time.Time { return time.Now().Add(29 * 24 * time.Hour) }
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(serving), serving)).To(Succeed())
-			Expect(serving.Data[corev1.TLSCertKey]).NotTo(Equal(oldLeaf), "leaf rotation must remain wired after initial readiness")
-		})
-	}
-
-	for _, mode := range []kubernautv1alpha2.TLSMode{kubernautv1alpha2.TLSModeManual, kubernautv1alpha2.TLSModeAdministratorManaged} {
+	for _, mode := range []kubernautv1alpha2.TLSMode{kubernautv1alpha2.TLSModeManual} {
 		It("IT-TLS-AUDIT-515-002: validates and mounts external TLS without adopting its trust or Secrets for "+string(mode), func() {
 			kn := newCRWithRouteDisabled()
 			generator := kn.DeepCopy()
-			generator.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeHook}
-			material, err := resources.DevelopmentSelfSignedTLSSecrets(generator, nil, time.Now().Add(-time.Hour))
+			generator.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeManual}
+			material, err := testRuntimeTLSSecrets(generator, nil, time.Now().Add(-time.Hour))
 			Expect(err).NotTo(HaveOccurred())
 			for _, secret := range material {
 				secret.Labels, secret.OwnerReferences = nil, nil
@@ -150,8 +147,8 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 				})
 			}
 			kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: mode}
-			if mode == kubernautv1alpha2.TLSModeAdministratorManaged {
-				kn.Spec.TLS.AdministratorManaged = &kubernautv1alpha2.AdministratorManagedTLSConfig{
+			if mode == kubernautv1alpha2.TLSModeManual {
+				kn.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{
 					InternalCASecretName: material[0].Name, ServiceTLSSecretNames: certManagerServiceTLSSecretNames(),
 				}
 			}
@@ -159,7 +156,10 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 			trust := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: resources.InterServiceCAConfigMapName, Namespace: kn.Namespace},
 				Data: map[string]string{"ca.crt": string(material[0].Data["ca.crt"]), "administrator-key": "preserved"}}
 			Expect(k8sClient.Create(ctx, trust)).To(Succeed())
-			DeferCleanup(func() { Expect(k8sClient.Delete(context.Background(), trust)).To(Succeed()) })
+			DeferCleanup(func() {
+				deleteErr := k8sClient.Delete(context.Background(), trust)
+				Expect(deleteErr == nil || apierrors.IsNotFound(deleteErr)).To(BeTrue())
+			})
 			for _, object := range []client.Object{
 				resources.MutatingWebhookConfigurationWithCABundle(kn, material[0].Data["ca.crt"]),
 				resources.ValidatingWebhookConfigurationWithCABundle(kn, material[0].Data["ca.crt"]),
@@ -187,13 +187,8 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.DeploymentName(resources.ComponentEffectivenessMonitor)}, monitoringDeployment)).To(Succeed())
 			monitoringVolume := findMonitoringDeploymentVolume(monitoringDeployment)
 			Expect(monitoringVolume).NotTo(BeNil())
-			if mode == kubernautv1alpha2.TLSModeManual {
-				Expect(monitoringVolume.ConfigMap).NotTo(BeNil())
-				Expect(monitoringVolume.ConfigMap.Name).To(Equal(resources.InterServiceCAConfigMapName))
-			} else {
-				Expect(monitoringVolume.ConfigMap).NotTo(BeNil())
-				Expect(monitoringVolume.ConfigMap.Name).To(Equal(resources.TrustBundleConfigMapName))
-			}
+			Expect(monitoringVolume.Secret).NotTo(BeNil())
+			Expect(monitoringVolume.Secret.SecretName).To(Equal(material[0].Name))
 		})
 	}
 

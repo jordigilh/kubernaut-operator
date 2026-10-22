@@ -33,7 +33,7 @@ var _ = Describe("independent resource-generation boundary outcomes", func() {
 		Expect(InterServiceTLSCAFileFor(kn)).To(Equal("/etc/tls-ca/ca.crt"))
 		Expect(isHelmTLSMode(nil)).To(BeFalse())
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
-		kn.Spec.TLS.AdministratorManaged = &kubernautv1alpha2.AdministratorManagedTLSConfig{
+		kn.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{
 			InternalCASecretName: "administrator-ca", ServiceTLSSecretNames: map[string]string{TLSServiceGateway: "custom-gateway"},
 		}
 		Expect(InterServiceTLSCAVolume(kn).Secret.SecretName).To(Equal("administrator-ca"))
@@ -55,11 +55,14 @@ var _ = Describe("independent resource-generation boundary outcomes", func() {
 
 	It("UT-AUDIT-515-RESOURCES-002: honors signing overrides and emits bounded IP and DNS certificate SANs", func() {
 		kn := testKubernaut()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHelmCertManager
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeCertManager
 		Expect(CertManagerTLSProvisioningEnabled(nil)).To(BeFalse())
 		Expect(DataStorageSigningSecretName(nil)).To(BeEmpty())
 		_, err := CertManagerTLSResources(nil)
 		Expect(err).To(HaveOccurred())
+		kn.Spec.TLS.CertManager = &kubernautv1alpha2.CertManagerTLSConfig{
+			Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{},
+		}
 		material, err := ResolveTLSMaterial(kn)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(material.InternalCASecretName).To(Equal("kubernaut-interservice-ca-secret"))
@@ -401,7 +404,10 @@ var _ = Describe("embedded CRD publication over a simulated external API", func(
 		Expect(CertManagerBootstrapIssuerNames(nil)).To(BeEmpty())
 		kn := testKubernaut()
 		Expect(CertManagerBootstrapIssuerNames(kn)).To(BeEmpty())
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHelmCertManager
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeCertManager
+		kn.Spec.TLS.CertManager = &kubernautv1alpha2.CertManagerTLSConfig{
+			Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{},
+		}
 		Expect(CertManagerBootstrapIssuerNames(kn)).To(Equal([]string{defaultCertManagerBootstrapIssuerName, defaultCertManagerCAIssuerName}))
 		kn.Spec.TLS.CertManager = &kubernautv1alpha2.CertManagerTLSConfig{Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{
 			BootstrapIssuerName: "custom-bootstrap", InternalCAIssuerName: "custom-ca",

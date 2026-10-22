@@ -201,15 +201,6 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 			Expect(verifyTLSWorkloadTrust(ctx, caKey)).To(Succeed())
 
 			switch configuredTLS {
-			case tlsHook:
-				By("proving hook-mode material is operator-owned")
-				for _, name := range hookTLSSecretNames() {
-					Eventually(func(g Gomega) {
-						owner, ownerErr := secretOwnerKind(ctx, name)
-						g.Expect(ownerErr).NotTo(HaveOccurred(), name)
-						g.Expect(owner).To(Equal("Kubernaut"), name)
-					}).Should(Succeed())
-				}
 			case tlsManualAdmin:
 				By("proving manual TLS material is administrator-owned and unchanged")
 				Expect(assertManualTLSFixtureUnchanged(ctx, activeManualTLSSelection)).To(Succeed())
@@ -311,36 +302,6 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 		},
 	)
 
-	It(
-		"E2E-TLS-HOOK-002 [SC-8, SC-12, SC-13, SI-4; SOC2 CC7, A1; "+
-			"ASVS v5.0.0-V11.1.1, v5.0.0-V11.1.2, v5.0.0-V12.1.1, "+
-			"v5.0.0-V16.5.2] rotates a hook leaf without losing trust",
-		func() {
-			if configuredTLS != tlsHook {
-				return
-			}
-
-			for _, name := range []string{"gateway-tls", "datastorage-tls"} {
-				before, err := secretTLSCertificate(ctx, name)
-				Expect(err).NotTo(HaveOccurred())
-				By("deleting operator-owned hook leaf " + name + " to request reissuance")
-				Expect(deleteTLSSecret(ctx, name)).To(Succeed())
-				Eventually(func(g Gomega) {
-					current, getErr := secretTLSCertificate(ctx, name)
-					g.Expect(getErr).NotTo(HaveOccurred())
-					g.Expect(current).NotTo(Equal(before))
-					owner, ownerErr := secretOwnerKind(ctx, name)
-					g.Expect(ownerErr).NotTo(HaveOccurred())
-					g.Expect(owner).To(Equal("Kubernaut"))
-					g.Expect(kubernautCondition(ctx, "TLSReady")).To(Equal(conditionTrue))
-				}).Should(Succeed())
-			}
-			caKey, caErr := tlsProbeCAKey()
-			Expect(caErr).NotTo(HaveOccurred())
-			Expect(verifyTLSWorkloadTrust(ctx, caKey)).To(Succeed())
-		},
-	)
-
 	It("proves the standard policy is applied without claiming dataplane enforcement", func() {
 		Expect(kubernautCondition(ctx, "NetworkPolicyReady")).To(Equal(conditionTrue))
 		Expect(managedNativePolicyExists(ctx)).To(Succeed())
@@ -396,13 +357,6 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 			g.Expect(unmanagedNativePolicyExists(ctx)).To(Succeed())
 			if configuredTLS == tlsManualAdmin {
 				g.Expect(assertManualTLSFixtureUnchanged(ctx, activeManualTLSSelection)).To(Succeed())
-			}
-			if configuredTLS == tlsHook {
-				for _, name := range hookTLSSecretNames() {
-					present, secretErr := secretPresent(ctx, name)
-					g.Expect(secretErr).NotTo(HaveOccurred(), name)
-					g.Expect(present).To(BeFalse(), name)
-				}
 			}
 		}).Should(Succeed())
 	})

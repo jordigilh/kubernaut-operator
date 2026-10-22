@@ -88,7 +88,7 @@ var _ = Describe("cert-manager independent lifecycle decisions", Label("unit"), 
 		Expect(r.ensureCertManagerTLSResources(ctx, kn)).To(MatchError(ContainSubstring("api is not installed: certificates")))
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		Expect(r.ensureCertManagerTLSResources(ctx, kn)).To(Succeed())
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHelmCertManager
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeCertManager
 		kn.Spec.TLS.CertManager = nil
 		_, err := r.resolveCertManagerIssuer(ctx, kn)
 		Expect(err).To(HaveOccurred())
@@ -107,7 +107,7 @@ var _ = Describe("cert-manager independent lifecycle decisions", Label("unit"), 
 		r = businessUnitReconciler(kn, interceptor.Funcs{})
 		kn.Spec.TLS.CertManager = &kubernautv1alpha2.CertManagerTLSConfig{IssuerRef: kubernautv1alpha2.TLSIssuerRef{
 			Kind: "Issuer", Name: "external-customer-issuer",
-		}}
+		}, Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{Enabled: ptr.To(true)}}
 		installCertManagerLifecycleInputs(r.Client, kn)
 		r.Client = interceptor.NewClient(r.Client.(client.WithWatch), interceptor.Funcs{Create: deniedUnitCreate})
 		Expect(r.ensureCertManagerTLSResources(ctx, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
@@ -168,7 +168,7 @@ var _ = Describe("cert-manager independent lifecycle decisions", Label("unit"), 
 	})
 
 	It("UT-AUDIT-515-CERTMANAGER-006: preserves each webhook bootstrap error for manual and cert-manager sources", func() {
-		for _, mode := range []kubernautv1alpha2.TLSMode{kubernautv1alpha2.TLSModeManual, kubernautv1alpha2.TLSModeHelmCertManager} {
+		for _, mode := range []kubernautv1alpha2.TLSMode{kubernautv1alpha2.TLSModeManual, kubernautv1alpha2.TLSModeCertManager} {
 			for _, kind := range []string{"*v1.MutatingWebhookConfiguration", "*v1.ValidatingWebhookConfiguration"} {
 				kn := certManagerLifecycleCR("Issuer")
 				kn.Spec.TLS.Mode = mode
@@ -244,6 +244,7 @@ var _ = Describe("cert-manager independent lifecycle decisions", Label("unit"), 
 var _ = Describe("cert-manager real-API lifecycle wiring", func() {
 	BeforeEach(func() {
 		createBYOSecrets(ctx)
+		deleteExternalTLSFixtureSecrets(ctx)
 		for _, crd := range certManagerLifecycleCRDs() {
 			Expect(k8sClient.Create(ctx, crd)).To(Succeed())
 			Eventually(func(g Gomega) {
@@ -255,6 +256,7 @@ var _ = Describe("cert-manager real-API lifecycle wiring", func() {
 		}
 	})
 	AfterEach(func() {
+		deleteExternalTLSFixtureSecrets(ctx)
 		cleanupNamespacedResources(ctx)
 		deleteCRIfExists(ctx)
 		deleteBYOSecrets(ctx)
@@ -284,14 +286,25 @@ var _ = Describe("cert-manager real-API lifecycle wiring", func() {
 	})
 })
 
+func deleteExternalTLSFixtureSecrets(ctx context.Context) {
+	secrets := &corev1.SecretList{}
+	if err := k8sClient.List(ctx, secrets, client.InNamespace(testNamespace), client.MatchingLabels{"external-issuer": "true"}); err != nil {
+		return
+	}
+	for index := range secrets.Items {
+		_ = k8sClient.Delete(ctx, &secrets.Items[index])
+	}
+}
+
 const unitCertificateKind = "Certificate"
 
 func certManagerLifecycleCR(kind string) *kubernautv1alpha2.Kubernaut {
 	kn := newCRWithRouteDisabled()
-	kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeHelmCertManager,
+	kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeCertManager,
 		CertManager: &kubernautv1alpha2.CertManagerTLSConfig{IssuerRef: kubernautv1alpha2.TLSIssuerRef{
 			Kind: kind, Name: "external-customer-issuer",
-		}}}
+		}, Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{Enabled: ptr.To(true)},
+		}}
 	return kn
 }
 
@@ -374,8 +387,8 @@ func exerciseCertManagerLifecycle(r *KubernautReconciler, kn *kubernautv1alpha2.
 		ExpectWithOffset(1, r.Status().Update(ctx, live)).To(Succeed())
 	}
 	generator := kn.DeepCopy()
-	generator.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeHook}
-	secrets, err := resources.DevelopmentSelfSignedTLSSecrets(generator, nil, time.Now().Add(-time.Hour))
+	generator.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeManual}
+	secrets, err := testRuntimeTLSSecrets(generator, nil, time.Now().Add(-time.Hour))
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	material, err := resources.ResolveTLSMaterial(kn)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())
@@ -384,7 +397,6 @@ func exerciseCertManagerLifecycle(r *KubernautReconciler, kn *kubernautv1alpha2.
 	for _, secret := range secrets {
 		secret.Labels, secret.OwnerReferences = map[string]string{"external-issuer": "true"}, nil
 		ExpectWithOffset(1, r.Create(ctx, secret)).To(Succeed())
-		DeferCleanup(func() { Expect(r.Delete(ctx, secret)).To(Succeed()) })
 	}
 	_, err = r.Reconcile(ctx, request)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())

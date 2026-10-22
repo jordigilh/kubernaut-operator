@@ -307,12 +307,6 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 	dataStorage := kubernautv1alpha2.DataStorageSpec{}
 	monitoring := kubernautv1alpha2.MonitoringSpec{}
 	switch configuredTLS {
-	case tlsDevelopment:
-		tls.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}
-	case tlsHook:
-		tls.Hooks = &kubernautv1alpha2.TLSHooksConfig{TLSCerts: kubernautv1alpha2.TLSCertsConfig{
-			ExtraSANs: []string{"localhost"},
-		}}
 	case tlsManualAdmin:
 		tls = manualAdminTLSConfig(activeManualTLSSelection)
 		prefix := string(manualTLSSelectionManual)
@@ -328,6 +322,7 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 		tls = kubernautv1alpha2.TLSConfigSpec{
 			Mode: kubernautv1alpha2.TLSModeCertManager,
 			CertManager: &kubernautv1alpha2.CertManagerTLSConfig{ //nolint:gosec // disposable Kind fixture Secret references
+				Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{Enabled: ptr.To(false)},
 				IssuerRef: kubernautv1alpha2.TLSIssuerRef{
 					Name:  "kubernaut-ca",
 					Kind:  "Issuer",
@@ -398,15 +393,15 @@ func manualAdminTLSConfig(selection manualTLSSelection) kubernautv1alpha2.TLSCon
 	if selection == manualTLSSelectionAdmin {
 		prefix = manualTLSAdminPrefix
 	}
-	config := &kubernautv1alpha2.AdministratorManagedTLSConfig{
+	config := &kubernautv1alpha2.ManualTLSConfig{
 		ServiceTLSSecretNames: manualTLSServiceSecretNames(prefix),
 	}
 	if selection == manualTLSSelectionAdmin {
 		config.InternalCASecretName = manualTLSCASecretName(prefix)
 	}
 	return kubernautv1alpha2.TLSConfigSpec{
-		Mode:                 mode,
-		AdministratorManaged: config,
+		Mode:   mode,
+		Manual: config,
 	}
 }
 
@@ -509,18 +504,6 @@ func tlsProbeCAKey() (string, error) {
 		}
 	}
 	return tlsCACertificateKey, nil
-}
-
-func hookTLSSecretNames() []string {
-	return []string{
-		defaultInternalCASecretName,
-		"gateway-tls",
-		"datastorage-tls",
-		"kubernautagent-tls",
-		"apifrontend-tls",
-		"authwebhook-tls",
-		"datastorage-signing-cert",
-	}
 }
 
 func exerciseManualAdminAliases(ctx context.Context) error {
@@ -652,24 +635,6 @@ func waitForContractReady(ctx context.Context) error {
 		return err
 	}
 	return nil
-}
-
-func deleteTLSSecret(ctx context.Context, name string) error {
-	if _, err := kubectl(ctx, "delete", "secret", name, "-n", kubernautNamespace, "--ignore-not-found=true"); err != nil {
-		return fmt.Errorf("deleting TLS Secret %q: %w", name, err)
-	}
-	return nil
-}
-
-func secretPresent(ctx context.Context, name string) (bool, error) {
-	output, err := kubectl(ctx, "get", "secret", name, "-n", kubernautNamespace)
-	if err != nil && (strings.Contains(output, "NotFound") || strings.Contains(output, "not found")) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 func serviceHasNoPlaintextPort(ctx context.Context, name string) (bool, error) {

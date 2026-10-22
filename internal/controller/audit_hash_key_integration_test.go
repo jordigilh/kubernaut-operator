@@ -111,21 +111,34 @@ var _ = Describe("DataStorage audit HMAC reconciliation wiring", func() {
 	It("IT-DS-550-ROT-001 [AU-9, AC-6, SI-4; SOC2 CC7.2; ASVS V13.3.1, V16.5.2] rolls DataStorage after signing Secret material changes", func() {
 		createBYOSecrets(ctx)
 		cr := newCRWithRouteDisabled()
-		cr.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
+		cr.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
+		cr.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{
+			InternalCASecretName:  "kubernaut-internal-ca",
+			ServiceTLSSecretNames: certManagerServiceTLSSecretNames(),
+		}
 		cr.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{
 			SigningCertificate: &kubernautv1alpha2.SigningCertSpec{SecretName: "customer-signing"},
 		}
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
-		runtimeSecrets, err := resources.DevelopmentSelfSignedTLSSecrets(cr, nil, time.Now())
+		runtimeSecrets, err := testRuntimeTLSSecrets(cr, nil, time.Now())
 		Expect(err).NotTo(HaveOccurred())
 		for _, secret := range runtimeSecrets {
+			if secret.Name == "customer-signing" {
+				continue
+			}
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+		}
+		for _, webhook := range []client.Object{
+			resources.MutatingWebhookConfigurationWithCABundle(cr, runtimeSecrets[0].Data["ca.crt"]),
+			resources.ValidatingWebhookConfigurationWithCABundle(cr, runtimeSecrets[0].Data["ca.crt"]),
+		} {
+			Expect(k8sClient.Create(ctx, webhook)).To(Succeed())
 		}
 
 		signingFixture := cr.DeepCopy()
 		signingFixture.Spec.DataStorage.Audit.SigningCertificate = nil
-		signingSecrets, err := resources.DevelopmentSelfSignedTLSSecrets(signingFixture, nil, time.Now())
+		signingSecrets, err := testRuntimeTLSSecrets(signingFixture, nil, time.Now())
 		Expect(err).NotTo(HaveOccurred())
 		defaultSigningName := resources.DataStorageSigningSecretName(signingFixture)
 		for _, secret := range signingSecrets {

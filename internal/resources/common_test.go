@@ -34,6 +34,7 @@ import (
 )
 
 const (
+	invalidRotationBefore   = "not-a-duration"
 	testSystemNamespace     = "kubernaut-system"
 	testIngressDomain       = "apps.test.example.com"
 	testWorkflowLiteProfile = "workflow-lite"
@@ -126,11 +127,15 @@ func testKubernaut() *kubernautv1alpha2.Kubernaut {
 	}
 }
 
-func testKubernautWithDevelopmentTLS() *kubernautv1alpha2.Kubernaut {
+func testKubernautWithCertManagerTLS() *kubernautv1alpha2.Kubernaut {
 	kn := testKubernaut()
 	kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
-		Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
-		DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
+		Mode: kubernautv1alpha2.TLSModeCertManager,
+		CertManager: &kubernautv1alpha2.CertManagerTLSConfig{
+			IssuerRef:             kubernautv1alpha2.TLSIssuerRef{Name: "customer-issuer"},
+			InternalCASecretName:  "customer-ca",
+			ServiceTLSSecretNames: validServiceTLSSecretNames(),
+		},
 	}
 	return kn
 }
@@ -464,7 +469,7 @@ var _ = Describe("InterServiceTLSCAFile", func() {
 
 	It("UT-TLS-491-007 [SC-8, SC-12; SOC2 CC6, CC8; ASVS v5.0.0-V12.1.1, v5.0.0-V13.2.1] resolves the Helm TLS path contract from the Kubernaut CR", func() {
 		kn := testKubernaut()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		Expect(InterServiceTLSCertDirFor(kn)).To(Equal("/etc/tls"))
 		Expect(InterServiceTLSCAFileFor(kn)).To(Equal("/etc/tls-ca/ca.crt"))
 
@@ -490,7 +495,7 @@ var _ = Describe("InterServiceTLSCAFile", func() {
 	It("mounts an administrator-managed Secret directly in manual mode", func() {
 		kn := testKubernaut()
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
-		kn.Spec.TLS.AdministratorManaged = &kubernautv1alpha2.AdministratorManagedTLSConfig{
+		kn.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{
 			InternalCASecretName: "customer-ca",
 		}
 
@@ -614,7 +619,7 @@ var _ = Describe("InterServiceTLSCAFile", func() {
 		Expect(volume.ConfigMap.Name).To(Equal(InterServiceCAConfigMapName))
 		Expect(volume.ConfigMap.Items).To(ConsistOf(corev1.KeyToPath{Key: "ca.crt", Path: "ca.crt"}))
 
-		kn.Spec.TLS.AdministratorManaged = &kubernautv1alpha2.AdministratorManagedTLSConfig{InternalCASecretName: "customer-ca"}
+		kn.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{InternalCASecretName: "customer-ca"}
 		volume = MonitoringTLSVolume(kn)
 		Expect(volume.Secret).NotTo(BeNil())
 		Expect(volume.Secret.SecretName).To(Equal("customer-ca"))

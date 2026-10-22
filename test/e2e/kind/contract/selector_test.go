@@ -38,16 +38,12 @@ var _ = Describe("Kind TLS source selector", func() {
 			input    string
 			expected string
 		}{
-			{input: "", expected: "development"},
-			{input: "development", expected: "development"},
-			{input: "development-self-signed", expected: "development"},
-			{input: "hook", expected: "hook"},
-			{input: "manual-admin", expected: "manual-admin"},
-			{input: "manual", expected: "manual-admin"},
-			{input: "administrator-managed", expected: "manual-admin"},
-			{input: "AdministratorManaged", expected: "manual-admin"},
+			{input: "", expected: "certmanager"},
 			{input: "certmanager", expected: "certmanager"},
 			{input: "cert-manager", expected: "certmanager"},
+			{input: "manual-admin", expected: "manual-admin"},
+			{input: "manual", expected: "manual-admin"},
+			{input: "admin", expected: "manual-admin"},
 		} {
 			actual, err := kind.TLSSourceForValue(test.input)
 			Expect(err).NotTo(HaveOccurred(), test.input)
@@ -55,9 +51,9 @@ var _ = Describe("Kind TLS source selector", func() {
 		}
 	})
 
-	It("UT-TLS-498-002 rejects unsupported selectors instead of falling back to development TLS", func() {
+	It("UT-TLS-498-002 rejects unsupported selectors instead of falling back to cert-manager", func() {
 		_, err := kind.TLSSourceForValue("plaintext")
-		Expect(err).To(MatchError(ContainSubstring("expected development, hook, manual-admin, or certmanager")))
+		Expect(err).To(MatchError(ContainSubstring("expected certmanager or manual-admin")))
 	})
 
 	It("UT-TLS-498-003 maps every lane to the exact v1alpha2 CR mode", func() {
@@ -66,11 +62,9 @@ var _ = Describe("Kind TLS source selector", func() {
 			selection string
 			expected  string
 		}{
-			{selector: "development", expected: "DevelopmentSelfSigned"},
-			{selector: "hook", expected: "hook"},
-			{selector: "certmanager", expected: "CertManager"},
+			{selector: "certmanager", expected: "cert-manager"},
 			{selector: "manual-admin", selection: "manual", expected: "manual"},
-			{selector: "manual-admin", selection: "administrator-managed", expected: "AdministratorManaged"},
+			{selector: "manual-admin", selection: "admin", expected: "manual"},
 		} {
 			mode, err := kind.TLSModeForSource(test.selector, test.selection)
 			Expect(err).NotTo(HaveOccurred(), test)
@@ -80,7 +74,7 @@ var _ = Describe("Kind TLS source selector", func() {
 
 	It("UT-TLS-498-004 rejects an unknown manual/admin scenario instead of using manual mode", func() {
 		_, err := kind.TLSModeForSource("manual-admin", "unexpected")
-		Expect(err).To(MatchError(ContainSubstring("expected manual or administrator-managed")))
+		Expect(err).To(MatchError(ContainSubstring("expected manual or admin")))
 	})
 
 	It("UT-TLS-498-005 maps every generated workload image to the local contract image", func() {

@@ -39,8 +39,6 @@ var (
 )
 
 const (
-	tlsDevelopment tlsSource = "development"
-	tlsHook        tlsSource = "hook"
 	tlsManualAdmin tlsSource = "manual-admin"
 	tlsCertManager tlsSource = "certmanager"
 
@@ -72,39 +70,30 @@ func tlsSourceFromEnvironment() (tlsSource, error) {
 }
 
 // TLSSourceForValue is the pure source-selector contract used by the Kind
-// harness and its unit tests. The returned values intentionally describe the
-// infrastructure lane rather than an API mode: manual and
-// AdministratorManaged share one isolated lane but are exercised separately by
-// the journey.
+// harness and its unit tests.
 func TLSSourceForValue(value string) (string, error) {
 	source, err := tlsSourceForValue(value)
 	return string(source), err
 }
 
-// TLSModeForSource maps a Kind lane selector and manual/admin scenario
-// selection to the exact v1alpha2 TLS mode emitted by the production CR
-// fixture. Keeping this pure makes it possible to test that a lane cannot
-// silently fall back to DevelopmentSelfSigned.
+// TLSModeForSource maps a Kind lane selector and manual scenario selection to
+// the exact v1alpha2 TLS mode emitted by the production CR fixture.
 func TLSModeForSource(source, manualSelection string) (kubernautv1alpha2.TLSMode, error) {
 	lane, err := tlsSourceForValue(source)
 	if err != nil {
 		return "", err
 	}
 	switch lane {
-	case tlsDevelopment:
-		return kubernautv1alpha2.TLSModeDevelopmentSelfSigned, nil
-	case tlsHook:
-		return kubernautv1alpha2.TLSModeHook, nil
 	case tlsCertManager:
 		return kubernautv1alpha2.TLSModeCertManager, nil
 	case tlsManualAdmin:
 		switch strings.ToLower(strings.TrimSpace(manualSelection)) {
 		case "", string(manualTLSSelectionManual):
 			return kubernautv1alpha2.TLSModeManual, nil
-		case string(manualTLSSelectionAdmin), "administratormanaged":
-			return kubernautv1alpha2.TLSModeAdministratorManaged, nil
+		case string(manualTLSSelectionAdmin):
+			return kubernautv1alpha2.TLSModeManual, nil
 		default:
-			return "", fmt.Errorf("invalid manual TLS selection %q; expected manual or administrator-managed", manualSelection)
+			return "", fmt.Errorf("invalid manual TLS selection %q; expected manual or admin", manualSelection)
 		}
 	default:
 		return "", fmt.Errorf("unsupported TLS lane %q", lane)
@@ -113,17 +102,13 @@ func TLSModeForSource(source, manualSelection string) (kubernautv1alpha2.TLSMode
 
 func tlsSourceForValue(value string) (tlsSource, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "development", "developmentsigned", "developmentselfsigned", "development-self-signed":
-		return tlsDevelopment, nil
-	case "hook":
-		return tlsHook, nil
-	case "manual-admin", string(manualTLSSelectionManual), "administrator-managed", "administratormanaged":
+	case "manual-admin", string(manualTLSSelectionManual), "admin":
 		return tlsManualAdmin, nil
-	case "certmanager", "cert-manager":
+	case "", "certmanager", "cert-manager":
 		return tlsCertManager, nil
 	default:
 		return "", fmt.Errorf(
-			"invalid KUBERNAUT_E2E_TLS_SOURCE value; expected development, hook, manual-admin, or certmanager",
+			"invalid KUBERNAUT_E2E_TLS_SOURCE value; expected certmanager or manual-admin",
 		)
 	}
 }

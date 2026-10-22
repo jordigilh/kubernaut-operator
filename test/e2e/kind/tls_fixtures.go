@@ -46,7 +46,7 @@ type manualTLSSelection string
 
 const (
 	manualTLSSelectionManual manualTLSSelection = "manual"
-	manualTLSSelectionAdmin  manualTLSSelection = "administrator-managed"
+	manualTLSSelectionAdmin  manualTLSSelection = "admin"
 	manualTLSAdminPrefix                        = "admin"
 	tlsCACertificateKey                         = "ca.crt"
 	tlsTrustProbeRole                           = "tls-probe"
@@ -99,7 +99,7 @@ func ensureManualAdminTLSFixtures(ctx context.Context) error {
 		prefix    string
 	}{
 		{selection: manualTLSSelectionManual, mode: kubernautv1alpha2.TLSModeManual, prefix: "manual"},
-		{selection: manualTLSSelectionAdmin, mode: kubernautv1alpha2.TLSModeAdministratorManaged, prefix: "admin"},
+		{selection: manualTLSSelectionAdmin, mode: kubernautv1alpha2.TLSModeManual, prefix: "admin"},
 	} {
 		fixture, err := newManualTLSFixture(definition.mode, definition.prefix, kubernautNamespace)
 		if err != nil {

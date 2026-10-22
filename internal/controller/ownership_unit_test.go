@@ -123,13 +123,14 @@ var _ = Describe("integrated ownership API boundaries", Label("unit"), func() {
 		Expect(r.Create(ctx, service)).To(Succeed())
 		Expect(r.clearStaleServingCertErrors(ctx, kn, service)).To(MatchError(ContainSubstring("ownership conflict")))
 
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
+		kn.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{InternalCASecretName: "foreign-ca"}
 		material, err := resources.ResolveTLSMaterial(kn)
 		Expect(err).NotTo(HaveOccurred())
 		foreignSecret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: material.InternalCASecretName, Namespace: kn.Namespace}}
 		Expect(r.Create(ctx, foreignSecret)).To(Succeed())
 		_, _, err = r.ensureRuntimeTLS(ctx, kn)
-		Expect(err).To(MatchError(ContainSubstring("ownership conflict")))
+		Expect(err).To(MatchError(ContainSubstring("missing ca.crt")))
 	})
 
 	It("UT-AUDIT-515-OWNERSHIP-005: authorizes migration metadata repair and surfaces failed writes for migration and cert-manager objects", func() {
