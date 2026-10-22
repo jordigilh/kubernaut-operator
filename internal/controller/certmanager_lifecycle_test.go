@@ -30,7 +30,7 @@ import (
 
 var _ = Describe("cert-manager independent lifecycle decisions", Label("unit"), func() {
 	for _, issuerKind := range []string{"Issuer", "ClusterIssuer"} {
-		It("UT-AUDIT-515-CERTMANAGER-001: drives provisioning, output readiness and activation with "+issuerKind, func() {
+		It("UT-AUDIT-515-CERTMANAGER-001 UT-TLS-PARITY-001: drives provisioning, output readiness and activation with "+issuerKind, func() {
 			kn := certManagerLifecycleCR(issuerKind)
 			r := businessUnitReconciler(kn, interceptor.Funcs{})
 			installCertManagerLifecycleInputs(r.Client, kn)
@@ -117,7 +117,7 @@ var _ = Describe("cert-manager independent lifecycle decisions", Label("unit"), 
 		Expect(r.ensureCertManagerDesiredTLSResources(ctx, kn, nil)).To(MatchError(ContainSubstring("building cert-manager TLS resources")))
 	})
 
-	It("UT-AUDIT-515-CERTMANAGER-004: rejects unreadable or malformed readiness conditions instead of assuming issuance", func() {
+	It("UT-AUDIT-515-CERTMANAGER-004 UT-TLS-CERTMANAGER-READY-001: rejects unreadable or malformed readiness conditions instead of assuming issuance", func() {
 		kn := certManagerLifecycleCR("Issuer")
 		r := businessUnitReconciler(kn, interceptor.Funcs{})
 		Expect(r.validateCertManagerCertificatesReady(ctx, kn)).To(MatchError(ContainSubstring("reading cert-manager Certificate")))
@@ -138,7 +138,7 @@ var _ = Describe("cert-manager independent lifecycle decisions", Label("unit"), 
 		Expect(r.validateCertManagerCertificatesReady(ctx, nil)).To(HaveOccurred())
 	})
 
-	It("UT-AUDIT-515-CERTMANAGER-005: preserves resource API errors and rejects conflicting controller identities", func() {
+	It("UT-AUDIT-515-CERTMANAGER-005 UT-OWN-514-023: preserves resource API errors and rejects conflicting controller identities", func() {
 		kn := certManagerLifecycleCR("Issuer")
 		kn.UID = "issuer-owner"
 		objects, err := resources.CertManagerTLSResources(kn)
@@ -186,7 +186,7 @@ var _ = Describe("cert-manager independent lifecycle decisions", Label("unit"), 
 		}
 	})
 
-	It("UT-AUDIT-515-CERTMANAGER-007: never treats absent webhook entries or absent cainjector bundles as ready", func() {
+	It("UT-AUDIT-515-CERTMANAGER-007 UT-TLS-WEBHOOK-001: never treats absent webhook entries or absent cainjector bundles as ready", func() {
 		kn := newMinimalCR()
 		r := businessUnitReconciler(kn, interceptor.Funcs{})
 		Expect(r.validateWebhookCABundles(ctx, kn)).To(MatchError(ContainSubstring("reading AuthWebhook Mutating")))

@@ -61,7 +61,7 @@ var _ = Describe("cert-manager TLS provisioning", func() {
 		Expect(objects).NotTo(BeEmpty())
 	})
 
-	It("uses default provisioning settings when provisioning is explicitly enabled", func() {
+	It("UT-TLS-491-003 UT-TLS-PARITY-001 uses default provisioning settings when provisioning is explicitly enabled", func() {
 		kn := testKubernaut()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
 			Mode: kubernautv1alpha2.TLSModeCertManager,

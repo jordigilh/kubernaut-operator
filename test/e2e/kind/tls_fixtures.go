@@ -375,7 +375,7 @@ func newManualTLSFixture(mode kubernautv1alpha2.TLSMode, prefix, namespace strin
 	configMaps := make(map[string]*corev1.ConfigMap, 1)
 	caSecretName := ""
 	caConfigMapName := ""
-	if mode == kubernautv1alpha2.TLSModeManual {
+	if prefix == string(manualTLSSelectionManual) {
 		caConfigMapName = resources.InterServiceCAConfigMapName
 		configMaps[caConfigMapName] = &corev1.ConfigMap{
 			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},

@@ -48,7 +48,7 @@ var _ = Describe("runtime TLS sources", func() {
 		_, err = ResolveTLSMaterial(kn)
 		Expect(err).To(MatchError(ContainSubstring("internalCASecretName")))
 	})
-	It("resolves manual material without taking ownership", func() {
+	It("UT-TLS-491-001 UT-TLS-MANUAL-001 resolves manual material without taking ownership", func() {
 		kn := testKubernaut()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
 			Mode: kubernautv1alpha2.TLSModeManual,
@@ -97,7 +97,7 @@ var _ = Describe("runtime TLS sources", func() {
 		Expect(material.OwnsSecrets).To(BeFalse())
 	})
 
-	It("resolves explicit and implicit service-ca mode to the platform source", func() {
+	It("UT-TLS-GAP-002 resolves explicit and implicit service-ca mode to the platform source", func() {
 		for _, mode := range []kubernautv1alpha2.TLSMode{"", kubernautv1alpha2.TLSModeServiceCA} {
 			kn := testKubernaut()
 			kn.Spec.TLS.Mode = mode
@@ -109,7 +109,7 @@ var _ = Describe("runtime TLS sources", func() {
 		}
 	})
 
-	It("rejects removed TLS source values", func() {
+	It("UT-TLS-GAP-001 rejects removed TLS source values", func() {
 		for _, mode := range []kubernautv1alpha2.TLSMode{
 			"hook", "DevelopmentSelfSigned", "AdministratorManaged", "CertManager",
 		} {

@@ -16,7 +16,7 @@ import (
 )
 
 var _ = Describe("runtime TLS validation boundaries", func() {
-	It("covers invalid and valid CA payloads", func() {
+	It("UT-TLS-491-002 UT-TLS-MANUAL-002 covers invalid and valid CA payloads", func() {
 		ca, leaf := validationTLSSecrets()
 		Expect(ValidateInternalCASecret(nil)).To(HaveOccurred())
 		Expect(ValidateInternalCASecret(ca)).To(Succeed())

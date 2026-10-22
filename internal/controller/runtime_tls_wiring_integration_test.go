@@ -132,7 +132,7 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 	})
 
 	for _, mode := range []kubernautv1alpha2.TLSMode{kubernautv1alpha2.TLSModeManual} {
-		It("IT-TLS-AUDIT-515-002: validates and mounts external TLS without adopting its trust or Secrets for "+string(mode), func() {
+		It("IT-TLS-AUDIT-515-001 IT-TLS-AUDIT-515-002: validates and mounts external TLS without adopting its trust or Secrets for "+string(mode), func() {
 			kn := newCRWithRouteDisabled()
 			generator := kn.DeepCopy()
 			generator.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeManual}

@@ -130,8 +130,8 @@ check_wiring() {
 	grep -Fq 'IT-TLS-' "${integration_path}" || fail "${symbol} has no controller wiring evidence"
 }
 
-check_wiring 'ResolveTLSMaterial' internal/controller internal/resources/tls_test.go internal/controller/runtime_tls_wiring_integration_test.go
-check_wiring 'DevelopmentSelfSignedTLSSecrets' internal/controller internal/resources/tls_test.go internal/controller/runtime_tls_wiring_integration_test.go
+check_wiring 'ResolveTLSMaterial' internal/controller internal/resources/tls_source_test.go internal/controller/runtime_tls_wiring_integration_test.go
+check_wiring 'CertManagerTLSResources' internal/controller internal/resources/tls_certmanager_test.go internal/controller/certmanager_lifecycle_test.go
 check_wiring 'GenericTLSConfigMaps' internal/controller internal/resources/tlsconfigmaps_test.go internal/controller/runtime_tls_wiring_integration_test.go
 check_wiring 'MutatingWebhookConfigurationWithCABundle' internal/controller internal/resources/webhooks_test.go internal/controller/runtime_tls_wiring_integration_test.go
 

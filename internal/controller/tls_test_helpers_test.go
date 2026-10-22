@@ -104,7 +104,7 @@ func createManualRuntimeTLSFixtures(ctx context.Context, kn *kubernautv1alpha2.K
 		return err
 	}
 	for _, secret := range secrets {
-		if err := k8sClient.Create(ctx, secret); err != nil {
+		if err = k8sClient.Create(ctx, secret); err != nil {
 			return err
 		}
 	}
@@ -112,7 +112,7 @@ func createManualRuntimeTLSFixtures(ctx context.Context, kn *kubernautv1alpha2.K
 		resources.MutatingWebhookConfigurationWithCABundle(kn, secrets[0].Data["ca.crt"]),
 		resources.ValidatingWebhookConfigurationWithCABundle(kn, secrets[0].Data["ca.crt"]),
 	} {
-		if err := k8sClient.Create(ctx, webhook); err != nil {
+		if err = k8sClient.Create(ctx, webhook); err != nil {
 			return err
 		}
 	}
