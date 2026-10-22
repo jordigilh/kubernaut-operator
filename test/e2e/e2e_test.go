@@ -396,7 +396,14 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			"E2E-MON-563-001 [SC-8, SC-13, SI-4; SOC2 CC7.2; "+
 				"ASVS V12.3.1, V12.3.2, V13.3.4] verifies monitoring HTTPS with the injected service CA",
 			func() {
-				const probeName = "effectivenessmonitor-monitoring-tls-probe"
+				const (
+					probeName                    = "effectivenessmonitor-monitoring-tls-probe"
+					probeServiceAccountName      = "monitoring-tls-probe"
+					probeMonitoringBindingName   = "monitoring-tls-probe-monitoring-view"
+					probeAlertmanagerBindingName = "monitoring-tls-probe-alertmanager-view"
+					probeImage                   = "docker.io/curlimages/curl@sha256:" +
+						"ce8e655b562cf387752de7d2076ec3f81a4383c908f386b6724ec3571ce08b4a"
+				)
 				Eventually(func(g Gomega) {
 					cmd := exec.Command(
 						"kubectl", "get", "kubernaut", "kubernaut", "-n", crNS,
@@ -424,6 +431,41 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 					g.Expect(err).NotTo(HaveOccurred())
 					g.Expect(name).To(Equal("effectivenessmonitor-service-ca"))
 				}, 5*time.Minute, 2*time.Second).Should(Succeed())
+				cmd := exec.Command("kubectl", "create", "serviceaccount", probeServiceAccountName, "-n", crNS)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() {
+					for _, resource := range []string{
+						"clusterrolebinding/" + probeMonitoringBindingName,
+						"clusterrolebinding/" + probeAlertmanagerBindingName,
+					} {
+						cmd := exec.Command("kubectl", "delete", resource, "--ignore-not-found=true")
+						_, cleanupErr := utils.Run(cmd)
+						Expect(cleanupErr).NotTo(HaveOccurred(), "failed to delete %s", resource)
+					}
+					cmd := exec.Command(
+						"kubectl", "delete", "serviceaccount", probeServiceAccountName,
+						"-n", crNS, "--ignore-not-found=true",
+					)
+					_, cleanupErr := utils.Run(cmd)
+					Expect(cleanupErr).NotTo(HaveOccurred(), "failed to delete probe ServiceAccount")
+				})
+				for _, args := range [][]string{
+					{
+						"create", "clusterrolebinding", probeMonitoringBindingName,
+						"--clusterrole=cluster-monitoring-view",
+						"--serviceaccount=" + crNS + ":" + probeServiceAccountName,
+					},
+					{
+						"create", "clusterrolebinding", probeAlertmanagerBindingName,
+						"--clusterrole=" + crNS + "-alertmanager-view",
+						"--serviceaccount=" + crNS + ":" + probeServiceAccountName,
+					},
+				} {
+					cmd := exec.Command("kubectl", args...)
+					_, err = utils.Run(cmd)
+					Expect(err).NotTo(HaveOccurred())
+				}
 				probeScript := `set -eu; token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token); ` +
 					`curl -fsS --connect-timeout 10 --cacert /etc/monitoring-ca/service-ca.crt ` +
 					`-H \"Authorization: Bearer ${token}\" ` +
@@ -433,11 +475,11 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 					`https://alertmanager-main.openshift-monitoring.svc:9094/api/v2/status >/dev/null`
 				probeOverrides := `{
 				"spec": {
-					"serviceAccount": "effectivenessmonitor-controller",
+					"serviceAccountName": "` + probeServiceAccountName + `",
 					"restartPolicy": "Never",
 					"containers": [{
 						"name": "probe",
-						"image": "curlimages/curl:latest",
+						"image": "` + probeImage + `",
 						"command": ["/bin/sh", "-c"],
 						"args": ["` + probeScript + `"],
 						"volumeMounts": [{
@@ -478,9 +520,9 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 				Expect(probePayload.Spec.Containers[0].Args[0]).To(
 					ContainSubstring(`-H "Authorization: Bearer ${token}"`),
 				)
-				cmd := exec.Command("kubectl", "run", probeName, "--restart=Never", "--namespace", crNS,
-					"--image=curlimages/curl:latest", "--overrides", probeOverrides)
-				_, err := utils.Run(cmd)
+				cmd = exec.Command("kubectl", "run", probeName, "--restart=Never", "--namespace", crNS,
+					"--image="+probeImage, "--overrides", probeOverrides)
+				_, err = utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() {
 					cmd := exec.Command(
