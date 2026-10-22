@@ -55,15 +55,11 @@ var certManagerTLSLeaves = []certManagerTLSLeaf{
 }
 
 // CertManagerTLSProvisioningEnabled reports whether the operator should create
-// cert-manager Issuer/Certificate resources. The lower-case Helm mode enables
-// provisioning by definition; the title-case operator mode remains
-// reference-only unless its explicit provisioning block opts in.
+// cert-manager Issuer/Certificate resources. Provisioning is opt-in; when the
+// block or its enabled flag is omitted, cert-manager output is reference-only.
 func CertManagerTLSProvisioningEnabled(kn *kubernautv1alpha2.Kubernaut) bool {
-	if kn == nil {
+	if kn == nil || kn.Spec.TLS.Mode != kubernautv1alpha2.TLSModeCertManager {
 		return false
-	}
-	if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeHelmCertManager {
-		return true
 	}
 	cfg := kn.Spec.TLS.CertManager
 	if cfg == nil || cfg.Provisioning == nil {
@@ -80,17 +76,11 @@ func CertManagerBootstrapIssuerNames(kn *kubernautv1alpha2.Kubernaut) []string {
 		return nil
 	}
 	cfg := kn.Spec.TLS.CertManager
-	if cfg == nil {
-		cfg = &kubernautv1alpha2.CertManagerTLSConfig{}
-	}
 	settings := certManagerProvisioningValuesFor(kn, cfg)
 	return []string{settings.bootstrapIssuerName, settings.caIssuerName}
 }
 
-// DataStorageSigningSecretName resolves the chart-compatible AU-9 signing
-// Secret name. Explicit development and Helm hook modes use the dedicated
-// RSA signing Secret; legacy OpenShift/cert-manager reference modes retain the
-// prior service-certificate fallback unless an explicit signing certificate is set.
+// DataStorageSigningSecretName resolves the AU-9 signing Secret name.
 func DataStorageSigningSecretName(kn *kubernautv1alpha2.Kubernaut) string {
 	if kn == nil {
 		return ""
@@ -101,22 +91,16 @@ func DataStorageSigningSecretName(kn *kubernautv1alpha2.Kubernaut) string {
 	}
 	if CertManagerTLSProvisioningEnabled(kn) {
 		cfg := kn.Spec.TLS.CertManager
-		if cfg == nil {
-			cfg = &kubernautv1alpha2.CertManagerTLSConfig{}
-		}
 		return certManagerProvisioningValuesFor(kn, cfg).signingSecretName
 	}
-	if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeHook ||
-		kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeDevelopmentSelfSigned ||
-		kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual {
+	if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual {
 		return defaultCertManagerSigningSecretName
 	}
 	return ""
 }
 
-// CertManagerTLSResources builds the cert-manager resources required by the
-// chart's cert-manager mode. It deliberately returns no objects for the
-// reference-only contract. Generated Secrets are not returned: cert-manager,
+// CertManagerTLSResources builds the optional cert-manager resources selected
+// by the cert-manager mode. Generated Secrets are not returned: cert-manager,
 // not the operator, owns and rotates them.
 func CertManagerTLSResources(kn *kubernautv1alpha2.Kubernaut) ([]*unstructured.Unstructured, error) {
 	if kn == nil {
@@ -127,11 +111,8 @@ func CertManagerTLSResources(kn *kubernautv1alpha2.Kubernaut) ([]*unstructured.U
 	}
 
 	cfg := kn.Spec.TLS.CertManager
-	if cfg == nil {
-		cfg = &kubernautv1alpha2.CertManagerTLSConfig{}
-	}
 	settings := certManagerProvisioningValuesFor(kn, cfg)
-	issuerRef := certManagerExternalIssuerRef(kn, cfg)
+	issuerRef := certManagerExternalIssuerRef(cfg)
 
 	objects := certManagerBootstrapResources(kn, settings)
 	objects = append(objects, certManagerLeafResources(kn, settings)...)
@@ -289,14 +270,11 @@ func defaultCertManagerServiceSecretNames(kn *kubernautv1alpha2.Kubernaut) map[s
 	return serviceNames
 }
 
-func certManagerExternalIssuerRef(kn *kubernautv1alpha2.Kubernaut, cfg *kubernautv1alpha2.CertManagerTLSConfig) map[string]interface{} {
+func certManagerExternalIssuerRef(cfg *kubernautv1alpha2.CertManagerTLSConfig) map[string]interface{} {
 	issuer := cfg.EffectiveIssuerRef()
 	kind := issuer.Kind
 	if kind == "" {
 		kind = "ClusterIssuer"
-		if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeCertManager {
-			kind = "Issuer"
-		}
 	}
 	group := firstNonEmpty(issuer.Group, defaultCertManagerGroup)
 	return map[string]interface{}{

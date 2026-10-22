@@ -25,6 +25,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"os"
 	"strings"
 	"time"
 
@@ -336,6 +337,27 @@ func cleanupNamespacedResources(ctx context.Context) {
 	for i := range secretList.Items {
 		_ = k8sClient.Delete(ctx, &secretList.Items[i])
 	}
+	// External TLS fixtures are deliberately unlabeled and therefore outside
+	// the operator-managed sweep above. Remove the fixed fixture names between
+	// specs so one lifecycle journey cannot contaminate the next one.
+	for _, name := range []string{
+		"kubernaut-internal-ca", "kubernaut-interservice-ca-secret",
+		resources.GatewayTLSSecretName, resources.DataStorageTLSSecretName,
+		resources.KubernautAgentTLSSecretName, resources.APIFrontendTLSSecretName,
+		resources.FleetMetadataCacheTLSSecretName, "authwebhook-tls",
+		"datastorage-signing-cert", "customer-signing", "telemetry-ca", "telemetry-client",
+	} {
+		secret := &corev1.Secret{}
+		if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: name}, secret); err == nil {
+			_ = k8sClient.Delete(ctx, secret)
+		}
+	}
+	for _, name := range []string{resources.InterServiceCAConfigMapName, resources.TrustBundleConfigMapName} {
+		configMap := &corev1.ConfigMap{}
+		if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: name}, configMap); err == nil {
+			_ = k8sClient.Delete(ctx, configMap)
+		}
+	}
 
 	// ServiceAccounts
 	saList := &corev1.ServiceAccountList{}
@@ -361,6 +383,36 @@ func cleanupNamespacedResources(ctx context.Context) {
 	_ = k8sClient.List(ctx, rbList, client.InNamespace(testNamespace), client.MatchingLabels{"app.kubernetes.io/managed-by": "kubernaut-operator"})
 	for i := range rbList.Items {
 		_ = k8sClient.Delete(ctx, &rbList.Items[i])
+	}
+}
+
+func cleanupTLSFixtureResources(ctx context.Context) {
+	if os.Getenv("KUBERNAUT_CONTROLLER_TEST_TIER") == controllerUnitTier || k8sClient == nil {
+		return
+	}
+	for _, name := range []string{
+		"kubernaut-internal-ca", "kubernaut-interservice-ca-secret",
+		resources.GatewayTLSSecretName, resources.DataStorageTLSSecretName,
+		resources.KubernautAgentTLSSecretName, resources.APIFrontendTLSSecretName,
+		resources.FleetMetadataCacheTLSSecretName, "authwebhook-tls",
+		"datastorage-signing-cert", "customer-signing", "telemetry-ca", "telemetry-client",
+	} {
+		secret := &corev1.Secret{}
+		if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: name}, secret); err == nil {
+			_ = k8sClient.Delete(ctx, secret)
+		}
+	}
+	for _, name := range []string{resources.InterServiceCAConfigMapName, resources.TrustBundleConfigMapName} {
+		configMap := &corev1.ConfigMap{}
+		if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: name}, configMap); err == nil {
+			_ = k8sClient.Delete(ctx, configMap)
+		}
+	}
+	for _, object := range []client.Object{
+		&admissionregistrationv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: testNamespace + "-authwebhook-mutating"}},
+		&admissionregistrationv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: testNamespace + "-authwebhook-validating"}},
+	} {
+		_ = k8sClient.Delete(ctx, object)
 	}
 }
 
@@ -433,8 +485,26 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			createIngressTLSSecret(ctx, "gateway.example.test")
 			cr := newCRWithRouteDisabled()
 			cr.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
-				Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
-				DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
+				Mode: kubernautv1alpha2.TLSModeManual,
+				Manual: &kubernautv1alpha2.ManualTLSConfig{
+					InternalCASecretName:  "kubernaut-internal-ca",
+					ServiceTLSSecretNames: certManagerServiceTLSSecretNames(),
+				},
+			}
+			runtimeSecrets, err := testRuntimeTLSSecrets(cr, nil, time.Now().Add(-time.Hour))
+			Expect(err).NotTo(HaveOccurred())
+			for _, secret := range runtimeSecrets {
+				Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+				DeferCleanup(func() {
+					deleteErr := k8sClient.Delete(context.Background(), secret)
+					Expect(deleteErr == nil || errors.IsNotFound(deleteErr)).To(BeTrue())
+				})
+			}
+			for _, webhook := range []client.Object{
+				resources.MutatingWebhookConfigurationWithCABundle(cr, runtimeSecrets[0].Data["ca.crt"]),
+				resources.ValidatingWebhookConfigurationWithCABundle(cr, runtimeSecrets[0].Data["ca.crt"]),
+			} {
+				Expect(k8sClient.Create(ctx, webhook)).To(Succeed())
 			}
 			cr.Spec.Gateway.Ingress = kubernautv1alpha2.IngressSpec{
 				Enabled:          ptr.To(true),
@@ -449,11 +519,6 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			ca := &corev1.Secret{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "kubernaut-internal-ca", Namespace: testNamespace}, ca)).To(Succeed())
 			Expect(ca.Data["ca.crt"]).NotTo(BeEmpty())
-
-			trust := &corev1.ConfigMap{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.TrustBundleConfigMapName, Namespace: testNamespace}, trust)).To(Succeed())
-			Expect(trust.Data["service-ca.crt"]).To(Equal(string(ca.Data["ca.crt"])))
-			Expect(trust.Annotations).NotTo(HaveKey(resources.OCPServiceCAInjectAnnotation))
 
 			service := &corev1.Service{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "gateway-service", Namespace: testNamespace}, service)).To(Succeed())

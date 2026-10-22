@@ -60,11 +60,11 @@ var _ = Describe("OTLP telemetry reconciliation wiring", func() {
 		}
 
 		kn := newCRWithRouteDisabled()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeDevelopmentSelfSigned
-		kn.Spec.TLS.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		kn.Spec.Gateway.Config.Telemetry = integrationTelemetrySpec("gateway-telemetry-ca", "gateway-telemetry-client")
 		kn.Spec.DataStorage.Telemetry = integrationTelemetrySpec("datastorage-telemetry-ca", "datastorage-telemetry-client")
 		kn.Spec.KubernautAgent.Telemetry = integrationTelemetrySpec("agent-telemetry-ca", "agent-telemetry-client")
+		Expect(createManualRuntimeTLSFixtures(ctx, kn)).To(Succeed())
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 
 		reconcileToRunning(ctx)
@@ -93,11 +93,11 @@ var _ = Describe("OTLP telemetry reconciliation wiring", func() {
 		}
 
 		kn := newCRWithRouteDisabled()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeDevelopmentSelfSigned
-		kn.Spec.TLS.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		kn.Spec.Gateway.Config.Telemetry = integrationTelemetrySpec("gateway-telemetry-ca", "gateway-telemetry-client")
 		kn.Spec.DataStorage.Telemetry = integrationTelemetrySpec("datastorage-telemetry-ca", "datastorage-telemetry-client")
 		kn.Spec.KubernautAgent.Telemetry = integrationTelemetrySpec("agent-telemetry-ca", "agent-telemetry-client")
+		Expect(createManualRuntimeTLSFixtures(ctx, kn)).To(Succeed())
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 		r := reconcileToRunning(ctx)
 
@@ -135,12 +135,12 @@ var _ = Describe("OTLP telemetry reconciliation wiring", func() {
 		ctx := context.Background()
 		createBYOSecrets(ctx)
 		kn := newCRWithRouteDisabled()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeDevelopmentSelfSigned
-		kn.Spec.TLS.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		logSink := true
 		kn.Spec.Gateway.Config.Telemetry = kubernautv1alpha2.TelemetrySpec{LogSink: &logSink}
 		kn.Spec.DataStorage.Telemetry = kubernautv1alpha2.TelemetrySpec{Endpoint: "stdout"}
 		kn.Spec.KubernautAgent.Telemetry = kubernautv1alpha2.TelemetrySpec{}
+		Expect(createManualRuntimeTLSFixtures(ctx, kn)).To(Succeed())
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 
 		reconcileToRunning(ctx)
@@ -164,14 +164,14 @@ var _ = Describe("OTLP telemetry reconciliation wiring", func() {
 		ctx := context.Background()
 		createBYOSecrets(ctx)
 		kn := newCRWithRouteDisabled()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeDevelopmentSelfSigned
-		kn.Spec.TLS.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		kn.Spec.DataStorage.Telemetry = kubernautv1alpha2.TelemetrySpec{
 			Endpoint: "otel-collector:4317",
 			TLS: kubernautv1alpha2.TelemetryTLSConfig{
 				CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "missing-telemetry-ca"},
 			},
 		}
+		Expect(createManualRuntimeTLSFixtures(ctx, kn)).To(Succeed())
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})

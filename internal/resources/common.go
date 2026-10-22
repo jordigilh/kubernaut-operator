@@ -124,7 +124,7 @@ func monitoringTLSVolumeSource(kn *kubernautv1alpha2.Kubernaut) *corev1.VolumeSo
 
 func monitoringTLSInterServiceVolumeSource(kn *kubernautv1alpha2.Kubernaut) corev1.VolumeSource {
 	if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual {
-		if cfg := kn.Spec.TLS.AdministratorManaged; cfg != nil && cfg.InternalCASecretName != "" {
+		if cfg := kn.Spec.TLS.Manual; cfg != nil && cfg.InternalCASecretName != "" {
 			return corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
 				SecretName: cfg.InternalCASecretName,
 				Items:      []corev1.KeyToPath{{Key: tlsCACertificateKey, Path: tlsCACertificateKey}},
@@ -325,7 +325,7 @@ func InterServiceTLSCADirFor(kn *kubernautv1alpha2.Kubernaut) string {
 // runtime TLS contract. OpenShift's injected ConfigMaps use service-ca.crt;
 // the generic/Helm-compatible contract publishes ca.crt.
 func InterServiceTLSCAKeyFor(kn *kubernautv1alpha2.Kubernaut) string {
-	if kn == nil || kn.Spec.TLS.Mode == "" {
+	if kn == nil || kn.Spec.TLS.Mode == "" || kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeServiceCA {
 		return "service-ca.crt"
 	}
 	return tlsCACertificateKey
@@ -338,7 +338,7 @@ func InterServiceTLSCAKeyFor(kn *kubernautv1alpha2.Kubernaut) string {
 func InterServiceTLSCAVolume(kn *kubernautv1alpha2.Kubernaut) corev1.Volume {
 	caPath := path.Base(InterServiceTLSCAFileFor(kn))
 	if kn != nil && kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual {
-		if cfg := kn.Spec.TLS.AdministratorManaged; cfg != nil && cfg.InternalCASecretName != "" {
+		if cfg := kn.Spec.TLS.Manual; cfg != nil && cfg.InternalCASecretName != "" {
 			return corev1.Volume{
 				Name: "tls-ca",
 				VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
@@ -386,7 +386,7 @@ func isHelmTLSMode(kn *kubernautv1alpha2.Kubernaut) bool {
 		return false
 	}
 	switch kn.Spec.TLS.Mode {
-	case kubernautv1alpha2.TLSModeHook, kubernautv1alpha2.TLSModeHelmCertManager, kubernautv1alpha2.TLSModeManual:
+	case kubernautv1alpha2.TLSModeCertManager, kubernautv1alpha2.TLSModeManual:
 		return true
 	default:
 		return false
@@ -515,12 +515,10 @@ func ActiveComponents(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.K
 	return active
 }
 
-// usesOpenShiftServiceCA reports whether the legacy empty TLS mode is in use.
-// The controller admits that mode only after discovering the OpenShift
-// service-CA capability; every explicit TLS mode is portable and must not
-// render OpenShift-only CA volumes or init containers.
+// usesOpenShiftServiceCA reports whether the implicit or explicit service-CA
+// source is selected. The controller admits it only after capability discovery.
 func usesOpenShiftServiceCA(kn *kubernautv1alpha2.Kubernaut) bool {
-	return kn != nil && kn.Spec.TLS.Mode == ""
+	return kn != nil && (kn.Spec.TLS.Mode == "" || kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeServiceCA)
 }
 
 // CommonLabels returns the base label set applied to every managed resource.

@@ -163,6 +163,7 @@ var _ = BeforeSuite(func() {
 })
 
 var _ = BeforeEach(func() {
+	cleanupTLSFixtureResources(ctx)
 	ensureIntegrationPolicyFixture(ctx)
 	ensureIntegrationBYOServices(ctx)
 })

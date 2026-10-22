@@ -1565,7 +1565,7 @@ var _ = Describe("ConfigMaps", func() {
 		})
 
 		It("uses the shared trust-bundle path for explicit generic TLS", func() {
-			kn := testKubernautWithDevelopmentTLS()
+			kn := testKubernautWithCertManagerTLS()
 			cm, err := EffectivenessMonitorConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 

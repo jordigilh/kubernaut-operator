@@ -20,6 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/utils/ptr"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
@@ -34,10 +35,13 @@ var _ = Describe("cert-manager TLS provisioning", func() {
 		Expect(DataStorageSigningSecretName(kn)).To(Equal("customer-signing-cert"))
 
 		setDataStorageSigningCertificate(kn, nil)
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHelmCertManager
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeCertManager
+		kn.Spec.TLS.CertManager = &kubernautv1alpha2.CertManagerTLSConfig{
+			Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{},
+		}
 		Expect(DataStorageSigningSecretName(kn)).To(Equal(defaultCertManagerSigningSecretName))
 
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeDevelopmentSelfSigned
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		Expect(DataStorageSigningSecretName(kn)).To(Equal(defaultCertManagerSigningSecretName))
 	})
 
@@ -46,7 +50,27 @@ var _ = Describe("cert-manager TLS provisioning", func() {
 		Expect(err).To(MatchError("kubernaut is required"))
 
 		kn := testKubernaut()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHelmCertManager
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode: kubernautv1alpha2.TLSModeCertManager,
+			CertManager: &kubernautv1alpha2.CertManagerTLSConfig{
+				Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{},
+			},
+		}
+		objects, err := CertManagerTLSResources(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(objects).NotTo(BeEmpty())
+	})
+
+	It("UT-TLS-491-003 UT-TLS-PARITY-001 uses default provisioning settings when provisioning is explicitly enabled", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+			Mode: kubernautv1alpha2.TLSModeCertManager,
+			CertManager: &kubernautv1alpha2.CertManagerTLSConfig{
+				Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{Enabled: ptr.To(true)},
+			},
+		}
+		Expect(CertManagerBootstrapIssuerNames(kn)).To(Equal([]string{defaultCertManagerBootstrapIssuerName, defaultCertManagerCAIssuerName}))
+		Expect(DataStorageSigningSecretName(kn)).To(Equal(defaultCertManagerSigningSecretName))
 		objects, err := CertManagerTLSResources(kn)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(objects).NotTo(BeEmpty())
@@ -55,7 +79,7 @@ var _ = Describe("cert-manager TLS provisioning", func() {
 	It("handles blank, DNS, and explicit IP extra SANs", func() {
 		kn := testKubernaut()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
-			Mode: kubernautv1alpha2.TLSModeHelmCertManager,
+			Mode: kubernautv1alpha2.TLSModeCertManager,
 			CertManager: &kubernautv1alpha2.CertManagerTLSConfig{
 				Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{
 					ExtraSANs: []string{" ", "10.0.0.1", "127.0.0.1"},
@@ -99,6 +123,7 @@ var _ = Describe("cert-manager TLS provisioning", func() {
 				Issuer:                kubernautv1alpha2.TLSIssuerRef{Name: "customer-issuer"},
 				InternalCASecretName:  "customer-ca",
 				ServiceTLSSecretNames: validServiceTLSSecretNames(),
+				Provisioning:          &kubernautv1alpha2.CertManagerTLSProvisioning{Enabled: ptr.To(false)},
 			},
 		}
 

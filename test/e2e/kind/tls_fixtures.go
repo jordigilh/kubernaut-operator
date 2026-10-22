@@ -46,7 +46,7 @@ type manualTLSSelection string
 
 const (
 	manualTLSSelectionManual manualTLSSelection = "manual"
-	manualTLSSelectionAdmin  manualTLSSelection = "administrator-managed"
+	manualTLSSelectionAdmin  manualTLSSelection = "admin"
 	manualTLSAdminPrefix                        = "admin"
 	tlsCACertificateKey                         = "ca.crt"
 	tlsTrustProbeRole                           = "tls-probe"
@@ -99,7 +99,7 @@ func ensureManualAdminTLSFixtures(ctx context.Context) error {
 		prefix    string
 	}{
 		{selection: manualTLSSelectionManual, mode: kubernautv1alpha2.TLSModeManual, prefix: "manual"},
-		{selection: manualTLSSelectionAdmin, mode: kubernautv1alpha2.TLSModeAdministratorManaged, prefix: "admin"},
+		{selection: manualTLSSelectionAdmin, mode: kubernautv1alpha2.TLSModeManual, prefix: "admin"},
 	} {
 		fixture, err := newManualTLSFixture(definition.mode, definition.prefix, kubernautNamespace)
 		if err != nil {
@@ -257,15 +257,22 @@ func verifyTLSWorkloadTrust(ctx context.Context, caKey string) error {
 			Items:                []corev1.KeyToPath{{Key: tlsCACertificateKey, Path: tlsCACertificateKey}},
 		}},
 	}
-	if configuredTLS == tlsManualAdmin && activeManualTLSSelection == manualTLSSelectionManual {
+	if configuredTLS == tlsManualAdmin {
 		fixture, err := activeManualTLSFixture()
 		if err != nil {
 			return err
 		}
-		trustVolume.VolumeSource = corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-			LocalObjectReference: corev1.LocalObjectReference{Name: fixture.caConfigMapName},
-			Items:                []corev1.KeyToPath{{Key: caKey, Path: tlsCACertificateKey}},
-		}}
+		if activeManualTLSSelection == manualTLSSelectionManual {
+			trustVolume.VolumeSource = corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: fixture.caConfigMapName},
+				Items:                []corev1.KeyToPath{{Key: caKey, Path: tlsCACertificateKey}},
+			}}
+		} else {
+			trustVolume.VolumeSource = corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+				SecretName: fixture.caSecretName,
+				Items:      []corev1.KeyToPath{{Key: caKey, Path: tlsCACertificateKey}},
+			}}
+		}
 	}
 	encoded, err := yaml.Marshal(TLSProbePod(trustVolume))
 	if err != nil {
@@ -375,7 +382,7 @@ func newManualTLSFixture(mode kubernautv1alpha2.TLSMode, prefix, namespace strin
 	configMaps := make(map[string]*corev1.ConfigMap, 1)
 	caSecretName := ""
 	caConfigMapName := ""
-	if mode == kubernautv1alpha2.TLSModeManual {
+	if prefix == string(manualTLSSelectionManual) {
 		caConfigMapName = resources.InterServiceCAConfigMapName
 		configMaps[caConfigMapName] = &corev1.ConfigMap{
 			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},

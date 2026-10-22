@@ -152,20 +152,6 @@ var _ = Describe("Telemetry controller material lifecycle", Label("unit"), func(
 		Expect(r.validateTelemetrySecrets(context.Background(), kn)).To(MatchError(ContainSubstring("non-ca certificate")))
 	})
 
-	It("prepares an explicit runtime trust source before telemetry validation", func() {
-		kn := telemetryUnitKubernaut()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeDevelopmentSelfSigned
-		kn.Spec.TLS.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}
-		kn.Spec.DataStorage.Telemetry = kubernautv1alpha2.TelemetrySpec{Endpoint: "otel-collector:4317"}
-		r := newTelemetryUnitReconciler(kn)
-
-		Expect(r.ensureTelemetryAmbientTrustSource(context.Background(), kn)).To(Succeed())
-		trust := &corev1.ConfigMap{}
-		Expect(r.Get(context.Background(), client.ObjectKey{Namespace: kn.Namespace, Name: resources.TrustBundleConfigMapName}, trust)).To(Succeed())
-		Expect(trust.Data["ca.crt"]).NotTo(BeEmpty())
-		Expect(r.validateTelemetryAmbientTrust(context.Background(), kn)).To(Succeed())
-	})
-
 	It("UT-TELEMETRY-TLS-005/007 maps referenced Secret events and changes only non-sensitive revision metadata", func() {
 		kn := telemetryUnitKubernaut()
 		kn.Spec.DataStorage.Telemetry = telemetrySecretSpec()
@@ -216,7 +202,7 @@ var _ = Describe("Telemetry controller material lifecycle", Label("unit"), func(
 	It("tracks a manual runtime CA Secret as ambient trust without exposing its contents", func() {
 		kn := telemetryUnitKubernaut()
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
-		kn.Spec.TLS.AdministratorManaged = &kubernautv1alpha2.AdministratorManagedTLSConfig{
+		kn.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{
 			InternalCASecretName: "internal-ca",
 		}
 		kn.Spec.DataStorage.Telemetry = kubernautv1alpha2.TelemetrySpec{Endpoint: "otel-collector:4317"}
@@ -315,11 +301,11 @@ var _ = Describe("Telemetry controller material lifecycle", Label("unit"), func(
 		Expect(ambientTrustConfigMapRelevant(kn, trust)).To(BeTrue())
 
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
-		kn.Spec.TLS.AdministratorManaged = &kubernautv1alpha2.AdministratorManagedTLSConfig{
+		kn.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{
 			InternalCASecretName: "internal-ca",
 		}
 		Expect(ambientTrustConfigMapRelevant(kn, trust)).To(BeFalse())
-		kn.Spec.TLS.AdministratorManaged.InternalCASecretName = ""
+		kn.Spec.TLS.Manual.InternalCASecretName = ""
 		Expect(ambientTrustConfigMapRelevant(kn, trust)).To(BeTrue())
 	})
 
@@ -375,7 +361,7 @@ var _ = Describe("Telemetry controller material lifecycle", Label("unit"), func(
 		Expect(r.validateTelemetryAmbientTrust(ctx, kn)).To(Succeed())
 		_, err = r.telemetryAmbientTrustRevision(ctx, kn)
 		Expect(err).NotTo(HaveOccurred())
-		kn.Spec.TLS.AdministratorManaged = &kubernautv1alpha2.AdministratorManagedTLSConfig{InternalCASecretName: "absent"}
+		kn.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{InternalCASecretName: "absent"}
 		_, err = r.telemetryAmbientTrustRevision(ctx, kn)
 		Expect(err).To(HaveOccurred())
 		_, err = r.telemetryMaterialRevisions(ctx, kn)
@@ -430,8 +416,6 @@ var _ = Describe("Telemetry controller material lifecycle", Label("unit"), func(
 			_, err, handled := r.validateTelemetryTrust(ctx, kn)
 			Expect(handled).To(BeTrue())
 			Expect(err).NotTo(HaveOccurred())
-			kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
-			Expect(r.ensureTelemetryAmbientTrustSource(ctx, kn)).To(MatchError(ContainSubstring("injected trust write failure")))
 		}
 		kn := newMinimalCR()
 		kn.Spec.DataStorage.Telemetry.Endpoint = unitTelemetryEndpoint

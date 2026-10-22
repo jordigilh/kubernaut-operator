@@ -868,7 +868,7 @@ var _ = Describe("Deployments", func() {
 		})
 
 		It("uses a generic TLS security context and does not advertise OpenShift", func() {
-			kn := testKubernautWithDevelopmentTLS()
+			kn := testKubernautWithCertManagerTLS()
 			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1320,7 +1320,7 @@ var _ = Describe("Deployments", func() {
 		})
 
 		It("does not wait for an OpenShift service CA with generic TLS", func() {
-			kn := testKubernautWithDevelopmentTLS()
+			kn := testKubernautWithCertManagerTLS()
 			dep, err := EffectivenessMonitorDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dep.Spec.Template.Spec.InitContainers).To(BeEmpty())
@@ -2130,8 +2130,7 @@ var _ = Describe("APIFrontendDeployment", func() {
 	It("does not render OpenShift CA wiring for explicit generic TLS", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
-			Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
-			DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
+			Mode: kubernautv1alpha2.TLSModeManual,
 		}
 		dep, err := APIFrontendDeployment(kn, testKnV2(kn))
 		Expect(err).NotTo(HaveOccurred())
@@ -2518,7 +2517,7 @@ var _ = Describe("DataStorage Signing Cert", func() {
 
 	It("uses the effective fallback Secret when signingCertificate.secretName is empty", func() {
 		kn := testKubernaut()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		setDataStorageSigningCertificate(kn, &kubernautv1alpha2.SigningCertSpec{MountPath: "/custom/certs"})
 
 		dep, err := DataStorageDeployment(kn)

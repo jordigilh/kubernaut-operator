@@ -434,15 +434,14 @@ var _ = Describe("independent activation and exposure failure decisions", Label(
 
 	It("UT-AUDIT-515-API-014: validates portable exposure identity before creating Ingress and rejects invalid material", func() {
 		kn := newMinimalCR()
-		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeHook,
-			Hooks: &kubernautv1alpha2.TLSHooksConfig{TLSCerts: kubernautv1alpha2.TLSCertsConfig{ExtraSANs: []string{"gateway.example.com"}}}}
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeManual}
 		kn.Spec.Gateway.Route.Enabled, kn.Spec.APIFrontend.Route.Enabled = ptr.To(false), ptr.To(false)
 		kn.Spec.Gateway.Ingress = kubernautv1alpha2.IngressSpec{Enabled: ptr.To(true), IngressClassName: "nginx",
-			Host: "gateway.example.com", TLSSecretName: resources.GatewayTLSSecretName}
+			Host: "gateway-service", TLSSecretName: resources.GatewayTLSSecretName}
 		r := businessUnitReconciler(kn, interceptor.Funcs{})
 		_, err := r.reconcileGenericIngresses(ctx, kn)
 		Expect(err).To(MatchError(ContainSubstring("reading TLS Secret")))
-		secrets, err := resources.DevelopmentSelfSignedTLSSecrets(kn, nil, time.Now().Add(-time.Hour))
+		secrets, err := testRuntimeTLSSecrets(kn, nil, time.Now().Add(-time.Hour))
 		Expect(err).NotTo(HaveOccurred())
 		for _, secret := range secrets {
 			Expect(r.Create(ctx, secret)).To(Succeed())
@@ -453,7 +452,7 @@ var _ = Describe("independent activation and exposure failure decisions", Label(
 		kn.Spec.Gateway.Ingress.Host = "uncovered.example.com"
 		_, err = r.reconcileRoutes(ctx, kn)
 		Expect(err).To(MatchError(ContainSubstring("validating TLS Secret")))
-		kn.Spec.Gateway.Ingress.Host = "gateway.example.com"
+		kn.Spec.Gateway.Ingress.Host = "gateway-service"
 		r.Client = interceptor.NewClient(r.Client.(client.WithWatch), interceptor.Funcs{Update: deniedUnitUpdate})
 		kn.Spec.Gateway.Ingress.Annotations = map[string]string{"updated": "true"}
 		_, err = r.reconcileGenericIngresses(ctx, kn)
@@ -801,11 +800,11 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 	It("UT-AUDIT-515-API-020: validates external CA, serving and signing failures without silently replacing administrator material", func() {
 		kn := newMinimalCR()
 		generator := kn.DeepCopy()
-		generator.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
-		generated, err := resources.DevelopmentSelfSignedTLSSecrets(generator, nil, time.Now().Add(-time.Hour))
+		generator.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
+		generated, err := testRuntimeTLSSecrets(generator, nil, time.Now().Add(-time.Hour))
 		Expect(err).NotTo(HaveOccurred())
-		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeAdministratorManaged,
-			AdministratorManaged: &kubernautv1alpha2.AdministratorManagedTLSConfig{
+		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeManual,
+			Manual: &kubernautv1alpha2.ManualTLSConfig{
 				InternalCASecretName: generated[0].Name, ServiceTLSSecretNames: certManagerServiceTLSSecretNames(),
 			}}
 		kn.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{
@@ -829,9 +828,15 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		for _, secret := range generated[1:] {
 			Expect(r.Create(ctx, secret)).To(Succeed())
 		}
+		for _, webhook := range []client.Object{
+			resources.MutatingWebhookConfigurationWithCABundle(kn, generated[0].Data["ca.crt"]),
+			resources.ValidatingWebhookConfigurationWithCABundle(kn, generated[0].Data["ca.crt"]),
+		} {
+			Expect(r.Create(ctx, webhook)).To(Succeed())
+		}
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		Expect(r.validateRuntimeTLSSecret(ctx, kn, material, ca, resources.TLSServiceAuthWebhook, resources.GatewayTLSSecretName)).To(HaveOccurred())
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeAdministratorManaged
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		Expect(r.validateRuntimeTLSSecret(ctx, kn, material, ca, resources.TLSServiceGateway, ca.Name)).To(HaveOccurred())
 		Expect(r.validateExplicitTLS(ctx, kn, material)).To(Succeed())
 		signing := &corev1.Secret{}
@@ -845,7 +850,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		Expect(r.Create(ctx, signing)).To(Succeed())
 		Expect(r.validateDataStorageSigningCertificate(ctx, kn)).To(HaveOccurred())
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
-		kn.Spec.TLS.AdministratorManaged = nil
+		kn.Spec.TLS.Manual = nil
 		material, err = resources.ResolveTLSMaterial(kn)
 		Expect(err).NotTo(HaveOccurred())
 		_, err = r.readRuntimeTLSCA(ctx, kn, material)
@@ -855,32 +860,19 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		Expect(r.Create(ctx, trust)).To(Succeed())
 		_, err = r.readRuntimeTLSCA(ctx, kn, material)
 		Expect(err).NotTo(HaveOccurred())
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
-		Expect(r.ensureGenericTLSConfigMaps(ctx, kn, nil)).To(HaveOccurred())
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
+		Expect(r.ensureGenericTLSConfigMaps(ctx, kn, nil)).To(Succeed())
 		kn.Spec.TLS.Mode = unitInvalidTLSMode
 		_, err = r.validateTLSConfiguration(ctx, kn)
 		Expect(err).To(HaveOccurred())
 		kn.Spec.TLS.Mode = ""
 		_, err = r.validateTLSConfiguration(ctx, kn)
-		Expect(err).To(HaveOccurred(), "no OpenShift API is available in this explicit-source fixture")
+		Expect(err).To(HaveOccurred())
 	})
 
 	It("UT-AUDIT-515-API-021: propagates trust-publication, embedded-input, toggle-RBAC and additional-role failures", func() {
 		kn := newMinimalCR()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
-		faults := interceptor.Funcs{Create: func(ctx context.Context, api client.WithWatch,
-			object client.Object, options ...client.CreateOption) error {
-			if _, configMap := object.(*corev1.ConfigMap); configMap && object.GetName() == resources.TrustBundleConfigMapName {
-				return fmt.Errorf("%s", unitAPIDenial)
-			}
-			return api.Create(ctx, object, options...)
-		}}
-		r := businessUnitReconciler(kn, faults)
-		Expect(r.ensureMigrationPrereqs(ctx, kn)).To(MatchError(ContainSubstring("ensuring generic TLS trust before migration")))
-		r = businessUnitReconciler(kn, faults)
-		Expect(r.phaseDeploy(ctx, kn, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
-		kn = newMinimalCR()
-		r = businessUnitReconciler(kn, interceptor.Funcs{Delete: deniedUnitDelete})
+		r := businessUnitReconciler(kn, interceptor.Funcs{Delete: deniedUnitDelete})
 		role, _ := resources.AnsibleRBAC(kn)
 		seedBusinessOwnedResources(r, kn, role)
 		Expect(r.deployRBAC(ctx, kn, kn)).To(MatchError(ContainSubstring("toggle cleanup")))
@@ -900,27 +892,6 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		Expect(r.ensureMigrationPrereqs(ctx, kn)).To(MatchError(ContainSubstring("building migration configmap")))
 	})
 
-	It("UT-AUDIT-515-API-022: propagates development-TLS read/generation failures and ignores unrelated monitoring events", func() {
-		kn := newMinimalCR()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
-		r := businessUnitReconciler(kn, interceptor.Funcs{Get: deniedUnitGet})
-		_, _, err := r.ensureRuntimeTLS(ctx, kn)
-		Expect(err).To(MatchError(ContainSubstring("reading development TLS secret")))
-		kn.Spec.TLS.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{RotationBefore: "not-a-duration"}
-		r = businessUnitReconciler(kn, interceptor.Funcs{})
-		_, _, err = r.ensureRuntimeTLS(ctx, kn)
-		Expect(err).To(HaveOccurred())
-		_, err = r.deployWorkloads(ctx, kn, kn, nil, telemetryMaterialRevisionSet{})
-		Expect(err).NotTo(HaveOccurred(), "standard NetworkPolicy reconciliation must not add a provider gate")
-		kn.Spec.Monitoring.Prometheus.Enabled = ptr.To(false)
-		kn.Spec.Monitoring.AlertManager.Enabled = ptr.To(true)
-		kn.Spec.Monitoring.AlertManager.URL = "not-a-url"
-		r = businessUnitReconciler(kn, interceptor.Funcs{})
-		Expect(r.monitoringObjectToKubernaut(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "alertmanager", Namespace: "monitoring"}})).To(BeEmpty())
-		kn.Spec.Monitoring.AlertManager.URL = "https://alertmanager.monitoring.svc:9093"
-		r = businessUnitReconciler(kn, interceptor.Funcs{})
-		Expect(r.monitoringObjectToKubernaut(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: "monitoring"}})).To(BeEmpty())
-	})
 })
 
 func withoutControllerImage(name string) {

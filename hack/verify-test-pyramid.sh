@@ -97,15 +97,12 @@ require_text test/e2e/kind/scenarios_test.go 'applyKubernautCR\(ctx\)' 'Kind sui
 require_text test/e2e/kind/scenarios_test.go 'NetworkPolicyReady' 'Kind suite does not assert standard NetworkPolicy status'
 require_text test/e2e/kind/scenarios_test.go 'TLSReady' 'Kind suite does not assert runtime TLS readiness'
 require_text test/e2e/kind/scenarios_test.go 'E2E-TLS-CERTMANAGER-002' 'Kind suite does not assert cert-manager leaf rotation'
-require_text test/e2e/kind/scenarios_test.go 'E2E-TLS-HOOK-001' 'Kind suite does not assert the hook TLS journey'
 require_text test/e2e/kind/scenarios_test.go 'E2E-TLS-MANUAL-001' 'Kind suite does not assert the manual TLS journey'
 require_text test/e2e/kind/scenarios_test.go 'E2E-TLS-ADMIN-001' 'Kind suite does not assert the AdministratorManaged TLS journey'
 require_text test/e2e/kind/scenarios_test.go 'E2E-TLS-FAIL-CLOSED-001' 'Kind suite does not assert invalid TLS fail-closed behavior'
 require_text test/e2e/kind/scenarios_test.go 'E2E-TLS-CLEANUP-001' 'Kind suite does not assert source-specific TLS cleanup'
 require_text test/e2e/kind/contract/selector_test.go 'UT-TLS-498-001' 'TLS selector contract has no unit evidence'
 require_text .github/workflows/test.yml 'tls_source: certmanager' 'CI does not run the pinned cert-manager lane'
-require_text .github/workflows/test.yml 'tls_source: development' 'CI does not name the development TLS lane explicitly'
-require_text .github/workflows/test.yml 'tls_source: hook' 'CI does not run the hook TLS lane'
 require_text .github/workflows/test.yml 'tls_source: manual-admin' 'CI does not run the manual/admin TLS lane'
 require_text test/e2e/kind/cluster.go 'certManagerVersion[[:space:]]*=[[:space:]]*"v1\.20\.2"' 'Kind suite does not pin cert-manager v1.20.2'
 require_text .github/workflows/test.yml 'KIND_VERSION=v0\.31\.0' 'cert-manager lane does not pin Kind v0.31.0'
@@ -130,8 +127,8 @@ check_wiring() {
 	grep -Fq 'IT-TLS-' "${integration_path}" || fail "${symbol} has no controller wiring evidence"
 }
 
-check_wiring 'ResolveTLSMaterial' internal/controller internal/resources/tls_test.go internal/controller/runtime_tls_wiring_integration_test.go
-check_wiring 'DevelopmentSelfSignedTLSSecrets' internal/controller internal/resources/tls_test.go internal/controller/runtime_tls_wiring_integration_test.go
+check_wiring 'ResolveTLSMaterial' internal/controller internal/resources/tls_source_test.go internal/controller/runtime_tls_wiring_integration_test.go
+check_wiring 'CertManagerTLSResources' internal/controller internal/resources/tls_certmanager_test.go internal/controller/certmanager_lifecycle_test.go
 check_wiring 'GenericTLSConfigMaps' internal/controller internal/resources/tlsconfigmaps_test.go internal/controller/runtime_tls_wiring_integration_test.go
 check_wiring 'MutatingWebhookConfigurationWithCABundle' internal/controller internal/resources/webhooks_test.go internal/controller/runtime_tls_wiring_integration_test.go
 

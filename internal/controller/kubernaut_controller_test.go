@@ -718,12 +718,29 @@ var _ = Describe("Kubernaut Controller", func() {
 			// explicit now, so use the development source to verify that the
 			// OpenShift service-CA ConfigMap is not created for this path.
 			kn.Spec.PostgreSQL.SSLMode = "require"
-			kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeDevelopmentSelfSigned
-			kn.Spec.TLS.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}
+			kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
+			runtimeSecrets, err := testRuntimeTLSSecrets(kn, nil, time.Now().Add(-time.Hour))
+			Expect(err).NotTo(HaveOccurred())
+			for _, secret := range runtimeSecrets[1:] {
+				Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			}
+			Expect(k8sClient.Create(ctx, &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: resources.InterServiceCAConfigMapName, Namespace: testNamespace},
+				Data: map[string]string{
+					"ca.crt":         string(runtimeSecrets[0].Data["ca.crt"]),
+					"service-ca.crt": string(runtimeSecrets[0].Data["ca.crt"]),
+				},
+			})).To(Succeed())
+			for _, webhook := range []client.Object{
+				resources.MutatingWebhookConfigurationWithCABundle(kn, runtimeSecrets[0].Data["ca.crt"]),
+				resources.ValidatingWebhookConfigurationWithCABundle(kn, runtimeSecrets[0].Data["ca.crt"]),
+			} {
+				Expect(k8sClient.Create(ctx, webhook)).To(Succeed())
+			}
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 
 			r := newReconciler()
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())

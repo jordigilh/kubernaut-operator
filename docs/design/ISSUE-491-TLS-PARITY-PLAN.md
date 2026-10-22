@@ -1,6 +1,7 @@
 # Issue #491: Upstream Helm TLS parity in the operator
 
-**Status:** Approved for implementation
+**Status:** Historical; superseded for the unreleased operator CR API by
+Issue #561. The application Helm chart TLS parity surface is being deprecated.
 
 **Date:** 2026-10-02
 
@@ -8,7 +9,7 @@
 
 **Related:** #489
 
-## Decision
+## Historical decision
 
 The TLS configuration surface is intentionally one-to-one with the upstream
 chart: `spec.tls.mode` accepts `hook`, `cert-manager`, and `manual`, and

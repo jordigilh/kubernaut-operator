@@ -184,7 +184,7 @@ var _ = Describe("monitoring TLS source references", Label("unit"), func() {
 	It("follows the administrator-owned manual inter-service Secret", func() {
 		kn := newMinimalCR()
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
-		kn.Spec.TLS.AdministratorManaged = &kubernautv1alpha2.AdministratorManagedTLSConfig{InternalCASecretName: "administrator-ca"}
+		kn.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{InternalCASecretName: "administrator-ca"}
 		kind, name, key, ok := monitoringTLSReference(kn)
 		Expect(ok).To(BeTrue())
 		Expect(kind).To(Equal("secret"))

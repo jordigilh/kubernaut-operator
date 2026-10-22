@@ -50,20 +50,17 @@ Supported source modes are:
 
 | Source | Generic Kubernetes / Kind | OpenShift |
 |---|---|---|
-| `hook` | Explicit Helm-compatible hook mode; the operator provisions and owns the generated CA, leaves, trust bundle, webhook trust, and signing material | Not live-qualified by the current generic Kind evidence |
-| `manual` | Reference pre-created Secrets/ConfigMaps; the operator validates keys, CA consistency, and SANs without overwriting them | Supported where the referenced material satisfies the same contract, but not live-qualified here |
-| `AdministratorManaged` | Reference pre-created administrator-owned Secrets; the operator validates and publishes trust without adopting or deleting the inputs | Supported where the referenced material satisfies the same contract, but not live-qualified here |
-| cert-manager | Requires a pre-installed cert-manager, configured issuer, and its output Secrets; the operator never installs cert-manager or its CRDs | Optional; not installed by Kubernaut |
-| Development self-signed | Explicit opt-in for Kind/development; creates a dedicated CA and leaves and reports non-production status | Available only if explicitly selected; service-CA remains the preferred platform adapter |
-| OpenShift service-CA/router-CA | Not available | Optional adapter for Service leaves, webhook CA injection, Routes, and router trust |
+| `manual` | References pre-created administrator- or external-PKI-owned Secrets; the operator validates keys, CA consistency, and SANs without adopting or rotating them | Supported where the referenced material satisfies the same contract, but not live-qualified here |
+| `cert-manager` | Requires a pre-installed cert-manager and pre-created Issuer/Certificate objects by default; set provisioning `enabled=true` for operator-reconciled objects while cert-manager owns output Secrets. | Optional; not installed by Kubernaut |
+| `service-ca` | Not available | Uses the discovered OpenShift service-CA adapter for Service leaves, webhook CA injection, and trust bundles |
 
-The generic Kind acceptance matrix runs isolated `development`, `hook`,
-`manual-admin`, and `certmanager` selectors. The `manual-admin` lane exercises
-both the lower-case `manual` mode and the title-case `AdministratorManaged`
-mode against pre-created administrator-owned material. These hosted journeys
-are implementation evidence rather than a FedRAMP, SOC 2, or OWASP ASVS
-certification claim. OpenShift service-CA and router-CA qualification remains
-deferred until an OCP-capable runner is available.
+The generic Kind acceptance matrix runs isolated `certmanager` and
+`manual-admin` selectors. The `certmanager` lane installs cert-manager and
+uses cert-manager-owned output Secrets. The `manual-admin` lane exercises
+manual references against pre-created external material. These hosted
+journeys are implementation evidence rather than a FedRAMP, SOC 2, or OWASP
+ASVS certification claim. OpenShift service-CA and router-CA qualification
+remains deferred until an OCP-capable runner is available.
 
 The operator must not silently fall back from a missing or invalid production
 source to plaintext HTTP, an empty webhook `caBundle`, or a fixed OpenShift
@@ -80,12 +77,12 @@ OLM bundle and its service-CA integration. The repository's Kustomize
 manifests remain available for compatibility and development workflows; they
 are not used by the Kind CI deployment lanes. These installation paths own the
 operator manager's serving-certificate prerequisites.
-For generated `DevelopmentSelfSigned` and `hook` modes, the operator owns
-per-instance AuthWebhook, inter-service, and runtime trust artifacts once a
-`Kubernaut` instance is reconciled. In `manual` and `AdministratorManaged`
-modes, the referenced Secrets remain administrator-owned and survive operator
-cleanup. A future Helm chart and the operator must never co-own the same Secret
-or ConfigMap.
+The operator never owns runtime certificate Secrets. In `manual` mode,
+referenced Secrets remain externally owned and survive operator cleanup. In
+`cert-manager` mode, cert-manager owns output Secrets while the operator owns
+only any Issuer/Certificate objects it explicitly reconciles. The deprecated
+application Helm chart and the operator must never co-own the same Secret or
+ConfigMap.
 
 ## OpenShift integrations
 

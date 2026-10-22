@@ -37,8 +37,8 @@ Notification Secret references are namespace-local: `secretRef.name` and `secret
 
 ## Credential rotation
 
-The operator watches its owned Secret resources and periodically revalidates
-administrator-managed or cert-manager Secret references. When referenced
+The operator periodically revalidates manual or cert-manager Secret
+references. When referenced
 Secret data changes, reconciliation regenerates derived configuration (for
 example, ConfigMaps that reference trust material) and workload Deployments
 roll forward using a Deployment annotation hash strategy.
@@ -83,7 +83,11 @@ The following table summarizes primary east-west trust patterns for the managed 
 
 ## TLS configuration
 
-**Inter-service TLS:** the selected runtime source supplies internal service certificates and the public trust bundle. Administrator-managed and cert-manager sources are read without adoption; explicit development self-signed mode is limited to development/Kind; OpenShift service-CA injection is an optional capability adapter rather than a generic fallback.
+**Inter-service TLS:** the selected runtime source supplies internal service
+certificates and the public trust bundle. Manual and cert-manager sources are
+read without Secret adoption; cert-manager output remains cert-manager-owned.
+OpenShift service-CA injection is available only through the explicit platform
+adapter and is never a generic fallback.
 
 **External TLS (LLM and corporate egress):** Custom CA bundles for corporate TLS inspection or private PKI may be supplied via `spec.llmProfiles.<name>.tlsCaFile` so any component resolving to that profile trusts required roots when calling external LLM endpoints.
 
@@ -100,7 +104,10 @@ The following table summarizes primary east-west trust patterns for the managed 
 
 **Valkey (IA-5, SC-8):** A `requirepass` password (`spec.valkey.secretName`) does **not** provide real client authentication -- the Go Redis client used by Kubernaut's services silently tolerates an `AUTH` failure against a server with no password configured, so a misconfigured deployment fails open rather than closed (the same gap upstream `kubernaut` closed in [kubernaut#2269](https://github.com/jordigilh/kubernaut/issues/2269)/[#2272](https://github.com/jordigilh/kubernaut/pull/2272)). Set `spec.valkey.tls.enabled: true` with `caSecretName` and `clientCertSecretName` to require mutual TLS instead: Valkey rejects any client that doesn't present a certificate signed by the trusted CA, which fails closed. DataStorage and FleetMetadataCache both already support this; a single shared client certificate is sufficient since Valkey 8 only validates the certificate chain, not the caller's identity. See [01-infrastructure.md: Enable mTLS](../installation/01-infrastructure.md#enable-mtls) for setup steps.
 
-**Admission webhooks:** TLS for the AuthWebhook admission endpoints uses the selected runtime TLS source. OpenShift service-CA injection is used only when the optional OpenShift capability is discovered; generic clusters use the explicit administrator-managed, cert-manager, or development self-signed source.
+**Admission webhooks:** TLS for the AuthWebhook admission endpoints uses the
+selected runtime TLS source. OpenShift service-CA injection is used only when
+the optional OpenShift capability is discovered; generic clusters use manual
+or cert-manager material.
 
 ## OTLP telemetry TLS and operational rotation
 

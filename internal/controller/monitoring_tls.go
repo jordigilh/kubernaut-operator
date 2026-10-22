@@ -87,7 +87,7 @@ func monitoringTLSInterServiceReference(kn *kubernautv1alpha2.Kubernaut) (string
 	if kn.Spec.TLS.Mode != kubernautv1alpha2.TLSModeManual {
 		return monitoringTLSConfigMapKind, resources.TrustBundleConfigMapName, "service-ca.crt", true
 	}
-	if cfg := kn.Spec.TLS.AdministratorManaged; cfg != nil && cfg.InternalCASecretName != "" {
+	if cfg := kn.Spec.TLS.Manual; cfg != nil && cfg.InternalCASecretName != "" {
 		return monitoringTLSSecretKind, cfg.InternalCASecretName, monitoringTLSDefaultCAKey, true
 	}
 	return monitoringTLSConfigMapKind, resources.InterServiceCAConfigMapName, monitoringTLSDefaultCAKey, true

@@ -112,14 +112,11 @@ func seedBusinessOwnedResources(r *KubernautReconciler, kn *kubernautv1alpha2.Ku
 }
 
 var _ = Describe("independent business lifecycle decisions", Label("unit"), func() {
-	for _, mode := range []kubernautv1alpha2.TLSMode{"", kubernautv1alpha2.TLSModeDevelopmentSelfSigned} {
+	for _, mode := range []kubernautv1alpha2.TLSMode{""} {
 		It(fmt.Sprintf("UT-AUDIT-515-LIFECYCLE-001: converges migration, deployment, readiness and cleanup with TLS mode %q", mode), func() {
 			kn := newMinimalCR()
 			kn.UID = "unit-lifecycle"
 			kn.Spec.TLS.Mode = mode
-			if mode == kubernautv1alpha2.TLSModeDevelopmentSelfSigned {
-				kn.Spec.TLS.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}
-			}
 			kn.Spec.APIFrontend.Route.Enabled = ptr.To(false)
 			r := businessUnitReconciler(kn, interceptor.Funcs{})
 			request := reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)}

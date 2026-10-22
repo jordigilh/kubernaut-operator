@@ -3532,28 +3532,6 @@ spec:
                   adapter retain the service-CA behavior; generic clusters must select one
                   of the documented source modes before TLS-backed workloads are ready.
                 properties:
-                  administratorManaged:
-                    description: |-
-                      References administrator-owned internal CA and service serving Secrets.
-                      The operator validates these objects but does not mutate or delete them.
-                    properties:
-                      internalCASecretName:
-                        description: |-
-                          Secret containing the public internal CA under ca.crt.
-                          Required when mode=AdministratorManaged. In other modes this field is
-                          ignored unless it is used as an explicit output-name override.
-                        type: string
-                      serviceTLSSecretNames:
-                        additionalProperties:
-                          type: string
-                        description: |-
-                          Serving Secret names keyed by component: gateway, datastorage,
-                          kubernautagent, apifrontend, and authwebhook. Each Secret contains
-                          tls.crt and tls.key with SANs covering its Service DNS names.
-                          Required when mode=AdministratorManaged. Provisioned cert-manager mode
-                          fills omitted entries with the stable operator defaults.
-                        type: object
-                    type: object
                   certManager:
                     description: |-
                       References cert-manager issuer output Secrets. cert-manager must already
@@ -3561,59 +3539,52 @@ spec:
                     properties:
                       internalCASecretName:
                         description: |-
-                          Public CA Secret containing ca.crt for administrator-managed material or
+                          Public CA Secret containing ca.crt for manual material or
                           tls.crt for cert-manager Certificate output.
                           Required for reference-only mode. Provisioning mode defaults this to the
                           dedicated inter-service CA Secret unless an override is supplied here or
                           in Provisioning.
                         type: string
                       issuer:
-                        description: |-
-                          Issuer is the legacy operator spelling for the cert-manager issuer
-                          reference. It remains accepted for existing CRs.
+                        description: Issuer is the concise cert-manager issuer reference.
                         properties:
                           group:
                             default: cert-manager.io
                             description: API group, normally cert-manager.io.
                             type: string
                           kind:
-                            description: |-
-                              Issuer kind, normally Issuer or ClusterIssuer. The lower-case Helm mode
-                              defaults to ClusterIssuer; legacy title-case mode defaults to Issuer.
+                            description: Issuer kind, normally Issuer or ClusterIssuer.
                             type: string
                           name:
                             description: |-
-                              Issuer name. When empty in Helm-compatible cert-manager mode, the
-                              controller selects the sole Issuer/ClusterIssuer in scope, matching the
-                              chart's live-cluster lookup behavior.
+                              Issuer name. When empty, the controller may select the sole
+                              Issuer/ClusterIssuer in scope.
                             type: string
                         type: object
                       issuerRef:
                         description: |-
-                          IssuerRef mirrors Helm tls.certManager.issuerRef. When populated it takes
-                          precedence over the legacy Issuer field.
+                          IssuerRef is the structured cert-manager issuer reference. When populated
+                          it takes precedence over Issuer.
                         properties:
                           group:
                             default: cert-manager.io
                             description: API group, normally cert-manager.io.
                             type: string
                           kind:
-                            description: |-
-                              Issuer kind, normally Issuer or ClusterIssuer. The lower-case Helm mode
-                              defaults to ClusterIssuer; legacy title-case mode defaults to Issuer.
+                            description: Issuer kind, normally Issuer or ClusterIssuer.
                             type: string
                           name:
                             description: |-
-                              Issuer name. When empty in Helm-compatible cert-manager mode, the
-                              controller selects the sole Issuer/ClusterIssuer in scope, matching the
-                              chart's live-cluster lookup behavior.
+                              Issuer name. When empty, the controller may select the sole
+                              Issuer/ClusterIssuer in scope.
                             type: string
                         type: object
                       provisioning:
                         description: |-
-                          Provisioning enables operator-owned cert-manager Issuer and Certificate
-                          resources. cert-manager remains the owner of generated output Secrets.
-                          When omitted, the existing reference-only contract is preserved.
+                          Provisioning controls optional operator reconciliation of cert-manager
+                          Issuer and Certificate resources. It defaults to reference-only; set
+                          enabled=true to reconcile these objects. cert-manager remains the owner of
+                          generated output Secrets.
                         properties:
                           bootstrapIssuerName:
                             default: kubernaut-interservice-bootstrap-issuer
@@ -3675,42 +3646,8 @@ spec:
                           type: string
                         description: |-
                           Serving Secret names keyed by component, with the same keys as the
-                          administrator-managed mode. Required for reference-only mode;
+                          manual mode. Required for reference-only mode;
                           provisioning mode fills omitted entries with stable defaults.
-                        type: object
-                    type: object
-                  developmentSelfSigned:
-                    description: Configures the explicit development-only self-signed
-                      provisioner.
-                    properties:
-                      caSecretName:
-                        description: Secret name for the generated CA. Defaults to
-                          kubernaut-internal-ca.
-                        type: string
-                      rotationBefore:
-                        default: 168h
-                        description: How long before expiry the operator should rotate
-                          generated leaves.
-                        type: string
-                    type: object
-                  hooks:
-                    description: |-
-                      Hooks mirrors Helm hooks.tlsCerts. Helm hook Jobs are replaced by the
-                      operator's reconciliation loop, while the extra SAN input remains the
-                      same migration-compatible configuration surface.
-                    properties:
-                      tlsCerts:
-                        description: |-
-                          TLSCerts configures the self-signed certificate SAN additions used by the
-                          Helm tls-cert-job. The operator reconciles the equivalent Secrets directly.
-                        properties:
-                          extraSANs:
-                            description: |-
-                              Additional DNS SANs for inter-service certificates. When non-empty, the
-                              loopback IP 127.0.0.1 is also included, matching the chart behavior.
-                            items:
-                              type: string
-                            type: array
                         type: object
                     type: object
                   interService:
@@ -3729,17 +3666,36 @@ spec:
                           server-side TLS.
                         type: string
                     type: object
+                  manual:
+                    description: |-
+                      References administrator- or external-PKI-owned internal CA and serving
+                      Secrets. The operator validates these objects but does not mutate or
+                      delete them.
+                    properties:
+                      internalCASecretName:
+                        description: |-
+                          Secret containing the public internal CA under ca.crt.
+                          Required when mode=manual with explicit Secret material.
+                        type: string
+                      serviceTLSSecretNames:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          Serving Secret names keyed by component: gateway, datastorage,
+                          kubernautagent, apifrontend, and authwebhook. Each Secret contains
+                          tls.crt and tls.key with SANs covering its Service DNS names.
+                          Required when mode=manual with explicit Secret material. Empty values use
+                          the stable service names used by the operator's manual source.
+                        type: object
+                    type: object
                   mode:
                     description: |-
                       Source mode. Empty selects only a positively discovered OpenShift
                       service-CA adapter; generic clusters must not treat it as plaintext.
                     enum:
-                    - hook
                     - cert-manager
                     - manual
-                    - AdministratorManaged
-                    - CertManager
-                    - DevelopmentSelfSigned
+                    - service-ca
                     type: string
                 type: object
               valkey:
