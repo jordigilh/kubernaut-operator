@@ -392,27 +392,46 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			}
 		})
 
-		It("E2E-MON-563-001 [SC-8, SC-13, SI-4; SOC2 CC7.2; ASVS V12.3.1, V12.3.2, V13.3.4] verifies monitoring HTTPS with the injected service CA", func() {
-			const probeName = "effectivenessmonitor-monitoring-tls-probe"
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "kubernaut", "kubernaut", "-n", crNS, "-o", `jsonpath={.status.conditions[?(@.type=="ServicesDeployed")].status}`)
-				status, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(status).To(Equal("True"))
-			}, 10*time.Minute, 5*time.Second).Should(Succeed())
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "serviceaccount", "effectivenessmonitor-controller", "-n", crNS, "-o", "jsonpath={.metadata.name}")
-				name, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(name).To(Equal("effectivenessmonitor-controller"))
-			}, 5*time.Minute, 2*time.Second).Should(Succeed())
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "configmap", "effectivenessmonitor-service-ca", "-n", crNS, "-o", "jsonpath={.metadata.name}")
-				name, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(name).To(Equal("effectivenessmonitor-service-ca"))
-			}, 5*time.Minute, 2*time.Second).Should(Succeed())
-			probeOverrides := `{
+		It(
+			"E2E-MON-563-001 [SC-8, SC-13, SI-4; SOC2 CC7.2; "+
+				"ASVS V12.3.1, V12.3.2, V13.3.4] verifies monitoring HTTPS with the injected service CA",
+			func() {
+				const probeName = "effectivenessmonitor-monitoring-tls-probe"
+				Eventually(func(g Gomega) {
+					cmd := exec.Command(
+						"kubectl", "get", "kubernaut", "kubernaut", "-n", crNS,
+						"-o", `jsonpath={.status.conditions[?(@.type=="ServicesDeployed")].status}`,
+					)
+					status, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(status).To(Equal("True"))
+				}, 10*time.Minute, 5*time.Second).Should(Succeed())
+				Eventually(func(g Gomega) {
+					cmd := exec.Command(
+						"kubectl", "get", "serviceaccount", "effectivenessmonitor-controller",
+						"-n", crNS, "-o", "jsonpath={.metadata.name}",
+					)
+					name, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(name).To(Equal("effectivenessmonitor-controller"))
+				}, 5*time.Minute, 2*time.Second).Should(Succeed())
+				Eventually(func(g Gomega) {
+					cmd := exec.Command(
+						"kubectl", "get", "configmap", "effectivenessmonitor-service-ca",
+						"-n", crNS, "-o", "jsonpath={.metadata.name}",
+					)
+					name, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(name).To(Equal("effectivenessmonitor-service-ca"))
+				}, 5*time.Minute, 2*time.Second).Should(Succeed())
+				probeScript := `set -eu; token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token); ` +
+					`curl -fsS --connect-timeout 10 --cacert /etc/monitoring-ca/service-ca.crt ` +
+					`-H 'Authorization: Bearer ${token}' ` +
+					`https://thanos-querier.openshift-monitoring.svc:9091/api/v1/status/buildinfo ` +
+					`>/dev/null; curl -fsS --connect-timeout 10 --cacert /etc/monitoring-ca/service-ca.crt ` +
+					`-H 'Authorization: Bearer ${token}' ` +
+					`https://alertmanager-main.openshift-monitoring.svc:9094/api/v2/status >/dev/null`
+				probeOverrides := `{
 				"spec": {
 					"serviceAccount": "effectivenessmonitor-controller",
 					"restartPolicy": "Never",
@@ -420,33 +439,53 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 						"name": "probe",
 						"image": "curlimages/curl:latest",
 						"command": ["/bin/sh", "-c"],
-						"args": ["set -eu; token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token); curl -fsS --connect-timeout 10 --cacert /etc/monitoring-ca/service-ca.crt -H \\\"Authorization: Bearer ${token}\\\" https://thanos-querier.openshift-monitoring.svc:9091/api/v1/status/buildinfo >/dev/null; curl -fsS --connect-timeout 10 --cacert /etc/monitoring-ca/service-ca.crt -H \\\"Authorization: Bearer ${token}\\\" https://alertmanager-main.openshift-monitoring.svc:9094/api/v2/status >/dev/null"],
-						"volumeMounts": [{"name": "monitoring-ca", "mountPath": "/etc/monitoring-ca", "readOnly": true}],
-						"securityContext": {"allowPrivilegeEscalation": false, "capabilities": {"drop": ["ALL"]}, "runAsNonRoot": true, "runAsUser": 1000, "seccompProfile": {"type": "RuntimeDefault"}}
+						"args": ["` + probeScript + `"],
+						"volumeMounts": [{
+							"name": "monitoring-ca",
+							"mountPath": "/etc/monitoring-ca",
+							"readOnly": true
+						}],
+						"securityContext": {
+							"allowPrivilegeEscalation": false,
+							"capabilities": {"drop": ["ALL"]},
+							"runAsNonRoot": true,
+							"runAsUser": 1000,
+							"seccompProfile": {"type": "RuntimeDefault"}
+						}
 					}],
-					"volumes": [{"name": "monitoring-ca", "configMap": {"name": "effectivenessmonitor-service-ca", "items": [{"key": "service-ca.crt", "path": "service-ca.crt"}]}}]
+					"volumes": [{
+						"name": "monitoring-ca",
+						"configMap": {
+							"name": "effectivenessmonitor-service-ca",
+							"items": [{
+								"key": "service-ca.crt",
+								"path": "service-ca.crt"
+							}]
+						}
+					}]
 				}
 			}`
-			cmd := exec.Command("kubectl", "run", probeName, "--restart=Never", "--namespace", crNS,
-				"--image=curlimages/curl:latest", "--overrides", probeOverrides)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-			DeferCleanup(func() {
-				cmd := exec.Command("kubectl", "delete", "pod", probeName, "-n", crNS, "--ignore-not-found=true")
-				_, _ = utils.Run(cmd)
-			})
+				cmd := exec.Command("kubectl", "run", probeName, "--restart=Never", "--namespace", crNS,
+					"--image=curlimages/curl:latest", "--overrides", probeOverrides)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() {
+					cmd := exec.Command("kubectl", "delete", "pod", probeName, "-n", crNS, "--ignore-not-found=true")
+					_, _ = utils.Run(cmd)
+				})
 
-			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pod", probeName, "-n", crNS, "-o", "jsonpath={.status.phase}")
-				phase, getErr := utils.Run(cmd)
-				g.Expect(getErr).NotTo(HaveOccurred())
-				if phase == "Failed" {
-					logs, logErr := utils.Run(exec.Command("kubectl", "logs", probeName, "-n", crNS))
-					g.Expect(logErr).NotTo(HaveOccurred(), logs)
-				}
-				g.Expect(phase).To(Equal("Succeeded"))
-			}, 5*time.Minute, 2*time.Second).Should(Succeed())
-		})
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "pod", probeName, "-n", crNS, "-o", "jsonpath={.status.phase}")
+					phase, getErr := utils.Run(cmd)
+					g.Expect(getErr).NotTo(HaveOccurred())
+					if phase == "Failed" {
+						logs, logErr := utils.Run(exec.Command("kubectl", "logs", probeName, "-n", crNS))
+						g.Expect(logErr).NotTo(HaveOccurred(), logs)
+					}
+					g.Expect(phase).To(Equal("Succeeded"))
+				}, 5*time.Minute, 2*time.Second).Should(Succeed())
+			},
+		)
 
 		It("should preserve bootstrap-provided policy ConfigMaps without operator ownership", func() {
 			for _, name := range []string{
