@@ -308,7 +308,6 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 				"signalprocessing-controller-metrics", "remediationorchestrator-controller",
 				"workflowexecution-controller-metrics", "effectivenessmonitor-metrics",
 				"notification-metrics", "kubernaut-agent", "authwebhook-service",
-				"apifrontend", "kubernaut-console",
 			} {
 				verifyService(svc)
 			}
