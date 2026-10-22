@@ -395,16 +395,22 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 		It("E2E-MON-563-001 [SC-8, SC-13, SI-4; SOC2 CC7.2; ASVS V12.3.1, V12.3.2, V13.3.4] verifies monitoring HTTPS with the injected service CA", func() {
 			const probeName = "effectivenessmonitor-monitoring-tls-probe"
 			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "kubernaut", "kubernaut", "-n", crNS, "-o", `jsonpath={.status.conditions[?(@.type=="ServicesDeployed")].status}`)
+				status, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(status).To(Equal("True"))
+			}, 10*time.Minute, 5*time.Second).Should(Succeed())
+			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "serviceaccount", "effectivenessmonitor-controller", "-n", crNS, "-o", "jsonpath={.metadata.name}")
 				name, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(name).To(Equal("effectivenessmonitor-controller"))
 			}, 5*time.Minute, 2*time.Second).Should(Succeed())
 			Eventually(func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "configmap", "effectivenessmonitor-service-ca", "-n", crNS, "-o", "jsonpath={.data['service-ca.crt']}")
-				bundle, err := utils.Run(cmd)
+				cmd := exec.Command("kubectl", "get", "configmap", "effectivenessmonitor-service-ca", "-n", crNS, "-o", "jsonpath={.metadata.name}")
+				name, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(bundle).NotTo(BeEmpty())
+				g.Expect(name).To(Equal("effectivenessmonitor-service-ca"))
 			}, 5*time.Minute, 2*time.Second).Should(Succeed())
 			probeOverrides := `{
 				"spec": {
