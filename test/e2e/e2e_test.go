@@ -400,6 +400,12 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(name).To(Equal("effectivenessmonitor-controller"))
 			}, 5*time.Minute, 2*time.Second).Should(Succeed())
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "configmap", "effectivenessmonitor-service-ca", "-n", crNS, "-o", "jsonpath={.data['service-ca.crt']}")
+				bundle, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(bundle).NotTo(BeEmpty())
+			}, 5*time.Minute, 2*time.Second).Should(Succeed())
 			probeOverrides := `{
 				"spec": {
 					"serviceAccount": "effectivenessmonitor-controller",
