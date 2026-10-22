@@ -206,10 +206,23 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 		for _, component := range []string{resources.ComponentEffectivenessMonitor, resources.ComponentKubernautAgent, resources.ComponentAPIFrontend} {
 			deployment := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.DeploymentName(component)}, deployment)).To(Succeed(), component)
+			Expect(deployment.Spec.Template.Annotations).To(HaveKey(resources.AnnotationMonitoringMaterialRevision), component)
 			volume := findMonitoringDeploymentVolume(deployment)
 			Expect(volume).NotTo(BeNil(), component)
 			Expect(volume.Secret).NotTo(BeNil(), component)
 			Expect(volume.Secret.SecretName).To(Equal(monitoringCA.Name), component)
+			var mounted bool
+			for _, container := range deployment.Spec.Template.Spec.Containers {
+				for _, mount := range container.VolumeMounts {
+					if mount.Name != resources.MonitoringTLSCAVolumeName {
+						continue
+					}
+					mounted = true
+					Expect(mount.MountPath).To(Equal(resources.MonitoringTLSCADir), component)
+					Expect(mount.ReadOnly).To(BeTrue(), component)
+				}
+			}
+			Expect(mounted).To(BeTrue(), component)
 		}
 	})
 
