@@ -3648,30 +3648,18 @@ func (r *KubernautReconciler) validateFleetTokenSecret(ctx context.Context, kn *
 	return nil
 }
 
-// validateMonitoringTLS verifies administrator-provided monitoring trust
-// material before dependent workloads are deployed. interService is supplied
-// by the operator/platform TLS contract and system deliberately uses the
-// process trust store; Secret and ConfigMap material must exist, contain the
-// selected key, and parse as one or more PEM certificates.
+// validateMonitoringTLS verifies optional administrator-provided monitoring
+// Secret material before dependent workloads are deployed. An omitted
+// reference deliberately uses the process trust store.
 func (r *KubernautReconciler) validateMonitoringTLS(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
 	tls := kn.Spec.Monitoring.TLS
-	if tls == nil || tls.Source == "" || tls.Source == kubernautv1alpha2.MonitoringTLSSourceInterService || tls.Source == kubernautv1alpha2.MonitoringTLSSourceSystem {
+	if tls == nil || tls.CACertSecretRef == nil {
 		return nil
 	}
-	switch tls.Source {
-	case kubernautv1alpha2.MonitoringTLSSourceSecret:
-		if tls.CACertSecretRef == nil || tls.CACertSecretRef.Name == "" {
-			return fmt.Errorf("spec.monitoring.tls.caCertSecretRef is required when source is secret")
-		}
-		return r.validateMonitoringTLSSecret(ctx, kn.Namespace, tls.CACertSecretRef)
-	case kubernautv1alpha2.MonitoringTLSSourceConfigMap:
-		if tls.CACertConfigMapRef == nil || tls.CACertConfigMapRef.Name == "" {
-			return fmt.Errorf("spec.monitoring.tls.caCertConfigMapRef is required when source is configMap")
-		}
-		return r.validateMonitoringTLSConfigMap(ctx, kn.Namespace, tls.CACertConfigMapRef)
-	default:
-		return fmt.Errorf("spec.monitoring.tls.source %q is invalid", tls.Source)
+	if tls.CACertSecretRef.Name == "" {
+		return fmt.Errorf("spec.monitoring.tls.caCertSecretRef is required when configured")
 	}
+	return r.validateMonitoringTLSSecret(ctx, kn.Namespace, tls.CACertSecretRef)
 }
 
 func (r *KubernautReconciler) validateMonitoringTLSSecret(ctx context.Context, namespace string, ref *kubernautv1alpha2.CACertSecretRef) error {
@@ -3687,37 +3675,21 @@ func (r *KubernautReconciler) validateMonitoringTLSSecret(ctx context.Context, n
 	if !ok || len(data) == 0 {
 		return fmt.Errorf("monitoring tls secret %q is missing key %q", ref.Name, key)
 	}
-	return validateMonitoringTLSCAData(data, "secret", ref.Name, key)
+	return validateMonitoringTLSCAData(data, ref.Name, key)
 }
 
-func (r *KubernautReconciler) validateMonitoringTLSConfigMap(ctx context.Context, namespace string, ref *kubernautv1alpha2.CACertConfigMapRef) error {
-	key := ref.Key
-	if key == "" {
-		key = monitoringTLSDefaultCAKey
-	}
-	configMap := &corev1.ConfigMap{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: ref.Name}, configMap); err != nil {
-		return fmt.Errorf("monitoring tls configmap %q could not be read: %w", ref.Name, err)
-	}
-	data, ok := configMap.Data[key]
-	if !ok || data == "" {
-		return fmt.Errorf("monitoring tls configmap %q is missing key %q", ref.Name, key)
-	}
-	return validateMonitoringTLSCAData([]byte(data), "configmap", ref.Name, key)
-}
-
-func validateMonitoringTLSCAData(data []byte, kind, name, key string) error {
+func validateMonitoringTLSCAData(data []byte, name, key string) error {
 	certificates, err := parseTelemetryCertificates(data)
 	if err != nil {
-		return fmt.Errorf("monitoring tls %s %q key %q does not contain valid ca pem: %w", kind, name, key, err)
+		return fmt.Errorf("monitoring tls secret %q key %q does not contain valid ca pem: %w", name, key, err)
 	}
 	now := time.Now()
 	for _, certificate := range certificates {
 		if !certificate.IsCA {
-			return fmt.Errorf("monitoring tls %s %q key %q contains a non-ca certificate", kind, name, key)
+			return fmt.Errorf("monitoring tls secret %q key %q contains a non-ca certificate", name, key)
 		}
 		if now.Before(certificate.NotBefore) || now.After(certificate.NotAfter) {
-			return fmt.Errorf("monitoring tls %s %q key %q contains an expired or not-yet-valid ca certificate", kind, name, key)
+			return fmt.Errorf("monitoring tls secret %q key %q contains an expired or not-yet-valid ca certificate", name, key)
 		}
 	}
 	return nil

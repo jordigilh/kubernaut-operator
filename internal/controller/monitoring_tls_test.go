@@ -41,7 +41,7 @@ var _ = Describe("monitoring TLS source lifecycle", Label("unit"), func() {
 		return scheme
 	}
 
-	It("resolves non-sensitive revisions for Secret and ConfigMap sources and none for system trust", func() {
+	It("UT-MON-563-ROT-001 [CM-3, SC-12, SI-4; SOC2 CC7.2, CC8.1; ASVS V13.3.4, V16.5.2] resolves Secret revisions and none for system trust", func() {
 		scheme := newMonitoringScheme()
 		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "monitoring-ca", Namespace: testNamespace, ResourceVersion: "11"}}
 		reconciler := &KubernautReconciler{
@@ -49,7 +49,6 @@ var _ = Describe("monitoring TLS source lifecycle", Label("unit"), func() {
 		}
 		kn := newMinimalCR()
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
 			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: secret.Name},
 		}
 		first, err := reconciler.monitoringTLSMaterialRevision(context.Background(), kn)
@@ -63,27 +62,13 @@ var _ = Describe("monitoring TLS source lifecycle", Label("unit"), func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(second).NotTo(Equal(first))
 
-		configMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "monitoring-ca-config", Namespace: testNamespace, ResourceVersion: "21"}}
-		reconciler.Client = fake.NewClientBuilder().WithScheme(scheme).WithObjects(configMap).Build()
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:             kubernautv1alpha2.MonitoringTLSSourceConfigMap,
-			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: configMap.Name, Key: "bundle.pem"},
-		}
-		configMapRevision, err := reconciler.monitoringTLSMaterialRevision(context.Background(), kn)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(configMapRevision).To(HaveLen(64))
-		kn.Spec.Monitoring.TLS.CACertConfigMapRef.Name = "missing-monitoring-ca-config"
-		_, err = reconciler.monitoringTLSMaterialRevision(context.Background(), kn)
-		Expect(err).To(MatchError(ContainSubstring("could not be read")))
-
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
 			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "missing-monitoring-ca"},
 		}
 		_, err = reconciler.monitoringTLSMaterialRevision(context.Background(), kn)
 		Expect(err).To(MatchError(ContainSubstring("could not be read")))
 
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSystem}
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{}
 		systemRevision, err := reconciler.monitoringTLSMaterialRevision(context.Background(), kn)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(systemRevision).To(BeEmpty())
@@ -93,25 +78,17 @@ var _ = Describe("monitoring TLS source lifecycle", Label("unit"), func() {
 		Expect(unconfiguredRevision).To(BeEmpty())
 	})
 
-	It("fails closed for nil and incomplete source objects", func() {
+	It("UT-MON-563-WATCH-001 [AC-6, SI-4; SOC2 CC6.1, CC7.2; ASVS V13.3.4] fails closed for nil and incomplete Secret references", func() {
 		Expect(monitoringTLSConfigured(nil)).To(BeFalse())
 		_, _, _, ok := monitoringTLSReference(nil)
 		Expect(ok).To(BeFalse())
 		_, _, _, ok = monitoringTLSSecretReference(nil)
 		Expect(ok).To(BeFalse())
-		_, _, _, ok = monitoringTLSConfigMapReference(nil)
-		Expect(ok).To(BeFalse())
 
 		kn := newMinimalCR()
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceConfigMap}
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{}
 		_, _, _, ok = monitoringTLSReference(kn)
 		Expect(ok).To(BeFalse())
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
-		kind, name, key, ok := monitoringTLSInterServiceReference(kn)
-		Expect(ok).To(BeTrue())
-		Expect(kind).To(Equal(monitoringTLSConfigMapKind))
-		Expect(name).To(Equal(resources.InterServiceCAConfigMapName))
-		Expect(key).To(Equal("ca.crt"))
 	})
 
 	It("includes the monitoring revision in the shared material resolver", func() {
@@ -119,7 +96,6 @@ var _ = Describe("monitoring TLS source lifecycle", Label("unit"), func() {
 		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "monitoring-ca", Namespace: testNamespace, ResourceVersion: "31"}}
 		kn := newMinimalCR()
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
 			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: secret.Name},
 		}
 		reconciler := &KubernautReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()}
@@ -139,8 +115,7 @@ var _ = Describe("monitoring TLS source lifecycle", Label("unit"), func() {
 		scheme := newMonitoringScheme()
 		kn := newMinimalCR()
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
-			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"},
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca", Key: "bundle.pem"},
 		}
 		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "monitoring-ca", Namespace: testNamespace}}
 		reconciler := &KubernautReconciler{
@@ -149,14 +124,6 @@ var _ = Describe("monitoring TLS source lifecycle", Label("unit"), func() {
 		expected := []reconcile.Request{{NamespacedName: types.NamespacedName{Name: kn.Name, Namespace: kn.Namespace}}}
 		Expect(reconciler.telemetrySecretToKubernaut(context.Background(), secret)).To(Equal(expected))
 
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:             kubernautv1alpha2.MonitoringTLSSourceConfigMap,
-			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca-config"},
-		}
-		configMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "monitoring-ca-config", Namespace: testNamespace}}
-		Expect(reconciler.Client.Update(context.Background(), kn)).To(Succeed())
-		Expect(reconciler.Client.Create(context.Background(), configMap)).To(Succeed())
-		Expect(reconciler.telemetryAmbientConfigMapToKubernaut(context.Background(), configMap)).To(Equal(expected))
 		Expect(reconciler.telemetryAmbientConfigMapToKubernaut(context.Background(), &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: testNamespace},
 		})).To(BeEmpty())
@@ -181,27 +148,15 @@ var _ = Describe("monitoring TLS source lifecycle", Label("unit"), func() {
 })
 
 var _ = Describe("monitoring TLS source references", Label("unit"), func() {
-	It("follows the administrator-owned manual inter-service Secret", func() {
+	It("resolves only an explicit administrator-owned monitoring Secret", func() {
 		kn := newMinimalCR()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
-		kn.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{InternalCASecretName: "administrator-ca"}
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca", Key: "bundle.pem"},
+		}
 		kind, name, key, ok := monitoringTLSReference(kn)
 		Expect(ok).To(BeTrue())
-		Expect(kind).To(Equal("secret"))
-		Expect(name).To(Equal("administrator-ca"))
-		Expect(key).To(Equal("ca.crt"))
-	})
-
-	It("resolves the generated inter-service ConfigMap and rejects unknown sources", func() {
-		kn := newMinimalCR()
-		kind, name, key, ok := monitoringTLSReference(kn)
-		Expect(ok).To(BeTrue())
-		Expect(kind).To(Equal(monitoringTLSConfigMapKind))
-		Expect(name).To(Equal(resources.TrustBundleConfigMapName))
-		Expect(key).To(Equal("service-ca.crt"))
-
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: "unknown"}
-		_, _, _, ok = monitoringTLSReference(kn)
-		Expect(ok).To(BeFalse())
+		Expect(kind).To(Equal(monitoringTLSSecretKind))
+		Expect(name).To(Equal("monitoring-ca"))
+		Expect(key).To(Equal("bundle.pem"))
 	})
 })

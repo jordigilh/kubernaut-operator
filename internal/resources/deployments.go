@@ -433,7 +433,7 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuber
 	}
 
 	var env []corev1.EnvVar
-	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
+	volumes, mounts, env = appendInterServiceTLSCAForMonitoringConsumer(kn, volumes, mounts, env)
 	if monitoringVolume := MonitoringTLSVolume(knV2); monitoringVolume != nil {
 		volumes = append(volumes, *monitoringVolume)
 		mounts = append(mounts, MonitoringTLSVolumeMount())
@@ -535,7 +535,7 @@ func KubernautAgentDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1
 	}
 
 	volumes, mounts, envVars := kaCoreVolumesMountsEnv(kn, kaProfile)
-	volumes, mounts, envVars = appendInterServiceTLSCA(kn, volumes, mounts, envVars)
+	volumes, mounts, envVars = appendInterServiceTLSCAForMonitoringConsumer(kn, volumes, mounts, envVars)
 	if monitoringVolume := MonitoringTLSVolume(knV2); monitoringVolume != nil {
 		volumes = append(volumes, *monitoringVolume)
 		mounts = append(mounts, MonitoringTLSVolumeMount())
@@ -1295,6 +1295,18 @@ func appendInterServiceTLSCA(kn *kubernautv1alpha2.Kubernaut, volumes []corev1.V
 	caFile := InterServiceTLSCAFileFor(kn)
 	env = append(env, corev1.EnvVar{Name: "TLS_CA_FILE", Value: caFile})
 	env = appendEnvIfAbsent(env, "SSL_CERT_FILE", caFile)
+	return volumes, mounts, env
+}
+
+// appendInterServiceTLSCAForMonitoringConsumer keeps the internal CA available
+// to DataStorage and other operator-managed clients without making it the
+// process-wide system trust store for external monitoring clients. On
+// OpenShift, an earlier caller may already have supplied the merged system+
+// service bundle; this helper deliberately preserves that value.
+func appendInterServiceTLSCAForMonitoringConsumer(kn *kubernautv1alpha2.Kubernaut, volumes []corev1.Volume, mounts []corev1.VolumeMount, env []corev1.EnvVar) ([]corev1.Volume, []corev1.VolumeMount, []corev1.EnvVar) {
+	volumes = append(volumes, InterServiceTLSCAVolume(kn))
+	mounts = append(mounts, InterServiceTLSCAMount(kn))
+	env = append(env, corev1.EnvVar{Name: "TLS_CA_FILE", Value: InterServiceTLSCAFileFor(kn)})
 	return volumes, mounts, env
 }
 

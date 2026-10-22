@@ -1561,16 +1561,16 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring(OCPPrometheusURL), "EM config should contain Prometheus URL when monitoring enabled, got:\n%s", data)
 			Expect(data).To(ContainSubstring(OCPAlertManagerURL), "EM config should contain AlertManager URL when monitoring enabled, got:\n%s", data)
 			Expect(data).To(ContainSubstring("external:"), "EM config should contain external section when monitoring enabled, got:\n%s", data)
-			Expect(data).To(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"), "EM config should contain external.tlsCaFile when monitoring enabled, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"), "EM config must use system trust when no monitoring Secret is configured, got:\n%s", data)
 		})
 
-		It("uses the shared trust-bundle path for explicit generic TLS", func() {
+		It("does not use the internal trust-bundle path for monitoring clients with generic TLS", func() {
 			kn := testKubernautWithCertManagerTLS()
 			cm, err := EffectivenessMonitorConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			data := cm.Data["effectivenessmonitor.yaml"]
-			Expect(data).To(ContainSubstring("tlsCaFile: " + MonitoringTLSCAFile))
+			Expect(data).NotTo(ContainSubstring("tlsCaFile: " + MonitoringTLSCAFile))
 		})
 
 		// #298: spec.monitoring.prometheus.url/spec.monitoring.alertManager.url
@@ -1596,7 +1596,7 @@ var _ = Describe("ConfigMaps", func() {
 		It("uses the shared monitoring TLS contract for every monitoring client (#424)", func() {
 			kn := testKubernaut()
 			knV2 := testKnV2(kn)
-			knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceConfigMap, CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca", Key: "bundle.pem"}}
+			knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca", Key: "bundle.pem"}}
 			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cm.Data["effectivenessmonitor.yaml"]).To(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"))
@@ -1611,7 +1611,7 @@ var _ = Describe("ConfigMaps", func() {
 		It("omits the shared CA file when system trust is selected", func() {
 			kn := testKubernautWithAF()
 			knV2 := testKnV2(kn)
-			knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSystem}
+			knV2.Spec.Monitoring.TLS = nil
 
 			em, err := EffectivenessMonitorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
@@ -1838,7 +1838,7 @@ var _ = Describe("ConfigMaps", func() {
 			data := cm.Data["config.yaml"]
 
 			Expect(data).To(ContainSubstring(OCPPrometheusURL), "KA config should contain Prometheus URL when monitoring enabled, got:\n%s", data)
-			Expect(data).To(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"), "KA config should contain Prometheus tlsCaFile for SA bearer auth, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"), "KA config must use system trust when no monitoring Secret is configured, got:\n%s", data)
 			Expect(data).To(ContainSubstring("dataStorage:"), "KA config should contain dataStorage section, got:\n%s", data)
 			Expect(data).To(ContainSubstring("url: https://data-storage-service.kubernaut-system.svc.cluster.local:8443"), "KA config should contain HTTPS dataStorage.url, got:\n%s", data)
 			Expect(strings.Contains(data, "tools:") && strings.Contains(data, "prometheus:")).To(BeTrue(), "KA config should contain upstream tools.prometheus section when monitoring enabled, got:\n%s", data)
@@ -1883,16 +1883,16 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(root.Integrations.DataStorage.URL).To(Equal(wantDS), "integrations.dataStorage.url = %q, want %q", root.Integrations.DataStorage.URL, wantDS)
 			Expect(root.Integrations.Tools).NotTo(BeNil(), "integrations.tools should be present when monitoring is enabled by default")
 			Expect(root.Integrations.Tools.Prometheus.URL).To(Equal(OCPPrometheusURL), "integrations.tools.prometheus.url = %q, want %q", root.Integrations.Tools.Prometheus.URL, OCPPrometheusURL)
-			Expect(root.Integrations.Tools.Prometheus.TLSCaFile).To(Equal("/etc/monitoring-tls/ca.crt"), "integrations.tools.prometheus.tlsCaFile = %q, want /etc/monitoring-tls/ca.crt", root.Integrations.Tools.Prometheus.TLSCaFile)
+			Expect(root.Integrations.Tools.Prometheus.TLSCaFile).To(BeEmpty(), "integrations.tools.prometheus.tlsCaFile = %q, want system trust", root.Integrations.Tools.Prometheus.TLSCaFile)
 			Expect(root.Integrations.Tools.Alertmanager).NotTo(BeNil(), "integrations.tools.alertmanager should be present when monitoring is enabled by default (#205)")
 			Expect(root.Integrations.Tools.Alertmanager.URL).To(Equal(OCPAlertManagerURL), "integrations.tools.alertmanager.url = %q, want %q", root.Integrations.Tools.Alertmanager.URL, OCPAlertManagerURL)
-			Expect(root.Integrations.Tools.Alertmanager.TLSCaFile).To(Equal("/etc/monitoring-tls/ca.crt"), "integrations.tools.alertmanager.tlsCaFile = %q, want /etc/monitoring-tls/ca.crt", root.Integrations.Tools.Alertmanager.TLSCaFile)
+			Expect(root.Integrations.Tools.Alertmanager.TLSCaFile).To(BeEmpty(), "integrations.tools.alertmanager.tlsCaFile = %q, want system trust", root.Integrations.Tools.Alertmanager.TLSCaFile)
 		})
 
 		It("uses one shared monitoring CA path for Prometheus and AlertManager tools (#424)", func() {
 			kn := testKubernaut()
 			knV2 := testKnV2(kn)
-			knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"}}
+			knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"}}
 			cm, err := KubernautAgentConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			var root kubernautAgentConfigYAML
@@ -3452,12 +3452,12 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).To(ContainSubstring("toolCallsPerMinute: 60"), "unset rateLimit.toolCallsPerMinute should default to 60, got:\n%s", data)
 	})
 
-	It("uses OCP service-ca for severity triage when monitoring is enabled", func() {
+	It("UT-MON-563-RES-002 [SC-8, SC-13, SC-17; SOC2 CC6.1, CC7.2; ASVS V12.3.1, V12.3.2, V13.3.4] omits severity-triage CA when no monitoring Secret is configured", func() {
 		kn := testKubernautWithAF()
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn))
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
-		Expect(data).To(ContainSubstring("prometheusTlsCaFile: /etc/monitoring-tls/ca.crt"))
+		Expect(data).NotTo(ContainSubstring("prometheusTlsCaFile: /etc/monitoring-tls/ca.crt"))
 	})
 
 	It("renders auth issuerURL and audience from spec", func() {
@@ -3880,7 +3880,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	It("uses the shared monitoring CA path for severity triage (#424)", func() {
 		kn := testKubernautWithAF()
 		knV2 := testKnV2(kn)
-		knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"}}
+		knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"}}
 		cm, err := APIFrontendConfigMap(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {

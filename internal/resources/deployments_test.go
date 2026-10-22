@@ -1330,7 +1330,6 @@ var _ = Describe("Deployments", func() {
 		It("TLS-CONSUMER-001 [AC-6, SC-8, SC-12, SI-4; ASVS V13.3.1, V13.3.2] mounts the shared monitoring CA source in EM, KA, and AF", func() {
 			kn := testKubernautWithAF()
 			kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-				Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
 				CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"},
 			}
 			knV2 := testKnV2(kn)
@@ -1361,7 +1360,7 @@ var _ = Describe("Deployments", func() {
 
 		It("TLS-CONSUMER-002 [SC-8, SC-12; ASVS V12.3.1, V13.3.1] does not mount monitoring CA material when system trust is selected", func() {
 			kn := testKubernautWithAF()
-			kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSystem}
+			kn.Spec.Monitoring.TLS = nil
 			knV2 := testKnV2(kn)
 
 			for _, builder := range []func(*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error){
@@ -1683,6 +1682,13 @@ var _ = Describe("Deployments", func() {
 	})
 
 	Context("overrideTLSCAFile helper", func() {
+		It("preserves an existing merged SSL_CERT_FILE when appending internal trust", func() {
+			env := []corev1.EnvVar{{Name: testEnvSSLCertFile, Value: "/etc/ssl/combined/ca-bundle.crt"}}
+			result := appendEnvIfAbsent(env, testEnvSSLCertFile, InterServiceTLSCAFile)
+			Expect(result).To(HaveLen(1))
+			Expect(result[0].Value).To(Equal("/etc/ssl/combined/ca-bundle.crt"))
+		})
+
 		It("replaces existing TLS_CA_FILE and SSL_CERT_FILE", func() {
 			env := []corev1.EnvVar{
 				{Name: "OTHER", Value: "foo"},
@@ -1961,12 +1967,13 @@ var _ = Describe("Deployments", func() {
 				}
 				Expect(hasCAMount).To(BeTrue(), "Deployment %q missing %s volume mount", dep.Name, testVolumeTLSCA)
 
-				// #478: Gateway and DataStorage must not set SSL_CERT_FILE to
-				// the narrow inter-service bundle because Go treats it as a
-				// replacement for the image's public system roots. KA retains
-				// its existing merged system+inter-service bundle on OpenShift.
+				// Gateway, DataStorage, and EffectivenessMonitor must not set
+				// SSL_CERT_FILE to the narrow inter-service bundle because Go
+				// treats it as a replacement for the image's public system roots.
+				// KA retains its existing merged system+inter-service bundle on
+				// OpenShift.
 				component := dep.Spec.Template.Labels["app"]
-				expectsProcessTrustEnv := component != ComponentGateway && component != ComponentDataStorage
+				expectsProcessTrustEnv := component != ComponentGateway && component != ComponentDataStorage && component != ComponentEffectivenessMonitor
 				wantSSLCertFile := InterServiceTLSCAFile
 				if component == ComponentKubernautAgent {
 					wantSSLCertFile = "/etc/ssl/combined/ca-bundle.crt"

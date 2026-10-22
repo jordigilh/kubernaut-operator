@@ -152,7 +152,6 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 					InternalCASecretName: material[0].Name, ServiceTLSSecretNames: certManagerServiceTLSSecretNames(),
 				}
 			}
-			kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceInterService}
 			trust := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: resources.InterServiceCAConfigMapName, Namespace: kn.Namespace},
 				Data: map[string]string{"ca.crt": string(material[0].Data["ca.crt"]), "administrator-key": "preserved"}}
 			Expect(k8sClient.Create(ctx, trust)).To(Succeed())
@@ -183,16 +182,10 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 			deployment := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.ComponentGateway}, deployment)).To(Succeed())
 			Expect(deployment.Spec.Template.Spec.Volumes).To(ContainElement(HaveField("Secret", PointTo(HaveField("SecretName", resources.GatewayTLSSecretName)))))
-			monitoringDeployment := &appsv1.Deployment{}
-			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.DeploymentName(resources.ComponentEffectivenessMonitor)}, monitoringDeployment)).To(Succeed())
-			monitoringVolume := findMonitoringDeploymentVolume(monitoringDeployment)
-			Expect(monitoringVolume).NotTo(BeNil())
-			Expect(monitoringVolume.Secret).NotTo(BeNil())
-			Expect(monitoringVolume.Secret.SecretName).To(Equal(material[0].Name))
 		})
 	}
 
-	It("IT-MON-424-001 [AC-6, SC-8, SC-12, SC-13, SI-4; ASVS V12.3.1, V12.3.2, V13.3.1, V13.3.2]: validates and mounts a Secret-backed monitoring CA through Reconcile", func() {
+	It("IT-MON-563-001 [AC-6, SC-8, SC-12, SC-13, SI-4; SOC2 CC6.1, CC7.2; ASVS V12.3.1, V12.3.2, V13.3.1, V13.3.2]: validates and mounts a Secret-backed monitoring CA through Reconcile", func() {
 		monitoringCA := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "monitoring-ca", Namespace: testNamespace},
 			Data:       map[string][]byte{"ca.crt": telemetryCAPEM()},
@@ -205,7 +198,6 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 
 		kn := newCRWithRouteDisabled()
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
 			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: monitoringCA.Name},
 		}
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
@@ -221,40 +213,9 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 		}
 	})
 
-	It("IT-MON-424-002 [AC-6, SC-8, SC-12, SC-13, SI-4; ASVS V12.3.1, V12.3.2, V13.3.1, V13.3.2]: validates and mounts a ConfigMap-backed monitoring CA through Reconcile", func() {
-		monitoringCA := &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{Name: "monitoring-ca-config", Namespace: testNamespace},
-			Data:       map[string]string{"ca.crt": string(telemetryCAPEM())},
-		}
-		Expect(k8sClient.Create(ctx, monitoringCA)).To(Succeed())
-		DeferCleanup(func() {
-			deleteErr := k8sClient.Delete(context.Background(), monitoringCA)
-			Expect(deleteErr == nil || apierrors.IsNotFound(deleteErr)).To(BeTrue())
-		})
-
+	It("IT-MON-563-002 [SC-8, SC-13, SC-17, SI-4; SOC2 CC6.1, CC7.2; ASVS V12.3.1, V12.3.2, V13.3.4]: uses system trust without a monitoring CA volume", func() {
 		kn := newCRWithRouteDisabled()
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:             kubernautv1alpha2.MonitoringTLSSourceConfigMap,
-			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: monitoringCA.Name},
-		}
-		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
-		reconcileToRunning(ctx)
-
-		for _, component := range []string{resources.ComponentEffectivenessMonitor, resources.ComponentKubernautAgent, resources.ComponentAPIFrontend} {
-			deployment := &appsv1.Deployment{}
-			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.DeploymentName(component)}, deployment)).To(Succeed(), component)
-			volume := findMonitoringDeploymentVolume(deployment)
-			Expect(volume).NotTo(BeNil(), component)
-			Expect(volume.ConfigMap).NotTo(BeNil(), component)
-			Expect(volume.ConfigMap.Name).To(Equal(monitoringCA.Name), component)
-			Expect(findMonitoringVolumeMount(deployment)).To(BeTrue(), component)
-			Expect(deployment.Spec.Template.Annotations).To(HaveKeyWithValue(resources.AnnotationMonitoringMaterialRevision, HaveLen(64)), component)
-		}
-	})
-
-	It("IT-MON-424-003 [SC-8, SC-13, SI-4; ASVS V12.3.1, V12.3.2, V13.3.1, V13.3.2]: uses the system trust store without a monitoring CA volume", func() {
-		kn := newCRWithRouteDisabled()
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSystem}
+		kn.Spec.Monitoring.TLS = nil
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 		reconcileToRunning(ctx)
 
@@ -271,7 +232,7 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 		}
 	})
 
-	It("IT-MON-424-004 [AC-6, CM-3, SC-8, SC-12, SC-13, SI-4; ASVS V12.3.1, V12.3.2, V12.3.4, V13.3.1, V13.3.2, V16.5.2]: preserves the last-known-good monitoring Deployments on invalid rotation and rolls all consumers after valid rotation", func() {
+	It("IT-MON-563-003 [AC-6, CM-3, SC-8, SC-12, SC-13, SI-4; SOC2 CC7.2, CC8.1; ASVS V12.3.1, V12.3.2, V13.3.4, V16.5.2]: preserves last-known-good Deployments on invalid rotation and rolls all consumers after valid rotation", func() {
 		monitoringCA := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "monitoring-ca", Namespace: testNamespace},
 			Data:       map[string][]byte{"ca.crt": telemetryCAPEM()},
@@ -284,7 +245,6 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 
 		kn := newCRWithRouteDisabled()
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
 			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: monitoringCA.Name},
 		}
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
@@ -325,15 +285,6 @@ func findMonitoringDeploymentVolume(deployment *appsv1.Deployment) *corev1.Volum
 		}
 	}
 	return nil
-}
-
-func findMonitoringVolumeMount(deployment *appsv1.Deployment) bool {
-	for _, mount := range deployment.Spec.Template.Spec.Containers[0].VolumeMounts {
-		if mount.Name == resources.MonitoringTLSCAVolumeName && mount.MountPath == resources.MonitoringTLSCADir {
-			return mount.ReadOnly
-		}
-	}
-	return false
 }
 
 func monitoringDeploymentRevisions(ctx context.Context) map[string]string {

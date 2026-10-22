@@ -514,9 +514,8 @@ func hasNetworkTelemetry(kn *kubernautv1alpha2.Kubernaut) bool {
 }
 
 // telemetryAmbientConfigMapToKubernaut maps updates to ConfigMaps that feed
-// the effective inter-service or monitoring trust source. The explicit watch
-// covers manual administrator-owned ConfigMaps; operator-owned variants are
-// also observed through Owns(ConfigMap).
+// the effective inter-service trust source. Operator-owned variants are also
+// observed through Owns(ConfigMap).
 func (r *KubernautReconciler) telemetryAmbientConfigMapToKubernaut(ctx context.Context, object client.Object) []reconcile.Request {
 	configMap, ok := object.(*corev1.ConfigMap)
 	if !ok {
@@ -530,10 +529,6 @@ func (r *KubernautReconciler) telemetryAmbientConfigMapToKubernaut(ctx context.C
 	requests := make([]reconcile.Request, 0, len(list.Items))
 	for index := range list.Items {
 		kn := &list.Items[index]
-		if configMap.Namespace == kn.Namespace && monitoringTLSConfigMapReferenced(kn, configMap.Name) {
-			requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: kn.Name, Namespace: kn.Namespace}})
-			continue
-		}
 		if !telemetryAmbientConfigMap(configMap) {
 			continue
 		}
@@ -546,14 +541,6 @@ func (r *KubernautReconciler) telemetryAmbientConfigMapToKubernaut(ctx context.C
 		requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: kn.Name, Namespace: kn.Namespace}})
 	}
 	return requests
-}
-
-func monitoringTLSConfigMapReferenced(kn *kubernautv1alpha2.Kubernaut, configMapName string) bool {
-	if !monitoringTLSConfigured(kn) {
-		return false
-	}
-	kind, name, _, ok := monitoringTLSReference(kn)
-	return ok && kind == monitoringTLSConfigMapKind && name == configMapName
 }
 
 func (r *KubernautReconciler) setTelemetryAmbientTrustPending(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, err error) (reconcile.Result, error) {
