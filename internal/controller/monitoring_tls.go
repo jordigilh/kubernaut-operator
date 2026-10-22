@@ -31,6 +31,8 @@ const (
 	monitoringTLSSecretKind = "secret"
 )
 
+// monitoringTLSConfigured reports whether the CR selects an administrator-owned
+// monitoring CA Secret.
 func monitoringTLSConfigured(kn *kubernautv1alpha2.Kubernaut) bool {
 	if kn == nil {
 		return false
@@ -49,6 +51,7 @@ func monitoringTLSReference(kn *kubernautv1alpha2.Kubernaut) (kind, name, key st
 	return monitoringTLSSecretReference(kn.Spec.Monitoring.TLS)
 }
 
+// monitoringTLSSecretReference extracts the effective Secret identity and key.
 func monitoringTLSSecretReference(tls *kubernautv1alpha2.MonitoringTLSSpec) (string, string, string, bool) {
 	if tls == nil || tls.CACertSecretRef == nil || tls.CACertSecretRef.Name == "" {
 		return "", "", "", false
@@ -56,6 +59,7 @@ func monitoringTLSSecretReference(tls *kubernautv1alpha2.MonitoringTLSSpec) (str
 	return monitoringTLSSecretKind, tls.CACertSecretRef.Name, monitoringTLSKey(tls.CACertSecretRef.Key), true
 }
 
+// monitoringTLSKey returns the default CA key when the reference omits one.
 func monitoringTLSKey(key string) string {
 	if key == "" {
 		return monitoringTLSDefaultCAKey

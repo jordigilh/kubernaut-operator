@@ -29,6 +29,8 @@ import (
 	sigsyaml "sigs.k8s.io/yaml"
 )
 
+// TestCleanBreak runs the v1alpha2 CRD contract suite without a conversion
+// webhook or legacy served version.
 func TestCleanBreak(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "v1alpha2 Clean-Break Contract Suite")

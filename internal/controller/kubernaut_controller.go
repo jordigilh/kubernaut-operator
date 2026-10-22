@@ -3662,6 +3662,8 @@ func (r *KubernautReconciler) validateMonitoringTLS(ctx context.Context, kn *kub
 	return r.validateMonitoringTLSSecret(ctx, kn.Namespace, tls.CACertSecretRef)
 }
 
+// validateMonitoringTLSSecret verifies the referenced Secret exists and
+// contains only currently valid CA certificates at the selected key.
 func (r *KubernautReconciler) validateMonitoringTLSSecret(ctx context.Context, namespace string, ref *kubernautv1alpha2.CACertSecretRef) error {
 	key := ref.Key
 	if key == "" {
@@ -3678,6 +3680,8 @@ func (r *KubernautReconciler) validateMonitoringTLSSecret(ctx context.Context, n
 	return validateMonitoringTLSCAData(data, ref.Name, key)
 }
 
+// validateMonitoringTLSCAData rejects malformed, non-CA, expired, or
+// not-yet-valid certificates from monitoring trust material.
 func validateMonitoringTLSCAData(data []byte, name, key string) error {
 	certificates, err := parseTelemetryCertificates(data)
 	if err != nil {

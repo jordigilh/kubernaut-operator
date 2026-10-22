@@ -496,6 +496,8 @@ func ambientTrustSecretReferenced(kn *kubernautv1alpha2.Kubernaut, secretName st
 	return material.InternalCASecretName != "" && material.InternalCASecretName == secretName
 }
 
+// monitoringTLSSecretReferenced reports whether a Secret backs the shared
+// monitoring CA selected by the Kubernaut resource.
 func monitoringTLSSecretReferenced(kn *kubernautv1alpha2.Kubernaut, secretName string) bool {
 	if !monitoringTLSConfigured(kn) {
 		return false
@@ -504,6 +506,8 @@ func monitoringTLSSecretReferenced(kn *kubernautv1alpha2.Kubernaut, secretName s
 	return ok && kind == monitoringTLSSecretKind && name == secretName
 }
 
+// hasNetworkTelemetry reports whether any deployed telemetry lane needs trust
+// material and therefore participates in ambient CA reconciliation.
 func hasNetworkTelemetry(kn *kubernautv1alpha2.Kubernaut) bool {
 	for _, lane := range telemetryLanes(kn) {
 		if resources.TelemetryNetworkEnabled(lane.spec) {
@@ -543,6 +547,8 @@ func (r *KubernautReconciler) telemetryAmbientConfigMapToKubernaut(ctx context.C
 	return requests
 }
 
+// setTelemetryAmbientTrustPending records a retryable trust-source condition
+// while OpenShift service-CA injection is still completing.
 func (r *KubernautReconciler) setTelemetryAmbientTrustPending(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, err error) (reconcile.Result, error) {
 	message := err.Error()
 	if statusErr := r.patchStatus(ctx, kn, func() {

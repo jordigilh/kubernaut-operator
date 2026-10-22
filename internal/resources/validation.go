@@ -212,6 +212,8 @@ func validateMonitoringTLS(kn *kubernautv1alpha2.Kubernaut) []error {
 	return validateMonitoringCARef("spec.monitoring.tls.caCertSecretRef", tls.CACertSecretRef.Name, tls.CACertSecretRef.Key)
 }
 
+// validateMonitoringCARef validates the name and optional key of a monitoring
+// CA Secret reference from the CR spec.
 func validateMonitoringCARef(base, name, key string) []error {
 	var errs []error
 	if name == "" {
