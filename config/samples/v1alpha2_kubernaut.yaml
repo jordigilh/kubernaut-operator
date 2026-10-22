@@ -45,6 +45,24 @@ spec:
   gateway:
     enabled: true
 
+  # Generic Kubernetes/Kind TLS. Install cert-manager before applying this CR
+  # and pre-create the referenced Issuer/Certificates. Set provisioning.enabled
+  # to true when the operator should reconcile those cert-manager objects.
+  # tls:
+  #   mode: cert-manager
+  #   certManager:
+  #     issuerRef:
+  #       name: kubernaut-ca
+  #       kind: Issuer
+  #       group: cert-manager.io
+  #     internalCASecretName: kubernaut-internal-ca
+  #     serviceTLSSecretNames:
+  #       gateway: gateway-tls
+  #       datastorage: datastorage-tls
+  #       kubernautagent: kubernautagent-tls
+  #       apifrontend: apifrontend-tls
+  #       authwebhook: authwebhook-tls
+
   # API Frontend and Console are optional. Disable AF here so this sample does
   # not require an external OIDC provider; enable it separately when needed.
   apiFrontend:

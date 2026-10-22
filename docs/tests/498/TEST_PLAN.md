@@ -4,10 +4,9 @@
 
 **Parent work:** [#491 — upstream Helm TLS parity](https://github.com/jordigilh/kubernaut-operator/issues/491)
 
-**Status:** Implementation plan for the dedicated `feat/498-tls-e2e-lanes`
-worktree. Repository changes are in progress, but the work is not complete
-until every source has unit, envtest, and Helm-backed Kind evidence and
-the hosted hook/manual-admin jobs are green.
+**Status:** Historical plan superseded by Issue #561. The application Helm
+TLS parity surface is being deprecated; current qualification uses the
+`manual`, `cert-manager`, and `service-ca` source contract.
 
 **Methodology:** RED → GREEN → REFACTOR → CHECK, with the operator Helm-chart
 E2E journey required for every supported generic TLS source.

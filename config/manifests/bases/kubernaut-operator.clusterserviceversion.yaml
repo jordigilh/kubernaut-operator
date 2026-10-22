@@ -53,7 +53,7 @@ spec:
     - **Single CR deployment**: one `Kubernaut` custom resource deploys the platform services
     - **BYO infrastructure**: bring your own PostgreSQL and Valkey/Redis
     - **Portable lifecycle**: workloads, Services, RBAC, PDBs, status, and cleanup use core Kubernetes APIs
-    - **Explicit TLS and exposure**: administrator-managed, cert-manager, or development self-signed TLS plus generic Ingress
+    - **Explicit TLS and exposure**: manual, cert-manager, or service-CA TLS plus generic Ingress
     - **Portable network isolation**: selector-based Kubernetes NetworkPolicy objects with administrator-owned API-server/external egress
     - **Policy-governed**: Rego policies control signal classification and AI analysis approval
     - **LLM-powered analysis**: integrates with OpenAI, Anthropic, and other LLM providers

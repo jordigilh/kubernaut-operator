@@ -4,7 +4,9 @@
 **Version:** `0.3`<br>
 **Date:** `2026-10-10`<br>
 **Scope:** Kubernaut Operator Issue #491 / PR #493  
-**Status:** repository evidence tier-corrected by PR #515 remediation; earlier hosted Kind records are historical, not qualification of the uncommitted remediation; OpenShift qualification and external-assessment evidence pending
+**Status:** historical Helm-parity evidence; superseded for the unreleased
+operator CR API by Issue #561. Earlier hosted Kind records are historical, not
+qualification of the new three-mode source contract.
 
 ## Attestation boundary
 
