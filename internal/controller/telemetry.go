@@ -485,6 +485,8 @@ func telemetrySecretReferenced(kn *kubernautv1alpha2.Kubernaut, secretName strin
 	return false
 }
 
+// ambientTrustSecretReferenced reports whether a Secret backs the selected
+// ambient inter-service trust material.
 func ambientTrustSecretReferenced(kn *kubernautv1alpha2.Kubernaut, secretName string) bool {
 	if !hasNetworkTelemetry(kn) {
 		return false
