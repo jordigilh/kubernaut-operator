@@ -176,13 +176,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - lane: generic (development TLS)
-            tls_source: development
-            cluster_name: kubernaut-kind-generic
-          - lane: generic (hook TLS)
-            tls_source: hook
-            cluster_name: kubernaut-kind-hook
-          - lane: generic (manual/administrator-managed TLS)
+          - lane: generic (manual TLS)
             tls_source: manual-admin
             cluster_name: kubernaut-kind-manual-admin
           - lane: generic (cert-manager TLS)

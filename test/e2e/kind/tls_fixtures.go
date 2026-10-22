@@ -257,15 +257,22 @@ func verifyTLSWorkloadTrust(ctx context.Context, caKey string) error {
 			Items:                []corev1.KeyToPath{{Key: tlsCACertificateKey, Path: tlsCACertificateKey}},
 		}},
 	}
-	if configuredTLS == tlsManualAdmin && activeManualTLSSelection == manualTLSSelectionManual {
+	if configuredTLS == tlsManualAdmin {
 		fixture, err := activeManualTLSFixture()
 		if err != nil {
 			return err
 		}
-		trustVolume.VolumeSource = corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-			LocalObjectReference: corev1.LocalObjectReference{Name: fixture.caConfigMapName},
-			Items:                []corev1.KeyToPath{{Key: caKey, Path: tlsCACertificateKey}},
-		}}
+		if activeManualTLSSelection == manualTLSSelectionManual {
+			trustVolume.VolumeSource = corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: fixture.caConfigMapName},
+				Items:                []corev1.KeyToPath{{Key: caKey, Path: tlsCACertificateKey}},
+			}}
+		} else {
+			trustVolume.VolumeSource = corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+				SecretName: fixture.caSecretName,
+				Items:      []corev1.KeyToPath{{Key: caKey, Path: tlsCACertificateKey}},
+			}}
+		}
 	}
 	encoded, err := yaml.Marshal(TLSProbePod(trustVolume))
 	if err != nil {

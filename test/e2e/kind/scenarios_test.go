@@ -141,7 +141,7 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 	})
 
 	It(
-		"E2E-MON-424-001 / E2E-TLS-GAP-001 / E2E-TLS-DEV-001 / E2E-TLS-CERTMANAGER-001 / E2E-TLS-HOOK-001 / "+
+		"E2E-MON-424-001 / E2E-TLS-GAP-001 / E2E-TLS-CERTMANAGER-001 / "+
 			"E2E-AUDIT-209-001 / "+
 			"E2E-TLS-MANUAL-001 / E2E-TLS-ADMIN-001 / E2E-TLS-CLEANUP-001 [SC-8, SC-13, SC-17, SI-4; "+
 			"SOC2 CC6, CC7, A1; ASVS v5.0.0-V12.1.3, v5.0.0-V13.2.1, v5.0.0-V16.5.2] drives the CR through "+

@@ -266,7 +266,7 @@ jobs:
         env:
           KIND_OPERATOR_VERSION: ci
           KUBERNAUT_OPERATOR_IMAGE: localhost/kubernaut-operator:ci
-          KUBERNAUT_E2E_TLS_SOURCE: development
+          KUBERNAUT_E2E_TLS_SOURCE: certmanager
           KIND_CLUSTER_NAME: kubernaut-kind-release
         run: make test-e2e-kind
 
