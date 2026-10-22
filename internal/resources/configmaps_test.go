@@ -1562,6 +1562,10 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring(OCPAlertManagerURL), "EM config should contain AlertManager URL when monitoring enabled, got:\n%s", data)
 			Expect(data).To(ContainSubstring("external:"), "EM config should contain external section when monitoring enabled, got:\n%s", data)
 			Expect(data).NotTo(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"), "EM config must use system trust when no monitoring Secret is configured, got:\n%s", data)
+			var root effectivenessMonitorConfigYAML
+			Expect(yaml.Unmarshal([]byte(data), &root)).To(Succeed())
+			Expect(root.TLSCAFile).To(Equal(InterServiceTLSCAFile), "EM ambient TLS trust must include the internal CA for internal clients")
+			Expect(root.External.TLSCaFile).To(BeEmpty(), "EM monitoring trust must remain on system trust without an administrator Secret")
 		})
 
 		It("does not use the internal trust-bundle path for monitoring clients with generic TLS", func() {
@@ -1600,6 +1604,10 @@ var _ = Describe("ConfigMaps", func() {
 			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cm.Data["effectivenessmonitor.yaml"]).To(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"))
+			var emRoot effectivenessMonitorConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["effectivenessmonitor.yaml"]), &emRoot)).To(Succeed())
+			Expect(emRoot.TLSCAFile).To(Equal(InterServiceTLSCAFile))
+			Expect(emRoot.External.TLSCaFile).To(Equal(MonitoringTLSCAFile))
 			ka, err := KubernautAgentConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ka.Data["config.yaml"]).To(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"))
@@ -1617,6 +1625,7 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(err).NotTo(HaveOccurred())
 			var emRoot effectivenessMonitorConfigYAML
 			Expect(yaml.Unmarshal([]byte(em.Data["effectivenessmonitor.yaml"]), &emRoot)).To(Succeed())
+			Expect(emRoot.TLSCAFile).To(Equal(InterServiceTLSCAFile))
 			Expect(emRoot.External.TLSCaFile).To(BeEmpty())
 
 			ka, err := KubernautAgentConfigMap(kn, knV2)

@@ -229,6 +229,9 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 			configMap := &corev1.ConfigMap{}
 			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: name}, configMap)).To(Succeed(), name)
 			Expect(configMap.Data).NotTo(ContainElement(ContainSubstring(resources.MonitoringTLSCAFile)), name)
+			if name == "effectivenessmonitor-config" {
+				Expect(configMap.Data["effectivenessmonitor.yaml"]).To(ContainSubstring("tlsCaFile: /etc/tls-ca/service-ca.crt"), name)
+			}
 		}
 	})
 
