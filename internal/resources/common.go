@@ -90,6 +90,8 @@ func MonitoringTLSVolume(kn *kubernautv1alpha2.Kubernaut) *corev1.Volume {
 	return &corev1.Volume{Name: MonitoringTLSCAVolumeName, VolumeSource: *source}
 }
 
+// monitoringTLSVolumeSource builds the Secret projection for the selected
+// administrator-owned monitoring CA, or nil when system trust is selected.
 func monitoringTLSVolumeSource(kn *kubernautv1alpha2.Kubernaut) *corev1.VolumeSource {
 	if kn == nil || kn.Spec.Monitoring.TLS == nil || kn.Spec.Monitoring.TLS.CACertSecretRef == nil || kn.Spec.Monitoring.TLS.CACertSecretRef.Name == "" {
 		return nil
