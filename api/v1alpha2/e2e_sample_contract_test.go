@@ -36,4 +36,25 @@ var _ = Describe("disposable OCP sample contract", func() {
 		Expect(sample.Spec.PostgreSQL.SSLMode).To(Equal("require"),
 			"the disposable bootstrap owns a private PostgreSQL CA; the E2E sample must request encrypted transport without assuming the operator CA")
 	})
+
+	It("UT-E2E-NOT-001 [IA-5, CM-6; SOC2 CC6.1, CC8.1; ASVS V8.2.1, V16.5.2]: references the bootstrap notification credentials and routing ConfigMap", func() {
+		manifestPath := filepath.Join("..", "..", "config", "samples", "v1alpha2_kubernaut.yaml")
+		manifest, err := os.ReadFile(manifestPath) //nolint:gosec // test path is fixed within the repository
+		Expect(err).NotTo(HaveOccurred())
+
+		sample := &Kubernaut{}
+		Expect(sigsyaml.Unmarshal(manifest, sample)).To(Succeed())
+		Expect(sample.Spec.Notification.Routing).NotTo(BeNil())
+		Expect(sample.Spec.Notification.Routing.ConfigMapName).To(Equal("notification-routing"))
+
+		credentials := make(map[string]NotificationSecretRef, len(sample.Spec.Notification.Credentials))
+		for _, credential := range sample.Spec.Notification.Credentials {
+			credentials[credential.Name] = credential.SecretRef
+		}
+		Expect(credentials).To(Equal(map[string]NotificationSecretRef{
+			"slack-ops":          {Name: "slack-webhook", Key: "webhook-url"},
+			"teams-primary":      {Name: "notification-teams", Key: "webhook-url"},
+			"pagerduty-critical": {Name: "notification-pagerduty", Key: "routing-key"},
+		}))
+	})
 })
