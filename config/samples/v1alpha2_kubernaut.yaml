@@ -16,6 +16,9 @@ spec:
   postgresql:
     host: postgresql.kubernaut-system.svc.cluster.local
     secretName: postgresql-secret
+    # The disposable E2E bootstrap uses a private PostgreSQL CA. Keep TLS
+    # enabled without making the operator's internal CA the BYO database trust.
+    sslMode: require
 
   # BYO Valkey/Redis. The Secret must contain valkey-secrets.yaml.
   valkey:
