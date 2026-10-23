@@ -55,7 +55,7 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 		_, _ = utils.Run(cmd) // ignore if already exists
 
 		By("installing the disposable PostgreSQL and Valkey bootstrap")
-		installDevelopmentBootstrap()
+		installDevelopmentDependencies()
 
 		By("installing CRDs")
 		cmd = exec.Command("make", "install")
@@ -80,7 +80,7 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 		_, _ = utils.Run(cmd)
 
 		By("uninstalling the disposable PostgreSQL and Valkey bootstrap")
-		cmd = exec.Command("helm", "uninstall", "kubernaut-dev-bootstrap",
+		cmd = exec.Command("helm", "uninstall", "kubernaut-development-dependencies",
 			"-n", crNS, "--wait")
 		_, _ = utils.Run(cmd)
 
@@ -554,7 +554,7 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 				cmd := exec.Command("kubectl", "get", "configmap", name,
 					"-n", crNS, "-o", "jsonpath={.metadata.labels.app\\.kubernetes\\.io/managed-by}")
 				output, err := utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "ConfigMap %q should be provided by the bootstrap chart", name)
+				Expect(err).NotTo(HaveOccurred(), "ConfigMap %q should be provided by the development dependencies chart", name)
 				Expect(output).To(Equal("Helm"), "ConfigMap %q should remain Helm-owned", name)
 
 				cmd = exec.Command("kubectl", "get", "configmap", name,
@@ -649,16 +649,16 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 	})
 })
 
-func installDevelopmentBootstrap() {
+func installDevelopmentDependencies() {
 	ctx, cancel := context.WithTimeout(context.Background(), 11*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "helm", "upgrade", "--install", "kubernaut-dev-bootstrap",
-		"charts/kubernaut-dev-bootstrap",
+	cmd := exec.CommandContext(ctx, "helm", "upgrade", "--install", "kubernaut-development-dependencies",
+		"charts/kubernaut-development-dependencies",
 		"--namespace", crNS,
 		"--create-namespace",
 		"--wait", "--timeout", "10m")
 	_, err := utils.Run(cmd)
-	Expect(err).NotTo(HaveOccurred(), "Failed to install the development bootstrap chart")
+	Expect(err).NotTo(HaveOccurred(), "Failed to install the development dependencies chart")
 }
 
 // serviceAccountToken returns a token for the operator service account.

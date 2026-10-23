@@ -4,7 +4,7 @@ metadata:
   name: {{ .Values.postgresql.name }}-config
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
 data:
   postgresql-ssl.conf: |-
     ssl = on

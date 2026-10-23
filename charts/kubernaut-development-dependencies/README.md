@@ -1,4 +1,4 @@
-# Kubernaut development dependency bootstrap
+# Kubernaut development dependencies
 
 This chart is an explicit, disposable development path for the operator's
 bring-your-own (BYO) PostgreSQL and Valkey contract. It is **not** part of the
@@ -21,8 +21,36 @@ generates a short-lived, in-cluster certificate and rejects non-TLS host
 connections.
 
 ```bash
-helm upgrade --install kubernaut-dev-bootstrap \
-  ./charts/kubernaut-dev-bootstrap \
+helm upgrade --install kubernaut-development-dependencies \
+  ./charts/kubernaut-development-dependencies \
+  --namespace kubernaut-system \
+  --create-namespace \
+  --wait --timeout 10m
+```
+
+## Demo clusters from the OCI release
+
+The tagged operator release publishes this chart to Quay as an OCI artifact.
+Use the immutable digest printed in the GitHub Release workflow summary:
+
+```bash
+helm upgrade --install kubernaut-development-dependencies \
+  oci://quay.io/kubernaut-ai/kubernaut-development-dependencies@sha256:<chart-digest> \
+  --namespace kubernaut-system \
+  --create-namespace \
+  --wait --timeout 10m
+```
+
+The same immutable reference is recorded in the release asset
+`operator-release-provenance.json` under `bootstrap_chart.digest` for automated
+demo-cluster consumers.
+
+The version tag is also available when digest pinning is not required:
+
+```bash
+helm upgrade --install kubernaut-development-dependencies \
+  oci://quay.io/kubernaut-ai/kubernaut-development-dependencies \
+  --version <release-version> \
   --namespace kubernaut-system \
   --create-namespace \
   --wait --timeout 10m
@@ -40,15 +68,15 @@ The chart creates:
   `llm-credentials`, plus `slack-webhook`, `kubernaut-console-oidc`,
   `aianalysis-policy`, and `signalprocessing-policy` fixtures for the sample
   CR; and
-* `kubernaut-dev-bootstrap-contract`, which records the hostnames, Secret
+* `kubernaut-development-dependencies-contract`, which records the hostnames, Secret
   names, and selected PostgreSQL `sslMode` for the Kubernaut CR.
 
 No real credentials are embedded. Override the disposable values for a local
 environment and keep them out of shell history where appropriate:
 
 ```bash
-helm upgrade --install kubernaut-dev-bootstrap \
-  ./charts/kubernaut-dev-bootstrap \
+helm upgrade --install kubernaut-development-dependencies \
+  ./charts/kubernaut-development-dependencies \
   --namespace kubernaut-system --create-namespace --wait --timeout 10m \
   --set-string postgresql.password='local-only-value' \
   --set-string valkey.password='local-only-value'
@@ -68,7 +96,7 @@ The chart owns the resources listed above. Remove the whole disposable
 environment with:
 
 ```bash
-helm uninstall kubernaut-dev-bootstrap --namespace kubernaut-system --wait
+helm uninstall kubernaut-development-dependencies --namespace kubernaut-system --wait
 ```
 
 Do not install this release into a namespace containing administrator-owned
@@ -92,8 +120,8 @@ to direct `kubectl` fixtures.
 The harness equivalent is:
 
 ```bash
-helm upgrade --install kubernaut-dev-bootstrap \
-  ./charts/kubernaut-dev-bootstrap \
+helm upgrade --install kubernaut-development-dependencies \
+  ./charts/kubernaut-development-dependencies \
   --namespace kubernaut-system --create-namespace \
   --set postgresql.commandMode=official \
   --set postgresql.securityContext.enabled=false \

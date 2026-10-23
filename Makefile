@@ -172,8 +172,8 @@ test-helm: ## Validate the operator-only Helm chart and its render contracts.
 	@command -v $(HELM_BIN) >/dev/null 2>&1 || { echo "Helm CLI not found: $(HELM_BIN)"; exit 1; }
 	$(HELM_BIN) lint charts/kubernaut-operator
 	HELM_BIN=$(HELM_BIN) ./hack/verify-helm-chart.sh
-	$(HELM_BIN) lint charts/kubernaut-dev-bootstrap
-	HELM_BIN=$(HELM_BIN) ./hack/verify-dev-bootstrap-chart.sh
+	$(HELM_BIN) lint charts/kubernaut-development-dependencies
+	HELM_BIN=$(HELM_BIN) ./hack/verify-development-dependencies-chart.sh
 	HELM_BIN=$(HELM_BIN) go test $(HELM_PKGS) -v
 
 .PHONY: test

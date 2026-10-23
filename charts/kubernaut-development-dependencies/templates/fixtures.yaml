@@ -5,7 +5,7 @@ metadata:
   name: llm-credentials
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
 type: Opaque
 stringData:
   api_key: {{ .Values.fixtures.llm.apiKey | quote }}
@@ -18,7 +18,7 @@ metadata:
   name: slack-webhook
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
 type: Opaque
 stringData:
   webhook-url: {{ .Values.fixtures.slack.webhookURL | quote }}
@@ -29,7 +29,7 @@ metadata:
   name: notification-routing
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
 data:
   routing.yaml: |-
     route:
@@ -52,7 +52,7 @@ metadata:
   name: notification-teams
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
 type: Opaque
 stringData:
   webhook-url: {{ .Values.fixtures.teams.webhookURL | quote }}
@@ -63,7 +63,7 @@ metadata:
   name: notification-pagerduty
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
 type: Opaque
 stringData:
   routing-key: {{ .Values.fixtures.pagerduty.routingKey | quote }}
@@ -74,7 +74,7 @@ metadata:
   name: kubernaut-console-oidc
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
 type: Opaque
 stringData:
   client-id: {{ .Values.fixtures.console.clientID | quote }}
@@ -87,7 +87,7 @@ metadata:
   name: aianalysis-policy
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
 data:
   approval.rego: |-
     {{- .Values.fixtures.policies.aiAnalysis | nindent 4 }}
@@ -98,7 +98,7 @@ metadata:
   name: signalprocessing-policy
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
 data:
   policy.rego: |-
     {{- .Values.fixtures.policies.signalProcessing | nindent 4 }}
@@ -106,10 +106,10 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: kubernaut-dev-bootstrap-contract
+  name: kubernaut-development-dependencies-contract
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
 data:
   connection-contract.yaml: |-
     # Apply these values to a Kubernaut CR in this namespace.

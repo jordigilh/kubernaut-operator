@@ -4,17 +4,17 @@ metadata:
   name: {{ .Values.valkey.name }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
     app.kubernetes.io/name: {{ .Values.valkey.name }}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "kubernaut-dev-bootstrap.valkeyLabels" . | nindent 6 }}
+      {{- include "kubernaut-development-dependencies.valkeyLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "kubernaut-dev-bootstrap.valkeyLabels" . | nindent 8 }}
+        {{- include "kubernaut-development-dependencies.valkeyLabels" . | nindent 8 }}
     spec:
       automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}
@@ -23,7 +23,7 @@ spec:
       {{- end }}
       containers:
         - name: {{ .Values.valkey.name }}
-          image: {{ include "kubernaut-dev-bootstrap.image" (dict "image" .Values.valkey.image) | quote }}
+          image: {{ include "kubernaut-development-dependencies.image" (dict "image" .Values.valkey.image) | quote }}
           imagePullPolicy: {{ .Values.valkey.image.pullPolicy }}
           command: ["sh", "-ceu"]
           args:
@@ -61,7 +61,7 @@ spec:
             {{- toYaml .Values.valkey.resources | nindent 12 }}
           {{- if .Values.valkey.securityContext.enabled }}
           securityContext:
-            {{- include "kubernaut-dev-bootstrap.containerSecurityContext" .Values.valkey.securityContext | nindent 12 }}
+            {{- include "kubernaut-development-dependencies.containerSecurityContext" .Values.valkey.securityContext | nindent 12 }}
           {{- end }}
           volumeMounts:
             - name: data
