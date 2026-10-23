@@ -575,6 +575,7 @@ type aiAnalysisRegoYAML struct {
 
 // aiAnalysisConfigYAML embeds controllerConfig under "controller" via controllerBlock.
 type aiAnalysisConfigYAML struct {
+	TLSCAFile   string                       `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 	TLSProfile  string                       `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Logging     loggingYAML                  `json:"logging" yaml:"logging"`
 	Controller  controllerBlock              `json:"controller" yaml:"controller"`
@@ -611,6 +612,7 @@ type signalProcessingDatastorageYAML struct {
 
 // signalProcessingConfigYAML embeds controllerConfig under "controller" via controllerBlock.
 type signalProcessingConfigYAML struct {
+	TLSCAFile   string                          `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 	TLSProfile  string                          `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Logging     loggingYAML                     `json:"logging" yaml:"logging"`
 	Controller  controllerBlock                 `json:"controller" yaml:"controller"`
@@ -718,6 +720,7 @@ type roDatastorageYAML struct {
 }
 
 type remediationOrchestratorConfigYAML struct {
+	TLSCAFile               string                 `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 	TLSProfile              string                 `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Controller              controllerBlock        `json:"controller" yaml:"controller"`
 	Logging                 loggingYAML            `json:"logging" yaml:"logging"`
@@ -772,6 +775,7 @@ type weTektonYAML struct {
 }
 
 type workflowExecutionConfigYAML struct {
+	TLSCAFile   string                        `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 	TLSProfile  string                        `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Logging     loggingYAML                   `json:"logging" yaml:"logging"`
 	Execution   weExecutionYAML               `json:"execution" yaml:"execution"`
@@ -908,6 +912,7 @@ type notificationDatastorageYAML struct {
 
 // notificationControllerConfigYAML embeds controllerConfig under "controller" via controllerBlock.
 type notificationControllerConfigYAML struct {
+	TLSCAFile   string                      `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 	TLSProfile  string                      `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Logging     loggingYAML                 `json:"logging" yaml:"logging"`
 	Controller  controllerBlock             `json:"controller" yaml:"controller"`
@@ -1245,6 +1250,7 @@ type authWebhookDatastorageYAML struct {
 }
 
 type authWebhookConfigYAML struct {
+	TLSCAFile   string                     `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 	TLSProfile  string                     `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Logging     loggingYAML                `json:"logging" yaml:"logging"`
 	Webhook     authWebhookWebhookYAML     `json:"webhook" yaml:"webhook"`
@@ -1538,6 +1544,7 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha
 		rego.ConfidenceThreshold = kn.Spec.AIAnalysis.ConfidenceThreshold
 	}
 	cfg := aiAnalysisConfigYAML{
+		TLSCAFile:  InterServiceTLSCAFileFor(knV2),
 		TLSProfile: o.tlsProfile,
 		Logging:    loggingYAML{Level: withDefault(kn.Spec.AIAnalysis.Logging.Level, "info")},
 		Controller: newControllerBlock("aianalysis.kubernaut.ai"),
@@ -1586,6 +1593,7 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv
 		MaxRetries:    3,
 	}
 	cfg := signalProcessingConfigYAML{
+		TLSCAFile:  InterServiceTLSCAFileFor(knV2),
 		TLSProfile: o.tlsProfile,
 		Logging:    loggingYAML{Level: withDefault(kn.Spec.SignalProcessing.Logging.Level, "info")},
 		Controller: newControllerBlock("signalprocessing.kubernaut.ai"),
@@ -1633,6 +1641,7 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kub
 	ro := &kn.Spec.RemediationOrchestrator
 	ns := kn.Namespace
 	cfg := remediationOrchestratorConfigYAML{
+		TLSCAFile:  InterServiceTLSCAFileFor(knV2),
 		TLSProfile: o.tlsProfile,
 		Controller: newControllerBlock("remediationorchestrator.kubernaut.ai"),
 		Logging:    loggingYAML{Level: withDefault(ro.Logging.Level, "info")},
@@ -1704,7 +1713,12 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernaut
 	if we.FailedExecutionRetentionSeconds != nil {
 		retentionSeconds = *we.FailedExecutionRetentionSeconds
 	}
+	tlsCAFile := InterServiceTLSCAFileFor(knV2)
+	if we.Ansible.CACertSecretRef != nil {
+		tlsCAFile = "/etc/combined-ca/ca-bundle.crt"
+	}
 	cfg := workflowExecutionConfigYAML{
+		TLSCAFile:  tlsCAFile,
 		TLSProfile: o.tlsProfile,
 		Logging:    loggingYAML{Level: withDefault(we.Logging.Level, "info")},
 		Execution: weExecutionYAML{
@@ -1807,6 +1821,7 @@ func NotificationControllerConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kube
 		Buffer:    buf,
 	}
 	cfg := notificationControllerConfigYAML{
+		TLSCAFile:  InterServiceTLSCAFileFor(knV2),
 		TLSProfile: o.tlsProfile,
 		Logging:    loggingYAML{Level: withDefault(kn.Spec.Notification.Logging.Level, "info")},
 		Controller: newControllerBlock("notification.kubernaut.ai"),
@@ -2228,6 +2243,7 @@ func AuthWebhookConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 		Buffer:    buf,
 	}
 	cfg := authWebhookConfigYAML{
+		TLSCAFile:  InterServiceTLSCAFileFor(knV2),
 		TLSProfile: o.tlsProfile,
 		Logging:    loggingYAML{Level: withDefault(kn.Spec.AuthWebhook.Logging.Level, "info")},
 		Webhook: authWebhookWebhookYAML{

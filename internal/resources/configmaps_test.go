@@ -1316,6 +1316,21 @@ var _ = Describe("ConfigMaps", func() {
 	})
 
 	Describe("WorkflowExecution ConfigMap", func() {
+		It("renders the runtime ambient CA path", func() {
+			kn := testKubernaut()
+			cm, err := WorkflowExecutionConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["workflowexecution.yaml"]).To(ContainSubstring("tlsCaFile: " + InterServiceTLSCAFile))
+		})
+
+		It("renders the combined AAP CA path when an AAP CA Secret is configured", func() {
+			kn := testKubernaut()
+			kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "aap-ca-secret"}
+			cm, err := WorkflowExecutionConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["workflowexecution.yaml"]).To(ContainSubstring("tlsCaFile: /etc/combined-ca/ca-bundle.crt"))
+		})
+
 		It("uses default workflow namespace", func() {
 			kn := testKubernaut()
 			cm, err := WorkflowExecutionConfigMap(kn, testKnV2(kn))
