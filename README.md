@@ -8,7 +8,7 @@ The Kubernaut Operator manages the full lifecycle of a Kubernaut deployment:
 
 - **Validates** BYO PostgreSQL and Valkey secrets
 - **Migrates** the database schema via embedded SQL migrations
-- **Deploys** 10 microservices, RBAC, ConfigMaps, PDBs, webhooks, and OCP Routes
+- **Deploys** 10 microservices, RBAC, ConfigMaps, PDBs, and webhooks; external exposure is administrator-managed
 - **Monitors** workload readiness and reports per-service status
 - **Cleans up** all cluster-scoped resources on CR deletion via a finalizer
 

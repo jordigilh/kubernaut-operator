@@ -576,6 +576,7 @@ spec:
     enabled: true
     auth:
       secretName: kubernaut-console-oidc
+      redirectURL: https://console.example.com/oauth2/callback
       # Optional provider-discovered OIDC end_session_endpoint. Keep the
       # literal {id_token} placeholder; oauth2-proxy substitutes it server-side.
       providerLogoutURL: "https://idp.example.com/realms/kubernaut/protocol/openid-connect/logout?id_token_hint={id_token}"

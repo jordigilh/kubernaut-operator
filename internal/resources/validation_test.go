@@ -108,7 +108,7 @@ var _ = Describe("SC-23: per-provider audience binding", func() {
 
 var _ = Describe("Console administrator-owned callback validation", func() {
 	It("UT-EXP-565-CONSOLE-001 [AC-6, SC-8, SI-10; SOC2 CC6.1, CC8.1; ASVS v5.0.0-V2.2.1, v5.0.0-V12.2.1]: requires an explicit HTTPS callback URL", func() {
-		for _, value := range []string{"", " http://console.example.com/oauth2/callback", "not-a-url", "http://console.example.com/oauth2/callback", "https://console.example.com/"} {
+		for _, value := range []string{"", " http://console.example.com/oauth2/callback", "not-a-url", "http://console.example.com/oauth2/callback", "https://console.example.com/", "https://:443/oauth2/callback"} {
 			kn := testKubernautWithConsole()
 			kn.Spec.Console.Auth.RedirectURL = value
 

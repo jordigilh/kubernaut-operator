@@ -800,9 +800,11 @@ func collectMustGather() {
 		if image == "" {
 			image = defaultMustGatherImage
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
 		// E2E image/path are explicit test-runner inputs.
 		//nolint:gosec
-		cmd := exec.CommandContext(context.Background(), "oc", "adm", "must-gather",
+		cmd := exec.CommandContext(ctx, "oc", "adm", "must-gather",
 			"--image="+image,
 			"--dest-dir="+destination,
 			"--since=24h",
@@ -813,6 +815,9 @@ func collectMustGather() {
 			"--workflow-namespace="+workflowNS,
 		)
 		if _, err := utils.Run(cmd); err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				err = fmt.Errorf("must-gather timed out after 10m: %w", ctx.Err())
+			}
 			_, _ = fmt.Fprintf(GinkgoWriter, "=== must-gather FAILED: %v ===\n", err)
 			return
 		}

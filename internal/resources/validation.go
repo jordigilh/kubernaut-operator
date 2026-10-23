@@ -832,7 +832,7 @@ func validateConsoleRedirectURL(kn *kubernautv1alpha2.Kubernaut) error {
 		return fmt.Errorf("%s must not contain leading or trailing whitespace", path)
 	}
 	redirectURL, err := url.Parse(raw)
-	if err != nil || !strings.EqualFold(redirectURL.Scheme, httpsURLScheme) || redirectURL.Host == "" || redirectURL.User != nil || redirectURL.RawQuery != "" || redirectURL.Fragment != "" || redirectURL.Path != "/oauth2/callback" {
+	if err != nil || !strings.EqualFold(redirectURL.Scheme, httpsURLScheme) || redirectURL.Host == "" || redirectURL.Hostname() == "" || redirectURL.User != nil || redirectURL.RawQuery != "" || redirectURL.Fragment != "" || redirectURL.Path != "/oauth2/callback" {
 		return fmt.Errorf("%s must be an absolute https URL ending in /oauth2/callback", path)
 	}
 	return nil
