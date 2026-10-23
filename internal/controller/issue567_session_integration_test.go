@@ -35,7 +35,7 @@ var _ = Describe("Issue #567: Kubernaut Agent investigation concurrency", func()
 
 	It("IT-KA-567-RECONCILE-001 [CM-2, CM-3, CM-6, SA-11, SI-4; SOC2 CC7.2, CC8.1; ASVS v5.0.0-V14.2.4, v5.0.0-V16.5.2] renders the default through Reconcile", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 		reconcileToDeployPhase(ctx)
 
@@ -46,7 +46,7 @@ var _ = Describe("Issue #567: Kubernaut Agent investigation concurrency", func()
 
 	It("IT-KA-567-RECONCILE-002 [CM-3, CM-6, SI-4, SA-11; SOC2 CC7.2, CC8.1; ASVS v5.0.0-V13.3.1, v5.0.0-V16.5.2] propagates an override and keeps the ConfigMap mount read-only", func() {
 		createBYOSecrets(ctx)
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.KubernautAgent.Session.MaxConcurrentInvestigations = 75
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 

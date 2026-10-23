@@ -3008,7 +3008,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		// Proves Reconcile publishes the corrected role and binding.
 		It("IT-RBAC-566-001 [AC-3, AC-6, CM-6; SOC2 CC6.1, CC6.6, CC8.1; ASVS v5.0.0-V8.2.1, v5.0.0-V8.3.1] reconciles AF InvestigationSession patch permissions", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToDeployPhase(ctx)
 
 			crName := testNamespace + "-apifrontend-role"
