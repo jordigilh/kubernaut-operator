@@ -976,7 +976,8 @@ type kaAuditYAML struct {
 }
 
 type kaSessionYAML struct {
-	TTL string `json:"ttl" yaml:"ttl"`
+	TTL                         string `json:"ttl,omitempty" yaml:"ttl,omitempty"`
+	MaxConcurrentInvestigations int    `json:"maxConcurrentInvestigations" yaml:"maxConcurrentInvestigations"`
 }
 
 type kaAIYAML struct {
@@ -2035,6 +2036,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1a
 	kaProfile, _ := ResolveLLMProfile(kn, EffectiveInvestigationLLMProfileRef(kn))
 	maxTurns := intPtrDefault(ka.Investigation.MaxTurns, 40)
 	maxEvidenceHandoffBytes := intPtrDefault(ka.WorkflowDiscovery.MaxEvidenceHandoffBytes, 262144)
+	maxConcurrentInvestigations := intDefault(ka.Session.MaxConcurrentInvestigations, 50)
 
 	cfg := kubernautAgentConfigYAML{
 		Runtime: kaRuntimeYAML{
@@ -2078,8 +2080,9 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1a
 		}
 	}
 
-	if ttl := ka.Session.TTL; ttl != "" {
-		cfg.Runtime.Session = &kaSessionYAML{TTL: ttl}
+	cfg.Runtime.Session = &kaSessionYAML{
+		TTL:                         ka.Session.TTL,
+		MaxConcurrentInvestigations: maxConcurrentInvestigations,
 	}
 
 	applyKALLMProfileFields(&cfg.AI.LLM, kaProfile)
