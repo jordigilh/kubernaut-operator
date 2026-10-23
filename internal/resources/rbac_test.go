@@ -39,6 +39,25 @@ const (
 	kubernautAPIGroup        = "kubernaut.ai"
 )
 
+// apiFrontendVerbs returns the effective API Frontend verbs for one resource.
+func apiFrontendVerbs(role *rbacv1.ClusterRole, resource string) []string {
+	seen := make(map[string]struct{})
+	verbs := make([]string, 0)
+	for i := range role.Rules {
+		rule := &role.Rules[i]
+		if slices.Contains(rule.APIGroups, kubernautAPIGroup) && slices.Contains(rule.Resources, resource) {
+			for _, verb := range rule.Verbs {
+				if _, ok := seen[verb]; ok {
+					continue
+				}
+				seen[verb] = struct{}{}
+				verbs = append(verbs, verb)
+			}
+		}
+	}
+	return verbs
+}
+
 var _ = Describe("ClusterRoles", func() {
 	It("returns exactly 17 roles (14 base + 2 monitoring + 1 console-access)", func() {
 		kn := testKubernaut()
@@ -1614,7 +1633,8 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include remediationrequests/status with get+update+patch")
 	})
 
-	It("does not grant patch on investigationsessions (AC-6 least privilege)", func() {
+	// Verifies the explicit base and status patch contract.
+	It("UT-RBAC-566-001 [AC-3, AC-6; SOC2 CC6.1, CC6.6; ASVS v5.0.0-V8.2.1] grants exact InvestigationSession patch permissions", func() {
 		kn := testKubernautWithAF()
 		roles := ClusterRoles(kn, testKnV2(kn))
 		var afRole *rbacv1.ClusterRole
@@ -1626,12 +1646,19 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		}
 		Expect(afRole).NotTo(BeNil())
 
+		// findRule returns the API Frontend rule for one Kubernetes resource.
+		baseVerbs := apiFrontendVerbs(afRole, "investigationsessions")
+		Expect(baseVerbs).To(ConsistOf("get", "list", "watch", "create", "update", "patch", "delete"))
+
+		statusVerbs := apiFrontendVerbs(afRole, "investigationsessions/status")
+		Expect(statusVerbs).To(ConsistOf("get", "update", "patch"))
+
 		for _, rule := range afRole.Rules {
 			if len(rule.APIGroups) > 0 && rule.APIGroups[0] == kubernautAPIGroup {
 				for _, res := range rule.Resources {
 					if res == "investigationsessions" || res == "investigationsessions/status" {
-						Expect(rule.Verbs).NotTo(ContainElement("patch"),
-							"apifrontend ClusterRole should not grant patch on %s (AC-6)", res)
+						Expect(rule.Verbs).To(ContainElement("patch"),
+							"apifrontend ClusterRole must grant patch on %s for the AF session lifecycle", res)
 					}
 				}
 			}

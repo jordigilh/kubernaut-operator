@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -57,6 +58,25 @@ import (
 )
 
 const testAwxAPIURL = "https://awx.example.com"
+
+// kubernautVerbs returns the effective kubernaut.ai verbs for one resource.
+func kubernautVerbs(role *rbacv1.ClusterRole, resourceName string) []string {
+	verbSet := make(map[string]struct{})
+	for i := range role.Rules {
+		rule := &role.Rules[i]
+		if slices.Contains(rule.APIGroups, "kubernaut.ai") && slices.Contains(rule.Resources, resourceName) {
+			for _, verb := range rule.Verbs {
+				verbSet[verb] = struct{}{}
+			}
+		}
+	}
+
+	verbs := make([]string, 0, len(verbSet))
+	for verb := range verbSet {
+		verbs = append(verbs, verb)
+	}
+	return verbs
+}
 
 // deleteFailingClient wraps a real client but returns an error on Delete
 // calls for ClusterRole objects, simulating a persistent cleanup failure.
@@ -3002,6 +3022,33 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			crName := testNamespace + "-apifrontend-role"
 			err = k8sClient.Get(ctx, types.NamespacedName{Name: crName}, cr)
 			Expect(err).NotTo(HaveOccurred(), "AF ClusterRole should be created")
+		})
+
+		// Proves Reconcile publishes the corrected role and binding.
+		It("IT-RBAC-566-001 [AC-3, AC-6, CM-6; SOC2 CC6.1, CC6.6, CC8.1; ASVS v5.0.0-V8.2.1, v5.0.0-V8.3.1] reconciles AF InvestigationSession patch permissions", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			crName := testNamespace + "-apifrontend-role"
+			cr := &rbacv1.ClusterRole{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crName}, cr)).To(Succeed())
+
+			// findRule returns the reconciled API Frontend rule for one resource.
+			baseVerbs := kubernautVerbs(cr, "investigationsessions")
+			Expect(baseVerbs).To(ConsistOf("get", "list", "watch", "create", "update", "patch", "delete"))
+
+			statusVerbs := kubernautVerbs(cr, "investigationsessions/status")
+			Expect(statusVerbs).To(ConsistOf("get", "update", "patch"))
+
+			crb := &rbacv1.ClusterRoleBinding{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNamespace + "-apifrontend-binding"}, crb)).To(Succeed())
+			Expect(crb.RoleRef.Name).To(Equal(crName))
+			Expect(crb.Subjects).To(ConsistOf(rbacv1.Subject{
+				Kind:      rbacv1.ServiceAccountKind,
+				Name:      resources.ServiceAccountName(resources.ComponentAPIFrontend),
+				Namespace: testNamespace,
+			}))
 		})
 
 		It("skips AF resources when AF is explicitly disabled", func() {
