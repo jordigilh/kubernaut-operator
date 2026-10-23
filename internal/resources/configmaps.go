@@ -1854,6 +1854,7 @@ func applyKALLMProfileFields(llmCfg *kaLLMYAML, profile kubernautv1alpha2.LLMPro
 	applyKALLMProfileFieldsForRole(llmCfg, profile, llmTLSRoleInvestigation)
 }
 
+// applyKALLMProfileFieldsForRole applies provider and credential fields for a role-specific LLM profile.
 func applyKALLMProfileFieldsForRole(llmCfg *kaLLMYAML, profile kubernautv1alpha2.LLMProfileSpec, role string) {
 	if profile.VertexProject != "" {
 		llmCfg.VertexProject = profile.VertexProject
@@ -2272,6 +2273,7 @@ func APIFrontendServiceCAConfigMap(kn *kubernautv1alpha2.Kubernaut) *corev1.Conf
 	return serviceCAConfigMap(kn, "apifrontend-service-ca", ComponentAPIFrontend)
 }
 
+// serviceCAConfigMap creates a service-CA injection ConfigMap for a component.
 func serviceCAConfigMap(kn *kubernautv1alpha2.Kubernaut, name, component string) *corev1.ConfigMap {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, name, component),
@@ -2282,6 +2284,7 @@ func serviceCAConfigMap(kn *kubernautv1alpha2.Kubernaut, name, component string)
 	return cm
 }
 
+// withDefault returns val when it is non-empty, otherwise it returns def.
 func withDefault(val, def string) string {
 	if val == "" {
 		return def
