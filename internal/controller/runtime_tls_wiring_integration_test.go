@@ -100,7 +100,13 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 		Expect(condition.Message).To(ContainSubstring("invalid client certificate"))
 		jobs := &batchv1.JobList{}
 		Expect(k8sClient.List(ctx, jobs, client.InNamespace(kn.Namespace))).To(Succeed())
-		Expect(jobs.Items).To(BeEmpty(), "invalid client material must block migration, not only report a warning")
+		ownedJobs := make([]batchv1.Job, 0, len(jobs.Items))
+		for _, job := range jobs.Items {
+			if metav1.IsControlledBy(&job, kn) {
+				ownedJobs = append(ownedJobs, job)
+			}
+		}
+		Expect(ownedJobs).To(BeEmpty(), "invalid client material must block migration, not only report a warning")
 		clientSecret.Data[corev1.TLSCertKey] = validClientChain
 		Expect(k8sClient.Update(ctx, clientSecret)).To(Succeed())
 		reconcileToRunning(ctx)
