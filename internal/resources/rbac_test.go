@@ -39,15 +39,23 @@ const (
 	kubernautAPIGroup        = "kubernaut.ai"
 )
 
-// apiFrontendRule returns the API Frontend ClusterRole rule for one resource.
-func apiFrontendRule(role *rbacv1.ClusterRole, resource string) *rbacv1.PolicyRule {
+// apiFrontendVerbs returns the effective API Frontend verbs for one resource.
+func apiFrontendVerbs(role *rbacv1.ClusterRole, resource string) []string {
+	seen := make(map[string]struct{})
+	verbs := make([]string, 0)
 	for i := range role.Rules {
 		rule := &role.Rules[i]
 		if slices.Contains(rule.APIGroups, kubernautAPIGroup) && slices.Contains(rule.Resources, resource) {
-			return rule
+			for _, verb := range rule.Verbs {
+				if _, ok := seen[verb]; ok {
+					continue
+				}
+				seen[verb] = struct{}{}
+				verbs = append(verbs, verb)
+			}
 		}
 	}
-	return nil
+	return verbs
 }
 
 var _ = Describe("ClusterRoles", func() {
@@ -1639,13 +1647,11 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		Expect(afRole).NotTo(BeNil())
 
 		// findRule returns the API Frontend rule for one Kubernetes resource.
-		baseRule := apiFrontendRule(afRole, "investigationsessions")
-		Expect(baseRule).NotTo(BeNil(), "API Frontend ClusterRole should include investigationsessions")
-		Expect(baseRule.Verbs).To(ConsistOf("get", "list", "watch", "create", "update", "patch", "delete"))
+		baseVerbs := apiFrontendVerbs(afRole, "investigationsessions")
+		Expect(baseVerbs).To(ConsistOf("get", "list", "watch", "create", "update", "patch", "delete"))
 
-		statusRule := apiFrontendRule(afRole, "investigationsessions/status")
-		Expect(statusRule).NotTo(BeNil(), "API Frontend ClusterRole should include investigationsessions/status")
-		Expect(statusRule.Verbs).To(ConsistOf("get", "update", "patch"))
+		statusVerbs := apiFrontendVerbs(afRole, "investigationsessions/status")
+		Expect(statusVerbs).To(ConsistOf("get", "update", "patch"))
 
 		for _, rule := range afRole.Rules {
 			if len(rule.APIGroups) > 0 && rule.APIGroups[0] == kubernautAPIGroup {

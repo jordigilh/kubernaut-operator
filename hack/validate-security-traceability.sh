@@ -40,6 +40,8 @@ fail() {
 [[ -f "${console_matrix}" ]] || fail "missing ${console_matrix}"
 [[ -f "${notification_matrix}" ]] || fail "missing ${notification_matrix}"
 [[ -f "${rbac566_test_plan}" ]] || fail "missing ${rbac566_test_plan}"
+grep -Fq '| Scope | Operator-generated API Frontend `ClusterRole` and `ClusterRoleBinding` |' "${rbac566_test_plan}" \
+	|| fail "Issue #566 test plan has an invalid scope"
 [[ -f "${session_concurrency_matrix}" ]] || fail "missing ${session_concurrency_matrix}"
 
 grep -Fq 'NIST SP 800-53 Rev. 5' "${session_concurrency_matrix}" \
@@ -523,11 +525,23 @@ for artifact in \
 	grep -Fq "${artifact}" "${rbac566_test_plan}" \
 		|| fail "Issue #566 test plan is missing evidence artifact ${artifact}"
 done
-for test_id in UT-RBAC-566-001 IT-RBAC-566-001; do
-	grep -R -n --include='*_test.go' -F "${test_id}" "${repo_root}/internal" >/dev/null \
-		|| fail "Issue #566 evidence ID ${test_id} has no executable test"
-	grep -Fq "${test_id}" "${rbac566_test_plan}" \
-		|| fail "Issue #566 test plan omits ${test_id}"
+declare -A rbac566_test_files=(
+	[UT-RBAC-566-001]='internal/resources/rbac_test.go'
+	[IT-RBAC-566-001]='internal/controller/kubernaut_lifecycle_test.go'
+)
+declare -A rbac566_test_patterns=(
+	[UT-RBAC-566-001]='It\("[^\"]*UT-RBAC-566-001'
+	[IT-RBAC-566-001]='It\("[^\"]*IT-RBAC-566-001'
+)
+for test_id in "${!rbac566_test_files[@]}"; do
+	test_file="${rbac566_test_files[${test_id}]}"
+	test_pattern="${rbac566_test_patterns[${test_id}]}"
+	awk -v id="| \`${test_id}\` |" -v path="\`${test_file}\`" \
+		'index($0, id) && index($0, path) { found = 1 } END { exit !found }' \
+		"${rbac566_test_plan}" \
+		|| fail "Issue #566 test plan does not map ${test_id} to ${test_file}"
+	grep -Eq "${test_pattern}" "${repo_root}/${test_file}" \
+		|| fail "Issue #566 evidence ID ${test_id} is missing from executable test ${test_file}"
 done
 
 # Every executable test identifier is a unique traceability key. Duplicate IDs

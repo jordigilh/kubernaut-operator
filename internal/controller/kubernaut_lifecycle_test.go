@@ -59,15 +59,23 @@ import (
 
 const testAwxAPIURL = "https://awx.example.com"
 
-// kubernautRule returns the kubernaut.ai ClusterRole rule for one resource.
-func kubernautRule(role *rbacv1.ClusterRole, resourceName string) *rbacv1.PolicyRule {
+// kubernautVerbs returns the effective kubernaut.ai verbs for one resource.
+func kubernautVerbs(role *rbacv1.ClusterRole, resourceName string) []string {
+	verbSet := make(map[string]struct{})
 	for i := range role.Rules {
 		rule := &role.Rules[i]
 		if slices.Contains(rule.APIGroups, "kubernaut.ai") && slices.Contains(rule.Resources, resourceName) {
-			return rule
+			for _, verb := range rule.Verbs {
+				verbSet[verb] = struct{}{}
+			}
 		}
 	}
-	return nil
+
+	verbs := make([]string, 0, len(verbSet))
+	for verb := range verbSet {
+		verbs = append(verbs, verb)
+	}
+	return verbs
 }
 
 // deleteFailingClient wraps a real client but returns an error on Delete
@@ -3027,13 +3035,11 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crName}, cr)).To(Succeed())
 
 			// findRule returns the reconciled API Frontend rule for one resource.
-			baseRule := kubernautRule(cr, "investigationsessions")
-			Expect(baseRule).NotTo(BeNil(), "live AF ClusterRole should include investigationsessions")
-			Expect(baseRule.Verbs).To(ConsistOf("get", "list", "watch", "create", "update", "patch", "delete"))
+			baseVerbs := kubernautVerbs(cr, "investigationsessions")
+			Expect(baseVerbs).To(ConsistOf("get", "list", "watch", "create", "update", "patch", "delete"))
 
-			statusRule := kubernautRule(cr, "investigationsessions/status")
-			Expect(statusRule).NotTo(BeNil(), "live AF ClusterRole should include investigationsessions/status")
-			Expect(statusRule.Verbs).To(ConsistOf("get", "update", "patch"))
+			statusVerbs := kubernautVerbs(cr, "investigationsessions/status")
+			Expect(statusVerbs).To(ConsistOf("get", "update", "patch"))
 
 			crb := &rbacv1.ClusterRoleBinding{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNamespace + "-apifrontend-binding"}, crb)).To(Succeed())
