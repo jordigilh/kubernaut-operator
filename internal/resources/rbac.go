@@ -1464,6 +1464,8 @@ func gatewaySignalSourceClusterRole(kn *kubernautv1alpha2.Kubernaut, labels map[
 	}
 }
 
+// apifrontendClusterRole builds the API Frontend permissions, including the
+// InvestigationSession patch operations required by the interactive lifecycle.
 func apifrontendClusterRole(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	rules := []rbacv1.PolicyRule{
 		// kubernaut#566: API Frontend backfills the RemediationRequest

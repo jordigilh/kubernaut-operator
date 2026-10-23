@@ -3005,6 +3005,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(err).NotTo(HaveOccurred(), "AF ClusterRole should be created")
 		})
 
+		// IT-RBAC-566-001 proves Reconcile publishes the corrected role and binding.
 		It("IT-RBAC-566-001 [AC-3, AC-6, CM-6; SOC2 CC6.1, CC6.6, CC8.1; ASVS v5.0.0-V8.2.1, v5.0.0-V8.3.1] reconciles AF InvestigationSession patch permissions", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
@@ -3014,6 +3015,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			cr := &rbacv1.ClusterRole{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crName}, cr)).To(Succeed())
 
+			// findRule returns the reconciled API Frontend rule for one resource.
 			findRule := func(resource string) *rbacv1.PolicyRule {
 				for i := range cr.Rules {
 					rule := &cr.Rules[i]

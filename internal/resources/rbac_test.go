@@ -1614,6 +1614,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include remediationrequests/status with get+update+patch")
 	})
 
+	// UT-RBAC-566-001 verifies the explicit base and status patch contract.
 	It("UT-RBAC-566-001 [AC-3, AC-6; SOC2 CC6.1, CC6.6; ASVS v5.0.0-V8.2.1] grants exact InvestigationSession patch permissions", func() {
 		kn := testKubernautWithAF()
 		roles := ClusterRoles(kn, testKnV2(kn))
@@ -1626,6 +1627,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		}
 		Expect(afRole).NotTo(BeNil())
 
+		// findRule returns the API Frontend rule for one Kubernetes resource.
 		findRule := func(resource string) *rbacv1.PolicyRule {
 			for i := range afRole.Rules {
 				rule := &afRole.Rules[i]
