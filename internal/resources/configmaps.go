@@ -2273,6 +2273,7 @@ func APIFrontendServiceCAConfigMap(kn *kubernautv1alpha2.Kubernaut) *corev1.Conf
 	return serviceCAConfigMap(kn, "apifrontend-service-ca", ComponentAPIFrontend)
 }
 
+// serviceCAConfigMap creates a service-CA injection ConfigMap for a component.
 func serviceCAConfigMap(kn *kubernautv1alpha2.Kubernaut, name, component string) *corev1.ConfigMap {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, name, component),
