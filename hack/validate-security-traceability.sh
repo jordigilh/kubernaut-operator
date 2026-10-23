@@ -20,6 +20,7 @@ workflowexecution_retention_matrix="${repo_root}/docs/security/ISSUE-480-CONTROL
 console_matrix="${repo_root}/docs/security/ISSUE-476-CONTROL-TRACEABILITY.md"
 notification_matrix="${repo_root}/docs/security/ISSUE-549-CONTROL-TRACEABILITY.md"
 rbac566_test_plan="${repo_root}/docs/tests/566/TEST_PLAN.md"
+session_concurrency_matrix="${repo_root}/docs/security/ISSUE-567-CONTROL-TRACEABILITY.md"
 
 fail() {
 	echo "security traceability validation failed: $*" >&2
@@ -39,6 +40,28 @@ fail() {
 [[ -f "${console_matrix}" ]] || fail "missing ${console_matrix}"
 [[ -f "${notification_matrix}" ]] || fail "missing ${notification_matrix}"
 [[ -f "${rbac566_test_plan}" ]] || fail "missing ${rbac566_test_plan}"
+[[ -f "${session_concurrency_matrix}" ]] || fail "missing ${session_concurrency_matrix}"
+
+grep -Fq 'NIST SP 800-53 Rev. 5' "${session_concurrency_matrix}" \
+	|| fail "Issue #567 matrix is missing NIST SP 800-53 Rev. 5 scope"
+grep -Fq 'FedRAMP' "${session_concurrency_matrix}" \
+	|| fail "Issue #567 matrix is missing FedRAMP scope"
+grep -Fq 'SOC 2' "${session_concurrency_matrix}" \
+	|| fail "Issue #567 matrix is missing SOC 2 scope"
+grep -Fq 'OWASP ASVS 5.0.0' "${session_concurrency_matrix}" \
+	|| fail "Issue #567 matrix is missing OWASP ASVS 5.0.0 scope"
+grep -Eiq 'not a formal FedRAMP authorization' "${session_concurrency_matrix}" \
+	|| fail "Issue #567 matrix must reject formal compliance claims"
+for requirement in v5.0.0-V2.2.1 v5.0.0-V2.2.2 v5.0.0-V2.2.3 v5.0.0-V13.3.1 v5.0.0-V14.2.4 v5.0.0-V16.5.2; do
+	grep -Fq "${requirement}" "${session_concurrency_matrix}" \
+		|| fail "Issue #567 matrix is missing ASVS requirement ${requirement}"
+done
+for evidence_id in UT-KA-567-API-001 UT-KA-567-CM-001 UT-KA-567-CM-002 IT-KA-567-RECONCILE-001 IT-KA-567-RECONCILE-002 E2E-KA-567-001; do
+	grep -R -n --include='*.go' -F "${evidence_id}" "${repo_root}/internal" "${repo_root}/api" "${repo_root}/test" >/dev/null \
+		|| fail "Issue #567 evidence ${evidence_id} has no executable artifact"
+	grep -Fq "${evidence_id}" "${session_concurrency_matrix}" \
+		|| fail "Issue #567 matrix omits evidence ID ${evidence_id}"
+done
 
 grep -Fq 'NIST SP 800-53' "${notification_matrix}" || fail "Issue #549 matrix is missing NIST scope"
 grep -Fq 'SOC 2' "${notification_matrix}" || fail "Issue #549 matrix is missing SOC 2 scope"

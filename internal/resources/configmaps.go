@@ -976,7 +976,8 @@ type kaAuditYAML struct {
 }
 
 type kaSessionYAML struct {
-	TTL string `json:"ttl" yaml:"ttl"`
+	TTL                         string `json:"ttl,omitempty" yaml:"ttl,omitempty"`
+	MaxConcurrentInvestigations int    `json:"maxConcurrentInvestigations" yaml:"maxConcurrentInvestigations"`
 }
 
 type kaAIYAML struct {
@@ -1846,7 +1847,6 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.Conf
 	return yamlConfigMap(metadata, "routing.yaml", "notification-routing console config", console)
 }
 
-// KubernautAgentConfigMap builds the kubernaut-agent-config ConfigMap.
 // applyKALLMProfileFields copies the optional provider-specific and
 // credential fields from a resolved LLM profile onto llmCfg, leaving zero
 // values (and thus YAML omission) for anything the profile doesn't set.
@@ -2028,6 +2028,7 @@ func kaToolsConfig(knV2 *kubernautv1alpha2.Kubernaut) *kaIntegrationsToolsYAML {
 	}
 }
 
+// KubernautAgentConfigMap builds the kubernaut-agent-config ConfigMap.
 func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ns := kn.Namespace
@@ -2035,6 +2036,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1a
 	kaProfile, _ := ResolveLLMProfile(kn, EffectiveInvestigationLLMProfileRef(kn))
 	maxTurns := intPtrDefault(ka.Investigation.MaxTurns, 40)
 	maxEvidenceHandoffBytes := intPtrDefault(ka.WorkflowDiscovery.MaxEvidenceHandoffBytes, 262144)
+	maxConcurrentInvestigations := intDefault(ka.Session.MaxConcurrentInvestigations, 50)
 
 	cfg := kubernautAgentConfigYAML{
 		Runtime: kaRuntimeYAML{
@@ -2078,8 +2080,9 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1a
 		}
 	}
 
-	if ttl := ka.Session.TTL; ttl != "" {
-		cfg.Runtime.Session = &kaSessionYAML{TTL: ttl}
+	cfg.Runtime.Session = &kaSessionYAML{
+		TTL:                         ka.Session.TTL,
+		MaxConcurrentInvestigations: maxConcurrentInvestigations,
 	}
 
 	applyKALLMProfileFields(&cfg.AI.LLM, kaProfile)
@@ -2286,6 +2289,7 @@ func withDefault(val, def string) string {
 	return val
 }
 
+// intDefault returns val when it is non-zero, otherwise it returns def.
 func intDefault(val, def int) int {
 	if val != 0 {
 		return val

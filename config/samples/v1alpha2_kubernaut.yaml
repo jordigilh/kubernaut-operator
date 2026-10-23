@@ -34,6 +34,11 @@ spec:
       credentialsSecretName: llm-credentials
 
   # Required parent; the sole LLM profile is inferred for both KA roles.
+  # KA admits up to 50 concurrent investigations per replica by default.
+  # Override with:
+  # kubernautAgent:
+  #   session:
+  #     maxConcurrentInvestigations: 75
   kubernautAgent: {}
 
   # These ConfigMaps must exist before the CR is applied.

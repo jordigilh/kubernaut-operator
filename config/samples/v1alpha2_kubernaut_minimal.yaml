@@ -37,7 +37,8 @@ spec:
 
   # kubernautAgent is a schema-required parent key. Its logical-agent profile
   # references can stay unset here: exactly one profile is defined above, so
-  # the operator infers it automatically (v1alpha2/F10).
+  # the operator infers it automatically (v1alpha2/F10). Investigation
+  # concurrency defaults to 50 per Agent replica.
   kubernautAgent: {}
 
   # Both Rego policy ConfigMaps are schema-required (no operator-bundled
