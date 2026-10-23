@@ -66,21 +66,20 @@ const (
 	MonitoringTLSCAFile = MonitoringTLSCADir + "/ca.crt"
 )
 
-// EffectiveMonitoringTLSCAFile returns the shared monitoring CA path. The
-// system source deliberately returns an empty path so clients use their OS
-// trust store.
+// EffectiveMonitoringTLSCAFile returns the shared monitoring CA path only when
+// an administrator-provided Secret is configured. An omitted reference uses
+// the application/container system trust store.
 func EffectiveMonitoringTLSCAFile(kn *kubernautv1alpha2.Kubernaut) string {
-	if kn != nil && kn.Spec.Monitoring.TLS != nil && kn.Spec.Monitoring.TLS.Source == kubernautv1alpha2.MonitoringTLSSourceSystem {
+	if kn == nil || kn.Spec.Monitoring.TLS == nil || kn.Spec.Monitoring.TLS.CACertSecretRef == nil || kn.Spec.Monitoring.TLS.CACertSecretRef.Name == "" {
 		return ""
 	}
 	return MonitoringTLSCAFile
 }
 
-// MonitoringTLSVolume returns the source-aware, read-only volume for the
-// shared monitoring CA path. Secret and ConfigMap sources are administrator
-// owned and are never copied or mutated by the operator.
+// MonitoringTLSVolume returns the read-only volume for an administrator-owned
+// monitoring CA Secret. An omitted reference intentionally renders no volume.
 func MonitoringTLSVolume(kn *kubernautv1alpha2.Kubernaut) *corev1.Volume {
-	if kn == nil || kn.Spec.Monitoring.TLS != nil && kn.Spec.Monitoring.TLS.Source == kubernautv1alpha2.MonitoringTLSSourceSystem {
+	if kn == nil {
 		return nil
 	}
 
@@ -91,53 +90,20 @@ func MonitoringTLSVolume(kn *kubernautv1alpha2.Kubernaut) *corev1.Volume {
 	return &corev1.Volume{Name: MonitoringTLSCAVolumeName, VolumeSource: *source}
 }
 
+// monitoringTLSVolumeSource builds the Secret projection for the selected
+// administrator-owned monitoring CA, or nil when system trust is selected.
 func monitoringTLSVolumeSource(kn *kubernautv1alpha2.Kubernaut) *corev1.VolumeSource {
-	tls := kn.Spec.Monitoring.TLS
-	switch {
-	case tls == nil || tls.Source == "" || tls.Source == kubernautv1alpha2.MonitoringTLSSourceInterService:
-		volumeSource := monitoringTLSInterServiceVolumeSource(kn)
-		return &volumeSource
-	case tls.Source == kubernautv1alpha2.MonitoringTLSSourceSecret:
-		if tls.CACertSecretRef == nil {
-			return nil
-		}
-		key := tlsCACertificateKey
-		if tls.CACertSecretRef.Key != "" {
-			key = tls.CACertSecretRef.Key
-		}
-		return &corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: tls.CACertSecretRef.Name, Items: []corev1.KeyToPath{{Key: key, Path: tlsCACertificateKey}}}}
-	case tls.Source == kubernautv1alpha2.MonitoringTLSSourceConfigMap:
-		if tls.CACertConfigMapRef == nil {
-			return nil
-		}
-		key := tlsCACertificateKey
-		if tls.CACertConfigMapRef.Key != "" {
-			key = tls.CACertConfigMapRef.Key
-		}
-		return &corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: tls.CACertConfigMapRef.Name}, Items: []corev1.KeyToPath{{Key: key, Path: tlsCACertificateKey}}}}
-	default:
-		// ValidateKubernaut rejects unknown sources before resource rendering.
-		// Keep this helper fail-closed when called directly with an invalid CR.
+	if kn == nil || kn.Spec.Monitoring.TLS == nil || kn.Spec.Monitoring.TLS.CACertSecretRef == nil || kn.Spec.Monitoring.TLS.CACertSecretRef.Name == "" {
 		return nil
 	}
-}
-
-func monitoringTLSInterServiceVolumeSource(kn *kubernautv1alpha2.Kubernaut) corev1.VolumeSource {
-	if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual {
-		if cfg := kn.Spec.TLS.Manual; cfg != nil && cfg.InternalCASecretName != "" {
-			return corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
-				SecretName: cfg.InternalCASecretName,
-				Items:      []corev1.KeyToPath{{Key: tlsCACertificateKey, Path: tlsCACertificateKey}},
-			}}
-		}
-		return corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-			LocalObjectReference: corev1.LocalObjectReference{Name: InterServiceCAConfigMapName},
-			Items:                []corev1.KeyToPath{{Key: tlsCACertificateKey, Path: tlsCACertificateKey}},
-		}}
+	tls := kn.Spec.Monitoring.TLS
+	key := tlsCACertificateKey
+	if tls.CACertSecretRef.Key != "" {
+		key = tls.CACertSecretRef.Key
 	}
-	return corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-		LocalObjectReference: corev1.LocalObjectReference{Name: TrustBundleConfigMapName},
-		Items:                []corev1.KeyToPath{{Key: trustBundleServiceCAKey, Path: tlsCACertificateKey}},
+	return &corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+		SecretName: tls.CACertSecretRef.Name,
+		Items:      []corev1.KeyToPath{{Key: key, Path: tlsCACertificateKey}},
 	}}
 }
 

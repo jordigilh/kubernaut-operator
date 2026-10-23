@@ -29,6 +29,8 @@ import (
 	sigsyaml "sigs.k8s.io/yaml"
 )
 
+// TestCleanBreak runs the v1alpha2 CRD contract suite without a conversion
+// webhook or legacy served version.
 func TestCleanBreak(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "v1alpha2 Clean-Break Contract Suite")
@@ -263,6 +265,23 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 			Expect(string(manifest)).NotTo(ContainSubstring("spec.fleet.oauth2.enabled"))
 		}
 	})
+
+	It("UT-MON-563-API-001 [AC-6, CM-3, CM-6, SI-10; SOC2 CC6.1, CC8.1; ASVS V16.1.1, V16.2.1, V16.5.2]: publishes Secret-only monitoring trust", func() {
+		crd := loadKubernautCRD()
+		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+		monitoring := schema.Properties["spec"].Properties["monitoring"]
+		tls := monitoring.Properties["tls"]
+
+		Expect(tls.Properties).To(HaveKey("caCertSecretRef"))
+		for _, removed := range []string{"source", "caCertConfigMapRef"} {
+			Expect(tls.Properties).NotTo(HaveKey(removed), "removed monitoring TLS field %s must not be published", removed)
+		}
+		secretRef := tls.Properties["caCertSecretRef"]
+		Expect(secretRef.Properties).To(HaveKey("name"))
+		Expect(secretRef.Properties).To(HaveKey("key"))
+		Expect(string(secretRef.Properties["key"].Default.Raw)).To(Equal(`"ca.crt"`))
+	})
+
 })
 
 func loadKubernautCRD() *apiextensionsv1.CustomResourceDefinition {

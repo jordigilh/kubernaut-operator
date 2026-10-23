@@ -16,6 +16,9 @@ spec:
   postgresql:
     host: postgresql.kubernaut-system.svc.cluster.local
     secretName: postgresql-secret
+    # The disposable E2E bootstrap uses a private PostgreSQL CA. Keep TLS
+    # enabled without making the operator's internal CA the BYO database trust.
+    sslMode: require
 
   # BYO Valkey/Redis. The Secret must contain valkey-secrets.yaml.
   valkey:
@@ -41,9 +44,31 @@ spec:
     policy:
       configMapName: signalprocessing-policy
 
+  # Disposable notification credentials and routing supplied by the E2E
+  # bootstrap chart. Production users should provide administrator-owned
+  # Secrets with the same provider-specific keys.
+  notification:
+    credentials:
+      - name: slack-ops
+        secretRef:
+          name: slack-webhook
+          key: webhook-url
+      - name: teams-primary
+        secretRef:
+          name: notification-teams
+          key: webhook-url
+      - name: pagerduty-critical
+        secretRef:
+          name: notification-pagerduty
+          key: routing-key
+    routing:
+      configMapName: notification-routing
+
   # Gateway is the only external API enabled by this minimum sample.
   gateway:
     enabled: true
+    route:
+      enabled: false
 
   # Generic Kubernetes/Kind TLS. Install cert-manager before applying this CR
   # and pre-create the referenced Issuer/Certificates. Set provisioning.enabled

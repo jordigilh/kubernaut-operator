@@ -200,56 +200,20 @@ func validateMonitoringEndpoints(kn *kubernautv1alpha2.Kubernaut) []error {
 	return errs
 }
 
-// validateMonitoringTLS validates the source-specific shape of the shared
-// monitoring trust contract. Existence and PEM contents are checked later by
-// the controller because those checks require a Kubernetes client.
+// validateMonitoringTLS validates the optional administrator-provided
+// monitoring Secret reference. Existence and PEM contents are checked later
+// by the controller because those checks require a Kubernetes client.
 func validateMonitoringTLS(kn *kubernautv1alpha2.Kubernaut) []error {
 	tls := kn.Spec.Monitoring.TLS
-	if tls == nil {
+	if tls == nil || tls.CACertSecretRef == nil {
 		return nil
 	}
 
-	const base = "spec.monitoring.tls"
-	var errs []error
-	switch tls.Source {
-	case "", kubernautv1alpha2.MonitoringTLSSourceInterService, kubernautv1alpha2.MonitoringTLSSourceSystem:
-		if tls.CACertSecretRef != nil {
-			errs = append(errs, fmt.Errorf("%s.caCertSecretRef must be omitted when source is %q", base, defaultMonitoringTLSSource(tls.Source)))
-		}
-		if tls.CACertConfigMapRef != nil {
-			errs = append(errs, fmt.Errorf("%s.caCertConfigMapRef must be omitted when source is %q", base, defaultMonitoringTLSSource(tls.Source)))
-		}
-	case kubernautv1alpha2.MonitoringTLSSourceSecret:
-		if tls.CACertConfigMapRef != nil {
-			errs = append(errs, fmt.Errorf("%s.caCertConfigMapRef must be omitted when source is %q", base, tls.Source))
-		}
-		if tls.CACertSecretRef == nil {
-			errs = append(errs, fmt.Errorf("%s.caCertSecretRef is required when source is %q", base, tls.Source))
-		} else {
-			errs = append(errs, validateMonitoringCARef(base+".caCertSecretRef", tls.CACertSecretRef.Name, tls.CACertSecretRef.Key)...)
-		}
-	case kubernautv1alpha2.MonitoringTLSSourceConfigMap:
-		if tls.CACertSecretRef != nil {
-			errs = append(errs, fmt.Errorf("%s.caCertSecretRef must be omitted when source is %q", base, tls.Source))
-		}
-		if tls.CACertConfigMapRef == nil {
-			errs = append(errs, fmt.Errorf("%s.caCertConfigMapRef is required when source is %q", base, tls.Source))
-		} else {
-			errs = append(errs, validateMonitoringCARef(base+".caCertConfigMapRef", tls.CACertConfigMapRef.Name, tls.CACertConfigMapRef.Key)...)
-		}
-	default:
-		errs = append(errs, fmt.Errorf("%s.source %q is invalid", base, tls.Source))
-	}
-	return errs
+	return validateMonitoringCARef("spec.monitoring.tls.caCertSecretRef", tls.CACertSecretRef.Name, tls.CACertSecretRef.Key)
 }
 
-func defaultMonitoringTLSSource(source kubernautv1alpha2.MonitoringTLSSource) kubernautv1alpha2.MonitoringTLSSource {
-	if source == "" {
-		return kubernautv1alpha2.MonitoringTLSSourceInterService
-	}
-	return source
-}
-
+// validateMonitoringCARef validates the name and optional key of a monitoring
+// CA Secret reference from the CR spec.
 func validateMonitoringCARef(base, name, key string) []error {
 	var errs []error
 	if name == "" {
@@ -261,7 +225,7 @@ func validateMonitoringCARef(base, name, key string) []error {
 		key = tlsCACertificateKey
 	}
 	if len(k8svalidation.IsConfigMapKey(key)) > 0 {
-		errs = append(errs, fmt.Errorf("%s.key must be a valid ConfigMap or Secret key", base))
+		errs = append(errs, fmt.Errorf("%s.key must be a valid Secret key", base))
 	}
 	return errs
 }

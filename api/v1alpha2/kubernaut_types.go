@@ -574,16 +574,6 @@ type CACertSecretRef struct {
 	Key string `json:"key,omitempty"`
 }
 
-// CACertConfigMapRef references a ConfigMap containing a PEM-encoded CA bundle.
-type CACertConfigMapRef struct {
-	// Name of the ConfigMap.
-	Name string `json:"name"`
-	// Key within the ConfigMap containing the CA PEM. Default: "ca.crt".
-	// +kubebuilder:default="ca.crt"
-	// +optional
-	Key string `json:"key,omitempty"`
-}
-
 // SecretKeyRef references a key within a Secret.
 type SecretKeyRef struct {
 	// Name of the Secret.
@@ -2667,32 +2657,14 @@ type MonitoringSpec struct {
 	AlertManager AlertManagerSpec `json:"alertManager,omitempty"`
 }
 
-// MonitoringTLSSource identifies the trust material used by monitoring clients.
-type MonitoringTLSSource string
-
-const (
-	MonitoringTLSSourceInterService MonitoringTLSSource = "interService"
-	MonitoringTLSSourceSystem       MonitoringTLSSource = "system"
-	MonitoringTLSSourceSecret       MonitoringTLSSource = "secret"
-	MonitoringTLSSourceConfigMap    MonitoringTLSSource = "configMap"
-)
-
-// MonitoringTLSSpec selects one shared CA source for every monitoring client.
-// An omitted source defaults to interService. Secret and ConfigMap references
-// are namespaced to the Kubernaut namespace and default to the ca.crt key.
+// MonitoringTLSSpec configures optional administrator-provided trust for every
+// monitoring client. When omitted, clients use the container/system trust
+// store. The Secret reference is namespaced to the Kubernaut namespace and
+// defaults to the ca.crt key.
 type MonitoringTLSSpec struct {
-	// Source of the monitoring CA bundle.
-	// +kubebuilder:validation:Enum=interService;system;secret;configMap
-	// +optional
-	Source MonitoringTLSSource `json:"source,omitempty"`
-
-	// Secret containing the PEM-encoded CA bundle when source=secret.
+	// Secret containing the PEM-encoded monitoring CA bundle.
 	// +optional
 	CACertSecretRef *CACertSecretRef `json:"caCertSecretRef,omitempty"`
-
-	// ConfigMap containing the PEM-encoded CA bundle when source=configMap.
-	// +optional
-	CACertConfigMapRef *CACertConfigMapRef `json:"caCertConfigMapRef,omitempty"`
 }
 
 // PrometheusSpec configures a Prometheus-compatible endpoint.

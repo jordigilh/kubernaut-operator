@@ -1,5 +1,9 @@
 # Issue #424: monitoring client TLS trust contract
 
+> **Superseded by [DD-563](DD-563-MONITORING-TRUST-BOUNDARY.md).** This file
+> records the historical source-selector design; the active v1alpha2 contract
+> is Secret-only with system trust when the Secret reference is omitted.
+
 ## Decision
 
 The v1alpha2 API replaces the two accepted-but-unused fields

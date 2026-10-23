@@ -2630,24 +2630,9 @@ spec:
                       Prometheus and AlertManager. This is client trust only; it does not
                       configure serving certificates for any Kubernaut component.
                     properties:
-                      caCertConfigMapRef:
-                        description: ConfigMap containing the PEM-encoded CA bundle
-                          when source=configMap.
-                        properties:
-                          key:
-                            default: ca.crt
-                            description: 'Key within the ConfigMap containing the
-                              CA PEM. Default: "ca.crt".'
-                            type: string
-                          name:
-                            description: Name of the ConfigMap.
-                            type: string
-                        required:
-                        - name
-                        type: object
                       caCertSecretRef:
-                        description: Secret containing the PEM-encoded CA bundle when
-                          source=secret.
+                        description: Secret containing the PEM-encoded monitoring
+                          CA bundle.
                         properties:
                           key:
                             default: ca.crt
@@ -2659,14 +2644,6 @@ spec:
                         required:
                         - name
                         type: object
-                      source:
-                        description: Source of the monitoring CA bundle.
-                        enum:
-                        - interService
-                        - system
-                        - secret
-                        - configMap
-                        type: string
                     type: object
                 type: object
               networkPolicies:

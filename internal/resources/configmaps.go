@@ -850,6 +850,7 @@ type emExternalYAML struct {
 }
 
 type effectivenessMonitorConfigYAML struct {
+	TLSCAFile   string            `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 	TLSProfile  string            `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Logging     loggingYAML       `json:"logging" yaml:"logging"`
 	Assessment  emAssessmentYAML  `json:"assessment" yaml:"assessment"`
@@ -1756,6 +1757,7 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubern
 	o := resolveOpts(opts)
 	em := &kn.Spec.EffectivenessMonitor
 	cfg := effectivenessMonitorConfigYAML{
+		TLSCAFile:  InterServiceTLSCAFileFor(knV2),
 		TLSProfile: o.tlsProfile,
 		Logging:    loggingYAML{Level: withDefault(em.Logging.Level, "INFO")},
 		Assessment: emAssessmentYAML{

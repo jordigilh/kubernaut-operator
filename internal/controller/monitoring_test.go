@@ -102,45 +102,29 @@ var _ = Describe("generic monitoring defaults", Label("unit"), func() {
 	})
 })
 
-var _ = Describe("monitoring TLS trust source validation", Label("unit"), func() {
-	It("rejects a missing Secret and malformed ConfigMap CA", func() {
+var _ = Describe("monitoring TLS trust validation", Label("unit"), func() {
+	It("UT-MON-563-VAL-002 [SC-12, SC-13, SI-4, SI-10; SOC2 CC7.2; ASVS V12.3.2, V13.3.4, V16.5.2] rejects missing or malformed Secret CA material", func() {
 		scheme := runtime.NewScheme()
 		Expect(corev1.AddToScheme(scheme)).To(Succeed())
 		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
 		reconciler := &KubernautReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
 		kn := &kubernautv1alpha2.Kubernaut{}
 		kn.Namespace = "default"
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "missing"}}
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "missing"}}
 		Expect(reconciler.validateMonitoringTLS(ctx, kn)).To(MatchError(ContainSubstring("could not be read")))
+		kn.Spec.Monitoring.TLS.CACertSecretRef.Name = ""
+		Expect(reconciler.validateMonitoringTLS(ctx, kn)).To(MatchError(ContainSubstring("required when configured")))
 
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceConfigMap, CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "bad"}}
-		bad := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "bad", Namespace: "default"}, Data: map[string]string{"ca.crt": "not pem"}}
+		bad := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "bad", Namespace: "default"}, Data: map[string][]byte{"ca.crt": []byte("not pem")}}
 		Expect(reconciler.Client.Create(ctx, bad)).To(Succeed())
+		kn.Spec.Monitoring.TLS.CACertSecretRef.Name = bad.Name
 		Expect(reconciler.validateMonitoringTLS(ctx, kn)).To(MatchError(ContainSubstring("valid ca pem")))
-
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSecret}
-		Expect(reconciler.validateMonitoringTLS(ctx, kn)).To(MatchError(ContainSubstring("required when source is secret")))
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceConfigMap}
-		Expect(reconciler.validateMonitoringTLS(ctx, kn)).To(MatchError(ContainSubstring("required when source is configMap")))
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: "invalid"}
-		Expect(reconciler.validateMonitoringTLS(ctx, kn)).To(MatchError(ContainSubstring("source \"invalid\" is invalid")))
 
 		missingKeySecret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "missing-key", Namespace: "default"}, Data: map[string][]byte{"other": telemetryCAPEM()}}
 		Expect(reconciler.Client.Create(ctx, missingKeySecret)).To(Succeed())
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
 			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: missingKeySecret.Name},
 		}
-		Expect(reconciler.validateMonitoringTLS(ctx, kn)).To(MatchError(ContainSubstring("missing key")))
-
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:             kubernautv1alpha2.MonitoringTLSSourceConfigMap,
-			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "missing-configmap"},
-		}
-		Expect(reconciler.validateMonitoringTLS(ctx, kn)).To(MatchError(ContainSubstring("could not be read")))
-		missingKeyConfigMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "missing-configmap-key", Namespace: "default"}, Data: map[string]string{"other": string(telemetryCAPEM())}}
-		Expect(reconciler.Client.Create(ctx, missingKeyConfigMap)).To(Succeed())
-		kn.Spec.Monitoring.TLS.CACertConfigMapRef.Name = missingKeyConfigMap.Name
 		Expect(reconciler.validateMonitoringTLS(ctx, kn)).To(MatchError(ContainSubstring("missing key")))
 	})
 
@@ -153,9 +137,7 @@ var _ = Describe("monitoring TLS trust source validation", Label("unit"), func()
 		reconciler := &KubernautReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret, configMap).Build()}
 		kn := &kubernautv1alpha2.Kubernaut{}
 		kn.Namespace = "default"
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"}}
-		Expect(reconciler.validateMonitoringTLS(ctx, kn)).To(Succeed())
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceConfigMap, CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca-config"}}
+		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"}}
 		Expect(reconciler.validateMonitoringTLS(ctx, kn)).To(Succeed())
 		Expect(kn.Spec.TLS.Mode).To(BeEmpty())
 	})
@@ -189,7 +171,6 @@ var _ = Describe("monitoring TLS trust source validation", Label("unit"), func()
 			reconciler := &KubernautReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()}
 			kn := &kubernautv1alpha2.Kubernaut{ObjectMeta: metav1.ObjectMeta{Namespace: "default"}}
 			kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-				Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
 				CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: tc.name},
 			}
 			Expect(reconciler.validateMonitoringTLS(ctx, kn)).To(MatchError(ContainSubstring(tc.err)), tc.name)
@@ -202,7 +183,6 @@ var _ = Describe("monitoring TLS trust source validation", Label("unit"), func()
 		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
 		kn := newMinimalCR()
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
 			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "missing-monitoring-ca"},
 		}
 		postgresSecret := &corev1.Secret{
