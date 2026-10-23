@@ -19,6 +19,7 @@ handoff_matrix="${repo_root}/docs/security/ISSUE-527-CONTROL-TRACEABILITY.md"
 workflowexecution_retention_matrix="${repo_root}/docs/security/ISSUE-480-CONTROL-TRACEABILITY.md"
 console_matrix="${repo_root}/docs/security/ISSUE-476-CONTROL-TRACEABILITY.md"
 notification_matrix="${repo_root}/docs/security/ISSUE-549-CONTROL-TRACEABILITY.md"
+rbac566_test_plan="${repo_root}/docs/tests/566/TEST_PLAN.md"
 
 fail() {
 	echo "security traceability validation failed: $*" >&2
@@ -37,6 +38,7 @@ fail() {
 [[ -f "${workflowexecution_retention_matrix}" ]] || fail "missing ${workflowexecution_retention_matrix}"
 [[ -f "${console_matrix}" ]] || fail "missing ${console_matrix}"
 [[ -f "${notification_matrix}" ]] || fail "missing ${notification_matrix}"
+[[ -f "${rbac566_test_plan}" ]] || fail "missing ${rbac566_test_plan}"
 
 grep -Fq 'NIST SP 800-53' "${notification_matrix}" || fail "Issue #549 matrix is missing NIST scope"
 grep -Fq 'SOC 2' "${notification_matrix}" || fail "Issue #549 matrix is missing SOC 2 scope"
@@ -473,6 +475,36 @@ for test_id in UT-OWN-514-001 UT-OWN-514-002 UT-OWN-514-003 UT-OWN-514-004 UT-OW
 	grep -R -n --include='*_test.go' -F "${test_id}" "${repo_root}/internal" "${repo_root}/test" >/dev/null \
 		|| fail "ownership evidence ID ${test_id} has no executable test"
 	grep -Fq "${test_id}" "${ownership_matrix}" || fail "ownership matrix omits ${test_id}"
+done
+
+grep -Fq 'NIST SP 800-53 Rev. 5' "${rbac566_test_plan}" \
+	|| fail "Issue #566 test plan is missing NIST SP 800-53 Rev. 5 scope"
+grep -Fq 'SOC 2' "${rbac566_test_plan}" \
+	|| fail "Issue #566 test plan is missing SOC 2 scope"
+grep -Fq 'OWASP ASVS 5.0.0' "${rbac566_test_plan}" \
+	|| fail "Issue #566 test plan is missing OWASP ASVS 5.0.0 scope"
+grep -Fq 'does not claim formal' "${rbac566_test_plan}" \
+	|| fail "Issue #566 test plan must reject formal compliance claims"
+for control in AC-3 AC-6 CM-6; do
+	grep -Eq "(^|[^A-Za-z0-9-])${control}([^A-Za-z0-9-]|$)" "${rbac566_test_plan}" \
+		|| fail "Issue #566 test plan is missing control ${control}"
+done
+for requirement in v5.0.0-V8.2.1 v5.0.0-V8.3.1; do
+	grep -Fq "${requirement}" "${rbac566_test_plan}" \
+		|| fail "Issue #566 test plan is missing ASVS requirement ${requirement}"
+done
+for artifact in \
+	'internal/resources/rbac.go' \
+	'internal/resources/rbac_test.go' \
+	'internal/controller/kubernaut_lifecycle_test.go'; do
+	grep -Fq "${artifact}" "${rbac566_test_plan}" \
+		|| fail "Issue #566 test plan is missing evidence artifact ${artifact}"
+done
+for test_id in UT-RBAC-566-001 IT-RBAC-566-001; do
+	grep -R -n --include='*_test.go' -F "${test_id}" "${repo_root}/internal" >/dev/null \
+		|| fail "Issue #566 evidence ID ${test_id} has no executable test"
+	grep -Fq "${test_id}" "${rbac566_test_plan}" \
+		|| fail "Issue #566 test plan omits ${test_id}"
 done
 
 # Every executable test identifier is a unique traceability key. Duplicate IDs
