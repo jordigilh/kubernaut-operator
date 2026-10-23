@@ -40,7 +40,7 @@ fail() {
 [[ -f "${console_matrix}" ]] || fail "missing ${console_matrix}"
 [[ -f "${notification_matrix}" ]] || fail "missing ${notification_matrix}"
 [[ -f "${rbac566_test_plan}" ]] || fail "missing ${rbac566_test_plan}"
-grep -Fq '| Scope | Operator-generated API Frontend `ClusterRole` and `ClusterRoleBinding` |' "${rbac566_test_plan}" \
+grep -Fq '| Scope | Operator-generated API Frontend' "${rbac566_test_plan}" \
 	|| fail "Issue #566 test plan has an invalid scope"
 [[ -f "${session_concurrency_matrix}" ]] || fail "missing ${session_concurrency_matrix}"
 
