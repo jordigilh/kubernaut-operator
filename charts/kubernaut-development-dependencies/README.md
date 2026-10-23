@@ -82,6 +82,26 @@ helm upgrade --install kubernaut-development-dependencies \
   --set-string valkey.password='local-only-value'
 ```
 
+## Migration from `kubernaut-dev-bootstrap`
+
+The chart rename changes the Helm release identity and is **not** an
+in-place upgrade. Do not install both releases in the same namespace: they
+create fixed-name PostgreSQL and Valkey resources, and the old release's
+selectors cannot be changed safely by an upgrade.
+
+For a disposable environment, remove the old release before installing this
+chart:
+
+```bash
+helm uninstall kubernaut-dev-bootstrap \
+  --namespace kubernaut-system --wait
+```
+
+This deletes the old Helm-owned Deployments, Services, Secrets, and any
+Helm-owned PVCs. Back up or migrate data first if persistence was enabled.
+Then install `kubernaut-development-dependencies` using one of the commands
+above.
+
 Apply the operator CR only after the chart is ready. For the generated
 self-signed PostgreSQL certificate, use the supported CR value
 `spec.postgresql.sslMode: require` (the chart default). The operator accepts

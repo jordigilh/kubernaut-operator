@@ -25,6 +25,12 @@ image pinning, restricted-SCC settings, Kind overrides, persistence, and
 cleanup. It is intentionally separate from the production operator chart and
 must not be installed over administrator-owned BYO Services or Secrets.
 
+`kubernaut-development-dependencies` replaces the former
+`kubernaut-dev-bootstrap` release identity. Do not install both releases in
+the same namespace; uninstall the old disposable release first and back up any
+Helm-owned persistent data before doing so. The chart README contains the
+migration command.
+
 For demo clusters, use the immutable OCI reference printed by the tagged
 release workflow:
 
