@@ -1614,7 +1614,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include remediationrequests/status with get+update+patch")
 	})
 
-	It("does not grant patch on investigationsessions (AC-6 least privilege)", func() {
+	It("UT-RBAC-566-001 [AC-3, AC-6; SOC2 CC6.1, CC6.6; ASVS v5.0.0-V8.2.1] grants exact InvestigationSession patch permissions", func() {
 		kn := testKubernautWithAF()
 		roles := ClusterRoles(kn, testKnV2(kn))
 		var afRole *rbacv1.ClusterRole
@@ -1626,12 +1626,30 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		}
 		Expect(afRole).NotTo(BeNil())
 
+		findRule := func(resource string) *rbacv1.PolicyRule {
+			for i := range afRole.Rules {
+				rule := &afRole.Rules[i]
+				if slices.Contains(rule.APIGroups, kubernautAPIGroup) && slices.Contains(rule.Resources, resource) {
+					return rule
+				}
+			}
+			return nil
+		}
+
+		baseRule := findRule("investigationsessions")
+		Expect(baseRule).NotTo(BeNil(), "API Frontend ClusterRole should include investigationsessions")
+		Expect(baseRule.Verbs).To(ConsistOf("get", "list", "watch", "create", "update", "patch", "delete"))
+
+		statusRule := findRule("investigationsessions/status")
+		Expect(statusRule).NotTo(BeNil(), "API Frontend ClusterRole should include investigationsessions/status")
+		Expect(statusRule.Verbs).To(ConsistOf("get", "update", "patch"))
+
 		for _, rule := range afRole.Rules {
 			if len(rule.APIGroups) > 0 && rule.APIGroups[0] == kubernautAPIGroup {
 				for _, res := range rule.Resources {
 					if res == "investigationsessions" || res == "investigationsessions/status" {
-						Expect(rule.Verbs).NotTo(ContainElement("patch"),
-							"apifrontend ClusterRole should not grant patch on %s (AC-6)", res)
+						Expect(rule.Verbs).To(ContainElement("patch"),
+							"apifrontend ClusterRole must grant patch on %s for the AF session lifecycle", res)
 					}
 				}
 			}

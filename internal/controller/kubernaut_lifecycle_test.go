@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -3002,6 +3003,43 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			crName := testNamespace + "-apifrontend-role"
 			err = k8sClient.Get(ctx, types.NamespacedName{Name: crName}, cr)
 			Expect(err).NotTo(HaveOccurred(), "AF ClusterRole should be created")
+		})
+
+		It("IT-RBAC-566-001 [AC-3, AC-6, CM-6; SOC2 CC6.1, CC6.6, CC8.1; ASVS v5.0.0-V8.2.1, v5.0.0-V8.3.1] reconciles AF InvestigationSession patch permissions", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			crName := testNamespace + "-apifrontend-role"
+			cr := &rbacv1.ClusterRole{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crName}, cr)).To(Succeed())
+
+			findRule := func(resource string) *rbacv1.PolicyRule {
+				for i := range cr.Rules {
+					rule := &cr.Rules[i]
+					if slices.Contains(rule.APIGroups, "kubernaut.ai") && slices.Contains(rule.Resources, resource) {
+						return rule
+					}
+				}
+				return nil
+			}
+
+			baseRule := findRule("investigationsessions")
+			Expect(baseRule).NotTo(BeNil(), "live AF ClusterRole should include investigationsessions")
+			Expect(baseRule.Verbs).To(ConsistOf("get", "list", "watch", "create", "update", "patch", "delete"))
+
+			statusRule := findRule("investigationsessions/status")
+			Expect(statusRule).NotTo(BeNil(), "live AF ClusterRole should include investigationsessions/status")
+			Expect(statusRule.Verbs).To(ConsistOf("get", "update", "patch"))
+
+			crb := &rbacv1.ClusterRoleBinding{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNamespace + "-apifrontend-binding"}, crb)).To(Succeed())
+			Expect(crb.RoleRef.Name).To(Equal(crName))
+			Expect(crb.Subjects).To(ConsistOf(rbacv1.Subject{
+				Kind:      rbacv1.ServiceAccountKind,
+				Name:      resources.ServiceAccountName(resources.ComponentAPIFrontend),
+				Namespace: testNamespace,
+			}))
 		})
 
 		It("skips AF resources when AF is explicitly disabled", func() {
