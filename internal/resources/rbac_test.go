@@ -39,6 +39,17 @@ const (
 	kubernautAPIGroup        = "kubernaut.ai"
 )
 
+// apiFrontendRule returns the API Frontend ClusterRole rule for one resource.
+func apiFrontendRule(role *rbacv1.ClusterRole, resource string) *rbacv1.PolicyRule {
+	for i := range role.Rules {
+		rule := &role.Rules[i]
+		if slices.Contains(rule.APIGroups, kubernautAPIGroup) && slices.Contains(rule.Resources, resource) {
+			return rule
+		}
+	}
+	return nil
+}
+
 var _ = Describe("ClusterRoles", func() {
 	It("returns exactly 17 roles (14 base + 2 monitoring + 1 console-access)", func() {
 		kn := testKubernaut()
@@ -1614,7 +1625,7 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		Expect(found).To(BeTrue(), "apifrontend ClusterRole should include remediationrequests/status with get+update+patch")
 	})
 
-	// UT-RBAC-566-001 verifies the explicit base and status patch contract.
+	// Verifies the explicit base and status patch contract.
 	It("UT-RBAC-566-001 [AC-3, AC-6; SOC2 CC6.1, CC6.6; ASVS v5.0.0-V8.2.1] grants exact InvestigationSession patch permissions", func() {
 		kn := testKubernautWithAF()
 		roles := ClusterRoles(kn, testKnV2(kn))
@@ -1628,21 +1639,11 @@ var _ = Describe("APIFrontend ClusterRole", func() {
 		Expect(afRole).NotTo(BeNil())
 
 		// findRule returns the API Frontend rule for one Kubernetes resource.
-		findRule := func(resource string) *rbacv1.PolicyRule {
-			for i := range afRole.Rules {
-				rule := &afRole.Rules[i]
-				if slices.Contains(rule.APIGroups, kubernautAPIGroup) && slices.Contains(rule.Resources, resource) {
-					return rule
-				}
-			}
-			return nil
-		}
-
-		baseRule := findRule("investigationsessions")
+		baseRule := apiFrontendRule(afRole, "investigationsessions")
 		Expect(baseRule).NotTo(BeNil(), "API Frontend ClusterRole should include investigationsessions")
 		Expect(baseRule.Verbs).To(ConsistOf("get", "list", "watch", "create", "update", "patch", "delete"))
 
-		statusRule := findRule("investigationsessions/status")
+		statusRule := apiFrontendRule(afRole, "investigationsessions/status")
 		Expect(statusRule).NotTo(BeNil(), "API Frontend ClusterRole should include investigationsessions/status")
 		Expect(statusRule.Verbs).To(ConsistOf("get", "update", "patch"))
 
