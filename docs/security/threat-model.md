@@ -16,7 +16,7 @@ Kubernaut is an AIOps platform that runs on OpenShift. It ingests operational si
 
 ## Trust boundaries
 
-1. **Cluster perimeter:** External actors and systems enter through OpenShift Routes (for example, to the Gateway) and platform ingress, versus workloads and services inside the cluster.
+1. **Cluster perimeter:** External actors and systems enter through administrator-owned OpenShift Routes, platform ingress, or equivalent exposure, versus workloads and Services inside the cluster.
 2. **Namespace boundary:** The `kubernaut-system` (or customer-chosen) namespace hosting Kubernaut components versus other namespaces and tenants on the cluster.
 3. **LLM boundary:** The Kubernaut Agent and related controllers versus external LLM software-as-a-service APIs on the public internet or partner networks.
 4. **Database boundary:** Application services versus the PostgreSQL instance backing DataStorage.

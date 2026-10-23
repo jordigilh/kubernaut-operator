@@ -135,7 +135,9 @@ The operator's own ClusterRole (`config/rbac/role.yaml`, `manager-role`) grants 
 | `networking.k8s.io` | networkpolicies | create, delete, get, list, patch, update, watch | Manage NetworkPolicies when enabled |
 | `policy` | poddisruptionbudgets | create, delete, get, list, patch, update, watch | Manage PDBs for service availability |
 | `rbac.authorization.k8s.io` | clusterroles, clusterrolebindings, roles, rolebindings | bind, create, delete, escalate, get, list, patch, update, watch | Provision RBAC for managed workloads (requires escalate/bind) |
-| `route.openshift.io` | routes | create, delete, get, list, patch, update, watch | Manage OCP Routes for Gateway |
+External Routes, Ingresses, Gateway API resources, mesh configuration, hostnames,
+edge TLS, and edge authorization are administrator-owned and are not managed by
+the operator.
 
 ## ServiceAccount Token Model
 

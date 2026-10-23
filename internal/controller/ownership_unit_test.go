@@ -173,8 +173,6 @@ var _ = Describe("integrated ownership API boundaries", Label("unit"), func() {
 		Expect(ownershipMetadataMatches(desired, object)).To(BeFalse())
 		r.Scheme = runtime.NewScheme()
 		Expect(r.resourceKind(ctx, object)).To(Equal("*v1.ConfigMap"))
-		_, err := r.reconcileOptionalRoute(ctx, kn, "Gateway", nil, resources.GatewayRouteStub(kn))
-		Expect(err).NotTo(HaveOccurred())
 		r.Scheme = nil
 		Expect(r.resourceKind(ctx, object)).To(Equal("*v1.ConfigMap"))
 	})

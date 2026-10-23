@@ -51,7 +51,7 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 	})
 
 	It("IT-TELEMETRY-AUDIT-515-001: blocks malformed client chains through Reconcile and resumes only after valid external material is restored", func() {
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		kn.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{
 			InternalCASecretName:  "kubernaut-internal-ca",
@@ -133,7 +133,7 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 
 	for _, mode := range []kubernautv1alpha2.TLSMode{kubernautv1alpha2.TLSModeManual} {
 		It("IT-TLS-AUDIT-515-001 IT-TLS-AUDIT-515-002: validates and mounts external TLS without adopting its trust or Secrets for "+string(mode), func() {
-			kn := newCRWithRouteDisabled()
+			kn := newMinimalCR()
 			generator := kn.DeepCopy()
 			generator.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeManual}
 			material, err := testRuntimeTLSSecrets(generator, nil, time.Now().Add(-time.Hour))
@@ -196,7 +196,7 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 			Expect(deleteErr == nil || apierrors.IsNotFound(deleteErr)).To(BeTrue())
 		})
 
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
 			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: monitoringCA.Name},
 		}
@@ -227,7 +227,7 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 	})
 
 	It("IT-MON-563-002 [SC-8, SC-13, SC-17, SI-4; SOC2 CC6.1, CC7.2; ASVS V12.3.1, V12.3.2, V13.3.4]: uses system trust without a monitoring CA volume", func() {
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.Monitoring.TLS = nil
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 		reconcileToRunning(ctx)
@@ -259,7 +259,7 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 			Expect(deleteErr == nil || apierrors.IsNotFound(deleteErr)).To(BeTrue())
 		})
 
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
 			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: monitoringCA.Name},
 		}

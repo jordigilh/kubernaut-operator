@@ -50,7 +50,7 @@ var _ = Describe("WorkflowExecution fleet write-scoped OAuth2 credential wiring 
 
 	It("[AC-6] renders WE's own credential (never the shared one) into both the workflowexecution-config ConfigMap and the workflowexecution Deployment's Secret mount", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 		knV2 := &kubernautv1alpha2.Kubernaut{}
 		Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())

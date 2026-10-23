@@ -6,9 +6,13 @@ metadata:
       ,\n        \"app.kubernetes.io/name\": \"kubernaut-operator\"\n      },\n      \"name\": \"kubernaut\",\n      \"namespace\": \"kubernaut-system\"\n    },\n    \"spec\": {\n      \"aiAnalysis\": {\n\
       \        \"policy\": {\n          \"configMapName\": \"aianalysis-policy\"\n        }\n      },\n      \"apiFrontend\": {\n        \"enabled\": false\n      },\n      \"gateway\": {\n        \"enabled\"\
       : true\n      },\n      \"kubernautAgent\": {},\n      \"llmProfiles\": {\n        \"primary\": {\n          \"credentialsSecretName\": \"llm-credentials\",\n          \"model\": \"claude-sonnet-4-6\"\
-      ,\n          \"provider\": \"anthropic\"\n        }\n      },\n      \"postgresql\": {\n        \"host\": \"postgresql.kubernaut-system.svc.cluster.local\",\n        \"secretName\": \"postgresql-secret\"\
-      \n      },\n      \"signalProcessing\": {\n        \"policy\": {\n          \"configMapName\": \"signalprocessing-policy\"\n        }\n      },\n      \"valkey\": {\n        \"host\": \"valkey.kubernaut-system.svc.cluster.local\"\
-      ,\n        \"secretName\": \"valkey-secret\"\n      }\n    }\n  }\n]"
+      ,\n          \"provider\": \"anthropic\"\n        }\n      },\n      \"notification\": {\n        \"credentials\": [\n          {\n            \"name\": \"slack-ops\",\n            \"secretRef\":\
+      \ {\n              \"key\": \"webhook-url\",\n              \"name\": \"slack-webhook\"\n            }\n          },\n          {\n            \"name\": \"teams-primary\",\n            \"secretRef\"\
+      : {\n              \"key\": \"webhook-url\",\n              \"name\": \"notification-teams\"\n            }\n          },\n          {\n            \"name\": \"pagerduty-critical\",\n            \"\
+      secretRef\": {\n              \"key\": \"routing-key\",\n              \"name\": \"notification-pagerduty\"\n            }\n          }\n        ],\n        \"routing\": {\n          \"configMapName\"\
+      : \"notification-routing\"\n        }\n      },\n      \"postgresql\": {\n        \"host\": \"postgresql.kubernaut-system.svc.cluster.local\",\n        \"secretName\": \"postgresql-secret\",\n   \
+      \     \"sslMode\": \"require\"\n      },\n      \"signalProcessing\": {\n        \"policy\": {\n          \"configMapName\": \"signalprocessing-policy\"\n        }\n      },\n      \"valkey\": {\n\
+      \        \"host\": \"valkey.kubernaut-system.svc.cluster.local\",\n        \"secretName\": \"valkey-secret\"\n      }\n    }\n  }\n]"
     capabilities: Full Lifecycle
     categories: AI/Machine Learning,Monitoring
     com.redhat.openshift.versions: v4.18
@@ -245,18 +249,6 @@ spec:
         - apiGroups:
           - networking.k8s.io
           resources:
-          - ingresses
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
-          - networking.k8s.io
-          resources:
           - networkpolicies
           verbs:
           - create
@@ -295,25 +287,6 @@ spec:
           - patch
           - update
           - watch
-        - apiGroups:
-          - route.openshift.io
-          resources:
-          - routes
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
-          - route.openshift.io
-          resources:
-          - routes/custom-host
-          verbs:
-          - create
-          - update
         - apiGroups:
           - authentication.k8s.io
           resources:

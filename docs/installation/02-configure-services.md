@@ -410,8 +410,6 @@ The Gateway accepts signals from AlertManager and routes them to Signal Processi
 ```yaml
 spec:
   gateway:
-    route:
-      enabled: true
     logging:
       level: info               # debug, info, warn, error
     config:
@@ -422,6 +420,10 @@ spec:
 ```
 
 All gateway config fields are optional; the operator uses sensible defaults when omitted.
+
+The operator creates the internal Gateway Service only. Configure any external
+Route, Ingress, Gateway API, mesh, hostname, edge TLS, and edge authorization
+resource separately as an administrator-owned object.
 
 ## Remediation Orchestrator Tuning (optional)
 
@@ -554,8 +556,10 @@ spec:
 
 The standalone web Console (A2A chat UI, `spec.console.enabled`) is fronted by an oauth2-proxy sidecar that needs its own OIDC client -- distinct from the Fleet client-credentials clients above and from AF's own OIDC config. Provision a **confidential, Authorization Code flow** client (`standardFlowEnabled`, not a service-account/client-credentials client) on your OIDC provider:
 
-- Redirect URI: `https://<console-route-host>/oauth2/callback`, matching `spec.console.route.host`.
-- Web origin: `https://<console-route-host>`.
+- Redirect URI: the explicit HTTPS callback URL set in
+  `spec.console.auth.redirectURL` (for example,
+  `https://console.example.com/oauth2/callback`).
+- Web origin: the administrator-owned external Console URL.
 
 Build the Secret from the client's credentials plus a locally-generated cookie secret (used by oauth2-proxy to encrypt the session cookie, not an OIDC value). `spec.console.auth.secretName` requires exactly these three keys. The cookie secret's raw value must be exactly 16, 24, or 32 bytes (oauth2-proxy uses it as an AES key) -- `head -c 32` truncates the base64 text to 32 *characters*, which is already the right raw length, so do not additionally base64-encode the result or oauth2-proxy will reject it (`cookie_secret must be 16, 24, or 32 bytes ... but is 44 bytes`):
 

@@ -58,7 +58,7 @@ var _ = Describe("AF/EM namespace-scoped MCP Gateway RBAC wiring (#227)", func()
 	It("creates AF/EM's namespace-scoped Role+RoleBinding once the shared spec.fleet.mcpGateway.namespace resolves, and drops the MCP Gateway CRD rules from their ClusterRole", func() {
 		ensureNamespace(mcpGatewayTargetNS)
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 		knV2 := &kubernautv1alpha2.Kubernaut{}
 		Expect(k8sClient.Get(ctx, singletonKey(), knV2)).To(Succeed())

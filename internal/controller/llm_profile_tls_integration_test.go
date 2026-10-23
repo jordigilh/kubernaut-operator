@@ -61,7 +61,7 @@ var _ = Describe("LLM profile TLS material reconciliation wiring (#532)", func()
 		createLLMProfileTLSSecret(ctx, "alignment-client-532", validPrecreatedTLSData())
 		createLLMProfileCredentialSecret(ctx, "alignment-credentials-532")
 
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.APIFrontend.Enabled = ptr.To(false)
 		kn.Spec.LLMProfiles["primary"] = llmProfileTLSFor532(
 			"openai", "gpt-4o", llmSecretName, "primary-ca-532", "primary-client-532", "/etc/kubernaut-agent/llm-tls-client",
@@ -106,7 +106,7 @@ var _ = Describe("LLM profile TLS material reconciliation wiring (#532)", func()
 		createLLMProfileTLSSecret(ctx, "primary-ca-532", map[string][]byte{"ca.crt": []byte("not-a-certificate")})
 		createLLMProfileTLSSecret(ctx, "primary-client-532", validPrecreatedTLSData())
 
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.APIFrontend.Enabled = ptr.To(false)
 		kn.Spec.LLMProfiles["primary"] = llmProfileTLSFor532(
 			"openai", "gpt-4o", llmSecretName, "primary-ca-532", "primary-client-532", "/etc/kubernaut-agent/llm-tls-client",

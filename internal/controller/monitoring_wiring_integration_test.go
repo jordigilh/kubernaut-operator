@@ -23,7 +23,6 @@ import (
 	"github.com/go-logr/zapr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	routev1 "github.com/openshift/api/route/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 	"go.uber.org/zap"
@@ -55,16 +54,6 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 		Expect(reconciler.monitoringObjectToKubernaut(ctx, &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{Name: "prometheus", Namespace: "external-monitoring"},
 		})).To(BeEmpty())
-	})
-
-	It("removes a stale optional route when no route is desired", func() {
-		reconciler := newReconciler()
-		kn := newMinimalCR()
-		stale := &routev1.Route{ObjectMeta: metav1.ObjectMeta{Name: "stale-route", Namespace: kn.Namespace}}
-
-		hasRoute, err := reconciler.reconcileOptionalRoute(ctx, kn, "Gateway", nil, stale)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(hasRoute).To(BeFalse())
 	})
 
 	It("UT-MON-513-CTRL-001 [CM-3, CM-6, CM-8, SI-4]: creates rules and service monitors when their APIs are available", Label("unit"), func() {
@@ -313,7 +302,6 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 			createAnsibleSecret(ctx, "alertmanager-gateway-token", "token", "opaque-token-value")
 
 			kn := newMinimalCR()
-			kn.Spec.Gateway.Route.Enabled = ptr.To(false)
 			kn.Spec.Monitoring.Prometheus.Enabled = ptr.To(false)
 			kn.Spec.Monitoring.AlertManager.URL = "https://alertmanager.example.com:9093"
 			enabled := true

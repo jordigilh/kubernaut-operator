@@ -64,13 +64,14 @@ All inter-service communication uses TLS, provisioned automatically by the OpenS
 ```yaml
 spec:
   gateway:
-    route:
-      enabled: true           # set false if using a custom Ingress
-      hostname: ""             # leave empty for OCP auto-generated hostname
     config:
       k8sRequestTimeout: "15s"                              # default
       corsAllowedOrigins: "https://no-browser-clients.invalid"  # default (M2M API)
 ```
+
+The operator creates the internal Gateway Service only. Administrators own any
+external Route, Ingress, Gateway API, mesh, hostname, edge TLS, and
+edge-authorization resources that target that Service.
 
 ## Uninstall
 

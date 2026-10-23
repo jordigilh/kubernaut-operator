@@ -51,7 +51,7 @@ var _ = Describe("DataStorage audit HMAC reconciliation wiring", func() {
 
 	It("IT-AUDIT-209-INT-001 [AU-9, SI-4, SOC2 CC7.2] provisions the generated key through Reconcile", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 		Expect(err).NotTo(HaveOccurred())
@@ -83,7 +83,7 @@ var _ = Describe("DataStorage audit HMAC reconciliation wiring", func() {
 
 	It("IT-DS-550-INT-001 [CM-3, CM-6, SI-4, SOC2 CC7.2] renders nested DataStorage configuration through Reconcile", func() {
 		createBYOSecrets(ctx)
-		cr := newCRWithRouteDisabled()
+		cr := newMinimalCR()
 		maxConcurrent := 42
 		cr.Spec.DataStorage.Server = &kubernautv1alpha2.DataStorageServerSpec{
 			MaxBodySize:           "10485760",
@@ -110,7 +110,7 @@ var _ = Describe("DataStorage audit HMAC reconciliation wiring", func() {
 
 	It("IT-DS-550-ROT-001 [AU-9, AC-6, SI-4; SOC2 CC7.2; ASVS V13.3.1, V16.5.2] rolls DataStorage after signing Secret material changes", func() {
 		createBYOSecrets(ctx)
-		cr := newCRWithRouteDisabled()
+		cr := newMinimalCR()
 		cr.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		cr.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{
 			InternalCASecretName:  "kubernaut-internal-ca",
@@ -171,7 +171,7 @@ var _ = Describe("DataStorage audit HMAC reconciliation wiring", func() {
 	})
 
 	It("IT-DS-550-ROT-002 [SI-4, CM-3, SOC2 CC7.2] maps signing Secret changes to the singleton", func() {
-		cr := newCRWithRouteDisabled()
+		cr := newMinimalCR()
 		cr.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{
 			SigningCertificate: &kubernautv1alpha2.SigningCertSpec{SecretName: "customer-signing"},
 		}
@@ -187,7 +187,7 @@ var _ = Describe("DataStorage audit HMAC reconciliation wiring", func() {
 
 	It("IT-AUDIT-209-INT-002 [AC-6, IA-5, SOC2 CC6.6] uses a BYO key without adopting it", func() {
 		createBYOSecrets(ctx)
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		setDataStorageAuditHashKey(kn, &kubernautv1alpha2.DataStorageAuditHashKeySpec{
 			ExistingSecret: "customer-audit-key",
 			SecretKey:      "customHMACKey",
@@ -218,7 +218,7 @@ var _ = Describe("DataStorage audit HMAC reconciliation wiring", func() {
 
 	It("IT-AUDIT-209-INT-003 [SI-10, ASVS V16.5.2] blocks invalid BYO material before migration", func() {
 		createBYOSecrets(ctx)
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		setDataStorageAuditHashKey(kn, &kubernautv1alpha2.DataStorageAuditHashKeySpec{ExistingSecret: "customer-audit-key"})
 		Expect(k8sClient.Create(ctx, &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "customer-audit-key", Namespace: testNamespace},
@@ -240,7 +240,7 @@ var _ = Describe("DataStorage audit HMAC reconciliation wiring", func() {
 
 	It("IT-AUDIT-209-INT-004 [AU-9, CC8.1, ASVS V16.5.2] fails closed after initialized key loss", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		r := newReconciler()
 		for range 2 {
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -266,7 +266,7 @@ var _ = Describe("DataStorage audit HMAC reconciliation wiring", func() {
 		}
 		Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
 		before := foreign.DeepCopy()
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		r := newReconciler()
 		for range 2 {
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -282,7 +282,7 @@ var _ = Describe("DataStorage audit HMAC reconciliation wiring", func() {
 
 	It("IT-AUDIT-209-INT-006 [SI-4, ASVS V16.1.1/V16.2.1] maps audit Secret and state events to the singleton", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		r := newReconciler()
 		secretRequests := r.auditHashKeySecretToKubernaut(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
 			Name: resources.DataStorageAuditHashKeySecretName, Namespace: testNamespace,
@@ -296,7 +296,7 @@ var _ = Describe("DataStorage audit HMAC reconciliation wiring", func() {
 
 	It("IT-AUDIT-209-INT-007 [AU-9, CM-6, ASVS v5.0.0-V13.3.1/V16.5.2] carries audit wiring through migration and deployment", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		reconcileToDeployPhase(ctx)
 
 		configMap := &corev1.ConfigMap{}
@@ -331,7 +331,7 @@ var _ = Describe("DataStorage audit HMAC reconciliation wiring", func() {
 
 	It("IT-AUDIT-209-INT-008 [AC-6, AU-9, ASVS v5.0.0-V13.3.2/V16.5.2] rejects a foreign Secret during provisioning recovery", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 		Expect(err).NotTo(HaveOccurred())
@@ -356,7 +356,7 @@ var _ = Describe("DataStorage audit HMAC reconciliation wiring", func() {
 
 	It("IT-AUDIT-209-INT-009 [AU-9, CC8.1, ASVS v5.0.0-V11.1.1] blocks a changed BYO key after commitment", func() {
 		createBYOSecrets(ctx)
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		setDataStorageAuditHashKey(kn, &kubernautv1alpha2.DataStorageAuditHashKeySpec{ExistingSecret: "customer-audit-key"})
 		customerSecret := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "customer-audit-key", Namespace: testNamespace},

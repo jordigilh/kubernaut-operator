@@ -30,7 +30,6 @@ import (
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
-	routev1 "github.com/openshift/api/route/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 	"golang.org/x/time/rate"
@@ -92,8 +91,6 @@ const (
 	ReasonMigrationInProgress            = "MigrationInProgress"
 	ReasonRBACReady                      = "RBACReady"
 	ReasonWebhooksReady                  = "WebhooksReady"
-	ReasonRouteCreated                   = "RouteCreated"
-	ReasonRouteDisabled                  = "RouteDisabled"
 	ReasonManifestsApplied               = "ManifestsApplied"
 	ReasonPlatformCapabilitiesReady      = "CapabilitiesDiscovered"
 	ReasonTLSReady                       = "TLSReady"
@@ -105,7 +102,6 @@ const (
 	ReasonTelemetrySecretInvalid         = "TelemetrySecretInvalid"
 	ReasonTelemetryAmbientInvalid        = "TelemetryAmbientTrustInvalid"
 	ReasonAuditHashKeyInvalid            = "AuditHashKeyInvalid"
-	ReasonExposureReady                  = "ExposureReady"
 	ReasonExposureInternal               = "InternalOnly"
 	ReasonMonitoringAvailable            = "MonitoringAvailable"
 	ReasonMonitoringDisabled             = "MonitoringDisabled"
@@ -159,11 +155,8 @@ var dataStorageAuditHashKeyFingerprint = resources.DataStorageAuditHashKeyFinger
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings;roles;rolebindings,verbs=get;list;watch;create;update;patch;delete;escalate;bind
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // Standard NetworkPolicy is the only runtime policy API managed by the operator.
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=route.openshift.io,resources=routes/custom-host,verbs=create;update
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingwebhookconfigurations;validatingwebhookconfigurations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create;update;patch
@@ -776,13 +769,12 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 	if err := r.deployAdmissionWebhooks(ctx, kn, tlsMaterial, tlsBundle); err != nil {
 		return err
 	}
-	hasRoute, err := r.deployWorkloads(ctx, kn, runtimeKnV2, cmHashes, telemetryRevisions)
-	if err != nil {
+	if err := r.deployWorkloads(ctx, kn, runtimeKnV2, cmHashes, telemetryRevisions); err != nil {
 		return err
 	}
 
 	r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, ReasonManifestsApplied, "Reconcile", "All service manifests applied")
-	return r.finalizeDeployStatus(ctx, kn, hasRoute)
+	return r.finalizeDeployStatus(ctx, kn)
 }
 
 // handleRBACDeployError records a failed-RBAC status condition and a
@@ -805,10 +797,10 @@ func (r *KubernautReconciler) handleRBACDeployError(ctx context.Context, kn *kub
 }
 
 // finalizeDeployStatus records the terminal Deploying-phase status
-// conditions (RBAC, webhooks, route, services) once all deploy sub-steps
+// conditions (RBAC, webhooks, internal exposure, services) once all deploy sub-steps
 // have succeeded. Extracted from phaseDeploy to keep its cyclomatic
 // complexity within threshold.
-func (r *KubernautReconciler) finalizeDeployStatus(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, hasRoute bool) error {
+func (r *KubernautReconciler) finalizeDeployStatus(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
 	return r.patchStatus(ctx, kn, func() {
 		r.setPhase(kn, kubernautv1alpha2.PhaseDeploying)
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
@@ -821,27 +813,12 @@ func (r *KubernautReconciler) finalizeDeployStatus(ctx context.Context, kn *kube
 			Reason: ReasonWebhooksReady, Message: "Admission webhooks configured",
 			ObservedGeneration: kn.Generation,
 		})
-		routeCondition := metav1.Condition{
-			Type: kubernautv1alpha2.ConditionRouteReady, Status: metav1.ConditionFalse,
-			Reason: ReasonRouteDisabled, Message: "no external exposure is configured",
-			ObservedGeneration: kn.Generation,
-		}
-		if hasRoute {
-			routeCondition.Status = metav1.ConditionTrue
-			routeCondition.Reason = ReasonRouteCreated
-			routeCondition.Message = "configured external exposure is ready"
-		}
-		meta.SetStatusCondition(&kn.Status.Conditions, routeCondition)
 		exposureCondition := metav1.Condition{
 			Type:               kubernautv1alpha2.ConditionExposureReady,
 			Status:             metav1.ConditionTrue,
 			Reason:             ReasonExposureInternal,
-			Message:            "all externally exposed components are intentionally internal",
+			Message:            "external exposure is administrator-owned; operator-managed Services remain internal",
 			ObservedGeneration: kn.Generation,
-		}
-		if hasRoute {
-			exposureCondition.Reason = ReasonExposureReady
-			exposureCondition.Message = "configured Ingress or OpenShift Route is ready"
 		}
 		meta.SetStatusCondition(&kn.Status.Conditions, exposureCondition)
 		// Evaluate status against the user configuration rather than the
@@ -2022,9 +1999,8 @@ func (r *KubernautReconciler) enabledDeploymentBuilders(
 		depBuilders = append(depBuilders, resources.APIFrontendDeployment)
 	}
 	if kn.Spec.ConsoleEnabled() {
-		ingressDomain := r.clusterIngressDomain(ctx)
 		depBuilders = append(depBuilders, func(kn *kubernautv1alpha2.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-			return resources.ConsoleDeployment(kn, ingressDomain)
+			return resources.ConsoleDeployment(kn)
 		})
 	}
 	if knV2.Spec.FleetMetadataCacheEnabled() {
@@ -2058,44 +2034,44 @@ func (r *KubernautReconciler) ensureDeployments(
 	return nil
 }
 
-func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, cmHashes map[string]string, telemetryRevisions telemetryMaterialRevisionSet) (hasRoute bool, _ error) {
+func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, cmHashes map[string]string, telemetryRevisions telemetryMaterialRevisionSet) error {
 	if err := r.reconcileNetworkPolicies(ctx, kn, knV2); err != nil {
-		return false, err
+		return err
 	}
 	depBuilders, err := r.enabledDeploymentBuilders(ctx, kn, knV2)
 	if err != nil {
-		return false, err
+		return err
 	}
 	if err := r.ensureDeployments(ctx, kn, knV2, depBuilders, cmHashes, telemetryRevisions); err != nil {
-		return false, err
+		return err
 	}
 
 	if err := r.ensureServices(ctx, kn, knV2); err != nil {
-		return false, err
+		return err
 	}
 
 	for _, pdb := range resources.PodDisruptionBudgets(kn, knV2) {
 		if err := r.ensureNamespaced(ctx, kn, pdb); err != nil {
-			return false, fmt.Errorf("ensuring PDB %s: %w", pdb.Name, err)
+			return fmt.Errorf("ensuring PDB %s: %w", pdb.Name, err)
 		}
 	}
 
 	dsHPA := resources.DataStorageHPA(kn)
 	if err := r.ensureNamespaced(ctx, kn, dsHPA); err != nil {
-		return false, fmt.Errorf("ensuring DS HPA: %w", err)
+		return fmt.Errorf("ensuring DS HPA: %w", err)
 	}
 
 	if err := r.reconcileMonitoringAndAlerts(ctx, kn, knV2); err != nil {
-		return false, err
+		return err
 	}
 
 	if kn.Spec.APIFrontendEnabled() {
 		if err := r.deployAPIFrontendExtras(ctx, kn); err != nil {
-			return false, err
+			return err
 		}
 	}
 
-	return r.reconcileRoutes(ctx, kn)
+	return nil
 }
 
 func (r *KubernautReconciler) ensureServices(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
@@ -2400,109 +2376,6 @@ func (r *KubernautReconciler) pruneLegacyAuthWebhookServiceMonitor(ctx context.C
 		return fmt.Errorf("deleting legacy AuthWebhook ServiceMonitor: %w", err)
 	}
 	return nil
-}
-
-func (r *KubernautReconciler) reconcileRoutes(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (bool, error) {
-	hasRoute, err := r.reconcileOpenShiftRoutes(ctx, kn)
-	if err != nil {
-		return false, err
-	}
-	hasIngress, err := r.reconcileGenericIngresses(ctx, kn)
-	if err != nil {
-		return false, err
-	}
-	return hasRoute || hasIngress, nil
-}
-
-func (r *KubernautReconciler) reconcileOpenShiftRoutes(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (bool, error) {
-	if !r.routeAPISupported() {
-		return false, nil
-	}
-	var gatewayRoute *routev1.Route
-	if kn.Spec.GatewayEnabled() {
-		gatewayRoute = resources.GatewayRoute(kn)
-	}
-	hasGateway, err := r.reconcileOptionalRoute(ctx, kn, "Gateway", gatewayRoute, resources.GatewayRouteStub(kn))
-	if err != nil {
-		return false, err
-	}
-	hasAPIFrontend, err := r.reconcileOptionalRoute(ctx, kn, "AF", resources.APIFrontendRoute(kn), resources.APIFrontendRouteStub(kn))
-	if err != nil {
-		return false, err
-	}
-	var consoleRoute *routev1.Route
-	if kn.Spec.ConsoleEnabled() {
-		consoleRoute = resources.ConsoleRoute(kn)
-	}
-	hasConsole, err := r.reconcileOptionalRoute(ctx, kn, "Console", consoleRoute, resources.ConsoleRouteStub(kn))
-	if err != nil {
-		return false, err
-	}
-	return hasGateway || hasAPIFrontend || hasConsole, nil
-}
-
-func (r *KubernautReconciler) reconcileGenericIngresses(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (bool, error) {
-	ingresses, err := resources.Ingresses(kn)
-	if err != nil {
-		return false, fmt.Errorf("building generic exposure: %w", err)
-	}
-	desired := make(map[string]*networkingv1.Ingress, len(ingresses))
-	for _, ingress := range ingresses {
-		desired[ingress.Name] = ingress
-		tlsSecret := &corev1.Secret{}
-		if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: ingress.Spec.TLS[0].SecretName}, tlsSecret); err != nil {
-			return false, fmt.Errorf("reading TLS Secret %s for generic Ingress %s: %w", ingress.Spec.TLS[0].SecretName, ingress.Name, err)
-		}
-		if err := resources.ValidateServingTLSSecretForHost(tlsSecret, ingress.Spec.Rules[0].Host); err != nil {
-			return false, fmt.Errorf("validating TLS Secret %s for generic Ingress %s: %w", ingress.Spec.TLS[0].SecretName, ingress.Name, err)
-		}
-		if err := r.ensureNamespaced(ctx, kn, ingress); err != nil {
-			return false, fmt.Errorf("ensuring generic Ingress %s: %w", ingress.Name, err)
-		}
-	}
-	for _, name := range []string{"gateway-ingress", "apifrontend-ingress", "console-ingress"} {
-		if _, ok := desired[name]; ok {
-			continue
-		}
-		stale := &networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: kn.Namespace}}
-		if err := r.deleteIfExists(ctx, kn, stale); err != nil {
-			return false, fmt.Errorf("deleting stale generic Ingress %s: %w", name, err)
-		}
-	}
-
-	return len(desired) > 0, nil
-}
-
-func (r *KubernautReconciler) routeAPISupported() bool {
-	mapper := r.RESTMapper()
-	if mapper == nil {
-		return false
-	}
-	_, err := mapper.RESTMapping(schema.GroupKind{Group: routev1.GroupName, Kind: "Route"})
-	return err == nil
-}
-
-// reconcileOptionalRoute ensures route when it is non-nil (the component is
-// enabled and its builder produced a Route, e.g. not BYO-ingress), or
-// deletes staleRoute -- a name-only stub -- otherwise, covering both
-// "component disabled" and "component enabled but no Route needed". Returns
-// true when a Route now exists.
-func (r *KubernautReconciler) reconcileOptionalRoute(
-	ctx context.Context, kn *kubernautv1alpha2.Kubernaut, label string, route, staleRoute *routev1.Route,
-) (bool, error) {
-	if route != nil {
-		if err := r.ensureNamespaced(ctx, kn, route); err != nil {
-			return false, fmt.Errorf("ensuring %s Route: %w", label, err)
-		}
-		return true, nil
-	}
-	if !r.Scheme.Recognizes(routev1.GroupVersion.WithKind("Route")) {
-		return false, nil
-	}
-	if err := r.deleteIfExists(ctx, kn, staleRoute); err != nil && !runtime.IsNotRegisteredError(err) {
-		return false, fmt.Errorf("deleting stale %s Route: %w", label, err)
-	}
-	return false, nil
 }
 
 func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
@@ -3350,7 +3223,6 @@ func appendPrecreatedOptionalReferences(c *precreatedReferenceCollector, kn *kub
 	appendPrecreatedFeatureSecretReferences(c, kn)
 	appendPrecreatedLLMReferences(c, kn)
 	appendPrecreatedFleetReferences(c, kn)
-	appendPrecreatedIngressReferences(c, kn)
 }
 
 // appendPrecreatedConfigMapReferences collects ConfigMap references that
@@ -3476,27 +3348,6 @@ func appendPrecreatedFleetReferences(c *precreatedReferenceCollector, kn *kubern
 	}
 	c.add(precreatedSecretReference, "spec.workflowExecution.fleet.oauth2CredentialsSecretRef",
 		kn.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef, "client-id", "client-secret")
-}
-
-func appendPrecreatedIngressReferences(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
-	for _, ingress := range []struct {
-		path    string
-		enabled bool
-		spec    kubernautv1alpha2.IngressSpec
-	}{
-		{path: "spec.gateway.ingress", enabled: kn.Spec.GatewayEnabled(), spec: kn.Spec.Gateway.Ingress},
-		{path: "spec.apiFrontend.ingress", enabled: kn.Spec.APIFrontendEnabled(), spec: kn.Spec.APIFrontend.Ingress},
-		{path: "spec.console.ingress", enabled: kn.Spec.ConsoleEnabled(), spec: kn.Spec.Console.Ingress},
-	} {
-		if !ingress.enabled || !ingress.spec.IngressEnabled() {
-			continue
-		}
-		c.add(precreatedSecretReference, ingress.path+".tlsSecretName", ingress.spec.TLSSecretName,
-			corev1.TLSCertKey, corev1.TLSPrivateKeyKey)
-	}
-	if _, err := resources.Ingresses(kn); err != nil {
-		c.addError(fmt.Errorf("generic ingress configuration: %w", err))
-	}
 }
 
 func precreatedConfigurationReferences(kn *kubernautv1alpha2.Kubernaut) ([]precreatedReference, []error) {
@@ -4486,27 +4337,6 @@ func (r *KubernautReconciler) currentTime() time.Time {
 	return time.Now()
 }
 
-// clusterIngressDomain returns the cluster's ingress domain from
-// ingresses.config.openshift.io/cluster (e.g. "apps.dev.example.com").
-// Returns empty on non-OpenShift clusters or if the resource is unavailable.
-func (r *KubernautReconciler) clusterIngressDomain(ctx context.Context) string {
-	log := logf.FromContext(ctx)
-	ingress := &configv1.Ingress{}
-	if err := r.Get(ctx, client.ObjectKey{Name: "cluster"}, ingress); err != nil {
-		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
-			log.V(1).Info("Ingress config not found (non-OCP cluster), console redirect URL will use fallback domain")
-			return ""
-		}
-		log.V(1).Info("failed to read Ingress config, console redirect URL will use fallback domain", "error", err)
-		return ""
-	}
-	domain := ingress.Spec.Domain
-	if domain != "" {
-		log.V(1).Info("resolved cluster ingress domain", "domain", domain)
-	}
-	return domain
-}
-
 // hasCRD checks if a CRD with the given name exists in the cluster.
 func (r *KubernautReconciler) hasCRD(ctx context.Context, crdName string) bool {
 	crd := &unstructured.Unstructured{}
@@ -4878,7 +4708,6 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.dataStorageSigningSecretToKubernaut)).
 		Owns(&batchv1.Job{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
-		Owns(&networkingv1.Ingress{}).
 		Owns(&rbacv1.Role{}).
 		Owns(&rbacv1.RoleBinding{}).
 		Owns(&autoscalingv2.HorizontalPodAutoscaler{})
