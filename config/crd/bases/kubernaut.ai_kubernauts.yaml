@@ -2284,6 +2284,13 @@ spec:
                   session:
                     description: Session configuration.
                     properties:
+                      maxConcurrentInvestigations:
+                        default: 50
+                        description: |-
+                          Maximum number of investigations that may run concurrently on one
+                          Kubernaut Agent replica. The default matches the upstream Helm profile.
+                        minimum: 1
+                        type: integer
                       ttl:
                         default: 30m
                         description: Session time-to-live.

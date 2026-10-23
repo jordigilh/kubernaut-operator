@@ -1193,6 +1193,13 @@ type SessionSpec struct {
 	// +kubebuilder:default="30m"
 	// +optional
 	TTL string `json:"ttl,omitempty"`
+
+	// Maximum number of investigations that may run concurrently on one
+	// Kubernaut Agent replica. The default matches the upstream Helm profile.
+	// +kubebuilder:default=50
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	MaxConcurrentInvestigations int `json:"maxConcurrentInvestigations,omitempty"`
 }
 
 // AuditSpec configures KA audit logging.
