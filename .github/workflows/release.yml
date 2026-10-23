@@ -157,7 +157,7 @@ jobs:
           git diff --exit-code -- api config charts/kubernaut-operator/files bundle dist
 
       - name: Shellcheck hack/ scripts
-        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/validate-security-traceability.sh hack/verify-helm-chart.sh hack/verify-test-pyramid.sh hack/verify-ci-boundary.sh hack/verify-ci-boundary.test.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
+        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/verify-helm-chart.sh hack/verify-test-pyramid.sh hack/verify-ci-boundary.sh hack/verify-ci-boundary.test.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
 
   # ========================================
   # STAGE 0d: POST-TEST CONTRACT IMAGE

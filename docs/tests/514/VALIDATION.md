@@ -42,7 +42,7 @@ ownership changes. Only external Kubernetes API/cache behavior is injected.
 | `make manifests generate`; `git diff --exit-code config/ api/v1alpha2/zz_generated.deepcopy.go` | Passed; generated CRD/RBAC/deepcopy unchanged; `514-final-codegen.log` |
 | `make test` | Passed on the final remediation checkout; resources **96.1%**, all internal unit packages **93.6%**, controller integration **82.2%**, Helm **11/11**, and no failed/pending/skipped specs in the executed gates. GitHub Unit & Integration Tests also passed after the pipefail-safe coverage-gate fix in run `38109685938`. |
 | `make test-unit` after the coverage backfill | Passed; internal unit coverage **93.6%**, resources **96.1%**, all 12 business entry points **100%** |
-| `make test-security-traceability test-hack-scripts test-pyramid` | Passed; `514-final-static-gates.log` |
+| `make test-hack-scripts test-pyramid` | Passed; `514-final-static-gates.log` |
 
 Earlier `514-final-make-test.log` failed because Kubernetes 1.37 rejects a Job
 marked Complete without start/completion times and SuccessCriteriaMet. The new

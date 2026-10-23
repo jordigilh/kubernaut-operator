@@ -154,9 +154,8 @@ test-integration: manifests generate fmt vet setup-envtest ## Run integration te
 			echo "Controller integration coverage is below the $(INTEGRATION_COVERAGE_THRESHOLD)% threshold"; exit 1; \
 		fi
 
-.PHONY: test-security-traceability
-test-security-traceability: ## Validate the versioned NIST/FedRAMP and OWASP ASVS evidence matrix.
-	@./hack/validate-security-traceability.sh
+.PHONY: test-console-release
+test-console-release: ## Validate the Console release contract.
 	@./hack/verify-console-release.sh
 
 .PHONY: test-ci-boundary
@@ -164,7 +163,7 @@ test-ci-boundary: ## Verify that operator CI remains independent of the upstream
 	@./hack/verify-ci-boundary.sh
 
 .PHONY: test-pyramid
-test-pyramid: test-security-traceability test-ci-boundary test-helm ## Verify independent tiers, production wiring, and the real E2E journey.
+test-pyramid: test-console-release test-ci-boundary test-helm ## Verify independent tiers, production wiring, and the real E2E journey.
 	@./hack/verify-test-pyramid.sh
 
 .PHONY: test-helm

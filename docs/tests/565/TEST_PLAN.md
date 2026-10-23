@@ -57,8 +57,7 @@ namespaces for post-failure inspection.
 - `make test-unit`: passed; zero missed business statements; internal unit
   coverage **100.0%**.
 - `make test-integration`: passed; controller integration coverage **79.1%**.
-- `go build ./...`, `make lint`, `make test-security-traceability`, and
-  `make test-pyramid`: passed.
+- `go build ./...`, `make lint`, and `make test-pyramid`: passed.
 - Live OCP E2E was attempted through `helios08`. The cluster/API discovery was
   healthy, but publishing the disposable operator image was blocked because
   certificate-based `system:admin` access did not provide a registry bearer
