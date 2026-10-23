@@ -62,6 +62,7 @@ var _ = Describe("Issue #567: Kubernaut Agent investigation concurrency", func()
 	})
 })
 
+// sessionCapacity extracts the rendered KA investigation capacity from YAML.
 func sessionCapacity(data string) int {
 	var rendered struct {
 		Runtime struct {
@@ -74,6 +75,7 @@ func sessionCapacity(data string) int {
 	return rendered.Runtime.Session.MaxConcurrentInvestigations
 }
 
+// deploymentHasReadOnlyConfigMount reports whether the KA config is mounted read-only.
 func deploymentHasReadOnlyConfigMount(deployment *appsv1.Deployment) bool {
 	for _, container := range deployment.Spec.Template.Spec.Containers {
 		for _, mount := range container.VolumeMounts {

@@ -1847,7 +1847,6 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.Conf
 	return yamlConfigMap(metadata, "routing.yaml", "notification-routing console config", console)
 }
 
-// KubernautAgentConfigMap builds the kubernaut-agent-config ConfigMap.
 // applyKALLMProfileFields copies the optional provider-specific and
 // credential fields from a resolved LLM profile onto llmCfg, leaving zero
 // values (and thus YAML omission) for anything the profile doesn't set.
@@ -2029,6 +2028,7 @@ func kaToolsConfig(knV2 *kubernautv1alpha2.Kubernaut) *kaIntegrationsToolsYAML {
 	}
 }
 
+// KubernautAgentConfigMap builds the kubernaut-agent-config ConfigMap.
 func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ns := kn.Namespace
@@ -2289,6 +2289,7 @@ func withDefault(val, def string) string {
 	return val
 }
 
+// intDefault returns val when it is non-zero, otherwise it returns def.
 func intDefault(val, def int) int {
 	if val != 0 {
 		return val

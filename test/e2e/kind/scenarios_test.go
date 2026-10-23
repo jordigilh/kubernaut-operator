@@ -361,6 +361,7 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 	})
 })
 
+// assertLiveKAConfigOverride verifies a live default and an explicit CR override.
 func assertLiveKAConfigOverride(ctx context.Context, defaultFragment, patchJSON, overrideFragment string) {
 	By("verifying the operator-generated live KA ConfigMap and read-only ConfigMap mount")
 	Eventually(func(g Gomega) {
