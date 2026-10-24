@@ -18,6 +18,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: publish-development-dependencies
+  cancel-in-progress: false
+
 env:
   CHART_REPOSITORY: quay.io/kubernaut-ai/kubernaut-development-dependencies
 
@@ -51,7 +55,9 @@ jobs:
           HELM_BIN=helm ./hack/verify-development-dependencies-chart.sh
           base_version=$(awk '$1 == "version:" {print $2; exit}' charts/kubernaut-development-dependencies/Chart.yaml)
           export CHART_VERSION="${base_version}-run.${GITHUB_RUN_NUMBER}"
+          export CHART_REGISTRY_VERSION="${CHART_VERSION//+/_}"
           echo "CHART_VERSION=${CHART_VERSION}" >> "${GITHUB_ENV}"
+          echo "CHART_REGISTRY_VERSION=${CHART_REGISTRY_VERSION}" >> "${GITHUB_ENV}"
           mkdir -p dist
           helm package charts/kubernaut-development-dependencies \
             --version "${CHART_VERSION}" \
@@ -76,15 +82,20 @@ jobs:
         run: |
           set -euo pipefail
           package="dist/kubernaut-development-dependencies-${CHART_VERSION}.tgz"
+          if skopeo inspect --raw "docker://${CHART_REPOSITORY}:${CHART_REGISTRY_VERSION}" >/dev/null 2>&1; then
+            echo "Refusing to replace existing immutable chart tag ${CHART_REGISTRY_VERSION}" >&2
+            exit 1
+          fi
           push_output=$(helm push "${package}" oci://quay.io/kubernaut-ai)
           printf '%s\n' "${push_output}"
           digest=$(printf '%s\n' "${push_output}" | sed -n 's/^Digest: //p')
           test -n "${digest}"
 
           skopeo copy --retry-times 3 \
-            "docker://${CHART_REPOSITORY}:${VERSION}" \
+            "docker://${CHART_REPOSITORY}:${CHART_REGISTRY_VERSION}" \
             "docker://${CHART_REPOSITORY}:latest"
-          latest_digest=$(skopeo inspect --format '{{.Digest}}' "docker://${CHART_REPOSITORY}:latest")
+          latest_digest=$(skopeo inspect --raw "docker://${CHART_REPOSITORY}:latest" | \
+            python3 -c 'import hashlib, sys; data=sys.stdin.buffer.read(); data=data[:-1] if data.endswith(b"\n") else data; print("sha256:" + hashlib.sha256(data).hexdigest())')
           test "${latest_digest}" = "${digest}"
           echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
 
@@ -108,7 +119,7 @@ jobs:
               "chart": {
                   "name": "kubernaut-development-dependencies",
                   "version": version,
-                  "version_ref": f"oci://quay.io/kubernaut-ai/kubernaut-development-dependencies:{version}",
+                  "version_ref": f"oci://quay.io/kubernaut-ai/kubernaut-development-dependencies:{os.environ['CHART_REGISTRY_VERSION']}",
                   "latest_ref": "oci://quay.io/kubernaut-ai/kubernaut-development-dependencies:latest",
                   "digest_ref": f"oci://quay.io/kubernaut-ai/kubernaut-development-dependencies@{digest}",
                   "digest": digest,
