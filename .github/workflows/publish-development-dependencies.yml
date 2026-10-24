@@ -58,15 +58,15 @@ jobs:
 
       - name: Login to Quay.io
         env:
-          QUAY_ROBOT_USERNAME: ${{ secrets.QUAY_ROBOT_USERNAME }}
-          QUAY_ROBOT_TOKEN: ${{ secrets.QUAY_ROBOT_TOKEN }}
+          QUAY_DEVELOPMENT_DEPENDENCIES_USERNAME: ${{ secrets.QUAY_DEVELOPMENT_DEPENDENCIES_USERNAME }}
+          QUAY_DEVELOPMENT_DEPENDENCIES_TOKEN: ${{ secrets.QUAY_DEVELOPMENT_DEPENDENCIES_TOKEN }}
         run: |
           set -euo pipefail
-          printf '%s' "${QUAY_ROBOT_TOKEN}" | helm registry login quay.io \
-            --username "${QUAY_ROBOT_USERNAME}" \
+          printf '%s' "${QUAY_DEVELOPMENT_DEPENDENCIES_TOKEN}" | helm registry login quay.io \
+            --username "${QUAY_DEVELOPMENT_DEPENDENCIES_USERNAME}" \
             --password-stdin
-          printf '%s' "${QUAY_ROBOT_TOKEN}" | skopeo login quay.io \
-            --username "${QUAY_ROBOT_USERNAME}" \
+          printf '%s' "${QUAY_DEVELOPMENT_DEPENDENCIES_TOKEN}" | skopeo login quay.io \
+            --username "${QUAY_DEVELOPMENT_DEPENDENCIES_USERNAME}" \
             --password-stdin
 
       - name: Push immutable chart version and latest alias
