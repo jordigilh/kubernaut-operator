@@ -666,7 +666,7 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          BUNDLE_IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}-bundle:v${VERSION}"
+          BUNDLE_IMG="${IMAGE_REGISTRY}/${OLM_IMAGE_NAME}-bundle:v${VERSION}"
           echo "Building bundle image ${BUNDLE_IMG}..."
           podman build -f bundle.Dockerfile -t "${BUNDLE_IMG}" .
 
@@ -674,7 +674,7 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          BUNDLE_IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}-bundle:v${VERSION}"
+          BUNDLE_IMG="${IMAGE_REGISTRY}/${OLM_IMAGE_NAME}-bundle:v${VERSION}"
           echo "Pushing ${BUNDLE_IMG}..."
           podman push "${BUNDLE_IMG}"
 
@@ -703,8 +703,8 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          BUNDLE_IMGS="${IMAGE_REGISTRY}/${IMAGE_NAME}-bundle:v${VERSION}" \
-            CATALOG_IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}-catalog:v${VERSION}" \
+          BUNDLE_IMGS="${IMAGE_REGISTRY}/${OLM_IMAGE_NAME}-bundle:v${VERSION}" \
+            CATALOG_IMG="${IMAGE_REGISTRY}/${OLM_IMAGE_NAME}-catalog:v${VERSION}" \
             CONTAINER_TOOL=podman \
             make catalog-build catalog-push
 
@@ -1011,4 +1011,4 @@ jobs:
           echo ""
           echo "Images:"
           echo "  Operator: ${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
-          echo "  Bundle:   ${IMAGE_REGISTRY}/${IMAGE_NAME}-bundle:v${VERSION}"
+          echo "  Bundle:   ${IMAGE_REGISTRY}/${OLM_IMAGE_NAME}-bundle:v${VERSION}"

@@ -17,13 +17,18 @@ helm install kubernaut-operator ./charts/kubernaut-operator \
 
 For production, select one of the explicit certificate profiles.
 
-Formal releases publish this chart as the `kubernaut-operator` OCI artifact:
+Formal releases publish this chart as the `kubernaut-operator` OCI artifact.
+For a production generic-Kubernetes installation, install cert-manager and an
+Issuer or ClusterIssuer first, then use the cert-manager TLS profile:
 
 ```bash
 helm upgrade --install kubernaut-operator \
   oci://quay.io/kubernaut-ai/kubernaut-operator@sha256:<chart-digest> \
   --namespace kubernaut-operator-system \
   --create-namespace \
+  --set webhook.tls.mode=certManager \
+  --set webhook.tls.certManager.issuerRef.name=operator-issuer \
+  --set webhook.tls.certManager.issuerRef.kind=ClusterIssuer \
   --wait --timeout 10m
 ```
 
