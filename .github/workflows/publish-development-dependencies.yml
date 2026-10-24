@@ -1,0 +1,144 @@
+name: Publish Development Dependencies Chart
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: SemVer package version used as the immutable source for latest
+        required: true
+        default: 1.6.0-rc27
+        type: string
+      source_ref:
+        description: Merged source ref to package
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CHART_REPOSITORY: quay.io/kubernaut-ai/kubernaut-development-dependencies
+
+jobs:
+  publish:
+    name: Publish development dependencies OCI chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_ref }}
+
+      - name: Install pinned Helm 4
+        run: |
+          set -euo pipefail
+          HELM_VERSION=v4.3.0
+          HELM_ARCHIVE="/tmp/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o "${HELM_ARCHIVE}"
+          printf '%s  %s\n' \
+            86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb \
+            "${HELM_ARCHIVE}" | sha256sum -c -
+          tar -xzf "${HELM_ARCHIVE}" -C /tmp
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+
+      - name: Validate and package chart
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          helm lint charts/kubernaut-development-dependencies
+          HELM_BIN=helm ./hack/verify-development-dependencies-chart.sh
+          mkdir -p dist
+          helm package charts/kubernaut-development-dependencies \
+            --version "${VERSION}" \
+            --app-version "${VERSION}" \
+            --destination dist
+
+      - name: Login to Quay.io
+        env:
+          QUAY_ROBOT_USERNAME: ${{ secrets.QUAY_ROBOT_USERNAME }}
+          QUAY_ROBOT_TOKEN: ${{ secrets.QUAY_ROBOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${QUAY_ROBOT_TOKEN}" | helm registry login quay.io \
+            --username "${QUAY_ROBOT_USERNAME}" \
+            --password-stdin
+          printf '%s' "${QUAY_ROBOT_TOKEN}" | skopeo login quay.io \
+            --username "${QUAY_ROBOT_USERNAME}" \
+            --password-stdin
+
+      - name: Push immutable chart version and latest alias
+        id: push
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          package="dist/kubernaut-development-dependencies-${VERSION}.tgz"
+          push_output=$(helm push "${package}" oci://quay.io/kubernaut-ai)
+          printf '%s\n' "${push_output}"
+          digest=$(printf '%s\n' "${push_output}" | sed -n 's/^Digest: //p')
+          test -n "${digest}"
+
+          skopeo copy --retry-times 3 \
+            "docker://${CHART_REPOSITORY}:${VERSION}" \
+            "docker://${CHART_REPOSITORY}:latest"
+          latest_digest=$(skopeo inspect --format '{{.Digest}}' "docker://${CHART_REPOSITORY}:latest")
+          test "${latest_digest}" = "${digest}"
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Write OCI release manifest
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          export SOURCE_SHA
+          SOURCE_SHA=$(git rev-parse HEAD)
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          digest = os.environ["DIGEST"]
+          manifest = {
+              "schema": "kubernaut-development-dependencies-oci/v1",
+              "chart": {
+                  "name": "kubernaut-development-dependencies",
+                  "version": version,
+                  "version_ref": f"oci://quay.io/kubernaut-ai/kubernaut-development-dependencies:{version}",
+                  "latest_ref": "oci://quay.io/kubernaut-ai/kubernaut-development-dependencies:latest",
+                  "digest_ref": f"oci://quay.io/kubernaut-ai/kubernaut-development-dependencies@{digest}",
+                  "digest": digest,
+              },
+              "source": {
+                  "repository": os.environ["GITHUB_REPOSITORY"],
+                  "ref": os.environ["SOURCE_REF"],
+                  "sha": os.environ["SOURCE_SHA"],
+              },
+              "workflow": {
+                  "run_id": os.environ["GITHUB_RUN_ID"],
+                  "run_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+              },
+          }
+          Path("kubernaut-development-dependencies-oci.json").write_text(
+              json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+
+          {
+            echo "### Development dependencies chart"
+            echo "- Immutable version: \`oci://${CHART_REPOSITORY}:${VERSION}\`"
+            echo "- Mutable convenience alias: \`oci://${CHART_REPOSITORY}:latest\`"
+            echo "- Digest reference: \`oci://${CHART_REPOSITORY}@${DIGEST}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload OCI manifest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
+        with:
+          name: kubernaut-development-dependencies-${{ inputs.version }}
+          path: kubernaut-development-dependencies-oci.json
+          if-no-files-found: error
