@@ -359,7 +359,7 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 				TLS: &kubernautv1alpha2.ValkeyTLSSpec{
 					Enabled:              true,
 					CASecretName:         "valkey-ca",
-					ClientCertSecretName: "valkey-tls-client",
+					ClientCertSecretName: "valkey-tls-client", //nolint:gosec // disposable Kind fixture Secret reference
 				},
 			},
 			DataStorage: dataStorage,

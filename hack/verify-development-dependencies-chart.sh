@@ -35,7 +35,7 @@ for required in \
 	'kubectl create secret generic' \
 	'POSTGRES_USER' \
 	'valkey-secrets.yaml' \
-	'/dev/urandom' \
+	'openssl rand -hex' \
 	'name: valkey-ca' \
 	'name: valkey-tls' \
 	'name: valkey-tls-client' \
