@@ -18,7 +18,8 @@ permissions:
 
 env:
   IMAGE_REGISTRY: quay.io/kubernaut-ai
-  IMAGE_NAME: kubernaut-operator
+  IMAGE_NAME: kubernaut-operator-image
+  OLM_IMAGE_NAME: kubernaut-operator
 
 jobs:
   # ========================================
@@ -745,7 +746,7 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          chart_dir="${RUNNER_TEMP}/kubernaut-operator-chart"
+          chart_dir="${RUNNER_TEMP}/kubernaut-operator"
           mkdir -p dist
           cp -R charts/kubernaut-operator "${chart_dir}"
           sed -i "0,/^  tag: /s/^  tag: .*/  tag: ${VERSION}/" "${chart_dir}/values.yaml"
@@ -930,7 +931,7 @@ jobs:
               qualification = json.load(qualification_file)
 
           registry = os.environ["IMAGE_REGISTRY"]
-          image = f"{registry}/kubernaut-operator"
+          image = f"{registry}/{os.environ['IMAGE_NAME']}"
           manifest = {
               "schema": "kubernaut-operator-release-provenance/v1",
               "operator": {

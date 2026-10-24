@@ -1,6 +1,6 @@
 # Operator image. Prefer digest for production and disconnected installations.
 image:
-  repository: quay.io/kubernaut-ai/kubernaut-operator
+  repository: quay.io/kubernaut-ai/kubernaut-operator-image
   tag: 1.6.0-rc27
   digest: ""
   pullPolicy: IfNotPresent

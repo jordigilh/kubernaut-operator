@@ -15,7 +15,7 @@ mirror:
   additionalImages:
     # Operator (tag-based pending the v1.6.0-rc27 tag build; a follow-up PR
     # will pin this to a digest once published)
-    - name: quay.io/kubernaut-ai/kubernaut-operator:1.6.0-rc27
+    - name: quay.io/kubernaut-ai/kubernaut-operator-image:1.6.0-rc27
     # Operator bundle (tag-based, see note above)
     - name: quay.io/kubernaut-ai/kubernaut-operator-bundle:v1.6.0-rc27
     # Operand and infrastructure images
