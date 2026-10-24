@@ -155,8 +155,8 @@ TLS follow-up and is not an issue-499 acceptance criterion.
 The merged CI boundary requires the operator repository and its Kind harness to
 avoid upstream source checkouts, application images, and upstream workflow
 dispatch. `make test-pyramid` now includes `make test-ci-boundary`; release
-publication also consumes an immutable upstream qualification record for the
-exact operator SHA.
+provenance records that upstream qualification is manual and release-owner
+controlled.
 
 Therefore, issue-499 operator tests may prove CRD admission, rendered
 configuration, Deployment mounts, RBAC, ownership, status, and trust behavior
