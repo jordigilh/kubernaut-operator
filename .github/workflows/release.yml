@@ -708,6 +708,84 @@ jobs:
             make catalog-build catalog-push
 
   # ========================================
+  # STAGE 3c: OPERATOR HELM CHART
+  # Packages and publishes the operator chart as an OCI artifact alongside the
+  # operator image, bundle, and catalog for the same formal release.
+  # ========================================
+
+  operator-chart:
+    name: Package & Push Operator Helm Chart
+    needs: [prepare, operator-gates, operator-e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      chart_version: ${{ steps.package.outputs.chart_version }}
+      chart_digest: ${{ steps.push.outputs.chart_digest }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Helm 4
+        run: |
+          set -euo pipefail
+          HELM_VERSION=v4.3.0
+          HELM_ARCHIVE="/tmp/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o "${HELM_ARCHIVE}"
+          printf '%s  %s\n' \
+            86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb \
+            "${HELM_ARCHIVE}" | sha256sum -c -
+          tar -xzf "${HELM_ARCHIVE}" -C /tmp
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+
+      - name: Package operator chart with release image tag
+        id: package
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          chart_dir="${RUNNER_TEMP}/kubernaut-operator-chart"
+          mkdir -p dist
+          cp -R charts/kubernaut-operator "${chart_dir}"
+          sed -i "0,/^  tag: /s/^  tag: .*/  tag: ${VERSION}/" "${chart_dir}/values.yaml"
+          helm lint "${chart_dir}"
+          helm package "${chart_dir}" \
+            --version "${VERSION}" \
+            --app-version "${VERSION}" \
+            --destination dist
+          test -s "dist/kubernaut-operator-${VERSION}.tgz"
+          echo "chart_version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Login to Quay.io
+        env:
+          QUAY_ROBOT_USERNAME: ${{ secrets.QUAY_ROBOT_USERNAME }}
+          QUAY_ROBOT_TOKEN: ${{ secrets.QUAY_ROBOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${QUAY_ROBOT_TOKEN}" | helm registry login quay.io \
+            --username "${QUAY_ROBOT_USERNAME}" \
+            --password-stdin
+
+      - name: Push operator chart
+        id: push
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          chart="dist/kubernaut-operator-${VERSION}.tgz"
+          push_output=$(helm push "${chart}" oci://quay.io/kubernaut-ai)
+          printf '%s\n' "${push_output}"
+          digest=$(printf '%s\n' "${push_output}" | sed -n 's/^Digest: //p')
+          test -n "${digest}"
+          echo "chart_digest=${digest}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "### Operator Helm chart"
+            echo "- Version: \`${VERSION}\`"
+            echo "- Immutable OCI reference: \`oci://quay.io/kubernaut-ai/kubernaut-operator@${digest}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  # ========================================
   # STAGE 3c: DEVELOPMENT DEPENDENCIES HELM CHART
   # Packages and publishes the disposable PostgreSQL/Valkey dependency chart
   # as an OCI artifact for demo and qualification clusters.
@@ -796,7 +874,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [prepare, qualification, operator-e2e, create-manifests, bundle, catalog, development-dependencies-chart, sbom, sign, provenance-amd64, provenance-arm64]
+    needs: [prepare, qualification, operator-e2e, create-manifests, bundle, catalog, operator-chart, development-dependencies-chart, sbom, sign, provenance-amd64, provenance-arm64]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -828,6 +906,8 @@ jobs:
           AMD64_DIGEST: ${{ needs.create-manifests.outputs.amd64_digest }}
           ARM64_DIGEST: ${{ needs.create-manifests.outputs.arm64_digest }}
           MANIFEST_DIGEST: ${{ needs.create-manifests.outputs.manifest_digest }}
+          OPERATOR_CHART_VERSION: ${{ needs.operator-chart.outputs.chart_version }}
+          OPERATOR_CHART_DIGEST: ${{ needs.operator-chart.outputs.chart_digest }}
           DEPENDENCY_CHART_VERSION: ${{ needs.development-dependencies-chart.outputs.chart_version }}
           DEPENDENCY_CHART_DIGEST: ${{ needs.development-dependencies-chart.outputs.chart_digest }}
           QUALIFICATION_URL: https://github.com/jordigilh/kubernaut/releases/download/${{ needs.prepare.outputs.tag }}/operator-compatibility-qualification.json
@@ -836,6 +916,8 @@ jobs:
           test -n "$AMD64_DIGEST"
           test -n "$ARM64_DIGEST"
           test -n "$MANIFEST_DIGEST"
+          test -n "$OPERATOR_CHART_VERSION"
+          test -n "$OPERATOR_CHART_DIGEST"
           test -n "$DEPENDENCY_CHART_VERSION"
           test -n "$DEPENDENCY_CHART_DIGEST"
           python3 - <<'PY'
@@ -857,10 +939,24 @@ jobs:
                   "sha": os.environ["OPERATOR_SHA"],
                   "images": {
                       "amd64": f"{image}@{os.environ['AMD64_DIGEST']}",
-                      "arm64": f"{image}@{os.environ['ARM64_DIGEST']}",
-                      "manifest": f"{image}@{os.environ['MANIFEST_DIGEST']}",
-                  },
-              },
+                       "arm64": f"{image}@{os.environ['ARM64_DIGEST']}",
+                       "manifest": f"{image}@{os.environ['MANIFEST_DIGEST']}",
+                   },
+                   "chart": {
+                       "name": "kubernaut-operator",
+                       "version": os.environ["OPERATOR_CHART_VERSION"],
+                       "tag": (
+                           "oci://quay.io/kubernaut-ai/"
+                           "kubernaut-operator:"
+                           + os.environ["OPERATOR_CHART_VERSION"]
+                       ),
+                       "digest": (
+                           "oci://quay.io/kubernaut-ai/"
+                           "kubernaut-operator@"
+                           + os.environ["OPERATOR_CHART_DIGEST"]
+                       ),
+                   },
+               },
               "upstream_qualification": qualification,
               "qualification_manifest_url": os.environ["QUALIFICATION_URL"],
               "bootstrap_chart": {
