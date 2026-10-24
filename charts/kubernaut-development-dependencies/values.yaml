@@ -1,17 +1,24 @@
-# This chart is intentionally disposable. It owns the generated TLS Secret,
-# credentials, Services, workloads, and fixture ConfigMaps it creates.
+# This chart is intentionally disposable. It owns the generated TLS Secrets,
+# runtime-generated credentials, Services, workloads, and fixture ConfigMaps it
+# creates.
 
 imagePullSecrets: []
+
+credentials:
+  # The hook creates credentials at runtime; no credential values are rendered
+  # into the Helm release. This image is also used by the operator's tested
+  # development TLS bootstrap path.
+  image:
+    repository: docker.io/bitnami/kubectl
+    tag: latest
+    digest: sha256:6e2cdb22d6ab7264ea198c717f555e30536b54029d26c8781b9f25f78951b564
+    pullPolicy: IfNotPresent
 
 postgresql:
   name: postgresql
   serviceName: postgresql
   secretName: postgresql-secret
   database: kubernaut
-  user: kubernaut
-  # Development-only material. Override with --set-string for a local value;
-  # never use these defaults for a production deployment.
-  password: dev-only-postgres-password
   sslMode: require
   image:
     repository: registry.redhat.io/rhel10/postgresql-16
@@ -50,7 +57,11 @@ valkey:
   name: valkey
   serviceName: valkey
   secretName: valkey-secret
-  password: dev-only-valkey-password
+  tls:
+    serverSecretName: valkey-tls
+    caSecretName: valkey-ca
+    clientCertSecretName: valkey-tls-client
+    validityDays: 365
   image:
     repository: docker.io/valkey/valkey
     tag: 8.0.2

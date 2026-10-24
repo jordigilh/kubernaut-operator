@@ -4,17 +4,17 @@ metadata:
   name: {{ .Values.valkey.name }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
     app.kubernetes.io/name: {{ .Values.valkey.name }}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "kubernaut-dev-bootstrap.valkeyLabels" . | nindent 6 }}
+      {{- include "kubernaut-development-dependencies.valkeyLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "kubernaut-dev-bootstrap.valkeyLabels" . | nindent 8 }}
+        {{- include "kubernaut-development-dependencies.valkeyLabels" . | nindent 8 }}
     spec:
       automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}
@@ -23,17 +23,11 @@ spec:
       {{- end }}
       containers:
         - name: {{ .Values.valkey.name }}
-          image: {{ include "kubernaut-dev-bootstrap.image" (dict "image" .Values.valkey.image) | quote }}
+          image: {{ include "kubernaut-development-dependencies.image" (dict "image" .Values.valkey.image) | quote }}
           imagePullPolicy: {{ .Values.valkey.image.pullPolicy }}
           command: ["sh", "-ceu"]
           args:
-            - exec valkey-server --requirepass "$VALKEY_PASSWORD" --save "" --appendonly no
-          env:
-            - name: VALKEY_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.valkey.secretName }}
-                  key: VALKEY_PASSWORD
+            - exec valkey-server --port 0 --tls-port 6379 --tls-cert-file /certs/tls.crt --tls-key-file /certs/tls.key --tls-ca-cert-file /etc/tls-ca/ca.crt --tls-auth-clients yes --save "" --appendonly no
           ports:
             - name: valkey
               containerPort: 6379
@@ -43,7 +37,7 @@ spec:
               command:
                 - sh
                 - -ceu
-                - valkey-cli --no-auth-warning -a "$VALKEY_PASSWORD" ping
+                - valkey-cli --tls --cacert /etc/tls-ca/ca.crt --cert /certs/tls.crt --key /certs/tls.key -p 6379 ping
             initialDelaySeconds: 3
             periodSeconds: 5
             timeoutSeconds: 5
@@ -53,7 +47,7 @@ spec:
               command:
                 - sh
                 - -ceu
-                - valkey-cli --no-auth-warning -a "$VALKEY_PASSWORD" ping
+                - valkey-cli --tls --cacert /etc/tls-ca/ca.crt --cert /certs/tls.crt --key /certs/tls.key -p 6379 ping
             initialDelaySeconds: 20
             periodSeconds: 10
             timeoutSeconds: 5
@@ -61,11 +55,17 @@ spec:
             {{- toYaml .Values.valkey.resources | nindent 12 }}
           {{- if .Values.valkey.securityContext.enabled }}
           securityContext:
-            {{- include "kubernaut-dev-bootstrap.containerSecurityContext" .Values.valkey.securityContext | nindent 12 }}
+            {{- include "kubernaut-development-dependencies.containerSecurityContext" .Values.valkey.securityContext | nindent 12 }}
           {{- end }}
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: valkey-tls
+              mountPath: /certs
+              readOnly: true
+            - name: valkey-ca
+              mountPath: /etc/tls-ca
+              readOnly: true
       volumes:
         - name: data
           {{- if .Values.valkey.persistence.enabled }}
@@ -74,3 +74,11 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        - name: valkey-tls
+          secret:
+            secretName: {{ .Values.valkey.tls.serverSecretName }}
+            defaultMode: 0444
+        - name: valkey-ca
+          secret:
+            secretName: {{ .Values.valkey.tls.caSecretName }}
+            defaultMode: 0444

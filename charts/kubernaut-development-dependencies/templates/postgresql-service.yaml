@@ -4,12 +4,12 @@ metadata:
   name: {{ .Values.postgresql.serviceName }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
 spec:
   type: ClusterIP
   selector:
     app.kubernetes.io/name: {{ .Values.postgresql.name }}
-    app.kubernetes.io/part-of: kubernaut-dev-bootstrap
+    app.kubernetes.io/part-of: kubernaut-development-dependencies
     app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
     - name: postgres

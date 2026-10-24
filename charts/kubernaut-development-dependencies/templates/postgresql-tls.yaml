@@ -10,7 +10,7 @@ metadata:
   name: {{ .Values.postgresql.tls.secretName }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kubernaut-dev-bootstrap.labels" . | nindent 4 }}
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
 type: kubernetes.io/tls
 data:
   tls.crt: {{ if $existing }}{{ index $existing.data "tls.crt" | quote }}{{ else }}{{ $cert.Cert | b64enc | quote }}{{ end }}

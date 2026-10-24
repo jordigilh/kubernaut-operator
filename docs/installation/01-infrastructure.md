@@ -2,28 +2,46 @@
 
 Before deploying Kubernaut, provision the required backing services and namespace on your OCP cluster.
 
-## Disposable development bootstrap
+## Disposable development dependencies
 
 For operator development, Kind, and disposable OCP qualification, use the
-repository-owned bootstrap chart instead of reproducing the dependency
+repository-owned development dependencies chart instead of reproducing the dependency
 manifests by hand:
 
 ```bash
-helm upgrade --install kubernaut-dev-bootstrap \
-  ./charts/kubernaut-dev-bootstrap \
+helm upgrade --install kubernaut-development-dependencies \
+  ./charts/kubernaut-development-dependencies \
   --namespace kubernaut-system \
   --create-namespace \
   --wait --timeout 10m
 ```
 
 The chart creates selector-backed PostgreSQL and Valkey Services, synthetic
-credentials, the sample policy ConfigMaps, readiness probes, and a generated
-short-lived PostgreSQL TLS certificate. Its default CR contract is
-`spec.postgresql.sslMode: require`; `disable` is not supported. See the
-[bootstrap chart README](../../charts/kubernaut-dev-bootstrap/README.md) for
+runtime-generated credentials, the sample policy ConfigMaps, readiness probes,
+and generated PostgreSQL and Valkey TLS material. Its default CR contract is
+`spec.postgresql.sslMode: require` plus Valkey mTLS; `disable` is not supported.
+See the
+[development dependencies chart README](../../charts/kubernaut-development-dependencies/README.md) for
 image pinning, restricted-SCC settings, Kind overrides, persistence, and
 cleanup. It is intentionally separate from the production operator chart and
 must not be installed over administrator-owned BYO Services or Secrets.
+
+`kubernaut-development-dependencies` replaces the former
+`kubernaut-dev-bootstrap` release identity. Do not install both releases in
+the same namespace; uninstall the old disposable release first and back up any
+Helm-owned persistent data before doing so. The chart README contains the
+migration command.
+
+For demo clusters, use the immutable OCI reference printed by the tagged
+release workflow:
+
+```bash
+helm upgrade --install kubernaut-development-dependencies \
+  oci://quay.io/kubernaut-ai/kubernaut-development-dependencies@sha256:<chart-digest> \
+  --namespace kubernaut-system \
+  --create-namespace \
+  --wait --timeout 10m
+```
 
 ## Namespace
 

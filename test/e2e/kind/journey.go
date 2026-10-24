@@ -45,7 +45,7 @@ func ensureKubernautInfrastructure(ctx context.Context) error {
 		return err
 	}
 	args := []string{
-		"upgrade", "--install", "kubernaut-dev-bootstrap", devBootstrapChartPath(),
+		"upgrade", "--install", "kubernaut-development-dependencies", developmentDependenciesChartPath(),
 		"--namespace", kubernautNamespace,
 		"--create-namespace",
 		"--set", "postgresql.commandMode=official",
@@ -57,13 +57,13 @@ func ensureKubernautInfrastructure(ctx context.Context) error {
 		"--wait", "--timeout", "10m",
 	}
 	if _, err := helmInCluster(ctx, args...); err != nil {
-		return fmt.Errorf("installing Kubernaut development bootstrap chart: %w", err)
+		return fmt.Errorf("installing Kubernaut development dependencies chart: %w", err)
 	}
 	return nil
 }
 
-func devBootstrapChartPath() string {
-	return filepath.Join(repositoryRoot(), "charts", "kubernaut-dev-bootstrap")
+func developmentDependenciesChartPath() string {
+	return filepath.Join(repositoryRoot(), "charts", "kubernaut-development-dependencies")
 }
 
 // ensureCertManagerRuntimeTLS creates the cert-manager objects consumed by
@@ -356,6 +356,11 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 			Valkey: kubernautv1alpha2.ValkeySpec{
 				SecretName: "valkey-secret",
 				Host:       "valkey.kubernaut-system.svc.cluster.local",
+				TLS: &kubernautv1alpha2.ValkeyTLSSpec{ //nolint:gosec // disposable Kind fixture Secret references
+					Enabled:              true,
+					CASecretName:         "valkey-ca",
+					ClientCertSecretName: "valkey-tls-client",
+				},
 			},
 			DataStorage: dataStorage,
 			AIAnalysis: kubernautv1alpha2.AIAnalysisSpec{

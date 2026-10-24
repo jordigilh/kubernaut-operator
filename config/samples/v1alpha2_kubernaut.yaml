@@ -24,6 +24,10 @@ spec:
   valkey:
     host: valkey.kubernaut-system.svc.cluster.local
     secretName: valkey-secret
+    tls:
+      enabled: true
+      caSecretName: valkey-ca
+      clientCertSecretName: valkey-tls-client
 
   # One named profile is enough; the operator infers it for KA and API
   # Frontend when their profile references are omitted.

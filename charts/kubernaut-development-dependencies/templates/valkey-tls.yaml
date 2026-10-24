@@ -1,0 +1,45 @@
+{{- $existingCA := lookup "v1" "Secret" .Release.Namespace .Values.valkey.tls.caSecretName -}}
+{{- $existingServer := lookup "v1" "Secret" .Release.Namespace .Values.valkey.tls.serverSecretName -}}
+{{- $existingClient := lookup "v1" "Secret" .Release.Namespace .Values.valkey.tls.clientCertSecretName -}}
+{{- if or (and $existingCA (not $existingServer)) (and $existingCA (not $existingClient)) (and $existingServer (not $existingCA)) -}}
+{{- fail "valkey TLS Secrets must be created together; remove partial valkey TLS Secrets before reinstalling" -}}
+{{- end -}}
+{{- $serviceName := .Values.valkey.serviceName -}}
+{{- $namespace := .Release.Namespace -}}
+{{- $dnsNames := list $serviceName (printf "%s.%s" $serviceName $namespace) (printf "%s.%s.svc" $serviceName $namespace) (printf "%s.%s.svc.cluster.local" $serviceName $namespace) -}}
+{{- $ca := genCA (printf "%s-development-ca" $serviceName) (int .Values.valkey.tls.validityDays) -}}
+{{- $cert := genSignedCert $serviceName nil $dnsNames (int .Values.valkey.tls.validityDays) $ca -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.valkey.tls.caSecretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
+type: Opaque
+data:
+  ca.crt: {{ if $existingCA }}{{ index $existingCA.data "ca.crt" | quote }}{{ else }}{{ $ca.Cert | b64enc | quote }}{{ end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.valkey.tls.serverSecretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ if $existingServer }}{{ index $existingServer.data "tls.crt" | quote }}{{ else }}{{ $cert.Cert | b64enc | quote }}{{ end }}
+  tls.key: {{ if $existingServer }}{{ index $existingServer.data "tls.key" | quote }}{{ else }}{{ $cert.Key | b64enc | quote }}{{ end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.valkey.tls.clientCertSecretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ if $existingClient }}{{ index $existingClient.data "tls.crt" | quote }}{{ else }}{{ $cert.Cert | b64enc | quote }}{{ end }}
+  tls.key: {{ if $existingClient }}{{ index $existingClient.data "tls.key" | quote }}{{ else }}{{ $cert.Key | b64enc | quote }}{{ end }}

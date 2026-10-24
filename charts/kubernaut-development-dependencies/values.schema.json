@@ -14,6 +14,7 @@
         }
       }
     },
+    "credentials": { "$ref": "#/$defs/credentials" },
     "postgresql": { "$ref": "#/$defs/postgresql" },
     "valkey": { "$ref": "#/$defs/valkey" },
     "fixtures": {
@@ -81,6 +82,14 @@
         "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
       }
     },
+    "credentials": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image"],
+      "properties": {
+        "image": { "$ref": "#/$defs/image" }
+      }
+    },
     "securityContext": {
       "type": "object",
       "additionalProperties": false,
@@ -121,8 +130,6 @@
         "serviceName": { "type": "string", "minLength": 1 },
         "secretName": { "type": "string", "minLength": 1 },
         "database": { "type": "string", "minLength": 1 },
-        "user": { "type": "string", "minLength": 1 },
-        "password": { "type": "string", "minLength": 1 },
         "sslMode": { "type": "string", "enum": ["require", "verify-ca", "verify-full"] },
         "image": { "$ref": "#/$defs/image" },
         "commandMode": { "type": "string", "enum": ["rhel", "official"] },
@@ -146,8 +153,18 @@
         "name": { "type": "string", "minLength": 1 },
         "serviceName": { "type": "string", "minLength": 1 },
         "secretName": { "type": "string", "minLength": 1 },
-        "password": { "type": "string", "minLength": 1 },
         "image": { "$ref": "#/$defs/image" },
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["serverSecretName", "caSecretName", "clientCertSecretName", "validityDays"],
+          "properties": {
+            "serverSecretName": { "type": "string", "minLength": 1 },
+            "caSecretName": { "type": "string", "minLength": 1 },
+            "clientCertSecretName": { "type": "string", "minLength": 1 },
+            "validityDays": { "type": "integer", "minimum": 1, "maximum": 3650 }
+          }
+        },
         "persistence": { "$ref": "#/$defs/persistence" },
         "securityContext": { "$ref": "#/$defs/securityContext" },
         "resources": { "type": "object" }

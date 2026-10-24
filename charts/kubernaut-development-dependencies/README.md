@@ -1,4 +1,4 @@
-# Kubernaut development dependency bootstrap
+# Kubernaut development dependencies
 
 This chart is an explicit, disposable development path for the operator's
 bring-your-own (BYO) PostgreSQL and Valkey contract. It is **not** part of the
@@ -21,8 +21,36 @@ generates a short-lived, in-cluster certificate and rejects non-TLS host
 connections.
 
 ```bash
-helm upgrade --install kubernaut-dev-bootstrap \
-  ./charts/kubernaut-dev-bootstrap \
+helm upgrade --install kubernaut-development-dependencies \
+  ./charts/kubernaut-development-dependencies \
+  --namespace kubernaut-system \
+  --create-namespace \
+  --wait --timeout 10m
+```
+
+## Demo clusters from the OCI release
+
+The tagged operator release publishes this chart to Quay as an OCI artifact.
+Use the immutable digest printed in the GitHub Release workflow summary:
+
+```bash
+helm upgrade --install kubernaut-development-dependencies \
+  oci://quay.io/kubernaut-ai/kubernaut-development-dependencies@sha256:<chart-digest> \
+  --namespace kubernaut-system \
+  --create-namespace \
+  --wait --timeout 10m
+```
+
+The same immutable reference is recorded in the release asset
+`operator-release-provenance.json` under `bootstrap_chart.digest` for automated
+demo-cluster consumers.
+
+The version tag is also available when digest pinning is not required:
+
+```bash
+helm upgrade --install kubernaut-development-dependencies \
+  oci://quay.io/kubernaut-ai/kubernaut-development-dependencies \
+  --version <release-version> \
   --namespace kubernaut-system \
   --create-namespace \
   --wait --timeout 10m
@@ -33,26 +61,45 @@ The chart creates:
 * selector-backed `postgresql` and `valkey` ClusterIP Services;
 * one disposable Deployment for each dependency, with readiness/liveness
   probes and `emptyDir` storage by default;
-* `postgresql-secret` with `POSTGRES_USER`, `POSTGRES_PASSWORD`, and
-  `POSTGRES_DB`;
-* `valkey-secret` with the operator-required `valkey-secrets.yaml` key;
+* a pre-install/pre-upgrade hook that generates `postgresql-secret` at runtime
+  with random `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, and
+  `db-secrets.yaml` values;
+* the same hook generates `valkey-secret` at runtime with the operator-required
+  `valkey-secrets.yaml` compatibility key; the value is not used for Valkey
+  authentication;
+* Valkey server, CA, and shared client certificates, with plaintext Valkey
+  disabled and mTLS client authentication required;
 * synthetic, well-formed (but unusable) GCP ADC material in
   `llm-credentials`, plus `slack-webhook`, `kubernaut-console-oidc`,
   `aianalysis-policy`, and `signalprocessing-policy` fixtures for the sample
   CR; and
-* `kubernaut-dev-bootstrap-contract`, which records the hostnames, Secret
+* `kubernaut-development-dependencies-contract`, which records the hostnames, Secret
   names, and selected PostgreSQL `sslMode` for the Kubernaut CR.
 
-No real credentials are embedded. Override the disposable values for a local
-environment and keep them out of shell history where appropriate:
+No database credentials are embedded in the chart values or rendered Secret
+manifests. The pre-install hook generates them inside the cluster and preserves
+them across upgrades. The generated Valkey password exists only to satisfy the
+operator's Secret contract; mTLS is the only Valkey authentication mechanism.
+
+## Migration from `kubernaut-dev-bootstrap`
+
+The chart rename changes the Helm release identity and is **not** an
+in-place upgrade. Do not install both releases in the same namespace: they
+create fixed-name PostgreSQL and Valkey resources, and the old release's
+selectors cannot be changed safely by an upgrade.
+
+For a disposable environment, remove the old release before installing this
+chart:
 
 ```bash
-helm upgrade --install kubernaut-dev-bootstrap \
-  ./charts/kubernaut-dev-bootstrap \
-  --namespace kubernaut-system --create-namespace --wait --timeout 10m \
-  --set-string postgresql.password='local-only-value' \
-  --set-string valkey.password='local-only-value'
+helm uninstall kubernaut-dev-bootstrap \
+  --namespace kubernaut-system --wait
 ```
+
+This deletes the old Helm-owned Deployments, Services, Secrets, and any
+Helm-owned PVCs. Back up or migrate data first if persistence was enabled.
+Then install `kubernaut-development-dependencies` using one of the commands
+above.
 
 Apply the operator CR only after the chart is ready. For the generated
 self-signed PostgreSQL certificate, use the supported CR value
@@ -68,7 +115,7 @@ The chart owns the resources listed above. Remove the whole disposable
 environment with:
 
 ```bash
-helm uninstall kubernaut-dev-bootstrap --namespace kubernaut-system --wait
+helm uninstall kubernaut-development-dependencies --namespace kubernaut-system --wait
 ```
 
 Do not install this release into a namespace containing administrator-owned
@@ -92,8 +139,8 @@ to direct `kubectl` fixtures.
 The harness equivalent is:
 
 ```bash
-helm upgrade --install kubernaut-dev-bootstrap \
-  ./charts/kubernaut-dev-bootstrap \
+helm upgrade --install kubernaut-development-dependencies \
+  ./charts/kubernaut-development-dependencies \
   --namespace kubernaut-system --create-namespace \
   --set postgresql.commandMode=official \
   --set postgresql.securityContext.enabled=false \
