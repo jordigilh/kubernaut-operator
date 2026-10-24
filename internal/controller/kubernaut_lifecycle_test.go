@@ -18,13 +18,7 @@ package controller
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"fmt"
-	"math/big"
 	"os"
 	"slices"
 	"strings"
@@ -57,7 +51,10 @@ import (
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
-const testAwxAPIURL = "https://awx.example.com"
+const (
+	testAwxAPIURL          = "https://awx.example.com"
+	testConsoleRedirectURL = "https://console.example.com/oauth2/callback"
+)
 
 // kubernautVerbs returns the effective kubernaut.ai verbs for one resource.
 func kubernautVerbs(role *rbacv1.ClusterRole, resourceName string) []string {
@@ -209,7 +206,7 @@ func setAllDeploymentsReady(ctx context.Context) {
 // newCRWithAnsibleEnabled returns a minimal CR with Ansible enabled and a
 // tokenSecretRef pointing to the given secret name.
 func newCRWithAnsibleEnabled(secretName string) *kubernautv1alpha2.Kubernaut {
-	cr := newCRWithRouteDisabled()
+	cr := newMinimalCR()
 	cr.Spec.WorkflowExecution.Ansible.Enabled = true
 	cr.Spec.WorkflowExecution.Ansible.APIURL = testAwxAPIURL
 	cr.Spec.WorkflowExecution.Ansible.TokenSecretRef = &kubernautv1alpha2.SecretKeyRef{
@@ -251,15 +248,6 @@ func reconcileToDeployPhase(ctx context.Context) *KubernautReconciler {
 	_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 	Expect(err).NotTo(HaveOccurred())
 	return r
-}
-
-// newCRWithRouteDisabled returns a minimal CR with the OCP route disabled
-// to avoid needing routev1 in the test scheme.
-func newCRWithRouteDisabled() *kubernautv1alpha2.Kubernaut {
-	cr := newMinimalCR()
-	f := false
-	cr.Spec.Gateway.Route.Enabled = &f
-	return cr
 }
 
 func setDataStorageAuditHashKey(kn *kubernautv1alpha2.Kubernaut, spec *kubernautv1alpha2.DataStorageAuditHashKeySpec) {
@@ -489,7 +477,6 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 	AfterEach(func() {
 		cleanupNamespacedResources(ctx)
-		deleteIngressTLSSecret(ctx)
 		deleteCRIfExists(ctx)
 		deleteBYOSecrets(ctx)
 		cleanupClusterScoped(ctx)
@@ -500,10 +487,28 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	// ======================================================================
 
 	Context("Phase Progression", func() {
-		It("IT-TLS-GAP-003 [SC-8, SC-17, SI-4; SOC2 CC6, CC7, A1; ASVS v5.0.0-V12.1.3, v5.0.0-V13.2.1, v5.0.0-V16.5.2] deploys generic TLS, trust, webhook, and Ingress resources without OpenShift annotations", func() {
+		It("IT-EXP-565-RECONCILE-001 [SC-7, CM-6, SI-4; SOC2 CC7.2; ASVS v5.0.0-V16.5.2]: reaches Running with internal Services and no operator-managed external exposure", func() {
 			createBYOSecrets(ctx)
-			createIngressTLSSecret(ctx, "gateway.example.test")
-			cr := newCRWithRouteDisabled()
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			reconcileToRunning(ctx)
+
+			service := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "gateway-service", Namespace: testNamespace}, service)).To(Succeed())
+			Expect(service.Spec.Type).To(Equal(corev1.ServiceTypeClusterIP))
+
+			ingresses := &networkingv1.IngressList{}
+			Expect(k8sClient.List(ctx, ingresses, client.InNamespace(testNamespace))).To(Succeed())
+			Expect(ingresses.Items).To(BeEmpty(), "the operator must not create external Ingress resources")
+
+			kn := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(findCondition(kn.Status.Conditions, "RouteReady")).To(BeNil())
+			Expect(findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionExposureReady).Reason).To(Equal(ReasonExposureInternal))
+		})
+
+		It("IT-TLS-GAP-003 [SC-8, SC-17, SI-4; SOC2 CC6, CC7, A1; ASVS v5.0.0-V12.1.3, v5.0.0-V13.2.1, v5.0.0-V16.5.2] deploys generic TLS and webhook resources without OpenShift annotations", func() {
+			createBYOSecrets(ctx)
+			cr := newMinimalCR()
 			cr.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
 				Mode: kubernautv1alpha2.TLSModeManual,
 				Manual: &kubernautv1alpha2.ManualTLSConfig{
@@ -526,12 +531,6 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			} {
 				Expect(k8sClient.Create(ctx, webhook)).To(Succeed())
 			}
-			cr.Spec.Gateway.Ingress = kubernautv1alpha2.IngressSpec{
-				Enabled:          ptr.To(true),
-				IngressClassName: "nginx",
-				Host:             "gateway.example.test",
-				TLSSecretName:    "gateway-ingress-tls",
-			}
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
 			reconcileToDeployPhase(ctx)
@@ -550,11 +549,6 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(mwc.Webhooks[0].ClientConfig.CABundle).To(Equal(ca.Data["ca.crt"]))
 			Expect(mwc.Webhooks[0].Rules[0].APIVersions).To(Equal([]string{"v1alpha2"}))
 
-			ingress := &networkingv1.Ingress{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "gateway-ingress", Namespace: testNamespace}, ingress)).To(Succeed())
-			Expect(*ingress.Spec.IngressClassName).To(Equal("nginx"))
-			Expect(ingress.Spec.TLS[0].SecretName).To(Equal("gateway-ingress-tls"))
-
 			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionTLSReady).Status).To(Equal(metav1.ConditionTrue))
@@ -563,7 +557,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should transition from Validating through Migrating to Deploying", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
 
@@ -597,7 +591,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should reach Running phase when all Deployments are ready", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			reconcileToRunning(ctx)
 
@@ -612,7 +606,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should set per-service status for all 11 components", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToRunning(ctx)
 
 			kn := &kubernautv1alpha2.Kubernaut{}
@@ -627,7 +621,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should requeue after 60s when Running", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
 			result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -644,7 +638,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	Context("Degraded State", func() {
 		It("should report Degraded when a Deployment has insufficient replicas", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToDeployPhase(ctx)
 
 			By("marking all except gateway as ready")
@@ -674,7 +668,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should recover from Degraded to Running when Deployments become ready", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToDeployPhase(ctx)
 
 			By("driving to degraded")
@@ -710,7 +704,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	Context("Migration Job Lifecycle", func() {
 		It("should wait for migration Job to complete with requeue", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -733,7 +727,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should delete a failed Job and requeue for retry", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -759,7 +753,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should not duplicate the Job if it already exists", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -783,7 +777,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should skip migration when a completed Job with matching spec-hash exists", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
 			By("capturing the completed Job UID and resourceVersion")
@@ -842,7 +836,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should create monitoring RBAC when monitoring is enabled (default)", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToRunning(ctx)
 
 			crList := &rbacv1.ClusterRoleList{}
@@ -870,7 +864,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should create AWX RBAC when ansible is enabled", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.WorkflowExecution.Ansible.Enabled = true
 			cr.Spec.WorkflowExecution.Ansible.APIURL = testAwxAPIURL
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
@@ -882,7 +876,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should delete AWX RBAC when ansible is disabled", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.WorkflowExecution.Ansible.Enabled = true
 			cr.Spec.WorkflowExecution.Ansible.APIURL = testAwxAPIURL
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
@@ -916,12 +910,11 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("IT-CN-476-001 [CM-3, CM-6, SI-10, CC8.1]: console enabled creates a default-off runtime configuration", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			t := true
 			cr.Spec.Console.Enabled = &t
-			f := false
-			cr.Spec.Console.Route.Enabled = &f
 			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+			cr.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
 			Expect(k8sClient.Create(ctx, &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
 				Data: map[string][]byte{
@@ -956,10 +949,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("IT-CN-476-002 [CM-3, CM-6, SI-10, CC8.1]: raw-thinking changes roll the Console pod", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.Console.Enabled = ptr.To(true)
-			cr.Spec.Console.Route.Enabled = ptr.To(false)
 			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+			cr.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
 			Expect(k8sClient.Create(ctx, &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
 				Data: map[string][]byte{
@@ -1008,12 +1001,11 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				logoutURL2 = "https://idp.example.com/realms/kubernaut/protocol/openid-connect/logout?id_token_hint={id_token}"
 			)
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			t := true
 			cr.Spec.Console.Enabled = &t
-			f := false
-			cr.Spec.Console.Route.Enabled = &f
 			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+			cr.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
 			cr.Spec.Console.Auth.ProviderLogoutURL = logoutURL1
 			Expect(k8sClient.Create(ctx, &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
@@ -1052,21 +1044,13 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(deployment.Spec.Template.Spec.Containers[0].Args).To(ContainElement("--backend-logout-url=" + logoutURL2))
 		})
 
-		It("IT-CL-03 [SC-7, CC6.1]: console redirect URL uses cluster ingress domain", func() {
-			ingress := &configv1.Ingress{
-				ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-				Spec:       configv1.IngressSpec{Domain: "apps.test.example.com"},
-			}
-			Expect(k8sClient.Create(ctx, ingress)).To(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, ingress) }()
-
+		It("IT-CL-03 [SC-7, AC-6, CC6.1; ASVS v5.0.0-V2.2.1]: console redirect URL uses the administrator-owned callback URL", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			t := true
 			cr.Spec.Console.Enabled = &t
-			f := false
-			cr.Spec.Console.Route.Enabled = &f
 			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+			cr.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
 			oidcSecret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
 				Data: map[string][]byte{
@@ -1093,14 +1077,13 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 					redirectURL = strings.TrimPrefix(arg, "--redirect-url=")
 				}
 			}
-			Expect(redirectURL).To(Equal(
-				"https://kubernaut-console-default.apps.test.example.com/oauth2/callback"),
-				"redirect URL must use the cluster ingress domain, not cluster.local")
+			Expect(redirectURL).To(Equal(testConsoleRedirectURL),
+				"redirect URL must use the administrator-owned callback URL")
 		})
 
 		It("IT-CL-02 [SC-7, CC6.6]: console disabled produces no Console resources", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			reconcileToRunning(ctx)
 
@@ -1114,7 +1097,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("[SC-7, AC-3, CC6.6] applies standard policies without provider gating or API egress restriction", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			r := newReconciler()
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -1137,7 +1120,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("[SC-7] keeps standard policies applied after a CR update", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			r := reconcileToRunning(ctx)
 
@@ -1168,7 +1151,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	Context("Spec Update Propagation", func() {
 		It("should update ConfigMap data when spec changes", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
 			By("checking initial timeout value")
@@ -1196,7 +1179,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should update Deployment image when spec.image.tag changes", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
 			By("verifying initial image tag")
@@ -1226,7 +1209,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should set owner references on namespaced resources", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToRunning(ctx)
 
 			kn := &kubernautv1alpha2.Kubernaut{}
@@ -1244,7 +1227,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should apply custom resource limits from spec", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.Gateway.Resources = corev1.ResourceRequirements{
 				Limits: corev1.ResourceList{
 					corev1.ResourceMemory: resource.MustParse("512Mi"),
@@ -1270,7 +1253,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	Context("Deletion Edge Cases", func() {
 		It("should skip deletion of workflow namespace not managed by operator", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
 			By("WNS-030 [AC-4]: verifying the reconciled workflow namespace carries the restricted PSA labels (pyramid invariant: proves end-to-end wiring through a real reconcile, not just Go-level struct construction)")
@@ -1301,7 +1284,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should clean up all cluster-scoped RBAC on deletion", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
 			By("verifying cluster-scoped resources exist")
@@ -1345,7 +1328,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should always attempt AWX cleanup even when ansible is disabled", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.WorkflowExecution.Ansible.Enabled = true
 			cr.Spec.WorkflowExecution.Ansible.APIURL = testAwxAPIURL
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
@@ -1380,7 +1363,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	Context("Concurrent Operations", func() {
 		It("should handle status patch safely under concurrent spec changes", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -1429,7 +1412,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should use namespace-prefixed names for cluster-scoped resources", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToRunning(ctx)
 
 			cr := &rbacv1.ClusterRole{}
@@ -1450,7 +1433,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	Context("CRD Installation", func() {
 		It("should create workload CRDs during migration phase", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -1614,7 +1597,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	Context("Policy Prerequisite Validation", func() {
 		It("IT-CONFIG-512-001 [CM-6, SI-10]: blocks migration and workload creation when a required runtime ConfigMap is absent", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.KubernautAgent.RuntimeConfigMapName = "missing-llm-runtime"
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
@@ -1660,7 +1643,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "aianalysis-policy", Namespace: testNamespace}, policy)).To(Succeed())
 			delete(policy.Data, "approval.rego")
 			Expect(k8sClient.Update(ctx, policy)).To(Succeed())
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -1681,7 +1664,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should preserve pre-created policy CMs and create generated runtime ConfigMaps", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToRunning(ctx)
 
 			By("verifying effectivenessmonitor-service-ca exists with inject-cabundle annotation")
@@ -1742,7 +1725,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}
 			Expect(k8sClient.Create(ctx, customRouting)).To(Succeed())
 			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, customRouting))).To(Succeed()) })
-			kn := newCRWithRouteDisabled()
+			kn := newMinimalCR()
 			kn.Spec.Notification.Routing = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "my-notification-routing"}
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 			reconcileToRunning(ctx)
@@ -1762,7 +1745,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	Context("API Frontend shared OIDC issuer", func() {
 		It("rejects a missing issuerURL instead of inventing an identity provider", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.APIFrontend.Auth.IssuerURL = ""
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
@@ -1785,12 +1768,11 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("IT-483-FAIL-CLOSED-001 [AC-6; CC6.1; ASVS V5/V8]: rejects an unsafe Console logout URL before workload creation", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			t := true
 			cr.Spec.Console.Enabled = &t
-			f := false
-			cr.Spec.Console.Route.Enabled = &f
 			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+			cr.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
 			cr.Spec.Console.Auth.ProviderLogoutURL = "https://other.example.com/logout?id_token_hint={id_token}"
 			Expect(k8sClient.Create(ctx, &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
@@ -1823,7 +1805,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("preserves an explicit demo issuer URL", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.APIFrontend.Auth.IssuerURL = "https://idp.example.com/realms/kubernaut-demo"
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			reconcileToRunning(ctx)
@@ -1840,12 +1822,11 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			const issuer = "https://idp.example.com/realms/kubernaut-demo"
 			createBYOSecrets(ctx)
 			consoleEnabled := true
-			routeEnabled := false
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.APIFrontend.Auth.IssuerURL = issuer
 			cr.Spec.Console.Enabled = &consoleEnabled
-			cr.Spec.Console.Route.Enabled = &routeEnabled
 			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+			cr.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
 			Expect(k8sClient.Create(ctx, &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
 				Data: map[string][]byte{
@@ -1873,7 +1854,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("uses API Frontend TLS without an external sidecar", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 			reconcileToRunning(ctx)
 
@@ -1894,7 +1875,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	Context("Kubernaut Agent Client RoleBinding", func() {
 		It("should create kubernaut-agent-client-aianalysis RoleBinding during deploy", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToRunning(ctx)
 
 			rb := &rbacv1.RoleBinding{}
@@ -1919,7 +1900,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	Context("Spec-Hash Reconcile Optimization", func() {
 		It("IT-AUDIT-515-DRIFT-001 [CM-6, SI-4]: repairs live Service metrics drift through Reconcile while preserving allocation and platform metadata", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToRunning(ctx)
 			key := client.ObjectKey{Namespace: testNamespace, Name: "data-storage-service"}
 			service := &corev1.Service{}
@@ -1948,7 +1929,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should stamp spec-hash annotation on created resources", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToRunning(ctx)
 
 			cm := &corev1.ConfigMap{}
@@ -1962,7 +1943,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should skip update when hash matches (no drift)", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
 			cm := &corev1.ConfigMap{}
@@ -1984,7 +1965,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should detect and correct out-of-band ConfigMap edits", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
 			cm := &corev1.ConfigMap{}
@@ -2013,7 +1994,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should update hash when CR spec changes", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
 			cm := &corev1.ConfigMap{}
@@ -2048,7 +2029,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	Context("TLS Profile Injection and ConfigMap-Hash Rollout", func() {
 		It("should stamp configmap-hash annotation on Deployment pod templates", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToRunning(ctx)
 
 			dep := &appsv1.Deployment{}
@@ -2064,7 +2045,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should update configmap-hash when a ConfigMap-affecting spec field changes", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
 			dep := &appsv1.Deployment{}
@@ -2094,7 +2075,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should gracefully skip TLS profile on non-OCP clusters (no tlsProfile in ConfigMaps)", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToRunning(ctx)
 
 			cm := &corev1.ConfigMap{}
@@ -2113,7 +2094,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	Context("Deletion Cleanup Completeness", func() {
 		It("should clean up all resource categories on deletion including webhooks and workflow namespace resources", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
 			ns := testNamespace
@@ -2217,7 +2198,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("D1-I: should restore ConfigMap data when annotation is preserved but data is tampered", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
 			cm := &corev1.ConfigMap{}
@@ -2250,7 +2231,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("D4-I: should not update ConfigMap when annotation and content both match (regression guard)", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
 			cm := &corev1.ConfigMap{}
@@ -2289,7 +2270,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("A1: should set AnsibleReady=True/Disabled when ansible is not enabled", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.WorkflowExecution.Ansible.Enabled = false
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
@@ -2356,7 +2337,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("A5: should set AnsibleReady=False/TokenSecretNotFound when tokenSecretRef is nil", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.WorkflowExecution.Ansible.Enabled = true
 			cr.Spec.WorkflowExecution.Ansible.APIURL = testAwxAPIURL
 			cr.Spec.WorkflowExecution.Ansible.TokenSecretRef = nil
@@ -2486,7 +2467,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("AM1 [CM-6]: sets AlertManagerAuthConfigured=False/SecretNameNotConfigured "+
 			"when Gateway authentication is enabled and tokenSecretName is unset", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.Gateway.Auth.Enabled = ptr.To(true)
 			Expect(cr.Spec.Gateway.Auth.AlertManager.TokenSecretName).To(BeEmpty())
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
@@ -2506,7 +2487,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			"and the referenced Secret has a token key", func() {
 			createBYOSecrets(ctx)
 			createAnsibleSecret(ctx, amTokenSecretName, "token", "my-token-value")
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.Gateway.Auth.Enabled = ptr.To(true)
 			cr.Spec.Gateway.Auth.AlertManager.TokenSecretName = amTokenSecretName
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
@@ -2525,7 +2506,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		It("AM3 [CM-6]: sets AlertManagerAuthConfigured=False/TokenSecretNotFound "+
 			"when the referenced Secret does not exist", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.Gateway.Auth.Enabled = ptr.To(true)
 			cr.Spec.Gateway.Auth.AlertManager.TokenSecretName = "nonexistent-secret"
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
@@ -2545,7 +2526,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			"when the Secret lacks the \"token\" key", func() {
 			createBYOSecrets(ctx)
 			createAnsibleSecret(ctx, amTokenSecretName, "wrong-key", "value")
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.Gateway.Auth.Enabled = ptr.To(true)
 			cr.Spec.Gateway.Auth.AlertManager.TokenSecretName = amTokenSecretName
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
@@ -2563,7 +2544,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("AM5: reaches PhaseRunning with default-disabled Gateway authentication (non-blocking, CA-8)", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
 			reconcileToRunning(ctx)
@@ -2581,7 +2562,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("IT-539-GW-AUTH-CONDITION [AC-3, CM-6; ASVS v5.0.0-V8.3.1, v5.0.0-V16.5.2]: exposes an explicit authentication disablement without a missing-credential warning", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			enabled := false
 			cr.Spec.Gateway.Auth.Enabled = &enabled
 			cr.Spec.Gateway.Auth.AlertManager.TokenSecretName = amTokenSecretName
@@ -2700,7 +2681,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should emit MigrationComplete and ManifestsApplied events during reconcileToRunning", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := reconcileToRunning(ctx)
 
@@ -2722,7 +2703,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should emit CleanupComplete event on successful deletion", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := reconcileToRunning(ctx)
 
@@ -2765,7 +2746,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("IT-OWN-514-022 [AC-6, CM-3; SOC2 CC6.6] retains the finalizer and retries when cleanup fails", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
 
@@ -2774,7 +2755,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("creating an owned ClusterRole so the injected delete failure exercises cleanup")
-			owned := resources.ClusterRoles(newCRWithRouteDisabled(), newCRWithRouteDisabled())[0]
+			owned := resources.ClusterRoles(newMinimalCR(), newMinimalCR())[0]
 			Expect(k8sClient.Create(ctx, owned)).To(Succeed())
 			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, owned))).To(Succeed()) })
 
@@ -2833,7 +2814,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should set RBACProvisioned=False when RBAC apply fails", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
 			By("reconcile 1: add finalizer")
@@ -2888,7 +2869,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should set AdditionalRBACBound=False when referenced ClusterRoles do not exist", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.AdditionalClusterRoles = []string{"nonexistent-cluster-role"}
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
@@ -2913,7 +2894,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Create(ctx, existingCR)).To(Succeed())
 			defer func() { _ = k8sClient.Delete(ctx, existingCR) }()
 
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.AdditionalClusterRoles = []string{"test-extra-role"}
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 
@@ -2942,7 +2923,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("should transition to PhaseError when migration Job exceeds max retries", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 			r := newReconciler()
 			By("reconcile 1: add finalizer")
@@ -2999,7 +2980,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	Context("API Frontend Lifecycle", func() {
 		It("creates AF Deployment, ConfigMap, Service, and ClusterRole when AF is enabled (default)", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToDeployPhase(ctx)
 
 			dep := &appsv1.Deployment{}
@@ -3027,7 +3008,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		// Proves Reconcile publishes the corrected role and binding.
 		It("IT-RBAC-566-001 [AC-3, AC-6, CM-6; SOC2 CC6.1, CC6.6, CC8.1; ASVS v5.0.0-V8.2.1, v5.0.0-V8.3.1] reconciles AF InvestigationSession patch permissions", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToDeployPhase(ctx)
 
 			crName := testNamespace + "-apifrontend-role"
@@ -3053,7 +3034,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("skips AF resources when AF is explicitly disabled", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			disabled := false
 			cr.Spec.APIFrontend.Enabled = &disabled
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
@@ -3072,7 +3053,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("includes AF in per-service status when reaching Running", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToRunning(ctx)
 
 			kn := &kubernautv1alpha2.Kubernaut{}
@@ -3090,7 +3071,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("cleans up AF ClusterRole and CRB on CR deletion", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
 			crName := testNamespace + "-apifrontend-role"
@@ -3115,7 +3096,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	Context("SAR Tool RBAC Lifecycle", func() {
 		It("creates tool ClusterRoles during deploy phase", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToDeployPhase(ctx)
 
 			toolRoleNames := resources.ToolClusterRoleNames(&kubernautv1alpha2.Kubernaut{
@@ -3131,7 +3112,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("creates tool CRBs when roleBindings are specified in CR", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
 				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
 					{Role: "sre", Groups: []string{"sre-team"}},
@@ -3152,7 +3133,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("prunes stale CRBs when roleBindings removed from spec", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
 				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
 					{Role: "sre", Groups: []string{"sre-team"}},
@@ -3182,7 +3163,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("sets ConditionToolRBACBound True when all bindings active", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
 				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
 					{Role: "sre", Groups: []string{"sre-team"}},
@@ -3206,7 +3187,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("removes ConditionToolRBACBound when no bindings specified", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToRunning(ctx)
 
 			kn := &kubernautv1alpha2.Kubernaut{}
@@ -3226,13 +3207,13 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "apifrontend-rbac-roles",
 					Namespace: testNamespace,
-					Labels:    resources.CommonLabels(newCRWithRouteDisabled()),
+					Labels:    resources.CommonLabels(newMinimalCR()),
 				},
 				Data: map[string]string{"rbac_roles.yaml": "roles:\n  admin: [\"*\"]"},
 			}
 			Expect(k8sClient.Create(ctx, legacyCM)).To(Succeed())
 
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToDeployPhase(ctx)
 
 			cm := &corev1.ConfigMap{}
@@ -3245,7 +3226,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("deletes tool ClusterRoles and CRBs by finalizer", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
 				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
 					{Role: "sre", Groups: []string{"sre-team"}},
@@ -3283,7 +3264,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("AF Deployment uses plain ConfigMap volume after SAR migration", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToDeployPhase(ctx)
 
 			dep := &appsv1.Deployment{}
@@ -3310,7 +3291,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	Context("Console Access RBAC Lifecycle", func() {
 		It("IT-CONSOLE-001: creates the console-access ClusterRole during deploy phase", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToDeployPhase(ctx)
 
 			cr := &rbacv1.ClusterRole{}
@@ -3326,7 +3307,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("IT-CONSOLE-002: creates the console-access CRB with derived groups matching the #289 live scenario", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			roleBindings := make([]kubernautv1alpha2.ToolRoleBinding, 0, 6)
 			for _, role := range []string{"sre", "ai-orchestrator", "cicd", "observability", "l3-audit", "remediation-approver"} {
 				roleBindings = append(roleBindings, kubernautv1alpha2.ToolRoleBinding{
@@ -3350,7 +3331,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("IT-CONSOLE-003: reflects an explicit consoleAccessGroups override, independent of roleBindings", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
 				RoleBindings:        []kubernautv1alpha2.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
 				ConsoleAccessGroups: []string{"console-admins"},
@@ -3370,7 +3351,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("IT-CONSOLE-004: removes the console-access CRB after switching to consoleAccessGroups: []", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
 				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
 			}
@@ -3400,7 +3381,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("IT-CONSOLE-005: deletes the console-access ClusterRole and CRB by finalizer", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
 				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
 			}
@@ -3558,39 +3539,6 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	})
 
 })
-
-func createIngressTLSSecret(ctx context.Context, host string) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	Expect(err).NotTo(HaveOccurred())
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 120))
-	Expect(err).NotTo(HaveOccurred())
-	template := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: host},
-		DNSNames:     []string{host},
-		NotBefore:    time.Now().Add(-time.Minute),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	Expect(err).NotTo(HaveOccurred())
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "gateway-ingress-tls", Namespace: testNamespace},
-		Type:       corev1.SecretTypeTLS,
-		Data: map[string][]byte{
-			corev1.TLSCertKey:       pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
-			corev1.TLSPrivateKeyKey: pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}),
-		},
-	}
-	Expect(k8sClient.Create(ctx, secret)).To(Succeed())
-}
-
-func deleteIngressTLSSecret(ctx context.Context) {
-	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "gateway-ingress-tls", Namespace: testNamespace}}
-	err := k8sClient.Delete(ctx, secret)
-	Expect(err == nil || errors.IsNotFound(err)).To(BeTrue())
-}
 
 // ---------------------------------------------------------------------------
 // Shared helpers for unit tests migrated from testing.T files

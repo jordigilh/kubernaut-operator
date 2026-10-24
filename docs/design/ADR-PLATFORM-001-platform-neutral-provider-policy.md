@@ -56,7 +56,11 @@ The core reconciler must be able to start and reconcile on a Kubernetes cluster 
 - Cilium, Calico, or OVN policy CRDs
 - cert-manager or another certificate operator
 
-OpenShift, monitoring, certificate, exposure, and policy-provider features are optional capability adapters. An absent optional API is a capability result, not a controller-startup failure or a permanent watch retry loop.
+OpenShift, monitoring, certificate, and policy-provider features are optional
+capability adapters. External exposure is administrator-owned rather than an
+operator capability adapter: the operator does not create or reconcile Routes,
+Ingresses, Gateway API resources, or mesh exposure. An absent optional API is a
+capability result, not a controller-startup failure or a permanent watch retry loop.
 
 Core behavior remains equivalent across supported platforms: singleton validation, CR lifecycle, migration jobs, Deployments, Services, ConfigMaps, Secrets, service accounts, workload RBAC, PDBs, status conditions, finalizers, cleanup, and configured external dependencies.
 

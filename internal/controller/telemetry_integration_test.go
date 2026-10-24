@@ -59,7 +59,7 @@ var _ = Describe("OTLP telemetry reconciliation wiring", func() {
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 		}
 
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		kn.Spec.Gateway.Config.Telemetry = integrationTelemetrySpec("gateway-telemetry-ca", "gateway-telemetry-client")
 		kn.Spec.DataStorage.Telemetry = integrationTelemetrySpec("datastorage-telemetry-ca", "datastorage-telemetry-client")
@@ -92,7 +92,7 @@ var _ = Describe("OTLP telemetry reconciliation wiring", func() {
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 		}
 
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		kn.Spec.Gateway.Config.Telemetry = integrationTelemetrySpec("gateway-telemetry-ca", "gateway-telemetry-client")
 		kn.Spec.DataStorage.Telemetry = integrationTelemetrySpec("datastorage-telemetry-ca", "datastorage-telemetry-client")
@@ -134,7 +134,7 @@ var _ = Describe("OTLP telemetry reconciliation wiring", func() {
 	It("IT-TELEMETRY-TLS-003 [SC-7, SC-8, CM-6; ASVS v5.0.0-V12.1.3, v5.0.0-V12.2.1] preserves local-only telemetry without network Secret requirements or mounts", func() {
 		ctx := context.Background()
 		createBYOSecrets(ctx)
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		logSink := true
 		kn.Spec.Gateway.Config.Telemetry = kubernautv1alpha2.TelemetrySpec{LogSink: &logSink}
@@ -163,7 +163,7 @@ var _ = Describe("OTLP telemetry reconciliation wiring", func() {
 	It("IT-TELEMETRY-TLS-002 [IA-5, SC-8, SI-10; ASVS v5.0.0-V12.3.2, v5.0.0-V12.3.4] reports a missing referenced Secret before deployment", func() {
 		ctx := context.Background()
 		createBYOSecrets(ctx)
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		kn.Spec.DataStorage.Telemetry = kubernautv1alpha2.TelemetrySpec{
 			Endpoint: "otel-collector:4317",

@@ -131,7 +131,7 @@ The following are historical #491 implementation/evidence-gate results, not
 verification of the remediation revision:
 
 - `make test`: unit coverage `87.3%`; controller integration coverage `78.4%`.
-- `make test-pyramid`: passed, including `make test-security-traceability`.
+- `make test-pyramid`: passed.
 - `go build ./...` and `golangci-lint run` passed.
 - `make manifests generate` produced no unexpected generated-artifact drift.
 - `git diff --check` passed.

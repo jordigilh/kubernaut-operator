@@ -106,6 +106,23 @@ var _ = Describe("SC-23: per-provider audience binding", func() {
 	})
 })
 
+var _ = Describe("Console administrator-owned callback validation", func() {
+	It("UT-EXP-565-CONSOLE-001 [AC-6, SC-8, SI-10; SOC2 CC6.1, CC8.1; ASVS v5.0.0-V2.2.1, v5.0.0-V12.2.1]: requires an explicit HTTPS callback URL", func() {
+		for _, value := range []string{"", " http://console.example.com/oauth2/callback", "not-a-url", "http://console.example.com/oauth2/callback", "https://console.example.com/", "https://:443/oauth2/callback", "https://console.example.com/oauth2/%63allback"} {
+			kn := testKubernautWithConsole()
+			kn.Spec.Console.Auth.RedirectURL = value
+
+			errs := ValidateKubernaut(kn)
+			Expect(strings.Join(errorStrings(errs), "; ")).To(ContainSubstring("redirectURL"), value)
+		}
+	})
+
+	It("UT-EXP-565-CONSOLE-002 [AC-6, SC-8; SOC2 CC6.1; ASVS v5.0.0-V12.2.1]: accepts the administrator-owned HTTPS callback URL", func() {
+		kn := testKubernautWithConsole()
+		Expect(ValidateKubernaut(kn)).To(BeEmpty())
+	})
+})
+
 var _ = Describe("Console provider logout URL validation", func() {
 	It("UT-483-VALIDATE-001 [AC-6; CC6.1; ASVS V5/V8]: accepts the HTTPS provider endpoint with the literal ID token placeholder", func() {
 		kn := testKubernautWithConsole()

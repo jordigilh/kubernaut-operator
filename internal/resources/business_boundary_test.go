@@ -93,8 +93,6 @@ var _ = Describe("independent resource-generation boundary outcomes", func() {
 		for _, build := range []func() error{
 			func() error { _, err := WorkflowExecutionDeployment(kn, kn); return err },
 			func() error { _, err := EffectivenessMonitorDeployment(kn, kn); return err },
-			func() error { _, err := KubernautAgentDeployment(kn, kn); return err },
-			func() error { _, err := APIFrontendDeployment(kn, kn); return err },
 		} {
 			Expect(build()).To(MatchError(ContainSubstring("no image found")))
 		}
@@ -104,7 +102,7 @@ var _ = Describe("independent resource-generation boundary outcomes", func() {
 		_, err = DataStorageDeployment(kn)
 		Expect(err).To(HaveOccurred())
 		withoutImage("RELATED_IMAGE_CONSOLE")
-		_, err = ConsoleDeployment(kn, "")
+		_, err = ConsoleDeployment(kn)
 		Expect(err).To(HaveOccurred())
 		withoutImage("RELATED_IMAGE_API_FRONTEND")
 		_, err = APIFrontendDeployment(kn, kn)
@@ -156,7 +154,7 @@ var _ = Describe("independent resource-generation boundary outcomes", func() {
 		_, err := APIFrontendDeployment(kn, kn)
 		Expect(err).To(MatchError(ContainSubstring("apifrontend")))
 		withoutImage("RELATED_IMAGE_OAUTH2_PROXY")
-		_, err = ConsoleDeployment(testKubernautWithConsole(), "apps.example.com")
+		_, err = ConsoleDeployment(testKubernautWithConsole())
 		Expect(err).To(MatchError(ContainSubstring("oauth2-proxy")))
 		kn.Spec.TLS.Mode = "unsupported"
 		for _, service := range Services(kn, kn) {

@@ -8,7 +8,7 @@ The Kubernaut Operator manages the full lifecycle of a Kubernaut deployment:
 
 - **Validates** BYO PostgreSQL and Valkey secrets
 - **Migrates** the database schema via embedded SQL migrations
-- **Deploys** 10 microservices, RBAC, ConfigMaps, PDBs, webhooks, and OCP Routes
+- **Deploys** 10 microservices, RBAC, ConfigMaps, PDBs, and webhooks; external exposure is administrator-managed
 - **Monitors** workload readiness and reports per-service status
 - **Cleans up** all cluster-scoped resources on CR deletion via a finalizer
 
@@ -64,13 +64,14 @@ All inter-service communication uses TLS, provisioned automatically by the OpenS
 ```yaml
 spec:
   gateway:
-    route:
-      enabled: true           # set false if using a custom Ingress
-      hostname: ""             # leave empty for OCP auto-generated hostname
     config:
       k8sRequestTimeout: "15s"                              # default
       corsAllowedOrigins: "https://no-browser-clients.invalid"  # default (M2M API)
 ```
+
+The operator creates the internal Gateway Service only. Administrators own any
+external Route, Ingress, Gateway API, mesh, hostname, edge TLS, and
+edge-authorization resources that target that Service.
 
 ## Uninstall
 

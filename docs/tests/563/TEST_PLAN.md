@@ -110,7 +110,7 @@ Required evidence:
 - `make test-integration` passes with controller coverage at least 78%.
 - `make manifests generate` produces the expected v1alpha2 schema and no
   unrelated generated diff.
-- `make test-security-traceability`, `make test-pyramid`, build, and lint pass.
+- `make test-pyramid`, build, and lint pass.
 - The test IDs above are referenced in implementation test names and remain
   non-pending.
 

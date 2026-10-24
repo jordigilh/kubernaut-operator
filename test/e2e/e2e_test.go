@@ -23,6 +23,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -44,6 +46,7 @@ const (
 	serviceAccountName     = "kubernaut-operator-controller-manager"
 	metricsServiceName     = "kubernaut-operator-controller-manager-metrics-service"
 	metricsRoleBindingName = "kubernaut-operator-metrics-binding"
+	defaultMustGatherImage = "quay.io/kubernaut-ai/must-gather:latest"
 )
 
 var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
@@ -69,6 +72,11 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 	})
 
 	AfterAll(func() {
+		if preserveE2ENamespaces() {
+			_, _ = fmt.Fprintf(GinkgoWriter, "preserving E2E namespaces %q and %q for failure investigation\n", operatorNS, crNS)
+			return
+		}
+
 		By("cleaning up the curl pod for metrics")
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics",
 			"-n", operatorNS, "--ignore-not-found=true")
@@ -107,6 +115,7 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 
 	AfterEach(func() {
 		if CurrentSpecReport().Failed() {
+			collectMustGather()
 			collectDiagnostic("logs", controllerPodName, "-n", operatorNS)
 			collectDiagnostic("get", "events", "-n", operatorNS, "--sort-by=.lastTimestamp")
 			collectDiagnostic("get", "events", "-n", crNS, "--sort-by=.lastTimestamp")
@@ -268,6 +277,26 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			}
 		})
 
+		It("E2E-TLS-2545-OP-001 [AC-6, CM-7, SC-8; SOC2 CC7.2; "+
+			"ASVS v5.0.0-V12.3.1, v5.0.0-V15.2.5] uses upstream ambient CA ownership "+
+			"without legacy static env or ambient-only volumes", func() {
+			for _, dep := range []string{
+				"gateway", "data-storage", "aianalysis-controller",
+				"signalprocessing-controller", "remediationorchestrator-controller",
+				"workflowexecution-controller", "effectivenessmonitor-controller",
+				"notification-controller", "kubernaut-agent", "authwebhook",
+			} {
+				cmd := exec.Command("kubectl", "get", "deployment", dep, "-n", crNS, "-o", "yaml")
+				manifest, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Deployment %q should be readable", dep)
+				Expect(manifest).NotTo(ContainSubstring("name: SSL_CERT_FILE"), dep)
+				Expect(manifest).NotTo(ContainSubstring("name: SSL_CERT_DIR"), dep)
+				Expect(manifest).NotTo(ContainSubstring("name: TLS_CA_FILE"), dep)
+				Expect(manifest).NotTo(ContainSubstring("name: ambient-tmp"), dep)
+				Expect(manifest).NotTo(ContainSubstring("name: combined-ca"), dep)
+			}
+		})
+
 		It("E2E-NOT-SECRET-001 [IA-5, SC-28, CM-6; SOC2 CC6.1, CC6.6, CC8.1; "+
 			"ASVS v5.0.0-V8.2.1, v5.0.0-V16.5.2] projects the provider-neutral "+
 			"Notification credential and preserves its routing reference", func() {
@@ -313,12 +342,19 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			}
 		})
 
-		It("should honor the disabled Gateway OCP Route", func() {
-			cmd := exec.Command("kubectl", "get", "route", "gateway-route",
-				"-n", crNS, "--ignore-not-found=true", "-o", "jsonpath={.metadata.name}")
-			output, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Gateway Route lookup should succeed")
-			Expect(output).To(BeEmpty(), "Gateway Route should remain disabled by the sample CR")
+		It("E2E-EXP-565-001 [SC-7, SC-8, SI-4; SOC2 CC6.1, CC7.2; "+
+			"ASVS v5.0.0-V12.2.1, v5.0.0-V16.5.2] keeps Gateway internal unless "+
+			"an administrator creates external exposure", func() {
+			serviceCmd := exec.Command("kubectl", "get", "service", "gateway-service", "-n", crNS, "-o", "jsonpath={.spec.type}")
+			serviceType, err := utils.Run(serviceCmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(serviceType).To(Equal("ClusterIP"))
+
+			routeCmd := exec.Command("kubectl", "get", "route", "gateway-route", "-n", crNS,
+				"--ignore-not-found=true", "-o", "jsonpath={.metadata.name}")
+			routeName, err := utils.Run(routeCmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(routeName).To(BeEmpty(), "the operator must not create a Gateway Route")
 		})
 
 		It("should create ClusterRoles with kubernaut labels", func() {
@@ -743,5 +779,57 @@ func collectDiagnostic(args ...string) {
 		_, _ = fmt.Fprintf(GinkgoWriter, "=== kubectl %v ===\n%s\n", args, output)
 	} else {
 		_, _ = fmt.Fprintf(GinkgoWriter, "=== kubectl %v FAILED: %v ===\n", args, err)
+	}
+}
+
+var mustGatherOnce sync.Once
+
+func collectMustGather() {
+	mustGatherOnce.Do(func() {
+		destination := os.Getenv("KUBERNAUT_E2E_MUST_GATHER_DIR")
+		if destination == "" {
+			destination = filepath.Join("test-artifacts", "must-gather-"+time.Now().UTC().Format("20060102T150405Z"))
+		}
+		// E2E artifact path is explicitly supplied by the test runner.
+		//nolint:gosec
+		if err := os.MkdirAll(destination, 0o750); err != nil {
+			_, _ = fmt.Fprintf(GinkgoWriter, "=== must-gather FAILED creating %s: %v ===\n", destination, err)
+			return
+		}
+		image := os.Getenv("KUBERNAUT_MUST_GATHER_IMAGE")
+		if image == "" {
+			image = defaultMustGatherImage
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		// E2E image/path are explicit test-runner inputs.
+		//nolint:gosec
+		cmd := exec.CommandContext(ctx, "oc", "adm", "must-gather",
+			"--image="+image,
+			"--dest-dir="+destination,
+			"--since=24h",
+			"--",
+			"/usr/bin/gather",
+			"--namespace="+crNS,
+			"--operator-namespace="+operatorNS,
+			"--workflow-namespace="+workflowNS,
+		)
+		if _, err := utils.Run(cmd); err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				err = fmt.Errorf("must-gather timed out after 10m: %w", ctx.Err())
+			}
+			_, _ = fmt.Fprintf(GinkgoWriter, "=== must-gather FAILED: %v ===\n", err)
+			return
+		}
+		_, _ = fmt.Fprintf(GinkgoWriter, "=== must-gather saved to %s ===\n", destination)
+	})
+}
+
+func preserveE2ENamespaces() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("KUBERNAUT_E2E_PRESERVE_NAMESPACES"))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
 	}
 }

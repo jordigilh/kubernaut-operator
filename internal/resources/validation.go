@@ -48,6 +48,9 @@ func ValidateKubernaut(kn *kubernautv1alpha2.Kubernaut) []error {
 	errs = append(errs, validateMonitoringEndpoints(kn)...)
 	errs = append(errs, validateMonitoringTLS(kn)...)
 	errs = append(errs, validateAPIFrontend(kn)...)
+	if err := validateConsoleRedirectURL(kn); err != nil {
+		errs = append(errs, err)
+	}
 	if err := validateConsoleProviderLogoutURL(kn); err != nil {
 		errs = append(errs, err)
 	}
@@ -814,6 +817,25 @@ func validateAPIFrontend(kn *kubernautv1alpha2.Kubernaut) []error {
 	}
 
 	return errs
+}
+
+func validateConsoleRedirectURL(kn *kubernautv1alpha2.Kubernaut) error {
+	if !kn.Spec.ConsoleEnabled() {
+		return nil
+	}
+	const path = "spec.console.auth.redirectURL"
+	raw := kn.Spec.Console.Auth.RedirectURL
+	if raw == "" {
+		return fmt.Errorf("%s is required when Console is enabled", path)
+	}
+	if strings.TrimSpace(raw) != raw {
+		return fmt.Errorf("%s must not contain leading or trailing whitespace", path)
+	}
+	redirectURL, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(redirectURL.Scheme, httpsURLScheme) || redirectURL.Host == "" || redirectURL.Hostname() == "" || redirectURL.User != nil || redirectURL.RawQuery != "" || redirectURL.Fragment != "" || redirectURL.EscapedPath() != "/oauth2/callback" {
+		return fmt.Errorf("%s must be an absolute https URL ending in /oauth2/callback", path)
+	}
+	return nil
 }
 
 func validateConsoleProviderLogoutURL(kn *kubernautv1alpha2.Kubernaut) error {

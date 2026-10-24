@@ -221,12 +221,15 @@ var _ = Describe("Deployments", func() {
 			expectNoVolume(dep, "telemetry-client")
 		})
 
-		It("provides writable tmp for ambient trust bootstrap", func() {
+		It("does not mount an ambient-only writable tmp volume", func() {
 			kn := testKubernaut()
 			dep, err := GatewayDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
-			expectHasVolume(dep, "tmp")
-			expectHasVolumeMount(dep, "tmp", "/tmp")
+			expectNoVolume(dep, "tmp")
+			for _, mount := range dep.Spec.Template.Spec.Containers[0].VolumeMounts {
+				Expect(mount.Name).NotTo(Equal("tmp"))
+				Expect(mount.MountPath).NotTo(Equal("/tmp"))
+			}
 		})
 
 		// CONS-005 (#423): gateway.resources was flagged as a cross-consumer
@@ -811,62 +814,6 @@ var _ = Describe("Deployments", func() {
 			Expect(found).To(BeTrue(), "llm-credentials volume not found")
 		})
 
-		It("#404 [SC-8]: declares SSL_CERT_FILE exactly once, pointing at KA's own merged (system+service-ca+router) bundle -- not the narrower inter-service-only bundle", func() {
-			kn := testKubernaut()
-			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
-			Expect(err).NotTo(HaveOccurred())
-			container := dep.Spec.Template.Spec.Containers[0]
-
-			var sslCertValues []string
-			for _, e := range container.Env {
-				if e.Name == testEnvSSLCertFile {
-					sslCertValues = append(sslCertValues, e.Value)
-				}
-			}
-			Expect(sslCertValues).To(HaveLen(1),
-				"#404: SSL_CERT_FILE must be declared exactly once -- a second declaration silently shadows the first at runtime (confirmed via the API server's own admission warning), and Go's SSL_CERT_FILE replaces rather than extends the system trust store, so whichever value wins must be a superset of everything KA needs (system/public CAs for LLM providers + service-ca/router-CA for the fleet MCP client)")
-			Expect(sslCertValues[0]).To(Equal("/etc/ssl/combined/ca-bundle.crt"),
-				"#404: KA's own merged bundle (built by the build-ca-bundle init container) must win, not the narrower inter-service-only bundle")
-
-			// TLS_CA_FILE keeps its narrower, intentionally-scoped value --
-			// unaffected by this fix, unlike SSL_CERT_FILE above.
-			hasTLSCAFile := false
-			for _, e := range container.Env {
-				if e.Name == testEnvTLSCAFile && e.Value == InterServiceTLSCAFile {
-					hasTLSCAFile = true
-				}
-			}
-			Expect(hasTLSCAFile).To(BeTrue(), "TLS_CA_FILE must remain set to the narrower inter-service bundle")
-		})
-
-		It("#404 [SC-8]: build-ca-bundle init container merges system CA with the router-inclusive trust bundle (tls-ca), not the narrower service-ca-only bundle", func() {
-			kn := testKubernaut()
-			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
-			Expect(err).NotTo(HaveOccurred())
-
-			var initContainer *corev1.Container
-			for i := range dep.Spec.Template.Spec.InitContainers {
-				if dep.Spec.Template.Spec.InitContainers[i].Name == "build-ca-bundle" {
-					initContainer = &dep.Spec.Template.Spec.InitContainers[i]
-				}
-			}
-			Expect(initContainer).NotTo(BeNil(), "build-ca-bundle init container not found")
-
-			Expect(initContainer.Command).To(ContainElement(ContainSubstring("/etc/tls-ca/service-ca.crt")),
-				"#404: init container must read the router-inclusive trust bundle (mounted from tls-ca/TrustBundleConfigMapName), not the narrower kubernaut-agent-service-ca-only bundle")
-			Expect(initContainer.Command).NotTo(ContainElement(ContainSubstring("/service-ca/service-ca.crt")),
-				"#404: must no longer read the narrower service-ca-only bundle -- it's a strict subset of the tls-ca bundle now used")
-
-			const tlsCAMountPath = "/etc/tls-ca"
-			foundMount := false
-			for _, vm := range initContainer.VolumeMounts {
-				if vm.Name == testVolumeTLSCA && vm.MountPath == tlsCAMountPath {
-					foundMount = true
-				}
-			}
-			Expect(foundMount).To(BeTrue(), "build-ca-bundle init container must mount the tls-ca volume at %s", tlsCAMountPath)
-		})
-
 		It("uses a generic TLS security context and does not advertise OpenShift", func() {
 			kn := testKubernautWithCertManagerTLS()
 			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
@@ -1136,15 +1083,6 @@ var _ = Describe("Deployments", func() {
 			Expect(found).To(BeTrue(), "oauth2-credentials volume not found")
 		})
 
-		It("has service-ca volume when monitoring enabled", func() {
-			kn := testKubernaut()
-			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
-			Expect(err).NotTo(HaveOccurred())
-
-			expectHasVolume(dep, "service-ca")
-			expectHasVolumeMount(dep, "service-ca", "/etc/ssl/ka")
-		})
-
 		It("sets IS_OPENSHIFT env when monitoring enabled", func() {
 			kn := testKubernaut()
 			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
@@ -1166,19 +1104,6 @@ var _ = Describe("Deployments", func() {
 			Expect(err).NotTo(HaveOccurred())
 			expectHasVolume(dep, "tls-certs")
 			expectHasVolumeMount(dep, "tls-certs", InterServiceTLSCertDir)
-		})
-
-		It("mounts emptyDir /tmp for readOnlyRootFilesystem", func() {
-			kn := testKubernaut()
-			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
-			Expect(err).NotTo(HaveOccurred())
-			expectHasVolume(dep, "tmp")
-			expectHasVolumeMount(dep, "tmp", "/tmp")
-			for _, v := range dep.Spec.Template.Spec.Volumes {
-				if v.Name == "tmp" {
-					Expect(v.EmptyDir).NotTo(BeNil())
-				}
-			}
 		})
 
 		It("sets terminationGracePeriodSeconds to drainSeconds + 5 (default 30)", func() {
@@ -1418,33 +1343,20 @@ var _ = Describe("Deployments", func() {
 				Expect(v.Name).NotTo(Equal(testVolumeCombinedCA))
 			}
 
-			container := dep.Spec.Template.Spec.Containers[0]
-			for _, e := range container.Env {
-				if e.Name == testEnvTLSCAFile {
-					Expect(e.Value).To(Equal(InterServiceTLSCAFile))
-				}
+			for _, e := range dep.Spec.Template.Spec.Containers[0].Env {
+				Expect([]string{testEnvTLSCAFile, testEnvSSLCertFile}).NotTo(ContainElement(e.Name))
 			}
 		})
 
-		It("overrides SSL_CERT_FILE to the combined-CA path alongside TLS_CA_FILE", func() {
-			// overrideTLSCAFile keeps SSL_CERT_FILE in sync with
-			// TLS_CA_FILE (both must point at the AAP+inter-service
-			// combined bundle, not just the inter-service one) so the Go
-			// runtime's system cert pool also trusts the AAP CA.
+		It("does not declare static ambient env vars when AAP trust is configured", func() {
 			kn := testKubernaut()
 			kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "aap-ca-secret"}
 			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
-			container := dep.Spec.Template.Spec.Containers[0]
-			found := false
-			for _, e := range container.Env {
-				if e.Name == testEnvSSLCertFile {
-					found = true
-					Expect(e.Value).To(Equal("/etc/combined-ca/ca-bundle.crt"))
-				}
+			for _, e := range dep.Spec.Template.Spec.Containers[0].Env {
+				Expect([]string{testEnvTLSCAFile, testEnvSSLCertFile}).NotTo(ContainElement(e.Name))
 			}
-			Expect(found).To(BeTrue(), "WFE must set SSL_CERT_FILE env var")
 		})
 
 		It("has init container with caCertSecretRef", func() {
@@ -1508,22 +1420,6 @@ var _ = Describe("Deployments", func() {
 				}
 			}
 			Fail("combined-ca volume not found")
-		})
-
-		It("overrides TLS_CA_FILE", func() {
-			kn := testKubernaut()
-			kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "aap-ca-secret"}
-			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
-			Expect(err).NotTo(HaveOccurred())
-
-			container := dep.Spec.Template.Spec.Containers[0]
-			for _, e := range container.Env {
-				if e.Name == testEnvTLSCAFile {
-					Expect(e.Value).To(Equal("/etc/combined-ca/ca-bundle.crt"))
-					return
-				}
-			}
-			Fail("TLS_CA_FILE env var not found")
 		})
 
 		It("init container concatenates correct sources", func() {
@@ -1678,49 +1574,6 @@ var _ = Describe("Deployments", func() {
 			Expect(err).NotTo(HaveOccurred())
 			expectHasVolume(dep, fleetMCPGatewayCAVolumeName)
 			expectHasVolumeMount(dep, fleetMCPGatewayCAVolumeName, fleetMCPGatewayCAMountDir)
-		})
-	})
-
-	Context("overrideTLSCAFile helper", func() {
-		It("preserves an existing merged SSL_CERT_FILE when appending internal trust", func() {
-			env := []corev1.EnvVar{{Name: testEnvSSLCertFile, Value: "/etc/ssl/combined/ca-bundle.crt"}}
-			result := appendEnvIfAbsent(env, testEnvSSLCertFile, InterServiceTLSCAFile)
-			Expect(result).To(HaveLen(1))
-			Expect(result[0].Value).To(Equal("/etc/ssl/combined/ca-bundle.crt"))
-		})
-
-		It("replaces existing TLS_CA_FILE and SSL_CERT_FILE", func() {
-			env := []corev1.EnvVar{
-				{Name: "OTHER", Value: "foo"},
-				{Name: testEnvTLSCAFile, Value: "/old/path"},
-				{Name: testEnvSSLCertFile, Value: "/old/path"},
-			}
-			result := overrideTLSCAFile(env, "/new/path")
-			for _, name := range []string{testEnvTLSCAFile, testEnvSSLCertFile} {
-				found := false
-				for _, e := range result {
-					if e.Name == name {
-						found = true
-						Expect(e.Value).To(Equal("/new/path"))
-					}
-				}
-				Expect(found).To(BeTrue(), "%s not found after override", name)
-			}
-		})
-
-		It("appends both TLS_CA_FILE and SSL_CERT_FILE when missing", func() {
-			env := []corev1.EnvVar{{Name: "OTHER", Value: "foo"}}
-			result := overrideTLSCAFile(env, "/new/path")
-			Expect(result).To(HaveLen(3))
-			for _, name := range []string{testEnvTLSCAFile, testEnvSSLCertFile} {
-				found := false
-				for _, e := range result {
-					if e.Name == name && e.Value == "/new/path" {
-						found = true
-					}
-				}
-				Expect(found).To(BeTrue(), "%s should be appended when missing", name)
-			}
 		})
 	})
 
@@ -1946,7 +1799,7 @@ var _ = Describe("Deployments", func() {
 			}
 		})
 
-		It("have inter-service TLS CA volume, mount, and env var", func() {
+		It("have inter-service TLS CA volume and mount while runtime owns ambient env", func() {
 			kn := testKubernaut()
 			for _, dep := range getAllDeployments(kn) {
 				container := dep.Spec.Template.Spec.Containers[0]
@@ -1967,33 +1820,8 @@ var _ = Describe("Deployments", func() {
 				}
 				Expect(hasCAMount).To(BeTrue(), "Deployment %q missing %s volume mount", dep.Name, testVolumeTLSCA)
 
-				// Gateway, DataStorage, and EffectivenessMonitor must not set
-				// SSL_CERT_FILE to the narrow inter-service bundle because Go
-				// treats it as a replacement for the image's public system roots.
-				// KA retains its existing merged system+inter-service bundle on
-				// OpenShift.
-				component := dep.Spec.Template.Labels["app"]
-				expectsProcessTrustEnv := component != ComponentGateway && component != ComponentDataStorage && component != ComponentEffectivenessMonitor
-				wantSSLCertFile := InterServiceTLSCAFile
-				if component == ComponentKubernautAgent {
-					wantSSLCertFile = "/etc/ssl/combined/ca-bundle.crt"
-				}
-
-				hasCAEnv := false
-				hasSSLCertEnv := false
 				for _, env := range container.Env {
-					if env.Name == "TLS_CA_FILE" && env.Value == InterServiceTLSCAFile {
-						hasCAEnv = true
-					}
-					if env.Name == testEnvSSLCertFile && env.Value == wantSSLCertFile {
-						hasSSLCertEnv = true
-					}
-				}
-				Expect(hasCAEnv).To(BeTrue(), "Deployment %q missing TLS_CA_FILE env var", dep.Name)
-				if expectsProcessTrustEnv {
-					Expect(hasSSLCertEnv).To(BeTrue(), "Deployment %q missing SSL_CERT_FILE=%s env var", dep.Name, wantSSLCertFile)
-				} else {
-					Expect(hasSSLCertEnv).To(BeFalse(), "Deployment %q must leave SSL_CERT_FILE unset so public system roots remain available", dep.Name)
+					Expect([]string{"SSL_CERT_FILE", "SSL_CERT_DIR", "TLS_CA_FILE"}).NotTo(ContainElement(env.Name), dep.Name)
 				}
 			}
 		})
@@ -2050,36 +1878,6 @@ var _ = Describe("Deployments", func() {
 	})
 })
 
-var _ = Describe("overrideTLSCAFile standalone", func() {
-	It("replaces existing entry", func() {
-		env := []corev1.EnvVar{
-			{Name: "OTHER", Value: "foo"},
-			{Name: testEnvTLSCAFile, Value: "/old/path"},
-		}
-		result := overrideTLSCAFile(env, "/new/path")
-		for _, e := range result {
-			if e.Name == testEnvTLSCAFile {
-				Expect(e.Value).To(Equal("/new/path"))
-				return
-			}
-		}
-		Fail("TLS_CA_FILE not found after override")
-	})
-
-	It("appends when missing", func() {
-		env := []corev1.EnvVar{{Name: "OTHER", Value: "foo"}}
-		result := overrideTLSCAFile(env, "/new/path")
-		Expect(result).To(HaveLen(3))
-		found := false
-		for _, e := range result {
-			if e.Name == testEnvTLSCAFile && e.Value == "/new/path" {
-				found = true
-			}
-		}
-		Expect(found).To(BeTrue())
-	})
-})
-
 var _ = Describe("APIFrontendDeployment", func() {
 	It("builds successfully with AF enabled", func() {
 		kn := testKubernautWithAF()
@@ -2120,18 +1918,17 @@ var _ = Describe("APIFrontendDeployment", func() {
 		}
 	})
 
-	It("mounts config, tls-server, tls-ca, and tmp volumes", func() {
+	It("mounts config, tls-server, and the read-only tls-ca volume", func() {
 		kn := testKubernautWithAF()
 		dep, err := APIFrontendDeployment(kn, testKnV2(kn))
 		Expect(err).NotTo(HaveOccurred())
 		expectHasVolume(dep, "config")
 		expectHasVolume(dep, "tls-server")
 		expectHasVolume(dep, testVolumeTLSCA)
-		expectHasVolume(dep, "tmp")
 		expectHasVolumeMount(dep, "config", "/etc/apifrontend")
 		expectHasVolumeMount(dep, "tls-server", "/etc/apifrontend/tls")
 		expectHasVolumeMount(dep, testVolumeTLSCA, "/etc/apifrontend/tls-ca")
-		expectHasVolumeMount(dep, "tmp", "/tmp")
+		expectNoVolume(dep, "tmp")
 	})
 
 	It("does not render OpenShift CA wiring for explicit generic TLS", func() {
@@ -2150,42 +1947,17 @@ var _ = Describe("APIFrontendDeployment", func() {
 		}
 	})
 
-	It("#404 [SC-8]: SSL_CERT_FILE points at a merged system+inter-service bundle built by a build-ca-bundle init container, not the narrower router/service-ca-only bundle", func() {
+	It("does not declare legacy ambient trust env vars or a generated CA bundle", func() {
 		kn := testKubernautWithAF()
 		dep, err := APIFrontendDeployment(kn, testKnV2(kn))
 		Expect(err).NotTo(HaveOccurred())
 		container := dep.Spec.Template.Spec.Containers[0]
 
-		var sslCertValues []string
-		var tlsCAValue string
 		for _, e := range container.Env {
-			if e.Name == testEnvSSLCertFile {
-				sslCertValues = append(sslCertValues, e.Value)
-			}
-			if e.Name == testEnvTLSCAFile {
-				tlsCAValue = e.Value
-			}
+			Expect([]string{testEnvSSLCertFile, testEnvTLSCAFile}).NotTo(ContainElement(e.Name))
 		}
-		Expect(sslCertValues).To(HaveLen(1), "SSL_CERT_FILE must be declared exactly once")
-		Expect(sslCertValues[0]).To(Equal("/etc/ssl/combined/ca-bundle.crt"),
-			"#404: AF's severityTriage/LLM calls to public-CA providers need system CAs, which the narrower /etc/apifrontend/tls-ca/ca.crt bundle (service-ca+router only) lacks")
-		Expect(tlsCAValue).To(Equal("/etc/apifrontend/tls-ca/ca.crt"),
-			"TLS_CA_FILE keeps its narrower, intentionally-scoped inter-service value -- unaffected by this fix")
-
-		expectHasVolume(dep, testVolumeCombinedCA)
-		expectHasVolumeMount(dep, testVolumeCombinedCA, "/etc/ssl/combined")
-
-		var initContainer *corev1.Container
-		for i := range dep.Spec.Template.Spec.InitContainers {
-			if dep.Spec.Template.Spec.InitContainers[i].Name == "build-ca-bundle" {
-				initContainer = &dep.Spec.Template.Spec.InitContainers[i]
-			}
-		}
-		Expect(initContainer).NotTo(BeNil(), "AF must have a build-ca-bundle init container, mirroring KA's pattern")
-		Expect(initContainer.Command).To(ContainElement(ContainSubstring("/etc/apifrontend/tls-ca/ca.crt")),
-			"init container must merge the inter-service trust bundle (mounted at AF's existing tls-ca path) into the combined bundle")
-		Expect(initContainer.Command).To(ContainElement(ContainSubstring("/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem")),
-			"init container must also merge the base image's system CA bundle")
+		expectNoVolume(dep, testVolumeCombinedCA)
+		Expect(dep.Spec.Template.Spec.InitContainers).To(BeEmpty())
 	})
 
 	It("mounts llm-credentials volume from AF's own resolved profile", func() {

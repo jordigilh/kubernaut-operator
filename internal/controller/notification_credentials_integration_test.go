@@ -63,7 +63,7 @@ receivers:
 			}(secret))
 		}
 
-		cr := newCRWithRouteDisabled()
+		cr := newMinimalCR()
 		cr.Spec.Notification.Routing = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: routing.Name}
 		cr.Spec.Notification.Credentials = []kubernautv1alpha2.NotificationCredentialSpec{
 			{Name: "slack-ops", SecretRef: kubernautv1alpha2.NotificationSecretRef{Name: "notification-slack", Key: "webhook-url"}},

@@ -10,7 +10,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	configv1 "github.com/openshift/api/config/v1"
-	routev1 "github.com/openshift/api/route/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -318,23 +317,15 @@ var _ = Describe("independent Kubernetes API boundary decisions", Label("unit"),
 		}}}, nil)
 	})
 
-	It("UT-AUDIT-515-API-010: treats OpenShift profile/domain reads and external event mapping as optional evidence", func() {
+	It("UT-AUDIT-515-API-010: treats OpenShift profile reads and external event mapping as optional evidence", func() {
 		kn := newMinimalCR()
 		r := businessUnitReconciler(kn, interceptor.Funcs{})
-		ingress := &configv1.Ingress{}
-		Expect(r.Get(ctx, client.ObjectKey{Name: "cluster"}, ingress)).To(Succeed())
-		ingress.Spec.Domain = "apps.example.com"
-		Expect(r.Update(ctx, ingress)).To(Succeed())
-		Expect(r.clusterIngressDomain(ctx)).To(Equal("apps.example.com"))
 		apiServer := &configv1.APIServer{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: configv1.APIServerSpec{
 			TLSSecurityProfile: &configv1.TLSSecurityProfile{Type: configv1.TLSProfileIntermediateType},
 		}}
 		Expect(r.Create(ctx, apiServer)).To(Succeed())
 		Expect(r.resolveClusterTLSProfile(ctx)).NotTo(BeEmpty())
-		Expect(r.Delete(ctx, ingress)).To(Succeed())
-		Expect(r.clusterIngressDomain(ctx)).To(BeEmpty())
 		r.Client = interceptor.NewClient(r.Client.(client.WithWatch), interceptor.Funcs{Get: deniedUnitGet, List: deniedUnitList})
-		Expect(r.clusterIngressDomain(ctx)).To(BeEmpty())
 		Expect(r.resolveClusterTLSProfile(ctx)).To(BeEmpty())
 		Expect(r.apiServerToKubernaut(ctx, apiServer)).To(BeEmpty())
 		Expect(r.monitoringObjectToKubernaut(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "prometheus"}})).To(BeEmpty())
@@ -348,7 +339,6 @@ var _ = Describe("independent Kubernetes API boundary decisions", Label("unit"),
 		r.Client = businessMappedClient{Client: r.Client, mapper: mapper}
 		Expect(r.openShiftPlatformDetected(ctx)).To(BeTrue())
 		r.Client = businessMappedClient{Client: r.Client, mapper: nil}
-		Expect(r.routeAPISupported()).To(BeFalse())
 	})
 })
 
@@ -394,73 +384,6 @@ var _ = Describe("independent activation and exposure failure decisions", Label(
 		Expect(err).To(MatchError(ContainSubstring(unitAPIDenial)))
 	})
 
-	It("UT-AUDIT-515-API-013: reconciles all OpenShift exposures and surfaces per-component write failures", func() {
-		kn := newMinimalCR()
-		kn.Spec.Console.Enabled = ptr.To(true)
-		kn.Spec.APIFrontend.Route.Enabled = ptr.To(true)
-		r := businessUnitReconciler(kn, interceptor.Funcs{})
-		r.Scheme.AddKnownTypes(routev1.GroupVersion, &routev1.Route{}, &routev1.RouteList{})
-		mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{routev1.GroupVersion})
-		mapper.Add(routev1.GroupVersion.WithKind("Route"), meta.RESTScopeNamespace)
-		base := r.Client
-		r.Client = businessMappedClient{Client: base, mapper: mapper}
-		hasRoute, err := r.reconcileRoutes(ctx, kn)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(hasRoute).To(BeTrue())
-		Expect(r.finalizeDeployStatus(ctx, kn, true)).To(Succeed())
-		Expect(meta.IsStatusConditionTrue(kn.Status.Conditions, kubernautv1alpha2.ConditionRouteReady)).To(BeTrue())
-		for _, route := range []*routev1.Route{resources.GatewayRouteStub(kn), resources.APIFrontendRouteStub(kn), resources.ConsoleRouteStub(kn)} {
-			r.Client = businessMappedClient{Client: interceptor.NewClient(base.(client.WithWatch), interceptor.Funcs{
-				Get: func(ctx context.Context, api client.WithWatch, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
-					if _, isRoute := object.(*routev1.Route); isRoute && key.Name == route.Name {
-						return fmt.Errorf("%s", unitAPIDenial)
-					}
-					return api.Get(ctx, key, object, options...)
-				},
-			}), mapper: mapper}
-			_, err = r.reconcileRoutes(ctx, kn)
-			Expect(err).To(MatchError(ContainSubstring(unitAPIDenial)))
-		}
-		r.Client = businessMappedClient{Client: base, mapper: mapper}
-		kn.Spec.Gateway.Enabled, kn.Spec.APIFrontend.Route.Enabled, kn.Spec.Console.Enabled = ptr.To(false), ptr.To(false), ptr.To(false)
-		hasRoute, err = r.reconcileOpenShiftRoutes(ctx, kn)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(hasRoute).To(BeFalse())
-		seedBusinessOwnedResources(r, kn, resources.GatewayRouteStub(kn))
-		r.Client = interceptor.NewClient(base.(client.WithWatch), interceptor.Funcs{Delete: deniedUnitDelete})
-		_, err = r.reconcileOptionalRoute(ctx, kn, "Gateway", nil, resources.GatewayRouteStub(kn))
-		Expect(err).To(MatchError(ContainSubstring(unitAPIDenial)))
-	})
-
-	It("UT-AUDIT-515-API-014: validates portable exposure identity before creating Ingress and rejects invalid material", func() {
-		kn := newMinimalCR()
-		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeManual}
-		kn.Spec.Gateway.Route.Enabled, kn.Spec.APIFrontend.Route.Enabled = ptr.To(false), ptr.To(false)
-		kn.Spec.Gateway.Ingress = kubernautv1alpha2.IngressSpec{Enabled: ptr.To(true), IngressClassName: "nginx",
-			Host: "gateway-service", TLSSecretName: resources.GatewayTLSSecretName}
-		r := businessUnitReconciler(kn, interceptor.Funcs{})
-		_, err := r.reconcileGenericIngresses(ctx, kn)
-		Expect(err).To(MatchError(ContainSubstring("reading TLS Secret")))
-		secrets, err := testRuntimeTLSSecrets(kn, nil, time.Now().Add(-time.Hour))
-		Expect(err).NotTo(HaveOccurred())
-		for _, secret := range secrets {
-			Expect(r.Create(ctx, secret)).To(Succeed())
-		}
-		hasIngress, err := r.reconcileGenericIngresses(ctx, kn)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(hasIngress).To(BeTrue())
-		kn.Spec.Gateway.Ingress.Host = "uncovered.example.com"
-		_, err = r.reconcileRoutes(ctx, kn)
-		Expect(err).To(MatchError(ContainSubstring("validating TLS Secret")))
-		kn.Spec.Gateway.Ingress.Host = "gateway-service"
-		r.Client = interceptor.NewClient(r.Client.(client.WithWatch), interceptor.Funcs{Update: deniedUnitUpdate})
-		kn.Spec.Gateway.Ingress.Annotations = map[string]string{"updated": "true"}
-		_, err = r.reconcileGenericIngresses(ctx, kn)
-		Expect(err).To(MatchError(ContainSubstring(unitAPIDenial)))
-		kn.Spec.Gateway.Ingress.Host = ""
-		_, err = r.reconcileGenericIngresses(ctx, kn)
-		Expect(err).To(MatchError(ContainSubstring("building generic exposure")))
-	})
 })
 
 var _ = Describe("independent activation trust boundaries", Label("unit"), func() {
@@ -718,6 +641,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		kn := newMinimalCR()
 		kn.Spec.Console.Enabled = ptr.To(true)
 		kn.Spec.Console.Auth.SecretName = "external-console-oidc"
+		kn.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
 		kn.Spec.Fleet = defaultFMCFleetSpec()
 		kn.Spec.Notification.Routing = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "external-routing"}
 		r := businessUnitReconciler(kn, interceptor.Funcs{})
@@ -756,7 +680,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		seedBusinessOwnedResources(failing, kn,
 			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resources.DeploymentName(resources.ComponentGateway), Namespace: kn.Namespace}},
 			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resources.DeploymentName(resources.ComponentFleetMetadataCache), Namespace: kn.Namespace}})
-		_, err = failing.deployWorkloads(ctx, kn, kn, nil, telemetryMaterialRevisionSet{})
+		err = failing.deployWorkloads(ctx, kn, kn, nil, telemetryMaterialRevisionSet{})
 		Expect(err).To(HaveOccurred())
 		kn.Spec.Gateway.Enabled = ptr.To(true)
 		_, err = failing.enabledDeploymentBuilders(ctx, kn, kn)

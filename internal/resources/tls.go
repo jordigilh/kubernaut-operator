@@ -348,22 +348,6 @@ func secretName(secret *corev1.Secret) string {
 	return secret.Name
 }
 
-// ValidateServingTLSSecretForHost validates an externally terminated Ingress
-// certificate without requiring the operator to own or know its issuing CA.
-func ValidateServingTLSSecretForHost(secret *corev1.Secret, host string) error {
-	if err := ValidateServingTLSSecret(secret); err != nil {
-		return err
-	}
-	certificate, err := parseCertificate(secret.Data[corev1.TLSCertKey])
-	if err != nil {
-		return fmt.Errorf("secret %q certificate is invalid: %w", secret.Name, err)
-	}
-	if err := certificate.VerifyHostname(host); err != nil {
-		return fmt.Errorf("secret %q certificate does not cover ingress host %q: %w", secret.Name, host, err)
-	}
-	return nil
-}
-
 func requiredServiceTLSSecretNames(input map[string]string, includeFleetMetadataCache bool) (map[string]string, error) {
 	if len(input) == 0 {
 		return nil, fmt.Errorf("serviceTLSSecretNames is required")

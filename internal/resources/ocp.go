@@ -19,111 +19,14 @@ package resources
 import (
 	"fmt"
 
-	routev1 "github.com/openshift/api/route/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
-
-// SSE streams (live status, investigation progress) require long-lived
-// connections. OCP HAProxy defaults to 30s which kills them prematurely.
-const routeSSETimeout = "3600s"
-
-// GatewayRoute builds the OCP Route for external access to the Gateway.
-// Returns nil if Route creation is disabled.
-func GatewayRoute(kn *kubernautv1alpha2.Kubernaut) *routev1.Route {
-	if !kn.Spec.Gateway.Route.RouteEnabled() {
-		return nil
-	}
-
-	route := &routev1.Route{
-		ObjectMeta: ObjectMeta(kn, "gateway-route", ComponentGateway),
-		Spec: routev1.RouteSpec{
-			To: routev1.RouteTargetReference{
-				Kind: "Service",
-				Name: "gateway-service",
-			},
-			Port: &routev1.RoutePort{
-				TargetPort: intstr.FromString("https"),
-			},
-			TLS: &routev1.TLSConfig{
-				Termination:                   routev1.TLSTerminationReencrypt,
-				InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
-			},
-		},
-	}
-	route.Annotations = map[string]string{
-		"haproxy.router.openshift.io/timeout": routeSSETimeout,
-	}
-
-	if kn.Spec.Gateway.Route.Hostname != "" {
-		route.Spec.Host = kn.Spec.Gateway.Route.Hostname
-	}
-
-	return route
-}
-
-// GatewayRouteStub returns a minimal Route object suitable for deletion lookups
-// when the Route feature is disabled. It carries just enough metadata for
-// deleteIfExists to find the resource.
-func GatewayRouteStub(kn *kubernautv1alpha2.Kubernaut) *routev1.Route {
-	return &routev1.Route{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "gateway-route",
-			Namespace: kn.Namespace,
-		},
-	}
-}
-
-// APIFrontendRoute builds the OCP Route for external access to the AF.
-// Returns nil if Route creation is disabled (default).
-func APIFrontendRoute(kn *kubernautv1alpha2.Kubernaut) *routev1.Route {
-	if !kn.Spec.APIFrontend.Route.AFRouteEnabled() {
-		return nil
-	}
-
-	route := &routev1.Route{
-		ObjectMeta: ObjectMeta(kn, "apifrontend-route", ComponentAPIFrontend),
-		Spec: routev1.RouteSpec{
-			To: routev1.RouteTargetReference{
-				Kind: "Service",
-				Name: "apifrontend",
-			},
-			Port: &routev1.RoutePort{
-				TargetPort: intstr.FromString("https"),
-			},
-			TLS: &routev1.TLSConfig{
-				Termination:                   routev1.TLSTerminationReencrypt,
-				InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
-			},
-		},
-	}
-	route.Annotations = map[string]string{
-		"haproxy.router.openshift.io/timeout": routeSSETimeout,
-	}
-
-	if kn.Spec.APIFrontend.Route.Hostname != "" {
-		route.Spec.Host = kn.Spec.APIFrontend.Route.Hostname
-	}
-
-	return route
-}
-
-// APIFrontendRouteStub returns a minimal Route object suitable for deletion
-// lookups when the AF Route is disabled.
-func APIFrontendRouteStub(kn *kubernautv1alpha2.Kubernaut) *routev1.Route {
-	return &routev1.Route{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "apifrontend-route",
-			Namespace: kn.Namespace,
-		},
-	}
-}
 
 // GatewayAlertManagerConfig builds a namespace-scoped AlertmanagerConfig CR
 // that routes alerts matching the kubernaut-system namespace to the Gateway

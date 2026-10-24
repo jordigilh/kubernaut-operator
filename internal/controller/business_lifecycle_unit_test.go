@@ -117,7 +117,6 @@ var _ = Describe("independent business lifecycle decisions", Label("unit"), func
 			kn := newMinimalCR()
 			kn.UID = "unit-lifecycle"
 			kn.Spec.TLS.Mode = mode
-			kn.Spec.APIFrontend.Route.Enabled = ptr.To(false)
 			r := businessUnitReconciler(kn, interceptor.Funcs{})
 			request := reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)}
 			_, err := r.Reconcile(ctx, request)

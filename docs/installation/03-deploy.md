@@ -197,8 +197,8 @@ spec:
 
   # --- Gateway tuning (optional) ---
   gateway:
-    route:
-      enabled: true
+    # External exposure is administrator-owned. Create a Route, Ingress,
+    # Gateway API, or mesh resource separately when public access is required.
     # Authentication is disabled by default so this minimal CR does not
     # require an additional AlertManager token Secret. Enable it only after
     # following the "Configure AlertManager" step below.
@@ -372,12 +372,11 @@ All 10 services should reach Running within 2-5 minutes.
 oc get kubernaut kubernaut -n kubernaut-system \
   -o jsonpath='{range .status.services[*]}{.name}{"\t"}{.ready}{"\t"}{.readyReplicas}/{.desiredReplicas}{"\n"}{end}'
 
-# Gateway Route
-oc get route -n kubernaut-system -l app=gateway
+# Operator-managed internal Gateway Service
+oc get service gateway-service -n kubernaut-system
 
-# Gateway health
-GATEWAY_URL=$(oc get route gateway -n kubernaut-system -o jsonpath='{.spec.host}')
-curl -sk "https://${GATEWAY_URL}/healthz"
+# External health checks use the administrator-owned Route, Ingress,
+# Gateway API, or mesh resource created for the deployment.
 ```
 
 ## Seed the Workflow Catalog

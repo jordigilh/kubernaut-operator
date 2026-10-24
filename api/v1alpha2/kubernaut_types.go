@@ -1526,15 +1526,6 @@ type GatewaySpec struct {
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// Route configuration for OCP external access.
-	// +optional
-	Route RouteSpec `json:"route,omitempty"`
-
-	// Ingress configures portable Kubernetes exposure. It is independent from
-	// the optional OpenShift Route above.
-	// +optional
-	Ingress IngressSpec `json:"ingress,omitempty"`
-
 	// Gateway server and middleware configuration.
 	// +optional
 	Config GatewayConfigSpec `json:"config,omitempty"`
@@ -1610,16 +1601,6 @@ type ConsoleSpec struct {
 	// +optional
 	Auth ConsoleAuthSpec `json:"auth,omitempty"`
 
-	// OCP Route configuration for external access.
-	// +optional
-	Route ConsoleRouteSpec `json:"route,omitempty"`
-
-	// Ingress configures portable Kubernetes exposure. It is independent from
-	// the optional OpenShift Route above and is disabled unless explicitly
-	// enabled.
-	// +optional
-	Ingress IngressSpec `json:"ingress,omitempty"`
-
 	// Resource requirements for the console container.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
@@ -1646,6 +1627,13 @@ type ConsoleAuthSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	SecretName string `json:"secretName,omitempty"`
 
+	// Explicit public Console URL used for the oauth2-proxy callback. The
+	// administrator owns the Route, Ingress, or Gateway API resource serving
+	// this URL; the operator does not infer it from a platform ingress domain.
+	// +kubebuilder:validation:Pattern=`^https://.+`
+	// +optional
+	RedirectURL string `json:"redirectURL,omitempty"`
+
 	// ProviderLogoutURL is the provider-discovered OIDC end_session_endpoint
 	// used by oauth2-proxy for server-side logout. Keep the literal {id_token}
 	// placeholder where the provider requires an ID token hint; oauth2-proxy
@@ -1654,18 +1642,6 @@ type ConsoleAuthSpec struct {
 	// +kubebuilder:validation:Pattern=`^https://.+`
 	// +optional
 	ProviderLogoutURL string `json:"providerLogoutURL,omitempty"`
-}
-
-// ConsoleRouteSpec configures the OCP Route for the console.
-type ConsoleRouteSpec struct {
-	// Whether to create an OCP Route. Defaults to true on OpenShift.
-	// +kubebuilder:default=true
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// Explicit hostname. Empty = auto-derived from namespace.
-	// +optional
-	Host string `json:"host,omitempty"`
 }
 
 // GatewayConfigSpec configures Gateway server behaviour, middleware, and CORS.
@@ -1773,50 +1749,6 @@ type GatewayCORSSpec struct {
 	// +kubebuilder:default=300
 	// +optional
 	MaxAge *int `json:"maxAge,omitempty"`
-}
-
-// RouteSpec configures the OCP Route for the Gateway.
-type RouteSpec struct {
-	// Whether to create an OCP Route for the Gateway.
-	// +kubebuilder:default=true
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// Hostname override. When empty, the OCP router auto-generates a hostname.
-	// +optional
-	Hostname string `json:"hostname,omitempty"`
-}
-
-// IngressSpec configures portable Kubernetes Ingress exposure for a service.
-// An enabled Ingress requires an explicit class, host, and TLS Secret; the
-// operator never infers these values from OpenShift cluster settings.
-type IngressSpec struct {
-	// Whether to create the Ingress. Defaults to false.
-	// +kubebuilder:default=false
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// IngressClassName identifies the installed ingress controller.
-	// +optional
-	IngressClassName string `json:"ingressClassName,omitempty"`
-
-	// External DNS name covered by TLSSecretName.
-	// +optional
-	Host string `json:"host,omitempty"`
-
-	// Existing Secret containing tls.crt and tls.key.
-	// +optional
-	TLSSecretName string `json:"tlsSecretName,omitempty"`
-
-	// Optional controller-specific annotations. The operator does not add
-	// OpenShift Route annotations to this object.
-	// +optional
-	Annotations map[string]string `json:"annotations,omitempty"`
-}
-
-// IngressEnabled returns true only for an explicit opt-in.
-func (s *IngressSpec) IngressEnabled() bool {
-	return s != nil && s.Enabled != nil && *s.Enabled
 }
 
 // TLSMode identifies the source of runtime certificate and trust material.
@@ -2005,25 +1937,6 @@ type CertManagerTLSProvisioning struct {
 	SigningCertificateSecretName string `json:"signingCertificateSecretName,omitempty"`
 }
 
-// APIFrontendRouteSpec configures the OCP Route for the API Frontend.
-// Unlike GatewayRouteSpec, defaults to disabled (opt-in external access).
-type APIFrontendRouteSpec struct {
-	// Whether to create an OCP Route for the API Frontend.
-	// +kubebuilder:default=false
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// Hostname override. When empty, the OCP router auto-generates a hostname.
-	// +optional
-	Hostname string `json:"hostname,omitempty"`
-}
-
-// AFRouteEnabled returns true when the AF Route should be created.
-// Defaults to false when Enabled is nil (opt-in).
-func (s *APIFrontendRouteSpec) AFRouteEnabled() bool {
-	return s.Enabled != nil && *s.Enabled
-}
-
 // AuthWebhookSpec configures the AuthWebhook admission controller.
 type AuthWebhookSpec struct {
 	// +optional
@@ -2043,17 +1956,6 @@ type APIFrontendSpec struct {
 	// +kubebuilder:default=false
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
-
-	// Route configuration for OCP external access (FedRAMP SC-8).
-	// Disabled by default; set route.enabled=true to expose AF via an
-	// OpenShift Route with reencrypt TLS termination.
-	// +optional
-	Route APIFrontendRouteSpec `json:"route,omitempty"`
-
-	// Ingress configures portable Kubernetes exposure. It is independent from
-	// the optional OpenShift Route above.
-	// +optional
-	Ingress IngressSpec `json:"ingress,omitempty"`
 
 	// OIDC authentication configuration.
 	// +optional
@@ -2870,7 +2772,6 @@ const (
 	ConditionRBACProvisioned            ConditionType = "RBACProvisioned"
 	ConditionWebhooksConfigured         ConditionType = "WebhooksConfigured"
 	ConditionServicesDeployed           ConditionType = "ServicesDeployed"
-	ConditionRouteReady                 ConditionType = "RouteReady"
 	ConditionAnsibleReady               ConditionType = "AnsibleReady"
 	ConditionAlertManagerAuthConfigured ConditionType = "AlertManagerAuthConfigured"
 	ConditionAdditionalRBACBound        ConditionType = "AdditionalRBACBound"
@@ -2919,9 +2820,4 @@ type KubernautList struct {
 
 func init() {
 	SchemeBuilder.Register(&Kubernaut{}, &KubernautList{})
-}
-
-// RouteEnabled returns true when the Gateway Route should be created.
-func (s *RouteSpec) RouteEnabled() bool {
-	return s.Enabled == nil || *s.Enabled
 }

@@ -182,6 +182,7 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "ansible-ca"}
 		kn.Spec.Console.Enabled = ptr.To(true)
 		kn.Spec.Console.Auth.SecretName = "console-oidc"
+		kn.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
 		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{LLMProfileRef: "primary"}
 		kn.Spec.Valkey.TLS = &kubernautv1alpha2.ValkeyTLSSpec{
 			Enabled:              true,
@@ -284,16 +285,6 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		kn.Spec.KubernautAgent.Investigation.LLMProfileRef = "vertex"
 		kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = primaryProfile
 		_, errs := precreatedConfigurationReferences(kn)
-		Expect(errs).NotTo(BeEmpty())
-
-		kn = newMinimalCR()
-		kn.Spec.Gateway.Ingress = kubernautv1alpha2.IngressSpec{
-			Enabled: ptr.To(true), IngressClassName: "nginx", Host: "gateway.example.com", TLSSecretName: "gateway-ingress-tls",
-		}
-		_, errs = precreatedConfigurationReferences(kn)
-		Expect(errs).To(BeEmpty())
-		kn.Spec.Gateway.Ingress.IngressClassName = ""
-		_, errs = precreatedConfigurationReferences(kn)
 		Expect(errs).NotTo(BeEmpty())
 
 		enabled := true
