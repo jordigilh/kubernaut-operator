@@ -53,6 +53,8 @@ jobs:
           set -euo pipefail
           helm lint charts/kubernaut-development-dependencies
           HELM_BIN=helm ./hack/verify-development-dependencies-chart.sh
+          # This chart owns its own internal version cadence; it is deliberately
+          # independent from the operator's release/tag version.
           base_version=$(awk '$1 == "version:" {print $2; exit}' charts/kubernaut-development-dependencies/Chart.yaml)
           export CHART_VERSION="${base_version}-run.${GITHUB_RUN_NUMBER}"
           export CHART_REGISTRY_VERSION="${CHART_VERSION//+/_}"
@@ -116,6 +118,8 @@ jobs:
           digest = os.environ["DIGEST"]
           manifest = {
               "schema": "kubernaut-development-dependencies-oci/v1",
+              "intended_use": "internal-ci-and-upstream-demo-infrastructure",
+              "production_supported": False,
               "chart": {
                   "name": "kubernaut-development-dependencies",
                   "version": version,

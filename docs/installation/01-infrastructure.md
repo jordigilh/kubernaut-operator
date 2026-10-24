@@ -8,6 +8,10 @@ For operator development, Kind, and disposable OCP qualification, use the
 repository-owned development dependencies chart instead of reproducing the dependency
 manifests by hand:
 
+This is an internal CI/CD and upstream-demo infrastructure chart only. It has
+its own chart version and release pipeline, independent of the operator
+release; it is not a production dependency artifact.
+
 ```bash
 helm upgrade --install kubernaut-development-dependencies \
   ./charts/kubernaut-development-dependencies \

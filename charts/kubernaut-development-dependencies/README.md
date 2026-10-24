@@ -5,6 +5,15 @@ bring-your-own (BYO) PostgreSQL and Valkey contract. It is **not** part of the
 production operator chart and it does not change the operator's pre-created
 dependency requirement.
 
+This is an **internal-only** chart for operator CI/CD testing and upstream demo
+cluster infrastructure. It is not a production dependency release and must
+not be used as a production database or cache deployment.
+
+The chart has an independent release cadence and version from the operator.
+The dedicated publication workflow emits a unique chart version based on the
+chart's own `Chart.yaml` version and workflow run, plus a mutable `latest`
+convenience alias. Pin the published digest for repeatable internal runs.
+
 The operator repository owns this chart's release cadence and image upgrades.
 Each PostgreSQL/Valkey digest change must be reviewed against the target
 OpenShift restricted SCC and the Kind qualification lane; the chart does not
