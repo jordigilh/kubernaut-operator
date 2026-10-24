@@ -56,14 +56,19 @@ jobs:
           # This chart owns its own internal version cadence; it is deliberately
           # independent from the operator's release/tag version.
           base_version=$(awk '$1 == "version:" {print $2; exit}' charts/kubernaut-development-dependencies/Chart.yaml)
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          export SOURCE_SHA
           export CHART_VERSION="${base_version}-run.${GITHUB_RUN_NUMBER}"
           export CHART_REGISTRY_VERSION="${CHART_VERSION//+/_}"
-          echo "CHART_VERSION=${CHART_VERSION}" >> "${GITHUB_ENV}"
-          echo "CHART_REGISTRY_VERSION=${CHART_REGISTRY_VERSION}" >> "${GITHUB_ENV}"
+          {
+            echo "SOURCE_SHA=${SOURCE_SHA}"
+            echo "CHART_VERSION=${CHART_VERSION}"
+            echo "CHART_REGISTRY_VERSION=${CHART_REGISTRY_VERSION}"
+          } >> "${GITHUB_ENV}"
           mkdir -p dist
           helm package charts/kubernaut-development-dependencies \
             --version "${CHART_VERSION}" \
-            --app-version "${GITHUB_SHA}" \
+            --app-version "${SOURCE_SHA}" \
             --destination dist
 
       - name: Login to Quay.io

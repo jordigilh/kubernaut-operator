@@ -748,7 +748,7 @@ jobs:
           chart_dir="${RUNNER_TEMP}/kubernaut-operator-chart"
           mkdir -p dist
           cp -R charts/kubernaut-operator "${chart_dir}"
-          sed -i "0,/^  tag: /s//  tag: ${VERSION}/" "${chart_dir}/values.yaml"
+          sed -i "0,/^  tag: /s/^  tag: .*/  tag: ${VERSION}/" "${chart_dir}/values.yaml"
           helm lint "${chart_dir}"
           helm package "${chart_dir}" \
             --version "${VERSION}" \
