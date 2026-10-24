@@ -356,10 +356,10 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 			Valkey: kubernautv1alpha2.ValkeySpec{
 				SecretName: "valkey-secret",
 				Host:       "valkey.kubernaut-system.svc.cluster.local",
-				TLS: &kubernautv1alpha2.ValkeyTLSSpec{
+				TLS: &kubernautv1alpha2.ValkeyTLSSpec{ //nolint:gosec // disposable Kind fixture Secret references
 					Enabled:              true,
 					CASecretName:         "valkey-ca",
-					ClientCertSecretName: "valkey-tls-client", //nolint:gosec // disposable Kind fixture Secret reference
+					ClientCertSecretName: "valkey-tls-client",
 				},
 			},
 			DataStorage: dataStorage,
