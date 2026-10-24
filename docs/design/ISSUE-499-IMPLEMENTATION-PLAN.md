@@ -8,9 +8,9 @@
 
 **Status:** Approved for RED tests on 2026-10-05; production implementation
 may proceed only through the RED → GREEN → REFACTOR sequence below. Release
-readiness also depends on the separate #501 evidence-schema follow-up described
-below; that follow-up must remove the retired application-chart requirement
-before an operator release can pass its qualification gate.
+readiness also depends on the separate #501 evidence-boundary follow-up described
+below; upstream compatibility acceptance remains a manual release-owner
+responsibility and is not an automated operator-workflow gate.
 
 **Deployment contract:** The operator is the only supported way to deploy
 Kubernaut services on OpenShift, generic Kubernetes, and Kind. A Helm chart may
@@ -155,8 +155,8 @@ TLS follow-up and is not an issue-499 acceptance criterion.
 The merged CI boundary requires the operator repository and its Kind harness to
 avoid upstream source checkouts, application images, and upstream workflow
 dispatch. `make test-pyramid` now includes `make test-ci-boundary`; release
-publication also consumes an immutable upstream qualification record for the
-exact operator SHA.
+provenance records that upstream qualification is manual and release-owner
+controlled.
 
 Therefore, issue-499 operator tests may prove CRD admission, rendered
 configuration, Deployment mounts, RBAC, ownership, status, and trust behavior
