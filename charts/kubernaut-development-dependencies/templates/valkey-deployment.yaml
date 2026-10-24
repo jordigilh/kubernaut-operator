@@ -77,8 +77,8 @@ spec:
         - name: valkey-tls
           secret:
             secretName: {{ .Values.valkey.tls.serverSecretName }}
-            defaultMode: 0440
+            defaultMode: 0444
         - name: valkey-ca
           secret:
             secretName: {{ .Values.valkey.tls.caSecretName }}
-            defaultMode: 0440
+            defaultMode: 0444
