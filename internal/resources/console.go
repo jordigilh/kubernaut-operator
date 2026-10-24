@@ -19,7 +19,6 @@ package resources
 import (
 	"fmt"
 
-	routev1 "github.com/openshift/api/route/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,9 +34,9 @@ const (
 )
 
 // ConsoleDeployment builds the Deployment for the standalone web console.
-// ingressDomain is the cluster's ingress domain (e.g. "apps.dev.example.com")
-// used to derive the oauth2-proxy redirect URL when console.route.host is empty.
-func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*appsv1.Deployment, error) {
+// The administrator-owned external exposure supplies the explicit OAuth2
+// callback URL through spec.console.auth.redirectURL.
+func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	consoleImage, err := ResolveImage(kn, "console")
 	if err != nil {
 		return nil, err
@@ -56,11 +55,14 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*
 	if secretName == "" {
 		return nil, fmt.Errorf("console.auth.secretName is required")
 	}
+	if err := validateConsoleRedirectURL(kn); err != nil {
+		return nil, err
+	}
 	if err := validateConsoleProviderLogoutURL(kn); err != nil {
 		return nil, err
 	}
 
-	redirectURL := consoleRedirectURL(kn, ingressDomain)
+	redirectURL := consoleRedirectURL(kn)
 	caFile := InterServiceTLSCAFileFor(kn)
 	caDir := InterServiceTLSCADirFor(kn)
 	logoutURL := kn.Spec.Console.Auth.ProviderLogoutURL
@@ -416,66 +418,8 @@ location / {
 `, caFile, afURL, afURL, afURL, enableRawThinking)
 }
 
-// ConsoleRoute builds the OCP Route for external access to the console.
-func ConsoleRoute(kn *kubernautv1alpha2.Kubernaut) *routev1.Route {
-	if kn.Spec.Console.Route.Enabled != nil && !*kn.Spec.Console.Route.Enabled {
-		return nil
-	}
-
-	route := &routev1.Route{
-		ObjectMeta: ObjectMeta(kn, ComponentConsole, ComponentConsole),
-		Spec: routev1.RouteSpec{
-			To: routev1.RouteTargetReference{
-				Kind:   "Service",
-				Name:   ComponentConsole,
-				Weight: ptr.To(int32(100)),
-			},
-			Port: &routev1.RoutePort{
-				TargetPort: intstr.FromString("http"),
-			},
-			TLS: &routev1.TLSConfig{
-				Termination:                   routev1.TLSTerminationEdge,
-				InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
-			},
-		},
-	}
-	// #268: the console is the externally-reachable ingress for the A2A
-	// investigation stream (nginx proxies /a2a/ to apifrontend internally
-	// with a 3600s read/send timeout, see ConsoleNginxConfigMap); without
-	// this annotation OCP HAProxy's default server timeout kills
-	// long-running investigations mid-stream ("context canceled"),
-	// dropping the train-of-thought and decision UI. Mirrors
-	// GatewayRoute/APIFrontendRoute in ocp.go.
-	route.Annotations = map[string]string{
-		"haproxy.router.openshift.io/timeout": routeSSETimeout,
-	}
-
-	if kn.Spec.Console.Route.Host != "" {
-		route.Spec.Host = kn.Spec.Console.Route.Host
-	}
-
-	return route
-}
-
-// ConsoleRouteStub returns a minimal Route for deletion lookups.
-func ConsoleRouteStub(kn *kubernautv1alpha2.Kubernaut) *routev1.Route {
-	return &routev1.Route{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      ComponentConsole,
-			Namespace: kn.Namespace,
-		},
-	}
-}
-
-func consoleRedirectURL(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) string {
-	if kn.Spec.Console.Route.Host != "" {
-		return fmt.Sprintf("https://%s/oauth2/callback", kn.Spec.Console.Route.Host)
-	}
-	if ingressDomain == "" {
-		ingressDomain = "apps.cluster.local"
-	}
-	return fmt.Sprintf("https://%s-%s.%s/oauth2/callback",
-		ComponentConsole, kn.Namespace, ingressDomain)
+func consoleRedirectURL(kn *kubernautv1alpha2.Kubernaut) string {
+	return kn.Spec.Console.Auth.RedirectURL
 }
 
 func consoleContainerResources(kn *kubernautv1alpha2.Kubernaut) corev1.ResourceRequirements {

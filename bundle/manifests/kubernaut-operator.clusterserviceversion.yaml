@@ -6,9 +6,13 @@ metadata:
       ,\n        \"app.kubernetes.io/name\": \"kubernaut-operator\"\n      },\n      \"name\": \"kubernaut\",\n      \"namespace\": \"kubernaut-system\"\n    },\n    \"spec\": {\n      \"aiAnalysis\": {\n\
       \        \"policy\": {\n          \"configMapName\": \"aianalysis-policy\"\n        }\n      },\n      \"apiFrontend\": {\n        \"enabled\": false\n      },\n      \"gateway\": {\n        \"enabled\"\
       : true\n      },\n      \"kubernautAgent\": {},\n      \"llmProfiles\": {\n        \"primary\": {\n          \"credentialsSecretName\": \"llm-credentials\",\n          \"model\": \"claude-sonnet-4-6\"\
-      ,\n          \"provider\": \"anthropic\"\n        }\n      },\n      \"postgresql\": {\n        \"host\": \"postgresql.kubernaut-system.svc.cluster.local\",\n        \"secretName\": \"postgresql-secret\"\
-      \n      },\n      \"signalProcessing\": {\n        \"policy\": {\n          \"configMapName\": \"signalprocessing-policy\"\n        }\n      },\n      \"valkey\": {\n        \"host\": \"valkey.kubernaut-system.svc.cluster.local\"\
-      ,\n        \"secretName\": \"valkey-secret\"\n      }\n    }\n  }\n]"
+      ,\n          \"provider\": \"anthropic\"\n        }\n      },\n      \"notification\": {\n        \"credentials\": [\n          {\n            \"name\": \"slack-ops\",\n            \"secretRef\":\
+      \ {\n              \"key\": \"webhook-url\",\n              \"name\": \"slack-webhook\"\n            }\n          },\n          {\n            \"name\": \"teams-primary\",\n            \"secretRef\"\
+      : {\n              \"key\": \"webhook-url\",\n              \"name\": \"notification-teams\"\n            }\n          },\n          {\n            \"name\": \"pagerduty-critical\",\n            \"\
+      secretRef\": {\n              \"key\": \"routing-key\",\n              \"name\": \"notification-pagerduty\"\n            }\n          }\n        ],\n        \"routing\": {\n          \"configMapName\"\
+      : \"notification-routing\"\n        }\n      },\n      \"postgresql\": {\n        \"host\": \"postgresql.kubernaut-system.svc.cluster.local\",\n        \"secretName\": \"postgresql-secret\",\n   \
+      \     \"sslMode\": \"require\"\n      },\n      \"signalProcessing\": {\n        \"policy\": {\n          \"configMapName\": \"signalprocessing-policy\"\n        }\n      },\n      \"valkey\": {\n\
+      \        \"host\": \"valkey.kubernaut-system.svc.cluster.local\",\n        \"secretName\": \"valkey-secret\"\n      }\n    }\n  }\n]"
     capabilities: Full Lifecycle
     categories: AI/Machine Learning,Monitoring
     com.redhat.openshift.versions: v4.18
@@ -46,14 +50,14 @@ spec:
       kind: Kubernaut
       name: kubernauts.kubernaut.ai
       version: v1alpha2
-  description: "## Kubernaut Operator\n\nThe Kubernaut Operator deploys and manages the **Kubernaut AIOps Remediation Platform**\non Kubernetes and OpenShift. Routes, service-CA, and monitoring resources\n\
-    are optional capability adapters; runtime isolation uses the portable\nKubernetes NetworkPolicy API.\n\n### Features\n\n- **Single CR deployment**: one `Kubernaut` custom resource deploys the platform\
+  description: "## Kubernaut Operator\n\nThe Kubernaut Operator deploys and manages the **Kubernaut AIOps Remediation Platform**\non Kubernetes and OpenShift. Service-CA and monitoring resources are\n\
+    optional capability adapters; external exposure is administrator-managed; runtime isolation uses the portable\nKubernetes NetworkPolicy API.\n\n### Features\n\n- **Single CR deployment**: one `Kubernaut` custom resource deploys the platform\
     \ services\n- **BYO infrastructure**: bring your own PostgreSQL and Valkey/Redis\n- **Portable lifecycle**: workloads, Services, RBAC, PDBs, status, and cleanup use core Kubernetes APIs\n- **Explicit\
-    \ TLS and exposure**: manual, cert-manager, or service-CA TLS plus generic Ingress\n- **Portable network isolation**: selector-based Kubernetes NetworkPolicy objects with administrator-owned API-server/external\
+    \ TLS and exposure**: manual, cert-manager, or service-CA TLS; external exposure is administrator-managed\n- **Portable network isolation**: selector-based Kubernetes NetworkPolicy objects with administrator-owned API-server/external\
     \ egress\n- **Policy-governed**: Rego policies control signal classification and AI analysis approval\n- **LLM-powered analysis**: integrates with OpenAI, Anthropic, and other LLM providers\n- **Ansible\
     \ integration**: optional AWX/AAP for Ansible-based remediation workflows\n\n### Prerequisites\n\n- PostgreSQL database with credentials in a Secret\n- Valkey/Redis with credentials in a Secret\n- LLM\
     \ API credentials (for example, an OpenAI API key) in a Secret\n- Rego policy ConfigMaps for AI analysis and signal processing\n- An explicitly selected TLS source on generic Kubernetes\n\n### Getting\
-    \ Started\n\n1. Create the required BYO secrets (PostgreSQL, Valkey, LLM credentials)\n2. Create Rego policy ConfigMaps\n3. Select TLS/exposure options\n4. Apply a `Kubernaut` CR \u2014 see the sample\
+    \ Started\n\n1. Create the required BYO secrets (PostgreSQL, Valkey, LLM credentials)\n2. Create Rego policy ConfigMaps\n3. Select TLS options and configure administrator-owned external exposure separately\n4. Apply a `Kubernaut` CR \u2014 see the sample\
     \ in the operator bundle\n"
   displayName: Kubernaut Operator
   icon:
@@ -245,18 +249,6 @@ spec:
         - apiGroups:
           - networking.k8s.io
           resources:
-          - ingresses
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
-          - networking.k8s.io
-          resources:
           - networkpolicies
           verbs:
           - create
@@ -295,25 +287,6 @@ spec:
           - patch
           - update
           - watch
-        - apiGroups:
-          - route.openshift.io
-          resources:
-          - routes
-          verbs:
-          - create
-          - delete
-          - get
-          - list
-          - patch
-          - update
-          - watch
-        - apiGroups:
-          - route.openshift.io
-          resources:
-          - routes/custom-host
-          verbs:
-          - create
-          - update
         - apiGroups:
           - authentication.k8s.io
           resources:

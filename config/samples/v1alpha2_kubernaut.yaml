@@ -73,11 +73,11 @@ spec:
     routing:
       configMapName: notification-routing
 
-  # Gateway is the only external API enabled by this minimum sample.
+  # Gateway is the only API enabled by this minimum sample. Create any
+  # administrator-owned external Route, Ingress, or Gateway API resource
+  # separately when external access is required.
   gateway:
     enabled: true
-    route:
-      enabled: false
 
   # Generic Kubernetes/Kind TLS. Install cert-manager before applying this CR
   # and pre-create the referenced Issuer/Certificates. Set provisioning.enabled

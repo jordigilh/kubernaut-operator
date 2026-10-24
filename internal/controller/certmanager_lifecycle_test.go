@@ -299,7 +299,7 @@ func deleteExternalTLSFixtureSecrets(ctx context.Context) {
 const unitCertificateKind = "Certificate"
 
 func certManagerLifecycleCR(kind string) *kubernautv1alpha2.Kubernaut {
-	kn := newCRWithRouteDisabled()
+	kn := newMinimalCR()
 	kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeCertManager,
 		CertManager: &kubernautv1alpha2.CertManagerTLSConfig{IssuerRef: kubernautv1alpha2.TLSIssuerRef{
 			Kind: kind, Name: "external-customer-issuer",

@@ -111,7 +111,7 @@ var _ = Describe("Core cluster-scoped RBAC pruning on feature toggle-off (#341)"
 
 	It("removes Gateway's ClusterRole and ClusterRoleBinding once gateway is disabled (pre-existing gap)", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		reconcileToRunning(ctx)
 
 		By("sanity: Gateway's cluster RBAC exists while enabled (the default)")
@@ -146,7 +146,7 @@ var _ = Describe("Core cluster-scoped RBAC pruning on feature toggle-off (#341)"
 
 	It("removes the console-access ClusterRole once explicitly enabled apiFrontend is disabled", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		reconcileToRunning(ctx)
 
 		By("sanity: console-access ClusterRole exists while apiFrontend is explicitly enabled")

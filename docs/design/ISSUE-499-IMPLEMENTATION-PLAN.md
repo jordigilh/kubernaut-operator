@@ -91,7 +91,6 @@ The baseline passed before this plan was written:
 - `golangci-lint run` — zero issues
 - `make test` — unit coverage 87.3%, controller integration coverage 78.3%
 - `make test-pyramid`
-- `make test-security-traceability`
 - generated-artifact checks with no unexpected working-tree changes
 
 Post-merge triage checks on `ffa8577` also passed:
@@ -903,7 +902,6 @@ make test
 make test-pyramid
 make test-ci-boundary
 make test-hack-scripts
-make test-security-traceability
 git diff --check
 ```
 

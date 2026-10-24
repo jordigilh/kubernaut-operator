@@ -45,7 +45,7 @@ import (
 var _ = Describe("portable NetworkPolicy controller wiring", Label("integration"), func() {
 	It("IT-NP-555-RECONCILE-001 [AC-3, AC-6, SC-7; SOC2 CC6.1, CC6.6, CC7.2; ASVS V4.1, V4.2, V4.3] reconciles standard policies without provider APIs and preserves API-client access", func() {
 		createBYOSecrets(ctx)
-		cr := newCRWithRouteDisabled()
+		cr := newMinimalCR()
 		cr.Spec.NetworkPolicies.ScrapeSources = []kubernautv1alpha2.MetricsScrapeSource{{
 			Namespace: "monitoring",
 			PodLabels: map[string]string{"app": "prometheus"},
@@ -100,7 +100,7 @@ var _ = Describe("portable NetworkPolicy controller wiring", Label("integration"
 			Expect(apierrors.IsNotFound(err)).To(BeTrue())
 		}
 		Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
-		cr := newCRWithRouteDisabled()
+		cr := newMinimalCR()
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 		DeferCleanup(func() {
 			deleteCRIfExists(ctx)
@@ -125,7 +125,7 @@ var _ = Describe("portable NetworkPolicy controller wiring", Label("integration"
 
 	It("IT-NP-555-LIFECYCLE-003 [AC-3, AC-6, CM-3; SOC2 CC6.6, CC8.1; ASVS V4.1, V4.2] updates and cleans owned policies without deleting user policy", func() {
 		createBYOSecrets(ctx)
-		cr := newCRWithRouteDisabled()
+		cr := newMinimalCR()
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 		DeferCleanup(func() {
 			deleteCRIfExists(ctx)
@@ -173,7 +173,7 @@ var _ = Describe("portable NetworkPolicy controller wiring", Label("integration"
 
 	It("IT-NP-555-FAILCLOSED-004 [AC-3, SI-4; SOC2 CC7.2; ASVS V4.1, V16.1] exposes invalid selector input and does not apply policies", func() {
 		createBYOSecrets(ctx)
-		cr := newCRWithRouteDisabled()
+		cr := newMinimalCR()
 		cr.Spec.NetworkPolicies.Gateway.IngressCIDRs = []string{"not-a-cidr"}
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 		DeferCleanup(func() {
@@ -198,7 +198,7 @@ var _ = Describe("portable NetworkPolicy controller wiring", Label("integration"
 
 	It("IT-NP-555-SCRAPE-005 [AC-3, AC-6, SC-7; SOC2 CC6.1, CC6.6; ASVS V4.1] updates source-qualified metrics ingress through full reconciliation", func() {
 		createBYOSecrets(ctx)
-		cr := newCRWithRouteDisabled()
+		cr := newMinimalCR()
 		cr.Spec.NetworkPolicies.ScrapeSources = []kubernautv1alpha2.MetricsScrapeSource{{
 			Namespace: "monitoring", PodLabels: map[string]string{"app": "prometheus"},
 		}}

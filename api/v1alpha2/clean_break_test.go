@@ -25,6 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	sigsyaml "sigs.k8s.io/yaml"
 )
@@ -70,6 +71,36 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
 		apiFrontend := schema.Properties["spec"].Properties["apiFrontend"]
 		Expect(apiFrontend.Properties).NotTo(HaveKey("spire"))
+	})
+
+	It("UT-EXP-565-API-001 [CM-3, CM-6, SI-10; SOC2 CC8.1; ASVS v5.0.0-V16.5.2]: leaves external exposure to administrators", func() {
+		crd := loadKubernautCRD()
+		spec := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+
+		for _, component := range []string{"gateway", "apiFrontend", "console"} {
+			properties := spec.Properties[component].Properties
+			Expect(properties).NotTo(HaveKey("route"), "%s must not publish a CR-managed Route", component)
+			Expect(properties).NotTo(HaveKey("ingress"), "%s must not publish a CR-managed Ingress", component)
+		}
+	})
+
+	It("UT-EXP-565-RBAC-001 [AC-6, SC-7; SOC2 CC6.1, CC6.6; ASVS v5.0.0-V8.2.1, v5.0.0-V8.3.1, v5.0.0-V13.1.1]: does not grant the operator external exposure access", func() {
+		for _, relativePath := range []string{
+			filepath.Join("..", "..", "config", "rbac", "role.yaml"),
+			filepath.Join("..", "..", "charts", "kubernaut-operator", "files", "manager-role.yaml"),
+		} {
+			manifest, err := os.ReadFile(relativePath) //nolint:gosec // test paths are fixed within the repository
+			Expect(err).NotTo(HaveOccurred())
+
+			role := &rbacv1.ClusterRole{}
+			Expect(sigsyaml.Unmarshal(manifest, role)).To(Succeed())
+			for _, rule := range role.Rules {
+				Expect(rule.APIGroups).NotTo(ContainElement("route.openshift.io"), relativePath)
+				if containsString(rule.APIGroups, "networking.k8s.io") {
+					Expect(rule.Resources).NotTo(ContainElement("ingresses"), relativePath)
+				}
+			}
+		}
 	})
 
 	It("UT-NP-555-API-001 [AC-3, AC-6; SOC2 CC6.1, CC6.6; ASVS V4.1, V4.2] publishes only the portable NetworkPolicy contract", func() {
@@ -292,4 +323,13 @@ func loadKubernautCRD() *apiextensionsv1.CustomResourceDefinition {
 	crd := &apiextensionsv1.CustomResourceDefinition{}
 	Expect(sigsyaml.Unmarshal(manifest, crd)).To(Succeed())
 	return crd
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

@@ -63,7 +63,7 @@ var _ = Describe("alignment sibling-agent reconciliation wiring", func() {
 			Data:       validPrecreatedTLSData(),
 		})).To(Succeed())
 
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.APIFrontend.LLMProfileRef = "primary"
 		kn.Spec.KubernautAgent.AlignmentCheck = kubernautv1alpha2.AlignmentCheckSpec{
 			Enabled:       true,
@@ -135,7 +135,7 @@ var _ = Describe("alignment sibling-agent reconciliation wiring", func() {
 	It("IT-419-RECONCILE-002 [CM-6, IA-5, AC-6; SOC2 CC6.6, CC7.2, CC8.1; ASVS v5.0.0-V2.2.1, v5.0.0-V8.2.1, v5.0.0-V16.5.2] rejects a missing alignment Secret before deployment", func() {
 		ctx := context.Background()
 		createBYOSecrets(ctx)
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.APIFrontend.LLMProfileRef = "primary"
 		kn.Spec.KubernautAgent.AlignmentCheck = kubernautv1alpha2.AlignmentCheckSpec{
 			Enabled:       true,

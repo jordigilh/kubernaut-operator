@@ -11,7 +11,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -125,7 +124,6 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resources.DeploymentName(resources.ComponentGateway), Namespace: kn.Namespace}},
 			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resources.DeploymentName(resources.ComponentFleetMetadataCache), Namespace: kn.Namespace}},
 			&rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: resources.ConsoleAccessCRBName(kn)}},
-			&networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: "gateway-ingress", Namespace: kn.Namespace}},
 			&rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "stale-role"}})
 		for _, cleanup := range []func() error{
 			func() error { return r.cleanupDisabledGateway(ctx, kn) },
@@ -133,7 +131,6 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 			func() error { return r.deployToggleRBAC(ctx, kn) },
 			func() error { return r.deployConsoleAccessRBAC(ctx, kn) },
 			func() error { _, err := r.enabledDeploymentBuilders(ctx, kn, kn); return err },
-			func() error { _, err := r.reconcileGenericIngresses(ctx, kn); return err },
 		} {
 			Expect(cleanup()).To(MatchError(ContainSubstring("injected cleanup failure")))
 		}

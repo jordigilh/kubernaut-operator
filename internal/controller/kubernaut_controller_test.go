@@ -536,7 +536,7 @@ var _ = Describe("Kubernaut Controller", func() {
 	Context("Monitoring integration is unconditional", func() {
 		It("MON-001 [CM-6]: a v1.5-style manifest carrying the removed spec.monitoring.enabled=false is accepted -- the CRD's structural schema silently prunes the unknown field instead of rejecting the request -- and still reconciles with monitoring fully wired", func() {
 			createBYOSecrets(ctx)
-			kn := newCRWithRouteDisabled()
+			kn := newMinimalCR()
 
 			u, err := runtime.DefaultUnstructuredConverter.ToUnstructured(kn)
 			Expect(err).NotTo(HaveOccurred())
@@ -557,7 +557,7 @@ var _ = Describe("Kubernaut Controller", func() {
 
 		It("MON-002 [CM-6]: monitoring RBAC is independent and no raw policy fallback is created", func() {
 			createBYOSecrets(ctx)
-			kn := newCRWithRouteDisabled()
+			kn := newMinimalCR()
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 
 			reconcileToDeployPhase(ctx)
@@ -601,7 +601,7 @@ var _ = Describe("Kubernaut Controller", func() {
 	Context("KA Fleet GatewayType propagation", func() {
 		It("KFG-060 [CM-6]: a Kubernaut CR with spec.fleet.enabled and mcpGateway.type=kuadrant reconciles successfully and KA's rendered ConfigMap carries the gatewayType through", func() {
 			createBYOSecrets(ctx)
-			kn := newCRWithRouteDisabled()
+			kn := newMinimalCR()
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 
 			// Apply the Fleet-specific fields through the v1alpha2 object after
@@ -643,7 +643,7 @@ var _ = Describe("Kubernaut Controller", func() {
 			// fields whose defaults are set to match AF's binary defaults
 			// exactly, making the CRD the single source of truth.
 			createBYOSecrets(ctx)
-			kn := newCRWithRouteDisabled()
+			kn := newMinimalCR()
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 
 			reconcileToDeployPhase(ctx)
@@ -673,7 +673,7 @@ var _ = Describe("Kubernaut Controller", func() {
 	Context("Trust-bundle ConfigMap wiring", func() {
 		It("TB-001 [CM-6]: the reconcile loop creates an owned inter-service-trust-bundle ConfigMap with the service-ca.crt key present", func() {
 			createBYOSecrets(ctx)
-			kn := newCRWithRouteDisabled()
+			kn := newMinimalCR()
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 
 			reconcileToDeployPhase(ctx)
@@ -693,7 +693,7 @@ var _ = Describe("Kubernaut Controller", func() {
 	Context("PostgreSQL sslMode wiring (#423 CONS-002)", func() {
 		It("CONS-002 [CM-6, SC-8]: creates the inter-service-ca and trust-bundle ConfigMaps before migration when sslMode defaults to verify-full", func() {
 			createBYOSecrets(ctx)
-			kn := newCRWithRouteDisabled()
+			kn := newMinimalCR()
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 
 			r := newReconciler()
@@ -711,7 +711,7 @@ var _ = Describe("Kubernaut Controller", func() {
 
 		It("CONS-002b: uses generic trust material when sslMode is not verify-full", func() {
 			createBYOSecrets(ctx)
-			kn := newCRWithRouteDisabled()
+			kn := newMinimalCR()
 			// "require" is a valid, CRD-accepted enum value
 			// (kubebuilder:validation:Enum=require;verify-ca;verify-full)
 			// that is deliberately not verify-full. Generic runtime TLS is
@@ -756,7 +756,7 @@ var _ = Describe("Kubernaut Controller", func() {
 	Context("KubernautAgent Fleet OAuth2 mount (#413)", func() {
 		It("KFG-061 [IA-5]: reconciles KA's fleet OAuth2 Secret at the hyphenated mount path", func() {
 			createBYOSecrets(ctx)
-			kn := newCRWithRouteDisabled()
+			kn := newMinimalCR()
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 
 			knV2 := &kubernautv1alpha2.Kubernaut{}

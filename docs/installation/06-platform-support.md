@@ -10,8 +10,8 @@ The operator's core lifecycle is intended to work on both generic Kubernetes and
 
 | Platform profile | Core lifecycle | Optional integrations |
 |---|---|---|
-| Generic Kubernetes / Kind | Singleton CR, workloads, Services, ConfigMaps, Secrets, RBAC, PDBs, status, cleanup, standard NetworkPolicies | Kubernetes Ingress, administrator/cert-manager TLS, explicitly configured Prometheus/AlertManager |
-| OpenShift | Same core lifecycle and standard NetworkPolicy object contract | Routes, service-CA/router CA, TLS security profile, and OpenShift monitoring remain capability-specific; no OVN policy API is required |
+| Generic Kubernetes / Kind | Singleton CR, workloads, Services, ConfigMaps, Secrets, RBAC, PDBs, status, cleanup, standard NetworkPolicies | Administrator-owned Kubernetes Ingress, administrator/cert-manager TLS, explicitly configured Prometheus/AlertManager |
+| OpenShift | Same core lifecycle and standard NetworkPolicy object contract | Administrator-owned Routes, service-CA/router CA, TLS security profile, and OpenShift monitoring remain capability-specific; no OVN policy API is required |
 
 The operator creates standard `NetworkPolicy` objects and reports
 `NetworkPolicyReady=True` after ownership-safe application. This reports object
@@ -88,11 +88,16 @@ ConfigMap.
 
 On a supported OpenShift release, optional adapters may use:
 
-- `route.openshift.io` Routes;
 - service-CA serving certificates and injected CA bundles;
-- `config.openshift.io` TLS profile and ingress-domain data;
+- `config.openshift.io` TLS profile and capability data;
 - OpenShift monitoring and `AlertmanagerConfig` APIs;
 - OpenShift NetworkPolicy API compatibility.
+
+External exposure is not an operator adapter. Administrators create and own
+OpenShift Routes, Kubernetes Ingresses, Gateway API resources, mesh resources,
+hostnames, edge TLS, and edge authorization. The Console callback URL is
+explicitly configured in `spec.console.auth.redirectURL`; it is never derived
+from an OpenShift ingress domain.
 
 Missing OpenShift APIs must not prevent the generic operator manager from starting. OpenShift-specific status and events identify which optional capability was not available.
 

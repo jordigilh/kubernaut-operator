@@ -177,7 +177,6 @@ field existence. No coverage-only tests will be added.
   using the repository's established generation workflow.
 - Update installation and security documentation.
 - Add `docs/security/ISSUE-539-CONTROL-TRACEABILITY.md` and validate it with
-  `make test-security-traceability`.
 - Run formatting, build, vet, focused tests, unit/integration suites, and the
   repository test-pyramid checks without altering unrelated worktree changes.
 
@@ -209,7 +208,6 @@ golangci-lint run
 make manifests generate
 make test-unit
 make test-integration
-make test-security-traceability
 make test-pyramid
 ```
 

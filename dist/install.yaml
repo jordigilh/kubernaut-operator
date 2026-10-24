@@ -58,8 +58,8 @@ spec:
             description: |-
               KubernautSpec defines the desired state of a Kubernaut deployment on
               Kubernetes. The operator deploys all Kubernaut services into the CR's
-              namespace; OpenShift monitoring, service-CA, and Routes are optional
-              capability-gated adapters.
+              namespace; OpenShift monitoring and service-CA are optional
+              capability-gated adapters. External exposure is administrator-owned.
 
               v1alpha2 is the sole served/storage shape for this CRD. Older objects must
               follow the documented export/transform/recreate migration procedure. See
@@ -344,33 +344,6 @@ spec:
                     maximum: 65535
                     minimum: 1024
                     type: integer
-                  ingress:
-                    description: |-
-                      Ingress configures portable Kubernetes exposure. It is independent from
-                      the optional OpenShift Route above.
-                    properties:
-                      annotations:
-                        additionalProperties:
-                          type: string
-                        description: |-
-                          Optional controller-specific annotations. The operator does not add
-                          OpenShift Route annotations to this object.
-                        type: object
-                      enabled:
-                        default: false
-                        description: Whether to create the Ingress. Defaults to false.
-                        type: boolean
-                      host:
-                        description: External DNS name covered by TLSSecretName.
-                        type: string
-                      ingressClassName:
-                        description: IngressClassName identifies the installed ingress
-                          controller.
-                        type: string
-                      tlsSecretName:
-                        description: Existing Secret containing tls.crt and tls.key.
-                        type: string
-                    type: object
                   llmProfileRef:
                     description: |-
                       Reference to a named profile in spec.llmProfiles used for API
@@ -605,21 +578,6 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
-                  route:
-                    description: |-
-                      Route configuration for OCP external access (FedRAMP SC-8).
-                      Disabled by default; set route.enabled=true to expose AF via an
-                      OpenShift Route with reencrypt TLS termination.
-                    properties:
-                      enabled:
-                        default: false
-                        description: Whether to create an OCP Route for the API Frontend.
-                        type: boolean
-                      hostname:
-                        description: Hostname override. When empty, the OCP router
-                          auto-generates a hostname.
-                        type: string
-                    type: object
                   session:
                     description: |-
                       Session configures AF's MCP/A2A session lifecycle. When unset,
@@ -781,6 +739,13 @@ spec:
                           effective Console OIDC provider authority.
                         pattern: ^https://.+
                         type: string
+                      redirectURL:
+                        description: |-
+                          Explicit public Console URL used for the oauth2-proxy callback. The
+                          administrator owns the Route, Ingress, or Gateway API resource serving
+                          this URL; the operator does not infer it from a platform ingress domain.
+                        pattern: ^https://.+
+                        type: string
                       secretName:
                         description: |-
                           Name of the pre-existing Secret containing OIDC credentials.
@@ -801,34 +766,6 @@ spec:
                     description: Whether the Console component is deployed. Defaults
                       to false (opt-in).
                     type: boolean
-                  ingress:
-                    description: |-
-                      Ingress configures portable Kubernetes exposure. It is independent from
-                      the optional OpenShift Route above and is disabled unless explicitly
-                      enabled.
-                    properties:
-                      annotations:
-                        additionalProperties:
-                          type: string
-                        description: |-
-                          Optional controller-specific annotations. The operator does not add
-                          OpenShift Route annotations to this object.
-                        type: object
-                      enabled:
-                        default: false
-                        description: Whether to create the Ingress. Defaults to false.
-                        type: boolean
-                      host:
-                        description: External DNS name covered by TLSSecretName.
-                        type: string
-                      ingressClassName:
-                        description: IngressClassName identifies the installed ingress
-                          controller.
-                        type: string
-                      tlsSecretName:
-                        description: Existing Secret containing tls.crt and tls.key.
-                        type: string
-                    type: object
                   resources:
                     description: Resource requirements for the console container.
                     properties:
@@ -887,19 +824,6 @@ spec:
                           otherwise to an implementation-defined value. Requests cannot exceed Limits.
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
-                    type: object
-                  route:
-                    description: OCP Route configuration for external access.
-                    properties:
-                      enabled:
-                        default: true
-                        description: Whether to create an OCP Route. Defaults to true
-                          on OpenShift.
-                        type: boolean
-                      host:
-                        description: Explicit hostname. Empty = auto-derived from
-                          namespace.
-                        type: string
                     type: object
                 type: object
               dataStorage:
@@ -1886,33 +1810,6 @@ spec:
                           against the same shared spec.fleet.oauth2.tokenURL).
                         type: string
                     type: object
-                  ingress:
-                    description: |-
-                      Ingress configures portable Kubernetes exposure. It is independent from
-                      the optional OpenShift Route above.
-                    properties:
-                      annotations:
-                        additionalProperties:
-                          type: string
-                        description: |-
-                          Optional controller-specific annotations. The operator does not add
-                          OpenShift Route annotations to this object.
-                        type: object
-                      enabled:
-                        default: false
-                        description: Whether to create the Ingress. Defaults to false.
-                        type: boolean
-                      host:
-                        description: External DNS name covered by TLSSecretName.
-                        type: string
-                      ingressClassName:
-                        description: IngressClassName identifies the installed ingress
-                          controller.
-                        type: string
-                      tlsSecretName:
-                        description: Existing Secret containing tls.crt and tls.key.
-                        type: string
-                    type: object
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -1986,18 +1883,6 @@ spec:
                           otherwise to an implementation-defined value. Requests cannot exceed Limits.
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
-                    type: object
-                  route:
-                    description: Route configuration for OCP external access.
-                    properties:
-                      enabled:
-                        default: true
-                        description: Whether to create an OCP Route for the Gateway.
-                        type: boolean
-                      hostname:
-                        description: Hostname override. When empty, the OCP router
-                          auto-generates a hostname.
-                        type: string
                     type: object
                 type: object
               image:
@@ -4374,18 +4259,6 @@ rules:
 - apiGroups:
   - networking.k8s.io
   resources:
-  - ingresses
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - networking.k8s.io
-  resources:
   - networkpolicies
   verbs:
   - create
@@ -4424,25 +4297,6 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - route.openshift.io
-  resources:
-  - routes
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - route.openshift.io
-  resources:
-  - routes/custom-host
-  verbs:
-  - create
-  - update
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

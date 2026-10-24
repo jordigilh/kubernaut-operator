@@ -39,7 +39,7 @@ var _ = Describe("WorkflowExecution failed-resource retention wiring (#480)", fu
 
 	It("IT-WE-480-001 [CM-3, CM-6, SI-10; SOC2 CC7.2, CC8.1; ASVS v5.0.0-V2.2.2] propagates disabled defaults and an explicit opt-in through reconciliation", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		r := reconcileToRunning(ctx)
 
 		cmKey := types.NamespacedName{Name: "workflowexecution-config", Namespace: testNamespace}
@@ -51,7 +51,7 @@ var _ = Describe("WorkflowExecution failed-resource retention wiring (#480)", fu
 		Expect(defaultConfig).To(ContainSubstring("failedExecutionRetentionSeconds: 600"),
 			"the reconciled default must preserve the upstream bounded retention period")
 
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 		kn.Spec.WorkflowExecution.RetainFailedExecutions = true
 		kn.Spec.WorkflowExecution.FailedExecutionRetentionSeconds = ptr.To(int64(900))
