@@ -8,9 +8,9 @@
 
 **Status:** Approved for RED tests on 2026-10-05; production implementation
 may proceed only through the RED → GREEN → REFACTOR sequence below. Release
-readiness also depends on the separate #501 evidence-schema follow-up described
-below; that follow-up must remove the retired application-chart requirement
-before an operator release can pass its qualification gate.
+readiness also depends on the separate #501 evidence-boundary follow-up described
+below; upstream compatibility acceptance remains a manual release-owner
+responsibility and is not an automated operator-workflow gate.
 
 **Deployment contract:** The operator is the only supported way to deploy
 Kubernaut services on OpenShift, generic Kubernetes, and Kind. A Helm chart may

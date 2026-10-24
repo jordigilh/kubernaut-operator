@@ -56,66 +56,25 @@ jobs:
           fi
 
   # ========================================
-  # STAGE 0b: UPSTREAM COMPATIBILITY GATE
+  # STAGE 0b: MANUAL UPSTREAM COMPATIBILITY BOUNDARY
   #
-  # Upstream publishes and qualifies the full Kubernaut RC first. This job
-  # consumes only the immutable qualification evidence; it never checks out
-  # upstream source, pulls upstream application images, or invokes upstream CI.
-  # The image build jobs depend on this gate, so an unqualified operator SHA
-  # cannot publish an operator image.
+  # Full Kubernaut application compatibility qualification is an external,
+  # release-owner-controlled operation. This workflow does not fetch or require
+  # an upstream qualification asset; it publishes only after the operator-local
+  # release gates and contract E2E pass.
   # ========================================
-
-  qualification:
-    name: Verify upstream compatibility qualification
-    needs: prepare
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout operator source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Download upstream qualification manifest
-        env:
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          set -euo pipefail
-          URL="https://github.com/jordigilh/kubernaut/releases/download/${TAG}/operator-compatibility-qualification.json"
-          echo "Downloading immutable upstream qualification evidence for ${TAG}"
-          curl --fail --location --retry 3 --silent --show-error \
-            "$URL" -o upstream-qualification.json
-          test -s upstream-qualification.json
-
-      - name: Verify qualification matches this operator tag
-        env:
-          TAG: ${{ needs.prepare.outputs.tag }}
-          OPERATOR_SHA: ${{ github.sha }}
-        run: |
-          ./hack/verify-release-qualification.sh \
-            --manifest upstream-qualification.json \
-            --operator-sha "$OPERATOR_SHA" \
-            --expected-upstream-ref "refs/tags/${TAG}"
-
-      - name: Retain qualification evidence for the operator release
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
-        with:
-          name: upstream-qualification-${{ needs.prepare.outputs.tag }}
-          path: upstream-qualification.json
-          if-no-files-found: error
-          retention-days: 30
 
   # ========================================
   # STAGE 0c: OPERATOR-LOCAL RELEASE GATES
   #
-  # These checks remain deliberately independent of the upstream qualification
-  # gate. They prove the tagged operator itself is buildable and testable
-  # before the post-test contract image is built.
+  # These checks prove the tagged operator itself is buildable and testable
+  # before the post-test contract image is built. Full application compatibility
+  # remains a manual release-owner responsibility outside this workflow.
   # ========================================
 
   operator-gates:
     name: Verify operator release gates
-    needs: [prepare, qualification]
+    needs: [prepare]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -170,7 +129,7 @@ jobs:
 
   operator-e2e-image:
     name: Build operator image for contract E2E
-    needs: [prepare, qualification, operator-gates]
+    needs: [prepare, operator-gates]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -208,7 +167,7 @@ jobs:
 
   operator-e2e:
     name: Run contract-only Kind E2E
-    needs: [prepare, qualification, operator-e2e-image]
+    needs: [prepare, operator-e2e-image]
     runs-on: ubuntu-latest
     timeout-minutes: 35
     permissions:
@@ -278,7 +237,7 @@ jobs:
 
   build-amd64:
     name: Build Operator (amd64)
-    needs: [prepare, qualification, operator-e2e]
+    needs: [prepare, operator-e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -394,7 +353,7 @@ jobs:
 
   build-arm64:
     name: Build Operator (arm64)
-    needs: [prepare, qualification, operator-e2e]
+    needs: [prepare, operator-e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -875,7 +834,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [prepare, qualification, operator-e2e, create-manifests, bundle, catalog, operator-chart, development-dependencies-chart, sbom, sign, provenance-amd64, provenance-arm64]
+    needs: [prepare, operator-e2e, create-manifests, bundle, catalog, operator-chart, development-dependencies-chart, sbom, sign, provenance-amd64, provenance-arm64]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -893,12 +852,6 @@ jobs:
           name: sbom-${{ needs.prepare.outputs.version }}
           path: .
 
-      - name: Download upstream qualification evidence
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.0
-        with:
-          name: upstream-qualification-${{ needs.prepare.outputs.tag }}
-          path: qualification
-
       - name: Create operator release provenance manifest
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
@@ -911,7 +864,6 @@ jobs:
           OPERATOR_CHART_DIGEST: ${{ needs.operator-chart.outputs.chart_digest }}
           DEPENDENCY_CHART_VERSION: ${{ needs.development-dependencies-chart.outputs.chart_version }}
           DEPENDENCY_CHART_DIGEST: ${{ needs.development-dependencies-chart.outputs.chart_digest }}
-          QUALIFICATION_URL: https://github.com/jordigilh/kubernaut/releases/download/${{ needs.prepare.outputs.tag }}/operator-compatibility-qualification.json
         run: |
           set -euo pipefail
           test -n "$AMD64_DIGEST"
@@ -925,10 +877,6 @@ jobs:
           import json
           import os
           from pathlib import Path
-
-          qualification_path = Path("qualification/upstream-qualification.json")
-          with qualification_path.open(encoding="utf-8") as qualification_file:
-              qualification = json.load(qualification_file)
 
           registry = os.environ["IMAGE_REGISTRY"]
           image = f"{registry}/{os.environ['IMAGE_NAME']}"
@@ -958,8 +906,12 @@ jobs:
                        ),
                    },
                },
-              "upstream_qualification": qualification,
-              "qualification_manifest_url": os.environ["QUALIFICATION_URL"],
+               "upstream_qualification": {
+                   "mode": "manual",
+                   "automated": False,
+                   "responsibility": "release operator",
+                   "evidence": "maintained outside this workflow",
+               },
               "bootstrap_chart": {
                   "name": "kubernaut-development-dependencies",
                   "version": os.environ["DEPENDENCY_CHART_VERSION"],

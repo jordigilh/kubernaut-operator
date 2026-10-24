@@ -2,7 +2,7 @@
 
 **Issue:** [kubernaut-operator#501](https://github.com/jordigilh/kubernaut-operator/issues/501)
 **Related work:** [PR #500](https://github.com/jordigilh/kubernaut-operator/pull/500), [Issue #498](https://github.com/jordigilh/kubernaut-operator/issues/498)
-**Status:** Approved operating model; operator-side gates implemented; upstream workflow implementation is a separate follow-up
+**Status:** Approved operating model; operator-side gates implemented; upstream compatibility qualification is manual and release-owner controlled
 **Date:** 2026-10-04
 
 ## 1. Decision summary
@@ -26,14 +26,29 @@ for the full upstream Kubernaut application. Upstream CI MAY check out and build
 the operator, install its CRD/manifests, and deploy the complete Kubernaut
 application.
 
-The upstream qualification result is a release gate for the operator, but the
-operator repository remains the owner of its Git tags and published artifacts.
-Upstream qualifies an exact operator commit; it does not create or push the
-operator tag.
+Upstream compatibility qualification remains an external release-owner
+responsibility. The operator repository remains the owner of its Git tags and
+published artifacts. The operator release workflow does not require an upstream
+qualification asset; the release owner manually decides when the exact merged
+operator commit is ready to tag and publish.
 
 This document defines the process and evidence contract. The upstream workflow
 that consumes the operator is tracked separately so the operator repository does
 not acquire a reverse CI dependency.
+
+### Decision update — 2026-10-24
+
+The upstream compatibility qualification is intentionally manual. Release
+owners are responsible for running or reviewing the external full-application
+qualification, retaining any evidence they require, and deciding whether to
+create the operator tag. The operator release workflow must not download,
+validate, or block publication on `operator-compatibility-qualification.json`.
+
+The automated workflow still gates the operator-local test pyramid, contract
+Kind E2E, image build, SBOM/vulnerability scan, signing, provenance, OLM
+bundle/catalog publication, and Helm OCI chart publication. Its provenance
+records that upstream qualification is manual; it does not claim that the
+workflow performed compatibility qualification.
 
 ## 2. Repository responsibilities
 
@@ -97,8 +112,9 @@ qualification.
 
 ## 4. Release-candidate flow
 
-The release candidate is published by upstream first, then the matching
-operator candidate is published only after compatibility qualification passes.
+The release candidate is published by upstream first. The release owner then
+manually decides whether the matching operator candidate is ready to publish;
+the operator workflow does not automate or enforce upstream qualification.
 
 ### 4.1 Select the release line and upstream RC
 
@@ -121,9 +137,9 @@ Upstream publishes the RC images and chart first. The upstream release record
 must include the digest of every image and the chart/package digest or
 immutable version used by qualification.
 
-The RC remains a prerelease until compatibility qualification succeeds. A
-published RC is never treated as a production approval merely because its build
-and security scans passed.
+The RC remains a prerelease. A published RC is never treated as a production
+approval merely because its build and security scans passed; compatibility
+acceptance remains a separate manual release-owner decision.
 
 ### 4.3 Qualify the operator SHA
 
@@ -144,7 +160,7 @@ publish the operator artifacts.
 
 ### 4.4 Tag and publish the operator
 
-After a successful qualification:
+After the release owner manually accepts the external qualification result:
 
 1. The operator release owner creates the operator tag at exactly SHA `C`:
 
@@ -154,8 +170,7 @@ After a successful qualification:
    ```
 
 2. The operator release workflow verifies that the tag resolves to SHA `C`.
-3. It verifies the upstream qualification status and evidence for SHA `C`.
-4. It runs or verifies the operator-local release gates:
+3. It runs the operator-local release gates:
    - unit tests;
    - envtest integration tests;
    - security traceability and test-pyramid checks;
@@ -168,7 +183,8 @@ After a successful qualification:
    immutable digest.
 
 No full Kubernaut application deployment is repeated in the operator release
-workflow. The upstream qualification has already provided that evidence.
+workflow. The release owner is responsible for any external qualification
+evidence and acceptance decision.
 
 The upstream RC artifact is evidence and input data; it is not the source from
 which the operator Git tag is created. The operator tag always points to a Git
@@ -176,8 +192,8 @@ commit in the operator repository.
 
 ## 5. Qualification evidence contract
 
-The upstream workflow must produce a durable, machine-readable record equivalent
-to the following:
+The release owner may retain a durable, machine-readable record equivalent to
+the following for the manual qualification decision:
 
 ```json
 {
@@ -208,7 +224,7 @@ to the following:
 }
 ```
 
-The operator release must verify at minimum:
+When the release owner uses this record, it should cover at minimum:
 
 - the qualification result is `passed`;
 - the evidence operator SHA equals the tag SHA;
@@ -216,10 +232,9 @@ The operator release must verify at minimum:
 - the referenced upstream image and chart digests are immutable;
 - the qualification run belongs to the expected upstream workflow.
 
-The operator release consumes the upstream record from the GitHub Release asset
-`operator-compatibility-qualification.json`. The asset is retained as a workflow
-artifact during the operator release and embedded in the published
-`operator-release-provenance.json` record alongside the operator image digests.
+The operator release workflow does not require or consume this record from a
+GitHub Release asset. The published `operator-release-provenance.json` records
+that upstream qualification was manual and release-owner controlled instead.
 
 ## 6. Failure ownership and rollback
 
@@ -246,7 +261,7 @@ FedRAMP authorization, SOC 2 attestation, or OWASP ASVS compliance.
 | Operator workflows cannot consume the full upstream application | `SA-12`, `CM-3` | `CC8` change control | `v5.0.0-V15.2.4` dependency source control | `CI-501-BOUNDARY-001`, workflow boundary guard |
 | Exact repository SHAs and image/chart digests are retained | `CM-8`, `AU-3`, `AU-12` | `CC7` monitoring and investigation | `v5.0.0-V15.1.2`, `v5.0.0-V16.2.1` | `CI-501-PROVENANCE-001`, qualification manifest |
 | SBOM, scanning, signing, and provenance gate publication | `SA-12`, `RA-5` | `CC7`, `CC8` | `v5.0.0-V15.1.2`, `v5.0.0-V15.2.4` | `CI-501-ARTIFACT-001`, release artifacts |
-| Unqualified operator SHAs cannot be published | `CM-3`, `SI-2` | `CC8`, `A1` | `v5.0.0-V16.5.3` fail-secure behavior | `CI-501-GATE-001`, release preflight |
+| Operator-local gates prevent unbuildable or untestable SHAs from being published | `CM-3`, `SI-2` | `CC8`, `A1` | `v5.0.0-V16.5.3` fail-secure behavior | `CI-501-GATE-001`, release preflight |
 | Qualification failures and ownership are observable | `AU-3`, `AU-12`, `CA-7` | `CC7`, `A1` | `v5.0.0-V16.1.1`, `v5.0.0-V16.3.4` | Workflow logs, status checks, diagnostics, evidence record |
 
 The evidence identifiers above are requirements for the implementation work;
@@ -261,11 +276,11 @@ The operator-side implementation in this repository adds:
 - a static CI-boundary guard (`hack/verify-ci-boundary.sh`) that rejects upstream
   source/image/CI references
   from operator workflows and the Kind contract harness;
-- release evidence validation (`hack/verify-release-qualification.sh`) that
-  checks an upstream qualification record for the exact tag SHA;
-- a release workflow qualification gate and operator-local release-gates job;
-- release-manifest publication linking operator artifacts to the upstream
-  qualification record.
+- an optional manual evidence validator
+  (`hack/verify-release-qualification.sh`) for release owners;
+- a release workflow with operator-local release gates;
+- release-manifest publication that records upstream qualification as manual
+  and release-owner controlled.
 
 The upstream checkout/build/qualification workflow is intentionally not added
 to this repository. It must be implemented and owned in the upstream repository

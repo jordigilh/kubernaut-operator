@@ -41,15 +41,16 @@ require_text Makefile 'cover-unit-baseline\.out' 'unit target does not establish
 require_text hack/businesscoverage/main.go 'summary\.Missed > 0' \
 	'business coverage verifier does not reject raw missed statements'
 
-# A release tag must not publish before both upstream qualification and the
-# operator-local gates have completed successfully.
-require_text .github/workflows/release.yml '^  qualification:' 'release workflow is missing upstream qualification gate'
+# Upstream compatibility qualification is manual and release-owner controlled;
+# the automated release workflow gates only operator-local evidence.
+require_text .github/workflows/release.yml 'MANUAL UPSTREAM COMPATIBILITY BOUNDARY' \
+	'release workflow is missing the manual upstream qualification boundary'
 require_text .github/workflows/release.yml '^  operator-gates:' 'release workflow is missing operator-local gates'
 require_text .github/workflows/release.yml 'Run unit, integration, security, and pyramid gates' 'release workflow does not run local test gates'
 require_text .github/workflows/release.yml '^  operator-e2e-image:' 'release workflow does not build an operator image for E2E'
 require_text .github/workflows/release.yml '^  operator-e2e:' 'release workflow is missing the contract-only Kind gate'
 require_text .github/workflows/release.yml 'run: make test-e2e-kind' 'release workflow does not run the contract-only Kind gate'
-require_text .github/workflows/release.yml 'needs: \[prepare, qualification, operator-e2e\]' 'image build is not gated by qualification and the post-test E2E gate'
+require_text .github/workflows/release.yml 'needs: \[prepare, operator-e2e\]' 'image build is not gated by the post-test E2E gate'
 
 # The hosted test pipeline must establish the test -> image -> E2E order. The
 # image artifact is deliberately shared so every lane validates the same
