@@ -356,6 +356,11 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 			Valkey: kubernautv1alpha2.ValkeySpec{
 				SecretName: "valkey-secret",
 				Host:       "valkey.kubernaut-system.svc.cluster.local",
+				TLS: &kubernautv1alpha2.ValkeyTLSSpec{
+					Enabled:              true,
+					CASecretName:         "valkey-ca",
+					ClientCertSecretName: "valkey-tls-client",
+				},
 			},
 			DataStorage: dataStorage,
 			AIAnalysis: kubernautv1alpha2.AIAnalysisSpec{

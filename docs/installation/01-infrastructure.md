@@ -17,9 +17,10 @@ helm upgrade --install kubernaut-development-dependencies \
 ```
 
 The chart creates selector-backed PostgreSQL and Valkey Services, synthetic
-credentials, the sample policy ConfigMaps, readiness probes, and a generated
-short-lived PostgreSQL TLS certificate. Its default CR contract is
-`spec.postgresql.sslMode: require`; `disable` is not supported. See the
+runtime-generated credentials, the sample policy ConfigMaps, readiness probes,
+and generated PostgreSQL and Valkey TLS material. Its default CR contract is
+`spec.postgresql.sslMode: require` plus Valkey mTLS; `disable` is not supported.
+See the
 [development dependencies chart README](../../charts/kubernaut-development-dependencies/README.md) for
 image pinning, restricted-SCC settings, Kind overrides, persistence, and
 cleanup. It is intentionally separate from the production operator chart and

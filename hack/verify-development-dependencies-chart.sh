@@ -20,8 +20,6 @@ command -v "${helm_bin}" >/dev/null 2>&1 || {
 
 for required in \
 	'kind: Secret' \
-	'name: postgresql-secret' \
-	'name: valkey-secret' \
 	'name: llm-credentials' \
 	'name: slack-webhook' \
 	'name: kubernaut-console-oidc' \
@@ -32,6 +30,18 @@ for required in \
 	'name: postgresql' \
 	'name: valkey' \
 	'kind: Service' \
+	'kind: Job' \
+	'credentials-bootstrap' \
+	'kubectl create secret generic' \
+	'POSTGRES_USER' \
+	'valkey-secrets.yaml' \
+	'/dev/urandom' \
+	'name: valkey-ca' \
+	'name: valkey-tls' \
+	'name: valkey-tls-client' \
+	'--port 0' \
+	'--tls-port 6379' \
+	'--tls-auth-clients yes' \
 	'ssl = on' \
 	'hostnossl all all 0.0.0.0/0 reject' \
 	'kind: Deployment' \
@@ -40,11 +50,21 @@ for required in \
 	"hba_file = '/tmp/bootstrap-config/pg_hba'" \
 	'registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e' \
 	'docker.io/valkey/valkey@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9'; do
-	grep -Fq "${required}" "${rendered}" || {
+	grep -Fq -- "${required}" "${rendered}" || {
 		printf 'development dependencies render is missing: %s\n' "${required}" >&2
 		exit 1
 	}
 done
+
+if grep -Fq -- '--requirepass' "${rendered}"; then
+	printf 'development dependencies render enables password-only Valkey authentication\n' >&2
+	exit 1
+fi
+
+if grep -Fq 'dev-only-postgres-password' "${rendered}" || grep -Fq 'dev-only-valkey-password' "${rendered}"; then
+	printf 'development dependencies render contains static database credentials\n' >&2
+	exit 1
+fi
 
 if "${helm_bin}" template kubernaut-development-dependencies "${chart}" \
 	--namespace kubernaut-system --set postgresql.sslMode=disable >/dev/null 2>&1; then

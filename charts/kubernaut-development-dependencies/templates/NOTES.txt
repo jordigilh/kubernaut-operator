@@ -3,6 +3,7 @@ Kubernaut disposable development dependencies are ready.
 PostgreSQL: {{ .Values.postgresql.serviceName }}.{{ .Release.Namespace }}.svc.cluster.local:5432
 Valkey:     {{ .Values.valkey.serviceName }}.{{ .Release.Namespace }}.svc.cluster.local:6379
 PostgreSQL sslMode for the Kubernaut CR: {{ .Values.postgresql.sslMode }}
+Valkey TLS: enabled with required client certificates
 
 The chart owns every resource it creates. Remove the disposable environment with:
   helm uninstall {{ .Release.Name }} --namespace {{ .Release.Namespace }}

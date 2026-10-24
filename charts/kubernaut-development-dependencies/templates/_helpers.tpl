@@ -52,3 +52,7 @@ runAsNonRoot: {{ .runAsNonRoot }}
 seccompProfile:
 {{ toYaml .seccompProfile | nindent 2 }}
 {{- end -}}
+
+{{- define "kubernaut-development-dependencies.credentialsName" -}}
+{{- printf "%s-credentials" (include "kubernaut-development-dependencies.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}

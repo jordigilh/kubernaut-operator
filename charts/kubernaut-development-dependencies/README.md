@@ -61,9 +61,14 @@ The chart creates:
 * selector-backed `postgresql` and `valkey` ClusterIP Services;
 * one disposable Deployment for each dependency, with readiness/liveness
   probes and `emptyDir` storage by default;
-* `postgresql-secret` with `POSTGRES_USER`, `POSTGRES_PASSWORD`, and
-  `POSTGRES_DB`;
-* `valkey-secret` with the operator-required `valkey-secrets.yaml` key;
+* a pre-install/pre-upgrade hook that generates `postgresql-secret` at runtime
+  with random `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, and
+  `db-secrets.yaml` values;
+* the same hook generates `valkey-secret` at runtime with the operator-required
+  `valkey-secrets.yaml` compatibility key; the value is not used for Valkey
+  authentication;
+* Valkey server, CA, and shared client certificates, with plaintext Valkey
+  disabled and mTLS client authentication required;
 * synthetic, well-formed (but unusable) GCP ADC material in
   `llm-credentials`, plus `slack-webhook`, `kubernaut-console-oidc`,
   `aianalysis-policy`, and `signalprocessing-policy` fixtures for the sample
@@ -71,16 +76,10 @@ The chart creates:
 * `kubernaut-development-dependencies-contract`, which records the hostnames, Secret
   names, and selected PostgreSQL `sslMode` for the Kubernaut CR.
 
-No real credentials are embedded. Override the disposable values for a local
-environment and keep them out of shell history where appropriate:
-
-```bash
-helm upgrade --install kubernaut-development-dependencies \
-  ./charts/kubernaut-development-dependencies \
-  --namespace kubernaut-system --create-namespace --wait --timeout 10m \
-  --set-string postgresql.password='local-only-value' \
-  --set-string valkey.password='local-only-value'
-```
+No database credentials are embedded in the chart values or rendered Secret
+manifests. The pre-install hook generates them inside the cluster and preserves
+them across upgrades. The generated Valkey password exists only to satisfy the
+operator's Secret contract; mTLS is the only Valkey authentication mechanism.
 
 ## Migration from `kubernaut-dev-bootstrap`
 

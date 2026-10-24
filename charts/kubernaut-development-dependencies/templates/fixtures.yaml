@@ -122,4 +122,8 @@ data:
       host: {{ printf "%s.%s.svc.cluster.local" .Values.valkey.serviceName .Release.Namespace | quote }}
       port: 6379
       secretName: {{ .Values.valkey.secretName | quote }}
+      tls:
+        enabled: true
+        caSecretName: {{ .Values.valkey.tls.caSecretName | quote }}
+        clientCertSecretName: {{ .Values.valkey.tls.clientCertSecretName | quote }}
 {{- end }}
