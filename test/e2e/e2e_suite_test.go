@@ -43,7 +43,7 @@ func TestE2E(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	if projectImage == "" {
-		projectImage = "quay.io/kubernaut-ai/kubernaut-operator:1.1.0"
+		projectImage = "quay.io/kubernaut-ai/kubernaut-operator-image:1.1.0"
 	}
 
 	By("verifying oc login")

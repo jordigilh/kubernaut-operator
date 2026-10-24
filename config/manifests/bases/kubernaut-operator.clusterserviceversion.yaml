@@ -6,7 +6,7 @@ metadata:
     capabilities: Full Lifecycle
     categories: AI/Machine Learning,Monitoring
     com.redhat.openshift.versions: v4.18
-    containerImage: quay.io/kubernaut-ai/kubernaut-operator:1.6.0-rc20
+    containerImage: quay.io/kubernaut-ai/kubernaut-operator-image:1.6.0-rc27
     createdAt: "2026-04-15T00:00:00Z"
     description: Automated Kubernetes remediation powered by AI — detects issues,
       analyzes root causes, and executes verified fixes.
@@ -44,8 +44,9 @@ spec:
     ## Kubernaut Operator
 
     The Kubernaut Operator deploys and manages the **Kubernaut AIOps Remediation Platform**
-    on Kubernetes and OpenShift. Routes, service-CA, and monitoring resources
-    are optional capability adapters; runtime isolation uses the portable
+    on Kubernetes and OpenShift. External exposure resources, including Routes,
+    remain administrator-owned; OpenShift monitoring and service-CA are optional
+    capability adapters. Runtime isolation uses the portable
     Kubernetes NetworkPolicy API.
 
     ### Features
@@ -53,7 +54,7 @@ spec:
     - **Single CR deployment**: one `Kubernaut` custom resource deploys the platform services
     - **BYO infrastructure**: bring your own PostgreSQL and Valkey/Redis
     - **Portable lifecycle**: workloads, Services, RBAC, PDBs, status, and cleanup use core Kubernetes APIs
-    - **Explicit TLS and exposure**: manual, cert-manager, or service-CA TLS plus generic Ingress
+    - **Explicit TLS**: manual, cert-manager, or service-CA TLS; administrators own external exposure resources
     - **Portable network isolation**: selector-based Kubernetes NetworkPolicy objects with administrator-owned API-server/external egress
     - **Policy-governed**: Rego policies control signal classification and AI analysis approval
     - **LLM-powered analysis**: integrates with OpenAI, Anthropic, and other LLM providers
@@ -62,16 +63,17 @@ spec:
     ### Prerequisites
 
     - PostgreSQL database with credentials in a Secret
-    - Valkey/Redis with credentials in a Secret
+    - Valkey/Redis with credentials in a Secret and server-side mTLS enabled (`--tls-port` and `--tls-auth-clients yes`)
+    - Valkey TLS Secrets: `valkey-tls` (`tls.crt`, `tls.key`), `valkey-ca` (`ca.crt`), and `valkey-client-cert` (`tls.crt`, `tls.key`)
     - LLM API credentials (for example, an OpenAI API key) in a Secret
     - Rego policy ConfigMaps for AI analysis and signal processing
     - An explicitly selected TLS source on generic Kubernetes
 
     ### Getting Started
 
-    1. Create the required BYO secrets (PostgreSQL, Valkey, LLM credentials)
+    1. Create the required BYO secrets (PostgreSQL, Valkey, LLM credentials, and the Valkey TLS Secrets listed above)
     2. Create Rego policy ConfigMaps
-    3. Select TLS/exposure options
+    3. Select a TLS source and configure administrator-owned exposure resources
     4. Apply a `Kubernaut` CR — see the sample in the operator bundle
   displayName: Kubernaut Operator
   icon:

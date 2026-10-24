@@ -50,8 +50,9 @@ spec:
             description: |-
               KubernautSpec defines the desired state of a Kubernaut deployment on
               Kubernetes. The operator deploys all Kubernaut services into the CR's
-              namespace; OpenShift monitoring and service-CA are optional
-              capability-gated adapters. External exposure is administrator-owned.
+              namespace; OpenShift monitoring and service-CA are optional capability-gated
+              adapters. External exposure resources, including Routes, remain
+              administrator-owned.
 
               v1alpha2 is the sole served/storage shape for this CRD. Older objects must
               follow the documented export/transform/recreate migration procedure. See

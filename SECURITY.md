@@ -170,7 +170,7 @@ the operator.
 cosign verify \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
   --certificate-identity-regexp="^https://github.com/jordigilh/kubernaut-operator/.github/workflows/release.yml@refs/tags/" \
-  quay.io/kubernaut-ai/kubernaut-operator:<version>
+  quay.io/kubernaut-ai/kubernaut-operator-image:<version>
 ```
 
 - Consumer verification (SLSA provenance):
@@ -180,14 +180,14 @@ cosign verify \
 slsa-verifier verify-image \
   --source-uri github.com/jordigilh/kubernaut-operator \
   --builder-id "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0" \
-  quay.io/kubernaut-ai/kubernaut-operator:<version>
+  quay.io/kubernaut-ai/kubernaut-operator-image:<version>
 
 # or via cosign, against the in-toto/SLSA predicate attestation directly
 cosign verify-attestation \
   --type slsaprovenance \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
   --certificate-identity-regexp="^https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/" \
-  quay.io/kubernaut-ai/kubernaut-operator:<version>
+  quay.io/kubernaut-ai/kubernaut-operator-image:<version>
 ```
 
 ## Disclosure Policy

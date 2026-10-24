@@ -197,7 +197,7 @@ to the following:
     "repository": "jordigilh/kubernaut-operator",
     "ref": "refs/heads/release/v1.6",
     "sha": "<operator-sha>",
-    "image": "quay.io/kubernaut-ai/kubernaut-operator@sha256:<digest>"
+    "image": "quay.io/kubernaut-ai/kubernaut-operator-image@sha256:<digest>"
   },
   "qualification": {
     "workflow_run_id": "<run-id>",

@@ -27,7 +27,7 @@ spec:
     tls:
       enabled: true
       caSecretName: valkey-ca
-      clientCertSecretName: valkey-tls-client
+      clientCertSecretName: valkey-client-cert
 
   # One named profile is enough; the operator infers it for KA and API
   # Frontend when their profile references are omitted.

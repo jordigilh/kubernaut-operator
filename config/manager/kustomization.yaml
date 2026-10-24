@@ -5,5 +5,5 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 images:
 - name: controller
-  newName: quay.io/kubernaut-ai/kubernaut-operator
-  newTag: 1.6.0-rc20
+  newName: quay.io/kubernaut-ai/kubernaut-operator-image
+  newTag: 1.6.0-rc27

@@ -5,7 +5,7 @@ set -euo pipefail
 # CI-CN-476-001
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-console_digest='quay.io/kubernaut-ai/kubernaut-console@sha256:68cf5aebbca09c079fccda92b4c86f4a019a8f6878cf30e5b6724f4e2e48657b'
+console_digest='quay.io/kubernaut-ai/kubernaut-console@sha256:69fc00fd29d6d08f3375a00615f70f11037200fff58fcb1682dec67fa9906752'
 old_console_digest='sha256:98f75c56b8f2a4e2ee0276e31f353175b91dec9e95478775843590c37f876062'
 
 image_files=(

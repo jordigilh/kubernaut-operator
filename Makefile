@@ -3,7 +3,7 @@
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 1.6.0-rc20
+VERSION ?= 1.6.0-rc27
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "candidate,fast,stable")
@@ -24,16 +24,15 @@ BUNDLE_DEFAULT_CHANNEL := --default-channel=$(DEFAULT_CHANNEL)
 endif
 BUNDLE_METADATA_OPTS ?= $(BUNDLE_CHANNELS) $(BUNDLE_DEFAULT_CHANNEL)
 
-# IMAGE_TAG_BASE defines the docker.io namespace and part of the image name for remote images.
-# This variable is used to construct full image tags for bundle and catalog images.
-#
-# For example, running 'make bundle-build bundle-push catalog-build catalog-push' will build and push both
-# kubernaut.ai/kubernaut-operator-bundle:$VERSION and kubernaut.ai/kubernaut-operator-catalog:$VERSION.
-IMAGE_TAG_BASE ?= quay.io/kubernaut-ai/kubernaut-operator
+# IMAGE_TAG_BASE defines the registry path for the operator image.
+# OLM_IMAGE_TAG_BASE keeps the OLM bundle and catalog repositories separate
+# from the operator image and the Helm chart while preserving their names.
+IMAGE_TAG_BASE ?= quay.io/kubernaut-ai/kubernaut-operator-image
+OLM_IMAGE_TAG_BASE ?= quay.io/kubernaut-ai/kubernaut-operator
 
 # BUNDLE_IMG defines the image:tag used for the bundle.
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
-BUNDLE_IMG ?= $(IMAGE_TAG_BASE)-bundle:v$(VERSION)
+BUNDLE_IMG ?= $(OLM_IMAGE_TAG_BASE)-bundle:v$(VERSION)
 
 # BUNDLE_GEN_FLAGS are the flags passed to the operator-sdk generate bundle command
 BUNDLE_GEN_FLAGS ?= -q --overwrite --version $(VERSION) $(BUNDLE_METADATA_OPTS)
@@ -473,7 +472,7 @@ endif
 BUNDLE_IMGS ?= $(BUNDLE_IMG)
 
 # The image tag given to the resulting catalog image.
-CATALOG_IMG ?= $(IMAGE_TAG_BASE)-catalog:v$(VERSION)
+CATALOG_IMG ?= $(OLM_IMAGE_TAG_BASE)-catalog:v$(VERSION)
 
 # Build a file-based catalog (FBC) image from the bundle image.
 # Uses 'opm render' to extract bundle content and builds a serving catalog.

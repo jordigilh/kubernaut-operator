@@ -58,7 +58,7 @@ new_manifest() {
     "repository": "jordigilh/kubernaut-operator",
     "ref": "refs/heads/release/v1.6",
     "sha": "$operator_sha",
-    "image": "quay.io/kubernaut-ai/kubernaut-operator@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    "image": "quay.io/kubernaut-ai/kubernaut-operator-image@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
   },
   "qualification": {
     "workflow_run_id": "123456789",
