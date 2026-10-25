@@ -39,8 +39,9 @@ helm upgrade --install kubernaut-development-dependencies \
 
 ## Demo clusters from the OCI release
 
-The tagged operator release publishes this chart to Quay as an OCI artifact.
-Use the immutable digest printed in the GitHub Release workflow summary:
+The dedicated development-dependencies publication workflow publishes this
+chart to Quay as an OCI artifact. Use the immutable digest from that workflow's
+summary or its `kubernaut-development-dependencies-oci.json` artifact:
 
 ```bash
 helm upgrade --install kubernaut-development-dependencies \
