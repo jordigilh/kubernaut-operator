@@ -589,13 +589,13 @@ jobs:
 
   # ========================================
   # STAGE 3: OPERATOR HELM CHART
-  # Packages and publishes the operator chart as an OCI artifact alongside the
-  # operator image for the same formal release.
+  # Packages and publishes the operator chart after all release artifacts,
+  # security attestations, and provenance have completed.
   # ========================================
 
   operator-chart:
     name: Package & Push Operator Helm Chart
-    needs: [prepare, operator-gates, operator-e2e]
+    needs: [prepare, operator-gates, operator-e2e, create-manifests, sbom, sign, provenance-amd64, provenance-arm64, development-dependencies-chart]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -619,16 +619,19 @@ jobs:
           tar -xzf "${HELM_ARCHIVE}" -C /tmp
           sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
 
-      - name: Package operator chart with release image tag
+      - name: Package operator chart with released image digest
         id: package
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          MANIFEST_DIGEST: ${{ needs.create-manifests.outputs.manifest_digest }}
         run: |
           set -euo pipefail
+          test -n "${MANIFEST_DIGEST}"
           chart_dir="${RUNNER_TEMP}/kubernaut-operator"
           mkdir -p dist
           cp -R charts/kubernaut-operator "${chart_dir}"
           sed -i "0,/^  tag: /s/^  tag: .*/  tag: ${VERSION}/" "${chart_dir}/values.yaml"
+          sed -i "0,/^  digest: /s/^  digest: .*/  digest: ${MANIFEST_DIGEST}/" "${chart_dir}/values.yaml"
           helm lint "${chart_dir}"
           helm package "${chart_dir}" \
             --version "${VERSION}" \
