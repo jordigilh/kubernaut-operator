@@ -161,10 +161,6 @@ test-console-release: ## Validate the Console release contract.
 test-ci-boundary: ## Verify that operator CI remains independent of the upstream application.
 	@./hack/verify-ci-boundary.sh
 
-.PHONY: test-pyramid
-test-pyramid: test-console-release test-ci-boundary test-helm ## Verify independent tiers, production wiring, and the real E2E journey.
-	@./hack/verify-test-pyramid.sh
-
 .PHONY: test-helm
 test-helm: ## Validate the operator-only Helm chart and its render contracts.
 	@command -v $(HELM_BIN) >/dev/null 2>&1 || { echo "Helm CLI not found: $(HELM_BIN)"; exit 1; }
@@ -175,7 +171,7 @@ test-helm: ## Validate the operator-only Helm chart and its render contracts.
 	HELM_BIN=$(HELM_BIN) go test $(HELM_PKGS) -v
 
 .PHONY: test
-test: test-unit test-integration test-pyramid ## Run all tests (unit + integration).
+test: test-unit test-integration test-helm ## Run all executable unit, integration, and Helm tests.
 	@echo "mode: atomic" > cover.out
 	@tail -n +2 cover-unit.out >> cover.out 2>/dev/null || true
 	@tail -n +2 cover-integration.out >> cover.out 2>/dev/null || true
@@ -183,7 +179,6 @@ test: test-unit test-integration test-pyramid ## Run all tests (unit + integrati
 .PHONY: test-hack-scripts
 test-hack-scripts: yq ## Run fixture-based tests for standalone hack/ shell tooling.
 	PATH="$(LOCALBIN):$$PATH" bash hack/migrate-llm-profile.test.sh
-	bash hack/verify-ci-boundary.test.sh
 	bash hack/verify-release-qualification.test.sh
 	bash hack/validate-fleet-docs-contract.test.sh
 

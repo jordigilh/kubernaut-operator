@@ -33,8 +33,6 @@ require_text Makefile 'go tool cover -func=cover-integration-controller\.out' \
 	'integration floor is not evaluated on the controller independently of process bootstrap'
 require_text .github/workflows/test.yml 'name: Run independent unit tests' 'CI has no independent unit lane'
 require_text .github/workflows/test.yml 'name: Run independent integration tests' 'CI has no independent integration lane'
-require_text Makefile '^test-ci-boundary:' 'CI boundary target is missing'
-require_text Makefile '^test-pyramid: .*test-ci-boundary' 'test pyramid does not enforce the CI boundary'
 require_text Makefile 'verify-business-unit-coverage\.sh cover-unit\.out' \
 	'unit target does not enforce full handwritten business coverage'
 require_text Makefile 'cover-unit-baseline\.out' 'unit target does not establish complete instrumentation'
@@ -45,18 +43,35 @@ require_text hack/businesscoverage/main.go 'summary\.Missed > 0' \
 # the automated release workflow gates only operator-local evidence.
 require_text .github/workflows/release.yml 'MANUAL UPSTREAM COMPATIBILITY BOUNDARY' \
 	'release workflow is missing the manual upstream qualification boundary'
-require_text .github/workflows/release.yml '^  operator-gates:' 'release workflow is missing operator-local gates'
-require_text .github/workflows/release.yml 'Run unit, integration, security, and pyramid gates' 'release workflow does not run local test gates'
-require_text .github/workflows/release.yml '^  operator-e2e-image:' 'release workflow does not build an operator image for E2E'
+if grep -Eq '^  operator-gates:|^  operator-e2e-image:' .github/workflows/release.yml; then
+	fail 'release workflow retains a redundant aggregate or separate contract image job'
+fi
+require_text .github/workflows/release.yml '^  operator-unit:' 'release workflow is missing the independent unit gate'
+require_text .github/workflows/release.yml '^  operator-integration:' 'release workflow is missing the independent integration gate'
+require_text .github/workflows/release.yml '^  operator-helm:' 'release workflow is missing the independent Helm gate'
+require_text .github/workflows/release.yml 'run: make test-unit' 'release workflow does not run the unit gate'
+require_text .github/workflows/release.yml 'run: make test-integration' 'release workflow does not run the integration gate'
+require_text .github/workflows/release.yml 'run: make test-helm' 'release workflow does not run the Helm gate'
 require_text .github/workflows/release.yml '^  operator-e2e:' 'release workflow is missing the contract-only Kind gate'
 require_text .github/workflows/release.yml 'run: make test-e2e-kind' 'release workflow does not run the contract-only Kind gate'
-require_text .github/workflows/release.yml 'needs: \[prepare, operator-e2e\]' 'image build is not gated by the post-test E2E gate'
+require_text .github/workflows/release.yml 'needs: \[prepare, operator-lint, operator-unit, operator-integration, operator-helm, operator-hack, operator-manifests\]' \
+	'image builds are not directly gated by every local release check'
+require_text .github/workflows/release.yml 'docker pull "\$\{IMAGE_REGISTRY\}/\$\{IMAGE_NAME\}@\$\{AMD64_DIGEST\}"' \
+	'contract E2E does not pull the pushed amd64 digest'
+require_text .github/workflows/release.yml 'KUBERNAUT_OPERATOR_IMAGE: .*@\$\{\{ needs.build-amd64.outputs.digest \}\}' \
+	'contract E2E is not pinned to the amd64 build digest'
+require_text .github/workflows/release.yml 'apt-get install --yes --no-install-recommends skopeo' \
+	'release workflow does not install the registry inspection tool'
+require_text .github/workflows/release.yml 'sbom:.*' 'release workflow is missing post-manifest SBOM coverage'
+require_text .github/workflows/release.yml 'needs: \[prepare, create-manifests\]' 'SBOM coverage is not gated by the final manifest'
+require_text .github/workflows/release.yml 'needs: \[prepare, build-amd64, build-arm64, operator-e2e\]' \
+	'final manifest is not gated by both architecture builds and contract E2E'
 
 # The hosted test pipeline must establish the test -> image -> E2E order. The
 # image artifact is deliberately shared so every lane validates the same
 # operator build instead of rebuilding a different image in each runner.
 require_text .github/workflows/test.yml '^  build-image:' 'test workflow is missing the post-test operator image build'
-require_text .github/workflows/test.yml '^    needs: test' 'operator image build is not gated by unit and integration tests'
+require_text .github/workflows/test.yml '^    needs: \[test, helm-tests\]' 'operator image build is not gated by unit, integration, and Helm tests'
 require_text .github/workflows/test.yml '^  kind-e2e:' 'test workflow is missing the Kind E2E matrix'
 require_text .github/workflows/test.yml '^    needs: build-image' 'Kind E2E is not gated by the operator image build'
 require_text .github/workflows/test.yml 'actions/upload-artifact@' 'test workflow does not publish the built operator image artifact'

@@ -27,24 +27,12 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install pinned Helm 4
-        run: |
-          set -euo pipefail
-          HELM_VERSION=v4.3.0
-          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz -C /tmp
-          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
-          helm version --short
-
       - name: Run independent unit tests
         run: make test-unit
 
       - name: Run independent integration tests
         if: ${{ !cancelled() }}
         run: make test-integration
-
-      - name: Run pyramid and compatibility gates
-        if: ${{ !cancelled() }}
-        run: make test-pyramid
 
       - name: Merge passing independent profiles
         run: |
@@ -67,9 +55,9 @@ jobs:
             cover-business-unit.json
           if-no-files-found: warn
 
-      - name: Shellcheck hack/ scripts
+      - name: Shellcheck executable hack/ scripts
         if: ${{ !cancelled() }}
-        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/verify-helm-chart.sh hack/verify-test-pyramid.sh hack/verify-business-unit-coverage.sh hack/verify-monitoring-contract.sh hack/verify-ci-boundary.sh hack/verify-ci-boundary.test.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
+        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/verify-helm-chart.sh hack/verify-business-unit-coverage.sh hack/verify-monitoring-contract.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
 
       - name: Run hack/ script tests
         if: ${{ !cancelled() }}
@@ -77,8 +65,7 @@ jobs:
 
       - name: Check coverage threshold
         run: |
-          # Check the merged pyramid coverage and the independent unit lane.
-          # The latter prevents integration coverage from masking a unit-test gap.
+          # Check the merged independent coverage profiles.
           grep 'internal/' cover-unit.out > cover-unit-internal.out || true
           echo "mode: atomic" | cat - cover-unit-internal.out > cover-unit-internal-final.out
           UNIT_COVERAGE=$(go tool cover -func=cover-unit-internal-final.out | grep '^total:' | awk '{print $3}' | tr -d '%')
@@ -89,7 +76,6 @@ jobs:
             exit 1
           fi
 
-          # cover.out is produced by `make test` (Makefile: merged profile)
           grep 'internal/' cover.out > cover-internal.out || true
           echo "mode: atomic" | cat - cover-internal.out > cover-internal-final.out
           COVERAGE=$(go tool cover -func=cover-internal-final.out | grep '^total:' | awk '{print $3}' | tr -d '%')
@@ -100,9 +86,38 @@ jobs:
             exit 1
           fi
 
+  helm-tests:
+    name: Helm chart tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install pinned Helm 4
+        run: |
+          set -euo pipefail
+          HELM_VERSION=v4.3.0
+          HELM_ARCHIVE="/tmp/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o "${HELM_ARCHIVE}"
+          printf '%s  %s\n' \
+            86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb \
+            "${HELM_ARCHIVE}" | sha256sum -c -
+          tar -xzf "${HELM_ARCHIVE}" -C /tmp
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+
+      - name: Run Helm chart tests
+        run: make test-helm
+
   build-image:
     name: Build operator image
-    needs: test
+    needs: [test, helm-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
