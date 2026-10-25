@@ -289,9 +289,14 @@ jobs:
 
       - name: Login to Quay.io
         run: |
-          podman login -u "${{ secrets.QUAY_CICD_ROBOT_USERNAME }}" \
-                       -p "${{ secrets.QUAY_CICD_ROBOT_TOKEN }}" \
-                       quay.io
+          set -euo pipefail
+          STAGING_AUTHFILE="${RUNNER_TEMP}/quay-staging-auth.json"
+          printf '%s' "${{ secrets.QUAY_CICD_ROBOT_TOKEN }}" | podman login \
+            --authfile "${STAGING_AUTHFILE}" \
+            --username "${{ secrets.QUAY_CICD_ROBOT_USERNAME }}" \
+            --password-stdin quay.io
+          echo "STAGING_AUTHFILE=${STAGING_AUTHFILE}" >> "${GITHUB_ENV}"
+          echo "REGISTRY_AUTH_FILE=${STAGING_AUTHFILE}" >> "${GITHUB_ENV}"
 
       - name: Build image
         env:
@@ -316,6 +321,13 @@ jobs:
           echo "Pushing ${IMAGE}..."
           podman push "${IMAGE}"
 
+      - name: Install Skopeo for registry digest resolution
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends skopeo
+          skopeo --version
+
       # #93: pushed digest, required as input to the SLSA3 provenance
       # generator job below -- re-pulling to inspect (rather than parsing
       # `podman push` output) matches the digest-resolution approach the
@@ -325,9 +337,10 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
+          set -euo pipefail
           IMAGE="${STAGING_IMAGE_REGISTRY}/${IMAGE_NAME}"
-          podman pull "${IMAGE}:${VERSION}-amd64"
-          DIGEST=$(podman inspect --format='{{.Digest}}' "${IMAGE}:${VERSION}-amd64")
+          DIGEST=$(skopeo inspect --authfile "${STAGING_AUTHFILE}" \
+            --format='{{.Digest}}' "docker://${IMAGE}:${VERSION}-amd64")
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
@@ -367,9 +380,14 @@ jobs:
 
       - name: Login to Quay.io
         run: |
-          podman login -u "${{ secrets.QUAY_CICD_ROBOT_USERNAME }}" \
-                       -p "${{ secrets.QUAY_CICD_ROBOT_TOKEN }}" \
-                       quay.io
+          set -euo pipefail
+          STAGING_AUTHFILE="${RUNNER_TEMP}/quay-staging-auth.json"
+          printf '%s' "${{ secrets.QUAY_CICD_ROBOT_TOKEN }}" | podman login \
+            --authfile "${STAGING_AUTHFILE}" \
+            --username "${{ secrets.QUAY_CICD_ROBOT_USERNAME }}" \
+            --password-stdin quay.io
+          echo "STAGING_AUTHFILE=${STAGING_AUTHFILE}" >> "${GITHUB_ENV}"
+          echo "REGISTRY_AUTH_FILE=${STAGING_AUTHFILE}" >> "${GITHUB_ENV}"
 
       - name: Build runtime image (no QEMU)
         env:
@@ -391,6 +409,13 @@ jobs:
           echo "Pushing ${IMAGE}..."
           podman push "${IMAGE}"
 
+      - name: Install Skopeo for registry digest resolution
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends skopeo
+          skopeo --version
+
       # #93: see the matching step in build-amd64 for why this re-pulls
       # rather than parsing `podman push` output.
       - name: Resolve pushed digest
@@ -398,9 +423,10 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
+          set -euo pipefail
           IMAGE="${STAGING_IMAGE_REGISTRY}/${IMAGE_NAME}"
-          podman pull "${IMAGE}:${VERSION}-arm64"
-          DIGEST=$(podman inspect --format='{{.Digest}}' "${IMAGE}:${VERSION}-arm64")
+          DIGEST=$(skopeo inspect --authfile "${STAGING_AUTHFILE}" \
+            --format='{{.Digest}}' "docker://${IMAGE}:${VERSION}-arm64")
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
@@ -445,6 +471,13 @@ jobs:
             --password-stdin quay.io
           echo "PRODUCTION_AUTHFILE=${PRODUCTION_AUTHFILE}" >> "${GITHUB_ENV}"
 
+      - name: Install Skopeo for staging digest verification
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends skopeo
+          skopeo --version
+
       - name: Promote amd64 and arm64 images
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -457,12 +490,14 @@ jobs:
             local arch="$1"
             local expected_digest="$2"
             local staging_image="${STAGING_IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-${arch}"
+            local staging_digest_ref="${staging_image%:*}@${expected_digest}"
             local production_image="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-${arch}"
 
-            REGISTRY_AUTH_FILE="${STAGING_AUTHFILE}" podman pull "${staging_image}"
-            actual_digest=$(podman inspect --format='{{.Digest}}' "${staging_image}")
+            actual_digest=$(skopeo inspect --authfile "${STAGING_AUTHFILE}" \
+              --format='{{.Digest}}' "docker://${staging_image}")
             test "${actual_digest}" = "${expected_digest}"
-            podman tag "${staging_image}" "${production_image}"
+            REGISTRY_AUTH_FILE="${STAGING_AUTHFILE}" podman pull "${staging_digest_ref}"
+            podman tag "${staging_digest_ref}" "${production_image}"
             REGISTRY_AUTH_FILE="${PRODUCTION_AUTHFILE}" podman push "${production_image}"
             echo "promoted ${arch}: ${actual_digest}"
           }
