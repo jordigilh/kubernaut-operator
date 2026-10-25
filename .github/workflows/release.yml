@@ -587,7 +587,7 @@ jobs:
             "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
 
   # ========================================
-  # SLSA Build Level 3 provenance (per-arch digest)
+  # SLSA Build Level 3 provenance (final multi-arch manifest digest)
   #
   # #93: upgraded from actions/attest-build-provenance (SLSA Build L1-2)
   # to slsa-framework/slsa-github-generator's container workflow (SLSA
@@ -596,10 +596,10 @@ jobs:
   # it does not build the image -- only slsa-github-generator's
   # ecosystem-specific *builders*, e.g. its Go builder, do that):
   #
-  # - Before: the "Attest amd64/arm64 provenance" steps ran as part of
-  #   *this* repo's own workflow, so the provenance's builder identity
-  #   was self-asserted (release.yml attesting to its own build).
-  # - After: the provenance job below is a *reusable workflow call*
+  # - Before: the attestation steps ran as part of *this* repo's own workflow,
+  #   so the provenance's builder identity was self-asserted (release.yml
+  #   attesting to its own build).
+  # - After: the final multi-arch manifest is attested by a *reusable workflow call*
   #   (`uses:`, not a step), so GitHub mints its OIDC token against the
   #   *generator's* job, not ours. The resulting provenance's builder.id
   #   is slsa-github-generator's own pinned identity
@@ -620,32 +620,17 @@ jobs:
   # interact (see slsa-github-generator#1257).
   # ========================================
 
-  provenance-amd64:
-    name: SLSA3 provenance (amd64)
-    needs: build-amd64
+  provenance:
+    name: SLSA3 provenance (multi-arch manifest)
+    needs: create-manifests
     permissions:
       actions: read
       id-token: write
       packages: write
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
     with:
-      image: ${{ needs.build-amd64.outputs.image }}
-      digest: ${{ needs.build-amd64.outputs.digest }}
-    secrets:
-      registry-username: ${{ secrets.QUAY_ROBOT_USERNAME }}
-      registry-password: ${{ secrets.QUAY_ROBOT_TOKEN }}
-
-  provenance-arm64:
-    name: SLSA3 provenance (arm64)
-    needs: build-arm64
-    permissions:
-      actions: read
-      id-token: write
-      packages: write
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
-    with:
-      image: ${{ needs.build-arm64.outputs.image }}
-      digest: ${{ needs.build-arm64.outputs.digest }}
+      image: quay.io/kubernaut-ai/kubernaut-operator-image
+      digest: ${{ needs.create-manifests.outputs.manifest_digest }}
     secrets:
       registry-username: ${{ secrets.QUAY_ROBOT_USERNAME }}
       registry-password: ${{ secrets.QUAY_ROBOT_TOKEN }}
@@ -658,7 +643,7 @@ jobs:
 
   operator-chart:
     name: Package & Push Operator Helm Chart
-    needs: [prepare, operator-gates, operator-e2e, create-manifests, sbom, sign, provenance-amd64, provenance-arm64]
+    needs: [prepare, operator-gates, operator-e2e, create-manifests, sbom, sign, provenance]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -738,7 +723,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [prepare, operator-e2e, create-manifests, operator-chart, sbom, sign, provenance-amd64, provenance-arm64]
+    needs: [prepare, operator-e2e, create-manifests, operator-chart, sbom, sign, provenance]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
