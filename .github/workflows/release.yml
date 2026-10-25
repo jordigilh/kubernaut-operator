@@ -71,8 +71,27 @@ jobs:
   # remains a manual release-owner responsibility outside this workflow.
   # ========================================
 
-  operator-gates:
-    name: Verify operator release gates
+  operator-lint:
+    name: Verify operator lint
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout operator source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Run Go lint gate
+        run: make lint
+      - name: Shellcheck hack/ scripts
+        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/verify-helm-chart.sh hack/verify-test-pyramid.sh hack/verify-ci-boundary.sh hack/verify-ci-boundary.test.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
+
+  operator-tests:
+    name: Run operator test gates
     needs: [prepare]
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -81,12 +100,10 @@ jobs:
     steps:
       - name: Checkout operator source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-
       - name: Install pinned Helm 4
         run: |
           set -euo pipefail
@@ -99,24 +116,60 @@ jobs:
           tar -xzf "${HELM_ARCHIVE}" -C /tmp
           sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
           helm version --short
-
-      - name: Run Go lint gate
-        run: make lint
-
       - name: Run unit, integration, security, and pyramid gates
         run: make test
 
+  operator-hack:
+    name: Run operator hack-script tests
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout operator source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
       - name: Run hack script tests
         run: make test-hack-scripts
 
+  operator-manifests:
+    name: Verify generated operator manifests
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout operator source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
       - name: Verify generated manifests are clean
         run: |
           set -euo pipefail
           make manifests generate build-installer
           git diff --exit-code -- api config charts/kubernaut-operator/files dist
 
-      - name: Shellcheck hack/ scripts
-        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/verify-helm-chart.sh hack/verify-test-pyramid.sh hack/verify-ci-boundary.sh hack/verify-ci-boundary.test.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
+  operator-gates:
+    name: Verify operator release gates
+    needs: [operator-lint, operator-tests, operator-hack, operator-manifests]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Fail if any parallel gate failed
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}
+        run: exit 1
+      - name: Confirm parallel release gates
+        run: echo "All operator-local release gates passed"
 
   # ========================================
   # STAGE 0d: POST-TEST CONTRACT IMAGE
@@ -471,14 +524,24 @@ jobs:
         id: manifest-digest
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          EXPECTED_AMD64_DIGEST: ${{ needs.build-amd64.outputs.digest }}
+          EXPECTED_ARM64_DIGEST: ${{ needs.build-arm64.outputs.digest }}
         run: |
           set -euo pipefail
+          command -v skopeo >/dev/null 2>&1 || { echo "skopeo is required to resolve the registry manifest digest" >&2; exit 1; }
           MANIFEST="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
-          podman pull "${MANIFEST}"
-          DIGEST=$(podman inspect --format='{{.Digest}}' "${MANIFEST}")
+          AMD64_DIGEST=$(skopeo inspect --format='{{.Digest}}' "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-amd64")
+          ARM64_DIGEST=$(skopeo inspect --format='{{.Digest}}' "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-arm64")
+          DIGEST=$(skopeo inspect --format='{{.Digest}}' "docker://${MANIFEST}")
+          test "${AMD64_DIGEST}" = "${EXPECTED_AMD64_DIGEST}"
+          test "${ARM64_DIGEST}" = "${EXPECTED_ARM64_DIGEST}"
+          test "${DIGEST}" != "${AMD64_DIGEST}"
+          test "${DIGEST}" != "${ARM64_DIGEST}"
           test -n "${DIGEST}"
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
-          echo "Manifest digest: ${DIGEST}"
+          echo "amd64 digest: ${AMD64_DIGEST}"
+          echo "arm64 digest: ${ARM64_DIGEST}"
+          echo "top-level manifest digest: ${DIGEST}"
 
   # ========================================
   # Cosign sign multi-arch manifest (keyless)
@@ -524,7 +587,7 @@ jobs:
             "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
 
   # ========================================
-  # SLSA Build Level 3 provenance (per-arch digest)
+  # SLSA Build Level 3 provenance (final multi-arch manifest digest)
   #
   # #93: upgraded from actions/attest-build-provenance (SLSA Build L1-2)
   # to slsa-framework/slsa-github-generator's container workflow (SLSA
@@ -533,10 +596,10 @@ jobs:
   # it does not build the image -- only slsa-github-generator's
   # ecosystem-specific *builders*, e.g. its Go builder, do that):
   #
-  # - Before: the "Attest amd64/arm64 provenance" steps ran as part of
-  #   *this* repo's own workflow, so the provenance's builder identity
-  #   was self-asserted (release.yml attesting to its own build).
-  # - After: the provenance job below is a *reusable workflow call*
+  # - Before: the attestation steps ran as part of *this* repo's own workflow,
+  #   so the provenance's builder identity was self-asserted (release.yml
+  #   attesting to its own build).
+  # - After: the final multi-arch manifest is attested by a *reusable workflow call*
   #   (`uses:`, not a step), so GitHub mints its OIDC token against the
   #   *generator's* job, not ours. The resulting provenance's builder.id
   #   is slsa-github-generator's own pinned identity
@@ -557,45 +620,30 @@ jobs:
   # interact (see slsa-github-generator#1257).
   # ========================================
 
-  provenance-amd64:
-    name: SLSA3 provenance (amd64)
-    needs: build-amd64
+  provenance:
+    name: SLSA3 provenance (multi-arch manifest)
+    needs: create-manifests
     permissions:
       actions: read
       id-token: write
       packages: write
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
     with:
-      image: ${{ needs.build-amd64.outputs.image }}
-      digest: ${{ needs.build-amd64.outputs.digest }}
-    secrets:
-      registry-username: ${{ secrets.QUAY_ROBOT_USERNAME }}
-      registry-password: ${{ secrets.QUAY_ROBOT_TOKEN }}
-
-  provenance-arm64:
-    name: SLSA3 provenance (arm64)
-    needs: build-arm64
-    permissions:
-      actions: read
-      id-token: write
-      packages: write
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
-    with:
-      image: ${{ needs.build-arm64.outputs.image }}
-      digest: ${{ needs.build-arm64.outputs.digest }}
+      image: quay.io/kubernaut-ai/kubernaut-operator-image
+      digest: ${{ needs.create-manifests.outputs.manifest_digest }}
     secrets:
       registry-username: ${{ secrets.QUAY_ROBOT_USERNAME }}
       registry-password: ${{ secrets.QUAY_ROBOT_TOKEN }}
 
   # ========================================
   # STAGE 3: OPERATOR HELM CHART
-  # Packages and publishes the operator chart as an OCI artifact alongside the
-  # operator image for the same formal release.
+  # Packages and publishes the operator chart after all release artifacts,
+  # security attestations, and provenance have completed.
   # ========================================
 
   operator-chart:
     name: Package & Push Operator Helm Chart
-    needs: [prepare, operator-gates, operator-e2e]
+    needs: [prepare, operator-gates, operator-e2e, create-manifests, sbom, sign, provenance]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -619,16 +667,19 @@ jobs:
           tar -xzf "${HELM_ARCHIVE}" -C /tmp
           sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
 
-      - name: Package operator chart with release image tag
+      - name: Package operator chart with released image digest
         id: package
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          MANIFEST_DIGEST: ${{ needs.create-manifests.outputs.manifest_digest }}
         run: |
           set -euo pipefail
+          test -n "${MANIFEST_DIGEST}"
           chart_dir="${RUNNER_TEMP}/kubernaut-operator"
           mkdir -p dist
           cp -R charts/kubernaut-operator "${chart_dir}"
           sed -i "0,/^  tag: /s/^  tag: .*/  tag: ${VERSION}/" "${chart_dir}/values.yaml"
+          sed -i "0,/^  digest: /s/^  digest: .*/  digest: ${MANIFEST_DIGEST}/" "${chart_dir}/values.yaml"
           helm lint "${chart_dir}"
           helm package "${chart_dir}" \
             --version "${VERSION}" \
@@ -666,95 +717,13 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
   # ========================================
-  # STAGE 3c: DEVELOPMENT DEPENDENCIES HELM CHART
-  # Packages and publishes the disposable PostgreSQL/Valkey dependency chart
-  # as an OCI artifact for demo and qualification clusters.
-  # ========================================
-
-  development-dependencies-chart:
-    name: Package & Push Development Dependencies Chart
-    needs: [prepare, operator-gates, operator-e2e]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    outputs:
-      chart_version: ${{ steps.package.outputs.chart_version }}
-      chart_digest: ${{ steps.push.outputs.chart_digest }}
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install pinned Helm 4
-        run: |
-          set -euo pipefail
-          HELM_VERSION=v4.3.0
-          HELM_ARCHIVE="/tmp/helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o "${HELM_ARCHIVE}"
-          printf '%s  %s\n' \
-            86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb \
-            "${HELM_ARCHIVE}" | sha256sum -c -
-          tar -xzf "${HELM_ARCHIVE}" -C /tmp
-          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
-          helm version --short
-
-      - name: Validate development dependencies chart
-        run: |
-          set -euo pipefail
-          helm lint charts/kubernaut-development-dependencies
-          HELM_BIN=helm ./hack/verify-development-dependencies-chart.sh
-
-      - name: Package development dependencies chart
-        id: package
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          helm package charts/kubernaut-development-dependencies \
-            --version "${VERSION}" \
-            --app-version "${VERSION}" \
-            --destination dist
-          test -s "dist/kubernaut-development-dependencies-${VERSION}.tgz"
-          echo "chart_version=${VERSION}" >> "${GITHUB_OUTPUT}"
-
-      - name: Login to Quay.io for Helm OCI push
-        env:
-          QUAY_ROBOT_USERNAME: ${{ secrets.QUAY_ROBOT_USERNAME }}
-          QUAY_ROBOT_TOKEN: ${{ secrets.QUAY_ROBOT_TOKEN }}
-        run: |
-          set -euo pipefail
-          printf '%s' "${QUAY_ROBOT_TOKEN}" | helm registry login quay.io \
-            --username "${QUAY_ROBOT_USERNAME}" \
-            --password-stdin
-
-      - name: Push development dependencies chart
-        id: push
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          set -euo pipefail
-          chart="dist/kubernaut-development-dependencies-${VERSION}.tgz"
-          push_output=$(helm push "${chart}" oci://quay.io/kubernaut-ai)
-          printf '%s\n' "${push_output}"
-          digest=$(printf '%s\n' "${push_output}" | sed -n 's/^Digest: //p')
-          test -n "${digest}"
-          echo "chart_digest=${digest}" >> "${GITHUB_OUTPUT}"
-          echo "Published oci://quay.io/kubernaut-ai/kubernaut-development-dependencies:${VERSION}"
-          {
-            echo "### Development dependencies chart"
-            echo "- Version: \`${VERSION}\`"
-            echo "- Immutable OCI reference: \`oci://quay.io/kubernaut-ai/kubernaut-development-dependencies@${digest}\`"
-          } >> "${GITHUB_STEP_SUMMARY}"
-
-  # ========================================
   # STAGE 4: GITHUB RELEASE
   # Creates a GitHub Release with auto-generated notes.
   # ========================================
 
   release:
     name: Create GitHub Release
-    needs: [prepare, operator-e2e, create-manifests, operator-chart, development-dependencies-chart, sbom, sign, provenance-amd64, provenance-arm64]
+    needs: [prepare, operator-e2e, create-manifests, operator-chart, sbom, sign, provenance]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -782,8 +751,6 @@ jobs:
           MANIFEST_DIGEST: ${{ needs.create-manifests.outputs.manifest_digest }}
           OPERATOR_CHART_VERSION: ${{ needs.operator-chart.outputs.chart_version }}
           OPERATOR_CHART_DIGEST: ${{ needs.operator-chart.outputs.chart_digest }}
-          DEPENDENCY_CHART_VERSION: ${{ needs.development-dependencies-chart.outputs.chart_version }}
-          DEPENDENCY_CHART_DIGEST: ${{ needs.development-dependencies-chart.outputs.chart_digest }}
         run: |
           set -euo pipefail
           test -n "$AMD64_DIGEST"
@@ -791,8 +758,6 @@ jobs:
           test -n "$MANIFEST_DIGEST"
           test -n "$OPERATOR_CHART_VERSION"
           test -n "$OPERATOR_CHART_DIGEST"
-          test -n "$DEPENDENCY_CHART_VERSION"
-          test -n "$DEPENDENCY_CHART_DIGEST"
           python3 - <<'PY'
           import json
           import os
@@ -801,7 +766,7 @@ jobs:
           registry = os.environ["IMAGE_REGISTRY"]
           image = f"{registry}/{os.environ['IMAGE_NAME']}"
           manifest = {
-              "schema": "kubernaut-operator-release-provenance/v1",
+              "schema": "kubernaut-operator-release-provenance/v2",
               "operator": {
                   "repository": os.environ["GITHUB_REPOSITORY"],
                   "tag": os.environ["TAG"],
@@ -832,20 +797,6 @@ jobs:
                    "responsibility": "release operator",
                    "evidence": "maintained outside this workflow",
                },
-              "bootstrap_chart": {
-                  "name": "kubernaut-development-dependencies",
-                  "version": os.environ["DEPENDENCY_CHART_VERSION"],
-                  "tag": (
-                      "oci://quay.io/kubernaut-ai/"
-                      "kubernaut-development-dependencies:"
-                      + os.environ["DEPENDENCY_CHART_VERSION"]
-                  ),
-                  "digest": (
-                      "oci://quay.io/kubernaut-ai/"
-                      "kubernaut-development-dependencies@"
-                      + os.environ["DEPENDENCY_CHART_DIGEST"]
-                  ),
-              },
               "release_workflow": {
                   "run_id": os.environ["GITHUB_RUN_ID"],
                   "run_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
