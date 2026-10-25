@@ -2,7 +2,7 @@ name: Release
 
 # Triggered by version tag push (e.g., v1.4.0, v1.5.0-rc1)
 # Builds multi-arch operator image (amd64 + arm64), creates manifest list,
-# builds and pushes the OLM bundle image, and creates a GitHub Release.
+# publishes the operator image and Helm charts, and creates a GitHub Release.
 # Pre-release tags (-rc*, -alpha*, -beta*) create a pre-release and skip :latest tagging.
 #
 # Prerequisites:
@@ -19,7 +19,6 @@ permissions:
 env:
   IMAGE_REGISTRY: quay.io/kubernaut-ai
   IMAGE_NAME: kubernaut-operator-image
-  OLM_IMAGE_NAME: kubernaut-operator
 
 jobs:
   # ========================================
@@ -113,8 +112,8 @@ jobs:
       - name: Verify generated manifests are clean
         run: |
           set -euo pipefail
-          make manifests generate build-installer bundle
-          git diff --exit-code -- api config charts/kubernaut-operator/files bundle dist
+          make manifests generate build-installer
+          git diff --exit-code -- api config charts/kubernaut-operator/files dist
 
       - name: Shellcheck hack/ scripts
         run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/verify-helm-chart.sh hack/verify-test-pyramid.sh hack/verify-ci-boundary.sh hack/verify-ci-boundary.test.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
@@ -589,88 +588,9 @@ jobs:
       registry-password: ${{ secrets.QUAY_ROBOT_TOKEN }}
 
   # ========================================
-  # STAGE 3: OLM BUNDLE IMAGE
-  # Builds and pushes the operator bundle image used by OLM / OperatorHub.
-  # The bundle version matches the release version.
-  # ========================================
-
-  bundle:
-    name: Build & Push OLM Bundle
-    needs: [prepare, create-manifests]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-
-      - name: Login to Quay.io
-        run: |
-          podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
-                       -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
-                       quay.io
-
-      - name: Regenerate bundle with release version
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          export IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
-          make bundle
-
-      - name: Build bundle image
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          BUNDLE_IMG="${IMAGE_REGISTRY}/${OLM_IMAGE_NAME}-bundle:v${VERSION}"
-          echo "Building bundle image ${BUNDLE_IMG}..."
-          podman build -f bundle.Dockerfile -t "${BUNDLE_IMG}" .
-
-      - name: Push bundle image
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          BUNDLE_IMG="${IMAGE_REGISTRY}/${OLM_IMAGE_NAME}-bundle:v${VERSION}"
-          echo "Pushing ${BUNDLE_IMG}..."
-          podman push "${BUNDLE_IMG}"
-
-  # ========================================
-  # STAGE 3b: OLM CATALOG IMAGE
-  # Builds a file-based catalog (FBC) containing the bundle and pushes it.
-  # This catalog can be referenced by a CatalogSource on OCP clusters.
-  # ========================================
-
-  catalog:
-    name: Build & Push OLM Catalog
-    needs: [prepare, bundle]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Login to Quay.io
-        run: |
-          podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
-                       -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
-                       quay.io
-
-      - name: Build and push catalog image
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          BUNDLE_IMGS="${IMAGE_REGISTRY}/${OLM_IMAGE_NAME}-bundle:v${VERSION}" \
-            CATALOG_IMG="${IMAGE_REGISTRY}/${OLM_IMAGE_NAME}-catalog:v${VERSION}" \
-            CONTAINER_TOOL=podman \
-            make catalog-build catalog-push
-
-  # ========================================
-  # STAGE 3c: OPERATOR HELM CHART
+  # STAGE 3: OPERATOR HELM CHART
   # Packages and publishes the operator chart as an OCI artifact alongside the
-  # operator image, bundle, and catalog for the same formal release.
+  # operator image for the same formal release.
   # ========================================
 
   operator-chart:
@@ -834,7 +754,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [prepare, operator-e2e, create-manifests, bundle, catalog, operator-chart, development-dependencies-chart, sbom, sign, provenance-amd64, provenance-arm64]
+    needs: [prepare, operator-e2e, create-manifests, operator-chart, development-dependencies-chart, sbom, sign, provenance-amd64, provenance-arm64]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -963,4 +883,3 @@ jobs:
           echo ""
           echo "Images:"
           echo "  Operator: ${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
-          echo "  Bundle:   ${IMAGE_REGISTRY}/${OLM_IMAGE_NAME}-bundle:v${VERSION}"

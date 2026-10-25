@@ -45,8 +45,8 @@ create the operator tag. The operator release workflow must not download,
 validate, or block publication on `operator-compatibility-qualification.json`.
 
 The automated workflow still gates the operator-local test pyramid, contract
-Kind E2E, image build, SBOM/vulnerability scan, signing, provenance, OLM
-bundle/catalog publication, and Helm OCI chart publication. Its provenance
+Kind E2E, image build, SBOM/vulnerability scan, signing, provenance, and Helm
+OCI chart publication. Its provenance
 records that upstream qualification is manual; it does not claim that the
 workflow performed compatibility qualification.
 
@@ -63,7 +63,7 @@ The operator repository owns:
 - optional Kind tests using deterministic operator-contract and dependency
   fixture images;
 - generated CRDs/manifests, lint, build, SBOM, vulnerability scanning, signing,
-  provenance, bundle, and catalog artifacts;
+  provenance, and Helm chart artifacts;
 - operator branch protection, Git tags, and operator image publication.
 
 The operator's Kind suite is contract-only. It loads the local operator image,
@@ -178,7 +178,7 @@ After the release owner manually accepts the external qualification result:
    - build and generated-manifest validation;
    - SBOM and vulnerability scan;
    - image signing and provenance;
-   - bundle and catalog generation/publication.
+   - Helm chart generation/publication.
 5. It builds the operator image from the tagged SHA and publishes it by
    immutable digest.
 
