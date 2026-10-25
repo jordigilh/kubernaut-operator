@@ -524,14 +524,24 @@ jobs:
         id: manifest-digest
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          EXPECTED_AMD64_DIGEST: ${{ needs.build-amd64.outputs.digest }}
+          EXPECTED_ARM64_DIGEST: ${{ needs.build-arm64.outputs.digest }}
         run: |
           set -euo pipefail
+          command -v skopeo >/dev/null 2>&1 || { echo "skopeo is required to resolve the registry manifest digest" >&2; exit 1; }
           MANIFEST="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
-          podman pull "${MANIFEST}"
-          DIGEST=$(podman inspect --format='{{.Digest}}' "${MANIFEST}")
+          AMD64_DIGEST=$(skopeo inspect --format='{{.Digest}}' "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-amd64")
+          ARM64_DIGEST=$(skopeo inspect --format='{{.Digest}}' "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-arm64")
+          DIGEST=$(skopeo inspect --format='{{.Digest}}' "docker://${MANIFEST}")
+          test "${AMD64_DIGEST}" = "${EXPECTED_AMD64_DIGEST}"
+          test "${ARM64_DIGEST}" = "${EXPECTED_ARM64_DIGEST}"
+          test "${DIGEST}" != "${AMD64_DIGEST}"
+          test "${DIGEST}" != "${ARM64_DIGEST}"
           test -n "${DIGEST}"
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
-          echo "Manifest digest: ${DIGEST}"
+          echo "amd64 digest: ${AMD64_DIGEST}"
+          echo "arm64 digest: ${ARM64_DIGEST}"
+          echo "top-level manifest digest: ${DIGEST}"
 
   # ========================================
   # Cosign sign multi-arch manifest (keyless)
