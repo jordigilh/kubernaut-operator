@@ -50,9 +50,10 @@ helm upgrade --install kubernaut-development-dependencies \
   --wait --timeout 10m
 ```
 
-The same immutable reference is recorded in the release asset
-`operator-release-provenance.json` under `bootstrap_chart.digest` for automated
-demo-cluster consumers.
+The dedicated development-dependencies publication workflow writes the same
+reference to `kubernaut-development-dependencies-oci.json`. The operator
+release provenance does not include this internal-only chart because it has an
+independent release cadence.
 
 The version tag is also available when digest pinning is not required:
 

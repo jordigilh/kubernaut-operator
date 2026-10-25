@@ -36,8 +36,8 @@ the same namespace; uninstall the old disposable release first and back up any
 Helm-owned persistent data before doing so. The chart README contains the
 migration command.
 
-For demo clusters, use the immutable OCI reference printed by the tagged
-release workflow:
+For demo clusters, use the immutable OCI reference printed by the dedicated
+development-dependencies publication workflow:
 
 ```bash
 helm upgrade --install kubernaut-development-dependencies \
