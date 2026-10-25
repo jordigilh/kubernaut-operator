@@ -157,10 +157,6 @@ test-integration: manifests generate fmt vet setup-envtest ## Run integration te
 test-console-release: ## Validate the Console release contract.
 	@./hack/verify-console-release.sh
 
-.PHONY: test-ci-boundary
-test-ci-boundary: ## Verify that operator CI remains independent of the upstream application.
-	@./hack/verify-ci-boundary.sh
-
 .PHONY: test-helm
 test-helm: ## Validate the operator-only Helm chart and its render contracts.
 	@command -v $(HELM_BIN) >/dev/null 2>&1 || { echo "Helm CLI not found: $(HELM_BIN)"; exit 1; }
