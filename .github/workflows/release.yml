@@ -281,49 +281,53 @@ jobs:
         run: make test-e2e-kind
 
       - name: Collect Kind diagnostics
-        if: ${{ failure() }}
+        if: ${{ steps.contract-e2e.outcome == 'failure' }}
         run: |
           set +e
           diagnostics="${RUNNER_TEMP}/operator-e2e-diagnostics.txt"
-          KUBECTL=(kubectl --request-timeout=10s --context "kind-${KIND_CLUSTER_NAME}")
-          {
-            echo '=== cluster ==='
-            "${KUBECTL[@]}" cluster-info
-            echo '=== nodes ==='
-            "${KUBECTL[@]}" get nodes -o wide
-            echo '=== pods ==='
-            "${KUBECTL[@]}" get pods -A -o wide
-            echo '=== deployments ==='
-            "${KUBECTL[@]}" get deployments -A
-            echo '=== events ==='
-            "${KUBECTL[@]}" get events -A --sort-by=.lastTimestamp
-            echo '=== operator deployment ==='
-            "${KUBECTL[@]}" describe deployment \
-              kubernaut-operator-controller-manager \
-              -n kubernaut-operator-system
-            echo '=== pod descriptions ==='
-            "${KUBECTL[@]}" describe pods -A
-            echo '=== pod logs ==='
-            while read -r namespace pod; do
-              test -n "${namespace}" || continue
-              test -n "${pod}" || continue
-              echo "--- ${namespace}/${pod} ---"
-              "${KUBECTL[@]}" logs \
-                --namespace "${namespace}" "${pod}" \
-                --all-containers=true --prefix --tail=200
-              "${KUBECTL[@]}" logs \
-                --namespace "${namespace}" "${pod}" \
-                --all-containers=true --prefix --tail=200 --previous
-            done < <(
-              "${KUBECTL[@]}" get pods -A \
-                -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name' \
-                --no-headers
-            )
-          } 2>&1 | tee "${diagnostics}"
+          # The nested shell intentionally expands inherited runtime variables.
+          # shellcheck disable=SC2016
+          timeout 180s bash -c '
+            KUBECTL=(kubectl --request-timeout=10s --context "kind-${KIND_CLUSTER_NAME}")
+            {
+              echo "=== cluster ==="
+              "${KUBECTL[@]}" cluster-info
+              echo "=== nodes ==="
+              "${KUBECTL[@]}" get nodes -o wide
+              echo "=== pods ==="
+              "${KUBECTL[@]}" get pods -A -o wide
+              echo "=== deployments ==="
+              "${KUBECTL[@]}" get deployments -A
+              echo "=== events ==="
+              "${KUBECTL[@]}" get events -A --sort-by=.lastTimestamp
+              echo "=== operator deployment ==="
+              "${KUBECTL[@]}" describe deployment \
+                kubernaut-operator-controller-manager \
+                -n kubernaut-operator-system
+              echo "=== pod descriptions ==="
+              "${KUBECTL[@]}" describe pods -A
+              echo "=== pod logs ==="
+              while read -r namespace pod; do
+                test -n "${namespace}" || continue
+                test -n "${pod}" || continue
+                echo "--- ${namespace}/${pod} ---"
+                "${KUBECTL[@]}" logs \
+                  --namespace "${namespace}" "${pod}" \
+                  --all-containers=true --prefix --tail=200
+                "${KUBECTL[@]}" logs \
+                  --namespace "${namespace}" "${pod}" \
+                  --all-containers=true --prefix --tail=200 --previous
+              done < <(
+                "${KUBECTL[@]}" get pods -A \
+                  -o custom-columns="NAMESPACE:.metadata.namespace,NAME:.metadata.name" \
+                  --no-headers
+              )
+            }
+          ' 2>&1 | tee "${diagnostics}" || true
           timeout 120s kind export logs "${RUNNER_TEMP}/kind-logs" --name "${KIND_CLUSTER_NAME}" || true
 
       - name: Upload Kind diagnostics
-        if: ${{ failure() }}
+        if: ${{ steps.contract-e2e.outcome == 'failure' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
         with:
           name: operator-release-kind-diagnostics-${{ github.run_id }}
