@@ -158,7 +158,7 @@ test-console-release: ## Validate the Console release contract.
 	@./hack/verify-console-release.sh
 
 .PHONY: test-helm
-test-helm: ## Validate the operator-only Helm chart and its render contracts.
+test-helm: test-console-release ## Validate the operator-only Helm chart and its render contracts.
 	@command -v $(HELM_BIN) >/dev/null 2>&1 || { echo "Helm CLI not found: $(HELM_BIN)"; exit 1; }
 	$(HELM_BIN) lint charts/kubernaut-operator
 	HELM_BIN=$(HELM_BIN) ./hack/verify-helm-chart.sh
