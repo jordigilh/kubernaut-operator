@@ -250,14 +250,21 @@ jobs:
             --username "${QUAY_CICD_ROBOT_USERNAME}" \
             --password-stdin
 
-      - name: Pull amd64 release image
+      - name: Pull amd64 release image by digest
+        id: pull-amd64
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           AMD64_DIGEST: ${{ needs.build-amd64.outputs.digest }}
         run: |
           set -euo pipefail
+          REMOTE_IMAGE="${STAGING_IMAGE_REGISTRY}/${IMAGE_NAME}@${AMD64_DIGEST}"
+          LOCAL_IMAGE="localhost/kubernaut-operator:${VERSION}-amd64"
           test -n "${AMD64_DIGEST}"
-          docker pull "${STAGING_IMAGE_REGISTRY}/${IMAGE_NAME}@${AMD64_DIGEST}"
+          docker pull "${REMOTE_IMAGE}"
+          IMAGE_ID=$(docker image inspect --format='{{.Id}}' "${REMOTE_IMAGE}")
+          docker tag "${IMAGE_ID}" "${LOCAL_IMAGE}"
+          echo "image=${LOCAL_IMAGE}" >> "${GITHUB_OUTPUT}"
+          echo "Pulled ${REMOTE_IMAGE} and tagged local Kind image ${LOCAL_IMAGE}"
 
       - name: Pull pinned dependency images
         run: |
@@ -268,7 +275,7 @@ jobs:
         id: contract-e2e
         env:
           KIND_OPERATOR_VERSION: ${{ needs.prepare.outputs.version }}-amd64
-          KUBERNAUT_OPERATOR_IMAGE: ${{ env.STAGING_IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-amd64.outputs.digest }}
+          KUBERNAUT_OPERATOR_IMAGE: ${{ steps.pull-amd64.outputs.image }}
           KUBERNAUT_E2E_TLS_SOURCE: certmanager
           KEEP_CLUSTER: "1"
         run: make test-e2e-kind
