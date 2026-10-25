@@ -296,6 +296,7 @@ jobs:
             --username "${{ secrets.QUAY_CICD_ROBOT_USERNAME }}" \
             --password-stdin quay.io
           echo "STAGING_AUTHFILE=${STAGING_AUTHFILE}" >> "${GITHUB_ENV}"
+          echo "REGISTRY_AUTH_FILE=${STAGING_AUTHFILE}" >> "${GITHUB_ENV}"
 
       - name: Build image
         env:
@@ -386,6 +387,7 @@ jobs:
             --username "${{ secrets.QUAY_CICD_ROBOT_USERNAME }}" \
             --password-stdin quay.io
           echo "STAGING_AUTHFILE=${STAGING_AUTHFILE}" >> "${GITHUB_ENV}"
+          echo "REGISTRY_AUTH_FILE=${STAGING_AUTHFILE}" >> "${GITHUB_ENV}"
 
       - name: Build runtime image (no QEMU)
         env:
@@ -488,13 +490,14 @@ jobs:
             local arch="$1"
             local expected_digest="$2"
             local staging_image="${STAGING_IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-${arch}"
+            local staging_digest_ref="${staging_image%:*}@${expected_digest}"
             local production_image="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-${arch}"
 
             actual_digest=$(skopeo inspect --authfile "${STAGING_AUTHFILE}" \
               --format='{{.Digest}}' "docker://${staging_image}")
             test "${actual_digest}" = "${expected_digest}"
-            REGISTRY_AUTH_FILE="${STAGING_AUTHFILE}" podman pull "${staging_image}"
-            podman tag "${staging_image}" "${production_image}"
+            REGISTRY_AUTH_FILE="${STAGING_AUTHFILE}" podman pull "${staging_digest_ref}"
+            podman tag "${staging_digest_ref}" "${production_image}"
             REGISTRY_AUTH_FILE="${PRODUCTION_AUTHFILE}" podman push "${production_image}"
             echo "promoted ${arch}: ${actual_digest}"
           }
