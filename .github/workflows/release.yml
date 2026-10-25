@@ -201,7 +201,7 @@ jobs:
     name: Run contract-only Kind E2E
     needs: [prepare, build-amd64]
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 50
     env:
       KIND_CLUSTER_NAME: kubernaut-kind-release
     permissions:
@@ -278,41 +278,42 @@ jobs:
         run: |
           set +e
           diagnostics="${RUNNER_TEMP}/operator-e2e-diagnostics.txt"
+          KUBECTL=(kubectl --request-timeout=10s --context "kind-${KIND_CLUSTER_NAME}")
           {
             echo '=== cluster ==='
-            kubectl --context "kind-${KIND_CLUSTER_NAME}" cluster-info
+            "${KUBECTL[@]}" cluster-info
             echo '=== nodes ==='
-            kubectl --context "kind-${KIND_CLUSTER_NAME}" get nodes -o wide
+            "${KUBECTL[@]}" get nodes -o wide
             echo '=== pods ==='
-            kubectl --context "kind-${KIND_CLUSTER_NAME}" get pods -A -o wide
+            "${KUBECTL[@]}" get pods -A -o wide
             echo '=== deployments ==='
-            kubectl --context "kind-${KIND_CLUSTER_NAME}" get deployments -A
+            "${KUBECTL[@]}" get deployments -A
             echo '=== events ==='
-            kubectl --context "kind-${KIND_CLUSTER_NAME}" get events -A --sort-by=.lastTimestamp
+            "${KUBECTL[@]}" get events -A --sort-by=.lastTimestamp
             echo '=== operator deployment ==='
-            kubectl --context "kind-${KIND_CLUSTER_NAME}" describe deployment \
+            "${KUBECTL[@]}" describe deployment \
               kubernaut-operator-controller-manager \
               -n kubernaut-operator-system
             echo '=== pod descriptions ==='
-            kubectl --context "kind-${KIND_CLUSTER_NAME}" describe pods -A
+            "${KUBECTL[@]}" describe pods -A
             echo '=== pod logs ==='
             while read -r namespace pod; do
               test -n "${namespace}" || continue
               test -n "${pod}" || continue
               echo "--- ${namespace}/${pod} ---"
-              kubectl --context "kind-${KIND_CLUSTER_NAME}" logs \
+              "${KUBECTL[@]}" logs \
                 --namespace "${namespace}" "${pod}" \
                 --all-containers=true --prefix --tail=200
-              kubectl --context "kind-${KIND_CLUSTER_NAME}" logs \
+              "${KUBECTL[@]}" logs \
                 --namespace "${namespace}" "${pod}" \
                 --all-containers=true --prefix --tail=200 --previous
             done < <(
-              kubectl --context "kind-${KIND_CLUSTER_NAME}" get pods -A \
+              "${KUBECTL[@]}" get pods -A \
                 -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name' \
                 --no-headers
             )
           } 2>&1 | tee "${diagnostics}"
-          kind export logs "${RUNNER_TEMP}/kind-logs" --name "${KIND_CLUSTER_NAME}" || true
+          timeout 120s kind export logs "${RUNNER_TEMP}/kind-logs" --name "${KIND_CLUSTER_NAME}" || true
 
       - name: Upload Kind diagnostics
         if: ${{ failure() }}
@@ -326,7 +327,7 @@ jobs:
 
       - name: Delete retained Kind cluster
         if: always()
-        run: kind delete cluster --name "${KIND_CLUSTER_NAME}" || true
+        run: timeout 120s kind delete cluster --name "${KIND_CLUSTER_NAME}" || true
 
   # ========================================
   # STAGE 1a: BUILD & PUSH amd64 IMAGE
