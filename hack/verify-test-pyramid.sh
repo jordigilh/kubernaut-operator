@@ -56,16 +56,18 @@ require_text .github/workflows/release.yml '^  operator-e2e:' 'release workflow 
 require_text .github/workflows/release.yml 'run: make test-e2e-kind' 'release workflow does not run the contract-only Kind gate'
 require_text .github/workflows/release.yml 'needs: \[prepare, operator-lint, operator-unit, operator-integration, operator-helm, operator-hack, operator-manifests\]' \
 	'image builds are not directly gated by every local release check'
-require_text .github/workflows/release.yml 'docker pull "\$\{IMAGE_REGISTRY\}/\$\{IMAGE_NAME\}@\$\{AMD64_DIGEST\}"' \
-	'contract E2E does not pull the pushed amd64 digest'
-require_text .github/workflows/release.yml 'KUBERNAUT_OPERATOR_IMAGE: .*@\$\{\{ needs.build-amd64.outputs.digest \}\}' \
-	'contract E2E is not pinned to the amd64 build digest'
+require_text .github/workflows/release.yml 'docker pull "\$\{STAGING_IMAGE_REGISTRY\}/\$\{IMAGE_NAME\}@\$\{AMD64_DIGEST\}"' \
+	'contract E2E does not pull the pushed staging amd64 digest'
+require_text .github/workflows/release.yml 'KUBERNAUT_OPERATOR_IMAGE: .*STAGING_IMAGE_REGISTRY.*@\$\{\{ needs.build-amd64.outputs.digest \}\}' \
+	'contract E2E is not pinned to the staging amd64 build digest'
 require_text .github/workflows/release.yml 'apt-get install --yes --no-install-recommends skopeo' \
 	'release workflow does not install the registry inspection tool'
+require_text .github/workflows/release.yml '^  promote-images:' \
+	'release workflow does not promote tested images to production Quay'
 require_text .github/workflows/release.yml 'sbom:.*' 'release workflow is missing post-manifest SBOM coverage'
 require_text .github/workflows/release.yml 'needs: \[prepare, create-manifests\]' 'SBOM coverage is not gated by the final manifest'
-require_text .github/workflows/release.yml 'needs: \[prepare, build-amd64, build-arm64, operator-e2e\]' \
-	'final manifest is not gated by both architecture builds and contract E2E'
+require_text .github/workflows/release.yml 'needs: \[prepare, build-amd64, build-arm64, operator-e2e, promote-images\]' \
+	'final manifest is not gated by promotion, both architecture builds, and contract E2E'
 
 # The hosted test pipeline must establish the test -> image -> E2E order. The
 # image artifact is deliberately shared so every lane validates the same
