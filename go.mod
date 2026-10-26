@@ -5,11 +5,11 @@ go 1.26.10
 require (
 	github.com/go-logr/logr v1.4.4
 	github.com/go-logr/zapr v1.3.0
-	github.com/jordigilh/kubernaut v1.6.0-rc27
+	github.com/jordigilh/kubernaut v1.6.0-rc9
 	github.com/onsi/ginkgo/v2 v2.33.1
 	github.com/onsi/gomega v1.44.0
 	github.com/openshift/api v0.0.0-20260327162646-993e604705e3
-	github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring v0.94.1
+	github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring v0.94.2
 	go.opentelemetry.io/otel v1.47.0
 	go.uber.org/zap v1.28.0
 	golang.org/x/time v0.16.0
