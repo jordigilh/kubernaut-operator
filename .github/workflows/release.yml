@@ -201,7 +201,9 @@ jobs:
     name: Run contract-only Kind E2E
     needs: [prepare, build-amd64]
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 50
+    env:
+      KIND_CLUSTER_NAME: kubernaut-kind-release
     permissions:
       contents: read
     steps:
@@ -248,14 +250,21 @@ jobs:
             --username "${QUAY_CICD_ROBOT_USERNAME}" \
             --password-stdin
 
-      - name: Pull amd64 release image
+      - name: Pull amd64 release image by digest
+        id: pull-amd64
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           AMD64_DIGEST: ${{ needs.build-amd64.outputs.digest }}
         run: |
           set -euo pipefail
+          REMOTE_IMAGE="${STAGING_IMAGE_REGISTRY}/${IMAGE_NAME}@${AMD64_DIGEST}"
+          LOCAL_IMAGE="localhost/kubernaut-operator:${VERSION}-amd64"
           test -n "${AMD64_DIGEST}"
-          docker pull "${STAGING_IMAGE_REGISTRY}/${IMAGE_NAME}@${AMD64_DIGEST}"
+          docker pull "${REMOTE_IMAGE}"
+          IMAGE_ID=$(docker image inspect --format='{{.Id}}' "${REMOTE_IMAGE}")
+          docker tag "${IMAGE_ID}" "${LOCAL_IMAGE}"
+          echo "image=${LOCAL_IMAGE}" >> "${GITHUB_OUTPUT}"
+          echo "Pulled ${REMOTE_IMAGE} and tagged local Kind image ${LOCAL_IMAGE}"
 
       - name: Pull pinned dependency images
         run: |
@@ -263,12 +272,73 @@ jobs:
           docker pull docker.io/valkey/valkey:8.0.2
 
       - name: Run contract-only Kind gate
+        id: contract-e2e
         env:
           KIND_OPERATOR_VERSION: ${{ needs.prepare.outputs.version }}-amd64
-          KUBERNAUT_OPERATOR_IMAGE: ${{ env.STAGING_IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-amd64.outputs.digest }}
+          KUBERNAUT_OPERATOR_IMAGE: ${{ steps.pull-amd64.outputs.image }}
           KUBERNAUT_E2E_TLS_SOURCE: certmanager
-          KIND_CLUSTER_NAME: kubernaut-kind-release
+          KEEP_CLUSTER: "1"
         run: make test-e2e-kind
+
+      - name: Collect Kind diagnostics
+        if: ${{ failure() && steps.contract-e2e.outcome == 'failure' }}
+        run: |
+          set +e
+          diagnostics="${RUNNER_TEMP}/operator-e2e-diagnostics.txt"
+          # The nested shell intentionally expands inherited runtime variables.
+          # shellcheck disable=SC2016
+          timeout 180s bash -c '
+            KUBECTL=(kubectl --request-timeout=10s --context "kind-${KIND_CLUSTER_NAME}")
+            {
+              echo "=== cluster ==="
+              "${KUBECTL[@]}" cluster-info
+              echo "=== nodes ==="
+              "${KUBECTL[@]}" get nodes -o wide
+              echo "=== pods ==="
+              "${KUBECTL[@]}" get pods -A -o wide
+              echo "=== deployments ==="
+              "${KUBECTL[@]}" get deployments -A
+              echo "=== events ==="
+              "${KUBECTL[@]}" get events -A --sort-by=.lastTimestamp
+              echo "=== operator deployment ==="
+              "${KUBECTL[@]}" describe deployment \
+                kubernaut-operator-controller-manager \
+                -n kubernaut-operator-system
+              echo "=== pod descriptions ==="
+              "${KUBECTL[@]}" describe pods -A
+              echo "=== pod logs ==="
+              while read -r namespace pod; do
+                test -n "${namespace}" || continue
+                test -n "${pod}" || continue
+                echo "--- ${namespace}/${pod} ---"
+                "${KUBECTL[@]}" logs \
+                  --namespace "${namespace}" "${pod}" \
+                  --all-containers=true --prefix --tail=200
+                "${KUBECTL[@]}" logs \
+                  --namespace "${namespace}" "${pod}" \
+                  --all-containers=true --prefix --tail=200 --previous
+              done < <(
+                "${KUBECTL[@]}" get pods -A \
+                  -o custom-columns="NAMESPACE:.metadata.namespace,NAME:.metadata.name" \
+                  --no-headers
+              )
+            }
+          ' 2>&1 | tee "${diagnostics}" || true
+          timeout 120s kind export logs "${RUNNER_TEMP}/kind-logs" --name "${KIND_CLUSTER_NAME}" || true
+
+      - name: Upload Kind diagnostics
+        if: ${{ failure() && steps.contract-e2e.outcome == 'failure' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
+        with:
+          name: operator-release-kind-diagnostics-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/operator-e2e-diagnostics.txt
+            ${{ runner.temp }}/kind-logs
+          if-no-files-found: warn
+
+      - name: Delete retained Kind cluster
+        if: always()
+        run: timeout 120s kind delete cluster --name "${KIND_CLUSTER_NAME}" || true
 
   # ========================================
   # STAGE 1a: BUILD & PUSH amd64 IMAGE
