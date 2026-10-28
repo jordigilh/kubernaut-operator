@@ -354,8 +354,10 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 			Expect(err).NotTo(HaveOccurred())
 			beforeDependencies, err := issue587DependencySnapshot(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			_, err = kubectl(ctx, "get", "secret", "datastorage-db-secret", "-n", kubernautNamespace)
-			Expect(err).To(HaveOccurred())
+			secretOutput, secretErr := kubectl(ctx, "get", "secret", "datastorage-db-secret", "-n", kubernautNamespace,
+				"--ignore-not-found", "-o", "name")
+			Expect(secretErr).NotTo(HaveOccurred(), secretOutput)
+			Expect(strings.TrimSpace(secretOutput)).To(BeEmpty())
 
 			patchOutput, patchErr := kubectl(ctx, "patch", "kubernaut", "kubernaut", "-n", kubernautNamespace,
 				"--type=merge", "-p", `{"spec":{"gateway":{"enabled":true}}}`)
@@ -381,8 +383,10 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 			Expect(afterConfigMap).To(Equal(beforeConfigMap))
 			Expect(afterReplicaSets).To(Equal(beforeReplicaSets))
 			Expect(afterDependencies).To(Equal(beforeDependencies))
-			_, err = kubectl(ctx, "get", "secret", "datastorage-db-secret", "-n", kubernautNamespace)
-			Expect(err).To(HaveOccurred())
+			secretOutput, secretErr = kubectl(ctx, "get", "secret", "datastorage-db-secret", "-n", kubernautNamespace,
+				"--ignore-not-found", "-o", "name")
+			Expect(secretErr).NotTo(HaveOccurred(), secretOutput)
+			Expect(strings.TrimSpace(secretOutput)).To(BeEmpty())
 		},
 	)
 
@@ -406,7 +410,9 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 			}
 			Expect(applyYAML(ctx, mismatch)).To(Succeed())
 			DeferCleanup(func() {
-				_, _ = kubectl(ctx, "delete", "secret", mismatch.Name, "-n", kubernautNamespace, "--ignore-not-found")
+				cleanupOutput, cleanupErr := kubectl(ctx, "delete", "secret", mismatch.Name, "-n", kubernautNamespace,
+					"--ignore-not-found")
+				Expect(cleanupErr).NotTo(HaveOccurred(), "deleting Secret %s/%s: %s", kubernautNamespace, mismatch.Name, cleanupOutput)
 			})
 
 			patchOutput, patchErr := kubectl(ctx, "patch", "kubernaut", "kubernaut", "-n", kubernautNamespace,
@@ -419,6 +425,14 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 				_, getErr := kubectl(ctx, "get", "job", "kubernaut-db-migration", "-n", kubernautNamespace)
 				g.Expect(getErr).NotTo(HaveOccurred())
 			}).Should(Succeed())
+			jobSecretName, jobSecretErr := kubectl(ctx, "get", "job", "kubernaut-db-migration", "-n", kubernautNamespace,
+				"-o", "jsonpath={.spec.template.spec.containers[0].envFrom[0].secretRef.name}")
+			Expect(jobSecretErr).NotTo(HaveOccurred(), jobSecretName)
+			Expect(jobSecretName).To(Equal(mismatch.Name))
+			jobCredentialRevision, revisionErr := kubectl(ctx, "get", "job", "kubernaut-db-migration", "-n", kubernautNamespace,
+				"-o", `jsonpath={.metadata.annotations.kubernaut\.ai/postgresql-credential-revision}`)
+			Expect(revisionErr).NotTo(HaveOccurred(), jobCredentialRevision)
+			Expect(strings.TrimSpace(jobCredentialRevision)).NotTo(BeEmpty())
 			failureMessage := "contract fixture simulated PostgreSQL authentication failure"
 			failureStatus := `{"status":{"active":0,"ready":0,"failed":3,"conditions":[` +
 				`{"type":"FailureTarget","status":"True","reason":"BackoffLimitExceeded","message":"` + failureMessage + `"},` +
@@ -446,10 +460,21 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 			}, 40*time.Second, 2*time.Second).Should(Equal(jobSnapshot))
 			Expect(issue587DataStorageSnapshot(ctx)).To(Equal(beforeDataStorage))
 			Expect(issue587ObjectMetadata(ctx, "deployment", "postgresql")).To(Equal(beforePostgreSQL))
+			failedJobUID, uidErr := kubectl(ctx, "get", "job", "kubernaut-db-migration", "-n", kubernautNamespace,
+				"-o", "jsonpath={.metadata.uid}")
+			Expect(uidErr).NotTo(HaveOccurred(), failedJobUID)
+			Expect(strings.TrimSpace(failedJobUID)).NotTo(BeEmpty())
 
 			patchOutput, patchErr = kubectl(ctx, "patch", "kubernaut", "kubernaut", "-n", kubernautNamespace,
 				"--type=merge", "-p", `{"spec":{"postgresql":{"secretName":"postgresql-secret"}}}`)
 			Expect(patchErr).NotTo(HaveOccurred(), patchOutput)
+			Eventually(func(g Gomega) {
+				currentJobUID, getErr := kubectl(ctx, "get", "job", "kubernaut-db-migration", "-n", kubernautNamespace,
+					"-o", "jsonpath={.metadata.uid}")
+				g.Expect(getErr).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(currentJobUID)).NotTo(BeEmpty())
+				g.Expect(strings.TrimSpace(currentJobUID)).NotTo(Equal(strings.TrimSpace(failedJobUID)))
+			}).Should(Succeed())
 			Expect(waitForContractReady(ctx)).To(Succeed())
 		},
 	)
