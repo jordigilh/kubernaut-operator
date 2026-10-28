@@ -1366,8 +1366,8 @@ func GatewayConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.K
 }
 
 // DataStorageConfigMap builds the data-storage config ConfigMap. The dbName and
-// dbUser parameters must match the values written into the DataStorageDBSecret
-// to avoid a config/secret mismatch.
+// dbUser parameters must match the identity in the user-owned PostgreSQL Secret
+// and its db-secrets.yaml document to avoid a config/secret mismatch.
 func DataStorageConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, dbName, dbUser string, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	pgPort := PostgreSQLPort(kn)

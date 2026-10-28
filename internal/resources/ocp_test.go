@@ -21,68 +21,11 @@ import (
 	. "github.com/onsi/gomega"
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
 	testOperatorManagedByValue = "kubernaut-operator"
 )
-
-var _ = Describe("DataStorageDBSecret", func() {
-	It("derives from the PostgreSQL secret", func() {
-		kn := testKubernaut()
-		pgSecret := &corev1.Secret{
-			Data: map[string][]byte{
-				"POSTGRES_USER":     []byte("kubernaut"),
-				"POSTGRES_PASSWORD": []byte("s3cret"),
-				"POSTGRES_DB":       []byte("action_history"),
-			},
-		}
-
-		dsSecret, err := DataStorageDBSecret(kn, pgSecret)
-		Expect(err).NotTo(HaveOccurred())
-
-		Expect(dsSecret.Name).To(Equal("datastorage-db-secret"), "name = %q, want %q", dsSecret.Name, "datastorage-db-secret")
-
-		yamlContent := string(dsSecret.Data["db-secrets.yaml"])
-		Expect(yamlContent).To(ContainSubstring("host: pg.example.com"), "db-secrets.yaml should contain PG host, got:\n%s", yamlContent)
-		Expect(yamlContent).To(ContainSubstring("port: 5432"), "db-secrets.yaml should contain PG port, got:\n%s", yamlContent)
-		Expect(yamlContent).To(ContainSubstring("dbname: action_history"), "db-secrets.yaml should contain dbname, got:\n%s", yamlContent)
-		Expect(yamlContent).To(ContainSubstring("user: kubernaut"), "db-secrets.yaml should contain user, got:\n%s", yamlContent)
-		Expect(yamlContent).To(ContainSubstring("password: s3cret"), "db-secrets.yaml should contain password, got:\n%s", yamlContent)
-	})
-
-	It("defaults the port to 5432", func() {
-		kn := testKubernaut()
-		kn.Spec.PostgreSQL.Port = 0
-		pgSecret := &corev1.Secret{
-			Data: map[string][]byte{
-				"POSTGRES_USER":     []byte("u"),
-				"POSTGRES_PASSWORD": []byte("p"),
-				"POSTGRES_DB":       []byte("d"),
-			},
-		}
-
-		dsSecret, err := DataStorageDBSecret(kn, pgSecret)
-		Expect(err).NotTo(HaveOccurred())
-		yamlContent := string(dsSecret.Data["db-secrets.yaml"])
-		Expect(yamlContent).To(ContainSubstring("port: 5432"), "should default to port 5432, got:\n%s", yamlContent)
-	})
-
-	It("returns an error when required keys are missing", func() {
-		kn := testKubernaut()
-		pgSecret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: "test-pg-secret"},
-			Data: map[string][]byte{
-				"POSTGRES_USER": []byte("u"),
-			},
-		}
-
-		_, err := DataStorageDBSecret(kn, pgSecret)
-		Expect(err).To(HaveOccurred(), "DataStorageDBSecret should return error when required keys are missing")
-	})
-})
 
 var _ = Describe("GatewayAlertManagerConfig", func() {
 	It("UT-539-GW-AUTH-AM-001 / UT-EXP-565-INTERNAL-001 [AC-3, AC-6, SC-8, SC-13, SC-17; SOC2 CC6.1, CC7.2; ASVS v5.0.0-V8.2.1, v5.0.0-V8.3.1, v5.0.0-V12.2.1, v5.0.0-V13.2.1]: keeps Alertmanager delivery on the internal Gateway Service FQDN without rendering token bytes", func() {

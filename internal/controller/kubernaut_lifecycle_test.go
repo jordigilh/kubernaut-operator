@@ -2921,7 +2921,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			cleanupNamespacedResources(ctx)
 		})
 
-		It("should transition to PhaseError when migration Job exceeds max retries", func() {
+		It("should transition to PhaseError and retain a failed migration Job", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
@@ -2969,7 +2969,8 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal("MigrationFailed"))
-			Expect(cond.Message).To(ContainSubstring("manual intervention required"))
+			Expect(cond.Message).To(ContainSubstring("correct the referenced PostgreSQL dependency"))
+			Expect(k8sClient.Get(ctx, key, &batchv1.Job{})).To(Succeed())
 		})
 	})
 

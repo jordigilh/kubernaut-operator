@@ -23,7 +23,6 @@ import (
 	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
@@ -98,57 +97,6 @@ func GatewayAlertManagerConfig(kn *kubernautv1alpha2.Kubernaut) *monitoringv1alp
 }
 
 func nonEmptyDurationPtr(d monitoringv1.NonEmptyDuration) *monitoringv1.NonEmptyDuration { return &d }
-
-// dbSecretsYAML is the typed structure for db-secrets.yaml, ensuring values
-// are properly YAML-encoded instead of interpolated via fmt.Sprintf.
-type dbSecretsYAML struct {
-	Host     string `json:"host" yaml:"host"`
-	Port     int32  `json:"port" yaml:"port"`
-	DBName   string `json:"dbname" yaml:"dbname"`
-	User     string `json:"user" yaml:"user"`
-	Password string `json:"password" yaml:"password"`
-}
-
-// DataStorageDBSecret derives the datastorage-db-secret from the user-provided
-// PostgreSQL secret. The DataStorage service expects a "db-secrets.yaml" key
-// with YAML content containing host, port, dbname, user, and password.
-// Returns an error if any required key is missing from the source secret.
-func DataStorageDBSecret(kn *kubernautv1alpha2.Kubernaut, pgSecret *corev1.Secret) (*corev1.Secret, error) {
-	requiredKeys := []string{"POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB"}
-	for _, key := range requiredKeys {
-		if _, ok := pgSecret.Data[key]; !ok {
-			return nil, fmt.Errorf("PostgreSQL secret %q is missing required key %q", pgSecret.Name, key)
-		}
-	}
-
-	// The Password field intentionally carries the value read from the
-	// source PostgreSQL Secret above -- this builds a derived Kubernetes
-	// Secret's data (RBAC-protected, encrypted at rest), not a log line or
-	// ConfigMap, so re-encoding it here is the function's whole purpose.
-	return yamlSecret(ObjectMeta(kn, "datastorage-db-secret", ComponentDataStorage), "db-secrets.yaml", dbSecretsYAML{ //nolint:gosec // G117: Secret-to-Secret transform, not exposure
-		Host:     kn.Spec.PostgreSQL.Host,
-		Port:     PostgreSQLPort(kn),
-		DBName:   string(pgSecret.Data["POSTGRES_DB"]),
-		User:     string(pgSecret.Data["POSTGRES_USER"]),
-		Password: string(pgSecret.Data["POSTGRES_PASSWORD"]),
-	})
-}
-
-// yamlSecret confines heterogeneous values to the real YAML serializer while
-// preserving the Secret-to-Secret boundary and observable encoding errors.
-func yamlSecret(metadata metav1.ObjectMeta, key string, config any) (*corev1.Secret, error) {
-	content, err := yaml.Marshal(config)
-	if err != nil {
-		return nil, fmt.Errorf("marshalling %s: %w", key, err)
-	}
-
-	return &corev1.Secret{
-		ObjectMeta: metadata,
-		Data: map[string][]byte{
-			key: content,
-		},
-	}, nil
-}
 
 // AnnotationCreatedBy marks resources created (not adopted) by the operator.
 // This is provenance only: #514 retains every workflow namespace on uninstall,
