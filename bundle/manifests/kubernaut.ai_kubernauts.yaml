@@ -3032,8 +3032,11 @@ spec:
                 type: object
               postgresql:
                 description: |-
-                  BYO PostgreSQL connection. The operator validates the secret and derives
-                  the DataStorage db-secrets.yaml Secret automatically.
+                  BYO PostgreSQL connection. The operator validates and mounts this
+                  administrator-owned Secret directly; it never creates a competing
+                  DataStorage credential Secret. Required keys are POSTGRES_USER,
+                  POSTGRES_PASSWORD, POSTGRES_DB, and db-secrets.yaml containing matching
+                  username/password values.
                 properties:
                   host:
                     description: PostgreSQL hostname or service DNS.
@@ -3049,7 +3052,8 @@ spec:
                   secretName:
                     description: |-
                       Name of the Secret containing PostgreSQL credentials.
-                      Required keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB.
+                      Required keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, and
+                      db-secrets.yaml containing matching username/password values.
                     minLength: 1
                     type: string
                   sslMode:

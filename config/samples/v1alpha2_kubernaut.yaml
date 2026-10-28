@@ -12,7 +12,8 @@ metadata:
   namespace: kubernaut-system
 spec:
   # BYO PostgreSQL. The Secret must contain POSTGRES_USER,
-  # POSTGRES_PASSWORD, and POSTGRES_DB.
+  # POSTGRES_PASSWORD, POSTGRES_DB, and db-secrets.yaml with matching
+  # username/password values. The operator mounts this Secret directly.
   postgresql:
     host: postgresql.kubernaut-system.svc.cluster.local
     secretName: postgresql-secret

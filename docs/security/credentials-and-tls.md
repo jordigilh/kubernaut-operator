@@ -19,7 +19,7 @@ The operator and managed workloads expect Kubernetes Secret objects (bring-your-
 
 | Secret | Required keys | Purpose |
 |--------|---------------|---------|
-| PostgreSQL (`spec.postgresql.secretName`) | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | Database access for DataStorage and migrations |
+| PostgreSQL (`spec.postgresql.secretName`) | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, and `db-secrets.yaml` with matching `username`/`password` | Database access for DataStorage and migrations; the operator mounts this Secret directly and never creates a derived database credential Secret |
 | Valkey or Redis (`spec.valkey.secretName`) | `password` | Cache and stream access for DataStorage. **Not sufficient authentication on its own** -- see [TLS configuration](#tls-configuration) below |
 | Valkey mTLS (optional but recommended, `spec.valkey.tls.caSecretName` / `clientCertSecretName`) | `ca.crt` / `tls.crt`, `tls.key` | Client authentication to Valkey via mutual TLS |
 | LLM credentials (`spec.llmProfiles.<name>.credentialsSecretName`) | Provider-dependent: `credentials.json` (Vertex AI), `api_key` (OpenAI or Anthropic), and similar | Authenticate to the LLM provider API |

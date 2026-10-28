@@ -41,8 +41,11 @@ type KubernautSpec struct {
 	// +optional
 	Image ImageSpec `json:"image,omitempty"`
 
-	// BYO PostgreSQL connection. The operator validates the secret and derives
-	// the DataStorage db-secrets.yaml Secret automatically.
+	// BYO PostgreSQL connection. The operator validates and mounts this
+	// administrator-owned Secret directly; it never creates a competing
+	// DataStorage credential Secret. Required keys are POSTGRES_USER,
+	// POSTGRES_PASSWORD, POSTGRES_DB, and db-secrets.yaml containing matching
+	// username/password values.
 	PostgreSQL PostgreSQLSpec `json:"postgresql"`
 
 	// BYO Valkey/Redis connection.
@@ -205,7 +208,8 @@ type ImageSpec struct {
 // PostgreSQLSpec defines the BYO PostgreSQL connection.
 type PostgreSQLSpec struct {
 	// Name of the Secret containing PostgreSQL credentials.
-	// Required keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB.
+	// Required keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, and
+	// db-secrets.yaml containing matching username/password values.
 	// +kubebuilder:validation:MinLength=1
 	SecretName string `json:"secretName"`
 

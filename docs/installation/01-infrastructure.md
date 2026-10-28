@@ -119,7 +119,8 @@ For testing with the service-ca certificate (not externally verifiable), set `ss
 
 ### Create the operator secret
 
-Keys must be `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`:
+Keys must be `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, and
+`db-secrets.yaml` containing matching `username`/`password` values:
 
 ```bash
 oc apply -f - <<EOF
@@ -132,6 +133,9 @@ stringData:
   POSTGRES_USER: kubernaut
   POSTGRES_PASSWORD: changeme
   POSTGRES_DB: kubernaut
+  db-secrets.yaml: |
+    username: kubernaut
+    password: changeme
 EOF
 ```
 
