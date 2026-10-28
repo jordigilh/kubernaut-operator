@@ -12,6 +12,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
@@ -84,6 +85,7 @@ var _ = Describe("Issue 587 BYO and migration boundaries", Label("unit"), func()
 		job.Status.Failed = 1
 		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded", Message: "database authentication failed"}}
 		Expect(r.Create(ctx, job)).To(Succeed())
+		Expect(r.Status().Update(ctx, job)).To(Succeed())
 
 		result, err := r.ensureMigrationJob(ctx, kn)
 		Expect(err).NotTo(HaveOccurred())
@@ -107,6 +109,7 @@ var _ = Describe("Issue 587 BYO and migration boundaries", Label("unit"), func()
 		job.Status.Failed = 1
 		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
 		Expect(r.Create(ctx, job)).To(Succeed())
+		Expect(r.Status().Update(ctx, job)).To(Succeed())
 
 		result, err := r.ensureMigrationJob(ctx, kn)
 		Expect(err).NotTo(HaveOccurred())
@@ -136,6 +139,7 @@ var _ = Describe("Issue 587 BYO and migration boundaries", Label("unit"), func()
 		job.Status.Failed = 1
 		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
 		Expect(r.Create(ctx, job)).To(Succeed())
+		Expect(r.Status().Update(ctx, job)).To(Succeed())
 
 		result, err := r.ensureMigrationJob(ctx, kn)
 		Expect(err).NotTo(HaveOccurred())
@@ -153,6 +157,24 @@ var _ = Describe("Issue 587 BYO and migration boundaries", Label("unit"), func()
 		}})
 		_, err := r.ensureMigrationJob(ctx, kn)
 		Expect(err).To(MatchError(ContainSubstring("reading PostgreSQL Secret")))
+	})
+
+	It("UT-587-MIG-005 [CM-3, SI-4; SOC2 CC7.2, CC8.1; ASVS v5.0.0-V16.2.1, V16.5.2] skips a running migration Job after a previously successful hash", func() {
+		kn := newMinimalCR()
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
+		job, err := resources.MigrationJob(kn)
+		Expect(err).NotTo(HaveOccurred())
+		credentialRevision, err := r.postgresqlCredentialRevision(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		job.Annotations = map[string]string{resources.AnnotationPostgreSQLCredentialRevision: credentialRevision}
+		desiredHash := resources.SpecHash(job)
+		job.Annotations[resources.AnnotationSpecHash] = desiredHash
+		Expect(r.Create(ctx, job)).To(Succeed())
+		kn.Status.LastMigrationHash = desiredHash
+
+		result, err := r.ensureMigrationJob(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(ctrl.Result{}))
 	})
 
 	It("UT-587-REV-002 [CM-3, SI-4; SOC2 CC7.2, CC8.1; ASVS v5.0.0-V16.5.2] fails DataStorage rollout when Valkey revision metadata cannot be read", func() {
