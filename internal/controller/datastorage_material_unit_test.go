@@ -131,6 +131,18 @@ var _ = Describe("DataStorage signing material rollout", Label("unit"), func() {
 		Expect(postgresRevision).To(HaveLen(64))
 		Expect(dependencyRevision).To(HaveLen(64))
 
+		hostChanged := kn.DeepCopy()
+		hostChanged.Spec.PostgreSQL.Host = "postgresql-alt.kubernaut-system.svc"
+		hostRevision, err := (&KubernautReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(hostChanged, postgres, valkey).Build()}).postgresqlCredentialRevision(context.Background(), hostChanged)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(hostRevision).NotTo(Equal(postgresRevision))
+
+		portChanged := kn.DeepCopy()
+		portChanged.Spec.PostgreSQL.Port = 15432
+		portRevision, err := (&KubernautReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(portChanged, postgres, valkey).Build()}).postgresqlCredentialRevision(context.Background(), portChanged)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(portRevision).NotTo(Equal(postgresRevision))
+
 		rotated := valkey.DeepCopy()
 		rotated.ResourceVersion = "12"
 		rotatedReconciler := &KubernautReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(kn, postgres, rotated).Build()}

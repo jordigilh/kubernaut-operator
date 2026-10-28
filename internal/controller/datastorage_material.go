@@ -66,14 +66,23 @@ func hashDataStorageDependencyRevision(value string) string {
 }
 
 // postgresqlCredentialRevision returns a non-sensitive revision for the
-// administrator-owned PostgreSQL Secret referenced by the Kubernaut CR.
+// administrator-owned PostgreSQL Secret and connection inputs referenced by
+// the Kubernaut CR.
 func (r *KubernautReconciler) postgresqlCredentialRevision(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (string, error) {
 	secret := &corev1.Secret{}
 	key := client.ObjectKey{Namespace: kn.Namespace, Name: kn.Spec.PostgreSQL.SecretName}
 	if err := r.Get(ctx, key, secret); err != nil {
 		return "", fmt.Errorf("reading PostgreSQL Secret %q for credential revision: %w", key.Name, err)
 	}
-	return hashDataStorageDependencyRevision(fmt.Sprintf("postgresql/%s/%s@%s", key.Namespace, key.Name, secret.ResourceVersion)), nil
+	sslMode := kn.Spec.PostgreSQL.SSLMode
+	if sslMode == "" {
+		sslMode = resources.DefaultSSLMode
+	}
+	return hashDataStorageDependencyRevision(fmt.Sprintf(
+		"postgresql/%s/%s@%s|host=%s|port=%d|sslMode=%s",
+		key.Namespace, key.Name, secret.ResourceVersion, kn.Spec.PostgreSQL.Host,
+		resources.PostgreSQLPort(kn), sslMode,
+	)), nil
 }
 
 // dataStorageDependencyRevision combines PostgreSQL and Valkey Secret
