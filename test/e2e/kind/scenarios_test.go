@@ -450,21 +450,21 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 				g.Expect(condition).To(Equal("False"))
 			}).Should(Succeed())
 
-			jobSnapshot, err := issue587ObjectMetadata(ctx, "job", "kubernaut-db-migration")
-			Expect(err).NotTo(HaveOccurred())
-			Consistently(func() string {
-				snapshot, snapshotErr := issue587ObjectMetadata(ctx, "job", "kubernaut-db-migration")
-				if snapshotErr != nil {
-					return snapshotErr.Error()
-				}
-				return snapshot
-			}, 40*time.Second, 2*time.Second).Should(Equal(jobSnapshot))
-			Expect(issue587DataStorageSnapshot(ctx)).To(Equal(beforeDataStorage))
-			Expect(issue587ObjectMetadata(ctx, "deployment", "postgresql")).To(Equal(beforePostgreSQL))
 			failedJobUID, uidErr := kubectl(ctx, "get", "job", "kubernaut-db-migration", "-n", kubernautNamespace,
 				"-o", "jsonpath={.metadata.uid}")
 			Expect(uidErr).NotTo(HaveOccurred(), failedJobUID)
-			Expect(strings.TrimSpace(failedJobUID)).NotTo(BeEmpty())
+			failedJobUID = strings.TrimSpace(failedJobUID)
+			Expect(failedJobUID).NotTo(BeEmpty())
+			Consistently(func() string {
+				uid, getErr := kubectl(ctx, "get", "job", "kubernaut-db-migration", "-n", kubernautNamespace,
+					"-o", "jsonpath={.metadata.uid}")
+				if getErr != nil {
+					return getErr.Error()
+				}
+				return strings.TrimSpace(uid)
+			}, 40*time.Second, 2*time.Second).Should(Equal(failedJobUID))
+			Expect(issue587DataStorageSnapshot(ctx)).To(Equal(beforeDataStorage))
+			Expect(issue587ObjectMetadata(ctx, "deployment", "postgresql")).To(Equal(beforePostgreSQL))
 
 			patchOutput, patchErr = kubectl(ctx, "patch", "kubernaut", "kubernaut", "-n", kubernautNamespace,
 				"--type=merge", "-p", `{"spec":{"postgresql":{"secretName":"postgresql-secret"}}}`)
