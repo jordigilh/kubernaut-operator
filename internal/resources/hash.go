@@ -56,6 +56,14 @@ const (
 	// revision for the Secret-backed Fleet MCP Gateway CA. It contains only
 	// Secret identity/resourceVersion metadata, never CA bytes.
 	AnnotationFleetMCPGatewayMaterialRevision = "kubernaut.ai/fleet-mcp-gateway-material-revision"
+
+	// AnnotationPostgreSQLCredentialRevision is a non-sensitive migration Job
+	// revision derived from the referenced PostgreSQL Secret metadata.
+	AnnotationPostgreSQLCredentialRevision = "kubernaut.ai/postgresql-credential-revision" //nolint:gosec // metadata key, not credential data
+
+	// AnnotationDataStorageDependencyRevision is a non-sensitive DataStorage
+	// pod-template revision derived from PostgreSQL and Valkey Secret metadata.
+	AnnotationDataStorageDependencyRevision = "kubernaut.ai/datastorage-dependency-revision"
 )
 
 // ConfigMapDataHash computes a stable SHA-256 hex digest of a ConfigMap's

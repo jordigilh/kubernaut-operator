@@ -20,11 +20,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/go-logr/zapr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest/observer"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -40,7 +37,6 @@ import (
 	"k8s.io/client-go/tools/events"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
@@ -57,7 +53,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		cleanupClusterScoped(ctx)
 	})
 
-	It("IT-OWN-514-001 [AC-3, AC-6, AU-3, SI-4; SOC2 CC6.1, CC7.2; ASVS v5.0.0-V8.3.1, v5.0.0-V16.2.1] preserves an administrator's derived-secret name and reports the conflict", func() {
+	It("IT-OWN-514-001 [AC-3, AC-6, AU-3, SI-4; SOC2 CC6.1, CC6.6, CC7.2; ASVS v5.0.0-V8.3.1, v5.0.0-V16.2.1] preserves a legacy derived-secret object without using it as a dependency credential", func() {
 		createBYOSecrets(ctx)
 		foreign := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "datastorage-db-secret", Namespace: testNamespace},
@@ -67,33 +63,10 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, foreign))).To(Succeed()) })
 		before := foreign.DeepCopy()
 		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
-		r := newReconciler()
-		core, logs := observer.New(zap.InfoLevel)
-		tracedCtx := logf.IntoContext(ctx, zapr.NewLogger(zap.New(core)))
-		_, err := r.Reconcile(tracedCtx, reconcile.Request{NamespacedName: singletonKey()})
-		Expect(err).NotTo(HaveOccurred())
-		_, err = r.Reconcile(tracedCtx, reconcile.Request{NamespacedName: singletonKey()})
-		Expect(err).NotTo(HaveOccurred()) // migration prereq errors become existing status/events
-
+		reconcileToRunning(ctx)
 		live := &corev1.Secret{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(foreign), live)).To(Succeed())
-		Expect(live).To(Equal(before), "a failed install must not take over administrator credentials")
-		kn := fetchKnV2(ctx)
-		condition := meta.FindStatusCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionCRDsInstalled)
-		Expect(condition).NotTo(BeNil())
-		Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-		Expect(condition.Message).To(ContainSubstring("ownership conflict"))
-		Expect(condition.Message).To(ContainSubstring("Secret"))
-		Expect(condition.Message).NotTo(ContainSubstring("administrator-private-data"))
-		Eventually(r.Recorder.(*events.FakeRecorder).Events, timeout, interval).Should(Receive(ContainSubstring("OwnershipConflict")))
-		entries := logs.FilterMessage("resource ownership conflict").All()
-		Expect(entries).NotTo(BeEmpty())
-		fields := entries[0].ContextMap()
-		Expect(fields).To(HaveKeyWithValue("kind", "Secret"))
-		Expect(fields).To(HaveKeyWithValue("name", foreign.Name))
-		Expect(fields).To(HaveKeyWithValue("namespace", testNamespace))
-		Expect(fields).To(HaveKeyWithValue("generation", kn.Generation))
-		Expect(fields).To(HaveKey("resourceVersion"))
+		Expect(live).To(Equal(before))
 	})
 
 	It("IT-483-OWNERSHIP-001 [AC-6, AU-3; SOC2 CC6.1; ASVS V8.3.1] preserves a foreign Helm-owned Console Deployment", func() {

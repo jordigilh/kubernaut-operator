@@ -191,6 +191,7 @@ var _ = Describe("monitoring TLS trust validation", Label("unit"), func() {
 				"POSTGRES_USER":     []byte("kubernaut"),
 				"POSTGRES_PASSWORD": []byte("secret"),
 				"POSTGRES_DB":       []byte("kubernaut"),
+				"db-secrets.yaml":   []byte("username: kubernaut\npassword: secret\n"),
 			},
 		}
 		valkeySecret := &corev1.Secret{

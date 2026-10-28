@@ -58,6 +58,48 @@ func hashDataStorageSigningRevision(value string) string {
 	return hex.EncodeToString(digest[:])
 }
 
+// hashDataStorageDependencyRevision hashes non-sensitive dependency identity
+// and resource-version material for rollout annotations.
+func hashDataStorageDependencyRevision(value string) string {
+	digest := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(digest[:])
+}
+
+// postgresqlCredentialRevision returns a non-sensitive revision for the
+// administrator-owned PostgreSQL Secret and connection inputs referenced by
+// the Kubernaut CR.
+func (r *KubernautReconciler) postgresqlCredentialRevision(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (string, error) {
+	secret := &corev1.Secret{}
+	key := client.ObjectKey{Namespace: kn.Namespace, Name: kn.Spec.PostgreSQL.SecretName}
+	if err := r.Get(ctx, key, secret); err != nil {
+		return "", fmt.Errorf("reading PostgreSQL Secret %q for credential revision: %w", key.Name, err)
+	}
+	sslMode := kn.Spec.PostgreSQL.SSLMode
+	if sslMode == "" {
+		sslMode = resources.DefaultSSLMode
+	}
+	return hashDataStorageDependencyRevision(fmt.Sprintf(
+		"postgresql/%s/%s@%s|host=%s|port=%d|sslMode=%s",
+		key.Namespace, key.Name, secret.ResourceVersion, kn.Spec.PostgreSQL.Host,
+		resources.PostgreSQLPort(kn), sslMode,
+	)), nil
+}
+
+// dataStorageDependencyRevision combines PostgreSQL and Valkey Secret
+// revisions without reading credential bytes into the resulting value.
+func (r *KubernautReconciler) dataStorageDependencyRevision(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (string, error) {
+	postgresqlRevision, err := r.postgresqlCredentialRevision(ctx, kn)
+	if err != nil {
+		return "", err
+	}
+	valkey := &corev1.Secret{}
+	key := client.ObjectKey{Namespace: kn.Namespace, Name: kn.Spec.Valkey.SecretName}
+	if err := r.Get(ctx, key, valkey); err != nil {
+		return "", fmt.Errorf("reading Valkey Secret %q for dependency revision: %w", key.Name, err)
+	}
+	return hashDataStorageDependencyRevision(fmt.Sprintf("%s|valkey/%s/%s@%s", postgresqlRevision, key.Namespace, key.Name, valkey.ResourceVersion)), nil
+}
+
 func stampDataStorageSigningMaterialRevision(dep *appsv1.Deployment, revisions telemetryMaterialRevisionSet) {
 	if dep.Spec.Template.Labels["app"] != resources.ComponentDataStorage || revisions.DataStorageSigning == "" {
 		return
@@ -66,6 +108,46 @@ func stampDataStorageSigningMaterialRevision(dep *appsv1.Deployment, revisions t
 		dep.Spec.Template.Annotations = make(map[string]string, 1)
 	}
 	dep.Spec.Template.Annotations[resources.AnnotationDataStorageSigningMaterialRevision] = revisions.DataStorageSigning
+}
+
+// stampDataStorageDependencyRevision adds the BYO dependency revision only to
+// the DataStorage pod template, keeping unrelated component hashes stable.
+func stampDataStorageDependencyRevision(dep *appsv1.Deployment, revisions telemetryMaterialRevisionSet) {
+	if dep.Spec.Template.Labels["app"] != resources.ComponentDataStorage || revisions.DataStorageDependency == "" {
+		return
+	}
+	if dep.Spec.Template.Annotations == nil {
+		dep.Spec.Template.Annotations = make(map[string]string, 1)
+	}
+	dep.Spec.Template.Annotations[resources.AnnotationDataStorageDependencyRevision] = revisions.DataStorageDependency
+}
+
+// byoDependencySecretToKubernaut maps changes to administrator-owned
+// PostgreSQL and Valkey Secrets to the singleton without adopting or mutating
+// the Secret.
+func (r *KubernautReconciler) byoDependencySecretToKubernaut(ctx context.Context, object client.Object) []reconcile.Request {
+	secret, ok := object.(*corev1.Secret)
+	if !ok || secret == nil {
+		return nil
+	}
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	instances := &kubernautv1alpha2.KubernautList{}
+	if err := reader.List(ctx, instances, client.InNamespace(secret.Namespace)); err != nil {
+		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for BYO dependency Secret event",
+			"namespace", secret.Namespace, "name", secret.Name)
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(instances.Items))
+	for index := range instances.Items {
+		kn := &instances.Items[index]
+		if kn.Spec.PostgreSQL.SecretName == secret.Name || kn.Spec.Valkey.SecretName == secret.Name {
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)})
+		}
+	}
+	return requests
 }
 
 // dataStorageSigningSecretToKubernaut maps changes to non-owned administrator

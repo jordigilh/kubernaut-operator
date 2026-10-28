@@ -114,4 +114,71 @@ var _ = Describe("DataStorage signing material rollout", Label("unit"), func() {
 			}}).Build()}
 		Expect(listDenied.dataStorageSigningSecretToKubernaut(context.Background(), secret)).To(BeNil())
 	})
+
+	It("UT-587-REV-001 [CM-3, CM-6, SI-4; SOC2 CC7.2, CC8.1; ASVS v5.0.0-V16.5.2] uses dependency Secret metadata for DataStorage rollout and watches only referenced Secrets", func() {
+		kn := newMinimalCR()
+		postgres := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: kn.Spec.PostgreSQL.SecretName, Namespace: kn.Namespace, ResourceVersion: "7"}}
+		valkey := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: kn.Spec.Valkey.SecretName, Namespace: kn.Namespace, ResourceVersion: "11"}}
+		scheme := runtime.NewScheme()
+		Expect(corev1.AddToScheme(scheme)).To(Succeed())
+		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
+		reconciler := &KubernautReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(kn, postgres, valkey).Build()}
+
+		postgresRevision, err := reconciler.postgresqlCredentialRevision(context.Background(), kn)
+		Expect(err).NotTo(HaveOccurred())
+		dependencyRevision, err := reconciler.dataStorageDependencyRevision(context.Background(), kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(postgresRevision).To(HaveLen(64))
+		Expect(dependencyRevision).To(HaveLen(64))
+
+		hostChanged := kn.DeepCopy()
+		hostChanged.Spec.PostgreSQL.Host = "postgresql-alt.kubernaut-system.svc"
+		hostRevision, err := (&KubernautReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(hostChanged, postgres, valkey).Build()}).postgresqlCredentialRevision(context.Background(), hostChanged)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(hostRevision).NotTo(Equal(postgresRevision))
+
+		portChanged := kn.DeepCopy()
+		portChanged.Spec.PostgreSQL.Port = 15432
+		portRevision, err := (&KubernautReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(portChanged, postgres, valkey).Build()}).postgresqlCredentialRevision(context.Background(), portChanged)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(portRevision).NotTo(Equal(postgresRevision))
+
+		rotated := valkey.DeepCopy()
+		rotated.ResourceVersion = "12"
+		rotatedReconciler := &KubernautReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(kn, postgres, rotated).Build()}
+		rotatedRevision, err := rotatedReconciler.dataStorageDependencyRevision(context.Background(), kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rotatedRevision).NotTo(Equal(dependencyRevision))
+
+		missingPostgres := &KubernautReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(kn, valkey).Build()}
+		_, err = missingPostgres.postgresqlCredentialRevision(context.Background(), kn)
+		Expect(err).To(HaveOccurred())
+		_, err = missingPostgres.dataStorageDependencyRevision(context.Background(), kn)
+		Expect(err).To(HaveOccurred())
+		missingValkey := &KubernautReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(kn, postgres).Build()}
+		_, err = missingValkey.dataStorageDependencyRevision(context.Background(), kn)
+		Expect(err).To(HaveOccurred())
+
+		dataStorage := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{
+			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": resources.ComponentDataStorage}},
+		}}}
+		other := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{
+			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": resources.ComponentGateway}},
+		}}}
+		stampDataStorageDependencyRevision(dataStorage, telemetryMaterialRevisionSet{DataStorageDependency: dependencyRevision})
+		stampDataStorageDependencyRevision(other, telemetryMaterialRevisionSet{DataStorageDependency: dependencyRevision})
+		Expect(dataStorage.Spec.Template.Annotations).To(HaveKeyWithValue(resources.AnnotationDataStorageDependencyRevision, dependencyRevision))
+		Expect(other.Spec.Template.Annotations).NotTo(HaveKey(resources.AnnotationDataStorageDependencyRevision))
+
+		requests := reconciler.byoDependencySecretToKubernaut(context.Background(), postgres)
+		Expect(requests).To(ConsistOf(reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)}))
+		Expect(reconciler.byoDependencySecretToKubernaut(context.Background(), &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: kn.Namespace}})).To(BeEmpty())
+		Expect(reconciler.byoDependencySecretToKubernaut(context.Background(), &corev1.ConfigMap{})).To(BeNil())
+		listDenied := &KubernautReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(kn).WithInterceptorFuncs(interceptor.Funcs{
+			List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+				return errors.New("list denied")
+			},
+		}).Build()}
+		Expect(listDenied.byoDependencySecretToKubernaut(context.Background(), postgres)).To(BeNil())
+	})
 })

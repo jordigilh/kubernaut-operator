@@ -132,6 +132,7 @@ func createBYOSecrets(ctx context.Context) {
 				"POSTGRES_USER":     []byte("kubernaut"),
 				"POSTGRES_PASSWORD": []byte("secret"),
 				"POSTGRES_DB":       []byte("kubernaut"),
+				"db-secrets.yaml":   []byte("username: kubernaut\npassword: secret\n"),
 			},
 		},
 		{
@@ -363,6 +364,7 @@ var _ = Describe("Kubernaut Controller", func() {
 					"POSTGRES_USER":     []byte("u"),
 					"POSTGRES_PASSWORD": []byte("p"),
 					"POSTGRES_DB":       []byte("d"),
+					"db-secrets.yaml":   []byte("username: u\npassword: p\n"),
 				},
 			}
 			Expect(k8sClient.Create(ctx, pgOnly)).To(Succeed())

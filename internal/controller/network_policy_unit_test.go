@@ -180,15 +180,13 @@ var _ = Describe("portable NetworkPolicy unit lifecycle", Label("unit"), func() 
 		Expect(phaseErr).To(MatchError(ContainSubstring("ingress CIDR")))
 
 		kn := newMinimalCR()
-		job, err := resources.MigrationJob(kn)
-		Expect(err).NotTo(HaveOccurred())
-		kn.Status.LastMigrationHash = resources.SpecHash(job)
 		deployFailure := businessUnitReconciler(kn, interceptor.Funcs{Create: func(ctx context.Context, api client.WithWatch, object client.Object, options ...client.CreateOption) error {
 			if _, ok := object.(*appsv1.Deployment); ok {
 				return fmt.Errorf("injected deployment failure")
 			}
 			return api.Create(ctx, object, options...)
 		}})
+		seedCompletedMigrationJob(deployFailure, kn)
 		_, phaseErr = deployFailure.reconcilePhases(ctx, kn, kn)
 		Expect(phaseErr).To(MatchError(ContainSubstring("deployment failure")))
 	})

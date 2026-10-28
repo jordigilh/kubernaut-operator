@@ -77,10 +77,6 @@ const (
 	certManagerClusterIssuerKind = "ClusterIssuer"
 )
 
-// maxMigrationRetries caps the number of times a failed migration Job is
-// deleted and re-created before the operator transitions to PhaseError.
-const maxMigrationRetries = 10
-
 // Condition reasons used in status patches.
 const (
 	ReasonSecretsValid                   = "SecretsValid"
@@ -310,14 +306,14 @@ func (r *KubernautReconciler) validateDatabaseInputs(ctx context.Context, kn *ku
 		},
 		{
 			validation: func() error {
-				return r.validateSecret(ctx, kn.Namespace, kn.Spec.PostgreSQL.SecretName, []string{"POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB"})
+				return r.validatePostgreSQLSecret(ctx, kn)
 			},
 			reason:  "PostgreSQLSecretInvalid",
 			message: "PostgreSQL secret validation failed",
 		},
 		{
 			validation: func() error {
-				return r.validateSecret(ctx, kn.Namespace, kn.Spec.Valkey.SecretName, []string{"valkey-secrets.yaml"})
+				return r.validateValkeySecret(ctx, kn)
 			},
 			reason:  "ValkeySecretInvalid",
 			message: "Valkey secret validation failed",
@@ -337,6 +333,26 @@ func (r *KubernautReconciler) validateDatabaseInputs(ctx context.Context, kn *ku
 		}
 	}
 	return ctrl.Result{}, nil, false
+}
+
+// validatePostgreSQLSecret reads and validates the administrator-owned
+// PostgreSQL Secret referenced by the Kubernaut CR.
+func (r *KubernautReconciler) validatePostgreSQLSecret(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: kn.Spec.PostgreSQL.SecretName}, secret); err != nil {
+		return fmt.Errorf("reading PostgreSQL secret %q: %w", kn.Spec.PostgreSQL.SecretName, err)
+	}
+	return resources.ValidatePostgreSQLSecret(secret)
+}
+
+// validateValkeySecret reads and validates the administrator-owned Valkey
+// Secret referenced by the Kubernaut CR without mutating it.
+func (r *KubernautReconciler) validateValkeySecret(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: kn.Spec.Valkey.SecretName}, secret); err != nil {
+		return fmt.Errorf("reading Valkey secret %q: %w", kn.Spec.Valkey.SecretName, err)
+	}
+	return resources.ValidateValkeySecret(secret)
 }
 
 //nolint:funlen // validation order is intentionally explicit and phase-gated.
@@ -531,8 +547,7 @@ func (r *KubernautReconciler) phaseMigrate(ctx context.Context, kn *kubernautv1a
 	})
 }
 
-// ensureMigrationPrereqs installs CRDs, derives the DataStorage DB secret
-// from the user-provided PostgreSQL secret, and ensures the migration ConfigMap.
+// ensureMigrationPrereqs installs CRDs and ensures the migration ConfigMap.
 func (r *KubernautReconciler) ensureMigrationPrereqs(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
 	if err := resources.EnsureCRDs(ctx, r.RestCfg); err != nil {
 		return err
@@ -544,18 +559,6 @@ func (r *KubernautReconciler) ensureMigrationPrereqs(ctx context.Context, kn *ku
 	}
 	if err := r.ensureTLSConfigMapsForMaterial(ctx, kn, tlsMaterial, tlsBundle); err != nil {
 		return fmt.Errorf("ensuring generic TLS trust before migration: %w", err)
-	}
-
-	pgSecret := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: kn.Spec.PostgreSQL.SecretName}, pgSecret); err != nil {
-		return fmt.Errorf("fetching pg secret for DS derivation: %w", err)
-	}
-	dsSecret, err := resources.DataStorageDBSecret(kn, pgSecret)
-	if err != nil {
-		return fmt.Errorf("deriving datastorage-db-secret: %w", err)
-	}
-	if err := r.ensureNamespaced(ctx, kn, dsSecret); err != nil {
-		return fmt.Errorf("ensuring datastorage-db-secret: %w", err)
 	}
 
 	migrationCM, err := resources.MigrationConfigMap(kn)
@@ -593,6 +596,14 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("building migration job: %w", err)
 	}
+	credentialRevision, err := r.postgresqlCredentialRevision(ctx, kn)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if migrationJob.Annotations == nil {
+		migrationJob.Annotations = make(map[string]string, 1)
+	}
+	migrationJob.Annotations[resources.AnnotationPostgreSQLCredentialRevision] = credentialRevision
 	desiredHash := resources.SpecHash(migrationJob)
 	setHashAnnotation(migrationJob, desiredHash)
 
@@ -604,19 +615,19 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 	if created {
 		existingJob = migrationJob
 	}
-	// The status hash is only a no-op shortcut after the live Job has been
-	// fetched and authorized. A name or matching status hash is not ownership.
-	if kn.Status.LastMigrationHash == desiredHash {
-		return ctrl.Result{}, nil
-	}
-
 	for _, cond := range existingJob.Status.Conditions {
 		if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
 			return r.handleCompleteMigrationJob(ctx, kn, existingJob, desiredHash)
 		}
 		if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
-			return r.handleFailedMigrationJob(ctx, kn, existingJob)
+			return r.handleFailedMigrationJob(ctx, kn, existingJob, credentialRevision)
 		}
+	}
+	// The status hash is only a no-op shortcut after terminal Job handling. A
+	// previously successful hash must not hide a failed Job from a newly
+	// corrected dependency revision.
+	if kn.Status.LastMigrationHash == desiredHash {
+		return ctrl.Result{}, nil
 	}
 
 	log.Info("waiting for migration job to complete")
@@ -662,29 +673,37 @@ func (r *KubernautReconciler) handleCompleteMigrationJob(
 }
 
 // handleFailedMigrationJob processes a migration Job that has reached
-// JobFailed. Once the retry limit is exceeded, migration is marked failed
-// requiring manual intervention; otherwise the failed job is deleted so a
-// fresh attempt is created on the next reconcile.
+// JobFailed. The failed Job is retained for the current dependency revision;
+// only a stale revision is deleted for a fresh attempt.
 func (r *KubernautReconciler) handleFailedMigrationJob(
-	ctx context.Context, kn *kubernautv1alpha2.Kubernaut, existingJob *batchv1.Job,
+	ctx context.Context, kn *kubernautv1alpha2.Kubernaut, existingJob *batchv1.Job, credentialRevision string,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	if existingJob.Status.Failed >= int32(maxMigrationRetries) {
-		log.Info("migration job exceeded retry limit", "failed", existingJob.Status.Failed, "max", maxMigrationRetries)
-		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionMigrationComplete,
-			ReasonMigrationFailed, fmt.Sprintf("Database migration failed after %d attempts; manual intervention required", existingJob.Status.Failed))
+	if existingJob.GetAnnotations()[resources.AnnotationPostgreSQLCredentialRevision] != credentialRevision {
+		log.Info("failed migration job has stale PostgreSQL credential revision, deleting for re-run")
+		propagation := metav1.DeletePropagationBackground
+		if err := r.deleteObservedResource(ctx, existingJob, &client.DeleteOptions{
+			PropagationPolicy: &propagation,
+		}); err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("deleting stale failed migration job: %w", err)
+		}
+		return ctrl.Result{RequeueAfter: time.Millisecond}, nil
 	}
 
-	log.Info("migration job failed, deleting for retry", "attempt", existingJob.Status.Failed)
-	propagation := metav1.DeletePropagationBackground
-	if err := r.deleteObservedResource(ctx, existingJob, &client.DeleteOptions{
-		PropagationPolicy: &propagation,
-	}); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, fmt.Errorf("deleting failed migration job: %w", err)
+	failureMessage := "migration job reached a terminal failed state"
+	for _, condition := range existingJob.Status.Conditions {
+		if condition.Type == batchv1.JobFailed && (condition.Reason != "" || condition.Message != "") {
+			failureMessage = strings.TrimSpace(strings.Join([]string{condition.Reason, condition.Message}, ": "))
+			break
+		}
+	}
+	log.Info("migration job failed; retaining for manual dependency correction", "failed", existingJob.Status.Failed)
+	if r.Recorder != nil {
+		r.Recorder.Eventf(kn, nil, corev1.EventTypeWarning, ReasonMigrationFailed, "Reconcile", "%s", failureMessage)
 	}
 	return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionMigrationComplete,
-		ReasonMigrationFailed, "Database migration job failed; will retry")
+		ReasonMigrationFailed, fmt.Sprintf("Database migration failed: %s; correct the referenced PostgreSQL dependency and update its Secret before retrying", failureMessage))
 }
 
 // setCRDsReady sets the ConditionCRDsInstalled condition to True on the
@@ -766,6 +785,11 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 		return fmt.Errorf("resolving DataStorage signing material revision: %w", err)
 	}
 	telemetryRevisions.DataStorageSigning = signingRevision
+	dependencyRevision, err := r.dataStorageDependencyRevision(ctx, kn)
+	if err != nil {
+		return fmt.Errorf("resolving DataStorage dependency revision: %w", err)
+	}
+	telemetryRevisions.DataStorageDependency = dependencyRevision
 	if err := r.deployAdmissionWebhooks(ctx, kn, tlsMaterial, tlsBundle); err != nil {
 		return err
 	}
@@ -2026,6 +2050,7 @@ func (r *KubernautReconciler) ensureDeployments(
 		stampTelemetryMaterialRevision(dep, telemetryRevisions)
 		stampFleetMCPGatewayMaterialRevision(dep, telemetryRevisions)
 		stampDataStorageSigningMaterialRevision(dep, telemetryRevisions)
+		stampDataStorageDependencyRevision(dep, telemetryRevisions)
 		stampMonitoringMaterialRevision(dep, telemetryRevisions)
 		if err := r.ensureNamespaced(ctx, kn, dep); err != nil {
 			return fmt.Errorf("ensuring Deployment %s: %w", dep.Name, err)
@@ -4706,6 +4731,7 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.precreatedConfigurationToKubernaut)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.auditHashKeySecretToKubernaut)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.dataStorageSigningSecretToKubernaut)).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.byoDependencySecretToKubernaut)).
 		Owns(&batchv1.Job{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Owns(&rbacv1.Role{}).

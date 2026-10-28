@@ -177,7 +177,6 @@ const DefaultValkeyPort int32 = 6379
 // succeeds or reaches the backoff limit.
 const (
 	MigrationBackoffLimit int32 = 3
-	MigrationTTLSeconds   int32 = 300
 )
 
 // PDB constant.

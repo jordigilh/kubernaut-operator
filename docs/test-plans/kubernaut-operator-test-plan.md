@@ -560,7 +560,7 @@ Tests are executed on every pull request via GitHub Actions. The pipeline:
 | `services_test.go` | 8 | Service count, ports, authwebhook HTTPS, selector-to-component validation, PDB count/selectors |
 | `serviceaccounts_test.go` | 3 | ServiceAccount per-component, WorkflowRunnerServiceAccount default/custom namespace |
 | `webhooks_test.go` | 7 | MWC/VWC names, rules, paths, sideEffects, failurePolicy, labels |
-| `ocp_test.go` | 9 | Route enabled/disabled, hostname, GatewayRouteStub, DataStorageDBSecret, WorkflowNamespace |
+| `ocp_test.go` | 6 | Route enabled/disabled, hostname, GatewayRouteStub, WorkflowNamespace |
 | `migration_test.go` | 6 | MigrationConfigMap, MigrationJob, backoffLimit, TTL, image |
 | `tls_test.go` | 5 | TLS generation, CA bundle, DNS names, cert validity |
 | `crds_test.go` | 4 | EnsureCRDs create, update, idempotency |

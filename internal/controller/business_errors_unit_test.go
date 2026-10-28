@@ -58,33 +58,38 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 		Expect(err).To(MatchError("injected status failure"))
 	})
 
-	It("UT-AUDIT-515-ERRORS-003: bounds failed migration retries and deletes stale completed Jobs", func() {
-		for _, failed := range []int32{1, maxMigrationRetries} {
-			kn := newMinimalCR()
-			r := businessUnitReconciler(kn, interceptor.Funcs{})
-			job, err := resources.MigrationJob(kn)
-			Expect(err).NotTo(HaveOccurred())
-			job.Status.Failed = failed
-			job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
-			Expect(r.Create(ctx, job)).To(Succeed())
-			result, err := r.ensureMigrationJob(ctx, kn)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(requeueError))
-			Expect(meta.IsStatusConditionFalse(kn.Status.Conditions, kubernautv1alpha2.ConditionMigrationComplete)).To(BeTrue())
-			live := &batchv1.Job{}
-			readErr := r.Get(ctx, client.ObjectKeyFromObject(job), live)
-			Expect(apierrors.IsNotFound(readErr)).To(Equal(failed < maxMigrationRetries))
-		}
+	It("UT-AUDIT-515-ERRORS-003: retains current failed migration Jobs and deletes stale completed Jobs", func() {
 		kn := newMinimalCR()
 		r := businessUnitReconciler(kn, interceptor.Funcs{})
 		job, err := resources.MigrationJob(kn)
 		Expect(err).NotTo(HaveOccurred())
-		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+		credentialRevision, err := r.postgresqlCredentialRevision(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		job.Annotations = map[string]string{
+			resources.AnnotationPostgreSQLCredentialRevision: credentialRevision,
+		}
+		job.Annotations[resources.AnnotationSpecHash] = resources.SpecHash(job)
+		job.Status.Failed = 1
+		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
 		Expect(r.Create(ctx, job)).To(Succeed())
 		result, err := r.ensureMigrationJob(ctx, kn)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(result.RequeueAfter).To(Equal(time.Millisecond))
-		Expect(apierrors.IsNotFound(r.Get(ctx, client.ObjectKeyFromObject(job), &batchv1.Job{}))).To(BeTrue())
+		Expect(result.RequeueAfter).To(Equal(requeueError))
+		Expect(meta.IsStatusConditionFalse(kn.Status.Conditions, kubernautv1alpha2.ConditionMigrationComplete)).To(BeTrue())
+		Expect(r.Get(ctx, client.ObjectKeyFromObject(job), &batchv1.Job{})).To(Succeed())
+
+		{
+			kn := newMinimalCR()
+			r := businessUnitReconciler(kn, interceptor.Funcs{})
+			job, err := resources.MigrationJob(kn)
+			Expect(err).NotTo(HaveOccurred())
+			job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+			Expect(r.Create(ctx, job)).To(Succeed())
+			result, err := r.ensureMigrationJob(ctx, kn)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Millisecond))
+			Expect(apierrors.IsNotFound(r.Get(ctx, client.ObjectKeyFromObject(job), &batchv1.Job{}))).To(BeTrue())
+		}
 	})
 
 	It("UT-AUDIT-515-ERRORS-004: retains finalizers when cleanup or finalizer removal fails", func() {

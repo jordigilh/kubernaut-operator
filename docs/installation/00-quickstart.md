@@ -16,7 +16,7 @@ Mandatory-ness comes from two different places, and it matters which one applies
 Provision these before applying the CR (see [Infrastructure Prerequisites](01-infrastructure.md) for full detail):
 
 - A namespace (e.g. `kubernaut-system`).
-- PostgreSQL 15+, reachable, with a Secret containing `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`.
+- PostgreSQL 15+, reachable, with a Secret containing `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` and `db-secrets.yaml` with matching `username`/`password` values.
 - Valkey/Redis 7+, reachable, with a Secret containing key `valkey-secrets.yaml`.
 - LLM API credentials (OpenAI, Anthropic, or GCP Vertex AI) in a Secret.
 - An OIDC provider is only required if you later enable API Frontend/Console.
@@ -69,7 +69,7 @@ spec:
   # BYO PostgreSQL (schema-required parent object + host/secretName).
   postgresql:
     host: postgresql.kubernaut-system.svc.cluster.local
-    secretName: postgresql-secret   # keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+    secretName: postgresql-secret   # keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, db-secrets.yaml
 
   # BYO Valkey/Redis (schema-required parent object + host/secretName).
   valkey:

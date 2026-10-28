@@ -16,7 +16,7 @@ spec:
   # docs/installation/01-infrastructure.md to provision it).
   postgresql:
     host: postgresql.kubernaut-system.svc.cluster.local
-    secretName: postgresql-secret   # keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+    secretName: postgresql-secret   # keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, db-secrets.yaml
 
   # BYO Valkey/Redis (schema-required parent object + host/secretName).
   valkey:

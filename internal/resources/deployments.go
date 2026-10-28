@@ -160,8 +160,8 @@ func dataStorageVolumesAndMounts(kn *kubernautv1alpha2.Kubernaut) ([]corev1.Volu
 				Projected: &corev1.ProjectedVolumeSource{
 					Sources: []corev1.VolumeProjection{
 						{Secret: &corev1.SecretProjection{
-							LocalObjectReference: corev1.LocalObjectReference{Name: "datastorage-db-secret"},
-							Items:                []corev1.KeyToPath{{Key: "db-secrets.yaml", Path: "db-secrets.yaml"}},
+							LocalObjectReference: corev1.LocalObjectReference{Name: kn.Spec.PostgreSQL.SecretName},
+							Items:                []corev1.KeyToPath{{Key: PostgreSQLDataStorageSecretKey, Path: PostgreSQLDataStorageSecretKey}},
 						}},
 						{Secret: &corev1.SecretProjection{
 							LocalObjectReference: corev1.LocalObjectReference{Name: kn.Spec.Valkey.SecretName},

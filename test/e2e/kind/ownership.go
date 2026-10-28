@@ -55,10 +55,10 @@ func ownershipObject(ctx context.Context, resource, name, namespace string) (*un
 // fabricated by resource builders. The installed operator is the only actor
 // allowed to reconcile the Kubernaut CR; the test observes public APIs.
 func createOwnershipConflicts(ctx context.Context) ([]ownershipWitness, error) {
-	secret := &corev1.Secret{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
-		ObjectMeta: metav1.ObjectMeta{Name: "datastorage-db-secret", Namespace: kubernautNamespace},
-		StringData: map[string]string{"administrator": "disposable-ownership-sentinel"},
+	migrations := &corev1.ConfigMap{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+		ObjectMeta: metav1.ObjectMeta{Name: "kubernaut-migrations", Namespace: kubernautNamespace},
+		Data:       map[string]string{"administrator": "disposable-ownership-sentinel"},
 	}
 	ingress := &networkingv1.Ingress{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "Ingress"},
@@ -78,11 +78,11 @@ func createOwnershipConflicts(ctx context.Context) ([]ownershipWitness, error) {
 		}},
 		Rules: []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get"}}},
 	}
-	if err := applyYAML(ctx, secret, ingress, role); err != nil {
+	if err := applyYAML(ctx, migrations, ingress, role); err != nil {
 		return nil, err
 	}
 	witnesses := []ownershipWitness{
-		{resource: "secret", name: secret.Name, namespace: secret.Namespace},
+		{resource: "configmap", name: migrations.Name, namespace: migrations.Namespace},
 		{resource: "ingress", name: ingress.Name, namespace: ingress.Namespace},
 		{resource: "clusterrole", name: role.Name},
 	}
@@ -218,8 +218,11 @@ func ownershipGenerationReady(ctx context.Context) error {
 	return fmt.Errorf("services have not reconciled generation %d", kn.GetGeneration())
 }
 
+// deleteOwnershipConflicts removes only the disposable administrator-owned
+// fixtures after the ownership assertions complete.
 func deleteOwnershipConflicts(ctx context.Context) error {
 	for _, args := range [][]string{
+		{"delete", "configmap", "kubernaut-migrations", "-n", kubernautNamespace, "--ignore-not-found"},
 		{"delete", "ingress", "gateway-ingress", "-n", kubernautNamespace, "--ignore-not-found"},
 		{"delete", "clusterrole", "ownership-514-administrator", "--ignore-not-found"},
 	} {

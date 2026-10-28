@@ -60,6 +60,7 @@ func businessUnitReconciler(kn *kubernautv1alpha2.Kubernaut, faults interceptor.
 		}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: pgSecretName, Namespace: kn.Namespace}, Data: map[string][]byte{
 			"POSTGRES_USER": []byte("kubernaut"), "POSTGRES_PASSWORD": []byte("unit-secret"), "POSTGRES_DB": []byte("kubernaut"),
+			"db-secrets.yaml": []byte("username: kubernaut\npassword: unit-secret\n"),
 		}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: vkSecretName, Namespace: kn.Namespace},
 			Data: map[string][]byte{"valkey-secrets.yaml": []byte("password: unit-secret")}},
@@ -101,6 +102,20 @@ func businessUnitReconciler(kn *kubernautv1alpha2.Kubernaut, faults interceptor.
 
 func refreshBusinessUnitCR(r *KubernautReconciler, kn *kubernautv1alpha2.Kubernaut) {
 	ExpectWithOffset(1, r.Get(ctx, client.ObjectKeyFromObject(kn), kn)).To(Succeed())
+}
+
+func seedCompletedMigrationJob(r *KubernautReconciler, kn *kubernautv1alpha2.Kubernaut) {
+	job, err := resources.MigrationJob(kn)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	revision, err := r.postgresqlCredentialRevision(ctx, kn)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	job.Annotations = map[string]string{resources.AnnotationPostgreSQLCredentialRevision: revision}
+	hash := resources.SpecHash(job)
+	job.Annotations[resources.AnnotationSpecHash] = hash
+	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+	ExpectWithOffset(1, r.Create(ctx, job)).To(Succeed())
+	ExpectWithOffset(1, r.Status().Update(ctx, job)).To(Succeed())
+	kn.Status.LastMigrationHash = hash
 }
 
 // Seed only external API state. Ownership checks and cleanup execute unchanged.

@@ -345,7 +345,7 @@ var _ = Describe("independent Kubernetes API boundary decisions", Label("unit"),
 var _ = Describe("independent activation and exposure failure decisions", Label("unit"), func() {
 	It("UT-AUDIT-515-API-011: reports every migration prerequisite and Job API failure before progressing", func() {
 		kn := newMinimalCR()
-		for _, name := range []string{pgSecretName, "datastorage-db-secret", "kubernaut-migrations",
+		for _, name := range []string{"kubernaut-migrations",
 			resources.InterServiceCAConfigMapName, resources.TrustBundleConfigMapName} {
 			r := businessUnitReconciler(kn, interceptor.Funcs{Get: func(ctx context.Context, api client.WithWatch,
 				key client.ObjectKey, object client.Object, options ...client.GetOption) error {
@@ -369,7 +369,7 @@ var _ = Describe("independent activation and exposure failure decisions", Label(
 		Expect(r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: pgSecretName}, pg)).To(Succeed())
 		delete(pg.Data, "POSTGRES_USER")
 		Expect(r.Update(ctx, pg)).To(Succeed())
-		Expect(r.ensureMigrationPrereqs(ctx, kn)).To(HaveOccurred())
+		Expect(r.validatePostgreSQLSecret(ctx, kn)).To(HaveOccurred())
 		Expect(r.validateSecret(ctx, kn.Namespace, pgSecretName, []string{"POSTGRES_USER"})).To(HaveOccurred())
 		for _, faults := range []interceptor.Funcs{{Create: deniedUnitCreate}, {SubResourcePatch: deniedUnitStatus}} {
 			r = businessUnitReconciler(kn, faults)
@@ -380,7 +380,7 @@ var _ = Describe("independent activation and exposure failure decisions", Label(
 		job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "stale", Namespace: kn.Namespace}}
 		_, err = r.handleCompleteMigrationJob(ctx, kn, job, "new")
 		Expect(err).To(MatchError(ContainSubstring(unitAPIDenial)))
-		_, err = r.handleFailedMigrationJob(ctx, kn, job)
+		_, err = r.handleFailedMigrationJob(ctx, kn, job, "stale")
 		Expect(err).To(MatchError(ContainSubstring(unitAPIDenial)))
 	})
 
@@ -602,9 +602,6 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 	It("UT-AUDIT-515-API-017: propagates every inter-phase reload failure and does not activate without native isolation", func() {
 		for _, failRead := range []int{1, 2, 3} {
 			kn := newMinimalCR()
-			job, err := resources.MigrationJob(kn)
-			Expect(err).NotTo(HaveOccurred())
-			kn.Status.LastMigrationHash = resources.SpecHash(job)
 			reads := 0
 			r := businessUnitReconciler(kn, interceptor.Funcs{Get: func(ctx context.Context, api client.WithWatch,
 				key client.ObjectKey, object client.Object, options ...client.GetOption) error {
@@ -616,16 +613,14 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 				}
 				return api.Get(ctx, key, object, options...)
 			}})
-			_, err = r.reconcilePhases(ctx, kn, kn)
+			seedCompletedMigrationJob(r, kn)
+			_, err := r.reconcilePhases(ctx, kn, kn)
 			Expect(err).To(MatchError(ContainSubstring(unitAPIDenial)))
 		}
 		kn := newMinimalCR()
 		r := businessUnitReconciler(kn, interceptor.Funcs{})
 		_, err := r.reconcilePhases(ctx, kn, kn)
 		Expect(err).NotTo(HaveOccurred(), "invalid TLS material was already observed above; workload deployment must not add a provider gate")
-		job, err := resources.MigrationJob(kn)
-		Expect(err).NotTo(HaveOccurred())
-		kn.Status.LastMigrationHash = resources.SpecHash(job)
 		r = businessUnitReconciler(kn, interceptor.Funcs{Create: func(ctx context.Context, api client.WithWatch,
 			object client.Object, options ...client.CreateOption) error {
 			if _, deployment := object.(*appsv1.Deployment); deployment {
@@ -633,6 +628,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 			}
 			return api.Create(ctx, object, options...)
 		}})
+		seedCompletedMigrationJob(r, kn)
 		_, err = r.reconcilePhases(ctx, kn, kn)
 		Expect(err).To(MatchError(ContainSubstring(unitAPIDenial)))
 	})

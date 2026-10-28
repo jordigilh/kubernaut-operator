@@ -33,7 +33,7 @@ var _ = Describe("integrated ownership API boundaries", Label("unit"), func() {
 		kn := newMinimalCR()
 		kn.UID = "unit-ownership"
 		r := businessUnitReconciler(kn, interceptor.Funcs{})
-		foreign := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "datastorage-db-secret", Namespace: kn.Namespace}}
+		foreign := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "kubernaut-migrations", Namespace: kn.Namespace}}
 		Expect(r.Create(ctx, foreign)).To(Succeed())
 		_, err := r.phaseMigrate(ctx, kn)
 		Expect(err).NotTo(HaveOccurred()) // failed prerequisites use the existing condition/requeue contract

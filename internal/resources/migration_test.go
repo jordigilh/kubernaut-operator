@@ -63,7 +63,7 @@ var _ = Describe("MigrationConfigMap", func() {
 })
 
 var _ = Describe("MigrationJob", func() {
-	It("has expected Job metadata and lifecycle fields", func() {
+	It("has expected Job metadata and retains terminal failures", func() {
 		kn := testKubernaut()
 		job := mustMigrationJob(kn)
 
@@ -72,8 +72,7 @@ var _ = Describe("MigrationJob", func() {
 
 		Expect(job.Spec.BackoffLimit).NotTo(BeNil())
 		Expect(*job.Spec.BackoffLimit).To(Equal(int32(3)), "Job should have backoffLimit=3")
-		Expect(job.Spec.TTLSecondsAfterFinished).NotTo(BeNil())
-		Expect(*job.Spec.TTLSecondsAfterFinished).To(Equal(int32(300)), "Job should have TTLSecondsAfterFinished=300")
+		Expect(job.Spec.TTLSecondsAfterFinished).To(BeNil(), "terminal migration failures must not be TTL-cleaned")
 	})
 
 	It("configures the db-migrate container", func() {
