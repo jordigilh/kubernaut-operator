@@ -90,13 +90,13 @@ func MigrationJob(kn *kubernautv1alpha2.Kubernaut) (*batchv1.Job, error) {
 	}
 
 	backoffLimit := MigrationBackoffLimit
-	ttlSeconds := MigrationTTLSeconds
 
 	return &batchv1.Job{
 		ObjectMeta: ObjectMeta(kn, migrationJobName, "migration"),
 		Spec: batchv1.JobSpec{
-			BackoffLimit:            &backoffLimit,
-			TTLSecondsAfterFinished: &ttlSeconds,
+			BackoffLimit: &backoffLimit,
+			// Terminal migration failures are the dependency recovery gate and
+			// must remain observable until the referenced Secret revision changes.
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: ComponentLabels(kn, "migration")},
 				Spec: corev1.PodSpec{

@@ -218,6 +218,8 @@ func ownershipGenerationReady(ctx context.Context) error {
 	return fmt.Errorf("services have not reconciled generation %d", kn.GetGeneration())
 }
 
+// deleteOwnershipConflicts removes only the disposable administrator-owned
+// fixtures after the ownership assertions complete.
 func deleteOwnershipConflicts(ctx context.Context) error {
 	for _, args := range [][]string{
 		{"delete", "configmap", "kubernaut-migrations", "-n", kubernautNamespace, "--ignore-not-found"},

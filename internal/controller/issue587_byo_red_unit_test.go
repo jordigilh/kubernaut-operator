@@ -92,12 +92,39 @@ var _ = Describe("Issue 587 BYO and migration boundaries", Label("unit"), func()
 		Expect(r.Get(ctx, types.NamespacedName{Namespace: kn.Namespace, Name: job.Name}, live)).To(Succeed())
 	})
 
-	It("UT-587-MIG-002 [CM-3, SI-4; SOC2 CC7.2, CC8.1; ASVS v5.0.0-V16.2.1, V16.5.2] retries only a failed migration Job with a stale dependency revision", func() {
+	It("UT-587-MIG-002 [CM-3, SI-4; SOC2 CC7.2, CC8.1; ASVS v5.0.0-V16.2.1, V16.5.2] retains a failed Job when only its spec changes", func() {
 		kn := newMinimalCR()
 		r := businessUnitReconciler(kn, interceptor.Funcs{})
 		job, err := resources.MigrationJob(kn)
 		Expect(err).NotTo(HaveOccurred())
-		job.Annotations = map[string]string{resources.AnnotationSpecHash: "old-revision"}
+		credentialRevision, err := r.postgresqlCredentialRevision(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		job.Annotations = map[string]string{
+			resources.AnnotationPostgreSQLCredentialRevision: credentialRevision,
+			resources.AnnotationSpecHash:                     "old-revision",
+		}
+		job.Spec.Template.Spec.Containers[0].Image = "quay.io/example/old-db-migrate:fixture"
+		job.Status.Failed = 1
+		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
+		Expect(r.Create(ctx, job)).To(Succeed())
+
+		result, err := r.ensureMigrationJob(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(requeueError))
+		live := &batchv1.Job{}
+		Expect(r.Get(ctx, types.NamespacedName{Namespace: kn.Namespace, Name: job.Name}, live)).To(Succeed())
+		Expect(live.Spec.Template.Spec.Containers[0].Image).To(Equal("quay.io/example/old-db-migrate:fixture"))
+	})
+
+	It("UT-587-MIG-003 [CM-3, SI-4; SOC2 CC7.2, CC8.1; ASVS v5.0.0-V16.2.1, V16.5.2] retries only a failed migration Job with a stale dependency revision", func() {
+		kn := newMinimalCR()
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
+		job, err := resources.MigrationJob(kn)
+		Expect(err).NotTo(HaveOccurred())
+		job.Annotations = map[string]string{
+			resources.AnnotationPostgreSQLCredentialRevision: "old-credential-revision",
+			resources.AnnotationSpecHash:                     "old-revision",
+		}
 		job.Status.Failed = 1
 		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
 		Expect(r.Create(ctx, job)).To(Succeed())
@@ -108,7 +135,7 @@ var _ = Describe("Issue 587 BYO and migration boundaries", Label("unit"), func()
 		Expect(apierrors.IsNotFound(r.Get(ctx, types.NamespacedName{Namespace: kn.Namespace, Name: job.Name}, &batchv1.Job{}))).To(BeTrue())
 	})
 
-	It("UT-587-MIG-003 [IA-5, SI-4; SOC2 CC7.2; ASVS v5.0.0-V16.2.1] fails migration reconciliation when the PostgreSQL Secret cannot be read", func() {
+	It("UT-587-MIG-004 [IA-5, SI-4; SOC2 CC7.2; ASVS v5.0.0-V16.2.1] fails migration reconciliation when the PostgreSQL Secret cannot be read", func() {
 		kn := newMinimalCR()
 		r := businessUnitReconciler(kn, interceptor.Funcs{Get: func(ctx context.Context, api client.WithWatch, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
 			if key.Name == kn.Spec.PostgreSQL.SecretName {

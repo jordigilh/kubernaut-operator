@@ -476,11 +476,15 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 	})
 })
 
+// issue587ObjectMetadata snapshots stable ownership metadata for a named
+// resource without reading Secret data.
 func issue587ObjectMetadata(ctx context.Context, resource, name string) (string, error) {
 	return kubectl(ctx, "get", resource, name, "-n", kubernautNamespace, "-o",
 		`jsonpath={.metadata.resourceVersion}|{.metadata.uid}|{.metadata.ownerReferences}|{.metadata.labels}`)
 }
 
+// issue587DataStorageSnapshot captures the DataStorage Deployment identity and
+// direct PostgreSQL Secret projection used by the no-roll journey.
 func issue587DataStorageSnapshot(ctx context.Context) (string, error) {
 	return kubectl(ctx, "get", "deployment", "data-storage", "-n", kubernautNamespace, "-o",
 		`jsonpath={.metadata.resourceVersion}|`+
@@ -488,6 +492,8 @@ func issue587DataStorageSnapshot(ctx context.Context) (string, error) {
 			`{.spec.template.spec.volumes[1].projected.sources[0].secret.name}`)
 }
 
+// issue587ReplicaSetSnapshot captures all DataStorage ReplicaSets for rollout
+// comparison across a Gateway-only reconciliation.
 func issue587ReplicaSetSnapshot(ctx context.Context) (string, error) {
 	return kubectl(ctx, "get", "replicasets", "-n", kubernautNamespace, "-l", "app=data-storage",
 		"--sort-by=.metadata.creationTimestamp", "-o",
@@ -495,6 +501,8 @@ func issue587ReplicaSetSnapshot(ctx context.Context) (string, error) {
 			"REPLICAS:.spec.replicas", "--no-headers")
 }
 
+// issue587DependencySnapshot captures stable metadata for the BYO dependency
+// workloads, Services, and credential Secrets.
 func issue587DependencySnapshot(ctx context.Context) (string, error) {
 	dependencies := []struct {
 		kind string

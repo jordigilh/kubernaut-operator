@@ -58,11 +58,15 @@ func hashDataStorageSigningRevision(value string) string {
 	return hex.EncodeToString(digest[:])
 }
 
+// hashDataStorageDependencyRevision hashes non-sensitive dependency identity
+// and resource-version material for rollout annotations.
 func hashDataStorageDependencyRevision(value string) string {
 	digest := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(digest[:])
 }
 
+// postgresqlCredentialRevision returns a non-sensitive revision for the
+// administrator-owned PostgreSQL Secret referenced by the Kubernaut CR.
 func (r *KubernautReconciler) postgresqlCredentialRevision(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (string, error) {
 	secret := &corev1.Secret{}
 	key := client.ObjectKey{Namespace: kn.Namespace, Name: kn.Spec.PostgreSQL.SecretName}
@@ -72,6 +76,8 @@ func (r *KubernautReconciler) postgresqlCredentialRevision(ctx context.Context, 
 	return hashDataStorageDependencyRevision(fmt.Sprintf("postgresql/%s/%s@%s", key.Namespace, key.Name, secret.ResourceVersion)), nil
 }
 
+// dataStorageDependencyRevision combines PostgreSQL and Valkey Secret
+// revisions without reading credential bytes into the resulting value.
 func (r *KubernautReconciler) dataStorageDependencyRevision(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (string, error) {
 	postgresqlRevision, err := r.postgresqlCredentialRevision(ctx, kn)
 	if err != nil {
@@ -95,6 +101,8 @@ func stampDataStorageSigningMaterialRevision(dep *appsv1.Deployment, revisions t
 	dep.Spec.Template.Annotations[resources.AnnotationDataStorageSigningMaterialRevision] = revisions.DataStorageSigning
 }
 
+// stampDataStorageDependencyRevision adds the BYO dependency revision only to
+// the DataStorage pod template, keeping unrelated component hashes stable.
 func stampDataStorageDependencyRevision(dep *appsv1.Deployment, revisions telemetryMaterialRevisionSet) {
 	if dep.Spec.Template.Labels["app"] != resources.ComponentDataStorage || revisions.DataStorageDependency == "" {
 		return

@@ -63,9 +63,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, foreign))).To(Succeed()) })
 		before := foreign.DeepCopy()
 		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
-		r := newReconciler()
-		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-		Expect(err).NotTo(HaveOccurred())
+		reconcileToRunning(ctx)
 		live := &corev1.Secret{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(foreign), live)).To(Succeed())
 		Expect(live).To(Equal(before))

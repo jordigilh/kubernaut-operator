@@ -335,6 +335,8 @@ func (r *KubernautReconciler) validateDatabaseInputs(ctx context.Context, kn *ku
 	return ctrl.Result{}, nil, false
 }
 
+// validatePostgreSQLSecret reads and validates the administrator-owned
+// PostgreSQL Secret referenced by the Kubernaut CR.
 func (r *KubernautReconciler) validatePostgreSQLSecret(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
 	secret := &corev1.Secret{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: kn.Spec.PostgreSQL.SecretName}, secret); err != nil {
@@ -343,6 +345,8 @@ func (r *KubernautReconciler) validatePostgreSQLSecret(ctx context.Context, kn *
 	return resources.ValidatePostgreSQLSecret(secret)
 }
 
+// validateValkeySecret reads and validates the administrator-owned Valkey
+// Secret referenced by the Kubernaut CR without mutating it.
 func (r *KubernautReconciler) validateValkeySecret(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
 	secret := &corev1.Secret{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: kn.Spec.Valkey.SecretName}, secret); err != nil {
@@ -622,7 +626,7 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 			return r.handleCompleteMigrationJob(ctx, kn, existingJob, desiredHash)
 		}
 		if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
-			return r.handleFailedMigrationJob(ctx, kn, existingJob, desiredHash)
+			return r.handleFailedMigrationJob(ctx, kn, existingJob, credentialRevision)
 		}
 	}
 
@@ -672,12 +676,12 @@ func (r *KubernautReconciler) handleCompleteMigrationJob(
 // JobFailed. The failed Job is retained for the current dependency revision;
 // only a stale revision is deleted for a fresh attempt.
 func (r *KubernautReconciler) handleFailedMigrationJob(
-	ctx context.Context, kn *kubernautv1alpha2.Kubernaut, existingJob *batchv1.Job, desiredHash string,
+	ctx context.Context, kn *kubernautv1alpha2.Kubernaut, existingJob *batchv1.Job, credentialRevision string,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	if existingJob.GetAnnotations()[resources.AnnotationSpecHash] != desiredHash {
-		log.Info("failed migration job has stale spec-hash, deleting for re-run")
+	if existingJob.GetAnnotations()[resources.AnnotationPostgreSQLCredentialRevision] != credentialRevision {
+		log.Info("failed migration job has stale PostgreSQL credential revision, deleting for re-run")
 		propagation := metav1.DeletePropagationBackground
 		if err := r.deleteObservedResource(ctx, existingJob, &client.DeleteOptions{
 			PropagationPolicy: &propagation,

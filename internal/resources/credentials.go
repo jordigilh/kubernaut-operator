@@ -86,6 +86,8 @@ func ValidateValkeySecret(secret *corev1.Secret) error {
 	return nil
 }
 
+// parseDataStorageCredential decodes and validates the DataStorage credential
+// document from the administrator-owned PostgreSQL Secret.
 func parseDataStorageCredential(secret *corev1.Secret) (dataStorageCredentialYAML, error) {
 	raw, ok := secret.Data[PostgreSQLDataStorageSecretKey]
 	if !ok || len(raw) == 0 {
@@ -104,6 +106,8 @@ func parseDataStorageCredential(secret *corev1.Secret) (dataStorageCredentialYAM
 	return document, nil
 }
 
+// requiredSecretValue returns a non-empty PostgreSQL Secret value without
+// including the value in an error message.
 func requiredSecretValue(secret *corev1.Secret, key string) (string, error) {
 	raw, ok := secret.Data[key]
 	if !ok || strings.TrimSpace(string(raw)) == "" {
