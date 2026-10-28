@@ -19,9 +19,11 @@ package kind
 import (
 	"context"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
 	. "github.com/onsi/gomega"    //nolint:revive,staticcheck
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
@@ -73,7 +75,7 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 		Expect(deleteKubernautCR(ctx)).To(Succeed())
 		Expect(assertOwnershipWitnesses(ctx, witnesses)).To(Succeed())
 		Expect(assertProvisioningWitnesses(ctx, provisioned)).To(Succeed())
-		_, err = kubectl(ctx, "delete", "secret", "datastorage-db-secret", "-n", kubernautNamespace)
+		_, err = kubectl(ctx, "delete", "configmap", "kubernaut-migrations", "-n", kubernautNamespace)
 		Expect(err).NotTo(HaveOccurred())
 		witnesses = witnesses[1:]
 		if configuredTLS == tlsManualAdmin {
@@ -339,6 +341,119 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 		}).Should(Succeed())
 	})
 
+	It(
+		"E2E-587-BYO-001 [AC-3, AC-6, CM-3, CM-6, SI-4; SOC2 CC6.1, CC6.6, CC7.2, CC8.1; "+
+			"ASVS v5.0.0-V8.3.1, V13.3.1, V14.2.4, V16.5.2] leaves BYO dependencies and DataStorage unchanged "+
+			"after a Gateway-only patch",
+		func() {
+			beforeDataStorage, err := issue587DataStorageSnapshot(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			beforeConfigMap, err := issue587ObjectMetadata(ctx, "configmap", "datastorage-config")
+			Expect(err).NotTo(HaveOccurred())
+			beforeReplicaSets, err := issue587ReplicaSetSnapshot(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			beforeDependencies, err := issue587DependencySnapshot(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = kubectl(ctx, "get", "secret", "datastorage-db-secret", "-n", kubernautNamespace)
+			Expect(err).To(HaveOccurred())
+
+			patchOutput, patchErr := kubectl(ctx, "patch", "kubernaut", "kubernaut", "-n", kubernautNamespace,
+				"--type=merge", "-p", `{"spec":{"gateway":{"enabled":true}}}`)
+			Expect(patchErr).NotTo(HaveOccurred(), patchOutput)
+			Eventually(func(g Gomega) {
+				condition, conditionErr := kubernautCondition(ctx, "ServicesDeployed")
+				g.Expect(conditionErr).NotTo(HaveOccurred())
+				g.Expect(condition).To(Equal(conditionTrue))
+				_, waitErr := kubectl(ctx, "wait", "--for=condition=available", "deployment/gateway", "-n",
+					kubernautNamespace, "--timeout=10s")
+				g.Expect(waitErr).NotTo(HaveOccurred())
+			}).Should(Succeed())
+
+			afterDataStorage, err := issue587DataStorageSnapshot(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			afterConfigMap, err := issue587ObjectMetadata(ctx, "configmap", "datastorage-config")
+			Expect(err).NotTo(HaveOccurred())
+			afterReplicaSets, err := issue587ReplicaSetSnapshot(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			afterDependencies, err := issue587DependencySnapshot(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(afterDataStorage).To(Equal(beforeDataStorage))
+			Expect(afterConfigMap).To(Equal(beforeConfigMap))
+			Expect(afterReplicaSets).To(Equal(beforeReplicaSets))
+			Expect(afterDependencies).To(Equal(beforeDependencies))
+			_, err = kubectl(ctx, "get", "secret", "datastorage-db-secret", "-n", kubernautNamespace)
+			Expect(err).To(HaveOccurred())
+		},
+	)
+
+	It(
+		"E2E-587-BYO-002 [IA-5, SI-10, SI-4; SOC2 CC7.2; ASVS v5.0.0-V2.2.1, V13.3.2, "+
+			"V16.2.1, V16.5.2] blocks rollout and stops retrying when a user-owned PostgreSQL reference cannot authenticate",
+		func() {
+			beforeDataStorage, err := issue587DataStorageSnapshot(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			beforePostgreSQL, err := issue587ObjectMetadata(ctx, "deployment", "postgresql")
+			Expect(err).NotTo(HaveOccurred())
+			mismatch := &corev1.Secret{
+				TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+				ObjectMeta: metav1.ObjectMeta{Name: "postgresql-mismatch", Namespace: kubernautNamespace},
+				StringData: map[string]string{
+					"POSTGRES_USER":     "mismatched-user",
+					"POSTGRES_PASSWORD": "mismatched-password",
+					"POSTGRES_DB":       "action_history",
+					"db-secrets.yaml":   "username: mismatched-user\npassword: mismatched-password\n",
+				},
+			}
+			Expect(applyYAML(ctx, mismatch)).To(Succeed())
+			DeferCleanup(func() {
+				_, _ = kubectl(ctx, "delete", "secret", mismatch.Name, "-n", kubernautNamespace, "--ignore-not-found")
+			})
+
+			patchOutput, patchErr := kubectl(ctx, "patch", "kubernaut", "kubernaut", "-n", kubernautNamespace,
+				"--type=merge", "-p", `{"spec":{"postgresql":{"secretName":"postgresql-mismatch"}}}`)
+			Expect(patchErr).NotTo(HaveOccurred(), patchOutput)
+			_, deleteErr := kubectl(ctx, "delete", "job", "kubernaut-db-migration", "-n", kubernautNamespace,
+				"--ignore-not-found", "--wait=true")
+			Expect(deleteErr).NotTo(HaveOccurred())
+			Eventually(func(g Gomega) {
+				_, getErr := kubectl(ctx, "get", "job", "kubernaut-db-migration", "-n", kubernautNamespace)
+				g.Expect(getErr).NotTo(HaveOccurred())
+			}).Should(Succeed())
+			failureMessage := "contract fixture simulated PostgreSQL authentication failure"
+			failureStatus := `{"status":{"active":0,"failed":3,"conditions":[` +
+				`{"type":"FailureTarget","status":"True","reason":"BackoffLimitExceeded","message":"` + failureMessage + `"},` +
+				`{"type":"Failed","status":"True","reason":"BackoffLimitExceeded","message":"` + failureMessage + `"}]}}`
+			failureOutput, failureErr := kubectl(ctx, "patch", "job", "kubernaut-db-migration", "-n", kubernautNamespace,
+				"--subresource=status", "--type=merge", "-p", failureStatus)
+			Expect(failureErr).NotTo(HaveOccurred(), failureOutput)
+			Eventually(func(g Gomega) {
+				phase, phaseErr := kubernautPhase(ctx)
+				g.Expect(phaseErr).NotTo(HaveOccurred())
+				g.Expect(phase).To(Equal(string(kubernautv1alpha2.PhaseError)))
+				condition, conditionErr := kubernautCondition(ctx, "MigrationComplete")
+				g.Expect(conditionErr).NotTo(HaveOccurred())
+				g.Expect(condition).To(Equal("False"))
+			}).Should(Succeed())
+
+			jobSnapshot, err := issue587ObjectMetadata(ctx, "job", "kubernaut-db-migration")
+			Expect(err).NotTo(HaveOccurred())
+			Consistently(func() string {
+				snapshot, snapshotErr := issue587ObjectMetadata(ctx, "job", "kubernaut-db-migration")
+				if snapshotErr != nil {
+					return snapshotErr.Error()
+				}
+				return snapshot
+			}, 40*time.Second, 2*time.Second).Should(Equal(jobSnapshot))
+			Expect(issue587DataStorageSnapshot(ctx)).To(Equal(beforeDataStorage))
+			Expect(issue587ObjectMetadata(ctx, "deployment", "postgresql")).To(Equal(beforePostgreSQL))
+
+			patchOutput, patchErr = kubectl(ctx, "patch", "kubernaut", "kubernaut", "-n", kubernautNamespace,
+				"--type=merge", "-p", `{"spec":{"postgresql":{"secretName":"postgresql-secret"}}}`)
+			Expect(patchErr).NotTo(HaveOccurred(), patchOutput)
+			Expect(waitForContractReady(ctx)).To(Succeed())
+		},
+	)
+
 	It("preserves a user-owned NetworkPolicy while cleaning up the CR journey", func() {
 		Expect(applyUnmanagedNativePolicy(ctx)).To(Succeed())
 		Expect(unmanagedNativePolicyExists(ctx)).To(Succeed())
@@ -360,6 +475,48 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 		Expect(deleteProbeWorkloads(context.Background())).To(Succeed())
 	})
 })
+
+func issue587ObjectMetadata(ctx context.Context, resource, name string) (string, error) {
+	return kubectl(ctx, "get", resource, name, "-n", kubernautNamespace, "-o",
+		`jsonpath={.metadata.resourceVersion}|{.metadata.uid}|{.metadata.ownerReferences}|{.metadata.labels}`)
+}
+
+func issue587DataStorageSnapshot(ctx context.Context) (string, error) {
+	return kubectl(ctx, "get", "deployment", "data-storage", "-n", kubernautNamespace, "-o",
+		`jsonpath={.metadata.resourceVersion}|`+
+			`{.spec.template.metadata.annotations.kubernaut\.ai/configmap-hash}|`+
+			`{.spec.template.spec.volumes[1].projected.sources[0].secret.name}`)
+}
+
+func issue587ReplicaSetSnapshot(ctx context.Context) (string, error) {
+	return kubectl(ctx, "get", "replicasets", "-n", kubernautNamespace, "-l", "app=data-storage",
+		"--sort-by=.metadata.creationTimestamp", "-o",
+		"custom-columns=NAME:.metadata.name,RESOURCE_VERSION:.metadata.resourceVersion,"+
+			"REPLICAS:.spec.replicas", "--no-headers")
+}
+
+func issue587DependencySnapshot(ctx context.Context) (string, error) {
+	dependencies := []struct {
+		kind string
+		name string
+	}{
+		{kind: "deployment", name: "postgresql"},
+		{kind: "deployment", name: "valkey"},
+		{kind: "service", name: "postgresql"},
+		{kind: "service", name: "valkey"},
+		{kind: "secret", name: "postgresql-secret"},
+		{kind: "secret", name: "valkey-secret"},
+	}
+	snapshots := make([]string, 0, len(dependencies))
+	for _, dependency := range dependencies {
+		snapshot, err := issue587ObjectMetadata(ctx, dependency.kind, dependency.name)
+		if err != nil {
+			return "", err
+		}
+		snapshots = append(snapshots, dependency.kind+"/"+dependency.name+"="+snapshot)
+	}
+	return strings.Join(snapshots, ";"), nil
+}
 
 // assertLiveKAConfigOverride verifies a live default and an explicit CR override.
 func assertLiveKAConfigOverride(ctx context.Context, defaultFragment, patchJSON, overrideFragment string) {
