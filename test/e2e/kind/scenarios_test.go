@@ -420,7 +420,7 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 				g.Expect(getErr).NotTo(HaveOccurred())
 			}).Should(Succeed())
 			failureMessage := "contract fixture simulated PostgreSQL authentication failure"
-			failureStatus := `{"status":{"active":0,"failed":3,"conditions":[` +
+			failureStatus := `{"status":{"active":0,"ready":0,"failed":3,"conditions":[` +
 				`{"type":"FailureTarget","status":"True","reason":"BackoffLimitExceeded","message":"` + failureMessage + `"},` +
 				`{"type":"Failed","status":"True","reason":"BackoffLimitExceeded","message":"` + failureMessage + `"}]}}`
 			failureOutput, failureErr := kubectl(ctx, "patch", "job", "kubernaut-db-migration", "-n", kubernautNamespace,
