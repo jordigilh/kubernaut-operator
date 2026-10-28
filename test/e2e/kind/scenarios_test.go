@@ -412,7 +412,8 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 			DeferCleanup(func() {
 				cleanupOutput, cleanupErr := kubectl(ctx, "delete", "secret", mismatch.Name, "-n", kubernautNamespace,
 					"--ignore-not-found")
-				Expect(cleanupErr).NotTo(HaveOccurred(), "deleting Secret %s/%s: %s", kubernautNamespace, mismatch.Name, cleanupOutput)
+				Expect(cleanupErr).NotTo(HaveOccurred(), "deleting Secret %s/%s: %s",
+					kubernautNamespace, mismatch.Name, cleanupOutput)
 			})
 
 			patchOutput, patchErr := kubectl(ctx, "patch", "kubernaut", "kubernaut", "-n", kubernautNamespace,

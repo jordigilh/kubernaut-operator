@@ -615,12 +615,6 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 	if created {
 		existingJob = migrationJob
 	}
-	// The status hash is only a no-op shortcut after the live Job has been
-	// fetched and authorized. A name or matching status hash is not ownership.
-	if kn.Status.LastMigrationHash == desiredHash {
-		return ctrl.Result{}, nil
-	}
-
 	for _, cond := range existingJob.Status.Conditions {
 		if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
 			return r.handleCompleteMigrationJob(ctx, kn, existingJob, desiredHash)
@@ -628,6 +622,12 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 		if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
 			return r.handleFailedMigrationJob(ctx, kn, existingJob, credentialRevision)
 		}
+	}
+	// The status hash is only a no-op shortcut after terminal Job handling. A
+	// previously successful hash must not hide a failed Job from a newly
+	// corrected dependency revision.
+	if kn.Status.LastMigrationHash == desiredHash {
+		return ctrl.Result{}, nil
 	}
 
 	log.Info("waiting for migration job to complete")

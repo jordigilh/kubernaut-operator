@@ -125,6 +125,14 @@ var _ = Describe("Issue 587 BYO and migration boundaries", Label("unit"), func()
 			resources.AnnotationPostgreSQLCredentialRevision: "old-credential-revision",
 			resources.AnnotationSpecHash:                     "old-revision",
 		}
+		desiredJob, err := resources.MigrationJob(kn)
+		Expect(err).NotTo(HaveOccurred())
+		currentCredentialRevision, err := r.postgresqlCredentialRevision(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		desiredJob.Annotations = map[string]string{
+			resources.AnnotationPostgreSQLCredentialRevision: currentCredentialRevision,
+		}
+		kn.Status.LastMigrationHash = resources.SpecHash(desiredJob)
 		job.Status.Failed = 1
 		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
 		Expect(r.Create(ctx, job)).To(Succeed())
