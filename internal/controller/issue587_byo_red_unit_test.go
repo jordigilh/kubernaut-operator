@@ -223,7 +223,9 @@ var _ = Describe("Issue 587 BYO and migration boundaries", Label("unit"), func()
 		Expect(err).To(MatchError(ContainSubstring("migration credential revision")))
 
 		kn.Status.Phase = kubernautv1alpha2.PhaseMigrating
-		Expect(r.migrationDeploymentGate(ctx, kn)).To(Equal(ctrl.Result{}))
+		result, err = r.migrationDeploymentGate(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(requeueMigrationPoll))
 		kn.Status.Phase = kubernautv1alpha2.PhaseRunning
 		kn.Status.LastMigrationHash = ""
 		Expect(r.migrationDeploymentGate(ctx, kn)).To(Equal(ctrl.Result{}))

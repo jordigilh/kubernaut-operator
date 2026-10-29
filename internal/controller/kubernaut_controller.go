@@ -294,10 +294,7 @@ func (r *KubernautReconciler) reconcileAfterMigration(
 }
 
 func (r *KubernautReconciler) migrationDeploymentGate(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
-	activePhase := kn.Status.Phase == kubernautv1alpha2.PhaseDeploying ||
-		kn.Status.Phase == kubernautv1alpha2.PhaseRunning ||
-		kn.Status.Phase == kubernautv1alpha2.PhaseDegraded
-	if !activePhase || kn.Status.LastMigrationHash == "" {
+	if kn.Status.LastMigrationHash == "" {
 		return ctrl.Result{}, nil
 	}
 	migrationReady, err := r.migrationReadyForCurrentSpec(ctx, kn)
