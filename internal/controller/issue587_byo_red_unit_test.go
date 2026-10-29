@@ -221,11 +221,13 @@ var _ = Describe("Issue 587 BYO and migration boundaries", Label("unit"), func()
 		}})
 		_, err = readDenied.migrationDeploymentGate(ctx, kn)
 		Expect(err).To(MatchError(ContainSubstring("migration credential revision")))
+		Expect(readDenied.ensureMigrationReadyForDeployment(ctx, kn)).To(MatchError(ContainSubstring("migration credential revision")))
 
 		kn.Status.Phase = kubernautv1alpha2.PhaseMigrating
 		result, err = r.migrationDeploymentGate(ctx, kn)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.RequeueAfter).To(Equal(requeueMigrationPoll))
+		Expect(r.phaseDeploy(ctx, kn, kn)).To(MatchError("database migration is not complete for the current dependency revision"))
 		kn.Status.Phase = kubernautv1alpha2.PhaseRunning
 		kn.Status.LastMigrationHash = ""
 		Expect(r.migrationDeploymentGate(ctx, kn)).To(Equal(ctrl.Result{}))

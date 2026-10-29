@@ -766,6 +766,9 @@ func setCRDsReady(kn *kubernautv1alpha2.Kubernaut) {
 
 //nolint:gocyclo // this phase is an ordered lifecycle transaction; each step must stop deployment on failure.
 func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
+	if err := r.ensureMigrationReadyForDeployment(ctx, kn); err != nil {
+		return err
+	}
 	if kn.Spec.APIFrontendEnabled() || kn.Spec.ConsoleEnabled() {
 		logf.FromContext(ctx).Info("resolved shared OIDC issuer",
 			"issuerURL", kn.Spec.EffectiveIssuerURL(),
@@ -845,6 +848,17 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 
 	r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, ReasonManifestsApplied, "Reconcile", "All service manifests applied")
 	return r.finalizeDeployStatus(ctx, kn)
+}
+
+func (r *KubernautReconciler) ensureMigrationReadyForDeployment(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	result, err := r.migrationDeploymentGate(ctx, kn)
+	if err != nil {
+		return err
+	}
+	if result.RequeueAfter > 0 {
+		return fmt.Errorf("database migration is not complete for the current dependency revision")
+	}
+	return nil
 }
 
 // handleRBACDeployError records a failed-RBAC status condition and a
