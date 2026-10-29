@@ -301,6 +301,8 @@ func (r *KubernautReconciler) migrationDeploymentGate(ctx context.Context, kn *k
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	logf.FromContext(ctx).Info("evaluated migration deployment gate",
+		"phase", kn.Status.Phase, "lastMigrationHash", kn.Status.LastMigrationHash, "ready", migrationReady)
 	if !migrationReady {
 		return ctrl.Result{RequeueAfter: requeueMigrationPoll}, nil
 	}
@@ -661,6 +663,8 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 	if created {
 		existingJob = migrationJob
 	}
+	log.Info("resolved migration job", "created", created, "desiredHash", desiredHash,
+		"lastMigrationHash", kn.Status.LastMigrationHash, "conditionCount", len(existingJob.Status.Conditions))
 	for _, cond := range existingJob.Status.Conditions {
 		if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
 			return r.handleCompleteMigrationJob(ctx, kn, existingJob, desiredHash)
@@ -764,7 +768,7 @@ func setCRDsReady(kn *kubernautv1alpha2.Kubernaut) {
 
 // ---------- Phase: Deploy ----------
 
-//nolint:gocyclo // this phase is an ordered lifecycle transaction; each step must stop deployment on failure.
+//nolint:gocyclo,funlen // this phase is an ordered lifecycle transaction; each step must stop deployment on failure.
 func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
 	if err := r.ensureMigrationReadyForDeployment(ctx, kn); err != nil {
 		return err
