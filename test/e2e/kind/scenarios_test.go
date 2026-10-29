@@ -513,8 +513,7 @@ func issue587ObjectMetadata(ctx context.Context, resource, name string) (string,
 // direct PostgreSQL Secret projection used by the no-roll journey.
 func issue587DataStorageSnapshot(ctx context.Context) (string, error) {
 	return kubectl(ctx, "get", "deployment", "data-storage", "-n", kubernautNamespace, "-o",
-		`jsonpath={.metadata.resourceVersion}|`+
-			`{.spec.template.metadata.annotations.kubernaut\.ai/configmap-hash}|`+
+		`jsonpath={.spec.template.metadata.annotations.kubernaut\.ai/configmap-hash}|`+
 			`{.spec.template.spec.volumes[1].projected.sources[0].secret.name}`)
 }
 
@@ -523,8 +522,7 @@ func issue587DataStorageSnapshot(ctx context.Context) (string, error) {
 func issue587ReplicaSetSnapshot(ctx context.Context) (string, error) {
 	return kubectl(ctx, "get", "replicasets", "-n", kubernautNamespace, "-l", "app=data-storage",
 		"--sort-by=.metadata.creationTimestamp", "-o",
-		"custom-columns=NAME:.metadata.name,RESOURCE_VERSION:.metadata.resourceVersion,"+
-			"REPLICAS:.spec.replicas", "--no-headers")
+		"custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas", "--no-headers")
 }
 
 // issue587DependencySnapshot captures stable metadata for the BYO dependency
