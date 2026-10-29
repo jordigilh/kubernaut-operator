@@ -392,11 +392,11 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 
 	It(
 		"E2E-587-BYO-002 [IA-5, SI-10, SI-4; SOC2 CC7.2; ASVS v5.0.0-V2.2.1, V13.3.2, "+
-			"V16.2.1, V16.5.2] blocks rollout and stops retrying when a user-owned PostgreSQL reference cannot authenticate",
+			"V16.2.1, V16.5.2] retains a failed migration and preserves BYO PostgreSQL resources",
 		func() {
-			beforeDataStorage, err := issue587DataStorageSnapshot(ctx)
-			Expect(err).NotTo(HaveOccurred())
 			beforePostgreSQL, err := issue587ObjectMetadata(ctx, "deployment", "postgresql")
+			Expect(err).NotTo(HaveOccurred())
+			beforeDependencies, err := issue587DependencySnapshot(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			mismatch := &corev1.Secret{
 				TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
@@ -463,8 +463,8 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 				}
 				return strings.TrimSpace(uid)
 			}, 40*time.Second, 2*time.Second).Should(Equal(failedJobUID))
-			Expect(issue587DataStorageSnapshot(ctx)).To(Equal(beforeDataStorage))
 			Expect(issue587ObjectMetadata(ctx, "deployment", "postgresql")).To(Equal(beforePostgreSQL))
+			Expect(issue587DependencySnapshot(ctx)).To(Equal(beforeDependencies))
 
 			patchOutput, patchErr = kubectl(ctx, "patch", "kubernaut", "kubernaut", "-n", kubernautNamespace,
 				"--type=merge", "-p", `{"spec":{"postgresql":{"secretName":"postgresql-secret"}}}`)

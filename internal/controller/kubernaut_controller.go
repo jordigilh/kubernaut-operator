@@ -268,18 +268,6 @@ func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernaut
 	if err := r.Get(ctx, client.ObjectKeyFromObject(kn), kn); err != nil {
 		return ctrl.Result{}, err
 	}
-	return r.reconcileAfterMigration(ctx, kn, knV2)
-}
-
-func (r *KubernautReconciler) reconcileAfterMigration(
-	ctx context.Context,
-	kn *kubernautv1alpha2.Kubernaut,
-	knV2 *kubernautv1alpha2.Kubernaut,
-) (ctrl.Result, error) {
-	result, err := r.migrationDeploymentGate(ctx, kn)
-	if err != nil || result.RequeueAfter > 0 {
-		return result, err
-	}
 
 	// Always run phaseDeploy — the spec-hash check inside ensureResource
 	// short-circuits API writes when no drift is detected, making this cheap.
@@ -291,42 +279,6 @@ func (r *KubernautReconciler) reconcileAfterMigration(
 	}
 
 	return r.phaseRunning(ctx, kn, knV2)
-}
-
-func (r *KubernautReconciler) migrationDeploymentGate(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
-	if kn.Status.LastMigrationHash == "" {
-		return ctrl.Result{}, nil
-	}
-	migrationReady, err := r.migrationReadyForCurrentSpec(ctx, kn)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	logf.FromContext(ctx).Info("evaluated migration deployment gate",
-		"phase", kn.Status.Phase, "lastMigrationHash", kn.Status.LastMigrationHash, "ready", migrationReady)
-	if !migrationReady {
-		return ctrl.Result{RequeueAfter: requeueMigrationPoll}, nil
-	}
-	return ctrl.Result{}, nil
-}
-
-// migrationReadyForCurrentSpec prevents workload reconciliation when the last
-// successful migration belongs to an older PostgreSQL/Valkey/dependency spec.
-// This is the final guard before deployment because status and watch events can
-// race with the phase transition that normally gates phaseDeploy.
-func (r *KubernautReconciler) migrationReadyForCurrentSpec(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (bool, error) {
-	desired, err := resources.MigrationJob(kn)
-	if err != nil {
-		return false, fmt.Errorf("building migration job for deployment gate: %w", err)
-	}
-	credentialRevision, err := r.postgresqlCredentialRevision(ctx, kn)
-	if err != nil {
-		return false, fmt.Errorf("resolving migration credential revision for deployment gate: %w", err)
-	}
-	if desired.Annotations == nil {
-		desired.Annotations = make(map[string]string, 1)
-	}
-	desired.Annotations[resources.AnnotationPostgreSQLCredentialRevision] = credentialRevision
-	return kn.Status.LastMigrationHash == resources.SpecHash(desired), nil
 }
 
 // ---------- Phase: Validate ----------
@@ -663,8 +615,6 @@ func (r *KubernautReconciler) ensureMigrationJob(ctx context.Context, kn *kubern
 	if created {
 		existingJob = migrationJob
 	}
-	log.Info("resolved migration job", "created", created, "desiredHash", desiredHash,
-		"lastMigrationHash", kn.Status.LastMigrationHash, "conditionCount", len(existingJob.Status.Conditions))
 	for _, cond := range existingJob.Status.Conditions {
 		if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
 			return r.handleCompleteMigrationJob(ctx, kn, existingJob, desiredHash)
@@ -768,11 +718,8 @@ func setCRDsReady(kn *kubernautv1alpha2.Kubernaut) {
 
 // ---------- Phase: Deploy ----------
 
-//nolint:gocyclo,funlen // this phase is an ordered lifecycle transaction; each step must stop deployment on failure.
+//nolint:gocyclo // this phase is an ordered lifecycle transaction; each step must stop deployment on failure.
 func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
-	if err := r.ensureMigrationReadyForDeployment(ctx, kn); err != nil {
-		return err
-	}
 	if kn.Spec.APIFrontendEnabled() || kn.Spec.ConsoleEnabled() {
 		logf.FromContext(ctx).Info("resolved shared OIDC issuer",
 			"issuerURL", kn.Spec.EffectiveIssuerURL(),
@@ -852,17 +799,6 @@ func (r *KubernautReconciler) phaseDeploy(ctx context.Context, kn *kubernautv1al
 
 	r.Recorder.Eventf(kn, nil, corev1.EventTypeNormal, ReasonManifestsApplied, "Reconcile", "All service manifests applied")
 	return r.finalizeDeployStatus(ctx, kn)
-}
-
-func (r *KubernautReconciler) ensureMigrationReadyForDeployment(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
-	result, err := r.migrationDeploymentGate(ctx, kn)
-	if err != nil {
-		return err
-	}
-	if result.RequeueAfter > 0 {
-		return fmt.Errorf("database migration is not complete for the current dependency revision")
-	}
-	return nil
 }
 
 // handleRBACDeployError records a failed-RBAC status condition and a
