@@ -7,4 +7,4 @@ spec:
     spec:
       containers:
       - name: manager
-        image: localhost/kubernaut-operator:1.6.0-rc28
+        image: localhost/kubernaut-operator:1.6.0-rc30
