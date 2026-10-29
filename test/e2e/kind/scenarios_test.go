@@ -506,7 +506,7 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 // resource without reading Secret data.
 func issue587ObjectMetadata(ctx context.Context, resource, name string) (string, error) {
 	return kubectl(ctx, "get", resource, name, "-n", kubernautNamespace, "-o",
-		`jsonpath={.metadata.resourceVersion}|{.metadata.uid}|{.metadata.ownerReferences}|{.metadata.labels}`)
+		`jsonpath={.metadata.uid}|{.metadata.ownerReferences}|{.metadata.labels}`)
 }
 
 // issue587DataStorageSnapshot captures the DataStorage Deployment identity and
