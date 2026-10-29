@@ -268,6 +268,18 @@ func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernaut
 	if err := r.Get(ctx, client.ObjectKeyFromObject(kn), kn); err != nil {
 		return ctrl.Result{}, err
 	}
+	return r.reconcileAfterMigration(ctx, kn, knV2)
+}
+
+func (r *KubernautReconciler) reconcileAfterMigration(
+	ctx context.Context,
+	kn *kubernautv1alpha2.Kubernaut,
+	knV2 *kubernautv1alpha2.Kubernaut,
+) (ctrl.Result, error) {
+	result, err := r.migrationDeploymentGate(ctx, kn)
+	if err != nil || result.RequeueAfter > 0 {
+		return result, err
+	}
 
 	// Always run phaseDeploy — the spec-hash check inside ensureResource
 	// short-circuits API writes when no drift is detected, making this cheap.
@@ -279,6 +291,43 @@ func (r *KubernautReconciler) reconcilePhases(ctx context.Context, kn *kubernaut
 	}
 
 	return r.phaseRunning(ctx, kn, knV2)
+}
+
+func (r *KubernautReconciler) migrationDeploymentGate(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (ctrl.Result, error) {
+	activePhase := kn.Status.Phase == kubernautv1alpha2.PhaseDeploying ||
+		kn.Status.Phase == kubernautv1alpha2.PhaseRunning ||
+		kn.Status.Phase == kubernautv1alpha2.PhaseDegraded
+	if !activePhase || kn.Status.LastMigrationHash == "" {
+		return ctrl.Result{}, nil
+	}
+	migrationReady, err := r.migrationReadyForCurrentSpec(ctx, kn)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !migrationReady {
+		return ctrl.Result{RequeueAfter: requeueMigrationPoll}, nil
+	}
+	return ctrl.Result{}, nil
+}
+
+// migrationReadyForCurrentSpec prevents workload reconciliation when the last
+// successful migration belongs to an older PostgreSQL/Valkey/dependency spec.
+// This is the final guard before deployment because status and watch events can
+// race with the phase transition that normally gates phaseDeploy.
+func (r *KubernautReconciler) migrationReadyForCurrentSpec(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) (bool, error) {
+	desired, err := resources.MigrationJob(kn)
+	if err != nil {
+		return false, fmt.Errorf("building migration job for deployment gate: %w", err)
+	}
+	credentialRevision, err := r.postgresqlCredentialRevision(ctx, kn)
+	if err != nil {
+		return false, fmt.Errorf("resolving migration credential revision for deployment gate: %w", err)
+	}
+	if desired.Annotations == nil {
+		desired.Annotations = make(map[string]string, 1)
+	}
+	desired.Annotations[resources.AnnotationPostgreSQLCredentialRevision] = credentialRevision
+	return kn.Status.LastMigrationHash == resources.SpecHash(desired), nil
 }
 
 // ---------- Phase: Validate ----------

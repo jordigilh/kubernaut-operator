@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -186,5 +187,52 @@ var _ = Describe("Issue 587 BYO and migration boundaries", Label("unit"), func()
 			return api.Get(ctx, key, object, options...)
 		}})
 		Expect(r.phaseDeploy(ctx, kn, kn)).To(MatchError(ContainSubstring("resolving DataStorage dependency revision")))
+	})
+
+	It("UT-587-DEP-001 [CM-3, SI-4] blocks deployment when the migration hash is stale for the current spec", func() {
+		kn := newMinimalCR()
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
+		job, err := resources.MigrationJob(kn)
+		Expect(err).NotTo(HaveOccurred())
+		credentialRevision, err := r.postgresqlCredentialRevision(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		job.Annotations = map[string]string{resources.AnnotationPostgreSQLCredentialRevision: credentialRevision}
+		currentHash := resources.SpecHash(job)
+		kn.Status.Phase = kubernautv1alpha2.PhaseRunning
+		kn.Status.LastMigrationHash = currentHash
+		result, err := r.migrationDeploymentGate(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(ctrl.Result{}))
+
+		kn.Spec.PostgreSQL.SecretName = "postgresql-mismatch"
+		Expect(r.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+			Name: "postgresql-mismatch", Namespace: kn.Namespace,
+		}})).To(Succeed())
+		result, err = r.migrationDeploymentGate(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(requeueMigrationPoll))
+
+		readDenied := businessUnitReconciler(kn, interceptor.Funcs{Get: func(ctx context.Context, api client.WithWatch,
+			key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+			if key.Name == kn.Spec.PostgreSQL.SecretName {
+				return fmt.Errorf("postgresql secret read denied")
+			}
+			return api.Get(ctx, key, object, options...)
+		}})
+		_, err = readDenied.migrationDeploymentGate(ctx, kn)
+		Expect(err).To(MatchError(ContainSubstring("migration credential revision")))
+
+		kn.Status.Phase = kubernautv1alpha2.PhaseMigrating
+		Expect(r.migrationDeploymentGate(ctx, kn)).To(Equal(ctrl.Result{}))
+		kn.Status.Phase = kubernautv1alpha2.PhaseRunning
+		kn.Status.LastMigrationHash = ""
+		Expect(r.migrationDeploymentGate(ctx, kn)).To(Equal(ctrl.Result{}))
+		kn.Status.LastMigrationHash = "stale"
+		result, err = r.reconcileAfterMigration(ctx, kn, kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(requeueMigrationPoll))
+		withoutControllerImage("RELATED_IMAGE_DB_MIGRATE")
+		_, err = r.migrationDeploymentGate(ctx, kn)
+		Expect(err).To(MatchError(ContainSubstring("building migration job for deployment gate")))
 	})
 })
