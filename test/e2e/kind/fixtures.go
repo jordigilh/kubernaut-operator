@@ -26,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 )
 
@@ -41,6 +42,7 @@ const (
 	policyProbeComponent     = "aianalysis"
 )
 
+// ensureProbeWorkloads applies the disposable probe Deployments and Service.
 func ensureProbeWorkloads(ctx context.Context) error {
 	output, err := kubectl(ctx, "create", "namespace", probeNamespace)
 	if err != nil && !strings.Contains(output, "AlreadyExists") {
@@ -54,7 +56,7 @@ func ensureProbeWorkloads(ctx context.Context) error {
 	}
 	targetLabels := managedProbeLabels(probeTargetRole)
 
-	objects := []interface{}{
+	objects := []client.Object{
 		probeDeployment(
 			probeNamespace, "probe-client", clientLabels, probeImage,
 			[]string{"sh", "-c"}, []string{"while true; do sleep 3600; done"},
@@ -149,7 +151,8 @@ func probeService(namespace, name string, labels map[string]string) *corev1.Serv
 	}
 }
 
-func applyYAML(ctx context.Context, objects ...interface{}) error {
+// applyYAML marshals Kubernetes objects and applies them as one YAML document.
+func applyYAML(ctx context.Context, objects ...client.Object) error {
 	doc := make([]string, 0, len(objects))
 	for _, object := range objects {
 		encoded, err := yaml.Marshal(object)

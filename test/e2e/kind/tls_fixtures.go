@@ -36,6 +36,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
@@ -92,6 +93,7 @@ func TLSProbeLabels() map[string]string {
 	return labels
 }
 
+// ensureManualAdminTLSFixtures applies the manual and administrator TLS fixtures.
 func ensureManualAdminTLSFixtures(ctx context.Context) error {
 	for _, definition := range []struct {
 		selection manualTLSSelection
@@ -106,7 +108,7 @@ func ensureManualAdminTLSFixtures(ctx context.Context) error {
 			return fmt.Errorf("creating %s TLS fixture: %w", definition.selection, err)
 		}
 		manualTLSFixtures[definition.selection] = fixture
-		objects := make([]interface{}, 0, len(fixture.secrets)+len(fixture.configMaps))
+		objects := make([]client.Object, 0, len(fixture.secrets)+len(fixture.configMaps))
 		for _, secret := range fixture.secrets {
 			objects = append(objects, secret)
 		}
