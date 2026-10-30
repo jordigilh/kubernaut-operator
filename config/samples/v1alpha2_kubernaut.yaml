@@ -54,9 +54,9 @@ spec:
     policy:
       configMapName: signalprocessing-policy
 
-  # Disposable notification credentials and routing supplied by the E2E
-  # bootstrap chart. Production users should provide administrator-owned
-  # Secrets with the same provider-specific keys.
+  # Notification credentials and routing are application-owned inputs. The
+  # disposable dependency chart does not create them; provide administrator-
+  # managed Secrets and ConfigMaps with the referenced keys.
   notification:
     credentials:
       - name: slack-ops

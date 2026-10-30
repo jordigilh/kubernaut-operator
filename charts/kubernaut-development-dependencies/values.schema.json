@@ -16,59 +16,7 @@
     },
     "credentials": { "$ref": "#/$defs/credentials" },
     "postgresql": { "$ref": "#/$defs/postgresql" },
-    "valkey": { "$ref": "#/$defs/valkey" },
-    "fixtures": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "llm": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "apiKey": { "type": "string", "minLength": 1 }
-          }
-        },
-        "slack": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "webhookURL": { "type": "string", "minLength": 1 }
-          }
-        },
-        "teams": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "webhookURL": { "type": "string", "minLength": 1 }
-          }
-        },
-        "pagerduty": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "routingKey": { "type": "string", "minLength": 1 }
-          }
-        },
-        "console": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "clientID": { "type": "string", "minLength": 1 },
-            "clientSecret": { "type": "string", "minLength": 1 },
-            "cookieSecret": { "type": "string", "minLength": 32 }
-          }
-        },
-        "policies": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "aiAnalysis": { "type": "string", "minLength": 1 },
-            "signalProcessing": { "type": "string", "minLength": 1 }
-          }
-        }
-      }
-    }
+    "valkey": { "$ref": "#/$defs/valkey" }
   },
   "$defs": {
     "image": {

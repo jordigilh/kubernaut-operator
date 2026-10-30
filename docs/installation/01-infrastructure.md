@@ -20,15 +20,18 @@ helm upgrade --install kubernaut-development-dependencies \
   --wait --timeout 10m
 ```
 
-The chart creates selector-backed PostgreSQL and Valkey Services, synthetic
-runtime-generated credentials, the sample policy ConfigMaps, readiness probes,
-and generated PostgreSQL and Valkey TLS material. Its default CR contract is
+The chart creates selector-backed PostgreSQL and Valkey Services,
+runtime-generated credentials, readiness probes, generated PostgreSQL and Valkey
+TLS material, and a connection contract ConfigMap. Its default CR contract is
 `spec.postgresql.sslMode: require` plus Valkey mTLS; `disable` is not supported.
 See the
 [development dependencies chart README](../../charts/kubernaut-development-dependencies/README.md) for
 image pinning, restricted-SCC settings, Kind overrides, persistence, and
 cleanup. It is intentionally separate from the production operator chart and
 must not be installed over administrator-owned BYO Services or Secrets.
+Application credentials, policy ConfigMaps, notification routing, and identity
+provider configuration are separate application-owned inputs and are not
+created by this chart.
 
 `kubernaut-development-dependencies` replaces the former
 `kubernaut-dev-bootstrap` release identity. Do not install both releases in

@@ -1,6 +1,6 @@
-# This chart is intentionally disposable. It owns the generated TLS Secrets,
-# runtime-generated credentials, Services, workloads, and fixture ConfigMaps it
-# creates.
+# This chart is intentionally disposable. It owns only the generated TLS
+# Secrets, runtime-generated credentials, Services, workloads, persistence, and
+# connection contract it creates for PostgreSQL and Valkey.
 
 imagePullSecrets: []
 
@@ -87,30 +87,3 @@ valkey:
     limits:
       cpu: 250m
       memory: 256Mi
-
-fixtures:
-  enabled: true
-  llm:
-    # Deliberately synthetic, well-formed GCP ADC material. The operator never
-    # calls the provider in the bootstrap qualification path, but the sample
-    # CR uses vertex_ai and the managed workloads must still initialize their
-    # clients without ambient credentials.
-    apiKey: >-
-      {"type":"authorized_user","client_id":"dev-only-client","client_secret":"dev-only-secret","refresh_token":"dev-only-refresh-token"}
-  slack:
-    webhookURL: https://hooks.slack.example/e2e
-  teams:
-    webhookURL: https://teams.example.invalid/e2e
-  pagerduty:
-    routingKey: pagerduty-routing-key
-  console:
-    clientID: e2e-client
-    clientSecret: e2e-secret
-    cookieSecret: "01234567890123456789012345678901"
-  policies:
-    aiAnalysis: |
-      package approval
-      default allow = true
-    signalProcessing: |
-      package signalprocessing
-      default allow = true

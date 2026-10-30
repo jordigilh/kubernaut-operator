@@ -80,10 +80,6 @@ The chart creates:
   authentication;
 * Valkey server, CA, and shared client certificates, with plaintext Valkey
   disabled and mTLS client authentication required;
-* synthetic, well-formed (but unusable) GCP ADC material in
-  `llm-credentials`, plus `slack-webhook`, `kubernaut-console-oidc`,
-  `aianalysis-policy`, and `signalprocessing-policy` fixtures for the sample
-  CR; and
 * `kubernaut-development-dependencies-contract`, which records the hostnames, Secret
   names, and selected PostgreSQL `sslMode` for the Kubernaut CR.
 
@@ -91,6 +87,10 @@ No database credentials are embedded in the chart values or rendered Secret
 manifests. The pre-install hook generates them inside the cluster and preserves
 them across upgrades. The generated Valkey password exists only to satisfy the
 operator's Secret contract; mTLS is the only Valkey authentication mechanism.
+
+Application credentials, policies, notification routing, and identity-provider
+configuration are outside this chart. Create and manage those resources
+separately before applying a Kubernaut CR that references them.
 
 ## Migration from `kubernaut-dev-bootstrap`
 
@@ -122,7 +122,7 @@ certificates, not this disposable self-signed default.
 
 ## Cleanup and ownership
 
-The chart owns the resources listed above. Remove the whole disposable
+The chart owns only the PostgreSQL/Valkey resources listed above. Remove the whole disposable
 environment with:
 
 ```bash
@@ -145,7 +145,7 @@ The Kind harness uses the same chart with locally loaded Docker Hub images and
 explicitly disables the chart's OpenShift security-context gate for those
 developer images. This keeps the harness on the production BYO path while
 making the image/runtime distinction visible rather than silently falling back
-to direct `kubectl` fixtures.
+to direct `kubectl` setup.
 
 The harness equivalent is:
 

@@ -20,13 +20,8 @@ command -v "${helm_bin}" >/dev/null 2>&1 || {
 
 for required in \
 	'kind: Secret' \
-	'name: llm-credentials' \
-	'name: slack-webhook' \
-	'name: kubernaut-console-oidc' \
-	'name: aianalysis-policy' \
-	'name: signalprocessing-policy' \
 	'name: kubernaut-development-dependencies-contract' \
-	'authorized_user' \
+	'connection-contract.yaml' \
 	'name: postgresql' \
 	'name: valkey' \
 	'kind: Service' \
@@ -55,6 +50,32 @@ for required in \
 		exit 1
 	}
 done
+
+for forbidden in \
+	'name: llm-credentials' \
+	'name: slack-webhook' \
+	'name: notification-routing' \
+	'name: notification-teams' \
+	'name: notification-pagerduty' \
+	'name: kubernaut-console-oidc' \
+	'name: aianalysis-policy' \
+	'name: signalprocessing-policy' \
+	'slackConfigs:' \
+	'teamsConfigs:' \
+	'pagerdutyConfigs:' \
+	'approval.rego:' \
+	'policy.rego:'; do
+	if grep -Fq -- "${forbidden}" "${rendered}"; then
+		printf 'development dependencies render contains out-of-scope fixture: %s\n' "${forbidden}" >&2
+		exit 1
+	fi
+done
+
+if "${helm_bin}" template kubernaut-development-dependencies "${chart}" \
+	--namespace kubernaut-system --set fixtures.enabled=true >/dev/null 2>&1; then
+	printf 'development dependencies accepted removed fixtures values\n' >&2
+	exit 1
+fi
 
 if grep -Fq -- '--requirepass' "${rendered}"; then
 	printf 'development dependencies render enables password-only Valkey authentication\n' >&2

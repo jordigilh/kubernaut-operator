@@ -32,7 +32,7 @@ import (
 
 var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Ordered, func() {
 	var ctx context.Context
-	var provisioned, namespaces []ownershipWitness
+	var provisioned, applicationFixtures, namespaces []ownershipWitness
 
 	BeforeAll(func() {
 		ctx = context.Background()
@@ -40,6 +40,9 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 		var err error
 		provisioned, err = captureProvisioningWitnesses(ctx)
 		Expect(err).NotTo(HaveOccurred())
+		applicationFixtures, err = captureApplicationFixtureWitnesses(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(assertApplicationFixtureOwnership(ctx, applicationFixtures)).To(Succeed())
 	})
 
 	AfterEach(func() {
@@ -74,7 +77,9 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 		By("uninstalling the failed CR without destroying the conflicting resources")
 		Expect(deleteKubernautCR(ctx)).To(Succeed())
 		Expect(assertOwnershipWitnesses(ctx, witnesses)).To(Succeed())
+		Expect(assertApplicationFixtureOwnership(ctx, applicationFixtures)).To(Succeed())
 		Expect(assertProvisioningWitnesses(ctx, provisioned)).To(Succeed())
+		Expect(assertProvisioningWitnesses(ctx, applicationFixtures)).To(Succeed())
 		_, err = kubectl(ctx, "delete", "configmap", "kubernaut-migrations", "-n", kubernautNamespace)
 		Expect(err).NotTo(HaveOccurred())
 		witnesses = witnesses[1:]
@@ -112,6 +117,8 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 		Expect(assertOwnershipWitnesses(ctx, witnesses)).To(Succeed())
 		Expect(assertRetainedNamespaces(ctx, namespaces)).To(Succeed())
 		Expect(assertProvisioningWitnesses(ctx, provisioned)).To(Succeed())
+		Expect(assertProvisioningWitnesses(ctx, applicationFixtures)).To(Succeed())
+		Expect(assertApplicationFixtureOwnership(ctx, applicationFixtures)).To(Succeed())
 		Eventually(func(g Gomega) {
 			output, getErr := kubectl(ctx, "get", "deployment", "workflowexecution-controller", "-n", kubernautNamespace,
 				"--ignore-not-found", "-o", "name")
@@ -140,6 +147,8 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 		Expect(assertOwnershipWitnesses(ctx, witnesses)).To(Succeed())
 		Expect(assertRetainedNamespaces(ctx, namespaces)).To(Succeed())
 		Expect(assertProvisioningWitnesses(ctx, provisioned)).To(Succeed())
+		Expect(assertProvisioningWitnesses(ctx, applicationFixtures)).To(Succeed())
+		Expect(assertApplicationFixtureOwnership(ctx, applicationFixtures)).To(Succeed())
 	})
 
 	It(
