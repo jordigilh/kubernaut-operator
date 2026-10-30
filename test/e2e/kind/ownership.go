@@ -35,6 +35,8 @@ type ownershipWitness struct {
 
 const workflowNamespaceName = "kubernaut-workflows"
 
+const applicationFixtureManager = "kubernaut-e2e"
+
 func ownershipObject(ctx context.Context, resource, name, namespace string) (*unstructured.Unstructured, error) {
 	args := []string{"get", resource, name, "-o", "json"}
 	if namespace != "" {
@@ -109,10 +111,31 @@ func captureProvisioningWitnesses(ctx context.Context) ([]ownershipWitness, erro
 		{resource: "service", name: "valkey", namespace: kubernautNamespace},
 		{resource: "secret", name: "postgresql-secret", namespace: kubernautNamespace},
 		{resource: "secret", name: "valkey-secret", namespace: kubernautNamespace},
+	})
+}
+
+func captureApplicationFixtureWitnesses(ctx context.Context) ([]ownershipWitness, error) {
+	return captureOwnershipWitnesses(ctx, []ownershipWitness{
 		{resource: "secret", name: "llm-credentials", namespace: kubernautNamespace},
 		{resource: "configmap", name: "aianalysis-policy", namespace: kubernautNamespace},
 		{resource: "configmap", name: "signalprocessing-policy", namespace: kubernautNamespace},
 	})
+}
+
+func assertApplicationFixtureOwnership(ctx context.Context, witnesses []ownershipWitness) error {
+	for _, witness := range witnesses {
+		live, err := ownershipObject(ctx, witness.resource, witness.name, witness.namespace)
+		if err != nil {
+			return err
+		}
+		if live.GetLabels()["app.kubernetes.io/managed-by"] != applicationFixtureManager {
+			return fmt.Errorf("application fixture %s %s has unexpected manager", witness.resource, witness.name)
+		}
+		if len(live.GetOwnerReferences()) != 0 {
+			return fmt.Errorf("application fixture %s %s has an owner reference", witness.resource, witness.name)
+		}
+	}
+	return nil
 }
 
 func createWorkflowOwnershipContent(ctx context.Context) ([]ownershipWitness, error) {

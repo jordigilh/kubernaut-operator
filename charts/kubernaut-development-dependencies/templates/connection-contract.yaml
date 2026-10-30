@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubernaut-development-dependencies-contract
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubernaut-development-dependencies.labels" . | nindent 4 }}
+data:
+  connection-contract.yaml: |-
+    # Apply these values to a Kubernaut CR in this namespace.
+    postgresql:
+      host: {{ printf "%s.%s.svc.cluster.local" .Values.postgresql.serviceName .Release.Namespace | quote }}
+      port: 5432
+      secretName: {{ .Values.postgresql.secretName | quote }}
+      sslMode: {{ .Values.postgresql.sslMode | quote }}
+    valkey:
+      host: {{ printf "%s.%s.svc.cluster.local" .Values.valkey.serviceName .Release.Namespace | quote }}
+      port: 6379
+      secretName: {{ .Values.valkey.secretName | quote }}
+      tls:
+        enabled: true
+        caSecretName: {{ .Values.valkey.tls.caSecretName | quote }}
+        clientCertSecretName: {{ .Values.valkey.tls.clientCertSecretName | quote }}

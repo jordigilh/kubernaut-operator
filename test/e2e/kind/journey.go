@@ -59,6 +59,62 @@ func ensureKubernautInfrastructure(ctx context.Context) error {
 	if _, err := helmInCluster(ctx, args...); err != nil {
 		return fmt.Errorf("installing Kubernaut development dependencies chart: %w", err)
 	}
+	if err := ensureKubernautApplicationFixtures(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+//nolint:gosec // disposable E2E fixture
+const syntheticLLMCredentials = `{"type":"authorized_user","client_id":"dev-only-client",` +
+	`"client_secret":"dev-only-secret","refresh_token":"dev-only-refresh-token"}`
+
+func ensureKubernautApplicationFixtures(ctx context.Context) error {
+	labels := map[string]string{
+		"app.kubernetes.io/managed-by": applicationFixtureManager,
+		"app.kubernetes.io/part-of":    "kubernaut-application-fixtures",
+	}
+	objects := []interface{}{
+		&corev1.Secret{
+			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "llm-credentials",
+				Namespace: kubernautNamespace,
+				Labels:    labels,
+			},
+			Type: corev1.SecretTypeOpaque,
+			StringData: map[string]string{
+				"api_key":          syntheticLLMCredentials,
+				"api-key":          syntheticLLMCredentials,
+				"credentials.json": syntheticLLMCredentials,
+			},
+		},
+		&corev1.ConfigMap{
+			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "aianalysis-policy",
+				Namespace: kubernautNamespace,
+				Labels:    labels,
+			},
+			Data: map[string]string{
+				"approval.rego": "package approval\ndefault allow = true\n",
+			},
+		},
+		&corev1.ConfigMap{
+			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "signalprocessing-policy",
+				Namespace: kubernautNamespace,
+				Labels:    labels,
+			},
+			Data: map[string]string{
+				"policy.rego": "package signalprocessing\ndefault allow = true\n",
+			},
+		},
+	}
+	if err := applyYAML(ctx, objects...); err != nil {
+		return fmt.Errorf("applying kubernaut application fixtures: %w", err)
+	}
 	return nil
 }
 

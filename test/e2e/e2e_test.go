@@ -60,6 +60,9 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 		By("installing the disposable PostgreSQL and Valkey bootstrap")
 		installDevelopmentDependencies()
 
+		By("installing application-owned test fixtures")
+		installApplicationFixtures()
+
 		By("installing CRDs")
 		cmd = exec.Command("make", "install")
 		_, err := utils.Run(cmd)
@@ -322,6 +325,10 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			Expect(output).To(ContainSubstring("credentialRef: slack-ops"))
 			Expect(output).To(ContainSubstring("credentialRef: teams-primary"))
 			Expect(output).To(ContainSubstring("credentialRef: pagerduty-critical"))
+			for _, name := range []string{"slack-webhook", "notification-teams", "notification-pagerduty"} {
+				expectApplicationFixtureOwnership("secret", name)
+			}
+			expectApplicationFixtureOwnership("configmap", "notification-routing")
 		})
 
 		It("should create Services for reachable components", func() {
@@ -582,22 +589,12 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			},
 		)
 
-		It("should preserve bootstrap-provided policy ConfigMaps without operator ownership", func() {
+		It("should preserve application-provided policy ConfigMaps without operator ownership", func() {
 			for _, name := range []string{
 				"aianalysis-policy",
 				"signalprocessing-policy",
 			} {
-				cmd := exec.Command("kubectl", "get", "configmap", name,
-					"-n", crNS, "-o", "jsonpath={.metadata.labels.app\\.kubernetes\\.io/managed-by}")
-				output, err := utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "ConfigMap %q should be provided by the development dependencies chart", name)
-				Expect(output).To(Equal("Helm"), "ConfigMap %q should remain Helm-owned", name)
-
-				cmd = exec.Command("kubectl", "get", "configmap", name,
-					"-n", crNS, "-o", "jsonpath={.metadata.ownerReferences}")
-				output, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "ConfigMap %q ownership should be readable", name)
-				Expect(output).To(BeEmpty(), "ConfigMap %q should not be adopted by the operator", name)
+				expectApplicationFixtureOwnership("configmap", name)
 			}
 		})
 
@@ -695,6 +692,133 @@ func installDevelopmentDependencies() {
 		"--wait", "--timeout", "10m")
 	_, err := utils.Run(cmd)
 	Expect(err).NotTo(HaveOccurred(), "Failed to install the development dependencies chart")
+}
+
+func installApplicationFixtures() {
+	const fixtures = `apiVersion: v1
+kind: Secret
+metadata:
+  name: llm-credentials
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/managed-by: kubernaut-e2e
+    app.kubernetes.io/part-of: kubernaut-application-fixtures
+type: Opaque
+stringData:
+  api_key: &syntheticCredentials >-
+    {"type":"authorized_user","client_id":"dev-only-client","client_secret":"dev-only-secret",
+    "refresh_token":"dev-only-refresh-token"}
+  api-key: *syntheticCredentials
+  credentials.json: *syntheticCredentials
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aianalysis-policy
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/managed-by: kubernaut-e2e
+    app.kubernetes.io/part-of: kubernaut-application-fixtures
+data:
+  approval.rego: |
+    package approval
+    default allow = true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: signalprocessing-policy
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/managed-by: kubernaut-e2e
+    app.kubernetes.io/part-of: kubernaut-application-fixtures
+data:
+  policy.rego: |
+    package signalprocessing
+    default allow = true
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: slack-webhook
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/managed-by: kubernaut-e2e
+    app.kubernetes.io/part-of: kubernaut-application-fixtures
+type: Opaque
+stringData:
+  webhook-url: https://hooks.slack.example/e2e
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: notification-teams
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/managed-by: kubernaut-e2e
+    app.kubernetes.io/part-of: kubernaut-application-fixtures
+type: Opaque
+stringData:
+  webhook-url: https://teams.example.invalid/e2e
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: notification-pagerduty
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/managed-by: kubernaut-e2e
+    app.kubernetes.io/part-of: kubernaut-application-fixtures
+type: Opaque
+stringData:
+  routing-key: pagerduty-routing-key
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notification-routing
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/managed-by: kubernaut-e2e
+    app.kubernetes.io/part-of: kubernaut-application-fixtures
+data:
+  routing.yaml: |-
+    route:
+      receiver: slack-ops
+    receivers:
+      - name: slack-ops
+        slackConfigs:
+          - channel: "#kubernaut-alerts"
+            credentialRef: slack-ops
+      - name: teams-primary
+        teamsConfigs:
+          - credentialRef: teams-primary
+      - name: pagerduty-critical
+        pagerdutyConfigs:
+          - credentialRef: pagerduty-critical
+`
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(fixtures)
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to install application-owned test fixtures")
+}
+
+func expectApplicationFixtureOwnership(resource, name string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "kubectl", "get", resource, name,
+		"-n", crNS, "-o", "jsonpath={.metadata.labels.app\\.kubernetes\\.io/managed-by}")
+	output, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "%s %q should be application-owned", resource, name)
+	Expect(output).To(Equal("kubernaut-e2e"), "%s %q should remain application-owned", resource, name)
+
+	cmd = exec.CommandContext(ctx, "kubectl", "get", resource, name,
+		"-n", crNS, "-o", "jsonpath={.metadata.ownerReferences}")
+	output, err = utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "%s %q ownership should be readable", resource, name)
+	Expect(output).To(BeEmpty(), "%s %q should not be adopted by the operator", resource, name)
 }
 
 // serviceAccountToken returns a token for the operator service account.

@@ -2,7 +2,7 @@ apiVersion: v2
 name: kubernaut-development-dependencies
 description: Disposable PostgreSQL and Valkey dependencies for Kubernaut development and qualification
 type: application
-version: 0.1.0
+version: 0.1.1
 appVersion: "1.6"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/jordigilh/kubernaut-operator
