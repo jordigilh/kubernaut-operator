@@ -463,8 +463,12 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 				}
 				return strings.TrimSpace(uid)
 			}, 40*time.Second, 2*time.Second).Should(Equal(failedJobUID))
-			Expect(issue587ObjectMetadata(ctx, "deployment", "postgresql")).To(Equal(beforePostgreSQL))
-			Expect(issue587DependencySnapshot(ctx)).To(Equal(beforeDependencies))
+			afterPostgreSQL, postgreSQLErr := issue587ObjectMetadata(ctx, "deployment", "postgresql")
+			Expect(postgreSQLErr).NotTo(HaveOccurred(), "capturing PostgreSQL metadata after failed migration")
+			Expect(afterPostgreSQL).To(Equal(beforePostgreSQL))
+			afterDependencies, dependencyErr := issue587DependencySnapshot(ctx)
+			Expect(dependencyErr).NotTo(HaveOccurred(), "capturing BYO dependency metadata after failed migration")
+			Expect(afterDependencies).To(Equal(beforeDependencies))
 
 			patchOutput, patchErr = kubectl(ctx, "patch", "kubernaut", "kubernaut", "-n", kubernautNamespace,
 				"--type=merge", "-p", `{"spec":{"postgresql":{"secretName":"postgresql-secret"}}}`)
