@@ -1,7 +1,7 @@
 # Operator image. Prefer digest for production and disconnected installations.
 image:
   repository: quay.io/kubernaut-ai/kubernaut-operator-image
-  tag: 1.6.0-rc28
+  tag: 1.6.0-rc30
   digest: ""
   pullPolicy: IfNotPresent
   pullSecrets: []
@@ -10,19 +10,19 @@ image:
 # operator when a user applies a Kubernaut CR. They are not application chart
 # configuration and do not cause any operand workload to be installed here.
 relatedImages:
-  GATEWAY: quay.io/kubernaut-ai/gateway@sha256:3f94492b0df56607acd7bc0a5e5ba5a61aeab2af0321b9a1cfdc57adef542b5d
-  DATA_STORAGE: quay.io/kubernaut-ai/datastorage@sha256:76a40d2abbb7a224731f0a889c7d482b53b2341bd37a11af296cf9746a94d4f4
-  AIANALYSIS: quay.io/kubernaut-ai/aianalysis@sha256:6adbf3726b00b9cfe909c96f31f360c195e3ee57fa20de5f7045d6dbea3ea959
-  SIGNALPROCESSING: quay.io/kubernaut-ai/signalprocessing@sha256:a9add026b06b1e73803d5e772330a4eedec63141756bfcfe34bc0842bde593c3
-  REMEDIATIONORCHESTRATOR: quay.io/kubernaut-ai/remediationorchestrator@sha256:f7b43cf44cef0ba392e03f1ee634c3945a99868e4d75a4ecbc0cd8e6312e9ad4
-  WORKFLOWEXECUTION: quay.io/kubernaut-ai/workflowexecution@sha256:54e64af2a2539543d9ca19b2aa7460e673e657ddd6557cbf3192d59851f2faee
-  EFFECTIVENESSMONITOR: quay.io/kubernaut-ai/effectivenessmonitor@sha256:2c2f4ed5702de3d41d2e2c6fd96047448da9dfa6bdcd765459d4f5f09c5b210d
-  NOTIFICATION: quay.io/kubernaut-ai/notification@sha256:e245dffaf0f78bcea4dd87025408a7b03c6c5d4db9555a7d693a5f1d358f4d33
-  KUBERNAUT_AGENT: quay.io/kubernaut-ai/kubernautagent@sha256:a7f0342a998e14af2421d4f3603d36d22fc688003606b544213759c0694e7c79
-  AUTHWEBHOOK: quay.io/kubernaut-ai/authwebhook@sha256:5a64cea75c8c188165f21a8426c294a7f0850ab85292a29772f47be8f25bb111
-  API_FRONTEND: quay.io/kubernaut-ai/apifrontend@sha256:788556cae7858ba9ed702cc96bdcd0a8241332d930f8cf4708acbe947f65532e
-  FLEETMETADATACACHE: quay.io/kubernaut-ai/fleetmetadatacache@sha256:59c4444461a66fd9032a3d78f4fab6d1bd77a6e887a0f2f14daec177ac3e3222
-  DB_MIGRATE: quay.io/kubernaut-ai/db-migrate@sha256:b105eeefc6dfe6101ee1b110569c9cd4e0767d51eb92923618631ac3c115b454
+  GATEWAY: quay.io/kubernaut-ai/gateway@sha256:163b73718e2b5d95d5a5505baeb35b431e28408d2b634ed47fead9e24acfea58
+  DATA_STORAGE: quay.io/kubernaut-ai/datastorage@sha256:4b32f3201f2f876ee7636003592cd6bf216f480634576c5f873a44bffe727084
+  AIANALYSIS: quay.io/kubernaut-ai/aianalysis@sha256:36330cfc86e3aa5c5525066a921b655e5a5109b04efa2e852dd1e368f994a04d
+  SIGNALPROCESSING: quay.io/kubernaut-ai/signalprocessing@sha256:67043980d66bd782aadf76bd2c4344995197fda67f92ed62474cf3780633770c
+  REMEDIATIONORCHESTRATOR: quay.io/kubernaut-ai/remediationorchestrator@sha256:86cde42501683be6c61f7fc577a00fdbc6f26e849f795c03ffee69032d846cd7
+  WORKFLOWEXECUTION: quay.io/kubernaut-ai/workflowexecution@sha256:7865bd09537a497d0608077d9c6fb380c64ca41c67e90d7d7c02abdb38b06800
+  EFFECTIVENESSMONITOR: quay.io/kubernaut-ai/effectivenessmonitor@sha256:d4b57690d596f64b9e6a85ee0e37206e93186c2fccb410e93dcac5088511e332
+  NOTIFICATION: quay.io/kubernaut-ai/notification@sha256:34b04d8e441fef4ab8246b9227abd15f336774814ffc88564eef496d848a02f7
+  KUBERNAUT_AGENT: quay.io/kubernaut-ai/kubernautagent@sha256:dee64e07d21ec82eaf10a9569a13aea023d8511b19e6ae512306ec22bec40f72
+  AUTHWEBHOOK: quay.io/kubernaut-ai/authwebhook@sha256:4f81055a9b8ba9003e9c8ec1739ee5e3cf523e68b3b8d66b178e12eca75fae7f
+  API_FRONTEND: quay.io/kubernaut-ai/apifrontend@sha256:9993d71cfc7eff94f2e19ad40d845cbb3cfe7579b5d680d344303daed1e98d36
+  FLEETMETADATACACHE: quay.io/kubernaut-ai/fleetmetadatacache@sha256:a59fa06ea41692fbd76f01c84bbe77ab767620151f2daef8a55594a00177ecaa
+  DB_MIGRATE: quay.io/kubernaut-ai/db-migrate@sha256:dbecf98c652b0cd9f98214179cfeba3d8488f34d6b73b76a18340b6c4291fc3d
   CONSOLE: quay.io/kubernaut-ai/kubernaut-console@sha256:85cdbb3596ba96873e5b30b1c861b6b96900427b61bd6001640c1789ad6c2edb
   OAUTH2_PROXY: quay.io/oauth2-proxy/oauth2-proxy@sha256:37c1570c0427e02fc7c947ef2c04e8995b8347b7abc9fcf1dbb4e376a4b221a7
   INIT_POSTGRES: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e

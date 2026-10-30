@@ -187,4 +187,5 @@ var _ = Describe("Issue 587 BYO and migration boundaries", Label("unit"), func()
 		}})
 		Expect(r.phaseDeploy(ctx, kn, kn)).To(MatchError(ContainSubstring("resolving DataStorage dependency revision")))
 	})
+
 })

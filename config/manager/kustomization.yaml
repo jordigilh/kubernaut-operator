@@ -6,4 +6,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: quay.io/kubernaut-ai/kubernaut-operator-image
-  newTag: 1.6.0-rc28
+  newTag: 1.6.0-rc30
