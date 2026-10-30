@@ -26,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
@@ -69,12 +70,13 @@ func ensureKubernautInfrastructure(ctx context.Context) error {
 const syntheticLLMCredentials = `{"type":"authorized_user","client_id":"dev-only-client",` +
 	`"client_secret":"dev-only-secret","refresh_token":"dev-only-refresh-token"}`
 
+// ensureKubernautApplicationFixtures applies resources owned by the application test.
 func ensureKubernautApplicationFixtures(ctx context.Context) error {
 	labels := map[string]string{
 		"app.kubernetes.io/managed-by": applicationFixtureManager,
 		"app.kubernetes.io/part-of":    "kubernaut-application-fixtures",
 	}
-	objects := []interface{}{
+	objects := []client.Object{
 		&corev1.Secret{
 			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
 			ObjectMeta: metav1.ObjectMeta{

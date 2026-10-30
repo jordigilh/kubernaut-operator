@@ -92,6 +92,49 @@ Application credentials, policies, notification routing, and identity-provider
 configuration are outside this chart. Create and manage those resources
 separately before applying a Kubernaut CR that references them.
 
+## Migration from chart `0.1.0`
+
+Chart `0.1.1` no longer renders the application fixture resources from
+`0.1.0`. Before upgrading, preserve every legacy fixture that is still
+referenced by annotating it with `helm.sh/resource-policy=keep`. Use the
+namespace of the existing Helm release; do not assume a particular namespace.
+
+```bash
+RELEASE_NAME=kubernaut-development-dependencies
+NAMESPACE=<namespace-of-the-existing-release>
+
+kubectl annotate --namespace "$NAMESPACE" \
+  secret/llm-credentials secret/slack-webhook \
+  secret/notification-teams secret/notification-pagerduty \
+  secret/kubernaut-console-oidc \
+  helm.sh/resource-policy=keep --overwrite
+
+kubectl annotate --namespace "$NAMESPACE" \
+  configmap/notification-routing configmap/aianalysis-policy \
+  configmap/signalprocessing-policy \
+  helm.sh/resource-policy=keep --overwrite
+```
+
+Run the upgrade after applying the annotations. Helm leaves retained resources
+in place, and they become administrator-managed; continue managing them
+separately from this chart.
+
+For a `0.1.0` release that used only the chart defaults, use
+`--reset-then-reuse-values` so the new defaults are applied while supported
+release overrides are retained:
+
+```bash
+helm upgrade "$RELEASE_NAME" <chart-reference> \
+  --namespace "$NAMESPACE" \
+  --reset-then-reuse-values \
+  --wait --timeout 10m
+```
+
+The root schema intentionally rejects the removed `fixtures` value. If the
+old release explicitly configured any `fixtures.*` values, remove those keys
+from the values file or command-line overrides and use `--reset-values` with
+the supported overrides instead of reusing the old fixture configuration.
+
 ## Migration from `kubernaut-dev-bootstrap`
 
 The chart rename changes the Helm release identity and is **not** an
