@@ -157,6 +157,7 @@ var _ = Describe("ValidatingWebhookConfiguration", func() {
 			"actiontypes",
 			"agentsessions",
 		}
+		wantAPIVersions := []string{"v1alpha2", "v1alpha1", "v1alpha1", "v1alpha2"}
 
 		for i, wh := range vwc.Webhooks {
 			Expect(wh.Rules).To(HaveLen(1), "webhook[%d] should have 1 rule, got %d", i, len(wh.Rules))
@@ -178,6 +179,7 @@ var _ = Describe("ValidatingWebhookConfiguration", func() {
 
 			Expect(rule.Resources).NotTo(BeEmpty())
 			Expect(rule.Resources[0]).To(Equal(wantResources[i]), "webhook[%d] resources = %v, want [%s]", i, rule.Resources, wantResources[i])
+			Expect(rule.APIVersions).To(Equal([]string{wantAPIVersions[i]}), "webhook[%d] apiVersions = %v, want [%s]", i, rule.APIVersions, wantAPIVersions[i])
 		}
 	})
 
@@ -229,9 +231,10 @@ var _ = Describe("WebhookConfigurations", func() {
 			Expect(webhook.ClientConfig.CABundle).To(Equal(ca))
 			Expect(webhook.Rules[0].APIVersions).To(Equal([]string{"v1alpha2"}))
 		}
-		for _, webhook := range vwc.Webhooks {
+		wantValidatingAPIVersions := []string{"v1alpha2", "v1alpha1", "v1alpha1", "v1alpha2"}
+		for i, webhook := range vwc.Webhooks {
 			Expect(webhook.ClientConfig.CABundle).To(Equal(ca))
-			Expect(webhook.Rules[0].APIVersions).To(Equal([]string{"v1alpha2"}))
+			Expect(webhook.Rules[0].APIVersions).To(Equal([]string{wantValidatingAPIVersions[i]}))
 		}
 	})
 
