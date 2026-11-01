@@ -2058,6 +2058,21 @@ var _ = Describe("WorkflowExecution controller ClusterRole", func() {
 		}
 		Expect(found).To(BeTrue(), "no events rule found on workflowexecution-controller ClusterRole")
 	})
+
+	It("[AC-6] grants get/list/watch on Pods for verified cancellation", func() {
+		role := weRole()
+		Expect(role).NotTo(BeNil())
+
+		found := false
+		for _, rule := range role.Rules {
+			if len(rule.APIGroups) == 1 && rule.APIGroups[0] == "" && slices.Contains(rule.Resources, "pods") {
+				found = true
+				Expect(rule.Verbs).To(ConsistOf("get", "list", "watch"),
+					"workflowexecution-controller needs read-only Pod access so upstream verified cancellation can observe active Pods")
+			}
+		}
+		Expect(found).To(BeTrue(), "no Pods rule found on workflowexecution-controller ClusterRole")
+	})
 })
 
 var _ = Describe("SignalProcessing fleet RBAC", func() {

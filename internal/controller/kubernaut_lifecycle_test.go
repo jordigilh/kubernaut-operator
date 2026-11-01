@@ -3094,6 +3094,38 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		})
 	})
 
+	Context("WorkflowExecution Controller RBAC Lifecycle", func() {
+		It("IT-RBAC-599-001 [AC-6, CM-6]: reconciles read-only Pod access for verified cancellation", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			roleName := testNamespace + "-workflowexecution-controller"
+			role := &rbacv1.ClusterRole{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: roleName}, role)).To(Succeed())
+
+			foundPodRule := false
+			for _, rule := range role.Rules {
+				if len(rule.APIGroups) == 1 && rule.APIGroups[0] == "" && slices.Contains(rule.Resources, "pods") {
+					foundPodRule = true
+					Expect(rule.Verbs).To(ConsistOf("get", "list", "watch"))
+				}
+			}
+			Expect(foundPodRule).To(BeTrue(), "reconciled WorkflowExecution ClusterRole should grant read-only Pod access")
+
+			binding := &rbacv1.ClusterRoleBinding{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: testNamespace + "-workflowexecution-controller-binding",
+			}, binding)).To(Succeed())
+			Expect(binding.RoleRef.Name).To(Equal(roleName))
+			Expect(binding.Subjects).To(ConsistOf(rbacv1.Subject{
+				Kind:      rbacv1.ServiceAccountKind,
+				Name:      resources.ServiceAccountName(resources.ComponentWorkflowExecution),
+				Namespace: testNamespace,
+			}))
+		})
+	})
+
 	Context("SAR Tool RBAC Lifecycle", func() {
 		It("creates tool ClusterRoles during deploy phase", func() {
 			createBYOSecrets(ctx)

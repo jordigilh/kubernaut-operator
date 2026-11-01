@@ -1305,6 +1305,11 @@ func workflowExecutionControllerClusterRole(kn *kubernautv1alpha2.Kubernaut, lab
 			{APIGroups: []string{"tekton.dev"}, Resources: []string{"pipelineruns"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 			{APIGroups: []string{"tekton.dev"}, Resources: []string{"taskruns"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+			// #599 / DD-2582: verified cancellation observes owned Job/Tekton
+			// Pods before persisting the terminal Cancelled phase. The cached
+			// client requires list/watch to synchronize even when the executor
+			// only performs a namespaced List; no Pod write access is needed.
+			{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list", "watch"}},
 			// #411: BR-WE-019/DD-WE-008's countPodCreationAttempts (kubernaut
 			// core, pkg/workflowexecution/executor/job.go) counts
 			// "SuccessfulCreate" Events on the Job object through the manager's
