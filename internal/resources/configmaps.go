@@ -2377,6 +2377,7 @@ type afConfigYAML struct {
 	AgentCard      afAgentCardYAML      `json:"agentCard" yaml:"agentCard"`
 	Auth           afAuthYAML           `json:"auth" yaml:"auth"`
 	RBAC           afRBACYAML           `json:"rbac" yaml:"rbac"`
+	PolicyRead     afPolicyReadYAML     `json:"policyRead" yaml:"policyRead"`
 	Logging        afLoggingYAML        `json:"logging" yaml:"logging"`
 	RateLimit      afRateLimitYAML      `json:"rateLimit" yaml:"rateLimit"`
 	Shutdown       afShutdownYAML       `json:"shutdown" yaml:"shutdown"`
@@ -2385,6 +2386,17 @@ type afConfigYAML struct {
 	Session        afSessionYAML        `json:"session" yaml:"session"`
 	Fleet          *fleetConfigYAML     `json:"fleet,omitempty" yaml:"fleet,omitempty"`
 	Debug          debugYAML            `json:"debug" yaml:"debug"`
+}
+
+// afPolicyReadYAML contains the operator-resolved policy ConfigMap references
+// that API Frontend uses for its sanitized policy-read projection.
+type afPolicyReadYAML struct {
+	AIAnalysis       afPolicyConfigMapYAML `json:"aiAnalysis" yaml:"aiAnalysis"`
+	SignalProcessing afPolicyConfigMapYAML `json:"signalProcessing" yaml:"signalProcessing"`
+}
+
+type afPolicyConfigMapYAML struct {
+	ConfigMapName string `json:"configMapName" yaml:"configMapName"`
 }
 
 type afSessionYAML struct {
@@ -2685,6 +2697,10 @@ func APIFrontendConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 		},
 		Auth: afAuthConfig(kn),
 		RBAC: afRBACConfig(kn, knV2),
+		PolicyRead: afPolicyReadYAML{
+			AIAnalysis:       afPolicyConfigMapYAML{ConfigMapName: AIAnalysisPolicyName(kn)},
+			SignalProcessing: afPolicyConfigMapYAML{ConfigMapName: SignalProcessingPolicyName(kn)},
+		},
 		Logging: afLoggingYAML{
 			Level: withDefault(af.Logging.Level, "info"),
 		},
