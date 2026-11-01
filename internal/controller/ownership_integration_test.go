@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"io/fs"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -41,6 +42,8 @@ import (
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
+	"github.com/jordigilh/kubernaut/pkg/shared/assets"
+	"sigs.k8s.io/yaml"
 )
 
 var _ = Describe("Issue 514 ownership safety through real reconciliation", func() {
@@ -51,6 +54,29 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		deleteCRIfExists(ctx)
 		deleteBYOSecrets(ctx)
 		cleanupClusterScoped(ctx)
+	})
+
+	It("IT-SCHEMA-600-001 [AC-3, CM-3, SI-10] installs embedded operand schemas without live CRD drift", func() {
+		Expect(resources.EnsureCRDs(ctx, cfg)).To(Succeed())
+
+		for _, filename := range []string{
+			"kubernaut.ai_aianalyses.yaml",
+			"kubernaut.ai_effectivenessassessments.yaml",
+			"kubernaut.ai_remediationapprovalrequests.yaml",
+			"kubernaut.ai_remediationrequests.yaml",
+			"kubernaut.ai_signalprocessings.yaml",
+			"kubernaut.ai_workflowexecutions.yaml",
+		} {
+			expected := embeddedOperandCRD(filename)
+			actual := &apiextensionsv1.CustomResourceDefinition{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Name: expected.Name}, actual)).To(Succeed(), filename)
+			Expect(actual.Spec.Versions).To(HaveLen(len(expected.Spec.Versions)), filename)
+
+			for index, expectedVersion := range expected.Spec.Versions {
+				Expect(actual.Spec.Versions[index].Name).To(Equal(expectedVersion.Name), filename)
+				Expect(actual.Spec.Versions[index].Schema).To(Equal(expectedVersion.Schema), filename)
+			}
+		}
 	})
 
 	It("IT-OWN-514-001 [AC-3, AC-6, AU-3, SI-4; SOC2 CC6.1, CC6.6, CC7.2; ASVS v5.0.0-V8.3.1, v5.0.0-V16.2.1] preserves a legacy derived-secret object without using it as a dependency credential", func() {
@@ -692,6 +718,18 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 	})
 
 })
+
+// embeddedOperandCRD loads one shared operand CRD from the operator's embedded asset filesystem.
+func embeddedOperandCRD(filename string) *apiextensionsv1.CustomResourceDefinition {
+	data, err := fs.ReadFile(assets.CRDsFS, "crds/"+filename)
+	Expect(err).NotTo(HaveOccurred(), "reading embedded CRD %s", filename)
+
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	Expect(yaml.Unmarshal(data, crd)).To(Succeed(), "unmarshalling embedded CRD %s", filename)
+	Expect(crd.Name).NotTo(BeEmpty(), "embedded CRD %s has no name", filename)
+	Expect(crd.Spec.Versions).NotTo(BeEmpty(), "embedded CRD %s has no versions", filename)
+	return crd
+}
 
 type ownershipWebhookReadRaceClient struct {
 	client.Client
